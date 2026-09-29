@@ -14,13 +14,50 @@ import type {
     ReviewAnalysisResponse,
     ReviewSnapshotItem,
 } from './ai/types';
-import { getCaptureModalCopilotParts, keepCaptureModalCopilotSuggestion, type CaptureModalCopilotPart } from './capture-modal-model';
+import {
+    formatCaptureModalCopilotApplied,
+    getCaptureModalCopilotParts,
+    keepCaptureModalCopilotSuggestion,
+    type CaptureModalCopilotPart,
+} from './capture-modal-model';
+import { formatAIErrorAlertBody } from './ai/utils';
 import { filterReviewSuggestions, isActionableReviewSuggestion, type TitledReviewSuggestion } from './review-views-model';
+import { redactSyncText } from './sync-settings-model';
 import type { TaskDraft } from './task-draft';
 import { getUsedTaskTokens } from './task-token-usage';
-import type { ChecklistItem, Project, Task, TimeEstimate } from './types';
+import type { AppSettings, ChecklistItem, Project, Task, TimeEstimate } from './types';
 
 type Translate = (key: string) => string;
+
+// ---------------------------------------------------------------------------
+// Failures.
+
+const urlPassword = (url: string | undefined): string | null => {
+    if (!url) return null;
+    try {
+        return decodeURIComponent(new URL(url).password) || null;
+    } catch {
+        return null;
+    }
+};
+
+/**
+ * A failed AI request's error with its text redacted, for the log and the screen: the log
+ * sanitizer, no URL credentials, and neither the API key nor the custom endpoint's password
+ * (a provider or a local server may echo them back).
+ */
+export function redactAIError(error: unknown, apiKey: string, settings: AppSettings | undefined): Error {
+    const secrets = [apiKey, urlPassword(settings?.ai?.baseUrl)];
+    const redacted = new Error(redactSyncText(error instanceof Error ? error.message : String(error), secrets));
+    redacted.name = error instanceof Error ? redactSyncText(error.name, secrets) : 'Error';
+    return redacted;
+}
+
+/** A failed AI request's alert: the generic line, then the redacted detail. */
+export const getAIErrorAlert = (error: unknown, t: Translate, apiKey: string, settings: AppSettings | undefined): { title: string; message: string } => ({
+    title: t('ai.errorTitle'),
+    message: formatAIErrorAlertBody(t('ai.errorBody'), redactAIError(error, apiKey, settings)),
+});
 
 // ---------------------------------------------------------------------------
 // The editor's copilot.
@@ -42,6 +79,8 @@ export function getTaskCopilotText(title: string, description: string): string |
 export const keepTaskCopilotSuggestion = keepCaptureModalCopilotSuggestion;
 /** The suggestion's parts not applied yet, in chip order. */
 export const getTaskCopilotParts = getCaptureModalCopilotParts;
+/** The "Applied …" line under the chips (each part spaced), or null when nothing was applied. */
+export const formatTaskCopilotApplied = formatCaptureModalCopilotApplied;
 
 const splitDraftTokens = (value: string | undefined) => (
     (value ?? '').split(',').map((token) => token.trim()).filter(Boolean)
@@ -204,6 +243,11 @@ export const appendTaskBreakdownSteps = (checklist: readonly ChecklistItem[], st
 
 // ---------------------------------------------------------------------------
 // The Weekly Review's analysis.
+
+/** The analysis's error line: the redacted detail, or the generic line when the failure says nothing. */
+export const getWeeklyReviewAnalysisError = (error: unknown, t: Translate, apiKey: string, settings: AppSettings | undefined): string => (
+    redactAIError(error, apiKey, settings).message || t('ai.errorBody')
+);
 
 /** The analysis shown: suggestions for items the review offered (as applied), the actionable ones chosen. */
 export function readWeeklyReviewAnalysis(response: ReviewAnalysisResponse, staleItems: readonly ReviewSnapshotItem[]): {

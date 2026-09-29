@@ -3,7 +3,16 @@
   "command": "cd apps/mobile && MINDWTR_CAPTURE_AI_SETTINGS=1 TZ=UTC bunx vitest run components/settings/ai-settings-screen.parity.test.tsx",
   "capturedAt": "2678f9a447d2736005b171510244f7a1de583b56",
   "sourceState": "Every file under apps/ was at HEAD except the parity harnesses. No React Native code imported core's AI settings model yet.",
-  "device": "The device is stubbed: Android, not Expo Go; AsyncStorage and the secure store are the scenario's maps (the secure store is available); the model lists answer from the scenario's queue and fail when none is queued; the Whisper model store finds no downloaded model and names each model file:///whisper/<id>.bin."
+  "device": "The device is stubbed: Android, not Expo Go; AsyncStorage and the secure store are the scenario's maps (the secure store is available); the model lists answer from the scenario's queue and fail when none is queued; the Whisper model store finds no downloaded model and names each model file:///whisper/<id>.bin.",
+  "recaptured": [
+   {
+    "base": "0ff13b46c",
+    "command": "cd apps/mobile && MINDWTR_DUMP_AI_SETTINGS=<file> TZ=UTC bunx vitest run components/settings/ai-settings-screen.parity.test.tsx, with the React Native fix for stale AI settings merges in place; only the observation below was replaced, and every other observation matched the frozen one",
+    "observations": [
+     "foss: the local provider and Whisper only, step 0: two writes (the local provider's defaults, then Whisper on top of them) instead of three, the second of which had put the stored Gemini provider back."
+    ]
+   }
+  ]
  },
  "settings": {
   "base": {},
@@ -11409,20 +11418,6 @@
         "copilotModel": "llama3.2",
         "reasoningEffort": "low",
         "thinkingBudget": 0
-       }
-      }
-     ],
-     [
-      "updateSettings",
-      {
-       "ai": {
-        "enabled": true,
-        "provider": "gemini",
-        "model": "gemini-3.5-flash",
-        "speechToText": {
-         "provider": "whisper",
-         "model": "whisper-tiny"
-        }
        }
       }
      ],

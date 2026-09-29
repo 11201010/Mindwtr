@@ -856,4 +856,24 @@ describe('TaskEditFormTab copilot chips', () => {
     expect(findButton(tree, 'copilot.applyAll')).toBeUndefined();
     expect(JSON.stringify(tree.toJSON())).toContain('copilot.applied');
   });
+
+  it('spaces every applied part in the summary', () => {
+    let tree!: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(
+        <TaskEditFormTab
+          {...baseProps}
+          aiEnabled
+          copilotContext="@phone"
+          copilotEstimate="15min"
+          copilotTags={['#health', '#errand']}
+        />
+      );
+    });
+
+    const texts = tree.root.findAll((node) => String(node.type) === 'Text')
+      .map((node) => node.children.filter((child) => typeof child === 'string').join(''));
+    expect(texts.filter((text) => text.startsWith('copilot.applied'))).toEqual(['copilot.applied @phone 15min #health #errand']);
+  });
 });

@@ -62,6 +62,7 @@ const harness = vi.hoisted(() => ({
   alerts: [] as unknown[][],
   toasts: [] as unknown[][],
   routes: [] as unknown[],
+  logs: [] as unknown[][],
 }));
 
 const translate = (key: string) => harness.strings[key] ?? key;
@@ -147,7 +148,11 @@ vi.mock('@/hooks/use-theme-colors', () => ({
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-vi.mock('../lib/app-log', () => ({ logError: async () => undefined, logInfo: async () => undefined, logWarn: async () => undefined }));
+vi.mock('../lib/app-log', () => ({
+  logError: async (error: unknown) => { harness.logs.push(['error', error instanceof Error ? error.message : String(error)]); },
+  logInfo: async () => undefined,
+  logWarn: async (message: string, context?: unknown) => { harness.logs.push(['warn', message, JSON.stringify(context ?? null)]); },
+}));
 vi.mock('../lib/external-calendar', () => ({ fetchExternalCalendarEvents: async () => ({ events: [] }) }));
 vi.mock('../lib/store-review-prompt', () => ({ maybeRequestStoreReviewAfterPositiveMoment: async () => false }));
 vi.mock('@/lib/task-meta-navigation', () => ({ openContextsScreen: () => undefined, openProjectScreen: () => undefined }));
@@ -695,4 +700,35 @@ describe('React Native AI actions parity fixture', () => {
     }
     expect(Object.keys(observations)).toEqual(Object.keys(captured));
   }, 300_000);
+
+  it('shows the Weekly Review\'s AI errors in the app language', async () => {
+    const [, missingKey] = await runScenario({ name: 'missing key', screen: 'review', settings: 'gemini', device: {}, actions: [['run']] }) as { error: string }[];
+    expect(missingKey.error).toBe('Add your API key in Settings → AI assistant.');
+    const [, empty] = await runScenario({
+      name: 'blank failure', screen: 'review', settings: 'openai', device: { secrets: KEYS, queues: { analyzeReview: [{ error: '' }] } }, actions: [['run']],
+    }) as { error: string }[];
+    expect(empty.error).toBe('Please try again.');
+  });
+
+  it('never shows or logs the API key when a provider echoes it', async () => {
+    const echo = (key: string) => ({ error: `Provider error: 401 Incorrect API key provided: ${key}` });
+    const secrets = { 'mindwtr-ai-key_openai': 'local-secret-42' };
+    harness.logs.length = 0;
+    const shown = [
+      ...await runScenario({
+        name: 'editor', screen: 'editor', settings: 'openai', taskId: 't-dentist',
+        device: { secrets, queues: { predictMetadata: [{ value: {} }], clarifyTask: [echo('local-secret-42')], breakDownTask: [echo('local-secret-42')] } },
+        actions: [['clarify'], ['breakdown']],
+      }),
+      ...await runScenario({ name: 'inbox', screen: 'inbox', settings: 'openai', device: { secrets, queues: { clarifyTask: [echo('local-secret-42')] } }, actions: [['clarify']] }),
+      ...await runScenario({ name: 'review', screen: 'review', settings: 'openai', device: { secrets, queues: { analyzeReview: [echo('local-secret-42')] } }, actions: [['run']] }),
+    ].map((observation) => {
+      const { alerts, error } = observation as { alerts: unknown[]; error?: string };
+      return [alerts, error ?? null];
+    });
+    const text = JSON.stringify([shown, harness.logs]);
+    // Each alert, the review's error and each log line still say what failed.
+    expect(text.match(/Incorrect API key provided/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(text).not.toContain('local-secret-42');
+  });
 });

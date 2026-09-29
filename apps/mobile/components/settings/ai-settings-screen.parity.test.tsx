@@ -642,4 +642,14 @@ describe('React Native Settings › AI parity fixture', () => {
     }
     expect(Object.keys(observations)).toEqual(Object.keys(captured));
   }, 300_000);
+
+  // Both FOSS corrections run on the same render: each must merge into the settings stored
+  // by then, never into that render's copy (which put the cloud provider back in between).
+  it('stores the FOSS corrections without writing the cloud provider back', async () => {
+    await runScenario({ name: 'foss corrections', settings: 'fossWrong', device: { foss: true }, actions: [] });
+    expect(writeLog.map(([, update]) => (update as { ai: { provider: string } }).ai.provider)).toEqual(['openai', 'openai']);
+    expect(useTaskStore.getState().settings.ai).toMatchObject({
+      provider: 'openai', model: 'llama3.2', copilotModel: 'llama3.2', speechToText: { provider: 'whisper', model: 'whisper-tiny' },
+    });
+  });
 });

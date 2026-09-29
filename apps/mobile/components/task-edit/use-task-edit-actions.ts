@@ -1,7 +1,6 @@
 import React, { useCallback } from 'react';
 import { Alert, Share } from 'react-native';
 import {
-    formatAIErrorAlertBody,
     canSkipRecurringTaskOccurrence,
     Task,
     TaskStatus,
@@ -22,9 +21,11 @@ import {
     buildTaskBreakdownInput,
     buildTaskClarifyInput,
     getAIClarifyDialog,
+    getAIErrorAlert,
     getTaskBreakdownDialog,
     getTaskBreakdownSteps,
     getTaskClarifySuggestionEdit,
+    redactAIError,
     type TaskAIProjectContext,
 } from '@mindwtr/core/ai-task-actions';
 import type { AIResponseAction } from '../ai-response-modal';
@@ -439,6 +440,7 @@ export function useTaskEditActions({
         });
     }, [canMutate, convertTaskToSection, draftLifecycle, runStoreAction, showToast, t, task]);
 
+    // The key comes back too: a failure's text must never show it.
     const getAIProvider = useCallback(async () => {
         if (!aiEnabled) {
             Alert.alert(t('ai.disabledTitle'), t('ai.disabledBody'));
@@ -450,7 +452,7 @@ export function useTaskEditActions({
             Alert.alert(t('ai.missingKeyTitle'), t('ai.missingKeyBody'));
             return null;
         }
-        return createAIProvider(buildAIConfig(settings, apiKey, language));
+        return { provider: createAIProvider(buildAIConfig(settings, apiKey, language)), apiKey };
     }, [aiEnabled, language, settings, t]);
 
     const applyAISuggestion = useCallback((suggested: { title: string; context?: string; timeEstimate?: TimeEstimate }) => {
@@ -468,10 +470,12 @@ export function useTaskEditActions({
         const title = String(titleDraftRef.current ?? mergedTask.title ?? task.title ?? '').trim();
         if (!title) return;
         setIsAIWorking(true);
+        let apiKey = '';
         try {
-            const provider = await getAIProvider();
-            if (!provider) return;
-            const response = await provider.clarifyTask(buildTaskClarifyInput({
+            const ai = await getAIProvider();
+            if (!ai) return;
+            apiKey = ai.apiKey;
+            const response = await ai.provider.clarifyTask(buildTaskClarifyInput({
                 title,
                 tasks,
                 task,
@@ -502,8 +506,9 @@ export function useTaskEditActions({
                 actions,
             });
         } catch (error) {
-            logTaskWarn('AI clarify failed', error);
-            Alert.alert(t('ai.errorTitle'), formatAIErrorAlertBody(t('ai.errorBody'), error));
+            logTaskWarn('AI clarify failed', redactAIError(error, apiKey, settings));
+            const alert = getAIErrorAlert(error, t, apiKey, settings);
+            Alert.alert(alert.title, alert.message);
         } finally {
             setIsAIWorking(false);
         }
@@ -518,6 +523,7 @@ export function useTaskEditActions({
         setAiModal,
         setIsAIWorking,
         setTitleImmediate,
+        settings,
         t,
         task,
         tasks,
@@ -529,10 +535,12 @@ export function useTaskEditActions({
         const title = String(titleDraftRef.current ?? mergedTask.title ?? task.title ?? '').trim();
         if (!title) return;
         setIsAIWorking(true);
+        let apiKey = '';
         try {
-            const provider = await getAIProvider();
-            if (!provider) return;
-            const response = await provider.breakDownTask(buildTaskBreakdownInput({
+            const ai = await getAIProvider();
+            if (!ai) return;
+            apiKey = ai.apiKey;
+            const response = await ai.provider.breakDownTask(buildTaskBreakdownInput({
                 title,
                 description: descriptionDraft,
                 projectContext,
@@ -558,8 +566,9 @@ export function useTaskEditActions({
                 ],
             });
         } catch (error) {
-            logTaskWarn('AI breakdown failed', error);
-            Alert.alert(t('ai.errorTitle'), formatAIErrorAlertBody(t('ai.errorBody'), error));
+            logTaskWarn('AI breakdown failed', redactAIError(error, apiKey, settings));
+            const alert = getAIErrorAlert(error, t, apiKey, settings);
+            Alert.alert(alert.title, alert.message);
         } finally {
             setIsAIWorking(false);
         }
@@ -574,6 +583,7 @@ export function useTaskEditActions({
         projectContext,
         setAiModal,
         setIsAIWorking,
+        settings,
         t,
         task,
         taskEditDraft?.checklist,

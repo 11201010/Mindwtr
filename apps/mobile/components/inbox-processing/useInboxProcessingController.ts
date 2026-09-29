@@ -67,7 +67,7 @@ import {
   type TimeEstimate,
 } from '@mindwtr/core';
 
-import { buildInboxClarifyInput, getAIClarifyDialog } from '@mindwtr/core/ai-task-actions';
+import { buildInboxClarifyInput, getAIClarifyDialog, getAIErrorAlert, redactAIError } from '@mindwtr/core/ai-task-actions';
 import type { AIResponseAction } from '../ai-response-modal';
 import { useLanguage } from '../../contexts/language-context';
 import { useTheme } from '../../contexts/theme-context';
@@ -1133,9 +1133,10 @@ export function useInboxProcessingController({
     } catch (error) {
       void logWarn('Inbox processing failed', {
         scope: 'inbox',
-        extra: { error: error instanceof Error ? error.message : String(error) },
+        extra: { error: redactAIError(error, apiKey, settings).message },
       });
-      Alert.alert(t('ai.errorTitle'), formatAIErrorAlertBody(t('ai.errorBody'), error));
+      const alert = getAIErrorAlert(error, t, apiKey, settings);
+      Alert.alert(alert.title, alert.message);
     } finally {
       setIsAIWorking(false);
     }

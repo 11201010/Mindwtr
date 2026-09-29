@@ -31,7 +31,7 @@ import {
     type WeeklyReviewStepId,
     useTaskStore,
 } from '@mindwtr/core';
-import { readWeeklyReviewAnalysis } from '@mindwtr/core/ai-task-actions';
+import { getWeeklyReviewAnalysisError, readWeeklyReviewAnalysis } from '@mindwtr/core/ai-task-actions';
 import {
     Calendar as CalendarIcon,
     CheckCircle2,
@@ -342,12 +342,12 @@ export function useReviewModalController({
         setAiError(null);
         setAiRan(true);
         if (!aiEnabled) {
-            setAiError('AI is disabled. Enable it in Settings.');
+            setAiError(t('ai.disabledBody'));
             return;
         }
         const apiKey = await loadAIKey(aiProvider);
         if (isAIKeyRequired(settings) && !apiKey) {
-            setAiError('Missing API key. Add it in Settings.');
+            setAiError(t('ai.missingKeyBody'));
             return;
         }
         if (staleItems.length === 0) {
@@ -363,12 +363,11 @@ export function useReviewModalController({
             setAiSuggestions(analysis.suggestions);
             setAiSelectedIds(new Set(analysis.selectedIds));
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            setAiError(message || 'AI request failed.');
+            setAiError(getWeeklyReviewAnalysisError(error, t, apiKey, settings));
         } finally {
             setAiLoading(false);
         }
-    }, [aiEnabled, aiProvider, language, settings, staleItems]);
+    }, [aiEnabled, aiProvider, language, settings, staleItems, t]);
 
     const applyAiSuggestions = useCallback(async () => {
         const updates = buildReviewSuggestionUpdates(aiSuggestions, aiSelectedIds, new Date());

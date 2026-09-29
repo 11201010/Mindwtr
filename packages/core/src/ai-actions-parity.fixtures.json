@@ -3,7 +3,17 @@
   "command": "cd apps/mobile && MINDWTR_CAPTURE_AI_ACTIONS=1 TZ=UTC bunx vitest run components/ai-actions.parity.test.tsx",
   "capturedAt": "2678f9a447d2736005b171510244f7a1de583b56",
   "sourceState": "Every file under apps/ was at HEAD except the parity harnesses. No React Native code imported core's AI request rules yet.",
-  "device": "The device is stubbed: Android; the AI provider answers each method from the scenario's queue (none queued: it fails); the secure store holds the scenario's keys and AsyncStorage starts empty; the editor host holds the draft, checklist and dialog as the task editor does; Process Inbox and the Weekly Review run their real controllers over the real core store."
+  "device": "The device is stubbed: Android; the AI provider answers each method from the scenario's queue (none queued: it fails); the secure store holds the scenario's keys and AsyncStorage starts empty; the editor host holds the draft, checklist and dialog as the task editor does; Process Inbox and the Weekly Review run their real controllers over the real core store.",
+  "recaptured": [
+   {
+    "base": "0ff13b46c",
+    "command": "cd apps/mobile && MINDWTR_DUMP_AI_ACTIONS=<file> TZ=UTC bunx vitest run components/ai-actions.parity.test.tsx, with the React Native fixes for AI error text in place; only the observations below were replaced, and every other observation matched the frozen one",
+    "observations": [
+     "editor: Clarify offers three options and the suggestion, step 7: the failure alert shows [redacted] where the provider echoed the API key.",
+     "review: a missing key, step 1: the error is the translated ai.missingKeyBody instead of hard-coded English."
+    ]
+   }
+  ]
  },
  "now": "2026-09-23T14:00:00.000Z",
  "tasks": [
@@ -2261,7 +2271,7 @@
     "alerts": [
      [
       "AI request failed",
-      "Please try again.\n\nOpenAI API error: 401 Incorrect API key provided: sk-open-111"
+      "Please try again.\n\nOpenAI API error: 401 Incorrect API key provided: [redacted]"
      ]
     ],
     "toasts": [],
@@ -3584,7 +3594,7 @@
     "routes": []
    },
    {
-    "error": "Missing API key. Add it in Settings.",
+    "error": "Add your API key in Settings → AI assistant.",
     "loading": false,
     "ran": true,
     "suggestions": [],

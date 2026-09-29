@@ -127,10 +127,12 @@ export function AISettingsScreen() {
     const speechApiKey = speechKey.provider === speechProvider ? speechKey.value : '';
     const speechModelOptions = mergeModelOptions(fetchedSpeechModels, staticSpeechModelOptions, speechModel);
 
-    const aiSettings = settings.ai;
+    // Each change merges into the settings stored when it is made, never into this render's
+    // copy: two changes in one render (the FOSS corrections) would otherwise undo each other.
     const updateAISettings = useCallback((next: Partial<NonNullable<AppSettings['ai']>>) => {
-        updateSettings({ ai: { ...(aiSettings ?? {}), ...next } }).catch(logSettingsError);
-    }, [aiSettings, updateSettings]);
+        const stored = useTaskStore.getState().settings.ai;
+        updateSettings({ ai: { ...(stored ?? {}), ...next } }).catch(logSettingsError);
+    }, [updateSettings]);
 
     useEffect(() => {
         if (!appleClarificationPrototypeEnabled) return;
@@ -201,12 +203,12 @@ export function AISettingsScreen() {
         updateAISettings(getAIProviderDefaultsPatch(provider, isFossBuild));
     }, [isFossBuild, updateAISettings]);
 
-    const speechToTextSettings = settings.ai?.speechToText;
     const updateSpeechSettings = useCallback((
         next: Partial<NonNullable<NonNullable<AppSettings['ai']>['speechToText']>>
     ) => {
-        updateAISettings({ speechToText: { ...(speechToTextSettings ?? {}), ...next } });
-    }, [speechToTextSettings, updateAISettings]);
+        const stored = useTaskStore.getState().settings.ai?.speechToText;
+        updateAISettings({ speechToText: { ...(stored ?? {}), ...next } });
+    }, [updateAISettings]);
 
     useEffect(() => {
         if (needsFossAIProviderReset(settings.ai?.provider, isFossBuild)) {
