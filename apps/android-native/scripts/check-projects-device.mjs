@@ -264,6 +264,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
             // settings and editor 70 (plus the 1 of its injected Done list task), Mind Sweep and saved search 75 (plus the 1 of its
             // injected task and the 2-3 of its two captures), entry points 77 (plus the 1 of its shared text; 2 to 8 are never saved),
             // the capture screen 79 (plus the 0-8 of its captures; 3 and 4 are never saved),
+            // the runner 80 (plus the 1-9 of its captures),
             // sync 93 (plus the 1-4 of its four captures) and its two emoji titles (a 12-digit run id after them).
             // No other title matches. [0-9], not \\d: this code sits in a template literal, which drops the backslash.
             const shapes = {
@@ -282,6 +283,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
                 entryPoints: /^77[0-9]{12}[1-8]$/,
                 captureModal: /^79[0-9]{12}[0-8]$/,
                 sync: /^(93[0-9]{12}[1-4]|(Sync ✓ Grüße|Cloud ✓ 雲) 😀 [0-9]{12})$/,
+                runner: /^80[0-9]{12}[1-9]$/,
             };
             for (const [check, shape] of Object.entries(shapes)) {
                 const ids = live(store()._allTasks).filter((item) => shape.test(item.title)).map((item) => item.id);
