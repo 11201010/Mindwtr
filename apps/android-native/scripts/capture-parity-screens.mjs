@@ -263,6 +263,14 @@ const shootModal = async (prefix, suffix, activity) => {
         await sleep(1500);
         await hideKeyboard();
         await shoot(`${prefix}-modal-${kind}-${suffix}`, shown);
+        // The link's screen with the ? open: core's syntax help, on RN's line height.
+        if (kind === 'link') {
+            const help = await waitFor('the ? button', (current) => Boolean(button(current, '?')), 15_000);
+            await tap(button(help, '?'));
+            await shoot(`${prefix}-modal-help-${suffix}`, (current) => current.some((node) => (node.text ?? '').includes('/due:')));
+            await tap(button(await device.screen(), '?'));
+            await sleep(800);
+        }
         const nodes = await waitFor('Cancel on the capture screen', (current) => Boolean(button(current, 'Cancel')), 15_000);
         await tap(button(nodes, 'Cancel'));
         await sleep(1500);

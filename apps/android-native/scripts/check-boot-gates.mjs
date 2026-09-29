@@ -2516,6 +2516,9 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // An owed failure (the screen's own save's, or any other command's) shows the app's failure banner with its exact retry, as
     // every screen's does: without it every control stayed disabled with no Try again.
     assert.match(captureModalUi, /if \(model\.failedAction != null\) Box\(Modifier\.statusBarsPadding\(\)\) \{ FailureBanner\(model\.error\.orEmpty\(\)\) \{ OwedRetry\(model\) \} \}/);
+    // RN's multi-line text keeps the font's own line pitch (font padding adds space only above the first line and below the last):
+    // the syntax help, the title and the description lines match RN's on the S23 with no line height set (parity pair modal-help).
+    assert.match(captureModalUi, /view\.getJSONObject\("help"\)\.text\("text"\)\?\.let \{ Text\(it, style = rnText\(12, 400\), color = c\.secondaryText\) \}/);
     // RN's Save is its fixed blue (capture-modal.tsx styles.save), in every theme.
     assert.match(themeKt, /val captureSave = rgb\("#3B82F6"\)/);
     assert.match(captureModalUi, /background\(theme\.captureSave\)/);
