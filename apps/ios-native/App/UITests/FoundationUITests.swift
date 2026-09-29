@@ -10209,7 +10209,7 @@ final class FoundationUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(swatch.frame.width, 44 - 0.001)
         XCTAssertGreaterThanOrEqual(swatch.frame.height, 44 - 0.001)
         swatch.tap()
-        XCTAssertEqual(swatch.value as? String, "selected")
+        XCTAssertTrue(swatch.isSelected)
     }
 
     private func task86WaitForColorEditorClose(_ app: XCUIApplication) {
@@ -10227,7 +10227,7 @@ final class FoundationUITests: XCTestCase {
         task86SelectGreen(app)
         boardTap(app, "manage-unassigned-color-cancel")
         task86OpenColorEditor(app)
-        XCTAssertNotEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+        XCTAssertFalse(app.buttons["manage-unassigned-color-option-1"].isSelected)
         boardTap(app, "manage-unassigned-color-save") // Exact imported custom color: no-op.
         task86WaitForColorEditorClose(app)
         task86OpenColorEditor(app)
@@ -10236,7 +10236,7 @@ final class FoundationUITests: XCTestCase {
         task86WaitForColorEditorClose(app)
         app.terminate(); app.launch(); task86OpenAreas(app)
         task86OpenColorEditor(app)
-        XCTAssertEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+        XCTAssertTrue(app.buttons["manage-unassigned-color-option-1"].isSelected)
         boardTap(app, "manage-unassigned-color-cancel")
         app.terminate()
     }
@@ -10254,7 +10254,7 @@ final class FoundationUITests: XCTestCase {
         task86WaitForColorEditorClose(app)
         app.terminate(); app.launch(); task86OpenAreas(app)
         task86OpenColorEditor(app)
-        XCTAssertEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+        XCTAssertTrue(app.buttons["manage-unassigned-color-option-1"].isSelected)
         boardTap(app, "manage-unassigned-color-cancel")
         app.terminate()
     }
@@ -10291,7 +10291,7 @@ final class FoundationUITests: XCTestCase {
         task86WaitForColorEditorClose(app)
         app.terminate(); app.launchArguments = ["--native-ui-test-library", "970a99c7-6746-4d7a-ba36-e3d4844b4050"]
         app.launch(); task86OpenAreas(app); task86OpenColorEditor(app)
-        XCTAssertEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+        XCTAssertTrue(app.buttons["manage-unassigned-color-option-1"].isSelected)
         boardTap(app, "manage-unassigned-color-cancel"); app.terminate()
     }
 
@@ -10305,7 +10305,7 @@ final class FoundationUITests: XCTestCase {
         let failure = app.staticTexts["manage-unassigned-color-error"]
         XCTAssertTrue(failure.waitForExistence(timeout: 20))
         for _ in 0..<2 {
-            XCTAssertEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+            XCTAssertTrue(app.buttons["manage-unassigned-color-option-1"].isSelected)
             XCTAssertFalse(app.buttons["manage-unassigned-color-save"].isEnabled)
             XCTAssertFalse(app.buttons["manage-unassigned-color-cancel"].isEnabled)
             XCTAssertFalse(app.buttons["manage-back"].isEnabled)
@@ -10321,7 +10321,7 @@ final class FoundationUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--native-ui-test-library", "aafd125a-deec-4d44-bf1e-183dc187c6e6"]
         app.launch(); task86OpenAreas(app); task86OpenColorEditor(app)
-        XCTAssertEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+        XCTAssertTrue(app.buttons["manage-unassigned-color-option-1"].isSelected)
         boardTap(app, "manage-unassigned-color-cancel")
         app.terminate()
     }
@@ -10357,6 +10357,219 @@ final class FoundationUITests: XCTestCase {
         task86OpenColorEditor(app); task86SelectGreen(app)
         boardTap(app, "manage-unassigned-color-save")
         task86WaitForColorEditorClose(app)
+        app.terminate()
+    }
+
+    private func task87OpenAreas(_ app: XCUIApplication, search: Bool = false) {
+        task83OpenManage(app, search: search, ensureOpen: false)
+        let toggle = app.buttons["manage-section-toggle-areas"]
+        revealPagedElement(app, toggle, in: app.scrollViews["manage-someday-scroll"])
+        if toggle.value as? String == "collapsed" { boardTap(app, "manage-section-toggle-areas") }
+        expectation(for: NSPredicate(format: "value == 'expanded'"), evaluatedWith: toggle)
+        waitForExpectations(timeout: 10)
+    }
+
+    private func task87OpenEditor(_ app: XCUIApplication) {
+        let add = app.buttons["manage-area-add"]
+        revealPagedElement(app, add, in: app.scrollViews["manage-someday-scroll"],
+                           more: "manage-areas-more", ready: app.buttons["manage-back"])
+        boardTap(app, "manage-area-add")
+        XCTAssertTrue(app.textFields["manage-area-create-name"].waitForExistence(timeout: 10))
+    }
+
+    private func task87Save(_ app: XCUIApplication, name: String, green: Bool = false) {
+        task87OpenEditor(app)
+        let input = app.textFields["manage-area-create-name"]
+        let scroll = app.scrollViews.containing(.textField, identifier: "manage-area-create-name").firstMatch
+        boardEnabled(input)
+        XCTAssertFalse(app.buttons["manage-area-create-save"].isEnabled)
+        input.tap(); input.typeText(name)
+        if green {
+            let choice = app.buttons["manage-area-create-color-1"]
+            revealPagedElement(app, choice, in: scroll)
+            XCTAssertGreaterThanOrEqual(choice.frame.width, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(choice.frame.height, 44 - 0.001)
+            choice.tap()
+            XCTAssertTrue(choice.isSelected)
+        } else {
+            XCTAssertFalse(app.buttons["manage-area-create-color-1"].isSelected)
+        }
+        let save = app.buttons["manage-area-create-save"]
+        revealPagedElement(app, save, in: scroll)
+        boardEnabled(save)
+        XCTAssertGreaterThanOrEqual(save.frame.height, 44 - 0.001)
+        boardTap(app, "manage-area-create-save")
+    }
+
+    func testManageAreaCreateNormal() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "197ec83f-be55-4f59-8ca9-f18cfeaa4bce"]
+        app.launch(); task87OpenAreas(app, search: true)
+        task86OpenColorEditor(app); task86SelectGreen(app)
+        boardTap(app, "manage-unassigned-color-cancel")
+        task87OpenEditor(app)
+        let input = app.textFields["manage-area-create-name"]
+        boardEnabled(input)
+        XCTAssertFalse(app.buttons["manage-area-create-save"].isEnabled)
+        input.tap(); input.typeText("   ")
+        XCTAssertFalse(app.buttons["manage-area-create-save"].isEnabled)
+        replaceTextView(input, with: "  mEtAdAtA aReA  ")
+        XCTAssertTrue(app.staticTexts["manage-area-create-name-taken"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["manage-area-create-save"].isEnabled)
+        replaceTextView(input, with: "Cancelled Manage Area 87")
+        revealPagedElement(app, app.buttons["manage-area-create-cancel"],
+                           in: app.scrollViews.containing(.textField, identifier: "manage-area-create-name").firstMatch)
+        boardTap(app, "manage-area-create-cancel")
+        task87Save(app, name: "Native Manage Area 87 世界")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: input)
+        waitForExpectations(timeout: 20)
+        XCTAssertTrue(app.staticTexts["Native Manage Area 87 世界"].exists)
+        task87Save(app, name: "Native Manage Green 87", green: true)
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: input)
+        waitForExpectations(timeout: 20)
+        XCTAssertTrue(app.staticTexts["Native Manage Green 87"].exists)
+        boardTap(app, "manage-back")
+        XCTAssertEqual(app.textFields["settings-search"].value as? String, "Manage")
+        app.terminate(); app.launch(); task87OpenAreas(app)
+        XCTAssertTrue(app.staticTexts["Native Manage Area 87 世界"].exists)
+        XCTAssertTrue(app.staticTexts["Native Manage Green 87"].exists)
+        app.terminate()
+    }
+
+    func testManageAreaCreateLargestText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "b7cb1f65-29b8-4018-8bd9-06702f7cc7c0"]
+        app.launch(); task87OpenAreas(app)
+        task87OpenEditor(app)
+        for id in ["manage-area-create-cancel", "manage-area-create-save"] {
+            XCTAssertGreaterThanOrEqual(app.buttons[id].frame.height, 44 - 0.001)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "New Area at largest text"; shot.lifetime = .keepAlways; add(shot)
+        let input = app.textFields["manage-area-create-name"]
+        boardEnabled(input); input.tap(); input.typeText("Native Manage Largest 87")
+        let scroll = app.scrollViews.containing(.textField, identifier: "manage-area-create-name").firstMatch
+        revealPagedElement(app, app.buttons["manage-area-create-color-1"], in: scroll)
+        boardTap(app, "manage-area-create-color-1")
+        revealPagedElement(app, app.buttons["manage-area-create-save"], in: scroll)
+        boardTap(app, "manage-area-create-save")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: input)
+        waitForExpectations(timeout: 20)
+        app.terminate()
+    }
+
+    func testManageAreaCreatePaging() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "83f7b612-cce9-4946-ae58-8af8088214cb"]
+        app.launch(); task87OpenAreas(app)
+        let last = app.staticTexts["manage-area-name-105"]
+        revealPagedElement(app, last, in: app.scrollViews["manage-someday-scroll"],
+                           more: "manage-areas-more", ready: app.buttons["manage-back"])
+        XCTAssertTrue(last.exists)
+        task87Save(app, name: "Native Manage Paged 87")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.textFields["manage-area-create-name"])
+        waitForExpectations(timeout: 20)
+        XCTAssertFalse(app.buttons["manage-area-edit-105"].isEnabled)
+        app.terminate()
+    }
+
+    func testManageAreaCreateReadFailureRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "f4bdff59-40b5-49ed-87e6-75882705b5cd",
+                               "--native-manage-area-read-failure"]
+        app.launch(); task87OpenAreas(app)
+        task87Save(app, name: "Native Manage Read 87", green: true)
+        let failure = app.staticTexts["manage-area-create-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-area-create-save"].isEnabled)
+        XCTAssertFalse(app.buttons["manage-area-create-cancel"].isEnabled)
+        for attempt in 0..<2 {
+            revealPagedElement(app, app.buttons["manage-area-create-retry"],
+                               in: app.scrollViews.containing(.textField, identifier: "manage-area-create-name").firstMatch)
+            boardTap(app, "manage-area-create-retry")
+            if attempt == 0 { XCTAssertTrue(failure.waitForExistence(timeout: 20)) }
+        }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.textFields["manage-area-create-name"])
+        waitForExpectations(timeout: 20)
+        XCTAssertTrue(app.staticTexts["Native Manage Read 87"].exists)
+        app.terminate()
+    }
+
+    func testManageAreaCreateSaveFailure() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "05a9a2a2-e535-481d-ba7b-a570c507a683"]
+        app.launch(); task87OpenAreas(app)
+        task87Save(app, name: "Native Manage Retry 87")
+        let failure = app.staticTexts["manage-area-create-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["manage-area-create-save"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-area-create-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+            revealPagedElement(app, app.buttons["manage-area-create-retry"],
+                               in: app.scrollViews.containing(.textField, identifier: "manage-area-create-name").firstMatch)
+            boardTap(app, "manage-area-create-retry")
+            boardEnabled(app.buttons["manage-area-create-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    func testManageAreaCreateColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "05a9a2a2-e535-481d-ba7b-a570c507a683"]
+        app.launch(); task87OpenAreas(app)
+        XCTAssertTrue(app.staticTexts["Native Manage Retry 87"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-area-create-save"].exists)
+        app.terminate()
+    }
+
+    func testManageAreaCreateOptionsReadRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "c6ea0dae-257a-4cd5-894d-59ace7487693",
+                               "--native-manage-area-options-failure"]
+        app.launch(); task87OpenAreas(app); task87OpenEditor(app)
+        XCTAssertTrue(app.staticTexts["manage-area-create-error"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-area-create-save"].isEnabled)
+        boardEnabled(app.buttons["manage-area-create-cancel"])
+        revealPagedElement(app, app.buttons["manage-area-create-retry"],
+                           in: app.scrollViews.containing(.textField, identifier: "manage-area-create-name").firstMatch)
+        boardTap(app, "manage-area-create-retry")
+        let input = app.textFields["manage-area-create-name"]
+        boardEnabled(input); input.tap(); input.typeText("Native Manage Options 87")
+        revealPagedElement(app, app.buttons["manage-area-create-save"],
+                           in: app.scrollViews.containing(.textField, identifier: "manage-area-create-name").firstMatch)
+        boardTap(app, "manage-area-create-save")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: input)
+        waitForExpectations(timeout: 20)
+        app.terminate()
+    }
+
+    func testManageAreaCreateDefiniteRefusal() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "70157719-d82e-4b74-8974-08d38bc720b1",
+                               "--native-manage-area-refusal"]
+        app.launch(); task87OpenAreas(app)
+        task87Save(app, name: "Native Manage Refusal 87")
+        XCTAssertTrue(app.staticTexts["manage-area-create-error"].waitForExistence(timeout: 20))
+        let save = app.buttons["manage-area-create-save"]
+        let scroll = app.scrollViews.containing(.textField, identifier: "manage-area-create-name").firstMatch
+        // Use a full upward swipe to reveal the longer error state.
+        scroll.swipeUp()
+        revealPagedElement(app, save, in: scroll)
+        boardEnabled(save)
+        boardTap(app, "manage-area-create-save")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.textFields["manage-area-create-name"])
+        waitForExpectations(timeout: 20)
+        XCTAssertTrue(app.staticTexts["Native Manage Refusal 87"].exists)
         app.terminate()
     }
 }

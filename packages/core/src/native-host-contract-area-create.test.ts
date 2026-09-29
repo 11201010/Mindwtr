@@ -57,6 +57,72 @@ async function open(initial: Partial<AppData> = {}, fail?: () => boolean) {
 afterEach(async () => { await flushPendingSave(); resetForTests(); });
 
 describe('prepared native Area create', () => {
+    it('accepts the Manage default gray for a fresh Area and replays the exact journal after reload', async () => {
+        const { methods, data } = await open();
+        const options = methods.getAreaCreateOptions();
+        expect(options).toMatchObject({ ok: true, value: { defaultColor: '#3b82f6' } });
+        if (!options.ok) throw new Error('options failed');
+        expect(options.value.colors).toHaveLength(12);
+        expect(options.value.colors).not.toContain('#94a3b8');
+
+        const input = request({ color: '#94a3b8' });
+        const plan = methods.prepareAreaCreate(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared', prepared: {
+            kind: 'fresh', effect: { area: { after: { id: requestId, color: '#94a3b8' } } },
+        } } });
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
+        const frozen = { request: input, prepared: plan.value.prepared };
+        expect(methods.validatePreparedAreaCreate(frozen)).toMatchObject({ ok: true });
+        const cold = await open(data());
+        expect(cold.methods.validatePreparedAreaCreate(frozen)).toMatchObject({ ok: true });
+        expect(await cold.methods.commitPreparedAreaCreate(frozen)).toMatchObject({ ok: true,
+            value: { id: requestId, created: true } });
+        const saved = structuredClone(cold.data());
+        expect(saved.areas).toHaveLength(1);
+        const replay = await open(saved);
+        const before = replay.saves();
+        expect(await replay.methods.commitPreparedAreaCreate(frozen)).toMatchObject({ ok: true });
+        expect(replay.saves()).toBe(before);
+        expect(replay.data()).toEqual(saved);
+    });
+
+    it('accepts gray for an exact restored ID and descendants, but rejects arbitrary colors', async () => {
+        const old = area('area-work', 'Work', { deletedAt: now, color: '#ef4444', rev: 2 });
+        const child = project('linked', { areaId: old.id, deletedAt: now, rev: 2 });
+        const { methods, data } = await open({ areas: [old], projects: [child] });
+        const input = request({ color: '#94a3b8', expectedAreaId: old.id });
+        const plan = methods.prepareAreaCreate(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
+        expect(plan.value.prepared.kind).toBe('restored');
+        expect(plan.value.prepared.effect.area.after).toMatchObject({ id: old.id, color: '#94a3b8' });
+        expect(plan.value.prepared.effect.projects[0].after).toMatchObject({ id: child.id,
+            color: '#94a3b8' });
+        expect(plan.value.prepared.effect.projects[0].after.deletedAt).toBeUndefined();
+        const frozen = { request: input, prepared: plan.value.prepared };
+        expect(methods.validatePreparedAreaCreate(frozen)).toMatchObject({ ok: true });
+        const cold = await open(data());
+        expect(cold.methods.validatePreparedAreaCreate(frozen)).toMatchObject({ ok: true });
+        expect(await cold.methods.commitPreparedAreaCreate(frozen)).toMatchObject({ ok: true,
+            value: { id: old.id, created: true } });
+        const saved = structuredClone(cold.data());
+        const replay = await open(saved);
+        const before = replay.saves();
+        expect(await replay.methods.commitPreparedAreaCreate(frozen)).toMatchObject({ ok: true });
+        expect(replay.saves()).toBe(before);
+        expect(replay.data()).toEqual(saved);
+
+        const custom = request({ color: '#123456', expectedAreaId: old.id });
+        expect(replay.methods.prepareAreaCreate(custom)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        expect(replay.methods.probeAreaCreateOutcome(custom)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        expect(replay.methods.validatePreparedAreaCreate({ request: custom, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await replay.methods.commitPreparedAreaCreate({ request: custom, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(replay.saves()).toBe(before);
+    });
+
     it('resolves the name and publishes a fresh canonical Area with an exact replay receipt', async () => {
         const { methods, data, saves } = await open({ areas: [area('old', 'Old', { order: 1.5, deletedAt: now })] });
         expect(methods.getAreaCreateOptions()).toMatchObject({ ok: true, value: {

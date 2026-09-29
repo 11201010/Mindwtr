@@ -828,6 +828,10 @@ globalThis.MindwtrHost = {
     areaCreateCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedAreaCreate(JSON.parse(json))));
     },
+    /** Settings Manage uses the same prepared Area policy with its own journal method. */
+    manageAreaCreateCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedAreaCreate(JSON.parse(json))));
+    },
     areaColorOptions(): string {
         return submit(async () => {
             requireSaved();

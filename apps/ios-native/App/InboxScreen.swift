@@ -898,7 +898,7 @@ struct InboxScreen: View {
             .accessibilityAddTraits(model.morePresented ? .isSelected : [])
         }
         .frame(minHeight: 66)
-        .disabled(model.unassignedAreaColorActive)
+        .disabled(model.unassignedAreaColorActive || model.settingsAreaCreatePresented)
         // RN's iOS tab bar subtracts 12pt from the bottom safe-area inset.
         .padding(.bottom, -12)
         .background(palette.card.ignoresSafeArea(edges: .bottom))

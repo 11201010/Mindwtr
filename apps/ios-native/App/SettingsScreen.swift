@@ -5,6 +5,7 @@ struct SettingsScreen: View {
     let palette: AppPalette
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var renameFocused: Bool
+    @FocusState private var areaNameFocused: Bool
     @State private var deleteConfirmPresented = false
     @State private var deleteConfirmAnswered = false
 
@@ -65,6 +66,10 @@ struct SettingsScreen: View {
             get: { !model.unassignedAreaColorOptions.isEmpty },
             set: { if !$0 { model.cancelUnassignedAreaColor() } }
         )) { unassignedAreaColorSheet }
+        .sheet(isPresented: Binding(
+            get: { model.settingsAreaCreatePresented },
+            set: { if !$0 { model.cancelSettingsAreaCreate() } }
+        )) { newAreaSheet }
         .accessibilityAction(.escape) {
             if model.settingsManagePresented { model.closeManageSettings() }
             else { Task { await model.closeSettings() } }
@@ -306,11 +311,93 @@ struct SettingsScreen: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Button(row.text("addLabel")) {}.disabled(true)
+            Button(row.text("addLabel")) { Task { await model.openSettingsAreaCreate() } }
+                .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
+                          || model.settingsAreaCreatePresented || model.unassignedAreaColorActive
+                          || model.somedaySectionRenameIndex != nil || model.somedaySectionDeleteActive
+                          || model.somedaySectionOrderActive)
                 .frame(minWidth: 86, minHeight: 44)
+                .accessibilityLabel(row.text("label"))
                 .accessibilityIdentifier("manage-area-add")
         }
         .padding(.horizontal, 12).frame(minHeight: 56)
+    }
+
+    private var newAreaSheet: some View {
+        let copy = model.manageSettings.object("editor").object("text").object("newArea")
+        let colors = model.manageSettings.object("editor").objects("colors")
+        return NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    TextField(copy.text("namePlaceholder"), text: Binding(
+                        get: { model.areaCreateName }, set: { model.setAreaCreateName($0) }))
+                        .focused($areaNameFocused).submitLabel(.done)
+                        .onSubmit { areaNameFocused = false }
+                        .rnFont(16).padding(.horizontal, 12).frame(minHeight: 48)
+                        .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                        .disabled(!model.settingsAreaCreateInputEnabled)
+                        .accessibilityLabel(copy.text("namePlaceholder"))
+                        .accessibilityIdentifier("manage-area-create-name")
+                    if model.areaCreateNameTaken {
+                        Text(copy.text("nameTaken")).rnFont(13).foregroundStyle(palette.danger)
+                            .accessibilityIdentifier("manage-area-create-name-taken")
+                    }
+                    Text(copy.text("changeColor")).rnFont(14, .semibold)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 52), spacing: 12)], spacing: 12) {
+                        ForEach(colors.indices, id: \.self) { index in
+                            let choice = colors[index]
+                            let selected = model.areaCreateColor == choice.text("color")
+                            Button { model.selectAreaCreateColor(choice.text("color")) } label: {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color(hex: choice.text("color")))
+                                    .frame(minWidth: 48, minHeight: 48)
+                                    .overlay {
+                                        if selected {
+                                            Image(systemName: "checkmark").font(.system(size: 17, weight: .bold))
+                                                .foregroundStyle(.white)
+                                        }
+                                    }
+                            }
+                            .buttonStyle(.plain).disabled(!model.settingsAreaCreateInputEnabled)
+                            .accessibilityLabel(copy.text("changeColor") + ": " + choice.text("color"))
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                            .accessibilityIdentifier("manage-area-create-color-\(index)")
+                        }
+                    }
+                    if let failure = model.areaCreateError ?? model.areaCreateReadError {
+                        errorBlock(failure, id: "manage-area-create-error", retryID: "manage-area-create-retry") {
+                            Task {
+                                if model.retryNeeded { await model.retry() }
+                                else { await model.retrySettingsAreaCreateRead() }
+                            }
+                        }
+                    }
+                    HStack(spacing: 12) {
+                        Button { areaNameFocused = false; model.cancelSettingsAreaCreate() } label: {
+                            Text(copy.text("cancelLabel"))
+                                .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .disabled(!model.settingsAreaCreateCanCancel)
+                        .accessibilityIdentifier("manage-area-create-cancel")
+                        Button { areaNameFocused = false; Task { await model.addArea() } } label: {
+                            Text(copy.text("saveLabel"))
+                                .foregroundStyle(palette.onTint)
+                                .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderedProminent).tint(palette.tint)
+                        .disabled(!model.settingsAreaCreateCanSave)
+                        .accessibilityIdentifier("manage-area-create-save")
+                    }
+                }
+                .padding(20)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle(copy.text("title"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(!model.settingsAreaCreateCanCancel)
     }
 
     private var unassignedAreaColorSheet: some View {
@@ -337,7 +424,7 @@ struct SettingsScreen: View {
                             }
                             .buttonStyle(.plain).disabled(!model.unassignedAreaColorCanSave)
                             .accessibilityLabel(choice.text("label"))
-                            .accessibilityValue(selected ? "selected" : "")
+                            .accessibilityAddTraits(selected ? .isSelected : [])
                             .accessibilityIdentifier("manage-unassigned-color-option-\(index)")
                         }
                     }

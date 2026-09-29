@@ -1,5 +1,5 @@
 import type { NativeHostResult } from './native-host-contract';
-import { AREA_PRESET_COLORS } from './color-constants';
+import { AREA_PRESET_COLORS, DEFAULT_AREA_COLOR } from './color-constants';
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { ensureDeviceId } from './store-helpers';
 import { useTaskStore } from './store';
@@ -56,7 +56,8 @@ const readRequest = (value: unknown): NativeAreaCreateRequest | null => {
     return input && exact(input, ['requestId', 'name', 'color', 'expectedAreaId'])
         && typeof input.requestId === 'string' && UUID.test(input.requestId)
         && typeof input.name === 'string' && Boolean(input.name.trim())
-        && typeof input.color === 'string' && (AREA_PRESET_COLORS as readonly string[]).includes(input.color)
+        && typeof input.color === 'string' && (input.color === DEFAULT_AREA_COLOR
+            || (AREA_PRESET_COLORS as readonly string[]).includes(input.color))
         && typeof input.expectedAreaId === 'string' && Boolean(input.expectedAreaId) && input.expectedAreaId.length <= 500
         ? input as NativeAreaCreateRequest : null;
 };
@@ -154,7 +155,7 @@ export function createAreaCreateMethods(deps: {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const request = readRequest(input);
-            if (!request) return fail('INVALID_INPUT', 'A bounded Area name, preset color, and lowercase UUID are required');
+            if (!request) return fail('INVALID_INPUT', 'A bounded Area name, supported color, and lowercase UUID are required');
             const state = useTaskStore.getState();
             const selected = resolution(state._allAreas, request.name);
             if (selected?.id !== request.expectedAreaId && (selected || request.expectedAreaId !== request.requestId))

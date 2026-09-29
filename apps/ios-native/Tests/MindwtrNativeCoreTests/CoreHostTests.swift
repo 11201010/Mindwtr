@@ -12487,6 +12487,173 @@ final class CoreHostTests: XCTestCase {
         }
     }
 
+    func testManageAreaCreateDefaultGrayDuplicateAndProjectsRoute() async throws {
+        let faults = HostIOFaults()
+        var diagnostics: [String] = []
+        faults.commandDiagnostic = { diagnostics.append($0) }
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try object(await core.call("areaCreateOptions"))
+        XCTAssertEqual(options["defaultColor"] as? String, "#3b82f6")
+        XCTAssertFalse((options["colors"] as? [String] ?? []).contains("#94a3b8"))
+        let id = UUID().uuidString.lowercased()
+        let resolved = try object(await core.call("areaCreateResolve", argumentsJSON: json([json(["requestId": id, "name": " Work "])])))
+        XCTAssertEqual(resolved["expectedAreaId"] as? String, id)
+        let request = areaCreateRequest(id, name: " Work ", color: "#94a3b8")
+        let created = try object(await core.call("manageAreaCreate", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(created["id"] as? String, id)
+        XCTAssertEqual(created["created"] as? Bool, true)
+        XCTAssertEqual(try areaRows(id).first?["name"] as? String, "Work")
+        XCTAssertEqual(try areaRows(id).first?["color"] as? String, "#94a3b8")
+        XCTAssertEqual(diagnostics.filter { $0 == "manageAreaCreateApplied" }.count, 1)
+        let saved = try json(areaRows())
+        let duplicate = areaCreateRequest(name: " work ", color: "#ef4444", expectedID: id)
+        let duplicateResult = try object(await core.call("manageAreaCreate", argumentsJSON: json([json(duplicate)])))
+        XCTAssertEqual(duplicateResult["id"] as? String, id)
+        XCTAssertEqual(duplicateResult["created"] as? Bool, false)
+        XCTAssertEqual(try json(areaRows()), saved)
+        XCTAssertEqual(diagnostics.filter { $0 == "manageAreaCreateApplied" }.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await expectFailure("unavailable") { _ = try await core.call("manageAreaCreateCommit", argumentsJSON: json([json(request)])) }
+        let projects = areaCreateRequest(name: "Projects route")
+        let old = try object(await core.call("areaCreate", argumentsJSON: json([json(projects)])))
+        XCTAssertEqual(old["created"] as? Bool, true)
+        XCTAssertEqual(diagnostics.filter { $0 == "areaCreateApplied" }.count, 1)
+        XCTAssertEqual(diagnostics.filter { $0 == "manageAreaCreateApplied" }.count, 1)
+    }
+
+    func testManageAreaCreateTwoFailedAttemptsThenColdExactRecovery() async throws {
+        let bootstrap = host()
+        _ = try await bootstrap.start()
+        await bootstrap.close()
+        let at = recentAreaTestTime()
+        let seed = try SQLiteBridge(url: database)
+        _ = try seed.execute("INSERT INTO areas (id, name, orderNum, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?)",
+                             parametersJSON: json(["sibling-area", "Sibling", 0, at, at, 1]))
+        let before = try nineTableSnapshot(seed)
+        seed.close()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = areaCreateRequest(name: " New area ", color: "#94a3b8")
+        let id = try XCTUnwrap(request["requestId"] as? String)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Manage Area COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("manageAreaCreate", argumentsJSON: json([json(request)])) }
+        XCTAssertEqual(try object(String(contentsOf: journal))["method"] as? String, "manageAreaCreateCommit")
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        let failed = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failed), before)
+        failed.close()
+        await writer.close()
+        let recovered = host()
+        let startup = try object(await recovered.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "manageAreaCreateCommit")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["id"] as? String, id)
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["created"] as? Bool, true)
+        XCTAssertEqual(try areaRows(id).count, 1)
+        XCTAssertEqual(try areaRows("sibling-area").first?["name"] as? String, "Sibling")
+        let check = try SQLiteBridge(url: database)
+        let after = try nineTableSnapshot(check)
+        check.close()
+        for index in before.indices where index != 2 { XCTAssertEqual(after[index], before[index]) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testManageAreaCreateColdRestoresDeletedAreaAndLinkedProject() async throws {
+        let bootstrap = host()
+        _ = try await bootstrap.start()
+        await bootstrap.close()
+        let at = recentAreaTestTime()
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("INSERT INTO areas (id, name, color, orderNum, createdAt, updatedAt, deletedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["old-area", "Work", "#22c55e", 0, at, at, at, 2]))
+        _ = try sqlite.execute("INSERT INTO projects (id, title, status, color, areaId, orderNum, isSequential, isFocused, createdAt, updatedAt, deletedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["old-project", "Linked", "active", "#22c55e", "old-area", 0, 0, 0, at, at, at, 3]))
+        sqlite.close()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let id = UUID().uuidString.lowercased()
+        let resolved = try object(await writer.call("areaCreateResolve", argumentsJSON: json([json(["requestId": id, "name": " work "])])))
+        XCTAssertEqual(resolved["expectedAreaId"] as? String, "old-area")
+        let request = areaCreateRequest(id, name: " work ", color: "#94a3b8", expectedID: "old-area")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Manage Area restore failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("manageAreaCreate", argumentsJSON: json([json(request)])) }
+        await writer.close()
+        let reopened = host()
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "manageAreaCreateCommit")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["id"] as? String, "old-area")
+        XCTAssertTrue(try XCTUnwrap(areaRows("old-area").first)["deletedAt"] is NSNull)
+        XCTAssertEqual(try areaRows("old-area").first?["color"] as? String, "#94a3b8")
+        let project = try XCTUnwrap(projectRows("old-project").first)
+        XCTAssertTrue(project["deletedAt"] is NSNull)
+        XCTAssertEqual(project["areaId"] as? String, "old-area")
+        XCTAssertEqual(project["color"] as? String, "#94a3b8")
+        XCTAssertTrue(try areaRows(id).isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testManageAreaCreateForgedColdJournalRefusesBeforeSQLite() async throws {
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = areaCreateRequest(name: "Journal authority", color: "#94a3b8")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Manage Area COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("manageAreaCreate", argumentsJSON: json([json(request)])) }
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "manageAreaCreateCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        let original = try object(XCTUnwrap(args.first))
+        let prepared = try XCTUnwrap(original["prepared"] as? [String: Any])
+        await writer.close()
+        let databaseBytes = try Data(contentsOf: database)
+        for corruption in ["request", "effect", "terminal", "oversized", "raw"] {
+            var envelope = original
+            var forged = saved
+            if corruption == "request" {
+                var changed = try XCTUnwrap(envelope["request"] as? [String: Any])
+                changed["requestId"] = UUID().uuidString.lowercased()
+                envelope["request"] = changed
+            } else if corruption == "effect" {
+                var changed = prepared
+                var effect = try XCTUnwrap(changed["effect"] as? [String: Any])
+                var area = try XCTUnwrap(effect["area"] as? [String: Any])
+                var after = try XCTUnwrap(area["after"] as? [String: Any])
+                after["color"] = "#000000"
+                area["after"] = after
+                effect["area"] = area
+                changed["effect"] = effect
+                envelope["prepared"] = changed
+            } else if corruption == "terminal" {
+                forged["terminal"] = ["success": ["_0": try json(["id": UUID().uuidString.lowercased(), "created": true])]]
+            }
+            if corruption == "raw" {
+                forged["method"] = "manageAreaCreate"
+                forged["argumentsJSON"] = try json([json(request)])
+            } else if corruption == "oversized" {
+                forged["argumentsJSON"] = try json([String(repeating: "x", count: 2_000_001)])
+            } else if corruption != "terminal" {
+                forged["argumentsJSON"] = try json([json(envelope)])
+            }
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var sql = 0, cleanup = 0
+            blockedFaults.beforeSQL = { _ in sql += 1 }
+            blockedFaults.journalRemove = { cleanup += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(sql, 0, corruption)
+            XCTAssertEqual(cleanup, 0, corruption)
+            XCTAssertEqual(try Data(contentsOf: database), databaseBytes, corruption)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, corruption)
+            await blocked.close()
+        }
+    }
+
     func testAreaRenameMergeFailedSQLiteCommitIsAtomicAndExactRetryPreservesRichRows() async throws {
         try await seedAreaRenameRows()
         let faults = HostIOFaults()
