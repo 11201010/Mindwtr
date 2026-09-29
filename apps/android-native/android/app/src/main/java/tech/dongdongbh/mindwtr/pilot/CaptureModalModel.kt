@@ -203,6 +203,8 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
             if (action.kind == "captureModal") runtime.submitCaptureModal(request) else runtime.submitCaptureModalLines(request)
         } catch (failure: Exception) {
             val refused = UPDATE_REFUSALS.any { failure.message?.startsWith(it) == true }
+            // A refused retry of an owed save wrote nothing either: nothing is owed any more, and the screen unlocks.
+            if (refused) shell.acknowledged(action)
             shell.ui { failed(refused) }
             throw failure
         }

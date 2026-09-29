@@ -2481,6 +2481,8 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     for (const kind of ['captureModal', 'captureModalLines']) assert.match(modalKt, new RegExp(`current\\.pending\\?\\.takeIf \\{ it\\.kind == "${kind}" \\}`), `${kind}: a retry reuses the pending request`);
     assert.match(modalKt, /shell\.acknowledged\(action\)/);
     assert.match(modalKt, /val refused = UPDATE_REFUSALS\.any \{ failure\.message\?\.startsWith\(it\) == true \}/);
+    // A refusal wrote nothing, so a refused retry of an owed save settles it: the screen unlocks (as the popup's freeCapture).
+    assert.match(modalKt, /if \(refused\) shell\.acknowledged\(action\)\s+shell\.ui \{ failed\(refused\) \}/);
     // The Bundle holds only whether the screen is open; the screen itself is on disk, each write synced and renamed into place.
     assert.match(modalKt, /saved\["captureModal"\] = value != null/);
     assert.match(modalKt, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(text\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
