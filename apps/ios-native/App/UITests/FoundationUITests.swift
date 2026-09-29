@@ -5697,6 +5697,135 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testHistoryViewRestorationNormal() { historyViewRestoration(library: "a575dfe8-784f-48df-87a9-73428aa65776", largest: false) }
+    func testHistoryViewRestorationLargestText() { historyViewRestoration(library: "39061af8-bbc8-4667-9b93-014fcedbf476", largest: true) }
+
+    private func historyViewOpen(_ app: XCUIApplication, tab: String = "done") {
+        boardEnabled(app.buttons["tab-menu"], timeout: 30); boardTap(app, "tab-menu")
+        let history = app.buttons["menu-history"]
+        if !history.isHittable { revealPagedElement(app, history, in: app.scrollViews.containing(.button, identifier: "menu-projects").firstMatch) }
+        boardTap(app, "menu-history"); boardEnabled(app.buttons["history-tab-done"])
+        historyViewTab(app, tab)
+    }
+
+    private func historyViewTab(_ app: XCUIApplication, _ tab: String) {
+        if !app.buttons["history-tab-" + tab].isSelected { boardTap(app, "history-tab-" + tab) }
+        boardEnabled(app.buttons[tab + "-overflow-button"])
+    }
+
+    private func historyViewTap(_ app: XCUIApplication, _ tab: String, _ id: String) {
+        let button = app.buttons[id]
+        if !button.isHittable, app.scrollViews[tab + "-panel-scroll"].exists {
+            revealPagedElement(app, button, in: app.scrollViews[tab + "-panel-scroll"])
+        }
+        boardEnabled(button); XCTAssertTrue(button.isHittable)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001); button.tap()
+    }
+
+    private func historyViewChoice(_ app: XCUIApplication, _ tab: String, _ field: String, _ value: String, selected: Bool = false, failed: Bool = false) {
+        boardTap(app, tab + "-overflow-button"); boardTap(app, tab + "-" + field + "-action")
+        let id = tab + "-" + field + "-" + value
+        if selected {
+            let choice = app.buttons[id]
+            if !choice.isHittable, app.scrollViews[tab + "-panel-scroll"].exists {
+                revealPagedElement(app, choice, in: app.scrollViews[tab + "-panel-scroll"])
+            }
+            XCTAssertTrue(choice.isSelected); historyViewTap(app, tab, tab + "-menu-close")
+        } else { historyViewTap(app, tab, id) }
+        boardEnabled(app.buttons[failed ? (tab == "done" ? "done-retry" : "archive-retry") : tab + "-overflow-button"])
+    }
+
+    private func historyViewFold(_ app: XCUIApplication, _ tab: String, _ id: String, open: Bool, toggle: Bool = false) {
+        let prefix = tab == "done" ? "done" : "archive"
+        let identifier = prefix + "-section-" + id
+        let matches = app.buttons.matching(identifier: identifier)
+        let button = matches.allElementsBoundByIndex.first { $0.identifier.utf8.elementsEqual(identifier.utf8) } ?? matches.firstMatch
+        revealPagedElement(app, button, in: app.scrollViews[prefix + "-scroll"])
+        boardEnabled(button); XCTAssertEqual(button.value as? String, open ? "Collapse" : "Expand")
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        if toggle { button.tap(); boardEnabled(app.buttons[tab + "-overflow-button"]) }
+    }
+
+    private func historyViewRestoration(library: String, largest: Bool) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); historyViewOpen(app)
+        for tab in ["done", "archived"] {
+            historyViewTab(app, tab)
+            historyViewChoice(app, tab, "group", "area")
+            historyViewFold(app, tab, "task76-area-a", open: true, toggle: true)
+            historyViewChoice(app, tab, "group", "tag")
+            historyViewFold(app, tab, "tag:Task76 B", open: true, toggle: true)
+            historyViewChoice(app, tab, "group", "area")
+            historyViewFold(app, tab, "task76-area-a", open: false)
+            historyViewChoice(app, tab, "sort", tab == "done" ? "title" : "created-desc")
+        }
+        historyViewTab(app, "done"); boardTap(app, "search-open"); boardEnabled(app.textFields["search-input"])
+        boardTap(app, "search-close"); historyViewFold(app, "done", "task76-area-a", open: false)
+        let task = app.buttons["task-title-task76-done-b"]
+        revealPagedElement(app, task, in: app.scrollViews["done-scroll"]); task.tap()
+        boardEnabled(app.buttons["task-view-close"]); boardTap(app, "task-view-close")
+        historyViewFold(app, "done", "task76-area-a", open: false)
+        app.terminate(); app.launch(); historyViewOpen(app)
+        for tab in ["done", "archived"] {
+            historyViewTab(app, tab)
+            historyViewFold(app, tab, "task76-area-a", open: false)
+            historyViewChoice(app, tab, "sort", tab == "done" ? "title" : "created-desc", selected: true)
+            historyViewChoice(app, tab, "group", "tag")
+            historyViewFold(app, tab, "tag:Task76 B", open: false, toggle: !largest)
+        }
+        if !largest {
+            app.terminate(); app.launch(); historyViewOpen(app)
+            for tab in ["done", "archived"] {
+                historyViewTab(app, tab); historyViewFold(app, tab, "tag:Task76 B", open: true)
+                historyViewChoice(app, tab, "group", "area"); historyViewFold(app, tab, "task76-area-a", open: false)
+            }
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "History restored independent views"
+        shot.lifetime = .keepAlways; add(shot); app.terminate()
+    }
+
+    func testHistoryViewReadFailureAndColdRestart() {
+        let app = XCUIApplication(); let args = ["--native-ui-test-library", "13bf5201-5cc8-44dc-8cc1-9c90377cd876"]
+        for tab in ["done", "archived"] {
+            app.launchArguments = args; app.launch(); historyViewOpen(app, tab: tab)
+            historyViewChoice(app, tab, "group", "area"); historyViewFold(app, tab, "task76-area-a", open: true, toggle: true)
+            app.terminate(); app.launchArguments = args + ["--native-history-view-read-failure"]
+            app.launch(); historyViewOpen(app, tab: tab); historyViewChoice(app, tab, "group", "tag", failed: true)
+            XCTAssertTrue(app.staticTexts[tab == "done" ? "done-error" : "archive-error"].exists)
+            app.terminate(); app.launchArguments = args; app.launch(); historyViewOpen(app, tab: tab)
+            historyViewFold(app, tab, "task76-area-a", open: false)
+            app.terminate(); app.launchArguments = args + ["--native-history-view-read-failure"]
+            app.launch(); historyViewOpen(app, tab: tab); historyViewChoice(app, tab, "group", "tag", failed: true)
+            boardTap(app, tab == "done" ? "done-retry" : "archive-retry")
+            boardEnabled(app.buttons[tab + "-overflow-button"]); historyViewFold(app, tab, "tag:Task76 B", open: true)
+            app.terminate(); app.launchArguments = args; app.launch(); historyViewOpen(app, tab: tab)
+            historyViewFold(app, tab, "tag:Task76 B", open: true); app.terminate()
+        }
+    }
+
+    func testHistoryLegacyViewImport() { historyLegacyView(mode: "import") }
+    func testHistoryLegacyNativeEmptyOverride() { historyLegacyView(mode: "override") }
+    func testHistoryLegacyMalformedViewFallback() { historyLegacyView(mode: "malformed") }
+    func testHistoryLegacyMalformedNativeOverride() { historyLegacyView(mode: "malformed") }
+    func testHistoryLegacyDisabledSortRetained() { historyLegacyView(mode: "disabled") }
+
+    private func historyLegacyView(mode: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-rn-rehearsal"]
+        app.launch(); historyViewOpen(app)
+        for tab in ["done", "archived"] {
+            historyViewTab(app, tab)
+            let sort = mode == "import" ? "title" : (mode != "disabled" && tab == "done" ? "completed" : "default")
+            historyViewChoice(app, tab, "sort", sort, selected: true)
+            if mode == "malformed" { historyViewChoice(app, tab, "group", "none", selected: true); historyViewChoice(app, tab, "group", "area") }
+            historyViewFold(app, tab, "task76-area-a", open: mode == "override" || mode == "malformed", toggle: true)
+        }
+        app.terminate(); app.launch(); historyViewOpen(app)
+        for tab in ["done", "archived"] {
+            historyViewTab(app, tab); historyViewFold(app, tab, "task76-area-a", open: mode == "import" || mode == "disabled")
+        }
+        app.terminate()
+    }
+
     func testReferenceViewRestorationNormal() { referenceViewRestoration(library: "f45c2e81-bddd-43db-9c44-e283995fae77") }
     func testReferenceViewRestorationLargestText() { referenceViewRestoration(library: "e29a5610-c098-4687-8f87-c3fa1093dc75") }
 

@@ -116,6 +116,7 @@ struct HistoryScreen: View {
                 }
                 .padding(16)
             }
+            .accessibilityIdentifier("archive-scroll")
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await model.refresh() }
         }
@@ -259,20 +260,20 @@ struct HistoryPanel: View {
                         HStack(spacing: 8) {
                             if model.historyPanel != "menu" {
                                 Button { model.setHistoryPanel("menu") } label: {
-                                    Text(model.label("common.back")).rnFont(13, .semibold).padding(.horizontal, 8).frame(minHeight: 44)
+                                    Text(model.label("common.back")).rnFont(13, .semibold).padding(.horizontal, 8).frame(minHeight: 44).contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain).foregroundStyle(palette.tint).accessibilityIdentifier(menuPrefix + "-panel-back")
                             }
                             Text(model.historyPanel == "menu" ? model.label("taskEdit.moreOptions") :
                                  submenu.text(model.historyArchived ? "label" : "title"))
                                 .rnFont(17, .bold).frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
-                            Button { close() } label: { AppIcon(name: "x", size: 20).frame(width: 44, height: 44) }
+                            Button { close() } label: { AppIcon(name: "x", size: 20).frame(width: 44, height: 44).contentShape(Rectangle()) }
                                 .buttonStyle(.plain).accessibilityLabel(model.label("common.close")).accessibilityIdentifier(menuPrefix + "-menu-close")
                         }
                         .frame(minHeight: 44).padding(.bottom, 12)
                         ViewThatFits(in: .vertical) {
                             overflowContent.fixedSize(horizontal: false, vertical: true)
-                            ScrollView { overflowContent }
+                            ScrollView { overflowContent }.accessibilityIdentifier(menuPrefix + "-panel-scroll")
                         }
                     }
                 }

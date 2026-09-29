@@ -141,6 +141,35 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         }
     });
 
+    it('keeps large and long saved Archive folds readable', async () => {
+        const prefix = '🌱'.repeat(260);
+        const longA = `tag:${prefix}á`;
+        const longB = `tag:${prefix}á`;
+        const archive = { ...fixture.archive, tasks: fixture.archive.tasks.map((task) => (
+            task.id === 'ar-report' ? { ...task, tags: [longA.slice(4)] }
+                : task.id === 'ar-call' ? { ...task, tags: [longB.slice(4)] } : task
+        )) };
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host, recorder } = await openHost(archive, scenario(archive, 'rows, labels, summary and menus'), saveData);
+        recorder.log.length = 0;
+        saveData.mockClear();
+        const collapsedGroupIds = [...Array.from({ length: 1001 }, (_, index) => `saved:${index}`), longA, longB, 'project:p-launch'];
+        const input = { groupBy: 'project' as const, collapsedGroupIds, offset: 0, limit: 1 };
+        const first = archiveView(host, input);
+        expect(first.items[0]).toMatchObject({ type: 'section', id: 'project:p-launch', collapsed: true });
+        const next = archiveView(host, { ...input, offset: 1, revision: first.revision });
+        expect(next.items).toHaveLength(Math.min(1, first.total - 1));
+        expect(host.getArchiveView({ ...input, collapsedGroupIds: [...collapsedGroupIds, null] as never }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(host.getArchiveView({ ...input, limit: 101 }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const longView = archiveView(host, { ...input, groupBy: 'tag', collapsedGroupIds: collapsedGroupIds.filter((id) => id !== longB), limit: 100 });
+        expect(longView.items.find((item) => item.type === 'section' && item.id === longA)).toMatchObject({ collapsed: true });
+        expect(longView.items.find((item) => item.type === 'section' && item.id === longB)).toMatchObject({ collapsed: false });
+        expect(recorder.log).toEqual([]);
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
     it('names Archive month headings and row dates in the host language', async () => {
         const { host } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
         expect(await host.setLanguage({ storedLanguage: 'fr', systemLocale: 'fr-FR' })).toMatchObject({ ok: true });

@@ -3132,6 +3132,62 @@ final class CoreHostTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 
+    func testSavedFoldListsKeepLargeAndLongRawIDsWithoutWrites() async throws {
+        let initializer = host(); _ = try await initializer.start(); await initializer.close()
+        let sqlite = try SQLiteBridge(url: database)
+        let at = "2026-01-01T12:00:00.000Z"
+        let longID = "legacy-" + String(repeating: "x", count: 600)
+        let composed = "é", decomposed = "e\u{0301}"
+        for (index, areaID) in [longID, composed, decomposed].enumerated() {
+            _ = try sqlite.execute("INSERT INTO areas (id, name, orderNum, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)",
+                                   parametersJSON: json([areaID, "Legacy Area \(index)", index, at, at]))
+            for status in ["reference", "done", "archived"] {
+                _ = try sqlite.execute("INSERT INTO tasks (id, title, status, areaId, tags, contexts, completedAt, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                       parametersJSON: json(["fold-\(status)-\(index)", "Legacy \(index)", status, areaID, "[]", "[]", status == "reference" ? NSNull() : at as Any, at, at, 1]))
+            }
+        }
+        // Keep this read-contract fixture independent of time-based auto-archiving.
+        let settingsRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sqlite.execute("SELECT data FROM settings WHERE id = 1").utf8)) as? [[String: Any]])
+        var settings = try object(XCTUnwrap(settingsRows.first?["data"] as? String))
+        settings["gtd"] = ["autoArchiveDays": 0]
+        _ = try sqlite.execute("UPDATE settings SET data = ? WHERE id = 1", parametersJSON: json([json(settings)]))
+        sqlite.close()
+        let faults = HostIOFaults(); let core = host(faults); _ = try await core.start()
+        var statements = 0, journalWrites = 0
+        faults.beforeSQL = { _ in statements += 1 }; faults.journalWrite = { journalWrites += 1 }
+        let folds = (0..<1_001).map { "old-group-\($0)" } + [longID, composed]
+        func read(_ name: String, _ input: [String: Any]) async throws -> [String: Any] {
+            try object(await core.call("menuRead", argumentsJSON: json([name, json(input)])))
+        }
+        for name in ["reference", "done", "archive"] {
+            var input: [String: Any] = ["groupBy": "area", "collapsedGroupIds": folds, "offset": 0, "limit": 2]
+            let first = try await read(name, input)
+            XCTAssertEqual(first["total"] as? Int, 4, name)
+            let firstItems = try XCTUnwrap(first["items"] as? [[String: Any]])
+            XCTAssertEqual(firstItems.count, 2)
+            XCTAssertTrue(firstItems.allSatisfy { $0["collapsed"] as? Bool == true })
+            if name != "archive" {
+                let echoed = try XCTUnwrap(first["collapsedGroupIds"] as? [String])
+                XCTAssertEqual(echoed.count, folds.count)
+                XCTAssertTrue(zip(echoed, folds).allSatisfy { $0.0.utf8.elementsEqual($0.1.utf8) })
+            }
+            input["offset"] = 2; input["revision"] = try XCTUnwrap(first["revision"] as? String)
+            let second = try await read(name, input)
+            let items = try XCTUnwrap(second["items"] as? [[String: Any]])
+            XCTAssertEqual(items.count, 2)
+            let heading = try XCTUnwrap(items.first)
+            XCTAssertTrue(try XCTUnwrap(heading["id"] as? String).utf8.elementsEqual(decomposed.utf8))
+            XCTAssertEqual(heading["collapsed"] as? Bool, false)
+            for invalid: Any in ["not an array", [7], NSNull()] {
+                await expectFailure("INVALID_INPUT") {
+                    _ = try await read(name, ["groupBy": "area", "collapsedGroupIds": invalid, "offset": 0, "limit": 2])
+                }
+            }
+            await expectFailure("INVALID_INPUT") { _ = try await read(name, ["offset": 0, "limit": 1_001]) }
+        }
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journalWrites, 0); await core.close()
+    }
+
     func testReferenceGroupingArchivedPreviewFiltersAndCollectionPagesReadWithoutWrites() async throws {
         let initializer = host()
         _ = try await initializer.start()

@@ -224,6 +224,9 @@ final class CoreModel: ObservableObject {
     private var referenceViewPreference = "nativeFoundation.reference.view"
     private var initialReferenceGroupBy: String?
     private var initialReferenceCollapsedGroups: [String: [String]] = [:]
+    private var historyViewPreferences = ["done": "nativeFoundation.history.done.view",
+                                          "archive": "nativeFoundation.history.archived.view"]
+    private var initialHistoryViews: [String: CoreObject] = [:]
     private let focusSectionKeys = ["focus", "schedule", "next", "upcoming", "reviewDue", "reviewProjects"]
     @Published private(set) var projectNotes: CoreObject = [:]
     @Published private(set) var projectNotesExpanded = false
@@ -444,6 +447,7 @@ final class CoreModel: ObservableObject {
     private var projectFilterTestReadFailures = 0
     private var referenceSortTestReadFailure = false
     private var referenceViewTestReadFailures = 0
+    private var historyViewTestReadFailures = 0
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -583,6 +587,8 @@ final class CoreModel: ObservableObject {
     private var referencePickerNeedsRead = false
     private var historyCaller: Surface = .inbox
     private var historyParamsByTab: [String: CoreObject] = [:]
+    private var historyCollapsedGroupsByTab: [String: [String: [String]]] = [:]
+    private var historyViewPreferencePending: Set<String> = []
     private var historyDepthByTab: [String: Int] = [:]
     private var historyTextEdits: [String: CoreObject] = [:]
     private var historyPendingEdit: CoreObject?
@@ -1223,6 +1229,7 @@ final class CoreModel: ObservableObject {
                     projectFilterTestReadFailures = arguments.contains("--native-project-filter-read-failure") ? 2 : 0
                     referenceSortTestReadFailure = arguments.contains("--native-reference-sort-read-failure")
                     referenceViewTestReadFailures = arguments.contains("--native-reference-view-read-failure") ? 2 : 0
+                    historyViewTestReadFailures = arguments.contains("--native-history-view-read-failure") ? 2 : 0
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1244,6 +1251,8 @@ final class CoreModel: ObservableObject {
                     focusShowDetailsPreference = "nativeRNRehearsal.focus.showDetails"
                     focusExpandedSectionsPreference = "nativeRNRehearsal.focus.expandedSections"
                     referenceViewPreference = "nativeRNRehearsal.reference.view"
+                    historyViewPreferences = ["done": "nativeRNRehearsal.history.done.view",
+                                              "archive": "nativeRNRehearsal.history.archived.view"]
                     initialFocusShowDetails = false
                     initialFocusExpandedSections = [:]
                     if let raw = try legacy.value(forKey: "mindwtr:view:focus:v1"),
@@ -1272,6 +1281,21 @@ final class CoreModel: ObservableObject {
                        let data = raw.data(using: .utf8),
                        let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
                         initialReferenceCollapsedGroups = referenceFoldMap(parsed, preserveEmpty: false)
+                    }
+                    for (name, viewKey, foldKey) in [
+                        ("done", "mindwtr:view:done:v1", "mindwtr:view:group-collapse:done:v1"),
+                        ("archive", "mindwtr:view:archived:v1", "mindwtr:view:group-collapse:archived:v1")
+                    ] {
+                        var view: CoreObject = [:]
+                        if let raw = try legacy.value(forKey: viewKey), let data = raw.data(using: .utf8),
+                           let parsed = (try? JSONSerialization.jsonObject(with: data)) as? CoreObject {
+                            view = parsed
+                        }
+                        if let raw = try legacy.value(forKey: foldKey), let data = raw.data(using: .utf8),
+                           let parsed = (try? JSONSerialization.jsonObject(with: data)) as? CoreObject {
+                            view["collapsedGroups"] = referenceFoldMap(parsed, preserveEmpty: false)
+                        }
+                        initialHistoryViews[name] = view
                     }
                     host = CoreHost(databaseURL: database, bundleURL: bundle, legacyStorage: legacy)
                 }
@@ -1307,6 +1331,21 @@ final class CoreModel: ObservableObject {
             // An omitted groupBy lets core choose its default, currently Area.
             referenceParams["collapsedGroupIds"] = referenceCollapsedGroups[referenceParams.text("groupBy").isEmpty
                 ? "area" : referenceParams.text("groupBy")] ?? []
+            for name in ["done", "archive"] {
+                guard let preferenceKey = historyViewPreferences[name] else { continue }
+                let view: CoreObject
+                if let stored = preferenceDefaults.object(forKey: preferenceKey) {
+                    view = stored as? CoreObject ?? [:]
+                } else { view = initialHistoryViews[name] ?? [:] }
+                let groupBy = validHistoryGroup(view.text("groupBy")) ? view.text("groupBy") : "none"
+                let folds = referenceFoldMap(view["collapsedGroups"], preserveEmpty: true)
+                historyCollapsedGroupsByTab[name] = folds
+                var params: CoreObject = ["groupBy": groupBy, "collapsedGroupIds": folds[groupBy] ?? []]
+                if let sortBy = view["sortBy"] as? String, validHistorySort(sortBy) {
+                    params["sortBy"] = sortBy
+                }
+                historyParamsByTab[name] = params
+            }
             let startup = try decode(await host!.start())
             let recovery = startup.object("recovery")
             if recovery.text("method") == "boardCommit" {
@@ -6528,6 +6567,14 @@ final class CoreModel: ObservableObject {
         return folds
     }
 
+    private func validHistoryGroup(_ value: String) -> Bool {
+        ["none", "completedDate", "context", "area", "project", "tag"].contains(value)
+    }
+
+    private func validHistorySort(_ value: String) -> Bool {
+        ["default", "due", "start", "review", "timeEstimate", "title", "created", "created-desc", "completed"].contains(value)
+    }
+
     func setReferenceOption(_ key: String, value: Any) async {
         guard referenceActionsEnabled, ["groupBy", "includeArchivedProjects", "collapsedGroupIds"].contains(key) else { return }
         if key == "groupBy" {
@@ -6952,8 +6999,24 @@ final class CoreModel: ObservableObject {
         guard historyActionsEnabled,
               ["sortBy", "groupBy", "collapsedGroupIds", "segment"].contains(key),
               historyArchived || key != "segment" else { return }
-        historyParamsByTab[historyReadName, default: [:]][key] = value
-        if key != "collapsedGroupIds" { historyDepthByTab[historyReadName] = pageSize }
+        let name = historyReadName
+        if key == "sortBy" {
+            guard let sortBy = value as? String, validHistorySort(sortBy) else { return }
+            historyParamsByTab[name, default: [:]][key] = sortBy
+            historyViewPreferencePending.insert(name)
+        } else if key == "groupBy" {
+            guard let groupBy = value as? String, validHistoryGroup(groupBy) else { return }
+            historyParamsByTab[name, default: [:]][key] = groupBy
+            historyParamsByTab[name, default: [:]]["collapsedGroupIds"] = historyCollapsedGroupsByTab[name]?[groupBy] ?? []
+            historyViewPreferencePending.insert(name)
+        } else if key == "collapsedGroupIds" {
+            guard let ids = value as? [String] else { return }
+            let groupBy = historyParamsByTab[name]?.text("groupBy") ?? "none"
+            historyCollapsedGroupsByTab[name, default: [:]][groupBy] = ids
+            historyParamsByTab[name, default: [:]][key] = ids
+            historyViewPreferencePending.insert(name)
+        } else { historyParamsByTab[name, default: [:]][key] = value }
+        if key != "collapsedGroupIds" { historyDepthByTab[name] = pageSize }
         busy = true
         defer { finishOperation() }
         await readHistory()
@@ -6961,11 +7024,11 @@ final class CoreModel: ObservableObject {
 
     func toggleHistorySection(_ id: String) async {
         guard historyActionsEnabled, let section = history.objects("items").first(where: {
-            $0.text("type") == "section" && $0.text("id") == id && $0.flag("collapsible")
+            $0.text("type") == "section" && $0.text("id").utf8.elementsEqual(id.utf8) && $0.flag("collapsible")
         }) else { return }
         var ids = historyParamsByTab[historyReadName]?["collapsedGroupIds"] as? [String] ?? []
-        if section.flag("collapsed") { ids.removeAll { $0 == id } }
-        else if !ids.contains(id) { ids.append(id) }
+        if section.flag("collapsed") { ids.removeAll { $0.utf8.elementsEqual(id.utf8) } }
+        else if !ids.contains(where: { $0.utf8.elementsEqual(id.utf8) }) { ids.append(id) }
         await setHistoryOption("collapsedGroupIds", value: ids)
     }
 
@@ -7043,20 +7106,20 @@ final class CoreModel: ObservableObject {
 
     private func effectiveHistoryParams(_ snapshot: CoreObject, name: String, input: CoreObject) -> CoreObject {
         if name == "done" {
-            return ["sortBy": snapshot.text("sortBy"), "groupBy": snapshot.text("groupBy"),
-                    "collapsedGroupIds": snapshot["collapsedGroupIds"] as? [String] ?? [],
-                    "filters": snapshot.object("filters").object("state")]
+            var params: CoreObject = ["groupBy": snapshot.text("groupBy"),
+                                      "collapsedGroupIds": snapshot["collapsedGroupIds"] as? [String] ?? [],
+                                      "filters": snapshot.object("filters").object("state")]
+            if let sortBy = input["sortBy"] as? String { params["sortBy"] = sortBy }
+            return params
         }
-        // Archive revisions identify data/time, not choices. Preserve the exact
-        // non-echoed inputs and resolve only choices that core returns selected.
+        // Archive revisions identify data/time, not choices. Keep the raw sort
+        // override (or its absence); core can resolve a different displayed sort.
         var params = input
         params.removeValue(forKey: "filterEdit")
         params["segment"] = snapshot.text("segment")
         params["filters"] = snapshot.object("filters").object("state")
-        for (menu, key) in [("sort", "sortBy"), ("group", "groupBy")] {
-            if let option = snapshot.object("menu").object(menu).objects("options").first(where: { $0.flag("selected") }) {
-                params[key] = option.text("id")
-            }
+        if let option = snapshot.object("menu").object("group").objects("options").first(where: { $0.flag("selected") }) {
+            params["groupBy"] = option.text("id")
         }
         return params
     }
@@ -7089,6 +7152,17 @@ final class CoreModel: ObservableObject {
                     throw CocoaError(.coderReadCorrupt)
                 }
                 let params = effectiveHistoryParams(next, name: name, input: input)
+                if historyViewPreferencePending.contains(name) {
+                    let requested = input["collapsedGroupIds"] as? [String] ?? []
+                    let returned = params["collapsedGroupIds"] as? [String] ?? []
+                    guard params.text("groupBy") == input.text("groupBy"),
+                          requested.count == returned.count,
+                          zip(requested, returned).allSatisfy({ $0.0.utf8.elementsEqual($0.1.utf8) }),
+                          name != "archive" || next.objects("items").allSatisfy({ item in
+                              item.text("type") != "section" ||
+                                  item.flag("collapsed") == requested.contains(where: { $0.utf8.elementsEqual(item.text("id").utf8) })
+                          }) else { throw CocoaError(.coderReadCorrupt) }
+                }
                 var items = next.objects("items")
                 let target = min(historyDepthByTab[name] ?? pageSize, next.number("total"))
                 while items.count < target {
@@ -7120,6 +7194,14 @@ final class CoreModel: ObservableObject {
                 historyParamsByTab[name] = params
                 historyPendingEdit = nil
                 history = next
+                if historyViewPreferencePending.contains(name), let key = historyViewPreferences[name] {
+                    var view: CoreObject = ["groupBy": params.text("groupBy"),
+                                            "collapsedGroups": historyCollapsedGroupsByTab[name] ?? [:]]
+                    if let sortBy = params["sortBy"] as? String { view["sortBy"] = sortBy }
+                    preferenceDefaults.set(view, forKey: key)
+                    historyViewPreferencePending.remove(name)
+                    NSLog("Native iOS History view preference updated releaseCheck=v1.3.4/ios-history-view outcome=updated")
+                }
                 syncHistoryText()
                 let correctSheet = name != "archive" || params.flag("filterSheetOpen") == (historyPanel == "filters")
                 historyCurrent = historyTextEdits.isEmpty && correctSheet
@@ -11677,6 +11759,11 @@ final class CoreModel: ObservableObject {
         if method == "menuRead", args.first as? String == "reference",
            referenceViewPreferencePending, referenceViewTestReadFailures > 0 {
             referenceViewTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "menuRead", ["done", "archive"].contains(args.first as? String ?? ""),
+           historyViewPreferencePending.contains(args.first as? String ?? ""), historyViewTestReadFailures > 0 {
+            historyViewTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
         if projectAreaCreatedID != nil {

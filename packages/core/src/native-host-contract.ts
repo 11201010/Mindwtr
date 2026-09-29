@@ -214,6 +214,7 @@ import {
 import type { TaskSortBy } from './types';
 import {
     createMenuViewMethods,
+    isFoldIdList,
     isFilterEdit,
     matchesPickerQuery,
     nativeFilterView,
@@ -3782,7 +3783,7 @@ const readArchiveParams = (input: Record<string, unknown>) => {
         || (input.sortBy !== undefined && !DONE_TASK_LIST_SORT_OPTIONS.includes(input.sortBy as TaskSortBy))
         || (input.groupBy !== undefined && !ARCHIVE_TASK_GROUP_OPTIONS.includes(input.groupBy as ArchiveTaskGroupBy))
         || (input.filterSheetOpen !== undefined && typeof input.filterSheetOpen !== 'boolean')
-        || (input.collapsedGroupIds !== undefined && !isStringList(input.collapsedGroupIds, 1000))
+        || (input.collapsedGroupIds !== undefined && !isFoldIdList(input.collapsedGroupIds))
         || (input.filterEdit !== undefined && !isFilterEdit(input.filterEdit))) {
         return null;
     }

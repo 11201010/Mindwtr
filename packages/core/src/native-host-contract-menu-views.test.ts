@@ -172,6 +172,40 @@ describe('native host contract: More sheet and list views', () => {
         expect(await host.setTaskListSort({ sortBy: 'completed' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     });
 
+    it('keeps large and long saved folds readable in Reference and Done', async () => {
+        freezeClock();
+        const prefix = '🌱'.repeat(260);
+        const longA = `tag:${prefix}á`;
+        const longB = `tag:${prefix}á`;
+        const data = { ...fixture, tasks: fixture.tasks.map((task) => (
+            task.id === 'r-a' || task.id === 'd-a' ? { ...task, tags: [longA.slice(4)] }
+                : task.id === 'r-b' || task.id === 'd-b' ? { ...task, tags: [longB.slice(4)] } : task
+        )) };
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host, recorder } = await openHost(scenario('done', 'keepDone'), saveData, data);
+        saveData.mockClear();
+        const saved = [...Array.from({ length: 1001 }, (_, index) => `saved:${index}`), longA, longB];
+        for (const get of [host.getReferenceView, host.getDoneView]) {
+            const base = value(get({ groupBy: 'project', offset: 0, limit: 100 }));
+            const section = base.items.find((item) => item.type === 'section' && base.items.some((row) => row.type === 'task' && row.groupId === item.id));
+            expect(section).toBeDefined();
+            const collapsedGroupIds = [...saved, section!.id];
+            const input = { groupBy: 'project' as const, collapsedGroupIds, offset: 0, limit: 1 };
+            const first = value(get(input));
+            expect(first.collapsedGroupIds).toEqual(collapsedGroupIds);
+            expect(first.items[0]).toMatchObject({ type: 'section', id: section!.id, collapsed: true });
+            const next = value(get({ ...input, offset: 1, revision: first.revision }));
+            expect(next.items).toHaveLength(Math.min(1, first.total - 1));
+            expect(get({ ...input, collapsedGroupIds: [...saved, 7] as never })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect(get({ ...input, limit: 101 })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            const longView = value(get({ ...input, groupBy: 'tag', collapsedGroupIds: saved.slice(0, -1), limit: 100 }));
+            expect(longView.items.find((item) => item.type === 'section' && item.id === longA)).toMatchObject({ collapsed: true });
+            expect(longView.items.find((item) => item.type === 'section' && item.id === longB)).toMatchObject({ collapsed: false });
+        }
+        expect(recorder.log).toEqual([]);
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
     it('writes nothing again for a target already reached', async () => {
         freezeClock();
         const { host, recorder } = await openHost(scenario('someday', 'sections'));
