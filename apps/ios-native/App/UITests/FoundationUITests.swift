@@ -3615,6 +3615,48 @@ final class FoundationUITests: XCTestCase {
         if tap { toggle.tap() }
     }
 
+    private func task84AlertButton(_ alert: XCUIElement, id: String, label: String) -> XCUIElement {
+        // Native alerts can expose nested buttons with the same identifier.
+        let identified = alert.buttons.matching(identifier: id).firstMatch
+        return identified.exists ? identified : alert.buttons.matching(identifier: label).firstMatch
+    }
+
+    private func task84OpenDelete(_ app: XCUIApplication, index: Int, title: String) -> XCUIElement {
+        let trash = app.buttons["manage-someday-delete-\(index)"]
+        revealPagedElement(app, trash, in: app.scrollViews["manage-someday-scroll"],
+            more: "manage-someday-more", ready: app.buttons["manage-back"])
+        XCTAssertGreaterThanOrEqual(trash.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(trash.frame.height, 44 - 0.001)
+        XCTAssertEqual(trash.label, "Delete: " + title)
+        trash.tap()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        XCTAssertTrue(alert.staticTexts["Delete \"\(title)\"?"].exists)
+        boardEnabled(task84AlertButton(alert, id: "manage-someday-delete-cancel", label: "Cancel"))
+        boardEnabled(task84AlertButton(alert, id: "manage-someday-delete-confirm", label: "Delete"))
+        return alert
+    }
+
+    private func task84ConfirmDelete(_ alert: XCUIElement) {
+        task84AlertButton(alert, id: "manage-someday-delete-confirm", label: "Delete").tap()
+    }
+
+    private func task84CancelDelete(_ alert: XCUIElement) {
+        task84AlertButton(alert, id: "manage-someday-delete-cancel", label: "Cancel").tap()
+    }
+
+    private func task84AssertUnsectionedTask(_ app: XCUIApplication) {
+        task80AssertTask(app, title: "Task84 Assigned")
+        let task = task80Task(app, title: "Task84 Assigned")
+        let heading = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'someday-heading-'"))
+            .allElementsBoundByIndex.filter { $0.frame.minY < task.frame.minY }
+            .max { $0.frame.minY < $1.frame.minY }
+        XCTAssertEqual(heading?.identifier, "someday-heading-view-section:someday:")
+        XCTAssertEqual(heading?.label, "No section")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Deleted section Task under No section"; shot.lifetime = .keepAlways; add(shot)
+    }
+
     func testSomedayManageRenameNormalAndRestart() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -3809,6 +3851,183 @@ final class FoundationUITests: XCTestCase {
         XCTAssertFalse(app.textFields["manage-someday-name"].exists)
         app.terminate(); app.launch(); task83OpenManage(app)
         task83AssertRow(app, index: 0, title: "Task83 Save retry")
+        app.terminate()
+    }
+
+    func testSomedayManageDeleteNormalAndRestart() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "9012ed64-44f4-4649-b386-e3bf02b669fe"]
+        app.launch(); task83OpenManage(app, search: true)
+        task83AssertRow(app, index: 0, title: "Task84 Delete section")
+        task83AssertRow(app, index: 1, title: "Task84 Keep section")
+        task84CancelDelete(task84OpenDelete(app, index: 0, title: "Task84 Delete section"))
+        task83AssertRow(app, index: 0, title: "Task84 Delete section")
+
+        task84ConfirmDelete(task84OpenDelete(app, index: 0, title: "Task84 Delete section"))
+        task83AssertRow(app, index: 0, title: "Task84 Keep section")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        boardTap(app, "manage-back")
+        boardTap(app, "settings-back")
+        task79OpenSomeday(app)
+        task84AssertUnsectionedTask(app)
+
+        app.terminate(); app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 0, title: "Task84 Keep section")
+        XCTAssertFalse(app.buttons["manage-someday-delete-1"].exists)
+        boardTap(app, "manage-back")
+        boardTap(app, "settings-back")
+        task79OpenSomeday(app)
+        task84AssertUnsectionedTask(app)
+        app.terminate()
+    }
+
+    func testSomedayManageDeleteLargestText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8087ee1b-8e8f-4b8d-bf64-a4515798a02d"]
+        app.launch(); task83OpenManage(app)
+        let alert = task84OpenDelete(app, index: 0, title: "Task84 Delete section")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Largest Someday section Delete confirmation"; shot.lifetime = .keepAlways; add(shot)
+        for button in [task84AlertButton(alert, id: "manage-someday-delete-cancel", label: "Cancel"),
+                       task84AlertButton(alert, id: "manage-someday-delete-confirm", label: "Delete")] {
+            XCTAssertTrue(button.isHittable)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        }
+        task84ConfirmDelete(alert)
+        task83AssertRow(app, index: 0, title: "Task84 Keep section")
+        app.terminate(); app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 0, title: "Task84 Keep section")
+        app.terminate()
+    }
+
+    func testSomedayManageDeleteLastPagedSection() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "1daacfef-eed1-43b1-b473-80ebaad93112"]
+        app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 105, title: "Task84 Last section")
+        task84ConfirmDelete(task84OpenDelete(app, index: 105, title: "Task84 Last section"))
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        XCTAssertFalse(app.buttons["manage-someday-delete-105"].exists)
+        let preceding = app.buttons["manage-someday-delete-104"]
+        revealPagedElement(app, preceding, in: app.scrollViews["manage-someday-scroll"],
+            more: "manage-someday-more", ready: app.buttons["manage-back"])
+        XCTAssertTrue(preceding.exists)
+        app.terminate(); app.launch(); task83OpenManage(app)
+        XCTAssertFalse(app.buttons["manage-someday-delete-105"].exists)
+        revealPagedElement(app, preceding, in: app.scrollViews["manage-someday-scroll"],
+            more: "manage-someday-more", ready: app.buttons["manage-back"])
+        XCTAssertTrue(preceding.exists)
+        app.terminate()
+    }
+
+    func testSomedayManageDeletePostAckReadRetryOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "da6d64ca-e956-4f25-a8b0-5e70cbd8a717",
+                               "--native-someday-delete-read-failure"]
+        app.launch(); task83OpenManage(app)
+        task84ConfirmDelete(task84OpenDelete(app, index: 0, title: "Task84 Delete section"))
+        let failure = app.staticTexts["manage-someday-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+        XCTAssertFalse(app.buttons["manage-someday-delete-1"].isEnabled)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        for attempt in 0..<2 {
+            boardTap(app, "manage-someday-delete-retry")
+            if attempt == 0 {
+                XCTAssertTrue(failure.waitForExistence(timeout: 20))
+                boardEnabled(app.buttons["manage-someday-delete-retry"], timeout: 20)
+            }
+        }
+        task83AssertRow(app, index: 0, title: "Task84 Keep section")
+        XCTAssertFalse(failure.exists)
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", "da6d64ca-e956-4f25-a8b0-5e70cbd8a717"]
+        app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 0, title: "Task84 Keep section")
+        app.terminate()
+    }
+
+    /// Run before the paired cold test while the isolated fixture rejects target removal.
+    func testSomedayManageDeleteFailedSaveKeepsExactRequest() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "b31f929d-f3c2-477f-8e22-5ca6e52e2648"]
+        app.launch(); task83OpenManage(app)
+        task84ConfirmDelete(task84OpenDelete(app, index: 0, title: "Task84 Delete section"))
+        let failure = app.staticTexts["manage-someday-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-someday-delete-1"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-someday-rename-1"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-section-toggle-someday-sections"].isEnabled)
+            boardTap(app, "manage-someday-delete-retry")
+            boardEnabled(app.buttons["manage-someday-delete-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    /// Root disarms only the failure trigger and retains this library's pending journal.
+    func testSomedayManageDeleteColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "b31f929d-f3c2-477f-8e22-5ca6e52e2648"]
+        app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 0, title: "Task84 Keep section")
+        XCTAssertFalse(app.staticTexts["manage-someday-delete-error"].exists)
+        app.terminate(); app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 0, title: "Task84 Keep section")
+        app.terminate()
+    }
+
+    func testSomedayManageDeleteOptionsReadRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "bc30bd67-2f58-4318-89ea-2b2e40feaa30",
+                               "--native-someday-delete-options-failure"]
+        app.launch(); task83OpenManage(app)
+        boardTap(app, "manage-someday-delete-0")
+        let failure = app.staticTexts["manage-someday-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        XCTAssertFalse(app.buttons["manage-someday-delete-0"].isEnabled)
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        boardTap(app, "manage-someday-delete-retry")
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        XCTAssertTrue(alert.staticTexts["Delete \"Task84 Delete section\"?"].exists)
+        task84CancelDelete(alert)
+        task83AssertRow(app, index: 0, title: "Task84 Delete section")
+        boardTap(app, "manage-back")
+        app.terminate()
+    }
+
+    func testSomedayManageDeleteDefiniteRefusalNeedsFreshConfirmation() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "00ad9209-6305-4508-8ef0-2ae8efb3ec78",
+                               "--native-someday-delete-refusal"]
+        app.launch(); task83OpenManage(app)
+        task84ConfirmDelete(task84OpenDelete(app, index: 0, title: "Task84 Delete section"))
+        let failure = app.staticTexts["manage-someday-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        boardTap(app, "manage-someday-delete-retry")
+        let fresh = app.alerts.firstMatch
+        XCTAssertTrue(fresh.waitForExistence(timeout: 10))
+        XCTAssertTrue(fresh.staticTexts["Delete \"Task84 Delete section\"?"].exists)
+        task84CancelDelete(fresh)
+        task83AssertRow(app, index: 0, title: "Task84 Delete section")
+        task84ConfirmDelete(task84OpenDelete(app, index: 0, title: "Task84 Delete section"))
+        task83AssertRow(app, index: 0, title: "Task84 Keep section")
         app.terminate()
     }
 

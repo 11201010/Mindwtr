@@ -4,6 +4,8 @@ struct SettingsScreen: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     @FocusState private var renameFocused: Bool
+    @State private var deleteConfirmPresented = false
+    @State private var deleteConfirmAnswered = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,7 +21,8 @@ struct SettingsScreen: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(model.busy || model.retryNeeded || model.somedaySectionRenamePending
-                          || model.somedaySectionRenameAwaitingRefresh)
+                          || model.somedaySectionRenameAwaitingRefresh
+                          || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh)
                 .accessibilityLabel(model.label("common.back"))
                 .accessibilityIdentifier(model.settingsManagePresented ? "manage-back" : "settings-back")
                 Text(model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
@@ -33,6 +36,29 @@ struct SettingsScreen: View {
             else { menuContent }
         }
         .background(palette.bg)
+        .alert(model.somedaySectionDeleteOptions.object("text").text("title"),
+               isPresented: $deleteConfirmPresented) {
+            Button(model.somedaySectionDeleteOptions.object("text").text("cancelLabel"), role: .cancel) {
+                deleteConfirmAnswered = true
+                model.cancelSomedaySectionDelete()
+            }
+            .accessibilityIdentifier("manage-someday-delete-cancel")
+            Button(model.somedaySectionDeleteOptions.object("text").text("confirmLabel"), role: .destructive) {
+                deleteConfirmAnswered = true
+                Task { await model.confirmSomedaySectionDelete() }
+            }
+            .accessibilityIdentifier("manage-someday-delete-confirm")
+        } message: {
+            Text(model.somedaySectionDeleteOptions.object("text").text("message"))
+        }
+        .onChange(of: deleteConfirmPresented) { presented in
+            guard !presented else { return }
+            // A system dismissal may publish before its destructive Button action.
+            // Defer implicit-cancel cleanup so that action can retain frozen Options.
+            DispatchQueue.main.async {
+                if !deleteConfirmAnswered && !deleteConfirmPresented { model.cancelSomedaySectionDelete() }
+            }
+        }
         .accessibilityAction(.escape) {
             if model.settingsManagePresented { model.closeManageSettings() }
             else { Task { await model.closeSettings() } }
@@ -103,7 +129,15 @@ struct SettingsScreen: View {
     private var manageContent: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
-                if let failure = model.somedaySectionRenameError ?? model.manageReadError {
+                if let failure = model.somedaySectionDeleteError {
+                    errorBlock(failure, id: "manage-someday-delete-error",
+                               retryID: "manage-someday-delete-retry") {
+                        Task {
+                            await model.retrySomedaySectionDelete()
+                            presentSomedayDeleteConfirmationIfReady()
+                        }
+                    }
+                } else if let failure = model.somedaySectionRenameError ?? model.manageReadError {
                     errorBlock(failure, id: "manage-someday-error") {
                         Task {
                             if model.somedaySectionRenameIndex != nil || model.somedaySectionRenameReadPending {
@@ -130,7 +164,8 @@ struct SettingsScreen: View {
                         }
                         .buttonStyle(.plain).disabled(!someday || model.busy || model.retryNeeded
                                                       || model.somedaySectionRenameIndex != nil
-                                                      || model.somedaySectionRenameReadPending)
+                                                      || model.somedaySectionRenameReadPending
+                                                      || model.somedaySectionDeleteActive)
                         .opacity(someday ? 1 : 0.55)
                         .accessibilityValue(section.flag("open") ? "expanded" : "collapsed")
                         .accessibilityIdentifier("manage-section-toggle-" + (someday ? "someday-sections" : section.text("key")))
@@ -149,7 +184,8 @@ struct SettingsScreen: View {
                                     }
                                     .frame(maxWidth: .infinity, minHeight: 44)
                                     .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
-                                              || model.somedaySectionRenameIndex != nil)
+                                              || model.somedaySectionRenameIndex != nil
+                                              || model.somedaySectionDeleteActive)
                                     .accessibilityIdentifier("manage-someday-more")
                                 }
                             }
@@ -203,9 +239,25 @@ struct SettingsScreen: View {
                         .foregroundStyle(palette.secondary).frame(width: 44, height: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.manageReadError != nil
-                                              || model.somedaySectionRenameReadPending || model.somedaySectionRenameIndex != nil)
+                                              || model.somedaySectionRenameReadPending || model.somedaySectionRenameIndex != nil
+                                              || model.somedaySectionDeleteActive)
                 .accessibilityLabel(row.text("renameLabel"))
                 .accessibilityIdentifier("manage-someday-rename-\(index)")
+                Button {
+                    Task {
+                        await model.openSomedaySectionDelete(index: index)
+                        presentSomedayDeleteConfirmationIfReady()
+                    }
+                } label: {
+                    Image(systemName: "trash").font(.system(size: 18))
+                        .foregroundStyle(palette.danger).frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.manageReadError != nil
+                                              || model.somedaySectionRenameReadPending || model.somedaySectionRenameIndex != nil
+                                              || model.somedaySectionDeleteActive)
+                .accessibilityLabel(row.text("deleteLabel"))
+                .accessibilityIdentifier("manage-someday-delete-\(index)")
             }
         }
         .padding(.horizontal, 12).frame(minHeight: 52)
@@ -214,7 +266,14 @@ struct SettingsScreen: View {
         .accessibilityIdentifier("manage-someday-row-\(index)")
     }
 
-    private func errorBlock(_ failure: String, id: String, retry: @escaping () -> Void) -> some View {
+    private func presentSomedayDeleteConfirmationIfReady() {
+        guard model.somedaySectionDeleteCanConfirm else { return }
+        deleteConfirmAnswered = false
+        deleteConfirmPresented = true
+    }
+
+    private func errorBlock(_ failure: String, id: String,
+                            retryID: String = "manage-someday-retry", retry: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(failure).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
                 .accessibilityIdentifier(id)
@@ -223,7 +282,7 @@ struct SettingsScreen: View {
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
             }
             .buttonStyle(.plain).disabled(model.busy)
-            .accessibilityIdentifier("manage-someday-retry")
+            .accessibilityIdentifier(retryID)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
