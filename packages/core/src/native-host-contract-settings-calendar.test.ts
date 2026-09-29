@@ -384,11 +384,14 @@ function calendarDriver(contract: Host, device: ReturnType<typeof phone>, openin
     };
 }
 
-/** A contract over the same store and device, as after a restart: no request receipts in memory. */
-async function restart(device: ReturnType<typeof phone>) {
+/**
+ * A contract over the same store and device, as after a restart: no request receipts in
+ * memory, and no screen open (the journal replays a write at boot before any screen).
+ */
+async function restart(device: ReturnType<typeof phone>, open = false) {
     await flushPendingSave();
     const contract = await openHost(device.host);
-    value(await contract.openCalendarSettings());
+    if (open) value(await contract.openCalendarSettings());
     return contract;
 }
 
@@ -462,7 +465,7 @@ describe('native host contract: Settings › Calendar', () => {
             return { handset, contract, view: () => value(contract.getCalendarSettings()) };
         };
         const replay = async (handset: ReturnType<typeof phone>, requestId: string, change: NativeCalendarSettingsEdit) => {
-            const restarted = await restart(handset);
+            const restarted = await restart(handset, true);
             const before = everything(handset);
             const answer = await edit(restarted, change, requestId);
             return { answer, before, after: everything(handset) };
@@ -512,7 +515,7 @@ describe('native host contract: Settings › Calendar', () => {
             const { answer, before, after } = await replay(handset, requestId, green);
             expect(value(answer).changed).toBe(false);
             expect(after).toEqual(before);
-            const restarted = await restart(handset);
+            const restarted = await restart(handset, true);
             expect(value(await edit(restarted, value(restarted.getCalendarSettings()).push.target!.colors!.options.find((option) => option.color === '#DB2777')!.edit)).changed).toBe(true);
             const again = await replay(handset, requestId, green);
             expect(again.answer).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
@@ -529,7 +532,7 @@ describe('native host contract: Settings › Calendar', () => {
             expect(value(done.answer).changed).toBe(false);
             expect(done.after).toEqual(done.before);
             // Push on again makes a new Mindwtr calendar; the old request must not delete it.
-            const restarted = await restart(handset);
+            const restarted = await restart(handset, true);
             expect(value(await edit(restarted, value(restarted.getCalendarSettings()).push.toggle)).changed).toBe(true);
             expect(handset.state.calendars.map((calendar) => calendar.id)).toEqual(['g-primary', 'created-1']);
             const later = await replay(handset, requestId, change);
@@ -545,7 +548,7 @@ describe('native host contract: Settings › Calendar', () => {
             const replayed = await replay(handset, requestId, first);
             expect(value(replayed.answer).changed).toBe(false);
             expect(replayed.after).toEqual(replayed.before);
-            const restarted = await restart(handset);
+            const restarted = await restart(handset, true);
             expect(value(await edit(restarted, value(restarted.getCalendarSettings()).device.toggle)).changed).toBe(true);
             const later = await replay(handset, requestId, first);
             expect(later.answer).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
@@ -569,7 +572,7 @@ describe('native host contract: Settings › Calendar', () => {
                     ? { id: requestId, name: 'Team', url: 'https://example.com/team.ics', enabled: true }
                     : { id: requestId, name: 'Plan', url: 'content://downloads/7', enabled: true },
             ]);
-            const restarted = await restart(handset);
+            const restarted = await restart(handset, true);
             expect(value(await edit(restarted, value(restarted.getCalendarSettings()).feeds.items[0].remove.edit)).changed).toBe(true);
             const removed = await replay(handset, requestId, change);
             expect(removed.answer).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
@@ -589,7 +592,7 @@ describe('native host contract: Settings › Calendar', () => {
             const same = await replay(handset, requestId, change);
             expect(value(same.answer).changed).toBe(false);
             expect(same.after).toEqual(same.before);
-            const restarted = await restart(handset);
+            const restarted = await restart(handset, true);
             expect(value(await edit(restarted, later(value(restarted.getCalendarSettings()).feeds.items[0]))).changed).toBe(true);
             const stale = await replay(handset, requestId, change);
             expect(stale.answer).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });

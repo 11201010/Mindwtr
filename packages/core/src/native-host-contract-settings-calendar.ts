@@ -637,6 +637,15 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
         };
     };
 
+    const newSession = (host: NativeCalendarHost): Session => ({
+        host,
+        push: { enabled: false, permission: 'undetermined', targetId: null, targets: [], color: DEFAULT_CALENDAR_PUSH_COLOR, loading: false, deleting: false },
+        device: { settings: { enabled: false, selectAll: true, selectedCalendarIds: [], areaIdsByCalendar: {} }, permission: 'undetermined', calendars: [], loading: false },
+        storedFeeds: [],
+    });
+    /** React Native's mount: every card's device state read, as the screen opens. */
+    const loadSession = (current: Session) => Promise.all([loadPush(current), loadDevice(current), loadFeeds(current), refreshShownRevision(current.host)]);
+
     const openedSession = (): NativeHostResult<Session> => {
         const ready = deps.readiness();
         if (!ready.ok) return ready;
@@ -696,7 +705,11 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                 await push.setCalendarPushEnabled(true);
                 current.push.enabled = true;
                 push.startCalendarPushSync();
-                void push.runFullCalendarSync().finally(() => refreshShownRevision(current.host));
+                // As on React Native, the first push runs on without the answer waiting for it.
+                void push.runFullCalendarSync()
+                    .catch((error: unknown) => logError(current, error))
+                    .then(() => refreshShownRevision(current.host))
+                    .catch(() => undefined);
                 await refreshShownRevision(current.host);
                 return result(true, { open: 'push' });
             }
@@ -829,14 +842,14 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
             const host = deps.host();
             if (!host) return fail('ACTION_FAILED', 'Calendars are not available on this host yet');
             takeToasts();
-            const current: Session = {
-                host,
-                push: { enabled: false, permission: 'undetermined', targetId: null, targets: [], color: DEFAULT_CALENDAR_PUSH_COLOR, loading: false, deleting: false },
-                device: { settings: { enabled: false, selectAll: true, selectedCalendarIds: [], areaIdsByCalendar: {} }, permission: 'undetermined', calendars: [], loading: false },
-                storedFeeds: [],
-            };
+            const current = newSession(host);
             session = current;
-            await Promise.all([loadPush(current), loadDevice(current), loadFeeds(current), refreshShownRevision(host)]);
+            try {
+                await loadSession(current);
+            } catch (error) {
+                logError(current, error);
+                return fail('ACTION_FAILED', 'Settings › Calendar could not read this device');
+            }
             if (session !== current) return fail('ACTION_FAILED', 'Settings › Calendar closed or opened again before it finished opening');
             return { ok: true, value: { ...buildView(current, {}), toasts: takeToasts() } };
         },
@@ -859,18 +872,27 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
             return { ok: true, value: buildView(opened.value, draft as Draft) };
         },
 
-        /** A write: an edit the view gave, with a request UUID. */
+        /**
+         * A write: an edit the view gave, with a request UUID. It needs no open screen
+         * (the journal replays it at boot): it then reads the device as the screen would.
+         */
         async setCalendarSetting(input: { requestId: string; edit: NativeCalendarSettingsEdit }): Promise<NativeHostResult<NativeCalendarCommandResult>> {
-            const opened = openedSession();
-            if (!opened.ok) return opened;
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const host = deps.host();
+            if (!host) return fail('ACTION_FAILED', 'Calendars are not available on this host yet');
             if (!isObjectRecord(input) || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId) || !isEdit(input.edit)) {
                 return fail('INVALID_INPUT', 'A request UUID and an edit the view gave are required');
             }
-            const current = opened.value;
+            const opened = session?.host === host ? session : null;
             const outcome = await receipts.run<NativeCalendarCommandResult>(
                 input.requestId,
                 JSON.stringify(['calendarSetting', input.edit]),
-                () => applyEdit(current, input.edit, input.requestId),
+                async () => {
+                    const current = opened ?? newSession(host);
+                    if (!opened) await loadSession(current);
+                    return applyEdit(current, input.edit, input.requestId);
+                },
             );
             return outcome.ok ? { ok: true, value: { ...outcome.value, toasts: takeToasts() } } : outcome;
         },
@@ -888,7 +910,11 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
             const opened = openedSession();
             if (!opened.ok) return opened;
             await loadPushTargets(opened.value);
-            await refreshShownRevision(opened.value.host);
+            try {
+                await refreshShownRevision(opened.value.host);
+            } catch (error) {
+                logError(opened.value, error);
+            }
             return { ok: true, value: { toasts: takeToasts() } };
         },
 
