@@ -314,7 +314,7 @@ struct SomedayPanel: View {
 
     private var createContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(menu.object("newSection").text("label")).rnFont(17, .bold)
+            Text(model.label("viewSections.add")).rnFont(17, .bold)
                 .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("someday-section-create-title")
             TextField(model.label("viewSections.namePlaceholder"), text: Binding(
@@ -330,8 +330,8 @@ struct SomedayPanel: View {
                 .disabled(model.somedaySectionCreatePending || model.somedaySectionCreateAwaitingRefresh || model.retryNeeded)
                 .accessibilityLabel(model.label("viewSections.nameHint"))
                 .accessibilityIdentifier("someday-section-create-input")
-            if let error = model.somedaySectionCreateError ?? model.somedaySectionCreateReadError {
-                Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+            if model.somedaySectionCreateError != nil || model.somedaySectionCreateReadError != nil {
+                Text(model.label("viewSections.updateFailed")).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
                     .accessibilityAddTraits(.updatesFrequently).accessibilityIdentifier("someday-section-create-error")
                 Button(model.label("common.retry")) { Task { await model.retrySomedaySectionCreate() } }
                     .rnFont(14, .semibold).frame(minHeight: 44).disabled(model.busy)
@@ -355,6 +355,7 @@ struct SomedayPanel: View {
                 .rnFont(14, .semibold).padding(.horizontal, 14).frame(minWidth: 88, minHeight: 44)
                 .foregroundStyle(palette.onTint).background(palette.tint, in: RoundedRectangle(cornerRadius: 8))
                 .disabled(!model.somedaySectionCreateCanSave)
+                .opacity(model.somedaySectionCreateCanSave ? 1 : 0.5)
                 .accessibilityIdentifier("someday-section-create-save")
             }
         }
