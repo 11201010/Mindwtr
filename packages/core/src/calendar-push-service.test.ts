@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     CALENDAR_PUSH_CALENDAR_ID_KEY,
+    CALENDAR_PUSH_COLOR_KEY,
     CALENDAR_PUSH_PENDING_KEY,
     CALENDAR_PUSH_ENABLED_KEY,
     CALENDAR_PUSH_TARGET_ID_KEY,
     createCalendarPushService,
     type CalendarPushServiceHost,
 } from './calendar-push-service';
+import { planCalendarPushColor } from './calendar-settings-model';
 import type { DeviceCalendar } from './external-calendar-feeds';
 import type { CalendarSyncEntry } from './sqlite-adapter';
 import type { Task } from './types';
@@ -209,6 +211,48 @@ describe('calendar push behind the host ports', () => {
         await createCalendarPushService(phone.host).deleteMindwtrCalendar();
         expect(phone.calendars.map((calendar) => calendar.id)).toEqual(['primary', 'made-elsewhere']);
         expect(Object.fromEntries(phone.storage)).toEqual({});
+    });
+
+    it.each(['android', 'ios'])('changes the Mindwtr calendar color on %s before storing it, so a change cut short at any step finishes', async (os) => {
+        await everyDeath(
+            () => device({
+                os,
+                calendars: [PRIMARY, { id: 'saved', title: 'Mindwtr', name: 'mindwtr', color: '#3B82F6', accessLevel: 'owner', allowsModifications: true, source: google }],
+                storage: { [CALENDAR_PUSH_ENABLED_KEY]: '1', [CALENDAR_PUSH_CALENDAR_ID_KEY]: 'saved', [CALENDAR_PUSH_COLOR_KEY]: '#3B82F6' },
+            }),
+            (service) => service.updateMindwtrCalendarColor('#059669'),
+            (phone, dieAt) => {
+                // The next push run makes the calendar if the change stopped between its delete and its create.
+                const stored = phone.storage.get(CALENDAR_PUSH_COLOR_KEY);
+                const own = phone.calendars.filter((calendar) => calendar.title === 'Mindwtr');
+                expect({ dieAt, stored, own: own.length <= 1 }).toEqual({ dieAt, stored: '#059669', own: true });
+                if (own.length === 1) {
+                    expect({ dieAt, color: own[0].color, saved: phone.storage.get(CALENDAR_PUSH_CALENDAR_ID_KEY) })
+                        .toEqual({ dieAt, color: '#059669', saved: own[0].id });
+                }
+            },
+            // A retry is what a caller sends: React Native's re-pick and the contract's replay skip a color already stored.
+            async (service) => {
+                if (planCalendarPushColor(await service.getCalendarPushColor(), '#059669')) await service.updateMindwtrCalendarColor('#059669');
+            },
+        );
+    });
+
+    it('a death after the device calendar changed color stores it on the retry without changing the calendar again', async () => {
+        const phone = device({
+            os: 'ios',
+            calendars: [PRIMARY, { id: 'saved', title: 'Mindwtr', color: '#3B82F6', accessLevel: 'owner', allowsModifications: true, source: google }],
+            storage: { [CALENDAR_PUSH_CALENDAR_ID_KEY]: 'saved', [CALENDAR_PUSH_COLOR_KEY]: '#3B82F6' },
+        });
+        phone.life.dieAt = 2;
+        await createCalendarPushService(phone.host).updateMindwtrCalendarColor('#059669').catch(() => undefined);
+        expect(phone.writes).toEqual([['updateCalendar', 'saved', '#059669']]);
+        expect(phone.storage.get(CALENDAR_PUSH_COLOR_KEY)).toBe('#3B82F6');
+        phone.life.dieAt = Infinity;
+        phone.life.died = false;
+        expect(await createCalendarPushService(phone.host).updateMindwtrCalendarColor('#059669')).toBe(true);
+        expect(phone.writes).toEqual([['updateCalendar', 'saved', '#059669']]);
+        expect(phone.storage.get(CALENDAR_PUSH_COLOR_KEY)).toBe('#059669');
     });
 
     it('keeps the saved ID, the chosen calendar and the pushed events when the delete fails', async () => {

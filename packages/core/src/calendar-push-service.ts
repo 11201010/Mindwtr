@@ -465,7 +465,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
      * Returns the ID of the managed "Mindwtr" calendar, creating it if needed.
      * Returns null if the calendar cannot be created (e.g. no permission, no source).
      */
-    const ensureMindwtrCalendar = async (): Promise<string | null> => {
+    const ensureMindwtrCalendar = async (withColor?: string): Promise<string | null> => {
         if (isSandboxMode()) return null;
         try {
             const storedId = await getStoredCalendarId();
@@ -483,7 +483,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             const adoptedId = await adoptPendingCalendar(allCalendars);
             if (adoptedId) return adoptedId;
 
-            const color = await getCalendarPushColor();
+            const color = withColor ?? await getCalendarPushColor();
             let calendarDetails: DeviceCalendarDetails;
 
             if (host.os() === 'android') {
@@ -845,49 +845,72 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
      * Deletes and recreates the managed "Mindwtr" calendar so a color change takes
      * effect on Android. The provider ignores post-creation color updates, so the
      * only way to change the color third-party calendar apps render is to drop the
-     * calendar and create a fresh one with the already-stored color, then re-push
-     * its events. Serialized on the calendar sync queue so it cannot race a
-     * concurrent push and duplicate events (#743). Returns true when a new managed
-     * calendar was created.
+     * calendar and create a fresh one with the new color, then re-push its events.
+     * Serialized on the calendar sync queue so it cannot race a concurrent push and
+     * duplicate events (#743). The color is stored once the new calendar exists.
+     * Returns true when a new managed calendar was created.
      */
-    const recreateManagedMindwtrCalendar = async (): Promise<boolean> => {
+    const recreateManagedMindwtrCalendar = async (color: string): Promise<boolean> => {
         let recreatedId: string | null = null;
         await enqueueCalendarSync(async () => {
             await deleteMindwtrCalendar();
-            recreatedId = await ensureMindwtrCalendar();
+            recreatedId = await ensureMindwtrCalendar(color);
             if (!recreatedId) return;
+            await setCalendarPushColor(color);
             await runFullCalendarSyncUnsafe();
         });
         return recreatedId !== null;
     };
 
+    /**
+     * Gives the Mindwtr calendar a new color. The device calendar changes first and
+     * the color is stored after it, so a change cut short at any step is finished by
+     * a retry: one whose device calendar already has the color only stores it.
+     * Without a calendar (or when the device refuses) the color is stored for the
+     * calendar the app makes next, and the answer is false.
+     */
     const updateMindwtrCalendarColor = async (color: string): Promise<boolean> => {
         if (isSandboxMode()) return false;
-        const normalized = await setCalendarPushColor(color);
+        const normalized = normalizeCalendarPushColor(color);
         try {
-            if (typeof device.updateCalendar !== 'function') return false;
+            if (typeof device.updateCalendar !== 'function') {
+                await setCalendarPushColor(normalized);
+                return false;
+            }
             const storedCalendarId = await getStoredCalendarId();
             const calendars = await device.getCalendars();
             // Only the calendar the app saved (or one it made with its marker) is its own, never one found by its title.
             const ownId = storedCalendarId ?? await adoptPendingCalendar(calendars);
             const target = calendars.find((calendar) => ownId && calendar.id === ownId);
-            if (!target || !isWritableCalendar(target)) return false;
+            if (!target || !isWritableCalendar(target)) {
+                await setCalendarPushColor(normalized);
+                return false;
+            }
+            if ((target.color ?? '').trim().toUpperCase() === normalized) {
+                await setCalendarPushColor(normalized);
+                return true;
+            }
 
             // Android's CalendarProvider only stores a calendar's color at creation
             // time, and expo-calendar's update path never writes CALENDAR_COLOR, so
             // updating it in place never reaches third-party calendar apps (#726).
-            // Recreate the managed calendar with the freshly stored color instead.
+            // Recreate the managed calendar with the new color instead.
             if (host.os() === 'android') {
-                return await recreateManagedMindwtrCalendar();
+                if (await recreateManagedMindwtrCalendar(normalized)) return true;
+                await setCalendarPushColor(normalized);
+                return false;
             }
 
             await device.updateCalendar(target.id, { color: normalized });
+            await setCalendarPushColor(normalized);
             return true;
         } catch (error) {
             void log.warn('Failed to update Mindwtr calendar color', {
                 scope: 'calendar-push',
                 extra: { error: getCalendarErrorMessage(error) },
             });
+            // The calendar the app makes next takes it.
+            await setCalendarPushColor(normalized).catch(() => undefined);
             return false;
         }
     };
