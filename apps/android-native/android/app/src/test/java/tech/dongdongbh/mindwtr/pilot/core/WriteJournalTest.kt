@@ -142,6 +142,40 @@ class WriteJournalTest {
         assertEquals("0000000000000013.json", entry.file.name)
     }
 
+    // Review 3: an entry leaves (in memory too) only once its unlink is on disk: deleted, then the folder synced.
+    @Test fun aDropIsDurableBeforeTheEntryLeaves() {
+        val dir = File(folder.root, "journal")
+        val journal = open(dir)
+        val entry = journal.append("complete", listOf("task-1", "3:dev:2026"))!!
+        assertTrue(journal.settle(entry, null))
+        assertEquals(emptyList<String>(), syncs.last())
+        assertEquals(emptyList<WriteJournal.Entry>(), journal.pending())
+    }
+
+    @Test fun aDeleteThatFailsKeepsTheEntry() {
+        val dir = File(folder.root, "journal")
+        val journal = open(dir)
+        val entry = journal.append("complete", listOf("task-1", "3:dev:2026"))!!
+        dir.setWritable(false)
+        try {
+            assertFalse(journal.settle(entry, null))
+        } finally {
+            dir.setWritable(true)
+        }
+        assertTrue(entry.file.exists())
+        assertEquals(listOf(entry), journal.pending())
+    }
+
+    @Test fun aDropWhoseFolderSyncFailsKeepsTheEntry() {
+        val dir = File(folder.root, "journal")
+        var failing = false
+        val journal = WriteJournal(dir, syncDirectory = { if (failing) throw java.io.IOException("sync failed") }, log = { logged += it })
+        val entry = journal.append("complete", listOf("task-1", "3:dev:2026"))!!
+        failing = true
+        assertFalse(journal.settle(entry, null))
+        assertEquals(listOf(entry), journal.pending())
+    }
+
     @Test fun onlySaveFailedKeeps() {
         assertTrue(WriteJournal.keeps("SAVE_FAILED: Injected commit failure"))
         for (error in listOf(null, "STALE_REVISION: x", "INVALID_INPUT: x", "ACTION_FAILED: x", "Incomplete tasks load")) assertFalse(WriteJournal.keeps(error))

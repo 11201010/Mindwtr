@@ -403,9 +403,8 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
                 owed = failure.message ?: failure.javaClass.simpleName
                 break
             }
-            journal.settle(entry, error)
+            if (journal.settle(entry, error)) dropped += 1
             if (WriteJournal.keeps(error)) { owed = error; break }
-            dropped += 1
         }
         stopped?.let { throw IllegalStateException(it) }
         Replay(sent, dropped, journal.pending().size, owed).also {

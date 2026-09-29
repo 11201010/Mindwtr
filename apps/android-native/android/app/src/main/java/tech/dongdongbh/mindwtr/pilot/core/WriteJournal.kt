@@ -105,12 +105,25 @@ class WriteJournal(
         return Entry(file, method, args.map { it!! }, text).also { entries += it }
     }
 
-    /** Core's final reply for [entry] ([error] null for a success): the entry goes, unless the reply [keeps] it. */
-    fun settle(entry: Entry, error: String?) {
-        if (keeps(error)) return
+    /**
+     * Core's final reply for [entry] ([error] null for a success): the entry goes, unless the reply [keeps] it. True once it is
+     * gone. It leaves (in memory too) only after its delete and the folder sync: a delete or a sync that fails keeps it for the
+     * next boot's replay (core's crash-safe commands allow that), and no receipt it may need is pruned while it stays.
+     */
+    fun settle(entry: Entry, error: String?): Boolean {
+        if (keeps(error)) return false
+        if (!entry.file.delete() && entry.file.exists()) {
+            log("Native Android journal entry not deleted ${entry.file.name}")
+            return false
+        }
+        try {
+            syncDirectory(dir)
+        } catch (failure: Exception) {
+            log("Native Android journal delete not synced ${entry.file.name}")
+            return false
+        }
         entries.remove(entry)
-        // A delete that fails leaves the entry for the next boot's replay, which core's crash-safe commands allow.
-        if (!entry.file.delete() && entry.file.exists()) log("Native Android journal entry not deleted ${entry.file.name}")
+        return true
     }
 
     private fun read(file: File): Entry? {

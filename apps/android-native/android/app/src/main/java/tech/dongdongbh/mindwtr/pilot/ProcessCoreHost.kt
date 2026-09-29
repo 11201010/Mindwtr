@@ -113,8 +113,10 @@ internal object ProcessCoreHost {
      * receipts, so an entry never outlives the receipt its replay needs; a failed prune only logs (the next boot prunes).
      */
     private fun replay(runtime: CoreHost) {
-        val owed = runtime.replayJournal().owed
-        if (owed != null) return recordFailure(PendingFailure(FailedAction("journal", ""), owed, null))
+        val replay = runtime.replayJournal()
+        replay.owed?.let { return recordFailure(PendingFailure(FailedAction("journal", ""), it, null)) }
+        // Only once the journal is empty on disk: an entry whose delete did not reach the disk still needs its receipt.
+        if (replay.left > 0) return
         runCatching { runtime.pruneReceipts() }
             .onSuccess { Log.i(CoreHost.TAG, "Native Android receipts pruned=${it.optInt("pruned")}") }
             .onFailure { Log.w(CoreHost.TAG, "Native Android receipts prune failed", it) }

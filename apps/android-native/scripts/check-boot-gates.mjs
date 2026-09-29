@@ -759,16 +759,17 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(coreHost, /val stop = if \(entry != null\) debugFault\("journal_stop"\) else ""/, 'the stop hook is debug-only');
     // Drop and keep: SAVE_FAILED keeps an entry, every other reply drops it; no reply (a throw) leaves it.
     assert.match(journalKt, /fun keeps\(error: String\?\): Boolean = error\?\.startsWith\("SAVE_FAILED"\) == true/);
-    assert.match(journalKt, /fun settle\(entry: Entry, error: String\?\) \{\s+if \(keeps\(error\)\) return\s+entries\.remove\(entry\)/);
+    // An entry leaves (in memory too) only after its delete and the folder sync; a failed one stays for the next boot.
+    assert.match(journalKt, /fun settle\(entry: Entry, error: String\?\): Boolean \{\s+if \(keeps\(error\)\) return false\s+if \(!entry\.file\.delete\(\) && entry\.file\.exists\(\)\) \{\s+log\([^\n]*\)\s+return false\s+\}\s+try \{\s+syncDirectory\(dir\)\s+\} catch \(failure: Exception\) \{\s+log\([^\n]*\)\s+return false\s+\}\s+entries\.remove\(entry\)\s+return true/);
     assert.match(journalKt, /entries\.firstOrNull \{ it\.text == text \}\?\.let \{ return it \}/, 'an owed retry reuses its entry');
     assert.match(journalKt, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(text\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)[\s\S]*?syncDirectory\(dir\)\s+return Entry/);
     // Replay: in journal order, one at a time, stopped by a kept entry or no reply; at boot after the validated load and the
     // language, before this boot hands the host to any screen (get() waits on the boot); a stop is the screens' owed retry.
     const replayFn = coreHost.slice(coreHost.indexOf('fun replayJournal()'), coreHost.indexOf('private fun journalStop('));
-    assert.match(replayFn, /for \(entry in journal\.pending\(\)\) \{[\s\S]*?answer\(entry\.method, entry\.args\.toTypedArray\(\), OPERATION_DEADLINE_MS\)\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+journal\.settle\(entry, error\)\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
+    assert.match(replayFn, /for \(entry in journal\.pending\(\)\) \{[\s\S]*?answer\(entry\.method, entry\.args\.toTypedArray\(\), OPERATION_DEADLINE_MS\)\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(journal\.settle\(entry, error\)\) dropped \+= 1\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
     assert.match(replayFn, /Log\.i\(TAG, "Native Android journal replay sent=/);
     assert(coreHost.indexOf('journal = WriteJournal(journalDir') < coreHost.indexOf('engine.evaluate(bundle'));
-    assert.match(owner, /private fun replay\(runtime: CoreHost\) \{\s+val owed = runtime\.replayJournal\(\)\.owed\s+if \(owed != null\) return recordFailure\(PendingFailure\(FailedAction\("journal", ""\), owed, null\)\)\s+runCatching \{ runtime\.pruneReceipts\(\) \}/);
+    assert.match(owner, /private fun replay\(runtime: CoreHost\) \{\s+val replay = runtime\.replayJournal\(\)\s+replay\.owed\?\.let \{ return recordFailure\(PendingFailure\(FailedAction\("journal", ""\), it, null\)\) \}\s+\/\/[^\n]*\s+if \(replay\.left > 0\) return\s+runCatching \{ runtime\.pruneReceipts\(\) \}/);
     // Core's receipts are pruned once per boot, and only after a replay that left nothing: never before the replay, never while an
     // entry that may need its receipt is left.
     assert.match(coreHost, /fun pruneReceipts\(\): JSONObject = callAsync\("pruneReceipts"\)/);
@@ -779,7 +780,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // The JVM tests keep the file rules (order, the atomic write, drop and keep, move-aside, writes only).
     const journalTest = readFileSync(resolve(app, 'android/app/src/test/java/tech/dongdongbh/mindwtr/pilot/core/WriteJournalTest.kt'), 'utf8');
     for (const name of ['entriesKeepTheirOrderAcrossAReopen', 'anEntryIsDurableBeforeAppendReturns', 'aWriteCutShortIsNeverAnEntry', 'anyFinalReplyDropsTheEntry',
-        'saveFailedKeepsTheEntryAndItsRetryReusesIt', 'damagedOrUnknownEntriesMoveAsideAndAreNeverReplayed', 'onlyWriteMethodsAreJournaled', 'onlySaveFailedKeeps']) {
+        'saveFailedKeepsTheEntryAndItsRetryReusesIt', 'damagedOrUnknownEntriesMoveAsideAndAreNeverReplayed', 'onlyWriteMethodsAreJournaled', 'onlySaveFailedKeeps',
+        'aJournalThatCannotBeListedRefusesToOpen', 'anAppendNeverReplacesAnEntryOnDisk', 'theSequenceResumesAfterTheHighestNameSeen',
+        'aDropIsDurableBeforeTheEntryLeaves', 'aDeleteThatFailsKeepsTheEntry', 'aDropWhoseFolderSyncFailsKeepsTheEntry']) {
         assert.match(journalTest, new RegExp(`@Test fun ${name}\\(\\)`));
     }
 }
