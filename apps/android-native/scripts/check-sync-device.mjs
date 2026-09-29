@@ -178,8 +178,10 @@ const tapTag = async (tag, expected, description, timeoutMs = 30_000) => {
 };
 /** The status line under Last sync, and the failure line under it (the danger color), as the screen shows them. */
 const statusLine = async () => {
-    const nodes = await reveal((current) => tagged(current, 'sync-status'), 'the Last sync status');
-    return { status: tagged(nodes, 'sync-status')?.text ?? '', error: tagged(nodes, 'sync-error')?.text ?? null };
+    const status = (await reveal((current) => tagged(current, 'sync-status'), 'the Last sync status')).text ?? '';
+    const error = status.endsWith(en['settings.syncStatusFailedSuffix'])
+        ? (await reveal((current) => tagged(current, 'sync-error'), 'the failure line')).text ?? null : null;
+    return { status, error };
 };
 /** The Allow insecure HTTP switch of the open form, turned on. */
 const insecureOn = async () => {
