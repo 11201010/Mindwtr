@@ -7,6 +7,9 @@ describe('Settings › Calendar rules', () => {
         expect(maskCalendarFeedUrl('user@calendar.example.com/private/feed')).toBe('calendar.example.com/...feed');
         expect(maskCalendarFeedUrl(' https://calendar.example.com/team/basic.ics ')).toBe('https://calendar.example.com/...ic.ics');
         expect(maskCalendarFeedUrl('content://downloads/42')).toBe('content:/...42');
+        // Any scheme, even without a path.
+        expect(maskCalendarFeedUrl('webcal://alex:s3cret@h')).not.toMatch(/alex|s3cret|cret/);
+        expect(maskCalendarFeedUrl('webcal://alex:s3cret@calendar.example.com/team.ics')).toBe('webcal:/...am.ics');
     });
 
     it('writes nothing when a color is picked again', () => {

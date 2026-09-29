@@ -258,14 +258,14 @@ export const removeCalendarFeed = (feeds: readonly ExternalCalendarSubscription[
 
 /** A subscription's URL as the list shows it: the scheme, the host (without credentials) and the end of the path. */
 export const maskCalendarFeedUrl = (url: string): string => {
-    const trimmed = url.trim();
+    // A URL's user name and password never show, whatever its scheme (webcal:// too).
+    const trimmed = url.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i, '$1');
     if (!trimmed) return '';
     const match = trimmed.match(/^(https?:\/\/)?([^/?#]+)([^?#]*)/i);
     if (!match) {
         return trimmed.length <= 8 ? '...' : `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
     }
     const protocol = match[1] ?? '';
-    // A URL's user name and password never show.
     const host = (match[2] ?? '').replace(/^.*@/, '');
     const path = match[3] ?? '';
     const lastSegment = path.split('/').filter(Boolean).pop() ?? '';
