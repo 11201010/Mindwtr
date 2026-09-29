@@ -5,21 +5,17 @@ set -euo pipefail
 
 requested="${1:-26}"
 case "$requested" in
-  26|27|27.0) ;;
+  26|27) ;;
   *) echo "Unsupported iOS SDK major: $requested" >&2; exit 1 ;;
 esac
 
 applications="${MINDWTR_XCODE_APPLICATIONS_DIR:-/Applications}"
 selected=""
-pattern="Xcode_${requested}*.app"
-if [[ "$requested" == *.* ]]; then
-  pattern="Xcode_${requested}.app"
-fi
 while IFS= read -r candidate; do
   if [ -d "$candidate/Contents/Developer" ]; then
     selected="$candidate/Contents/Developer"
   fi
-done < <(find "$applications" -maxdepth 1 -type d -name "$pattern" | sort -V)
+done < <(find "$applications" -maxdepth 1 -type d -name "Xcode_${requested}*.app" | sort -V)
 
 if [ -z "$selected" ]; then
   echo "Required Xcode $requested is not installed in $applications. Validation did not run." >&2
@@ -29,7 +25,7 @@ fi
 export DEVELOPER_DIR="$selected"
 xcodebuild -version
 sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
-if { [[ "$requested" == *.* ]] && [ "$sdk_version" != "$requested" ]; } || { [[ "$requested" != *.* ]] && [ "${sdk_version%%.*}" != "$requested" ]; }; then
+if [ "${sdk_version%%.*}" != "$requested" ]; then
   echo "Requested iOS SDK $requested, but selected Xcode provides $sdk_version." >&2
   exit 1
 fi
