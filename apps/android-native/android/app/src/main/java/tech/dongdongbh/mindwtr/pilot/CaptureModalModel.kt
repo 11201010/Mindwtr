@@ -22,6 +22,9 @@ import java.util.UUID
 /** The capture screen's Save and Create tasks (host-entry.ts captureModalSubmit and captureModalLines); core can refuse each before writing. */
 val CAPTURE_MODAL_KINDS = setOf("captureModal", "captureModalLines")
 
+/** A read of core's view for the draft as it is (no edit), queued with the edits. */
+private val READ = JSONObject().put("read", true)
+
 /**
  * The open screen. [params] are the entry's route params and [draft] core's draft (the typed text and description on top of
  * core's last), both sent with every call; [view] is core's last view. [edits] wait for core and go one at a time; they are
@@ -97,7 +100,8 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
     fun resume() {
         val restored = stored()?.takeIf { saved.get<Boolean>("captureModal") == true || it.pending != null }
         if (restored == null) { keep(null); return }
-        keep(restored)
+        // Core's view as it reads now: the data, the language or the minute may have moved since it was saved.
+        keep(restored.copy(edits = restored.edits + READ))
         val action = restored.pending ?: return pump()
         if (shell.failedAction != null) return
         shell.owe(action)
@@ -137,12 +141,14 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
         val next = current.edits.firstOrNull()
         if (next == null) { current.queuedSave?.let(::save); return }
         inFlight = next
-        val request = JSONObject().put("params", current.params).put("draft", current.draft).put("edit", next)
-        shell.background(emptyList(), { runtime -> runCatching { runtime.menuRead("captureModalEdit", request.toString()) } }) { reply, _ ->
+        val read = next.optBoolean("read")
+        val request = JSONObject().put("params", current.params).put("draft", current.draft).apply { if (!read) put("edit", next) }
+        shell.background(emptyList(), { runtime -> runCatching { runtime.menuRead(if (read) "captureModalView" else "captureModalEdit", request.toString()) } }) { reply, _ ->
             if (inFlight === next) inFlight = null
             // A reply counts only for its screen and the edit it answers, still first in the queue.
             val now = open?.takeIf { it.session == current.session && it.edits.firstOrNull() === next } ?: return@background pump()
             reply.onSuccess { result ->
+                if (read) return@onSuccess keep(now.copy(view = result, edits = now.edits.drop(1)))
                 // The fields keep what was typed since: that keystroke's own edit still waits.
                 val draft = result.getJSONObject("draft").put("text", now.draft.getString("text")).put("description", now.draft.getString("description"))
                 keep(now.copy(draft = draft, view = result.getJSONObject("view"), edits = now.edits.drop(1)))

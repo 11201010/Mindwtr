@@ -423,6 +423,7 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     captureImport: (input) => contract.planQuickCaptureImport(input),
     // The capture screen an entry opens (native-host-contract-capture-modal.ts): its open, its edits and its Cancel write nothing.
     captureModalOpen: (input) => contract.openCaptureModal(input),
+    captureModalView: (input) => contract.getCaptureModalView(input),
     captureModalEdit: (input) => contract.editCaptureModal(input),
     captureModalDiscard: (input) => contract.discardCaptureModal(input),
 };

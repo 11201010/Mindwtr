@@ -2463,7 +2463,8 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
 {
     const modalKt = captureModalModel;
     const entryKt = source('EntryPoints.kt');
-    for (const [name, call] of [['captureModalOpen', 'openCaptureModal'], ['captureModalEdit', 'editCaptureModal'], ['captureModalDiscard', 'discardCaptureModal']]) {
+    for (const [name, call] of [['captureModalOpen', 'openCaptureModal'], ['captureModalView', 'getCaptureModalView'], ['captureModalEdit', 'editCaptureModal'],
+        ['captureModalDiscard', 'discardCaptureModal']]) {
         assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${call}\\(input\\),$`, 'm'), `${name} is a Menu read`);
     }
     for (const [method, operation, call] of [['captureModalSubmit', 'captureModal', 'submitCaptureModal'], ['captureModalLines', 'captureModalLines', 'submitCaptureModalLines']]) {
@@ -2489,6 +2490,9 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(model, /val captureModal = CaptureModalModel\(this, saved, File\(app\.noBackupFilesDir, "capture-modal"\)\)/);
     // After process death the screen comes back (an owed request is sent again first); an owed failure in this process reopens it.
     assert.match(model, /menu\.start\(sheet\)\s+captureModal\.resume\(\)/);
+    // A screen restored from disk shows core's view as core reads it now (the data, the language or the minute may have moved).
+    assert.match(modalKt, /keep\(restored\.copy\(edits = restored\.edits \+ READ\)\)/);
+    assert.match(modalKt, /runtime\.menuRead\(if \(read\) "captureModalView" else "captureModalEdit", request\.toString\(\)\)/);
     assert.match(model, /if \(action\.kind in CAPTURE_MODAL_KINDS\) captureModal\.restored\(action\)/);
     assert.match(model, /"captureModal", "captureModalLines" -> captureModal\.retry\(action\)/);
     // Every control sends core's own edit; Kotlin builds only the typed fields' edits.
@@ -2626,6 +2630,7 @@ export function createNativeHostContract() {
     async submitQuickCaptureLines(input) { globalThis.captureInputs.push(JSON.stringify(['lines', input])); return { ok: true, value: { kind: 'saved', taskIds: input.captureIds } }; },
     async submitQuickCapturePickerQuery(input) { globalThis.captureInputs.push(JSON.stringify(['picker', input])); return { ok: true, value: { options: input.options, created: true } }; },
     openCaptureModal(input) { globalThis.captureInputs.push(JSON.stringify(['modalOpen', input])); return { ok: true, value: { draft: { text: '' }, view: { version: 1 } } }; },
+    getCaptureModalView(input) { globalThis.captureInputs.push(JSON.stringify(['modalView', input])); return { ok: true, value: { version: 1 } }; },
     editCaptureModal(input) { globalThis.captureInputs.push(JSON.stringify(['modalEdit', input])); return { ok: true, value: { draft: input.draft, view: { version: 1 } } }; },
     discardCaptureModal(input) { globalThis.captureInputs.push(JSON.stringify(['modalDiscard', input])); return { ok: true, value: { close: { returnTo: null, returnToPreviousApp: false } } }; },
     async submitCaptureModal(input) { globalThis.captureInputs.push(JSON.stringify(['modalSubmit', input])); return { ok: true, value: { kind: 'saved', taskId: input.captureId, projectId: null, next: 'close', close: { returnTo: null, returnToPreviousApp: false } } }; },
@@ -2812,13 +2817,15 @@ assert.deepEqual(await poll(ready, ready.MindwtrHost.pruneReceipts()), { ok: tru
 {
     const params = { initialValue: 'Buy%20milk', project: 'Home' };
     const draft = { text: 'Buy milk', description: '', showHelp: false, suggestion: null, applied: { tags: [] }, failed: false };
-    const reads = [['captureModalOpen', { params }], ['captureModalEdit', { params, draft, edit: { type: 'toggleHelp' } }], ['captureModalDiscard', { params }]];
+    const reads = [['captureModalOpen', { params }], ['captureModalView', { params, draft }], ['captureModalEdit', { params, draft, edit: { type: 'toggleHelp' } }],
+        ['captureModalDiscard', { params }]];
     for (const [name, input] of reads) assert.equal((await poll(ready, ready.MindwtrHost.menuRead(name, JSON.stringify(input)))).ok, true, `menuRead ${name}`);
     const submitInput = { params, draft, captureId: '5', openAfterSave: true };
     assert.equal((await poll(ready, ready.MindwtrHost.captureModalSubmit(JSON.stringify(submitInput)))).value.taskId, '5');
     const linesInput = { params, draft: { ...draft, text: 'a\nb' }, captureIds: ['6', '7'] };
     assert.deepEqual((await poll(ready, ready.MindwtrHost.captureModalLines(JSON.stringify(linesInput)))).value.taskIds, ['6', '7']);
-    assert.deepEqual(ready.captureInputs, [JSON.stringify(['modalOpen', reads[0][1]]), JSON.stringify(['modalEdit', reads[1][1]]), JSON.stringify(['modalDiscard', reads[2][1]]),
+    assert.deepEqual(ready.captureInputs, [JSON.stringify(['modalOpen', reads[0][1]]), JSON.stringify(['modalView', reads[1][1]]), JSON.stringify(['modalEdit', reads[2][1]]),
+        JSON.stringify(['modalDiscard', reads[3][1]]),
         JSON.stringify(['modalSubmit', submitInput]), JSON.stringify(['modalLines', linesInput])]);
     ready.captureInputs.length = 0;
 }
