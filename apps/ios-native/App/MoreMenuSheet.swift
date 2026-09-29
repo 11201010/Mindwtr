@@ -65,11 +65,13 @@ struct MoreMenuSheet: View {
         let isHistory = item.text("id") == "history" && item.text("route") == "/history"
         let isTrash = item.text("id") == "trash" && item.text("route") == "/trash"
         let isBoard = item.text("id") == "board" && item.text("route") == "/board"
-        let supported = isHistory || isTrash || isBoard
+        let isSettings = item.text("id") == "settings" && item.text("route") == "/settings"
+        let supported = isHistory || isTrash || isBoard || isSettings
         return Button {
             if isHistory { Task { await model.openHistory() } }
             else if isTrash { Task { await model.openTrash() } }
             else if isBoard { Task { await model.openBoard() } }
+            else if isSettings { Task { await model.openSettings() } }
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: item.text("icon")).font(.system(size: 18))

@@ -3546,6 +3546,289 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task83OpenManage(_ app: XCUIApplication, search: Bool = false, ensureOpen: Bool = true) {
+        let entry = app.buttons.matching(NSPredicate(
+            format: "identifier == %@ OR identifier == %@ OR identifier == %@",
+            "manage-back", "settings-back", "tab-menu")).firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 30))
+        if !app.buttons["manage-back"].exists {
+            if !app.buttons["settings-back"].exists {
+                boardTap(app, "tab-menu")
+                let settings = app.buttons["menu-settings"]
+                if !settings.isHittable {
+                    revealPagedElement(app, settings,
+                        in: app.scrollViews.containing(.button, identifier: "menu-projects").firstMatch)
+                }
+                boardTap(app, "menu-settings")
+            }
+            let query = app.textFields["settings-search"]
+            boardEnabled(query)
+            if search { query.tap(); query.typeText("Manage") }
+            boardTap(app, "settings-manage")
+        }
+        boardEnabled(app.buttons["manage-back"])
+        if ensureOpen {
+            let toggle = app.buttons["manage-section-toggle-someday-sections"]
+            boardEnabled(toggle)
+            if toggle.value as? String == "collapsed" {
+                task83ToggleSomeday(app, open: false, tap: true)
+                task83ToggleSomeday(app, open: true)
+            }
+        }
+    }
+
+    private func task83RenameInput(_ app: XCUIApplication, index: Int, title: String) -> XCUIElement {
+        let pencil = app.buttons["manage-someday-rename-\(index)"]
+        revealPagedElement(app, pencil, in: app.scrollViews["manage-someday-scroll"],
+            more: "manage-someday-more", ready: app.buttons["manage-back"])
+        XCTAssertGreaterThanOrEqual(pencil.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(pencil.frame.height, 44 - 0.001)
+        boardTap(app, pencil.identifier)
+        let input = app.textFields["manage-someday-name"]
+        boardEnabled(input)
+        XCTAssertEqual(input.value as? String, title)
+        XCTAssertLessThanOrEqual(input.frame.maxX, app.buttons["manage-someday-cancel"].frame.minX)
+        for id in ["manage-someday-save", "manage-someday-cancel"] {
+            let control = app.buttons[id]
+            boardEnabled(control)
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44 - 0.001)
+        }
+        return input
+    }
+
+    private func task83AssertRow(_ app: XCUIApplication, index: Int, title: String) {
+        let pencil = app.buttons["manage-someday-rename-\(index)"]
+        revealPagedElement(app, pencil, in: app.scrollViews["manage-someday-scroll"],
+            more: "manage-someday-more", ready: app.buttons["manage-back"])
+        let row = app.descendants(matching: .any).matching(identifier: "manage-someday-row-\(index)").firstMatch
+        XCTAssertTrue(row.exists)
+        XCTAssertEqual(row.label, title, "Unexpected title in row \(index)")
+    }
+
+    private func task83ToggleSomeday(_ app: XCUIApplication, open: Bool, tap: Bool = false) {
+        let toggle = app.buttons["manage-section-toggle-someday-sections"]
+        revealPagedElement(app, toggle, in: app.scrollViews["manage-someday-scroll"])
+        boardEnabled(toggle)
+        expectation(for: NSPredicate(format: "value == %@", open ? "expanded" : "collapsed"), evaluatedWith: toggle)
+        waitForExpectations(timeout: 10)
+        if tap { toggle.tap() }
+    }
+
+    func testSomedayManageRenameNormalAndRestart() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8dce5c1e-4ff3-4b0b-bf5f-5ee56aae0258"]
+        app.launch(); task83OpenManage(app, search: true)
+        task83AssertRow(app, index: 0, title: "Imported none")
+        let canceled = task83RenameInput(app, index: 0, title: "Imported none")
+        XCTAssertFalse(app.buttons["manage-someday-rename-1"].isEnabled)
+        replaceTextView(canceled, with: "Canceled title")
+        boardTap(app, "manage-someday-cancel")
+        task83AssertRow(app, index: 0, title: "Imported none")
+
+        let trimmed = task83RenameInput(app, index: 0, title: "Imported none")
+        replaceTextView(trimmed, with: "  Renamed none  ")
+        boardTap(app, "manage-someday-save")
+        task83AssertRow(app, index: 0, title: "Renamed none")
+        let caseOnly = task83RenameInput(app, index: 0, title: "Renamed none")
+        replaceTextView(caseOnly, with: "RENAMED NONE")
+        boardTap(app, "manage-someday-save")
+        task83AssertRow(app, index: 0, title: "RENAMED NONE")
+        let duplicate = task83RenameInput(app, index: 0, title: "RENAMED NONE")
+        replaceTextView(duplicate, with: "  Duplicate  ")
+        boardTap(app, "manage-someday-save")
+        task83AssertRow(app, index: 0, title: "Duplicate")
+        task83AssertRow(app, index: 1, title: "Duplicate")
+
+        task83ToggleSomeday(app, open: true, tap: true)
+        task83ToggleSomeday(app, open: false)
+        boardTap(app, "manage-back")
+        XCTAssertEqual(app.textFields["settings-search"].value as? String, "Manage")
+        boardTap(app, "settings-manage")
+        task83ToggleSomeday(app, open: false, tap: true)
+        task83AssertRow(app, index: 0, title: "Duplicate")
+        boardTap(app, "manage-back")
+        boardTap(app, "settings-back")
+        XCTAssertTrue(app.buttons["tab-menu"].waitForExistence(timeout: 10))
+        app.terminate(); app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 0, title: "Duplicate")
+        task83AssertRow(app, index: 1, title: "Duplicate")
+        app.terminate()
+    }
+
+    func testSomedayManageRenameLargestTextReturn() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8df70843-090c-4b21-a4ea-d71ec332258d"]
+        app.launch(); task83OpenManage(app)
+        let input = task83RenameInput(app, index: 0, title: "Imported none")
+        replaceTextView(input, with: "  Task83 Large  ")
+        let draftShot = XCTAttachment(screenshot: app.screenshot())
+        draftShot.name = "Largest Someday Rename draft"; draftShot.lifetime = .keepAlways; add(draftShot)
+        input.typeText("\n")
+        task83AssertRow(app, index: 0, title: "Task83 Large")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Largest Someday section Rename"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 0, title: "Task83 Large")
+        app.terminate()
+    }
+
+    func testSomedayManageRenameCancelBlankAndExactNoop() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "88ae830e-b3ec-4039-a804-f0200fe4d9b8"]
+        app.launch(); task83OpenManage(app)
+        let canceled = task83RenameInput(app, index: 0, title: "Imported none")
+        replaceTextView(canceled, with: "Canceled title")
+        boardTap(app, "manage-someday-cancel")
+        task83AssertRow(app, index: 0, title: "Imported none")
+        let blank = task83RenameInput(app, index: 0, title: "Imported none")
+        replaceTextView(blank, with: "   ")
+        XCTAssertFalse(app.buttons["manage-someday-save"].isEnabled)
+        boardTap(app, "manage-someday-cancel")
+        let noOp = task83RenameInput(app, index: 0, title: "Imported none")
+        replaceTextView(noOp, with: "Imported none")
+        boardTap(app, "manage-someday-save")
+        task83AssertRow(app, index: 0, title: "Imported none")
+        XCTAssertFalse(app.staticTexts["manage-someday-error"].exists)
+        app.terminate()
+    }
+
+    func testSomedayManageRenameLastPagedSection() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "7f992840-5b9f-4378-a6a5-53a168334329"]
+        app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 105, title: "Task83 Last section")
+        let input = task83RenameInput(app, index: 105, title: "Task83 Last section")
+        replaceTextView(input, with: "Task83 Paged renamed")
+        boardTap(app, "manage-someday-save")
+        task83AssertRow(app, index: 105, title: "Task83 Paged renamed")
+        app.terminate(); app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 105, title: "Task83 Paged renamed")
+        app.terminate()
+    }
+
+    func testSomedayManageRenamePostAckReadRetryOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "1058a408-0c77-4d6b-b302-05dd844db23d",
+                               "--native-someday-rename-read-failure"]
+        app.launch(); task83OpenManage(app)
+        let input = task83RenameInput(app, index: 0, title: "Imported none")
+        replaceTextView(input, with: "  Task83 Read retry  ")
+        boardTap(app, "manage-someday-save")
+        let failure = app.staticTexts["manage-someday-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+        for attempt in 0..<2 {
+            boardTap(app, "manage-someday-retry")
+            if attempt == 0 {
+                XCTAssertTrue(failure.waitForExistence(timeout: 20))
+                boardEnabled(app.buttons["manage-someday-retry"], timeout: 20)
+            }
+        }
+        task83AssertRow(app, index: 0, title: "Task83 Read retry")
+        XCTAssertFalse(failure.exists)
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", "1058a408-0c77-4d6b-b302-05dd844db23d"]
+        app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 0, title: "Task83 Read retry")
+        app.terminate()
+    }
+
+    func testSomedayManageReadRetriesKeepTargetAndDisclosure() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "e312f8f1-0f8c-4273-901f-48a7e327129c",
+                               "--native-manage-toggle-read-failure", "--native-someday-rename-options-failure"]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        task83ToggleSomeday(app, open: false, tap: true)
+        let failure = app.staticTexts["manage-someday-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        let toggle = app.buttons["manage-section-toggle-someday-sections"]
+        XCTAssertEqual(toggle.value as? String, "collapsed")
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "manage-someday-row-0").firstMatch.exists)
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertEqual(toggle.value as? String, "collapsed")
+        boardTap(app, "manage-someday-retry")
+        task83ToggleSomeday(app, open: true)
+        task83AssertRow(app, index: 0, title: "Imported none")
+
+        boardTap(app, "manage-someday-rename-0")
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.textFields["manage-someday-name"].exists)
+        let target = app.descendants(matching: .any).matching(identifier: "manage-someday-row-0").firstMatch
+        XCTAssertEqual(target.label, "Imported none")
+        XCTAssertFalse(app.buttons["manage-someday-rename-0"].isEnabled)
+        boardTap(app, "manage-someday-retry")
+        let input = app.textFields["manage-someday-name"]
+        boardEnabled(input)
+        XCTAssertEqual(input.value as? String, "Imported none")
+        boardTap(app, "manage-someday-cancel")
+        task83AssertRow(app, index: 0, title: "Imported none")
+        XCTAssertFalse(failure.exists)
+        app.terminate()
+    }
+
+    /// Run before the paired cold test while the fixture rejects the intended settings update.
+    func testSomedayManageRenameFailedSaveKeepsExactRequest() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "d89ccaf6-8589-4a17-a1d1-dc6504dcd2dc"]
+        app.launch(); task83OpenManage(app)
+        let input = task83RenameInput(app, index: 0, title: "Imported none")
+        replaceTextView(input, with: "  Task83 Save retry  ")
+        boardTap(app, "manage-someday-save")
+        let failure = app.staticTexts["manage-someday-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertEqual(input.value as? String, "  Task83 Save retry  ")
+            XCTAssertFalse(input.isEnabled)
+            XCTAssertFalse(app.buttons["manage-someday-save"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-someday-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+            boardTap(app, "manage-someday-retry")
+            boardEnabled(app.buttons["manage-someday-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    /// Root disarms the failure trigger but retains the same pending journal.
+    func testSomedayManageRenameColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "d89ccaf6-8589-4a17-a1d1-dc6504dcd2dc"]
+        app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 0, title: "Task83 Save retry")
+        XCTAssertFalse(app.staticTexts["manage-someday-error"].exists)
+        XCTAssertFalse(app.textFields["manage-someday-name"].exists)
+        app.terminate(); app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 0, title: "Task83 Save retry")
+        app.terminate()
+    }
+
+    func testSomedayManageLegacyDisclosureImport() { task83LegacyDisclosure(open: true) }
+    func testSomedayManageNativeDisclosureOverride() { task83LegacyDisclosure(open: false) }
+
+    private func task83LegacyDisclosure(open: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-rn-rehearsal"]
+        for _ in 0..<2 {
+            app.launch(); task83OpenManage(app, ensureOpen: false)
+            let row = app.descendants(matching: .any).matching(identifier: "manage-someday-row-0").firstMatch
+            task83ToggleSomeday(app, open: open)
+            if open { task83AssertRow(app, index: 0, title: "Task83 imported section") }
+            else { XCTAssertFalse(row.exists) }
+            app.terminate()
+        }
+    }
+
     func testWaitingPersonSearchEditCompleteAndRestart() {
         let app = XCUIApplication()
         app.launch()

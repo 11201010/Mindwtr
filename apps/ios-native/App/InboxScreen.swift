@@ -49,6 +49,8 @@ struct InboxScreen: View {
                             menuListHeader
                             SomedayScreen(model: model, palette: palette)
                                 .accessibilityAction(.escape) { Task { await model.closeSomeday() } }
+                        } else if model.selectedSurface == .settings {
+                            SettingsScreen(model: model, palette: palette)
                         } else if model.selectedSurface == .trash {
                             menuListHeader
                             TrashScreen(model: model, palette: palette)
@@ -85,7 +87,8 @@ struct InboxScreen: View {
                             && !(model.somedayPanel == "newSection" && model.somedaySectionCreateError != nil)
                             && !(model.somedayPanel == "newSectionTask" && model.somedaySectionTaskError != nil)
                             && !(model.somedayPanel == "moveSection" && model.somedayMoveError != nil)
-                            && !(model.selectedSurface == .someday && model.somedayMoveUndoError != nil) {
+                            && !(model.selectedSurface == .someday && model.somedayMoveUndoError != nil)
+                            && !(model.selectedSurface == .settings && model.somedaySectionRenameError != nil) {
                             FailureBanner(model: model, palette: palette)
                         }
                     }
@@ -98,7 +101,8 @@ struct InboxScreen: View {
                 }
                 if model.selectedSurface != .search && model.selectedSurface != .project && model.selectedSurface != .waiting
                     && model.selectedSurface != .someday && model.selectedSurface != .reference && model.selectedSurface != .history
-                    && model.selectedSurface != .trash && model.selectedSurface != .contexts {
+                    && model.selectedSurface != .trash && model.selectedSurface != .contexts
+                    && model.selectedSurface != .settings {
                     tabBar
                 }
             }

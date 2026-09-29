@@ -48,6 +48,8 @@ import { deterministicHash128, generateDeterministicUUID } from './uuid';
  *   a replay finds the row it made.
  */
 export type NativeRequestReceipts = {
+    /** Check ownership without reserving an ID, writing, or saving. */
+    checkIdentity(requestId: unknown, payload: string): NativeHostResult<null>;
     run<T>(requestId: unknown, payload: string, write: () => Promise<NativeHostResult<T> | NativeUnsavedWrite<T>>): Promise<NativeHostResult<T>>;
 };
 
@@ -369,6 +371,21 @@ export function createNativeRequestReceipts(options: {
     const limit = options.limit ?? 50;
     const receipts = new Map<string, Receipt>();
 
+    const checkIdentity = (requestId: unknown, payload: string): NativeHostResult<null> => {
+        if (typeof requestId !== 'string' || !REQUEST_ID_PATTERN.test(requestId)) {
+            return { ok: false, error: { code: 'INVALID_INPUT', message: 'A request UUID is required' } };
+        }
+        const known = receipts.get(requestId);
+        const stored = durableReceipts?.get(requestId);
+        const owner = requestPayloads.get(requestId);
+        const pending = pendingReceipts.get(requestId);
+        if ((known && known.payload !== payload) || (stored && stored.fingerprint !== fingerprintOf(payload))
+            || (owner !== undefined && owner !== payload) || (pending && pending.fingerprint !== fingerprintOf(payload))) {
+            return { ok: false, error: { code: 'INVALID_INPUT', message: 'Request ID already belongs to another action' } };
+        }
+        return { ok: true, value: null };
+    };
+
     const save = async (requestId: string, receipt: Receipt): Promise<NativeHostResult<unknown>> => {
         // A successful save stores the whole snapshot, so every write that landed before it
         // began is durable too. A write that lands while it runs waits for its own save.
@@ -401,33 +418,24 @@ export function createNativeRequestReceipts(options: {
     };
 
     return {
+        checkIdentity,
         run<T>(requestId: unknown, payload: string, write: () => Promise<NativeHostResult<T> | NativeUnsavedWrite<T>>): Promise<NativeHostResult<T>> {
-            if (typeof requestId !== 'string' || !REQUEST_ID_PATTERN.test(requestId)) {
-                return Promise.resolve({ ok: false, error: { code: 'INVALID_INPUT', message: 'A request UUID is required' } });
-            }
-            const known = receipts.get(requestId);
-            if (known && known.payload !== payload) {
-                return Promise.resolve({ ok: false, error: { code: 'INVALID_INPUT', message: 'Request ID already belongs to another action' } });
-            }
+            const identity = checkIdentity(requestId, payload);
+            if (!identity.ok) return Promise.resolve(identity);
+            // checkIdentity established the UUID shape without reserving it.
+            const id = requestId as string;
+            const known = receipts.get(id);
             if (known) {
                 if (known.running) return known.running as Promise<NativeHostResult<T>>;
                 if (known.saved) return Promise.resolve({ ok: true, value: known.value as T });
-                const finishing = save(requestId, known).finally(() => { known.running = null; });
+                const finishing = save(id, known).finally(() => { known.running = null; });
                 known.running = finishing;
                 return finishing as Promise<NativeHostResult<T>>;
             }
             // Landed and saved before a restart (or evicted since): its first reply, and nothing runs.
-            const stored = durableReceipts?.get(requestId);
+            const stored = durableReceipts?.get(id);
             if (stored) {
-                return Promise.resolve(stored.fingerprint === fingerprintOf(payload)
-                    ? { ok: true, value: stored.reply as T }
-                    : { ok: false, error: { code: 'INVALID_INPUT', message: 'Request ID already belongs to another action' } });
-            }
-            // Held by another module's action (landed, pending or running): refused.
-            const owner = requestPayloads.get(requestId);
-            const pending = pendingReceipts.get(requestId);
-            if ((owner !== undefined && owner !== payload) || (pending && pending.fingerprint !== fingerprintOf(payload))) {
-                return Promise.resolve({ ok: false, error: { code: 'INVALID_INPUT', message: 'Request ID already belongs to another action' } });
+                return Promise.resolve({ ok: true, value: stored.reply as T });
             }
             if (!makeRoom()) {
                 return Promise.resolve({
@@ -436,8 +444,8 @@ export function createNativeRequestReceipts(options: {
                 });
             }
             const receipt: Receipt = { payload, running: null, written: false, value: undefined, saved: false };
-            receipts.set(requestId, receipt);
-            requestPayloads.set(requestId, payload);
+            receipts.set(id, receipt);
+            requestPayloads.set(id, payload);
             receipt.running = (async (): Promise<NativeHostResult<unknown>> => {
                 let outcome: NativeHostResult<T> | NativeUnsavedWrite<T>;
                 const durable = durableReceipts !== null && !NATIVE_UNJOURNALED_COMMANDS.has(commandOf(payload));
@@ -452,22 +460,22 @@ export function createNativeRequestReceipts(options: {
                         // It landed; only its save failed. A retry saves and never writes again.
                         receipt.written = true;
                         receipt.value = 'value' in outcome ? outcome.value : undefined;
-                        if (durable) recordPendingReceipt(requestId, payload, receipt.value);
+                        if (durable) recordPendingReceipt(id, payload, receipt.value);
                         return { ok: false, error: outcome.error };
                     }
                     if (!outcome.ok) {
-                        receipts.delete(requestId);
-                        requestPayloads.delete(requestId);
+                        receipts.delete(id);
+                        requestPayloads.delete(id);
                         return outcome;
                     }
                     receipt.written = true;
                     receipt.value = outcome.value;
                     // Pending from here: the save below commits it with the snapshot that holds this write.
-                    if (durable) recordPendingReceipt(requestId, payload, receipt.value);
+                    if (durable) recordPendingReceipt(id, payload, receipt.value);
                 } finally {
                     if (durable) receiptedWritesRunning -= 1;
                 }
-                return save(requestId, receipt);
+                return save(id, receipt);
             })().finally(() => { receipt.running = null; });
             return receipt.running as Promise<NativeHostResult<T>>;
         },

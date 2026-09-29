@@ -15,7 +15,7 @@ extension Dictionary where Key == String, Value == Any {
 
 @MainActor
 final class CoreModel: ObservableObject {
-    enum Surface: Equatable { case inbox, focus, review, calendar, board, search, projects, project, waiting, someday, reference, history, trash, contexts }
+    enum Surface: Equatable { case inbox, focus, review, calendar, board, search, projects, project, waiting, someday, reference, history, trash, contexts, settings }
 
     @Published private(set) var selectedSurface: Surface = .inbox {
         didSet {
@@ -95,6 +95,19 @@ final class CoreModel: ObservableObject {
     @Published private(set) var searchError: String?
     @Published private(set) var moreMenu: CoreObject = [:]
     @Published private(set) var morePresented = false
+    @Published private(set) var settingsMenu: CoreObject = [:]
+    @Published private(set) var settingsSearch = ""
+    @Published private(set) var settingsManagePresented = false
+    @Published private(set) var settingsReadError: String?
+    @Published private(set) var manageSettings: CoreObject = [:]
+    @Published private(set) var managedSomedaySections: [CoreObject] = []
+    @Published private(set) var managedSomedayTotal = 0
+    @Published private(set) var manageReadError: String?
+    @Published private(set) var somedaySectionRenameOptions: CoreObject = [:]
+    @Published private(set) var somedaySectionRenameIndex: Int?
+    @Published private(set) var somedaySectionRenameTitle = ""
+    @Published private(set) var somedaySectionRenameError: String?
+    @Published private(set) var somedaySectionRenameAwaitingRefresh = false
     @Published private(set) var projects: CoreObject = [:]
     @Published private(set) var selectedProjectTagFilter = "__all__"
     @Published private(set) var projectTagFilterShown = false
@@ -373,6 +386,19 @@ final class CoreModel: ObservableObject {
     private var reviewFinishPending = false
     private let reviewPreferencePrefix = "nativeFoundation.review."
     private var preferenceDefaults: UserDefaults = .standard
+    private let manageOpenSectionsKey = "mindwtr:settings:manage:openSections"
+    private var manageOpenSectionsPreference = "mindwtr:settings:manage:openSections"
+    private var initialManageOpenSections: String?
+    private var settingsCaller: Surface = .inbox
+    private var settingsSearchGeneration = 0
+    private var settingsSearchTask: Task<Void, Never>?
+    private var managedSomedayDepth = 25
+    private var managePendingCandidate: String?
+    private var settingsManageRequested = false
+    private var somedaySectionRenameRequest: String?
+    private var somedaySectionRenameID: String?
+    private var somedaySectionRenameOpeningIndex: Int?
+    var somedaySectionRenameReadPending: Bool { somedaySectionRenameOpeningIndex != nil }
     private var boardFilters: CoreObject = [:]
     private var boardPendingEdit: CoreObject?
     @Published private var boardActionRequest: String?
@@ -482,6 +508,9 @@ final class CoreModel: ObservableObject {
     private var somedayUndoTestReadFailures = 0
     private var somedayCreateMoveTestReadFailures = 0
     private var somedayCreateMoveLookupTestReadFailures = 0
+    private var somedayRenameTestReadFailures = 0
+    private var somedayRenameOptionsTestReadFailures = 0
+    private var manageToggleTestReadFailures = 0
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -1160,6 +1189,15 @@ final class CoreModel: ObservableObject {
     }
     var somedayPickerActionsEnabled: Bool { somedayActionsEnabled && somedayPickerCurrent }
     var somedaySectionCreatePending: Bool { somedaySectionCreateRequest != nil }
+    var somedaySectionRenamePending: Bool { somedaySectionRenameRequest != nil }
+    var somedaySectionRenameInputEnabled: Bool {
+        ready && selectedSurface == .settings && settingsManagePresented && somedaySectionRenameIndex != nil
+            && !busy && !retryNeeded && !somedaySectionRenamePending && !somedaySectionRenameAwaitingRefresh
+            && !somedaySectionRenameOptions.isEmpty && manageReadError == nil
+    }
+    var somedaySectionRenameCanSave: Bool {
+        somedaySectionRenameInputEnabled && !somedaySectionRenameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     var somedaySectionCreateCanSave: Bool {
         somedayActionsEnabled && somedayPanel == "newSection" && !somedaySectionCreateOptions.isEmpty
             && somedaySectionCreateReadError == nil && !somedaySectionCreateAwaitingRefresh
@@ -1312,6 +1350,9 @@ final class CoreModel: ObservableObject {
                     somedayUndoTestReadFailures = arguments.contains("--native-someday-undo-read-failure") ? 2 : 0
                     somedayCreateMoveTestReadFailures = arguments.contains("--native-someday-create-move-read-failure") ? 2 : 0
                     somedayCreateMoveLookupTestReadFailures = arguments.contains("--native-someday-create-move-lookup-failure") ? 2 : 0
+                    somedayRenameTestReadFailures = arguments.contains("--native-someday-rename-read-failure") ? 2 : 0
+                    somedayRenameOptionsTestReadFailures = arguments.contains("--native-someday-rename-options-failure") ? 1 : 0
+                    manageToggleTestReadFailures = arguments.contains("--native-manage-toggle-read-failure") ? 1 : 0
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1335,6 +1376,8 @@ final class CoreModel: ObservableObject {
                     referenceViewPreference = "nativeRNRehearsal.reference.view"
                     historyViewPreferences = ["done": "nativeRNRehearsal.history.done.view",
                                               "archive": "nativeRNRehearsal.history.archived.view"]
+                    manageOpenSectionsPreference = "nativeRNRehearsal.manage.openSections"
+                    initialManageOpenSections = try legacy.value(forKey: manageOpenSectionsKey)
                     initialFocusShowDetails = false
                     initialFocusExpandedSections = [:]
                     if let raw = try legacy.value(forKey: "mindwtr:view:focus:v1"),
@@ -1390,6 +1433,10 @@ final class CoreModel: ObservableObject {
             }
             projectShowCompleted = (preferenceDefaults.object(forKey: projectShowCompletedPreference) as? Bool)
                 ?? initialProjectShowCompleted
+            if preferenceDefaults.object(forKey: manageOpenSectionsPreference) == nil,
+               let initialManageOpenSections {
+                preferenceDefaults.set(initialManageOpenSections, forKey: manageOpenSectionsPreference)
+            }
             focusShowDetails = (preferenceDefaults.object(forKey: focusShowDetailsPreference) as? Bool)
                 ?? initialFocusShowDetails
             var expanded = initialFocusExpandedSections
@@ -1449,6 +1496,9 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .focus
             } else if recovery.text("method") == "taskListSortWrite" {
                 selectedSurface = .reference
+            } else if recovery.text("method") == "somedaySectionRenameWrite" {
+                selectedSurface = .settings
+                settingsManagePresented = true
             } else if ["somedaySectionCreateWrite", "somedaySectionTaskCommit", "somedaySectionMoveCommit",
                        "somedaySectionMoveUndoCommit"].contains(recovery.text("method")) {
                 selectedSurface = .someday
@@ -1522,7 +1572,9 @@ final class CoreModel: ObservableObject {
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
         guard ready, !retryNeeded, !capturePresented, !taskPresented, !taskStatusMenuPresented, !calendarItemPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
-              !projectRenameEditing else { return }
+              !projectRenameEditing, somedaySectionRenameIndex == nil,
+              somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil,
+              !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh else { return }
         guard !busy else { refreshRequested = true; return }
         busy = true
         defer { finishOperation() }
@@ -1538,6 +1590,9 @@ final class CoreModel: ObservableObject {
         guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
               !projectRenameEditing, !somedaySectionCreatePending, !somedaySectionCreateAwaitingRefresh,
+              somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
+              managePendingCandidate == nil,
+              !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedayMovePending, !somedayMoveAwaitingRefresh, !somedayMoveUndoAwaitingRefresh,
               somedayMoveCreatedSectionID == nil else { return }
         morePresented = false
@@ -1553,7 +1608,9 @@ final class CoreModel: ObservableObject {
     func toggleMore() async {
         guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
-              !projectRenameEditing else { return }
+              !projectRenameEditing, somedaySectionRenameIndex == nil,
+              somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil,
+              !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh else { return }
         if morePresented { morePresented = false; return }
         busy = true
         defer { finishOperation() }
@@ -1567,6 +1624,319 @@ final class CoreModel: ObservableObject {
     func closeMore() {
         guard !busy, !retryNeeded else { return }
         morePresented = false
+    }
+
+    func openSettings() async {
+        guard ready, !busy, !retryNeeded, !somedaySectionRenamePending,
+              !somedaySectionRenameAwaitingRefresh else { return }
+        settingsCaller = selectedSurface
+        morePresented = false
+        settingsManagePresented = false
+        settingsManageRequested = false
+        settingsReadError = nil
+        settingsSearch = ""
+        selectedSurface = .settings
+        busy = true
+        defer { finishOperation() }
+        do { try await readSettingsMenu() }
+        catch { settingsReadError = error.localizedDescription }
+    }
+
+    func closeSettings() async {
+        guard selectedSurface == .settings, !busy, !retryNeeded,
+              !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh else { return }
+        settingsSearchTask?.cancel()
+        settingsSearchGeneration += 1
+        settingsManagePresented = false
+        settingsManageRequested = false
+        selectedSurface = settingsCaller
+        busy = true
+        defer { finishOperation() }
+        do { try await readSelectedSurface() }
+        catch { self.error = error.localizedDescription }
+    }
+
+    func setSettingsSearch(_ value: String) {
+        guard selectedSurface == .settings, !settingsManagePresented, !retryNeeded else { return }
+        settingsSearch = value
+        settingsReadError = nil
+        settingsSearchGeneration += 1
+        let generation = settingsSearchGeneration
+        settingsSearchTask?.cancel()
+        settingsSearchTask = Task {
+            do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
+            guard !Task.isCancelled, selectedSurface == .settings, !settingsManagePresented,
+                  settingsSearchGeneration == generation else { return }
+            do { try await readSettingsMenu(generation: generation) }
+            catch { if settingsSearchGeneration == generation { settingsReadError = error.localizedDescription } }
+        }
+    }
+
+    private func readSettingsMenu(generation: Int? = nil) async throws {
+        let result = try await query("menuRead", ["settingsMenu", try json(["query": settingsSearch])])
+        guard !result.text("title").isEmpty, result["groups"] is [[CoreObject]],
+              result["searchPlaceholder"] is String else { throw CocoaError(.coderReadCorrupt) }
+        guard generation == nil || settingsSearchGeneration == generation else { return }
+        settingsMenu = result
+        settingsReadError = nil
+    }
+
+    func openManageSettings() async {
+        guard ready, selectedSurface == .settings, !settingsManagePresented, !busy, !retryNeeded else { return }
+        settingsSearchTask?.cancel()
+        settingsSearchGeneration += 1
+        settingsManageRequested = true
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await readManageSettings()
+            settingsManagePresented = true
+            manageReadError = nil
+        } catch { manageReadError = error.localizedDescription }
+    }
+
+    func closeManageSettings() {
+        guard settingsManagePresented, !busy, !retryNeeded, !somedaySectionRenamePending,
+              !somedaySectionRenameAwaitingRefresh else { return }
+        cancelSomedaySectionRename()
+        settingsManagePresented = false
+        settingsManageRequested = false
+        managePendingCandidate = nil
+        manageReadError = nil
+    }
+
+    private func readManageSettings(openSections candidate: String? = nil) async throws {
+        let raw = candidate ?? (preferenceDefaults.object(forKey: manageOpenSectionsPreference) as? String)
+        let input: CoreObject = ["openSections": raw as Any? ?? NSNull()]
+        let next = try await query("menuRead", ["manageSettings", try json(input)])
+        guard !next.text("title").isEmpty, next["sections"] is [CoreObject] else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let somedayOpen = next.objects("sections").first(where: { $0.text("key") == "somedaySections" })?.flag("open") == true
+        let pages: (rows: [CoreObject], total: Int)
+        if somedayOpen { pages = try await readManagedSomedayPages(depth: managedSomedayDepth) }
+        else { pages = ([], 0) }
+        // Publish and persist together only after all required reads succeed.
+        manageSettings = next
+        managedSomedaySections = pages.rows
+        managedSomedayTotal = pages.total
+        if let write = next.object("openSectionsRestore")["value"] as? String,
+           next.object("openSectionsRestore").text("key") == manageOpenSectionsKey {
+            preferenceDefaults.set(write, forKey: manageOpenSectionsPreference)
+        } else if let candidate {
+            preferenceDefaults.set(candidate, forKey: manageOpenSectionsPreference)
+        }
+        managePendingCandidate = nil
+        manageReadError = nil
+    }
+
+    private func readManagedSomedayPages(depth: Int) async throws -> (rows: [CoreObject], total: Int) {
+        var rows: [CoreObject] = []
+        var total = 0
+        var revision = ""
+        while rows.isEmpty || rows.count < min(depth, total) {
+            var input: CoreObject = ["offset": rows.count, "limit": 25]
+            if !revision.isEmpty { input["revision"] = revision }
+            let page = try await query("menuRead", ["somedaySections", try json(input)])
+            guard let pageTotal = page["total"] as? Int, pageTotal >= 0,
+                  let pageRows = page["rows"] as? [CoreObject], pageRows.count <= 25,
+                  rows.count + pageRows.count <= pageTotal, !page.text("revision").isEmpty,
+                  revision.isEmpty || revision == page.text("revision"),
+                  rows.isEmpty || pageTotal == total,
+                  pageTotal == 0 || !pageRows.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            total = pageTotal
+            revision = page.text("revision")
+            rows.append(contentsOf: pageRows)
+            if total == 0 { break }
+        }
+        return (rows, total)
+    }
+
+    func toggleManageSection(_ key: String) async {
+        guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
+              manageReadError == nil,
+              !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
+              somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
+              let row = manageSettings.objects("sections").first(where: { $0.text("key") == key }),
+              row.object("toggle").text("key") == manageOpenSectionsKey else { return }
+        let candidate = row.object("toggle").text("value")
+        guard !candidate.isEmpty else { return }
+        managePendingCandidate = candidate
+        busy = true
+        defer { finishOperation() }
+        do { try await readManageSettings(openSections: candidate) }
+        catch { manageReadError = error.localizedDescription }
+    }
+
+    func loadMoreManagedSomedaySections() async {
+        guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
+              manageReadError == nil, somedaySectionRenameIndex == nil, !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
+              managedSomedaySections.count < managedSomedayTotal else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let nextDepth = min(managedSomedayDepth + 25, managedSomedayTotal)
+            let pages = try await readManagedSomedayPages(depth: nextDepth)
+            managedSomedayDepth = nextDepth
+            managedSomedaySections = pages.rows
+            managedSomedayTotal = pages.total
+            manageReadError = nil
+        } catch { manageReadError = error.localizedDescription }
+    }
+
+    func retryManageSettingsRead() async {
+        guard selectedSurface == .settings, !busy, !retryNeeded,
+              somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
+              !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            if settingsManagePresented || settingsManageRequested {
+                try await readManageSettings(openSections: managePendingCandidate)
+                settingsManagePresented = true
+            }
+            else { try await readSettingsMenu() }
+            settingsReadError = nil
+            manageReadError = nil
+        } catch {
+            if settingsManagePresented { manageReadError = error.localizedDescription }
+            else { settingsReadError = error.localizedDescription }
+        }
+    }
+
+    func openSomedaySectionRename(index: Int) async {
+        guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
+              !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
+              manageReadError == nil, somedaySectionRenameOpeningIndex == nil,
+              somedaySectionRenameIndex == nil,
+              managedSomedaySections.indices.contains(index) else { return }
+        let id = managedSomedaySections[index].text("id")
+        guard !id.isEmpty else { return }
+        somedaySectionRenameID = id
+        somedaySectionRenameOpeningIndex = index
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await readSomedaySectionRenameOptions(id: id, index: index)
+        } catch { somedaySectionRenameError = error.localizedDescription }
+    }
+
+    private func readSomedaySectionRenameOptions(id: String, index: Int) async throws {
+        let options = try await query("somedaySectionRenameOptions", [try json(["id": id])])
+        guard options.text("id") == id, options["title"] is String,
+              options.object("expected")["sections"] is [Any],
+              (options.object("expected")["updatedAt"] is NSNull
+                || options.object("expected")["updatedAt"] is String) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        somedaySectionRenameOptions = options
+        somedaySectionRenameIndex = index
+        somedaySectionRenameOpeningIndex = nil
+        somedaySectionRenameTitle = options.text("title")
+        somedaySectionRenameError = nil
+    }
+
+    func setSomedaySectionRenameTitle(_ value: String) {
+        guard somedaySectionRenameInputEnabled else { return }
+        somedaySectionRenameTitle = value
+        somedaySectionRenameError = nil
+    }
+
+    func cancelSomedaySectionRename() {
+        guard !busy, !retryNeeded, !somedaySectionRenamePending,
+              !somedaySectionRenameAwaitingRefresh else { return }
+        clearSomedaySectionRenameEditor()
+    }
+
+    private func clearSomedaySectionRenameEditor() {
+        somedaySectionRenameOptions = [:]
+        somedaySectionRenameIndex = nil
+        somedaySectionRenameOpeningIndex = nil
+        somedaySectionRenameID = nil
+        somedaySectionRenameTitle = ""
+        somedaySectionRenameError = nil
+    }
+
+    func saveSomedaySectionRename() async {
+        guard somedaySectionRenameCanSave, let id = somedaySectionRenameID,
+              somedaySectionRenameOptions.text("id") == id else { return }
+        busy = true
+        somedaySectionRenameError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "id": id,
+                                    "title": somedaySectionRenameTitle,
+                                    "expected": somedaySectionRenameOptions.object("expected")])
+            somedaySectionRenameRequest = request
+            let result = try await query("somedaySectionRenameWrite", [request])
+            try acknowledgeSomedaySectionRename(result)
+            await refreshManageAfterSomedayRename()
+        } catch { await handleSomedaySectionRenameError(error) }
+    }
+
+    private func acknowledgeSomedaySectionRename(_ result: CoreObject) throws {
+        guard somedaySectionRenameRequest != nil, let id = somedaySectionRenameID,
+              Set(result.keys) == Set(["id", "changed"]), result.text("id") == id,
+              let changed = result["changed"] as? NSNumber,
+              CFGetTypeID(changed) == CFBooleanGetTypeID() else { throw CocoaError(.coderReadCorrupt) }
+        somedaySectionRenameRequest = nil
+        somedaySectionRenameAwaitingRefresh = true
+        somedaySectionRenameError = nil
+        retryNeeded = false
+        error = nil
+    }
+
+    private func refreshManageAfterSomedayRename() async {
+        guard selectedSurface == .settings, settingsManagePresented,
+              somedaySectionRenameAwaitingRefresh else { return }
+        do {
+            try await readManageSettings()
+            somedaySectionRenameAwaitingRefresh = false
+            clearSomedaySectionRenameEditor()
+            manageReadError = nil
+            error = nil
+        } catch {
+            somedaySectionRenameError = error.localizedDescription
+        }
+    }
+
+    private func handleSomedaySectionRenameError(_ failure: Error) async {
+        if somedaySectionRenamePending && isDefiniteRejection(failure) {
+            somedaySectionRenameRequest = nil
+            retryNeeded = false
+            error = nil
+            somedaySectionRenameOptions = [:]
+            somedaySectionRenameError = failure.localizedDescription
+            if let id = somedaySectionRenameID {
+                do { somedaySectionRenameOptions = try await query("somedaySectionRenameOptions", [try json(["id": id])]) }
+                catch { manageReadError = error.localizedDescription }
+            }
+        } else {
+            retryNeeded = somedaySectionRenamePending
+            somedaySectionRenameError = failure.localizedDescription
+            if retryNeeded { error = failure.localizedDescription }
+        }
+    }
+
+    func retrySomedaySectionRename() async {
+        if retryNeeded { await retry(); return }
+        guard selectedSurface == .settings, settingsManagePresented, !busy,
+              !somedaySectionRenamePending else { return }
+        busy = true
+        defer { finishOperation() }
+        if somedaySectionRenameAwaitingRefresh {
+            await refreshManageAfterSomedayRename()
+        } else if let index = somedaySectionRenameOpeningIndex,
+                  let id = somedaySectionRenameID {
+            do { try await readSomedaySectionRenameOptions(id: id, index: index) }
+            catch { somedaySectionRenameError = error.localizedDescription }
+        } else if let id = somedaySectionRenameID {
+            do {
+                somedaySectionRenameOptions = try await query("somedaySectionRenameOptions", [try json(["id": id])])
+                manageReadError = nil
+                somedaySectionRenameError = nil
+            } catch { somedaySectionRenameError = error.localizedDescription }
+        }
     }
 
     func openProjects() async {
@@ -11606,6 +11976,14 @@ final class CoreModel: ObservableObject {
                 await refreshSomedayAfterSectionCreate()
                 return
             }
+            if let request = somedaySectionRenameRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("somedaySectionRenameRetryOutcome", [request]) }
+                try acknowledgeSomedaySectionRename(result)
+                await refreshManageAfterSomedayRename()
+                return
+            }
             if let envelope = somedaySectionTaskEnvelope {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -11851,6 +12229,10 @@ final class CoreModel: ObservableObject {
             }
             if somedaySectionCreateRequest != nil {
                 await handleSomedaySectionCreateError(error)
+                return
+            }
+            if somedaySectionRenameRequest != nil {
+                await handleSomedaySectionRenameError(error)
                 return
             }
             if somedaySectionTaskEnvelope != nil {
@@ -12622,6 +13004,9 @@ final class CoreModel: ObservableObject {
         case .waiting: await readWaiting()
         case .contexts: await readContexts(ownsOperation: true)
         case .someday: await readSomeday()
+        case .settings:
+            try await readSettingsMenu()
+            if settingsManagePresented { try await readManageSettings() }
         case .reference: await readReference()
         case .history: await readHistory()
         case .trash: await readTrash()
@@ -12666,6 +13051,21 @@ final class CoreModel: ObservableObject {
         if method == "menuRead", args.first as? String == "someday",
            somedayMoveUndoAwaitingRefresh, somedayUndoTestReadFailures > 0 {
             somedayUndoTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "menuRead", args.first as? String == "manageSettings",
+           somedaySectionRenameAwaitingRefresh, somedayRenameTestReadFailures > 0 {
+            somedayRenameTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "menuRead", args.first as? String == "manageSettings",
+           managePendingCandidate != nil, manageToggleTestReadFailures > 0 {
+            manageToggleTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "somedaySectionRenameOptions", somedaySectionRenameOpeningIndex != nil,
+           somedayRenameOptionsTestReadFailures > 0 {
+            somedayRenameOptionsTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
         if method == "menuRead", args.first as? String == "someday",

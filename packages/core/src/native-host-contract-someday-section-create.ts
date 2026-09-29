@@ -3,6 +3,13 @@ import { taskEditValuesEqual } from './json-value-equality';
 import { exact, record, detach } from './native-host-contract-project-shared';
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
+import {
+    SOMEDAY_SECTION_REQUEST_BYTES as REQUEST_BYTES,
+    SOMEDAY_SECTION_UUID as UUID,
+    rawSomedaySections as rawSections,
+    rawSomedayStamp as rawStamp,
+    validSomedaySectionTitle,
+} from './native-host-contract-someday-section-shared';
 import { buildSomedaySectionsSettingsUpdate, getSomedaySectionManagerText, planSomedaySectionCreate } from './someday-sections-model';
 import { useTaskStore } from './store';
 import type { ViewSectionDefinition } from './types';
@@ -15,45 +22,9 @@ export type NativeSomedaySectionCreateRequest = {
 };
 export type NativeSomedaySectionCreateResult = { id: string; existing: boolean };
 
-const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-// The frozen raw settings array may contain entries from a newer client. Refuse
-// a journal over 1 MiB rather than discard entries from the synced document.
-const REQUEST_BYTES = 1_000_000;
 const fail = (code: 'INVALID_INPUT' | 'STALE_REVISION' | 'SAVE_FAILED', message: string): NativeHostResult<never> =>
     ({ ok: false, error: { code, message } });
-const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 const same = taskEditValuesEqual;
-const hasUnpairedSurrogate = (value: string): boolean => {
-    for (let index = 0; index < value.length; index++) {
-        const unit = value.charCodeAt(index);
-        if (unit >= 0xd800 && unit <= 0xdbff) {
-            if (index + 1 >= value.length || value.charCodeAt(++index) < 0xdc00 || value.charCodeAt(index) > 0xdfff) return true;
-        } else if (unit >= 0xdc00 && unit <= 0xdfff) return true;
-    }
-    return false;
-};
-
-const rawSections = (): NativeHostResult<unknown[] | null> => {
-    const gtd = useTaskStore.getState().settings.gtd;
-    if (gtd === undefined) return { ok: true, value: null };
-    if (!record(gtd)) return fail('INVALID_INPUT', 'Stored Someday sections have an unsupported value');
-    if (!own(gtd, 'viewSections')) return { ok: true, value: null };
-    if (!record(gtd.viewSections)) return fail('INVALID_INPUT', 'Stored Someday sections have an unsupported value');
-    if (!own(gtd.viewSections, 'someday')) return { ok: true, value: null };
-    const sections = gtd.viewSections.someday;
-    if (!Array.isArray(sections) || !detach(sections)) return fail('INVALID_INPUT', 'Stored Someday sections have an unsupported value');
-    return { ok: true, value: sections };
-};
-
-const rawStamp = (): NativeHostResult<string | null> => {
-    const stamps = useTaskStore.getState().settings.syncPreferencesUpdatedAt;
-    if (stamps === undefined) return { ok: true, value: null };
-    if (!record(stamps)) return fail('INVALID_INPUT', 'Stored GTD timestamp has an unsupported value');
-    if (!own(stamps, 'gtd')) return { ok: true, value: null };
-    return typeof stamps.gtd === 'string' ? { ok: true, value: stamps.gtd }
-        : fail('INVALID_INPUT', 'Stored GTD timestamp has an unsupported value');
-};
-
 const readRequest = (input: unknown): NativeSomedaySectionCreateRequest | null => {
     if (!record(input) || !exact(input, ['requestId', 'title', 'expected'])
         || !record(input.expected) || !exact(input.expected, ['sections', 'updatedAt'])
@@ -61,8 +32,7 @@ const readRequest = (input: unknown): NativeSomedaySectionCreateRequest | null =
     const request = detach<NativeSomedaySectionCreateRequest>(input);
     if (!request || !record(request) || !exact(request, ['requestId', 'title', 'expected'])
         || typeof request.requestId !== 'string' || !UUID.test(request.requestId)
-        || typeof request.title !== 'string' || !request.title.trim() || request.title.length > 200
-        || request.title.includes('\0') || hasUnpairedSurrogate(request.title) || !record(request.expected)
+        || !validSomedaySectionTitle(request.title) || !record(request.expected)
         || !exact(request.expected, ['sections', 'updatedAt'])
         || (request.expected.sections !== null && !Array.isArray(request.expected.sections))
         || (request.expected.updatedAt !== null && typeof request.expected.updatedAt !== 'string')) return null;

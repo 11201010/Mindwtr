@@ -19,6 +19,20 @@ function createSave() {
 }
 
 describe('native request receipts', () => {
+    it('checks UUID ownership without reserving, writing or saving', async () => {
+        const { save } = createSave();
+        const receipts = createNativeRequestReceipts({ save });
+        const otherMethod = createNativeRequestReceipts({ save });
+        const id = generateUUID();
+        expect(receipts.checkIdentity(id, 'rename')).toEqual(ok(null));
+        expect(otherMethod.checkIdentity(id, 'create')).toEqual(ok(null));
+        expect(save).not.toHaveBeenCalled();
+        expect(await otherMethod.run(id, 'create', async () => ok('created'))).toEqual(ok('created'));
+        expect(receipts.checkIdentity(id, 'rename')).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(otherMethod.checkIdentity(id, 'create')).toEqual(ok(null));
+        expect(save).toHaveBeenCalledTimes(1);
+    });
+
     it('runs concurrent duplicates once and gives both the same result', async () => {
         const { save } = createSave();
         const receipts = createNativeRequestReceipts({ save });

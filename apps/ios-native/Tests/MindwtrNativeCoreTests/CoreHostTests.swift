@@ -5205,6 +5205,16 @@ final class CoreHostTests: XCTestCase {
         try json([json(["requestId": id, "title": title, "expected": XCTUnwrap(options["expected"])])])
     }
 
+    private func somedaySectionRenameOptions(_ core: CoreHost, id: String) async throws -> [String: Any] {
+        try object(await core.call("somedaySectionRenameOptions", argumentsJSON: json([json(["id": id])])))
+    }
+
+    private func somedaySectionRenamePayload(_ options: [String: Any], title: String,
+                                             id: String = UUID().uuidString.lowercased()) throws -> String {
+        try json([json(["requestId": id, "id": XCTUnwrap(options["id"]),
+                        "title": title, "expected": XCTUnwrap(options["expected"])])])
+    }
+
     private func somedaySectionTaskPayload(_ core: CoreHost, title: String, sectionId: String? = nil,
                                            id: String = UUID().uuidString.lowercased()) async throws -> String {
         let request: [String: Any] = ["requestId": id, "title": title, "sectionId": (sectionId as Any?) ?? NSNull()]
@@ -5865,6 +5875,469 @@ final class CoreHostTests: XCTestCase {
         XCTAssertNil(try storedTask(id)["areaId"] as? String)
         XCTAssertEqual(try storedTask(id)["createdAt"] as? String, actualPrepared["preparedAt"] as? String)
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testSomedaySectionRenamePreservesRawSettingsAndExactNoopDoesNotJournal() async throws {
+        try await seedCalendarPreferenceTask()
+        var before = try calendarPreferenceSettings()
+        let raw: [[String: Any]] = [
+            ["id": "none", "title": "Imported", "order": 0, "future": ["color": "blue"]],
+            ["hidden": "newer-client"],
+            ["id": "other", "title": "Duplicate", "order": 1],
+        ]
+        var gtd = before["gtd"] as? [String: Any] ?? [:]
+        var sections = gtd["viewSections"] as? [String: Any] ?? [:]
+        sections["someday"] = raw
+        sections["waiting"] = [["id": "waiting", "title": "Hold", "order": 0]]
+        gtd["viewSections"] = sections
+        before["gtd"] = gtd
+        try writeCalendarPreferenceSettings(before)
+        let tasks = try calendarPreferenceTasks()
+        let faults = HostIOFaults()
+        var writes = 0, diagnostics: [String] = []
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+        faults.commandDiagnostic = { diagnostics.append($0) }
+        let core = host(faults)
+        _ = try await core.start()
+        writes = 0
+        let first = try await somedaySectionRenameOptions(core, id: "none")
+        XCTAssertEqual(first["id"] as? String, "none")
+        XCTAssertEqual(first["title"] as? String, "Imported")
+        XCTAssertEqual(try json(XCTUnwrap((first["expected"] as? [String: Any])?["sections"])), try json(raw))
+        let duplicate = try somedaySectionRenamePayload(first, title: "  Duplicate  ")
+        let duplicateResult = try object(await core.call("somedaySectionRenameWrite", argumentsJSON: duplicate))
+        XCTAssertEqual(duplicateResult["id"] as? String, "none")
+        XCTAssertEqual(duplicateResult["changed"] as? Bool, true)
+        let second = try await somedaySectionRenameOptions(core, id: "none")
+        let caseOnly = try somedaySectionRenamePayload(second, title: "DUPLICATE")
+        let caseResult = try object(await core.call("somedaySectionRenameWrite", argumentsJSON: caseOnly))
+        XCTAssertEqual(caseResult["changed"] as? Bool, true)
+        let same = try await somedaySectionRenameOptions(core, id: "none")
+        let noOp = try somedaySectionRenamePayload(same, title: "  DUPLICATE  ")
+        let prior = try calendarPreferenceSettings()
+        let noOpResult = try object(await core.call("somedaySectionRenameWrite", argumentsJSON: noOp))
+        XCTAssertEqual(noOpResult["id"] as? String, "none")
+        XCTAssertEqual(noOpResult["changed"] as? Bool, false)
+        XCTAssertEqual(writes, 2)
+        XCTAssertEqual(diagnostics.filter { $0 == "somedaySectionRenameSaved" }.count, 2)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(prior))
+        var after = prior
+        gtd = after["gtd"] as? [String: Any] ?? [:]
+        sections = gtd["viewSections"] as? [String: Any] ?? [:]
+        var expected = raw
+        expected[0]["title"] = "DUPLICATE"
+        XCTAssertEqual(try json(XCTUnwrap(sections["someday"])), try json(expected))
+        sections["someday"] = raw
+        gtd["viewSections"] = sections
+        after["gtd"] = gtd
+        after["syncPreferencesUpdatedAt"] = before["syncPreferencesUpdatedAt"]
+        XCTAssertEqual(try json(after), try json(before))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+    }
+
+    func testSomedaySectionRenameFailedSaveExactRetriesAndColdRecovery() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var sections = gtd["viewSections"] as? [String: Any] ?? [:]
+        sections["someday"] = [["id": "none", "title": "Imported", "order": 0]]
+        gtd["viewSections"] = sections
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let tasks = try calendarPreferenceTasks()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let payload = try somedaySectionRenamePayload(try await somedaySectionRenameOptions(core, id: "none"), title: "Renamed")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected rename COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("somedaySectionRenameWrite", argumentsJSON: payload) }
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        let frozen = try Data(contentsOf: journal)
+        XCTAssertEqual((try object(String(decoding: frozen, as: UTF8.self)))["argumentsJSON"] as? String, payload)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        await core.close()
+
+        let recoveryFaults = HostIOFaults()
+        var diagnostics: [String] = []
+        recoveryFaults.commandDiagnostic = { diagnostics.append($0) }
+        let replay = host(recoveryFaults)
+        let window = try object(await replay.start())
+        let recovery = try XCTUnwrap(window["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "somedaySectionRenameWrite")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["id"] as? String, "none")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["changed"] as? Bool, true)
+        XCTAssertEqual(diagnostics.filter { $0 == "somedaySectionRenameSaved" }, ["somedaySectionRenameSaved"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        let replayedOutcome = try object(await replay.call("somedaySectionRenameRetryOutcome", argumentsJSON: payload))
+        XCTAssertEqual(replayedOutcome["changed"] as? Bool, true)
+    }
+
+    func testSomedaySectionRenameLostAcknowledgmentReplaysWithoutAnotherWrite() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var sections = gtd["viewSections"] as? [String: Any] ?? [:]
+        sections["someday"] = [["id": "none", "title": "Imported", "order": 0]]
+        gtd["viewSections"] = sections
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let payload = try somedaySectionRenamePayload(try await somedaySectionRenameOptions(writer, id: "none"), title: "Renamed")
+        var journalWrites = 0
+        faults.journalWrite = {
+            journalWrites += 1
+            if journalWrites == 2 { throw HostFailure("Injected rename lost acknowledgment") }
+        }
+        await expectFailure("lost acknowledgment") { _ = try await writer.call("somedaySectionRenameWrite", argumentsJSON: payload) }
+        XCTAssertNil((try object(String(contentsOf: journal)))["terminal"])
+        await writer.close()
+        var later = try calendarPreferenceSettings()
+        later["timeFormat"] = "24h"
+        try writeCalendarPreferenceSettings(later)
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+        let replay = host(replayFaults)
+        let window = try object(await replay.start())
+        XCTAssertEqual((window["recovery"] as? [String: Any])?["method"] as? String, "somedaySectionRenameWrite")
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(later))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testSomedaySectionRenameLiveIdentityAndOriginalReplayAfterHostRecreation() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var sections = gtd["viewSections"] as? [String: Any] ?? [:]
+        sections["someday"] = [["id": "none", "title": "Original", "order": 0]]
+        gtd["viewSections"] = sections
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let tasks = try calendarPreferenceTasks()
+
+        let requestID = UUID().uuidString.lowercased()
+        let writer = host(HostIOFaults())
+        _ = try await writer.start()
+        let changed = try somedaySectionRenamePayload(
+            try await somedaySectionRenameOptions(writer, id: "none"), title: "Renamed", id: requestID)
+        let changedResult = try object(await writer.call("somedaySectionRenameWrite", argumentsJSON: changed))
+        XCTAssertEqual(changedResult["id"] as? String, "none")
+        XCTAssertEqual(changedResult["changed"] as? Bool, true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let freshOptions = try await somedaySectionRenameOptions(writer, id: "none")
+        let reused = try somedaySectionRenamePayload(freshOptions, title: "Renamed", id: requestID)
+        await expectFailure("INVALID_INPUT") { _ = try await writer.call("somedaySectionRenameWrite", argumentsJSON: reused) }
+        await expectFailure("INVALID_INPUT") { _ = try await writer.call("somedaySectionRenameRetryOutcome", argumentsJSON: reused) }
+        await writer.close()
+
+        // iOS retains unresolved identity in its file journal, not a history of
+        // completed UUIDs. After recreation, replay the exact original request.
+        let saved = try calendarPreferenceSettings()
+        let faults = HostIOFaults()
+        let reader = host(faults)
+        _ = try await reader.start()
+        var settingsWrites = 0, journalWrites = 0
+        faults.beforeSQL = {
+            if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { settingsWrites += 1 }
+        }
+        faults.journalWrite = { journalWrites += 1 }
+        let replay = try object(await reader.call("somedaySectionRenameWrite", argumentsJSON: changed))
+        XCTAssertEqual(replay["id"] as? String, "none")
+        XCTAssertEqual(replay["changed"] as? Bool, true)
+        XCTAssertEqual(settingsWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(saved))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+
+        let beforeNoop = journalWrites
+        let freshNoop = try somedaySectionRenamePayload(
+            try await somedaySectionRenameOptions(reader, id: "none"), title: "Renamed")
+        let noOpResult = try object(await reader.call("somedaySectionRenameWrite", argumentsJSON: freshNoop))
+        XCTAssertEqual(noOpResult["id"] as? String, "none")
+        XCTAssertEqual(noOpResult["changed"] as? Bool, false)
+        XCTAssertEqual(settingsWrites, 0)
+        XCTAssertEqual(journalWrites, beforeNoop)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(saved))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+    }
+
+    func testSomedaySectionRenameStaleNoopAndChangedTerminalRefuseLaterTarget() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var sections = gtd["viewSections"] as? [String: Any] ?? [:]
+        sections["someday"] = [["id": "none", "title": "Imported", "order": 0]]
+        gtd["viewSections"] = sections
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try await somedaySectionRenameOptions(core, id: "none")
+        let noOp = try somedaySectionRenamePayload(options, title: "Imported")
+        await core.close()
+        var later = settings
+        gtd = later["gtd"] as? [String: Any] ?? [:]
+        sections = gtd["viewSections"] as? [String: Any] ?? [:]
+        sections["someday"] = [["id": "none", "title": "Changed elsewhere", "order": 0]]
+        gtd["viewSections"] = sections
+        later["gtd"] = gtd
+        try writeCalendarPreferenceSettings(later)
+        let stale = host(faults)
+        _ = try await stale.start()
+        var sql = 0, journalWrites = 0
+        faults.beforeSQL = { _ in sql += 1 }
+        faults.journalWrite = { journalWrites += 1 }
+        await expectFailure("STALE_REVISION") { _ = try await stale.call("somedaySectionRenameWrite", argumentsJSON: noOp) }
+        XCTAssertEqual(sql, 0); XCTAssertEqual(journalWrites, 0)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(later))
+        await stale.close()
+
+        let writerFaults = HostIOFaults()
+        let writer = host(writerFaults)
+        _ = try await writer.start()
+        let changed = try somedaySectionRenamePayload(try await somedaySectionRenameOptions(writer, id: "none"), title: "Saved")
+        writerFaults.journalRemove = { throw HostFailure("Injected rename cleanup failure") }
+        await expectFailure("cleanup failure") { _ = try await writer.call("somedaySectionRenameWrite", argumentsJSON: changed) }
+        let frozen = try Data(contentsOf: journal)
+        XCTAssertNotNil((try object(String(decoding: frozen, as: UTF8.self)))["terminal"])
+        await writer.close()
+        let replacements: [[[String: Any]]] = [
+            [["id": "none", "title": "Renamed after save", "order": 0]],
+            [],
+        ]
+        for replacement in replacements {
+            var changedSettings = try calendarPreferenceSettings()
+            var changedGtd = changedSettings["gtd"] as? [String: Any] ?? [:]
+            var changedSections = changedGtd["viewSections"] as? [String: Any] ?? [:]
+            changedSections["someday"] = replacement
+            changedGtd["viewSections"] = changedSections
+            changedSettings["gtd"] = changedGtd
+            try writeCalendarPreferenceSettings(changedSettings)
+            let blockedFaults = HostIOFaults()
+            var writes: [String] = []
+            blockedFaults.beforeSQL = {
+                // Boot repeats this idempotent schema marker before reading the target.
+                if $0 == "INSERT OR IGNORE INTO schema_migrations (version) VALUES (1)" { return }
+                if $0.hasPrefix("UPDATE ") || $0.hasPrefix("INSERT ") || $0.hasPrefix("DELETE ") { writes.append($0) }
+            }
+            let blocked = host(blockedFaults)
+            await expectFailure("STALE_REVISION") { _ = try await blocked.start() }
+            XCTAssertTrue(writes.isEmpty, writes.joined(separator: "\n"))
+            try assertJournalContentUnchanged(frozen)
+            XCTAssertEqual(try json(calendarPreferenceSettings()), try json(changedSettings))
+            await blocked.close()
+        }
+    }
+
+    func testSomedaySectionRenameStaleRawArrayAndStampRejectWithoutSettingsWrite() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var sections = gtd["viewSections"] as? [String: Any] ?? [:]
+        let original: [[String: Any]] = [["id": "none", "title": "Imported", "order": 0], ["hidden": "future"]]
+        sections["someday"] = original
+        gtd["viewSections"] = sections
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let writer = host()
+        _ = try await writer.start()
+        let payload = try somedaySectionRenamePayload(try await somedaySectionRenameOptions(writer, id: "none"), title: "Renamed")
+        await writer.close()
+        let changes: [([[String: Any]], String?)] = [
+            (original + [["hidden": "newer"]], nil),
+            (original, "2026-09-29T12:00:01.000Z"),
+        ]
+        for (raw, stamp) in changes {
+            var changed = settings
+            var changedGtd = changed["gtd"] as? [String: Any] ?? [:]
+            var changedSections = changedGtd["viewSections"] as? [String: Any] ?? [:]
+            changedSections["someday"] = raw
+            changedGtd["viewSections"] = changedSections
+            changed["gtd"] = changedGtd
+            if let stamp {
+                var stamps = changed["syncPreferencesUpdatedAt"] as? [String: Any] ?? [:]
+                stamps["gtd"] = stamp
+                changed["syncPreferencesUpdatedAt"] = stamps
+            }
+            try writeCalendarPreferenceSettings(changed)
+            let faults = HostIOFaults()
+            let reader = host(faults)
+            _ = try await reader.start()
+            var writes = 0
+            faults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+            await expectFailure("STALE_REVISION") { _ = try await reader.call("somedaySectionRenameWrite", argumentsJSON: payload) }
+            XCTAssertEqual(writes, 0)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            XCTAssertEqual(try json(calendarPreferenceSettings()), try json(changed))
+            await reader.close()
+        }
+    }
+
+    func testSomedaySectionRenameMalformedTransportAndColdJournalNeverOpenSQLite() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var sections = gtd["viewSections"] as? [String: Any] ?? [:]
+        sections["someday"] = [["id": "none", "title": "Imported", "order": 0]]
+        gtd["viewSections"] = sections
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let payload = try somedaySectionRenamePayload(try await somedaySectionRenameOptions(core, id: "none"), title: "Renamed")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String])
+        let request = try object(XCTUnwrap(args.first))
+        var sql = 0, journalWrites = 0
+        faults.beforeSQL = { _ in sql += 1 }
+        faults.journalWrite = { journalWrites += 1 }
+        var extra = request; extra["unexpected"] = true
+        var badUUID = request; badUUID["requestId"] = UUID().uuidString.uppercased()
+        var badExpected = request; badExpected["expected"] = ["sections": [:], "updatedAt": NSNull()]
+        var badTitle = request; badTitle["title"] = "Bad\0name"
+        var wrongID = request; wrongID["id"] = ""
+        let malformed = try ["{", json(extra), json(badUUID), json(badExpected), json(badTitle), json(wrongID),
+                             json(["requestId": request["requestId"] ?? "", "id": "none", "title": "Renamed"]),
+                             json(["requestId": request["requestId"] ?? "", "id": "none", "title": String(repeating: "x", count: 1_000_001),
+                                   "expected": request["expected"] ?? NSNull()])]
+        for invalid in malformed {
+            await expectFailure { _ = try await core.call("somedaySectionRenameWrite", argumentsJSON: try json([invalid])) }
+        }
+        await expectFailure("unavailable") { _ = try await core.call("somedaySectionRenameValidate", argumentsJSON: payload) }
+        XCTAssertEqual(sql, 0); XCTAssertEqual(journalWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+
+        for forgedRequest in [extra, badUUID, badExpected] {
+            let frozen = try json(["version": 2, "method": "somedaySectionRenameWrite",
+                                   "argumentsJSON": json([json(forgedRequest)])] as [String: Any])
+            try Data(frozen.utf8).write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var statements = 0
+            blockedFaults.beforeSQL = { _ in statements += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(statements, 0)
+            try assertJournalContentUnchanged(Data(frozen.utf8))
+            await blocked.close()
+        }
+        for wrong in [["id": "other", "changed": true] as [String: Any],
+                      ["id": "none", "changed": false],
+                      ["id": "none", "changed": 1],
+                      ["id": "none", "changed": true, "extra": true]] {
+            let frozen = try json(["version": 2, "method": "somedaySectionRenameWrite",
+                                   "argumentsJSON": payload,
+                                   "terminal": ["success": ["_0": json(wrong)]]] as [String: Any])
+            try Data(frozen.utf8).write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var statements = 0
+            blockedFaults.beforeSQL = { _ in statements += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure("acknowledgment") { _ = try await blocked.start() }
+            XCTAssertEqual(statements, 0)
+            try assertJournalContentUnchanged(Data(frozen.utf8))
+            await blocked.close()
+        }
+    }
+
+    func testSomedaySectionRenameManagerReadsUseExactInputsAndPagedRevision() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var sections = gtd["viewSections"] as? [String: Any] ?? [:]
+        sections["someday"] = (0..<3).map { ["id": "s-\($0)", "title": "Section \($0)", "order": $0] as [String: Any] }
+        gtd["viewSections"] = sections
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let core = host()
+        _ = try await core.start()
+        let menu = try object(await core.call("menuRead", argumentsJSON: json(["settingsMenu", "{}"])))
+        XCTAssertNotNil(menu["groups"])
+        let manage = try object(await core.call("menuRead", argumentsJSON: json(["manageSettings", json(["openSections": NSNull()])])))
+        XCTAssertNotNil(manage["sections"])
+        let first = try object(await core.call("menuRead", argumentsJSON: json(["somedaySections", json(["offset": 0, "limit": 1])])))
+        XCTAssertEqual(first["total"] as? Int, 3)
+        XCTAssertEqual((first["rows"] as? [[String: Any]])?.count, 1)
+        let revision = try XCTUnwrap(first["revision"] as? String)
+        let next = try object(await core.call("menuRead", argumentsJSON: json(["somedaySections", json(["offset": 1, "limit": 1, "revision": revision])])))
+        XCTAssertEqual(next["revision"] as? String, revision)
+        XCTAssertEqual((next["rows"] as? [[String: Any]])?.count, 1)
+        for (name, input) in [("settingsMenu", ["unknown": true] as [String: Any]),
+                              ("manageSettings", ["openSections": 42]),
+                              ("somedaySections", ["offset": 1, "limit": 1]),
+                              ("somedaySections", ["offset": 0, "limit": 101])]
+        {
+            await expectFailure { _ = try await core.call("menuRead", argumentsJSON: try json([name, json(input)])) }
+        }
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("menuRead", argumentsJSON: try json(["somedaySections", json(["offset": 1, "limit": 1, "revision": "stale"])]))
+        }
+    }
+
+    func testSomedaySectionRenameRejectsHiddenDuplicateAndForgedRetryAcknowledgment() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var sections = gtd["viewSections"] as? [String: Any] ?? [:]
+        sections["someday"] = [["id": "none", "title": "Imported", "order": 0], ["id": "none", "hidden": true]]
+        gtd["viewSections"] = sections
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let duplicate = host()
+        _ = try await duplicate.start()
+        await expectFailure("INVALID_INPUT") { _ = try await somedaySectionRenameOptions(duplicate, id: "none") }
+        await duplicate.close()
+        sections["someday"] = [["id": "none", "title": "Imported", "order": 0]]
+        gtd["viewSections"] = sections
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let writer = host()
+        _ = try await writer.start()
+        let payload = try somedaySectionRenamePayload(try await somedaySectionRenameOptions(writer, id: "none"), title: "Renamed")
+        let writeResult = try object(await writer.call("somedaySectionRenameWrite", argumentsJSON: payload))
+        XCTAssertEqual(writeResult["changed"] as? Bool, true)
+        await writer.close()
+        let after = try calendarPreferenceSettings()
+        for wrong in [["id": "other", "changed": true] as [String: Any], ["id": "none", "changed": 1]] {
+            let forgedValue = try json(wrong)
+            let source = try dateBundle(at: "2026-09-29T12:00:00.000Z", suffix: """
+            (() => {
+                const original = MindwtrHost.somedaySectionRenameRetryOutcome, poll = MindwtrHost.poll;
+                const tickets = new Set();
+                MindwtrHost.somedaySectionRenameRetryOutcome = function (json) {
+                    const ticket = original(json); tickets.add(ticket); return ticket;
+                };
+                MindwtrHost.poll = function (id) {
+                    const raw = poll(id);
+                    if (!raw || !tickets.has(id)) return raw;
+                    const result = JSON.parse(raw);
+                    if (result.ok) result.value = \(forgedValue);
+                    return JSON.stringify(result);
+                };
+            })();
+            """)
+            let faults = HostIOFaults()
+            let reader = host(faults, bundleURL: source)
+            _ = try await reader.start()
+            var writes = 0
+            faults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+            await expectFailure("acknowledgment") {
+                _ = try await reader.call("somedaySectionRenameRetryOutcome", argumentsJSON: payload)
+            }
+            XCTAssertEqual(writes, 0)
+            XCTAssertEqual(try json(calendarPreferenceSettings()), try json(after))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await reader.close()
+        }
     }
 
     func testSomedaySectionCreatePreservesRawSettingsAndExistingTitleDoesNotWrite() async throws {
