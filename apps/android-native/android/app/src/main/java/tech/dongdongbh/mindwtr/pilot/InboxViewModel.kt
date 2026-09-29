@@ -171,7 +171,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** The project whose detail shows on the Projects tab; its rows reload from core after process death. */
     var openProjectId by mutableStateOf(saved.get<String>("project")); private set
     var project by mutableStateOf<ProjectDetail?>(null); private set
-    private val prefs = app.getSharedPreferences("mindwtr-view-state", android.content.Context.MODE_PRIVATE)
+    private val prefs = app.getSharedPreferences(DEVICE_PREFS, android.content.Context.MODE_PRIVATE)
     /** Focus sections shown open, device-local as RN keeps them (every section starts open). */
     var focusView by mutableStateOf(FocusViewState.read(prefs)); private set
     /** Collapsed area groups and the open Someday / Waiting and Closed groups, device-local as RN keeps them. */

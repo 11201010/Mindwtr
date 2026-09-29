@@ -477,7 +477,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceWriter\(app\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup\)/);
 assert.equal(kotlinFiles.join('\n').match(/LegacyRnStoreGuard\.requireClear\(/g).length, 1);
 assert.match(guard, /private const val DATABASE = "files\/SQLite\/mindwtr\.db"/);
@@ -773,7 +773,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // callAsync journals before the engine call and settles after the reply; answer() is the only engine call, used by callAsync
     // and the replay; nothing else calls a host method.
     const callAsyncFn = coreHost.slice(coreHost.indexOf('private fun callAsync('), coreHost.indexOf('private fun answer('));
-    assert.match(callAsyncFn, /val entry = if \(method in WriteJournal\.WRITES\) checkNotNull\(journal\)\.append\(method, args\.toList\(\)\) else null[\s\S]*?val result = answer\(method, args, deadlineMs\)\s+if \(entry != null\) \{\s+debugDelay\("delay_after_ms"\)\s+journalStop\(stop, "after", entry\)\s+checkNotNull\(journal\)\.settle\(entry, result\.error\(\)\)\s+\}/);
+    assert.match(callAsyncFn, /val entry = if \(method in WriteJournal\.WRITES\) checkNotNull\(journal\)\.append\(method, args\.toList\(\)\) else null[\s\S]*?val result = answer\(method, args, deadlineMs\)\s+if \(entry != null\) \{\s+debugDelay\("delay_after_ms"\)\s+journalStop\(stop, "after", entry\)\s+\}\s+if \(method in WriteJournal\.WRITES\) settle\(entry, result\)/);
     assert.match(callAsyncFn, /if \(entry != null\) \{\s+checkNotNull\(sqlite\)\.failCommits = debugFault\("fail_commit"\) == "1"\s+debugDelay\("delay_before_ms"\)\s+journalStop\(stop, "before", entry\)\s+\}/);
     assert.equal(coreHost.match(/\banswer\(/g).length, 3, 'answer(): its definition, callAsync and replayJournal');
     assert.equal(coreHost.match(/\bcall\(method, \*args\)/g).length, 1);
@@ -789,7 +789,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // Replay: in journal order, one at a time, stopped by a kept entry or no reply; at boot after the validated load and the
     // language, before this boot hands the host to any screen (get() waits on the boot); a stop is the screens' owed retry.
     const replayFn = coreHost.slice(coreHost.indexOf('fun replayJournal()'), coreHost.indexOf('private fun journalStop('));
-    assert.match(replayFn, /for \(entry in journal\.pending\(\)\) \{[\s\S]*?answer\(entry\.method, entry\.args\.toTypedArray\(\), OPERATION_DEADLINE_MS\)\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(journal\.settle\(entry, error\)\) dropped \+= 1\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
+    assert.match(replayFn, /for \(entry in journal\.pending\(\)\) \{[\s\S]*?answer\(entry\.method, entry\.args\.toTypedArray\(\), OPERATION_DEADLINE_MS\)\.also \{ if \(settle\(entry, it\)\) dropped \+= 1 \}\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
     assert.match(replayFn, /Log\.i\(TAG, "Native Android journal replay sent=/);
     assert(coreHost.indexOf('journal = WriteJournal(journalDir') < coreHost.indexOf('engine.evaluate(bundle'));
     assert.match(owner, /private fun replay\(runtime: CoreHost\) \{\s+val replay = runtime\.replayJournal\(\)\s+replay\.owed\?\.let \{ return recordFailure\(PendingFailure\(FailedAction\("journal", ""\), it, null\)\) \}\s+\/\/[^\n]*\s+if \(replay\.left > 0\) return\s+runCatching \{ runtime\.pruneReceipts\(\) \}/);
@@ -1824,7 +1824,15 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(code(settingsModel), /menuCommand\(|\bsend\(|shell\.perform\(action|\.perform\([A-Za-z]/, 'SettingsModel writes only through MenuModel.command or create');
     // Core's device writes are stored under RN's keys before the command counts as done; a new language reloads core's words, a theme its colors.
     assert.match(menuModel, /if \(action\.kind in SETTINGS_KINDS\) settings\.applied\(runtime, reply\)\s+shell\.acknowledged\(action\)/);
-    assert.match(settingsModel, /internal fun applied\(runtime: CoreHost, reply: JSONObject\) \{\s+val writes = reply\.optJSONArray\("deviceWrites"\) \?: return\s+store\(writes\)/);
+    assert.match(settingsModel, /internal fun applied\(runtime: CoreHost, reply: JSONObject\) \{\s+val writes = reply\.optJSONArray\("deviceWrites"\) \?: return\s+val keys = /);
+    // A setting's deviceWrites are stored in CoreHost's one call path (the first send and the journal's replay), durably, before the
+    // write's journal entry settles; the Settings screen only reloads the language and theme after.
+    assert.doesNotMatch(settingsModel.slice(settingsModel.indexOf('internal fun applied(')), /^\s+store\(writes\)/m);
+    assert.match(settingsModel, /fun storeDeviceWrites\(prefs: SharedPreferences, writes: JSONArray\) \{[\s\S]*?check\(edit\.commit\(\)\) \{ "Cannot store the device settings" \}/);
+    assert.match(settingsModel, /fun deviceWriter\(app: Context\): \(JSONArray\) -> Unit = \{ storeDeviceWrites\(app\.getSharedPreferences\(DEVICE_PREFS, Context\.MODE_PRIVATE\), it\) \}/);
+    assert.match(model, /app\.getSharedPreferences\(DEVICE_PREFS, /);
+    assert.match(coreHost, /private fun settle\(entry: WriteJournal\.Entry\?, result: JSONObject\): Boolean \{\s+result\.optJSONObject\("value"\)\?\.optJSONArray\("deviceWrites"\)\?\.let\(deviceWrites\)\s+return entry != null && checkNotNull\(journal\)\.settle\(entry, result\.error\(\)\)/);
+    assert.equal(coreHost.match(/(?<!\.)\bsettle\(entry, /g).length, 2, 'settle(): the first send and the replay');
     assert.match(settingsModel, /runtime\.language\(prefs\.getString\(LANGUAGE_KEY, null\)\.orEmpty\(\), Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
     assert.match(model, /val runtime = ProcessCoreHost\.get\(getApplication\(\), prefs\.getString\(LANGUAGE_KEY, null\)\)\s+\/\/[^\n]*\s+applyDeviceChoices\(runtime, prefs\)/, 'the device\'s own language and theme apply at boot, before any screen');
     for (const [kotlin, file, core] of [['LANGUAGE_KEY', 'i18n/i18n-constants.ts', 'LANGUAGE_STORAGE_KEY'], ['THEME_KEY', 'general-settings-model.ts', 'MOBILE_THEME_STORAGE_KEY'],

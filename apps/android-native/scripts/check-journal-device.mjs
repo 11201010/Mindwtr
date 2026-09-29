@@ -10,7 +10,9 @@
 // exactly once: the row count, and each task's revision exactly one write past where it started. It also checks that the boot's
 // replay emptied the journal and logged its counts, and that a replay that left nothing (only such a one) pruned core's old
 // receipts after it. (4) A boot replay under an injected failed save keeps its entry, and the screen's Try again sends it once
-// saving works. It touches only the development package (it refuses any other APK), never
+// saving works. (5) A setting's device-local part (core's deviceWrites: GTD's Open tasks in, General's Language) is stored by the
+// boot's replay when the process died after core's reply: the app's preferences file holds it and the app applies it; each
+// setting is then put back through the app. It touches only the development package (it refuses any other APK), never
 // launches over another app, restores rotation, and clears its debug properties on exit. Leave the device on its home screen.
 // Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
 import { execFileSync } from 'node:child_process';
@@ -18,7 +20,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { box, button, check, connect, evidenced, fail, field, hasText, inboxCount, inEditor, owedRetry, Stopped, tab, tabSelected, tagged, taskRows, withDescription } from './device.mjs';
+import { box, button, check, connect, evidenced, fail, field, hasText, inboxCount, inEditor, isOn, owedRetry, Stopped, tab, tabSelected, tagged, taskRows, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -42,6 +44,14 @@ const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms', 'language', '
 const DB = 'mindwtr-native-dev.db';
 const work = resolve(app, 'android/build/journal-check');
 const { en } = await import(resolve(app, '../../packages/core/src/i18n/locales/en.ts'));
+const { zhHans: zh } = await import(resolve(app, '../../packages/core/src/i18n/locales/zh-Hans.ts'));
+// General's Language picker names Chinese by its own name (core's SETTINGS_LANGUAGE_OPTIONS).
+const CHINESE = /\n    zh: \{[\s\S]*?native: '([^']+)'/.exec(readFileSync(resolve(app, '../../packages/core/src/i18n/i18n-locales.ts'), 'utf8'))[1];
+// RN's device keys in the app's preferences file (core's MOBILE_TASK_OPEN_MODE_STORAGE_KEY and LANGUAGE_STORAGE_KEY).
+const PREFS = 'shared_prefs/mindwtr-view-state.xml';
+const OPEN_MODE_KEY = 'mindwtr:view:taskOpenMode:v1';
+const LANGUAGE_KEY = 'mindwtr-language';
+const OPEN_MODES = { automatic: en['settings.gtdMobile.taskOpenAutomatic'], preview: en['settings.gtdMobile.taskOpenPreview'] };
 // Digits only: the keyboard guard allows only an English layout, and digits never compose.
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
 const titles = {
@@ -74,6 +84,8 @@ const stored = (title) => {
 const journal = () => sh(`run-as ${PKG} ls files/journal`).split(/\s+/).filter((name) => /^\d{16}\.json$/.test(name)).sort()
     .map((name) => ({ name, ...JSON.parse(sh(`run-as ${PKG} cat files/journal/${name}`)) }));
 const aside = () => sh(`run-as ${PKG} ls files/journal/aside 2>/dev/null || true`).split(/\s+/).filter(Boolean);
+/** A device key's stored value in the app's preferences file, or null. */
+const devicePref = (key) => new RegExp(`<string name="${key}">([^<]*)</string>`).exec(sh(`run-as ${PKG} cat ${PREFS} 2>/dev/null || true`))?.[1] ?? null;
 
 // ---- UI (core's English) ----
 const inPopup = (nodes) => Boolean(tagged(nodes, 'quick-capture'));
@@ -87,13 +99,59 @@ const rowLabel = (nodes, row) => row.text || row['content-desc']
     || nodes.find((node) => node !== row && node.bounds === row.bounds && (node.text || node['content-desc']))?.['content-desc'] || '';
 const rowTitles = (nodes) => taskRows(nodes).sort((a, b) => box(a)[1] - box(b)[1]).map((node) => rowLabel(nodes, node));
 const results = (nodes) => nodes.filter((node) => (node['resource-id'] ?? '').endsWith('search-result')).map((node) => node['content-desc'] || node.text);
+const settingsScreen = (nodes) => nodes.some((node) => /(^|\/)settings-(main|general|gtd|gtd-task-editor)$/.test(node['resource-id'] ?? ''));
+const onSettings = (id) => (nodes) => Boolean(tagged(nodes, `settings-${id}`)) && !tagged(nodes, 'settings-picker');
+const withPrefix = (nodes, prefix) => nodes.find((node) => (node['content-desc'] ?? '').startsWith(prefix));
+/** Back until the tab bar shows in the language of [strings] (nothing open over it). */
+const toTabs = async (strings) => {
+    for (let step = 0; step < 8; step += 1) {
+        const nodes = await screen();
+        if (tab(nodes, strings['tab.menu']) && !tagged(nodes, 'menu-screen') && !sheetOpen(nodes) && !settingsScreen(nodes) && !inEditor(nodes)
+            && !inPopup(nodes) && !tagged(nodes, 'global-search')) return nodes;
+        requireAppFront();
+        if (/mInputShown=true/.test(sh('dumpsys input_method'))) sh('input keyevent KEYCODE_BACK');
+        sh('input keyevent KEYCODE_BACK');
+        await sleep(1000);
+    }
+    return fail('the tabs did not come back');
+};
+/** The node [find] picks, scrolled into view from the top (Settings keeps one scroll position across its screens). */
+const reveal = async (find, description) => {
+    let nodes = await device.toTop();
+    for (let step = 0; step < 8 && !find(nodes); step += 1) nodes = await device.swipe(nodes, 'down');
+    return find(nodes) ?? fail(`no ${description}`);
+};
+/** Settings from the More sheet, then its row titled [title] (core's row reads "<title>. <description>"), in [strings]' language. */
+const openSettings = async (strings, title, id) => {
+    let nodes = await toTabs(strings);
+    nodes = await tapExpecting(tab(nodes, strings['tab.menu']) ?? fail('no Menu tab'), sheetOpen, 'the More sheet');
+    await tapExpecting(withDescription(await device.settle(nodes), strings['nav.settings']) ?? fail('no Settings tile'), onSettings('main'), 'Settings');
+    await tapExpecting(await reveal((current) => withPrefix(current, `${title}. `), `${title} row`), onSettings(id), `Settings › ${title}`);
+    return device.toTop();
+};
+/** GTD › Task editor layout, where Open tasks in is core's first choice. */
+const openTaskEditorLayout = async () => {
+    await openSettings(en, en['settings.gtd'], 'gtd');
+    await tapExpecting(await reveal((current) => withDescription(current, en['settings.taskEditorLayout']), 'Task editor layout'), onSettings('gtd-task-editor'), 'Task editor layout');
+    // Open tasks in is the screen's first choice.
+    return device.toTop();
+};
+/** General's Language picker in [strings]' language, and [choice] picked there; waits for the app's words in [after]'s language. */
+const pickLanguage = async (strings, choice, after) => {
+    await openSettings(strings, strings['settings.general'], 'general');
+    const nodes = await tapExpecting(await reveal((current) => withPrefix(current, `${strings['settings.language']}: `), 'Language row'),
+        (current) => Boolean(tagged(current, 'settings-picker')), 'the language picker');
+    return tapExpecting(withDescription(nodes, choice) ?? fail(`no ${choice}`), (current) => !tagged(current, 'settings-picker')
+        && Boolean(withDescription(current, after['common.back'])), `the app in ${choice}`);
+};
+
 /** Back until the Inbox tab shows (a relaunch can restore search or History), then the Inbox tab itself. */
 const toInbox = async () => {
     for (let step = 0; step < 6; step += 1) {
         const nodes = await screen();
         if (onInbox(nodes)) return nodes;
         requireAppFront();
-        if (tagged(nodes, 'menu-screen') || inSearch(nodes) || inPopup(nodes) || sheetOpen(nodes) || inEditor(nodes)) {
+        if (tagged(nodes, 'menu-screen') || settingsScreen(nodes) || inSearch(nodes) || inPopup(nodes) || sheetOpen(nodes) || inEditor(nodes)) {
             if (/mInputShown=true/.test(sh('dumpsys input_method'))) sh('input keyevent KEYCODE_BACK');
             sh('input keyevent KEYCODE_BACK');
             await sleep(1200);
@@ -194,8 +252,14 @@ const prunedAfterReplay = async (processId) => {
 
 const originalAccelerometer = sh('settings get system accelerometer_rotation');
 const originalRotation = sh('settings get system user_rotation');
+// A setting (5) changed and not yet put back: put back through the app, on failure too.
+const undo = [];
 const restore = async () => {
     for (const name of PROPS) { try { setProp(name, ''); } catch { /* device gone */ } }
+    while (undo.length > 0) {
+        const step = undo.pop();
+        try { if (front().includes(`${PKG}/`)) await step.run(); } catch (error) { console.error(`RESTORE FAILED: ${step.name}: ${error.message}; put it back by hand`); }
+    }
     try { if (front().includes(`${PKG}/`)) await toInbox(); } catch { /* the app is gone */ }
     for (const [name, value] of [['user_rotation', originalRotation], ['accelerometer_rotation', originalAccelerometer]]) {
         try { sh(value === 'null' ? `settings delete system ${name}` : `settings put system ${name} ${value}`); } catch { /* device gone */ }
@@ -323,6 +387,52 @@ try {
         const [end, ...twins] = stored(title);
         check(twins.length === 0 && end.status === 'done' && end.rev === start.rev + 1, `(4) Try again sent the journal's request: done, one write (rev ${start.rev} → ${end.rev})`);
         check(journal().length === 0, '(4) the journal is empty');
+    }
+
+    // (5) A setting's device-local part (core's deviceWrites) when the process dies after core's reply, before the app stored it:
+    // the boot's replay (core answers from its receipt) stores it before the entry goes, and the app applies it.
+    {
+        // (5a) GTD › Task editor layout › Open tasks in: a GTD write whose only device-local part is the choice.
+        let nodes = await openTaskEditorLayout();
+        const [originalMode, originalLabel] = Object.entries(OPEN_MODES).find(([, label]) => isOn(withDescription(nodes, label))) ?? fail('Open tasks in shows neither Automatic nor Preview');
+        const [mode, label] = Object.entries(OPEN_MODES).find(([value]) => value !== originalMode);
+        const before = devicePref(OPEN_MODE_KEY);
+        undo.push({ name: `Open tasks in ${originalLabel}`, run: async () => {
+            const shown = await openTaskEditorLayout();
+            await tapExpecting(withDescription(shown, originalLabel), (current) => isOn(withDescription(current, originalLabel)), originalLabel);
+        } });
+        const stopped = await stopAt('after', 'gtdSetting', async () => tap(withDescription(nodes, label) ?? fail(`no ${label}`)));
+        check(devicePref(OPEN_MODE_KEY) === before, `(5a) the process died after core's reply, before the app stored the choice (${before})`);
+        const { replay, processId } = await relaunch(stopped);
+        check(replayed(replay, 1, 1), `(5a) the boot replayed the GTD write and dropped it: ${replay.split('journal replay ')[1]}`);
+        check(devicePref(OPEN_MODE_KEY) === mode, `(5a) the replay stored the device choice: ${OPEN_MODE_KEY} = ${devicePref(OPEN_MODE_KEY)}`);
+        check(await prunedAfterReplay(processId) && journal().length === 0, '(5a) the journal is empty');
+        nodes = await openTaskEditorLayout();
+        check(isOn(withDescription(nodes, label)), `(5a) GTD shows Open tasks in: ${label}`);
+        await tapExpecting(withDescription(nodes, originalLabel), (current) => isOn(withDescription(current, originalLabel)), originalLabel);
+        await waitFor('the choice back on disk', () => devicePref(OPEN_MODE_KEY) === originalMode, 15_000);
+        undo.pop();
+
+        // (5b) General › Language: a General write whose device-local part is the language the app shows.
+        const language = devicePref(LANGUAGE_KEY);
+        await openSettings(en, en['settings.general'], 'general');
+        nodes = await tapExpecting(await reveal((current) => withPrefix(current, `${en['settings.language']}: `), 'Language row'),
+            (current) => Boolean(tagged(current, 'settings-picker')), 'the language picker');
+        undo.push({ name: 'English', run: async () => {
+            const words = tab(await screen(), zh['tab.menu']) || devicePref(LANGUAGE_KEY) === 'zh' ? zh : en;
+            await pickLanguage(words, 'English', en);
+        } });
+        const halted = await stopAt('after', 'generalSetting', async () => tap(withDescription(nodes, CHINESE) ?? fail(`no ${CHINESE}`)));
+        check(devicePref(LANGUAGE_KEY) === language, `(5b) the process died after core's reply, before the app stored the language (${language})`);
+        const relaunched = await relaunch(halted);
+        check(replayed(relaunched.replay, 1, 1), `(5b) the boot replayed the General write and dropped it: ${relaunched.replay.split('journal replay ')[1]}`);
+        check(devicePref(LANGUAGE_KEY) === 'zh', `(5b) the replay stored the device language: ${LANGUAGE_KEY} = ${devicePref(LANGUAGE_KEY)}`);
+        await waitFor('the app in Chinese', (current) => Boolean(tab(current, zh['tab.menu'])), 30_000);
+        check(journal().length === 0, `(5b) the app shows Chinese after the relaunch ("${zh['tab.menu']}"), and the journal is empty`);
+        await pickLanguage(zh, 'English', en);
+        await waitFor('English on disk', () => devicePref(LANGUAGE_KEY) === 'en', 15_000);
+        undo.pop();
+        check(true, '(5b) English is back, through the app');
     }
     check(aside().length === 0, 'nothing was set aside');
     console.log('Journal device check passed');

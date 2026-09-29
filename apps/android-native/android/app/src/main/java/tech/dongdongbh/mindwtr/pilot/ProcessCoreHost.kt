@@ -93,7 +93,7 @@ internal object ProcessCoreHost {
             null
         }
         val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir }, HostIo(app),
-            File(app.filesDir, "journal"))
+            File(app.filesDir, "journal"), deviceWriter(app))
         try {
             runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() }, legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)

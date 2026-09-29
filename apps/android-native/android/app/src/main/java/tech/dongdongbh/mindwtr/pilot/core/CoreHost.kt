@@ -25,7 +25,14 @@ import java.util.concurrent.Future
  * then the JS host may apply RN's AsyncStorage change after it imported RN's backup.
  * [io] runs the JS host's fetch and secret calls off this thread; their answers come back in [callAsync]'s pump loop.
  */
-class CoreHost(private val databaseFile: File, private val rnDataDir: File? = null, private val io: HostIo, private val journalDir: File) {
+class CoreHost(
+    private val databaseFile: File,
+    private val rnDataDir: File? = null,
+    private val io: HostIo,
+    private val journalDir: File,
+    /** Stores a write's deviceWrites (a setting's device-local part) durably; throws if it cannot. */
+    private val deviceWrites: (JSONArray) -> Unit,
+) {
     companion object {
         const val TAG = "MindwtrNativeDev"
         /** Must match NATIVE_ERROR in bundle/host-entry.ts. */
@@ -352,8 +359,8 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
         if (entry != null) {
             debugDelay("delay_after_ms")
             journalStop(stop, "after", entry)
-            checkNotNull(journal).settle(entry, result.error())
         }
+        if (method in WriteJournal.WRITES) settle(entry, result)
         if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
         result.getJSONObject("value")
     }
@@ -380,6 +387,16 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
 
     private fun JSONObject.error(): String? = if (getBoolean("ok")) null else getString("error")
 
+    /**
+     * Core's reply to a write, on the first send and on the journal's replay alike: a success's deviceWrites (a setting's
+     * device-local part) are on disk first, then [entry] settles; true once it left the journal. A device write that fails
+     * throws before the entry settles, so the entry stays for a retry or the next boot.
+     */
+    private fun settle(entry: WriteJournal.Entry?, result: JSONObject): Boolean {
+        result.optJSONObject("value")?.optJSONArray("deviceWrites")?.let(deviceWrites)
+        return entry != null && checkNotNull(journal).settle(entry, result.error())
+    }
+
     /** What one replay did: requests [sent], [dropped] after a final reply, entries [left], and the failure that stopped it. */
     data class Replay(val sent: Int, val dropped: Int, val left: Int, val owed: String?)
 
@@ -398,12 +415,11 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
             sent += 1
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             val error = try {
-                answer(entry.method, entry.args.toTypedArray(), OPERATION_DEADLINE_MS).error()
+                answer(entry.method, entry.args.toTypedArray(), OPERATION_DEADLINE_MS).also { if (settle(entry, it)) dropped += 1 }.error()
             } catch (failure: Throwable) {
                 owed = failure.message ?: failure.javaClass.simpleName
                 break
             }
-            if (journal.settle(entry, error)) dropped += 1
             if (WriteJournal.keeps(error)) { owed = error; break }
         }
         stopped?.let { throw IllegalStateException(it) }
