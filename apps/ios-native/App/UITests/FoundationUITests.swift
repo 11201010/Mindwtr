@@ -5337,7 +5337,7 @@ final class FoundationUITests: XCTestCase {
 
 
     func testProjectTaskSortAndNotes() { projectTaskSortFlow(library: "13d4bc99-20dd-49b5-a395-835b78de7ebb") }
-    func testProjectTaskSortLargestText() { projectTaskSortFlow(library: "ba586121-f115-4dfb-a933-edf3e275da75") }
+    func testProjectTaskSortLargestText() { projectTaskSortFlow(library: "43017675-b987-4402-b220-f097fea28b70") }
 
     private func openProjectTaskSortTest(_ app: XCUIApplication, recovered: Bool = false) {
         if recovered { boardEnabled(app.textFields["projects-create-title"], timeout: 30) }
@@ -5351,6 +5351,8 @@ final class FoundationUITests: XCTestCase {
         let button = app.buttons[id]
         if id.hasPrefix("project-sort-option-") {
             revealPagedElement(app, button, in: app.scrollViews["project-sort-scroll"])
+        } else if id == "project-completed-toggle" {
+            revealPagedElement(app, button, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
         }
         boardEnabled(button); XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
         button.coordinate(withNormalizedOffset: .zero)
@@ -5392,6 +5394,7 @@ final class FoundationUITests: XCTestCase {
         tap("project-task-view-options-button"); tap("project-view-completed-option")
         boardEnabled(app.buttons["project-completed-toggle"])
         tap("project-completed-toggle")
+        XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Collapse")
         for (choice, firstID) in [("due", "a007e3b4-2789-43b0-8e79-86617f91c5c5"), ("start", "d55f6859-cf8e-4643-a1ad-eff6db59262e"), ("review", "acc031d9-9cac-4296-8420-840bcd17a562"),
                                   ("timeEstimate", "d55f6859-cf8e-4643-a1ad-eff6db59262e"), ("created", "acc031d9-9cac-4296-8420-840bcd17a562"),
                                   ("created-desc", "a007e3b4-2789-43b0-8e79-86617f91c5c5"), ("default", "acc031d9-9cac-4296-8420-840bcd17a562")] {
