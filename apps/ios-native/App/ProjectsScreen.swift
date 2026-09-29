@@ -1180,6 +1180,7 @@ struct ProjectDetailScreen: View {
                     }
                 }
             }
+            .accessibilityIdentifier(model.projectTaskSortPresented ? "project-sort-scroll" : "project-view-options-scroll")
         }
         .padding(16).background(palette.card).tint(palette.tint)
         .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)

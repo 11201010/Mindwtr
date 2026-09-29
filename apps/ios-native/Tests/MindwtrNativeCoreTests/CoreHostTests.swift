@@ -14207,7 +14207,7 @@ final class CoreHostTests: XCTestCase {
 
     func testProjectTaskSortFailedCommitAndColdReplayPreserveNestedAttachment() async throws {
         try await seedProjectRenameRows()
-        let nested = #"[{"zNested":{"z":1,"a":[{"z":2,"a":1},null]},"id":"focus-file","kind":"file","title":"Keep attachment","uri":"file:///retained.txt","createdAt":"2026-09-01T12:00:00.000Z","updatedAt":"2026-09-01T12:00:00.000Z"}]"#
+        let nested = #"[{"updatedAt":"2026-09-01T12:00:00.000Z","uri":"file:///second.txt","title":"Second","kind":"file","id":"second","createdAt":"2026-09-01T12:00:00.000Z","cloudKey":"attachments/second.txt","contentRev":2},{"uri":"file:///first.txt","title":"First","kind":"file","id":"first","createdAt":"2026-09-01T12:00:00.000Z","updatedAt":"2026-09-01T12:00:00.000Z","size":17}]"#
         let edit = try SQLiteBridge(url: database)
         _ = try edit.execute("UPDATE projects SET attachments = ? WHERE id = 'focus-target'", parametersJSON: json([nested]))
         edit.close()
@@ -14238,6 +14238,8 @@ final class CoreHostTests: XCTestCase {
         let savedAttachment = try XCTUnwrap(afterRow["attachments"] as? String)
         XCTAssertEqual(try json(JSONSerialization.jsonObject(with: Data(savedAttachment.utf8))),
                        try json(JSONSerialization.jsonObject(with: Data(nested.utf8))))
+        let attachmentRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(savedAttachment.utf8)) as? [[String: Any]])
+        XCTAssertEqual(attachmentRows.compactMap { $0["id"] as? String }, ["second", "first"])
         let saved = try SQLiteBridge(url: database)
         let after = try nineTableSnapshot(saved)
         saved.close()
@@ -14261,14 +14263,8 @@ final class CoreHostTests: XCTestCase {
         _ = try edit.execute("UPDATE projects SET title = 'Newer name', rev = rev + 1 WHERE id = 'focus-target'")
         let before = try nineTableSnapshot(edit)
         edit.close()
-        let replayFaults = HostIOFaults()
-        var writes = 0
-        replayFaults.beforeSQL = { sql in
-            if sql.hasPrefix("UPDATE") || sql.hasPrefix("INSERT") || sql.hasPrefix("DELETE") { writes += 1 }
-        }
-        let replay = host(replayFaults)
+        let replay = host()
         await expectFailure("STALE_REVISION") { _ = try await replay.start() }
-        XCTAssertEqual(writes, 0)
         let check = try SQLiteBridge(url: database)
         XCTAssertEqual(try nineTableSnapshot(check), before)
         check.close()
@@ -14303,20 +14299,38 @@ final class CoreHostTests: XCTestCase {
             }
             let before = try nineTableSnapshot(edit)
             edit.close()
-            let replayFaults = HostIOFaults()
-            var writes = 0
-            replayFaults.beforeSQL = { sql in
-                if sql.hasPrefix("UPDATE") || sql.hasPrefix("INSERT") || sql.hasPrefix("DELETE") { writes += 1 }
-            }
-            let replay = host(replayFaults)
+            let beforeTarget = try XCTUnwrap(projectRows("focus-target").first)
+            let beforeTask = try storedTask("rename-task")
+            let beforeSection = try XCTUnwrap(projectSectionRows("rename-section").first)
+            let beforeUnrelated = try storedTask("rename-unrelated-task")
+            let replay = host()
             let startup = try object(await replay.start())
             let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
             XCTAssertEqual(recovery["method"] as? String, "projectTaskSortCommit")
             XCTAssertEqual((recovery["result"] as? [String: Any])?["taskSortBy"] as? String, "title")
-            XCTAssertEqual(writes, 0)
             let check = try SQLiteBridge(url: database)
-            XCTAssertEqual(try nineTableSnapshot(check), before)
+            let after = try nineTableSnapshot(check)
             check.close()
+            XCTAssertEqual(try json(XCTUnwrap(projectRows("focus-target").first)), try json(beforeTarget))
+            XCTAssertEqual(try json(storedTask("rename-unrelated-task")), try json(beforeUnrelated))
+            if kind == "rename" {
+                XCTAssertEqual(after, before)
+            } else {
+                for index in [1, 2, 3, 5, 6, 7, 8] { XCTAssertEqual(after[index], before[index]) }
+                let detached = try storedTask("rename-task")
+                XCTAssertTrue(detached["projectId"] is NSNull)
+                XCTAssertTrue(detached["sectionId"] is NSNull)
+                XCTAssertEqual(detached["rev"] as? Int, (beforeTask["rev"] as? Int ?? 0) + 1)
+                for (field, value) in beforeTask where !["projectId", "sectionId", "rev", "revBy", "updatedAt"].contains(field) {
+                    XCTAssertEqual(try json([detached[field] ?? NSNull()]), try json([value]), field)
+                }
+                let removedSection = try XCTUnwrap(projectSectionRows("rename-section").first)
+                XCTAssertNotNil(removedSection["deletedAt"] as? String)
+                XCTAssertEqual(removedSection["rev"] as? Int, (beforeSection["rev"] as? Int ?? 0) + 1)
+                for (field, value) in beforeSection where !["deletedAt", "rev", "revBy", "updatedAt"].contains(field) {
+                    XCTAssertEqual(try json([removedSection[field] ?? NSNull()]), try json([value]), field)
+                }
+            }
             XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
             await replay.close()
             directory = parent

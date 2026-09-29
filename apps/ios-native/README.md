@@ -24,6 +24,8 @@ Project Details now includes a bounded Section list and Add Section sheet. The i
 
 Project list tag filtering follows RN: Show/Hide, All tags, No tags and exact stored tags intersect the browsing Area filter. The inventory remains global. Filtering preserves the quick-add draft and chosen creation Area through Project Details, Area management and Search; an unsuccessful read keeps the prior view and retries the intended selection. Empty stored tags have an accessible “Empty tag” label and remain distinct from untagged Projects. Selection is session-only and writes no library data.
 
+Project task-view More options includes RN’s Show completed and Sort controls. Sort uses the shared choices and feature gates, persists only the Project override, and preserves Task/Section order data. Archived Projects show Sort as read-only. Failed saves retain the exact durable request for Retry and cold recovery.
+
 Project task-view More options includes RN’s Show completed control. The preference persists locally across Projects and restarts, while the Completed group starts collapsed and resets when the Project or grouping mode changes. Parallel, sequential and archived membership remains core-owned. Notes are saved before changing view controls; a failed read retains the old rows and selection until Retry succeeds. Copied-RN rehearsals read the existing Show completed preference from the legacy storage copy.
 
 Project Tags uses the shared RN Add/Toggle/Clear rules and preserves distinct raw Unicode spellings. Its scrollable sheet reaches every suggestion, saves pending Notes before opening, and keeps the exact request and Add draft available for retry after an uncertain save. Cold recovery applies the journaled result once.

@@ -5336,6 +5336,126 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testProjectTaskSortAndNotes() { projectTaskSortFlow(library: "13d4bc99-20dd-49b5-a395-835b78de7ebb") }
+    func testProjectTaskSortLargestText() { projectTaskSortFlow(library: "ba586121-f115-4dfb-a933-edf3e275da75") }
+
+    private func openProjectTaskSortTest(_ app: XCUIApplication, recovered: Bool = false) {
+        if recovered { boardEnabled(app.textFields["projects-create-title"], timeout: 30) }
+        else { boardEnabled(app.buttons["tab-menu"], timeout: 30); boardTap(app, "tab-menu"); boardTap(app, "menu-projects") }
+        let row = app.buttons["project-open-b6b325b0-c0d7-411d-9114-f5b816ec6286"]
+        revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+        row.tap(); boardEnabled(app.buttons["project-details-toggle"])
+    }
+
+    private func projectSortTap(_ app: XCUIApplication, _ id: String) {
+        let button = app.buttons[id]
+        if id.hasPrefix("project-sort-option-") {
+            revealPagedElement(app, button, in: app.scrollViews["project-sort-scroll"])
+        }
+        boardEnabled(button); XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        button.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+    }
+
+    private func projectTaskSortFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        openProjectTaskSortTest(app)
+        func tap(_ id: String) { projectSortTap(app, id) }
+        func sort(_ selected: String, choose: String? = nil) {
+            tap("project-task-view-options-button"); tap("project-view-sort-option")
+            let current = app.buttons["project-sort-option-" + selected]
+            XCTAssertTrue(current.waitForExistence(timeout: 10)); XCTAssertTrue(current.isSelected)
+            tap(choose.map { "project-sort-option-" + $0 } ?? "project-sort-close")
+            boardEnabled(app.buttons["project-task-view-options-button"])
+        }
+        func first(_ title: String) {
+            let expected = app.buttons["task-title-" + title]
+            revealPagedElement(app, expected, in: app.scrollViews["project-detail-scroll"])
+            boardEnabled(expected)
+            let visible = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "task-title-"))
+                .allElementsBoundByIndex.filter { $0.exists && $0.frame.minY >= app.scrollViews["project-detail-scroll"].frame.minY }
+            XCTAssertEqual(visible.first?.identifier, "task-title-" + title)
+        }
+        sort("default")
+        projectManagerTap(app, "project-details-toggle"); projectManagerTap(app, "project-notes-toggle")
+        let input = app.textViews["project-notes-input"]
+        revealPagedElement(app, input, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+        boardEnabled(input); replaceProjectNotesText(input, with: "Saved before task sort\n")
+        sort("default", choose: "title")
+        XCTAssertEqual(input.value as? String, "Saved before task sort\n")
+        boardTap(app, "project-back")
+        let reopened = app.buttons["project-open-b6b325b0-c0d7-411d-9114-f5b816ec6286"]
+        revealPagedElement(app, reopened, in: app.scrollViews["projects-scroll"])
+        reopened.tap(); boardEnabled(app.buttons["project-details-toggle"])
+        first("d55f6859-cf8e-4643-a1ad-eff6db59262e")
+        sort("title", choose: "title") // Same choice must not add a revision.
+        tap("project-task-view-options-button"); tap("project-view-completed-option")
+        boardEnabled(app.buttons["project-completed-toggle"])
+        tap("project-completed-toggle")
+        for (choice, firstID) in [("due", "a007e3b4-2789-43b0-8e79-86617f91c5c5"), ("start", "d55f6859-cf8e-4643-a1ad-eff6db59262e"), ("review", "acc031d9-9cac-4296-8420-840bcd17a562"),
+                                  ("timeEstimate", "d55f6859-cf8e-4643-a1ad-eff6db59262e"), ("created", "acc031d9-9cac-4296-8420-840bcd17a562"),
+                                  ("created-desc", "a007e3b4-2789-43b0-8e79-86617f91c5c5"), ("default", "acc031d9-9cac-4296-8420-840bcd17a562")] {
+            tap("project-task-view-options-button"); tap("project-view-sort-option")
+            tap("project-sort-option-" + choice)
+            boardEnabled(app.buttons["project-task-view-options-button"])
+            XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Collapse")
+            first(firstID)
+        }
+        sort("default", choose: "title")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Project task Sort retains completed view"
+        shot.lifetime = .keepAlways; add(shot)
+        sort("title")
+        app.terminate(); app.launch(); openProjectTaskSortTest(app)
+        sort("title"); first("d55f6859-cf8e-4643-a1ad-eff6db59262e")
+        XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Expand")
+        boardTap(app, "project-back")
+        let archived = app.buttons["project-open-35361330-8e78-4a4c-8197-aaca63070b98"]
+        let closed = app.buttons["projects-section-archived"]
+        revealPagedElement(app, closed, in: app.scrollViews["projects-scroll"])
+        if closed.value as? String == "Expand" { closed.tap() }
+        revealPagedElement(app, archived, in: app.scrollViews["projects-scroll"])
+        archived.tap(); tap("project-task-view-options-button")
+        XCTAssertFalse(app.buttons["project-view-sort-option"].isEnabled)
+        XCTAssertFalse(app.buttons["project-view-completed-option"].exists)
+        tap("project-view-options-close"); app.terminate()
+    }
+
+    func testProjectTaskSortFailureRetainsChoice() { projectTaskSortRecovery(failed: true) }
+    func testProjectTaskSortColdRecovery() { projectTaskSortRecovery(failed: false) }
+    private func projectTaskSortRecovery(failed: Bool) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "962b774b-b259-45cd-839a-66bd22371154"]
+        app.launch(); openProjectTaskSortTest(app, recovered: !failed)
+        projectSortTap(app, "project-task-view-options-button"); projectSortTap(app, "project-view-sort-option")
+        if failed {
+            projectSortTap(app, "project-sort-option-title")
+            XCTAssertTrue(app.staticTexts["project-sort-error"].waitForExistence(timeout: 15))
+            for _ in 0..<2 {
+                XCTAssertFalse(app.buttons["project-sort-close"].isEnabled)
+                XCTAssertTrue(app.buttons["project-sort-option-default"].isSelected)
+                XCTAssertFalse(app.buttons["project-sort-option-due"].isEnabled)
+                projectSortTap(app, "project-sort-retry"); boardEnabled(app.buttons["project-sort-retry"])
+            }
+        } else {
+            XCTAssertTrue(app.buttons["project-sort-option-title"].isSelected)
+            projectSortTap(app, "project-sort-close")
+        }
+        app.terminate()
+    }
+
+    func testProjectTaskSortHiddenLegacyEstimateClearsDefault() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "3a9f2190-c9e8-4fd4-9390-2ba2a7a41fce"]
+        app.launch(); openProjectTaskSortTest(app)
+        projectSortTap(app, "project-task-view-options-button"); projectSortTap(app, "project-view-sort-option")
+        XCTAssertFalse(app.buttons["project-sort-option-timeEstimate"].exists)
+        XCTAssertTrue(app.buttons["project-sort-option-default"].isSelected)
+        projectSortTap(app, "project-sort-option-default")
+        boardEnabled(app.buttons["project-task-view-options-button"])
+        app.terminate(); app.launch(); openProjectTaskSortTest(app)
+        projectSortTap(app, "project-task-view-options-button"); projectSortTap(app, "project-view-sort-option")
+        XCTAssertTrue(app.buttons["project-sort-option-default"].isSelected)
+        projectSortTap(app, "project-sort-close"); app.terminate()
+    }
+
     func testProjectCompletedViewFlushesNotesAndResetsAfterTypeChange() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-ui-test-library", "36654896-3803-4740-a74b-87899cdb5dd8"]
@@ -5454,7 +5574,10 @@ final class FoundationUITests: XCTestCase {
         revealPagedElement(app, closed, in: app.scrollViews["projects-scroll"])
         if closed.value as? String == "Expand" { closed.tap() }
         open("89b11efe-3801-4a20-9ff5-dc096795a045")
-        XCTAssertFalse(app.buttons["project-task-view-options-button"].exists)
+        tap("project-task-view-options-button")
+        XCTAssertFalse(app.buttons["project-view-completed-option"].exists)
+        XCTAssertFalse(app.buttons["project-view-sort-option"].isEnabled)
+        tap("project-view-options-close")
         let archived = app.buttons["task-title-df02dc4c-dc78-4dda-b53f-dd1f8f147bbf"]
         revealPagedElement(app, archived, in: app.scrollViews["project-detail-scroll"])
         XCTAssertTrue(archived.exists)
