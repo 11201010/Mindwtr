@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-focus-grouping`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Focus grouping saved` with `outcome=confirmed` confirms the checked grouping intent was durably acknowledged and its journal cleared, including an unchanged choice or replay. Change Group next actions by in Focus View options and relaunch to verify the selection. Failed saves keep the exact request for Retry; newer conflicting GTD settings are refused. No filter content or identifiers are logged.
+
 - **`v1.3.4/ios-task-focus`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Task Focus saved` with `outcome=applied` confirms a task star change was durably saved and its journal cleared. Star or unstar a task, relaunch, and verify its Focus state; a refused limit or eligibility change must leave data unchanged. Failed saves retain the exact request for Retry. No task content or identifiers are logged.
 
 - **`v1.3.4/ios-project-task-order`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Project task order saved` with `outcome=applied` confirms the prepared move was durably saved and its journal cleared. In Project Order mode, drag a filtered task past another task or into a different Section, then relaunch and verify its placement and hidden tasks. Failed saves retain the exact request for Retry; no-op drops emit no applied marker. No task or Project content or identifiers are logged.

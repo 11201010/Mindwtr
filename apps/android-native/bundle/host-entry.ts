@@ -870,6 +870,19 @@ globalThis.MindwtrHost = {
     areaDeleteCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedAreaDelete(JSON.parse(json))));
     },
+    focusGroupOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.getFocusGroupOptions(JSON.parse(json))); });
+    },
+    focusGroupValidate(json: string): string {
+        return submit(async () => unwrap(contract.validateFocusGroupWrite(JSON.parse(json))));
+    },
+    /** Exact scalar intent; the iOS host journals before dispatch. */
+    focusGroupWrite(json: string): string {
+        return submit(async () => unwrap(await contract.setFocusGroupChecked(JSON.parse(json))));
+    },
+    focusGroupRetryOutcome(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.probeFocusGroupOutcome(JSON.parse(json))); });
+    },
     projectFocusOptions(json: string): string {
         return submit(async () => {
             requireSaved();

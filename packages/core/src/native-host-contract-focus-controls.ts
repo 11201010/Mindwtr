@@ -37,6 +37,7 @@ import {
     DEFAULT_FOCUS_CONTROL_STATE,
     getFocusGroupByLabel,
     getFocusGroupByOptions,
+    FOCUS_GROUP_BY_OPTIONS,
     getFocusReorderPositionLabel,
     getFocusReorderSecondaryLabel,
     getFocusSaveFilterName,
@@ -58,6 +59,7 @@ import type { ListFilterEdit, ListFilterState } from './list-filter-state';
 import { NATIVE_HOST_CONTRACT_VERSION, NATIVE_HOST_MAX_WINDOW, type NativeHostResult } from './native-host-contract';
 import { fail, firstWindow, isFilterEdit, isObjectRecord, isText, matchesPickerQuery, readFilterState, type NativeWindow } from './native-host-contract-menu-views';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
+import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { isSavedFilterSortField } from './saved-filters';
 import { useTaskStore } from './store';
 import { FOCUS_SORT_OPTIONS } from './task-list-sort-options';
@@ -415,6 +417,33 @@ export type FocusControlDeps = {
 /** A Focus control command's answer: the control state to keep, and whether the store changed. */
 export type NativeFocusCommandResult = { controls: FocusControlState; changed: boolean };
 
+export type NativeFocusGroupExpected = { groupBy: string | null; updatedAt: string | null };
+export type NativeFocusGroupWriteRequest = {
+    requestId: string;
+    controls: NativeFocusControlsInput;
+    groupBy: FocusGroupBy;
+    expected: NativeFocusGroupExpected;
+};
+export type NativeFocusGroupResult = { groupBy: FocusGroupBy; controls: FocusControlState };
+
+const hasExactKeys = (value: Record<string, unknown>, keys: readonly string[]) => (
+    Object.keys(value).length === keys.length && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+);
+const rawGroup = (): NativeHostResult<string | null> => {
+    const gtd = useTaskStore.getState().settings.gtd;
+    if (!gtd || !Object.prototype.hasOwnProperty.call(gtd, 'focusGroupBy')) return { ok: true, value: null };
+    return typeof gtd.focusGroupBy === 'string'
+        ? { ok: true, value: gtd.focusGroupBy }
+        : fail('INVALID_INPUT', 'Stored Focus grouping has an unsupported value');
+};
+const rawGtdStamp = (): NativeHostResult<string | null> => {
+    const stamps = useTaskStore.getState().settings.syncPreferencesUpdatedAt;
+    if (!stamps || !Object.prototype.hasOwnProperty.call(stamps, 'gtd')) return { ok: true, value: null };
+    return typeof stamps.gtd === 'string'
+        ? { ok: true, value: stamps.gtd }
+        : fail('INVALID_INPUT', 'Stored GTD timestamp has an unsupported value');
+};
+
 export function createFocusControlMethods(deps: FocusControlDeps) {
     const durableSave = async (): Promise<NativeHostResult<null>> => {
         try {
@@ -449,6 +478,107 @@ export function createFocusControlMethods(deps: FocusControlDeps) {
     const unchanged = (controls: FocusControlState): NativeHostResult<NativeFocusCommandResult> => ({ ok: true, value: { controls, changed: false } });
 
     return {
+        getFocusGroupOptions(input: { controls: NativeFocusControlsInput }): NativeHostResult<{
+            revision: string;
+            controls: FocusControlState;
+            expected: NativeFocusGroupExpected;
+            choices: { value: FocusGroupBy; label: string; selected: boolean }[];
+        }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const controls = isObjectRecord(input) && isObjectRecord(input.controls) ? readNativeFocusControls(input.controls) : null;
+            if (!controls || !isObjectRecord(input) || !hasExactKeys(input, ['controls'])) {
+                return fail('INVALID_INPUT', 'Focus controls are required');
+            }
+            const groupBy = rawGroup();
+            if (!groupBy.ok) return groupBy;
+            const updatedAt = rawGtdStamp();
+            if (!updatedAt.ok) return updatedAt;
+            const { model, revision } = deps.focusModel(controls, new Date());
+            const t = deps.t();
+            return { ok: true, value: {
+                revision, controls: model.filter.state,
+                expected: { groupBy: groupBy.value, updatedAt: updatedAt.value },
+                choices: getFocusGroupByOptions(model.prioritiesEnabled).map((value) => ({
+                    value, label: getFocusGroupByLabel(value, t), selected: model.perspective.effectiveGroupBy === value,
+                })),
+            } };
+        },
+
+        /** Static validation for a journaled request, safe before the store opens. */
+        validateFocusGroupWrite(input: unknown): NativeHostResult<NativeFocusGroupResult> {
+            if (!isObjectRecord(input) || !hasExactKeys(input, ['requestId', 'controls', 'groupBy', 'expected'])
+                || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)
+                || !isObjectRecord(input.controls) || !isObjectRecord(input.expected)
+                || !hasExactKeys(input.expected, ['groupBy', 'updatedAt'])
+                || !FOCUS_GROUP_BY_OPTIONS.includes(input.groupBy as FocusGroupBy)
+                || (input.expected.groupBy !== null && !isText(input.expected.groupBy, 500))
+                || (input.expected.updatedAt !== null && !isText(input.expected.updatedAt, 500))) {
+                return fail('INVALID_INPUT', 'A checked Focus grouping request is required');
+            }
+            const controls = readNativeFocusControls(input.controls);
+            if (!controls) return fail('INVALID_INPUT', 'Valid Focus controls are required');
+            if (!isNativeJsonWithinBytes(input, 32_768)) return fail('INVALID_INPUT', 'Focus grouping request is too large');
+            return { ok: true, value: { groupBy: input.groupBy as FocusGroupBy, controls: { ...controls, savedFilterId: null } } };
+        },
+
+        /** Read-only answer after the native journal confirms the SQLite save completed. */
+        probeFocusGroupOutcome(input: NativeFocusGroupWriteRequest): NativeHostResult<NativeFocusGroupResult> {
+            const checked = this.validateFocusGroupWrite(input);
+            if (!checked.ok) return checked;
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const current = rawGroup();
+            if (!current.ok) return current;
+            if (current.value === checked.value.groupBy) return checked;
+            const stamp = rawGtdStamp();
+            if (!stamp.ok) return stamp;
+            if (current.value !== input.expected.groupBy || stamp.value !== input.expected.updatedAt) {
+                return fail('STALE_REVISION', 'Focus grouping changed while editing');
+            }
+            const { model } = deps.focusModel(readNativeFocusControls(input.controls)!, new Date());
+            const plan = planFocusGroupChange(checked.value.groupBy, {
+                effectiveGroupBy: model.perspective.effectiveGroupBy,
+                hasActiveSavedFilter: model.filter.activeSavedFilter !== null,
+                settings: useTaskStore.getState().settings,
+            });
+            return !plan && getFocusGroupByOptions(model.prioritiesEnabled).includes(checked.value.groupBy)
+                ? checked : fail('STALE_REVISION', 'Focus grouping outcome is not present');
+        },
+
+        async setFocusGroupChecked(input: NativeFocusGroupWriteRequest): Promise<NativeHostResult<NativeFocusGroupResult>> {
+            const checked = this.validateFocusGroupWrite(input);
+            if (!checked.ok) return checked;
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const { groupBy } = checked.value;
+            const expected = input.expected;
+            const originalControls = readNativeFocusControls(input.controls)!;
+            return receipts.run(input.requestId, JSON.stringify(['checkedGroup', input]), async () => {
+                const current = rawGroup();
+                if (!current.ok) return current;
+                // A journaled lost acknowledgment must not rewrite newer GTD preferences.
+                if (current.value === groupBy) return { ok: true, value: checked.value };
+                const stamp = rawGtdStamp();
+                if (!stamp.ok) return stamp;
+                if (current.value !== expected.groupBy || stamp.value !== expected.updatedAt) {
+                    return fail('STALE_REVISION', 'Focus grouping changed while editing');
+                }
+                const { model } = deps.focusModel(originalControls, new Date());
+                const plan = planFocusGroupChange(groupBy, {
+                    effectiveGroupBy: model.perspective.effectiveGroupBy,
+                    hasActiveSavedFilter: model.filter.activeSavedFilter !== null,
+                    settings: useTaskStore.getState().settings,
+                });
+                if (!getFocusGroupByOptions(model.prioritiesEnabled).includes(groupBy)) {
+                    return fail('INVALID_INPUT', 'That grouping is not offered');
+                }
+                if (!plan) return { ok: true, value: checked.value };
+                const written = await runStoreWrite(() => useTaskStore.getState().updateSettings(plan.settingsUpdate));
+                return settleWrite(written, checked.value);
+            });
+        },
+
         /**
          * A View options Group by chip: detaches an applied saved filter and stores the
          * synced `settings.gtd.focusGroupBy`. Only an offered grouping is accepted.

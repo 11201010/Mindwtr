@@ -93,6 +93,9 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectCreateAreaID: String?
     @Published private(set) var projectCreateError: String?
     @Published private(set) var projectCreateReadError: String?
+    @Published private(set) var focusGroupError: String?
+    private var focusGroupRequest: String?
+    private var focusGroupExpectedResult: CoreObject?
     @Published private(set) var taskFocusNotice: CoreObject = [:]
     private var taskFocusRequest: String?
     private var taskFocusExpectedID: String?
@@ -1264,7 +1267,7 @@ final class CoreModel: ObservableObject {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
                 selectedSurface = .projects
-            } else if recovery.text("method") == "taskFocusCommit" {
+            } else if ["taskFocusCommit", "focusGroupWrite"].contains(recovery.text("method")) {
                 selectedSurface = .focus
             } else if recovery.text("method") == "inboxPreparedCommit" {
                 // The durable data recovered, but the in-memory queue did not.
@@ -1304,7 +1307,8 @@ final class CoreModel: ObservableObject {
                         "filters.more", "filters.priority", "filters.remove", "filters.active", "filters.clear", "taskEdit.energyLevel",
                         "taskEdit.locationLabel", "taskEdit.locationPlaceholder", "reference.title", "nav.history", "nav.trash",
                         "filters.matchAny", "filters.contextMatchMode", "filters.tagMatchMode",
-                        "sort.label", "list.groupBy", "taskEdit.moreOptions", "dailyReview.completeDesc"]
+                        "sort.label", "list.groupBy", "taskEdit.moreOptions", "dailyReview.completeDesc",
+                        "settings.feedback.saveFailed", "settings.feedback.actionFailed"]
             strings = try await query("strings", [try json(keys)]).object("strings")
             theme = try await query("theme", [storedTheme])
             if boardRecoveredResult != nil { selectedSurface = .board }
@@ -10471,6 +10475,14 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = focusGroupRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("focusGroupRetryOutcome", [request]) }
+                try acknowledgeFocusGroup(result)
+                await readFocus(ownsOperation: true)
+                return
+            }
             if let request = taskFocusRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -10666,6 +10678,10 @@ final class CoreModel: ObservableObject {
                 await handleProjectNotesWriteError(error)
                 return
             }
+            if focusGroupRequest != nil {
+                await handleFocusGroupWriteError(error)
+                return
+            }
             if taskFocusRequest != nil {
                 await handleTaskFocusWriteError(error)
                 return
@@ -10781,8 +10797,76 @@ final class CoreModel: ObservableObject {
     }
 
     func closeFocusPanel() {
+        guard !busy, !retryNeeded, focusGroupRequest == nil else { return }
         focusPanel = ""
         closeFocusPicker()
+    }
+
+    func setFocusGroup(_ groupBy: String) async {
+        guard focusControlsEnabled, focusPanel == "view", focusGroupRequest == nil else { return }
+        busy = true
+        focusGroupError = nil
+        defer { finishOperation() }
+        do {
+            // Drain accepted filter/sort edits before freezing the checked request.
+            focusReadTask?.cancel()
+            focusGeneration += 1
+            await readFocus(ownsOperation: true)
+            guard focusCurrent else { throw CocoaError(.fileReadUnknown) }
+            let options = try await query("focusGroupOptions", [try json(["controls": focusState])])
+            let controls = options.object("controls")
+            let expected = options.object("expected")
+            guard options.count == 4, !options.text("revision").isEmpty,
+                  !controls.isEmpty, expected.count == 2,
+                  expected["groupBy"] is String || expected["groupBy"] is NSNull,
+                  expected["updatedAt"] is String || expected["updatedAt"] is NSNull,
+                  options.objects("choices").contains(where: { $0.text("value") == groupBy }),
+                  try json(controls).utf8.elementsEqual(json(focusState).utf8) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            var detached = controls
+            detached["savedFilterId"] = NSNull()
+            focusGroupExpectedResult = ["groupBy": groupBy, "controls": detached]
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "controls": controls,
+                                    "groupBy": groupBy, "expected": expected])
+            focusGroupRequest = request
+            try acknowledgeFocusGroup(await query("focusGroupWrite", [request]))
+            await readFocus(ownsOperation: true)
+        } catch { await handleFocusGroupWriteError(error) }
+    }
+
+    private func acknowledgeFocusGroup(_ result: CoreObject) throws {
+        guard focusGroupRequest != nil, let expected = focusGroupExpectedResult,
+              try json(result).utf8.elementsEqual(json(expected).utf8) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        focusState = result.object("controls")
+        focusLoadedDepth = [:]
+        focusCurrent = false
+        focusNeedsRead = true
+        focusGroupRequest = nil
+        focusGroupExpectedResult = nil
+        focusGroupError = nil
+        retryNeeded = false
+        error = nil
+    }
+
+    private func handleFocusGroupWriteError(_ failure: Error) async {
+        if focusGroupRequest != nil && isDefiniteRejection(failure) {
+            focusGroupRequest = nil
+            focusGroupExpectedResult = nil
+            retryNeeded = false
+            await readFocus(ownsOperation: true)
+        } else { retryNeeded = focusGroupRequest != nil }
+        focusGroupError = label(retryNeeded ? "settings.feedback.saveFailed" : "settings.feedback.actionFailed")
+    }
+
+    func retryFocusGroup() async {
+        if retryNeeded { await retry() }
+        else {
+            focusGroupError = nil
+            retryFocus()
+        }
     }
 
     func toggleFocusShowDetails() {

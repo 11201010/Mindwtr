@@ -4700,6 +4700,209 @@ final class CoreHostTests: XCTestCase {
         try json([" \n" + json(["requestId": id, "field": field, "before": before, "value": value]) + "\n "])
     }
 
+    private func focusGroupOptions(_ core: CoreHost, controls: [String: Any] = [:]) async throws -> [String: Any] {
+        try object(await core.call("focusGroupOptions", argumentsJSON: json([json(["controls": controls])])))
+    }
+
+    private func focusGroupPayload(_ options: [String: Any], groupBy: String, id: String = UUID().uuidString.lowercased()) throws -> String {
+        try json([" \n" + json([
+            "requestId": id, "controls": try XCTUnwrap(options["controls"]),
+            "groupBy": groupBy, "expected": try XCTUnwrap(options["expected"]),
+        ]) + "\n "])
+    }
+
+    func testFocusGroupChoicesNoopAndSavedFilterDetachPreserveSettingsAndTasks() async throws {
+        try await seedCalendarPreferenceTask()
+        let core = host()
+        _ = try await core.start()
+        let tasks = try calendarPreferenceTasks()
+        let before = try calendarPreferenceSettings()
+        let options = try await focusGroupOptions(core)
+        XCTAssertNotNil(options["revision"] as? String)
+        let choices = try XCTUnwrap(options["choices"] as? [[String: Any]])
+        XCTAssertTrue(choices.contains { $0["value"] as? String == "project" })
+        XCTAssertEqual(choices.filter { $0["selected"] as? Bool == true }.count, 1)
+        let payload = try focusGroupPayload(options, groupBy: "project")
+        let applied = try object(await core.call("focusGroupWrite", argumentsJSON: payload))
+        XCTAssertEqual(applied["groupBy"] as? String, "project")
+        XCTAssertTrue(applied["controls"] is [String: Any])
+        XCTAssertEqual((try calendarPreferenceSettings()["gtd"] as? [String: Any])?["focusGroupBy"] as? String, "project")
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        XCTAssertEqual(try calendarPreferenceSettings()["timeFormat"] as? String, before["timeFormat"] as? String)
+        var settingsWrites = 0
+        let faults = HostIOFaults()
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE settings") { settingsWrites += 1 } }
+        let sameOptions = try await focusGroupOptions(core)
+        let same = try focusGroupPayload(sameOptions, groupBy: "project")
+        let unchanged = try object(await core.call("focusGroupWrite", argumentsJSON: same))
+        XCTAssertEqual(try json(unchanged), try json(applied))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        await core.close()
+
+        var withFilter = try calendarPreferenceSettings()
+        withFilter["savedFilters"] = [[
+            "id": "focus-group-filter", "name": "Grouped", "view": "focus", "criteria": [:],
+            "groupBy": "project", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z",
+        ]] as [[String: Any]]
+        try writeCalendarPreferenceSettings(withFilter)
+        let reopened = host(faults)
+        _ = try await reopened.start()
+        let filtered = try await focusGroupOptions(reopened, controls: ["savedFilterId": "focus-group-filter"])
+        let filteredControls = try XCTUnwrap(filtered["controls"] as? [String: Any])
+        XCTAssertEqual(filteredControls["savedFilterId"] as? String, "focus-group-filter")
+        let detachedPayload = try focusGroupPayload(filtered, groupBy: "project")
+        let detached = try object(await reopened.call("focusGroupWrite", argumentsJSON: detachedPayload))
+        XCTAssertTrue((try XCTUnwrap(detached["controls"] as? [String: Any]))["savedFilterId"] is NSNull)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(withFilter))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        XCTAssertEqual(settingsWrites, 0)
+        let retry = try object(await reopened.call("focusGroupRetryOutcome", argumentsJSON: detachedPayload))
+        XCTAssertEqual(try json(retry), try json(detached))
+    }
+
+    func testFocusGroupFailedCommitRetriesExactRequestAndColdFirstApply() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try await focusGroupOptions(core)
+        let payload = try focusGroupPayload(options, groupBy: "project")
+        let before = try calendarPreferenceSettings()
+        let tasks = try calendarPreferenceTasks()
+        var diagnostics: [String] = []
+        faults.commandDiagnostic = { diagnostics.append($0) }
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected grouping COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("focusGroupWrite", argumentsJSON: payload) }
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "focusGroupWrite")
+        XCTAssertEqual(saved["argumentsJSON"] as? String, payload)
+        XCTAssertNil(saved["terminal"])
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(before))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        XCTAssertTrue(diagnostics.isEmpty)
+        await expectFailure("exact retry") { _ = try await focusGroupOptions(core) }
+        await core.close()
+
+        let recoveryFaults = HostIOFaults()
+        recoveryFaults.commandDiagnostic = { diagnostics.append($0) }
+        let recovered = host(recoveryFaults)
+        let window = try object(await recovered.start())
+        let recovery = try XCTUnwrap(window["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "focusGroupWrite")
+        let result = try XCTUnwrap(recovery["result"] as? [String: Any])
+        XCTAssertEqual(result["groupBy"] as? String, "project")
+        XCTAssertEqual(diagnostics, ["focusGroupSaved"])
+        XCTAssertEqual((try calendarPreferenceSettings()["gtd"] as? [String: Any])?["focusGroupBy"] as? String, "project")
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        var writes = 0
+        recoveryFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") { writes += 1 } }
+        let probed = try object(await recovered.call("focusGroupRetryOutcome", argumentsJSON: payload))
+        XCTAssertEqual(try json(probed), try json(result))
+        XCTAssertEqual(writes, 0)
+    }
+
+    func testFocusGroupLostAcknowledgmentAfterGtdEditDoesNotRewriteSettings() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try await focusGroupOptions(core)
+        let payload = try focusGroupPayload(options, groupBy: "project")
+        var journalWrites = 0
+        faults.journalWrite = {
+            journalWrites += 1
+            if journalWrites == 2 { throw HostFailure("Injected grouping lost acknowledgment") }
+        }
+        await expectFailure("lost acknowledgment") { _ = try await core.call("focusGroupWrite", argumentsJSON: payload) }
+        XCTAssertNil((try object(String(contentsOf: journal)))["terminal"])
+        await core.close()
+        var changed = try calendarPreferenceSettings()
+        var gtd = changed["gtd"] as? [String: Any] ?? [:]
+        gtd["focusTaskLimit"] = 9
+        changed["gtd"] = gtd
+        try writeCalendarPreferenceSettings(changed)
+        let tasks = try calendarPreferenceTasks()
+        let recoveryFaults = HostIOFaults()
+        var settingsWrites = 0
+        recoveryFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") { settingsWrites += 1 } }
+        var diagnostics: [String] = []
+        recoveryFaults.commandDiagnostic = { diagnostics.append($0) }
+        let recovered = host(recoveryFaults)
+        let window = try object(await recovered.start())
+        XCTAssertEqual((window["recovery"] as? [String: Any])?["method"] as? String, "focusGroupWrite")
+        XCTAssertEqual(settingsWrites, 0)
+        XCTAssertEqual(diagnostics, ["focusGroupSaved"])
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(changed))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testFocusGroupColdReplayRejectsNewerGroupAndAbaWithoutWrites() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try await focusGroupOptions(core)
+        let payload = try focusGroupPayload(options, groupBy: "project")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected grouping COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("focusGroupWrite", argumentsJSON: payload) }
+        let frozenJournal = try Data(contentsOf: journal)
+        await core.close()
+
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        gtd["focusGroupBy"] = "area"
+        settings["gtd"] = gtd
+        var stamps = settings["syncPreferencesUpdatedAt"] as? [String: Any] ?? [:]
+        stamps["gtd"] = "2026-09-29T12:00:00.000Z"
+        settings["syncPreferencesUpdatedAt"] = stamps
+        try writeCalendarPreferenceSettings(settings)
+        let recoveryFaults = HostIOFaults()
+        var writes = 0
+        recoveryFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") { writes += 1 } }
+        let replay = host(recoveryFaults)
+        await expectFailure("STALE_REVISION") { _ = try await replay.start() }
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try Data(contentsOf: journal), frozenJournal)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+
+        if let original = (options["expected"] as? [String: Any])?["groupBy"] as? String {
+            gtd["focusGroupBy"] = original
+        } else {
+            gtd.removeValue(forKey: "focusGroupBy")
+        }
+        settings["gtd"] = gtd
+        stamps["gtd"] = "2026-09-29T12:00:01.000Z"
+        settings["syncPreferencesUpdatedAt"] = stamps
+        try writeCalendarPreferenceSettings(settings)
+        await expectFailure("STALE_REVISION") { _ = try await replay.start() }
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try Data(contentsOf: journal), frozenJournal)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+    }
+
+    func testFocusGroupMalformedColdJournalFailsBeforeSQLite() async throws {
+        try await seedCalendarPreferenceTask()
+        let core = host()
+        _ = try await core.start()
+        let options = try await focusGroupOptions(core)
+        await core.close()
+        let payload = try focusGroupPayload(options, groupBy: "project")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String])
+        var request = try object(XCTUnwrap(args.first))
+        request["controls"] = ["sortBy": "forged-sort"]
+        let encoded = try json(["version": 2, "method": "focusGroupWrite", "argumentsJSON": json([json(request)])] as [String: Any])
+        try Data(encoded.utf8).write(to: journal)
+        let faults = HostIOFaults()
+        var sql = 0
+        faults.beforeSQL = { _ in sql += 1 }
+        let replay = host(faults)
+        await expectFailure("INVALID_INPUT") { _ = try await replay.start() }
+        XCTAssertEqual(sql, 0)
+        XCTAssertEqual(try Data(contentsOf: journal), Data(encoded.utf8))
+    }
+
     func testCalendarPreferencesDefaultsAndThreeFieldRoundTripPreserveTasksAndSettings() async throws {
         try await seedCalendarPreferenceTask()
         let faults = HostIOFaults()

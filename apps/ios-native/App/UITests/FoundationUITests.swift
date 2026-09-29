@@ -5697,6 +5697,86 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testFocusGroupingNormal() { focusGroupingFlow(library: "200e5e94-1e41-4b90-a43f-190ae4d55bdc", largest: false) }
+    func testFocusGroupingLargestText() { focusGroupingFlow(library: "b7dc20b6-14a0-4240-b9cb-bee8dbf63c10", largest: true) }
+
+    private func focusGroupChoice(_ app: XCUIApplication, _ value: String) {
+        let choice = app.buttons["focus-group-" + value]
+        revealPagedElement(app, choice, in: app.scrollViews["focus-controls-scroll"])
+        boardEnabled(choice); choice.tap()
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: choice)
+        waitForExpectations(timeout: 15)
+        XCTAssertFalse(app.staticTexts["focus-group-error"].exists)
+    }
+
+    private func focusGroupingFlow(library: String, largest: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); boardEnabled(app.buttons["tab-focus"], timeout: 30)
+        boardTap(app, "tab-focus"); boardEnabled(app.buttons["focus-view-options"])
+        if !largest { boardTap(app, "focus-saved-task71-filter") }
+        boardTap(app, "focus-view-options")
+        if !largest {
+            focusGroupChoice(app, "area") // Same effective grouping still detaches the saved filter.
+            boardTap(app, "focus-controls-close")
+            XCTAssertFalse(app.buttons["focus-saved-task71-filter"].isSelected)
+            boardTap(app, "focus-view-options")
+            XCTAssertTrue(app.buttons["focus-sort-due"].isSelected)
+        }
+        for value in largest ? ["project", "tag", "none", "project"] : ["context", "energy", "priority", "person", "tag", "none", "project"] {
+            focusGroupChoice(app, value)
+        }
+        focusGroupChoice(app, "project") // Repeating the selected value must not write.
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = largest ? "Largest Focus grouping" : "Focus grouping choices"
+        shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "focus-controls-close")
+        let headers = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "focus-group-header-"))
+        revealPagedElement(app, headers.firstMatch, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+        XCTAssertGreaterThan(headers.count, 0)
+        boardTap(app, "tab-inbox"); boardTap(app, "tab-focus")
+        boardTap(app, "focus-view-options"); XCTAssertTrue(app.buttons["focus-group-project"].isSelected)
+        boardTap(app, "focus-controls-close")
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-focus"], timeout: 30)
+        boardTap(app, "tab-focus"); boardTap(app, "focus-view-options")
+        XCTAssertTrue(app.buttons["focus-group-project"].isSelected)
+        XCTAssertFalse(app.staticTexts["focus-group-error"].exists)
+        app.terminate()
+    }
+
+    func testFocusGroupingFailureKeepsExactRequest() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "5f53038f-21b9-4b7a-98e5-ff571b1fad91"]
+        app.launch(); boardEnabled(app.buttons["tab-focus"], timeout: 30)
+        boardTap(app, "tab-focus"); boardTap(app, "focus-view-options")
+        let choice = app.buttons["focus-group-project"]
+        revealPagedElement(app, choice, in: app.scrollViews["focus-controls-scroll"])
+        choice.tap()
+        XCTAssertTrue(app.staticTexts["focus-group-error"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.staticTexts["focus-group-error"].label, "Couldn't save this setting. Try again.")
+        for _ in 0..<2 {
+            XCTAssertFalse(choice.isEnabled)
+            XCTAssertFalse(app.buttons["focus-controls-close"].isEnabled)
+            let retry = app.buttons["focus-group-retry"]
+            boardEnabled(retry); XCTAssertTrue(retry.isHittable)
+            XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+            retry.tap(); boardEnabled(retry)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Focus grouping exact retry"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testFocusGroupingColdRecovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "5f53038f-21b9-4b7a-98e5-ff571b1fad91"]
+        app.launch(); boardEnabled(app.buttons["focus-view-options"], timeout: 30)
+        boardTap(app, "focus-view-options")
+        XCTAssertTrue(app.buttons["focus-group-project"].isSelected)
+        XCTAssertFalse(app.staticTexts["focus-group-error"].exists)
+        boardTap(app, "focus-controls-close"); app.terminate()
+    }
+
     func testFocusCompactLabelsNormal() { compactFocusLabels(library: "3f93f362-9eb7-4a5c-87f4-aee622376c17", largest: false) }
     func testFocusCompactLabelsLargestText() { compactFocusLabels(library: "9248813b-29bc-4015-b2d1-8468b3cd8276", largest: true) }
 

@@ -26,6 +26,7 @@ struct FocusControlsPanel: View {
                     .accessibilityIdentifier("focus-controls-dismiss")
                 VStack(alignment: .leading, spacing: 12) {
                     header
+                    groupFailure
                     if picker { pickerBody }
                     else {
                         ScrollView {
@@ -37,6 +38,7 @@ struct FocusControlsPanel: View {
                             .padding(.bottom, 12)
                         }
                         .scrollDismissesKeyboard(.interactively)
+                        .accessibilityIdentifier("focus-controls-scroll")
                     }
                     HStack {
                         Spacer()
@@ -44,7 +46,8 @@ struct FocusControlsPanel: View {
                             Text(model.focusPanel == "view" ? view.text("doneLabel") : sheet.text("doneLabel"))
                                 .rnFont(15, .semibold).padding(.horizontal, 16).frame(minHeight: 44).contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain).foregroundStyle(palette.tint).accessibilityIdentifier("focus-controls-close")
+                        .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.busy || model.retryNeeded)
+                        .accessibilityIdentifier("focus-controls-close")
                     }
                 }
                 .padding(16).frame(maxWidth: 860, maxHeight: geometry.size.height * 0.82)
@@ -100,7 +103,16 @@ struct FocusControlsPanel: View {
             sectionLabel(view.object("sort").text("label"))
             options(view.object("sort").objects("options"), prefix: "focus-sort")
             sectionLabel(view.object("group").text("label"))
-            options(view.object("group").objects("options"), prefix: "focus-group", enabled: false)
+            AppChipFlow {
+                let choices = view.object("group").objects("options")
+                ForEach(choices.indices, id: \.self) { index in
+                    let item = choices[index]
+                    chip(item.text("label"), selected: item.flag("selected"), id: "focus-group-" + item.text("value")) {
+                        endInput()
+                        Task { await model.setFocusGroup(item.text("value")) }
+                    }
+                }
+            }
             sectionLabel(view.object("details").text("sectionLabel"))
             chip(view.object("details").text(model.focusShowDetails ? "hideLabel" : "showLabel"),
                  selected: model.focusShowDetails, id: "focus-details") { model.toggleFocusShowDetails() }
@@ -224,6 +236,21 @@ struct FocusControlsPanel: View {
         .buttonStyle(.plain).disabled(!model.focusPickerActionsEnabled)
         .accessibilityAddTraits(selected ? .isSelected : []).accessibilityValue(excluded ? text.text("excluded") : "")
         .accessibilityIdentifier("focus-filter-" + (token ? "token-" + label : "project-" + item.text("id")))
+    }
+
+    @ViewBuilder private var groupFailure: some View {
+        if let error = model.focusGroupError {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(error).rnFont(13).foregroundStyle(palette.danger).lineLimit(3)
+                    .accessibilityIdentifier("focus-group-error")
+                Button { endInput(); Task { await model.retryFocusGroup() } } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold)
+                        .padding(.horizontal, 8).frame(minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.busy)
+                .accessibilityIdentifier("focus-group-retry")
+            }
+        }
     }
 
     @ViewBuilder private var failure: some View {
