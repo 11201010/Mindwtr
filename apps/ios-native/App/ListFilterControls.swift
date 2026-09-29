@@ -39,20 +39,17 @@ struct ListFilterControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                if isPicker {
-                    Button { focusedField = nil; onBack() } label: {
-                        Text(localized("common.back")).rnFont(13, .semibold).padding(.horizontal, 8).frame(minHeight: 44)
-                    }
-                    .buttonStyle(.plain).foregroundStyle(palette.tint).accessibilityIdentifier(prefix + "-panel-back")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    panelBack
+                    Text(panelTitle).rnFont(16, .bold).fixedSize()
+                        .frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
+                    panelClear
                 }
-                Text(panelTitle).rnFont(16, .bold).frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
-                if filters.flag("hasActive") || data.flag("hasActiveFilters") {
-                    Button { apply(filters.object("clearEdit")) } label: {
-                        Text(localized("filters.clear")).rnFont(13, .semibold).padding(.horizontal, 10).frame(minHeight: 44)
-                    }
-                    .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!enabled)
-                    .accessibilityIdentifier(prefix + "-filters-clear")
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(panelTitle).rnFont(16, .bold).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                    HStack { panelBack; Spacer(); panelClear }
                 }
             }
             .frame(minHeight: 44).padding(.bottom, 12)
@@ -65,7 +62,7 @@ struct ListFilterControls: View {
             HStack {
                 Spacer()
                 Button { close() } label: {
-                    Text(localized("common.done")).rnFont(14, .bold).padding(.horizontal, 10).frame(minHeight: 44)
+                    Text(localized("common.done")).rnFont(14, .bold).padding(.horizontal, 10).frame(minHeight: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).foregroundStyle(palette.tint).accessibilityIdentifier(prefix + "-filters-close")
             }
@@ -74,6 +71,27 @@ struct ListFilterControls: View {
         .accessibilityAction(.escape) {
             focusedField = nil
             if isPicker { onBack() } else { onClose() }
+        }
+    }
+
+    @ViewBuilder private var panelBack: some View {
+        if isPicker {
+            Button { focusedField = nil; onBack() } label: {
+                Text(localized("common.back")).rnFont(13, .semibold).padding(.horizontal, 8)
+                    .frame(minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(palette.tint).accessibilityIdentifier(prefix + "-panel-back")
+        }
+    }
+
+    @ViewBuilder private var panelClear: some View {
+        if filters.flag("hasActive") || data.flag("hasActiveFilters") {
+            Button { apply(filters.object("clearEdit")) } label: {
+                Text(localized("filters.clear")).rnFont(13, .semibold).padding(.horizontal, 10)
+                    .frame(minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!enabled)
+            .accessibilityIdentifier(prefix + "-filters-clear")
         }
     }
 
@@ -162,7 +180,7 @@ struct ListFilterControls: View {
                         }
                         if items.count < picker.number("total") {
                             Button { onMore() } label: {
-                                Text(localized("common.more")).rnFont(14, .semibold).frame(minHeight: 44)
+                                Text(localized("common.more")).rnFont(14, .semibold).frame(minHeight: 44).contentShape(Rectangle())
                             }
                             .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!pickerEnabled)
                             .accessibilityIdentifier(prefix + "-filter-picker-more")
@@ -267,8 +285,9 @@ struct ListFilterControls: View {
                 if removable { AppIcon(name: "x", size: 12) }
             }
             .foregroundStyle(selected ? palette.onTint : palette.text).padding(.horizontal, 12).padding(.vertical, 6)
-            .frame(minHeight: 44).background(selected ? tone : palette.filter, in: Capsule())
-            .overlay(Capsule().stroke(selected ? tone : palette.border, lineWidth: 1)).contentShape(Capsule())
+            .frame(minHeight: 44).background(selected ? tone : palette.filter, in: RoundedRectangle(cornerRadius: 22))
+            .overlay(RoundedRectangle(cornerRadius: 22).stroke(selected ? tone : palette.border, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 22))
         }
         .buttonStyle(.plain).disabled(!enabled).accessibilityIdentifier(id)
         .accessibilityAddTraits(selected ? .isSelected : []).accessibilityValue(excluded ? localized("filters.excluded") : "")

@@ -7126,6 +7126,7 @@ final class CoreModel: ObservableObject {
         if location { projectFilterLocationText = text } else { projectFilterSearchText = text }
         let type = location ? "setLocation" : "setSearch"
         projectFilterTextEdits[type] = ["type": type, "value": text]
+        if projectFilterPendingEdit?.text("type") == type { projectFilterPendingEdit = projectFilterTextEdits[type] }
         projectFilterNeedsRead = true
         projectCurrent = false
         projectError = nil

@@ -5336,13 +5336,18 @@ final class FoundationUITests: XCTestCase {
     }
 
 
-    func testProjectTaskFiltersNormalText() { projectTaskFilterFlow(library: "5f7db176-d155-4b8d-a701-333bcad97b58") }
-    func testProjectTaskFiltersLargestText() { projectTaskFilterFlow(library: "b974a018-ec93-4735-b00a-5901a29f6faf") }
+    func testProjectTaskFiltersNormalText() { projectTaskFilterFlow(library: "f2f2a252-5f4e-44d0-a89d-bfb60c90e500") }
+    func testProjectTaskFiltersLargestText() { projectTaskFilterFlow(library: "fc77542c-170f-447f-812d-0e0b2bd38d56") }
 
     private func projectFilterTap(_ app: XCUIApplication, _ id: String) {
         let button = app.buttons[id]
         if id.hasPrefix("project-filter-token-") {
-            revealPagedElement(app, button, in: app.scrollViews["project-filter-picker-scroll"], outerEdge: true)
+            // This flow searches for a single token; XCTest performs its own scroll-to-hit.
+            boardEnabled(button)
+            print("Filtered token: " + button.debugDescription)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+            button.tap()
+            return
         } else if ["project-filter-tokens", "project-filter-more", "project-filter-retry"].contains(id) {
             let scroll = app.scrollViews["project-filter-picker-scroll"].exists
                 ? app.scrollViews["project-filter-picker-scroll"] : app.scrollViews["project-filter-overview-scroll"]
@@ -5420,13 +5425,62 @@ final class FoundationUITests: XCTestCase {
         boardEnabled(query); query.tap(); query.typeText("token-124\n")
         tap("project-filter-token-@token-124")
         boardEnabled(app.buttons["project-filter-retry"])
-        XCTAssertFalse(app.buttons["project-filter-token-@token-124"].isEnabled)
+        XCTAssertFalse(app.buttons["project-filter-token-@token-124"].exists && app.buttons["project-filter-token-@token-124"].isEnabled)
         tap("project-filter-retry")
         let token = app.buttons["project-filter-token-@token-124"]
         boardEnabled(token); XCTAssertTrue(token.isSelected); XCTAssertNotEqual(token.value as? String, "Excluded")
         tap("project-filters-close")
         boardEnabled(app.buttons["task-title-d55f6859-cf8e-4643-a1ad-eff6db59262e"])
         XCTAssertFalse(app.buttons["task-title-acc031d9-9cac-4296-8420-840bcd17a562"].exists)
+        app.terminate()
+    }
+
+    func testProjectTaskFilterCorrectedLocationRecoversFailedRead() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "5e87538e-e1e5-4f7c-9a5c-bb75de6e6f9e"]
+        app.launch(); openProjectTaskSortTest(app)
+        func tap(_ id: String) { projectFilterTap(app, id) }
+        tap("project-task-view-options-button"); tap("project-view-filters-option"); tap("project-filter-more")
+        let input = app.textFields["project-filter-location"]
+        revealPagedElement(app, input, in: app.scrollViews["project-filter-overview-scroll"])
+        boardEnabled(input); input.tap(); input.typeText(String(repeating: "x", count: 501))
+        boardEnabled(app.buttons["project-filter-retry"])
+        // Keep the caret at the end while correcting the rejected value.
+        input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 501) + "Office\n")
+        XCTAssertEqual(input.value as? String, "Office")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["project-filter-retry"])
+        waitForExpectations(timeout: 10)
+        tap("project-filters-close")
+        boardEnabled(app.buttons["task-title-d55f6859-cf8e-4643-a1ad-eff6db59262e"])
+        XCTAssertFalse(app.buttons["task-title-acc031d9-9cac-4296-8420-840bcd17a562"].exists)
+        app.terminate()
+    }
+
+    func testProjectTaskFiltersFlushNotesAndRetainCompleted() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "8c6011c9-d626-40ad-81c1-065f8fb15f09"]
+        app.launch(); openProjectTaskSortTest(app)
+        projectManagerTap(app, "project-details-toggle"); projectManagerTap(app, "project-notes-toggle")
+        let notes = app.textViews["project-notes-input"]
+        revealPagedElement(app, notes, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+        replaceProjectNotesText(notes, with: "Notes before Project filters\n")
+        func tap(_ id: String) { projectFilterTap(app, id) }
+        tap("project-task-view-options-button"); tap("project-view-filters-option")
+        let search = app.textFields["project-filter-search"]
+        boardEnabled(search); search.tap(); search.typeText("Done action\n"); tap("project-filters-close")
+        boardEnabled(app.buttons["project-filter-button"])
+        XCTAssertFalse(app.buttons["task-title-8da3e93c-4ddc-4092-9713-54ba386b6873"].exists)
+        tap("project-task-view-options-button"); tap("project-view-completed-option")
+        let completed = app.buttons["project-completed-toggle"]
+        revealPagedElement(app, completed, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+        boardEnabled(completed); XCTAssertEqual(completed.value as? String, "Expand"); completed.tap()
+        boardEnabled(app.buttons["task-title-8da3e93c-4ddc-4092-9713-54ba386b6873"])
+        XCTAssertFalse(app.buttons["task-title-d55f6859-cf8e-4643-a1ad-eff6db59262e"].exists)
+        tap("project-filter-clear")
+        revealPagedElement(app, completed, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+        XCTAssertEqual(completed.value as? String, "Collapse")
+        app.terminate(); app.launch(); openProjectTaskSortTest(app)
+        XCTAssertFalse(app.buttons["project-filter-button"].exists)
+        revealPagedElement(app, completed, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+        XCTAssertEqual(completed.value as? String, "Expand")
         app.terminate()
     }
 

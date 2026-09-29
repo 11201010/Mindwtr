@@ -929,8 +929,9 @@ struct ProjectDetailScreen: View {
                                     AppIcon(name: "x", size: 12)
                                 }
                                 .foregroundStyle(palette.onTint).padding(.horizontal, 10)
-                                .frame(minHeight: 44).background(chip.flag("excluded") ? palette.danger : palette.tint, in: Capsule())
-                                .contentShape(Capsule())
+                                .frame(minHeight: 44).background(chip.flag("excluded") ? palette.danger : palette.tint,
+                                                                in: RoundedRectangle(cornerRadius: 22))
+                                .contentShape(RoundedRectangle(cornerRadius: 22))
                             }
                             .buttonStyle(.plain).disabled(!model.projectFilterActionsEnabled)
                             .accessibilityIdentifier("project-filter-chip-" + chip.text("id"))
