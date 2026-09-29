@@ -3796,8 +3796,9 @@ private final class Engine: @unchecked Sendable {
                 }
                 return
             }
+            // The shared host puts its fields in core's `context` (the part the Android log file keeps); older bundles used `extra`.
             guard payload["scope"] as? String == "native-ios",
-                  let encodedExtra = payload["extra"] as? String,
+                  let encodedExtra = (payload["context"] ?? payload["extra"]) as? String,
                   let extra = try? NativeJSON.jsonObject(with: Data(encodedExtra.utf8)) as? [String: Any] else { return }
             if extra["releaseCheck"] as? String == "v1.3.3/native-ios-legacy-json-import" {
                 guard let outcome = extra["outcome"] as? String, ["imported", "abandoned", "none"].contains(outcome),
