@@ -2827,6 +2827,126 @@ final class FoundationUITests: XCTestCase {
         XCTAssertFalse(app.buttons[title + " changed"].exists)
     }
 
+    func testSomedaySectionCreateNormal() {
+        somedaySectionCreateFlow(library: "0ae00aed-64c7-4c6b-a8d7-7f2026a389da", saveWithReturn: false)
+    }
+
+    func testSomedaySectionCreateLargestText() {
+        somedaySectionCreateFlow(library: "c9255e70-6056-4b40-a0b6-071c7df966cd", saveWithReturn: true)
+    }
+
+    private func task79OpenSomeday(_ app: XCUIApplication, recovered: Bool = false) {
+        if !recovered {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu")
+            let item = app.buttons["menu-someday"]
+            if !item.isHittable {
+                revealPagedElement(app, item, in: app.scrollViews.containing(.button, identifier: "menu-projects").firstMatch)
+            }
+            boardTap(app, "menu-someday")
+        }
+        boardEnabled(app.buttons["someday-overflow-button"], timeout: 30)
+    }
+
+    private func task79OpenSectionPrompt(_ app: XCUIApplication) -> XCUIElement {
+        boardTap(app, "someday-overflow-button")
+        let action = app.buttons["someday-new-section-action"]
+        if !action.isHittable {
+            revealPagedElement(app, action, in: app.scrollViews.containing(.button, identifier: "someday-new-section-action").firstMatch)
+        }
+        boardTap(app, "someday-new-section-action")
+        let input = app.textFields["someday-section-create-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        boardEnabled(app.buttons["someday-section-create-cancel"])
+        XCTAssertTrue(app.staticTexts["someday-section-create-title"].exists)
+        XCTAssertGreaterThanOrEqual(input.frame.height, 44 - 0.001)
+        for id in ["someday-section-create-cancel", "someday-section-create-save"] {
+            XCTAssertGreaterThanOrEqual(app.buttons[id].frame.height, 44 - 0.001)
+        }
+        return input
+    }
+
+    private func task79SectionHeadings(_ app: XCUIApplication) -> XCUIElementQuery {
+        app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+            "someday-heading-", "Task79 Books"))
+    }
+
+    private func somedaySectionCreateFlow(library: String, saveWithReturn: Bool) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        task79OpenSomeday(app)
+        let cancelled = task79OpenSectionPrompt(app)
+        XCTAssertFalse(app.buttons["someday-section-create-save"].isEnabled)
+        cancelled.tap(); cancelled.typeText("   ")
+        XCTAssertFalse(app.buttons["someday-section-create-save"].isEnabled)
+        cancelled.typeText("Task79 Cancelled")
+        boardTap(app, "someday-section-create-cancel")
+        boardEnabled(app.buttons["someday-overflow-button"])
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label == %@", "Task79 Cancelled")).firstMatch.exists)
+
+        let input = task79OpenSectionPrompt(app)
+        XCTAssertEqual(input.value as? String, input.placeholderValue)
+        input.tap(); input.typeText("  Task79 Books  ")
+        boardEnabled(app.buttons["someday-section-create-save"])
+        if saveWithReturn { input.typeText("\n") }
+        else { boardTap(app, "someday-section-create-save") }
+        let headings = task79SectionHeadings(app)
+        XCTAssertTrue(headings.firstMatch.waitForExistence(timeout: 20))
+        XCTAssertEqual(headings.count, 1)
+        XCTAssertFalse(app.staticTexts["someday-section-create-error"].exists)
+
+        let duplicate = task79OpenSectionPrompt(app)
+        duplicate.tap(); duplicate.typeText("  TASK79 BOOKS  ")
+        boardTap(app, "someday-section-create-save")
+        boardEnabled(app.buttons["someday-overflow-button"])
+        XCTAssertEqual(task79SectionHeadings(app).count, 1)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = saveWithReturn ? "Largest Someday section create" : "Someday section create"
+        shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task79OpenSomeday(app)
+        XCTAssertEqual(task79SectionHeadings(app).count, 1)
+        app.terminate()
+    }
+
+    /// Run before the cold-recovery test on the same staged library.
+    func testSomedaySectionCreateSaveFailureKeepsExactRequest() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "bef50510-7440-4897-8be6-6056fddf6182"]
+        app.launch(); task79OpenSomeday(app)
+        let input = task79OpenSectionPrompt(app)
+        input.tap(); input.typeText("  Task79 Books  ")
+        boardTap(app, "someday-section-create-save")
+        let failure = app.staticTexts["someday-section-create-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertEqual(input.value as? String, "  Task79 Books  ")
+            XCTAssertFalse(input.isEnabled)
+            XCTAssertFalse(app.buttons["someday-section-create-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["someday-section-create-save"].isEnabled)
+            XCTAssertFalse(app.buttons["someday-panel-dismiss"].isEnabled)
+            XCTAssertEqual(task79SectionHeadings(app).count, 0)
+            boardTap(app, "someday-section-create-retry")
+            boardEnabled(app.buttons["someday-section-create-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Someday section exact retry"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    /// Root disarms the fixture's SQLite failure trigger while retaining its pending journal.
+    func testSomedaySectionCreateColdRecovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "bef50510-7440-4897-8be6-6056fddf6182"]
+        app.launch(); task79OpenSomeday(app, recovered: true)
+        XCTAssertTrue(task79SectionHeadings(app).firstMatch.waitForExistence(timeout: 20))
+        XCTAssertEqual(task79SectionHeadings(app).count, 1)
+        XCTAssertFalse(app.staticTexts["someday-section-create-error"].exists)
+        XCTAssertFalse(app.textFields["someday-section-create-input"].exists)
+        app.terminate(); app.launch(); task79OpenSomeday(app)
+        XCTAssertEqual(task79SectionHeadings(app).count, 1)
+        app.terminate()
+    }
+
     func testWaitingPersonSearchEditCompleteAndRestart() {
         let app = XCUIApplication()
         app.launch()

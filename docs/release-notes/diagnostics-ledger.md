@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-someday-section-create`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Someday section saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. Create a section from Someday More options and relaunch; its trimmed name appears once. Failed saves retain the exact request for Retry, while conflicting newer sections are refused. No section names, identifiers or settings content are logged.
+
 - **`v1.3.4/ios-deferred-reactivate`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS deferred Project reactivated` with `outcome=confirmed` confirms a Waiting or Someday Reactivate request was durably acknowledged. Swipe a deferred Project right and relaunch; only that Project becomes active. Failed saves retain the exact request for Retry. Cold recovery is also covered by the existing `native-ios-project-status` and journal-recovery markers. No Project content or identifiers are logged.
 - **`v1.3.4/ios-board-filter-retry`** — `apps/ios-native/App/CoreModel.swift`. After a failed Board picker/page read following a filter choice, `Native iOS Board filter retry` with `outcome=retained` proves the pending pure edit remains available for Retry. Retrying must apply that choice once without changing stored library data. No search text, task content or identifiers are logged.
 

@@ -263,6 +263,11 @@ final class CoreModel: ObservableObject {
     @Published private(set) var somedayPicker: CoreObject = [:]
     @Published private(set) var somedayPickerCurrent = false
     @Published private(set) var somedayPickerError: String?
+    @Published private(set) var somedaySectionCreateOptions: CoreObject = [:]
+    @Published private(set) var somedaySectionCreateDraft = ""
+    @Published private(set) var somedaySectionCreateError: String?
+    @Published private(set) var somedaySectionCreateReadError: String?
+    @Published private(set) var somedaySectionCreateAwaitingRefresh = false
     @Published private(set) var reference: CoreObject = [:]
     @Published private(set) var referenceCurrent = false
     @Published private(set) var referenceError: String?
@@ -577,6 +582,8 @@ final class CoreModel: ObservableObject {
     private var somedayReadTask: Task<Void, Never>?
     private var somedayPickerDepth = 100
     private var somedayPickerNeedsRead = false
+    private var somedaySectionCreateRequest: String?
+    private var somedaySectionCreateRequestID: String?
     private var referenceCaller: Surface = .inbox
     private var referenceParams: CoreObject = [:]
     private var referenceCollapsedGroups: [String: [String]] = [:]
@@ -1110,6 +1117,13 @@ final class CoreModel: ObservableObject {
         ready && selectedSurface == .someday && somedayCurrent && !busy && !retryNeeded && !taskPresented
     }
     var somedayPickerActionsEnabled: Bool { somedayActionsEnabled && somedayPickerCurrent }
+    var somedaySectionCreatePending: Bool { somedaySectionCreateRequest != nil }
+    var somedaySectionCreateCanSave: Bool {
+        somedayActionsEnabled && somedayPanel == "newSection" && !somedaySectionCreateOptions.isEmpty
+            && somedaySectionCreateReadError == nil && !somedaySectionCreateAwaitingRefresh
+            && !somedaySectionCreatePending
+            && !somedaySectionCreateDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     var referenceActionsEnabled: Bool {
         ready && selectedSurface == .reference && referenceCurrent && !busy && !retryNeeded && !taskPresented
     }
@@ -1371,6 +1385,8 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .focus
             } else if recovery.text("method") == "taskListSortWrite" {
                 selectedSurface = .reference
+            } else if recovery.text("method") == "somedaySectionCreateWrite" {
+                selectedSurface = .someday
             } else if recovery.text("method") == "inboxPreparedCommit" {
                 // The durable data recovered, but the in-memory queue did not.
                 selectedSurface = .inbox
@@ -1410,7 +1426,8 @@ final class CoreModel: ObservableObject {
                         "taskEdit.locationLabel", "taskEdit.locationPlaceholder", "reference.title", "nav.history", "nav.trash",
                         "filters.matchAny", "filters.contextMatchMode", "filters.tagMatchMode",
                         "sort.label", "list.groupBy", "taskEdit.moreOptions", "dailyReview.completeDesc",
-                        "settings.feedback.saveFailed", "settings.feedback.actionFailed"]
+                        "settings.feedback.saveFailed", "settings.feedback.actionFailed",
+                        "viewSections.add", "viewSections.nameHint", "viewSections.namePlaceholder", "viewSections.updateFailed"]
             strings = try await query("strings", [try json(keys)]).object("strings")
             theme = try await query("theme", [storedTheme])
             if boardRecoveredResult != nil { selectedSurface = .board }
@@ -6282,15 +6299,149 @@ final class CoreModel: ObservableObject {
     }
 
     func closeSomeday() async {
-        guard selectedSurface == .someday, !busy, !retryNeeded, !taskPresented else { return }
+        guard selectedSurface == .someday, !busy, !retryNeeded, !taskPresented,
+              !somedaySectionCreatePending else { return }
         closeSomedayPicker()
         selectedSurface = somedayCaller
         await refresh()
     }
 
     func closeSomedayPanel() {
+        guard !busy, !retryNeeded, !somedaySectionCreatePending else { return }
         somedayPanel = ""
         closeSomedayPicker()
+        somedaySectionCreateDraft = ""
+        somedaySectionCreateOptions = [:]
+        somedaySectionCreateError = nil
+        somedaySectionCreateReadError = nil
+        somedaySectionCreateAwaitingRefresh = false
+    }
+
+    func openSomedaySectionCreate() async {
+        guard somedayActionsEnabled, somedayPanel == "menu", !somedaySectionCreatePending,
+              !capturePresented, !areaPickerPresented else { return }
+        somedayPanel = "newSection"
+        somedaySectionCreateDraft = ""
+        somedaySectionCreateError = nil
+        somedaySectionCreateReadError = nil
+        somedaySectionCreateAwaitingRefresh = false
+        await readSomedaySectionCreateOptions()
+    }
+
+    func setSomedaySectionCreateDraft(_ text: String) {
+        guard selectedSurface == .someday, somedayPanel == "newSection", !somedaySectionCreatePending,
+              !somedaySectionCreateAwaitingRefresh, !retryNeeded else { return }
+        somedaySectionCreateDraft = text
+        somedaySectionCreateError = nil
+    }
+
+    private func fetchSomedaySectionCreateOptions() async throws {
+        let options = try await query("somedaySectionCreateOptions", ["{}"])
+        let expected = options.object("expected")
+        let text = options.object("text")
+        guard Set(options.keys) == Set(["revision", "expected", "text", "choices"]),
+              !options.text("revision").isEmpty,
+              Set(expected.keys) == Set(["sections", "updatedAt"]),
+              expected["sections"] is [Any] || expected["sections"] is NSNull,
+              expected["updatedAt"] is String || expected["updatedAt"] is NSNull,
+              !text.text("title").isEmpty, !text.text("nameLabel").isEmpty,
+              !text.text("saveLabel").isEmpty, options["choices"] is [CoreObject] else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        somedaySectionCreateOptions = options
+        somedaySectionCreateReadError = nil
+    }
+
+    private func readSomedaySectionCreateOptions() async {
+        guard selectedSurface == .someday, somedayPanel == "newSection", !busy, !retryNeeded,
+              !somedaySectionCreatePending else { return }
+        busy = true
+        somedaySectionCreateOptions = [:]
+        somedaySectionCreateReadError = nil
+        defer { finishOperation() }
+        do { try await fetchSomedaySectionCreateOptions() }
+        catch { somedaySectionCreateReadError = error.localizedDescription }
+    }
+
+    func saveSomedaySectionCreate() async {
+        guard somedaySectionCreateCanSave else { return }
+        let title = somedaySectionCreateDraft
+        let expected = somedaySectionCreateOptions.object("expected")
+        busy = true
+        somedaySectionCreateError = nil
+        defer { finishOperation() }
+        do {
+            let requestID = UUID().uuidString.lowercased()
+            let request = try json(["requestId": requestID, "title": title, "expected": expected])
+            somedaySectionCreateRequest = request
+            somedaySectionCreateRequestID = requestID
+            let result = try await query("somedaySectionCreateWrite", [request])
+            try acknowledgeSomedaySectionCreate(result)
+            await refreshSomedayAfterSectionCreate()
+        } catch { await handleSomedaySectionCreateError(error) }
+    }
+
+    private func acknowledgeSomedaySectionCreate(_ result: CoreObject) throws {
+        guard somedaySectionCreateRequest != nil, let requestID = somedaySectionCreateRequestID,
+              Set(result.keys) == Set(["id", "existing"]), !result.text("id").isEmpty,
+              let existing = result["existing"] as? NSNumber,
+              CFGetTypeID(existing) == CFBooleanGetTypeID(),
+              existing.boolValue || result.text("id") == requestID else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        somedaySectionCreateRequest = nil
+        somedaySectionCreateRequestID = nil
+        somedaySectionCreateOptions = [:]
+        somedaySectionCreateError = nil
+        somedaySectionCreateReadError = nil
+        somedaySectionCreateAwaitingRefresh = true
+        retryNeeded = false
+        error = nil
+    }
+
+    private func refreshSomedayAfterSectionCreate() async {
+        guard selectedSurface == .someday, somedaySectionCreateAwaitingRefresh else { return }
+        if await readSomeday() {
+            somedaySectionCreateAwaitingRefresh = false
+            somedayPanel = ""
+            somedaySectionCreateDraft = ""
+            somedaySectionCreateOptions = [:]
+            somedaySectionCreateError = nil
+            somedaySectionCreateReadError = nil
+        } else {
+            somedaySectionCreateReadError = somedayError ?? label("settings.feedback.actionFailed")
+        }
+    }
+
+    private func handleSomedaySectionCreateError(_ failure: Error) async {
+        if somedaySectionCreatePending && isDefiniteRejection(failure) {
+            somedaySectionCreateRequest = nil
+            somedaySectionCreateRequestID = nil
+            somedaySectionCreateOptions = [:]
+            retryNeeded = false
+            error = nil
+            somedaySectionCreateError = failure.localizedDescription
+            do { try await fetchSomedaySectionCreateOptions() }
+            catch { somedaySectionCreateReadError = error.localizedDescription }
+        } else {
+            retryNeeded = somedaySectionCreatePending
+            somedaySectionCreateError = failure.localizedDescription
+            if retryNeeded { error = failure.localizedDescription }
+        }
+    }
+
+    func retrySomedaySectionCreate() async {
+        if retryNeeded { await retry(); return }
+        guard selectedSurface == .someday, somedayPanel == "newSection", !busy,
+              !somedaySectionCreatePending else { return }
+        if somedaySectionCreateAwaitingRefresh {
+            busy = true
+            defer { finishOperation() }
+            await refreshSomedayAfterSectionCreate()
+        } else {
+            somedaySectionCreateError = nil
+            await readSomedaySectionCreateOptions()
+        }
     }
 
     func setSomedayOption(_ key: String, value: Any) async {
@@ -10867,6 +11018,14 @@ final class CoreModel: ObservableObject {
                 await readReference()
                 return
             }
+            if let request = somedaySectionCreateRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("somedaySectionCreateRetryOutcome", [request]) }
+                try acknowledgeSomedaySectionCreate(result)
+                await refreshSomedayAfterSectionCreate()
+                return
+            }
             if let request = focusGroupRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -11084,6 +11243,10 @@ final class CoreModel: ObservableObject {
             }
             if referenceSortRequest != nil {
                 await handleReferenceSortError(error)
+                return
+            }
+            if somedaySectionCreateRequest != nil {
+                await handleSomedaySectionCreateError(error)
                 return
             }
             if focusGroupRequest != nil {

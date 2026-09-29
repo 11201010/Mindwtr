@@ -178,10 +178,12 @@ struct SomedayScreen: View {
 
 struct SomedayPanel: View {
     @FocusState private var focusedField: String?
+    @State private var createFocusedOnce = false
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     private var menu: CoreObject { model.someday.object("menu") }
     private var isFilter: Bool { model.somedayPanel == "filters" }
+    private var isCreate: Bool { model.somedayPanel == "newSection" }
     private var isPicker: Bool { !model.somedayPickerName.isEmpty }
 
     var body: some View {
@@ -190,8 +192,14 @@ struct SomedayPanel: View {
                 Button { close() } label: { Color.black.opacity(isFilter ? 0.35 : 0.28).contentShape(Rectangle()) }
                     .buttonStyle(.plain).ignoresSafeArea().accessibilityLabel(model.label("common.close"))
                     .accessibilityIdentifier("someday-panel-dismiss")
+                    .disabled(model.somedaySectionCreatePending || model.busy || model.retryNeeded)
                 VStack(alignment: .leading, spacing: 0) {
-                    if isFilter { filterControls } else {
+                    if isCreate {
+                        ViewThatFits(in: .vertical) {
+                            createContent.fixedSize(horizontal: false, vertical: true)
+                            ScrollView { createContent }.scrollDismissesKeyboard(.interactively)
+                        }
+                    } else if isFilter { filterControls } else {
                         panelHeader
                         ViewThatFits(in: .vertical) {
                             overflowContent.fixedSize(horizontal: false, vertical: true)
@@ -209,6 +217,14 @@ struct SomedayPanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
             .accessibilityAction(.escape) { backOrClose() }
+        }
+        .onChange(of: isCreate) { if !$0 { createFocusedOnce = false } }
+        .onChange(of: model.busy) { value in
+            if !value && isCreate && !createFocusedOnce && !model.somedaySectionCreatePending
+                && !model.somedaySectionCreateAwaitingRefresh {
+                focusedField = "someday-section-create"
+                createFocusedOnce = true
+            }
         }
     }
 
@@ -234,6 +250,9 @@ struct SomedayPanel: View {
                 overflowRow(menu.object("filters"), icon: "sliders", id: "someday-filter-action") { model.somedayPanel = "filters" }
                 overflowRow(menu.object("sort"), icon: "sort", id: "someday-sort-action") { model.somedayPanel = "sort" }
                 overflowRow(menu.object("group"), icon: "folder", id: "someday-group-action") { model.somedayPanel = "group" }
+                overflowRow(menu.object("newSection"), icon: "plus", id: "someday-new-section-action") {
+                    Task { await model.openSomedaySectionCreate() }
+                }
                 overflowRow(menu.object("details"), icon: "eye", id: "someday-toggle-details") {
                     let value = !model.someday.flag("showDetails")
                     close()
@@ -293,10 +312,61 @@ struct SomedayPanel: View {
             onRetryPicker: model.retrySomedayPicker, onClose: model.closeSomedayPanel, focusedField: $focusedField)
     }
 
+    private var createContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(menu.object("newSection").text("label")).rnFont(17, .bold)
+                .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("someday-section-create-title")
+            TextField(model.label("viewSections.namePlaceholder"), text: Binding(
+                get: { model.somedaySectionCreateDraft }, set: { model.setSomedaySectionCreateDraft($0) }))
+                .rnFont(16).focused($focusedField, equals: "someday-section-create")
+                .submitLabel(.done).onSubmit {
+                    focusedField = nil
+                    Task { await model.saveSomedaySectionCreate() }
+                }
+                .padding(.horizontal, 12).frame(minHeight: 44)
+                .background(palette.bg, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                .disabled(model.somedaySectionCreatePending || model.somedaySectionCreateAwaitingRefresh || model.retryNeeded)
+                .accessibilityLabel(model.label("viewSections.nameHint"))
+                .accessibilityIdentifier("someday-section-create-input")
+            if let error = model.somedaySectionCreateError ?? model.somedaySectionCreateReadError {
+                Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                    .accessibilityAddTraits(.updatesFrequently).accessibilityIdentifier("someday-section-create-error")
+                Button(model.label("common.retry")) { Task { await model.retrySomedaySectionCreate() } }
+                    .rnFont(14, .semibold).frame(minHeight: 44).disabled(model.busy)
+                    .accessibilityIdentifier("someday-section-create-retry")
+            } else if model.busy {
+                ProgressView().frame(maxWidth: .infinity)
+            }
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button(model.label("common.cancel")) { close() }
+                    .rnFont(14, .semibold).padding(.horizontal, 14).frame(minWidth: 88, minHeight: 44)
+                    .background(palette.bg, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                    .disabled(model.somedaySectionCreatePending || model.busy || model.retryNeeded)
+                    .accessibilityIdentifier("someday-section-create-cancel")
+                Button(model.somedaySectionCreateOptions.object("text").text("saveLabel").isEmpty
+                    ? model.label("common.save") : model.somedaySectionCreateOptions.object("text").text("saveLabel")) {
+                    focusedField = nil
+                    Task { await model.saveSomedaySectionCreate() }
+                }
+                .rnFont(14, .semibold).padding(.horizontal, 14).frame(minWidth: 88, minHeight: 44)
+                .foregroundStyle(palette.onTint).background(palette.tint, in: RoundedRectangle(cornerRadius: 8))
+                .disabled(!model.somedaySectionCreateCanSave)
+                .accessibilityIdentifier("someday-section-create-save")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+    }
+
     private func close() { focusedField = nil; model.closeSomedayPanel() }
     private func backOrClose() {
         focusedField = nil
-        if isPicker { model.closeSomedayPicker() }
+        if isCreate { close() }
+        else if isPicker { model.closeSomedayPicker() }
         else if !isFilter && model.somedayPanel != "menu" { model.somedayPanel = "menu" }
         else { close() }
     }

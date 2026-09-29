@@ -882,6 +882,18 @@ globalThis.MindwtrHost = {
     taskListSortRetryOutcome(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.probeTaskListSortOutcome(JSON.parse(json))); });
     },
+    somedaySectionCreateOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.getSomedaySectionCreateOptions(JSON.parse(json))); });
+    },
+    somedaySectionCreateValidate(json: string): string {
+        return submit(async () => unwrap(contract.validateSomedaySectionCreateWrite(JSON.parse(json))));
+    },
+    somedaySectionCreateWrite(json: string): string {
+        return submit(async () => unwrap(await contract.createSomedaySectionChecked(JSON.parse(json))));
+    },
+    somedaySectionCreateRetryOutcome(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.probeSomedaySectionCreateOutcome(JSON.parse(json))); });
+    },
     focusGroupOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getFocusGroupOptions(JSON.parse(json))); });
     },
