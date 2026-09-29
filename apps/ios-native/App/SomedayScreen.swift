@@ -346,6 +346,7 @@ struct SomedayPanel: View {
                     .background(palette.bg, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
                     .disabled(model.somedaySectionCreatePending || model.busy || model.retryNeeded)
+                    .opacity(model.somedaySectionCreatePending || model.busy || model.retryNeeded ? 0.5 : 1)
                     .accessibilityIdentifier("someday-section-create-cancel")
                 Button(model.somedaySectionCreateOptions.object("text").text("saveLabel").isEmpty
                     ? model.label("common.save") : model.somedaySectionCreateOptions.object("text").text("saveLabel")) {

@@ -553,7 +553,10 @@ private final class Engine: @unchecked Sendable {
                 }
             }
             let value = try invoke(method, arguments: args)
-            if method == "focusOrderOptions" { try validateFocusOrderOptions(value) }
+            if method == "focusOrderOptions" {
+                try validateFocusOrderOptions(value)
+                NSLog("Native iOS Focus order options validated releaseCheck=v1.3.4/ios-focus-order-revision outcome=accepted")
+            }
             if method == "focusSavedFilterOptions" { try validateFocusSavedFilterOptions(value) }
             if method == "projectDateOptions", let input = args.first as? String {
                 try validateProjectDateOptions(value, request: input)
@@ -2282,8 +2285,9 @@ private final class Engine: @unchecked Sendable {
               Self.isBoolean(options["canReorder"]),
               let rows = options["rows"] as? [[String: Any]], rows.count <= 100,
               rows.allSatisfy({ row in
-                  Set(row.keys) == Set(["id", "title", "secondaryLabel", "positionLabel", "moveUp", "moveDown"])
+                  Set(row.keys) == Set(["id", "taskRevision", "title", "secondaryLabel", "positionLabel", "moveUp", "moveDown"])
                     && (row["id"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true
+                    && (row["taskRevision"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true
                     && row["title"] is String && row["secondaryLabel"] is String && row["positionLabel"] is String
                     && (row["moveUp"] is NSNull || row["moveUp"] is [String])
                     && (row["moveDown"] is NSNull || row["moveDown"] is [String])

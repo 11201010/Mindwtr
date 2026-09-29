@@ -2917,6 +2917,7 @@ final class FoundationUITests: XCTestCase {
         boardTap(app, "someday-section-create-save")
         let failure = app.staticTexts["someday-section-create-error"]
         XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
         for _ in 0..<2 {
             XCTAssertEqual(input.value as? String, "  Task79 Books  ")
             XCTAssertFalse(input.isEnabled)

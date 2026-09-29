@@ -16141,7 +16141,15 @@ final class CoreHostTests: XCTestCase {
         _ = try await core.start()
         let options = try await focusOrderOptions(core)
         XCTAssertEqual(options["canReorder"] as? Bool, true)
-        XCTAssertEqual((options["rows"] as? [[String: Any]])?.count, 2)
+        let optionRows = try XCTUnwrap(options["rows"] as? [[String: Any]])
+        XCTAssertEqual(optionRows.count, 2)
+        for row in optionRows {
+            let id = try XCTUnwrap(row["id"] as? String)
+            let task = try storedTask(id)
+            let updatedAt = try XCTUnwrap(task["updatedAt"] as? String)
+            let revision = "\(task["rev"] as? Int ?? 0):\(task["revBy"] as? String ?? ""):\(updatedAt)"
+            XCTAssertEqual(row["taskRevision"] as? String, revision)
+        }
         let request = try focusOrderRequest(options)
         let ids = try XCTUnwrap(request["ids"] as? [String])
         var duplicate = request
@@ -16181,6 +16189,37 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0); XCTAssertEqual(logged, 1)
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
         await core.close()
+    }
+
+    func testFocusOrderOptionsRequiresBoundedTaskRevision() async throws {
+        try await seedFocusOrderRows()
+        for mutation in ["delete result.value.rows[0].taskRevision;",
+                         "result.value.rows[0].taskRevision = 7;",
+                         "result.value.rows[0].taskRevision = 'x'.repeat(201);"] {
+            let source = try dateBundle(at: "2026-09-29T12:00:00.000Z", suffix: """
+            (() => {
+                const options = MindwtrHost.focusOrderOptions, poll = MindwtrHost.poll;
+                const tickets = new Set();
+                MindwtrHost.focusOrderOptions = function (json) {
+                    const ticket = options(json); tickets.add(ticket); return ticket;
+                };
+                MindwtrHost.poll = function (id) {
+                    const raw = poll(id);
+                    if (!raw || !tickets.has(id)) return raw;
+                    const result = JSON.parse(raw);
+                    if (result.ok) { \(mutation) }
+                    return JSON.stringify(result);
+                };
+            })();
+            """)
+            let core = host(bundleURL: source)
+            _ = try await core.start()
+            await expectFailure("Malformed Focus order options") {
+                _ = try await core.call("focusOrderOptions", argumentsJSON: json([json(["controls": [String: Any]()])]))
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await core.close()
+        }
     }
 
     func testFocusOrderFailedCommitColdApplyAndLostAckParentChange() async throws {
