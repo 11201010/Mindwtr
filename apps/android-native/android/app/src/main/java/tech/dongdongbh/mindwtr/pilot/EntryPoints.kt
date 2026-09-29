@@ -29,9 +29,6 @@ private const val NOTE_TEXT = "com.google.android.gms.actions.extra.TEXT"
 /** A text file core can import is at most its 100,000 characters; four bytes each is the most UTF-8 can take. */
 private const val IMPORT_BYTES = 400_004
 
-/** How long a failed read waits before core reads the entry again. */
-private const val RETRY_MS = 5_000L
-
 /** The Menu screens a route opens by core's tile id (MenuModel.openTile). */
 private val TILE_ROUTES = setOf("review", "calendar", "contexts", "board", "trash", "history", "settings")
 
@@ -76,23 +73,21 @@ fun Context.readPickedText(uri: Uri): String? = runCatching {
  * force-stop keeps them). The oldest opens once no command runs or is owed and nothing the user is working in is open (the
  * editor, Process Inbox, Mind Sweep, the capture popup, a Menu or Focus dialog, the Calendar's composer, the search's save
  * dialog): that work stays, and the entry opens when it ends. An entry leaves the queue only after its screen or popup opened;
- * a failed read keeps it for another try (after [RETRY_MS]), unless core refused the input itself.
+ * a failed read keeps it for another try (after [EntryLifecycle]'s wait), unless core refused the input itself.
  */
 class EntryRouter(private val shell: InboxViewModel, dir: File) {
     private val queue = EntryQueue(dir)
+    /** Which entry core reads, when a failed read tries again, and when an entry leaves (EntryLifecycle.kt, JVM-tested). */
+    private val lifecycle = EntryLifecycle(queue) { SystemClock.uptimeMillis() }
     private val main = Handler(Looper.getMainLooper())
     /** The oldest waiting entry's id: MainActivity pumps again when it changes. */
-    var head by mutableStateOf(queue.head()?.id); private set
-    /** The entry core is reading, or whose screen waits to open: one at a time. */
-    private var opening: String? = null
-    /** After a failed read the entry waits until then (uptime) before core reads it again. */
-    private var retryAt = 0L
+    var head by mutableStateOf(lifecycle.head); private set
 
     /** A new intent's entry (a launch without saved state, or onNewIntent), last in the queue. */
     fun receive(intent: Intent) {
         val input = intent.entryInput() ?: return
         if (!queue.add(input.toString())) Log.w(CoreHost.TAG, "Native Android entry point dropped: the queue is full")
-        head = queue.head()?.id
+        head = lifecycle.head
     }
 
     /** Something keeps the entry from opening now: the app is not ready, a command runs or is owed, or the user's work is open. */
@@ -104,9 +99,7 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
 
     /** Reads the oldest entry once the app is free, then opens it once no action runs; MainActivity calls it whenever that may change. */
     fun pump(): Unit = with(shell) {
-        val entry = queue.head() ?: return
-        if (opening != null || blocked || SystemClock.uptimeMillis() < retryAt) return
-        opening = entry.id
+        val entry = lifecycle.next(blocked) ?: return
         perform { runtime ->
             val (reply, view) = try {
                 val reply = runtime.menuRead("entryPoint", entry.input)
@@ -124,25 +117,22 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
         }
     }
 
-    /** Core's read failed: the entry stays for another try, unless core refused the input itself. */
+    /** Core's read failed: the entry stays and is read again after the lifecycle's wait, unless core refused the input itself. */
     private fun failed(entry: EntryQueue.Entry, message: String?) {
-        opening = null
-        if (entryRetryable(message)) {
-            retryAt = SystemClock.uptimeMillis() + RETRY_MS
-            main.postDelayed({ pump() }, RETRY_MS)
-            return
-        }
-        queue.remove(entry.id)
-        head = queue.head()?.id
+        val outcome = lifecycle.failed(entry, message)
+        if (outcome is EntryLifecycle.Failure.Retry) main.postDelayed({ pump() }, outcome.delayMs)
+        head = lifecycle.head
     }
 
     /** Opens core's answer, then (only then) the entry leaves the queue. Work opened meanwhile keeps it for a later read. */
     private fun opened(entry: EntryQueue.Entry, reply: JSONObject, view: JSONObject?) {
-        opening = null
-        if (blocked) return
+        if (blocked) {
+            lifecycle.deferred(entry)
+            return
+        }
         open(reply, view)
-        queue.remove(entry.id)
-        head = queue.head()?.id
+        lifecycle.opened(entry)
+        head = lifecycle.head
     }
 
     /** Core's answer: its toast, its route (with the task or project it names), then its capture popup over the tabs. */
