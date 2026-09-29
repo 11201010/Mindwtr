@@ -6,7 +6,7 @@
   "rendering": "lib/notification-service-local.ts run for real under fake timers (Date, setTimeout) with TZ=UTC. The store, the system language and the alarm library are replaced: parseDate is toISOString, scheduleAlarm answers from the cycle's `answers` and then with ids counting up from 100, getScheduledAlarms answers []. Stored language and translations are core's real English. Android starts with notification permission granted; iOS grants through requestPermissions. Each cycle is one startLocalMobileNotifications call (the first starts the service, later ones run a cycle while running) or, for trigger `exact`, one rescheduleLocalAlarmsAsExact call. `calls` records, in order, every alarm library call, AsyncStorage write, setTimeout delay and log line (message and extra).",
   "amendments": [
    {
-    "change": "A cancelled reminder alarm is withdrawn (its delivered notification is removed, now before deleteAlarm, since the Android library finds it through the row deleteAlarm deletes) or expired (its delivered notification is kept: the time only passed, the same reminder is remade, or alarms are rebuilt as exact). Each reconciliation that cancels alarms logs \"Reminder alarms cancelled\" with releaseCheck v1.3.3/reminder-withdrawn-clears-tray, reason and count. Coordinator ruling, 2026-09-28.",
+    "change": "A cancelled reminder alarm is withdrawn (its delivered notification is removed, now before deleteAlarm, since the Android library finds it through the row deleteAlarm deletes) or expired (its delivered notification is kept: the time only passed, the same reminder is remade, or alarms are rebuilt as exact). Each reconciliation that cancels alarms logs \"Reminder alarms cancelled\" with releaseCheck v1.3.4/reminder-withdrawn-clears-tray, reason and count. Coordinator ruling, 2026-09-28.",
     "source": "The same harness and scenarios run on the working tree of the commit after 5f60b560a that adds the rule (apps/mobile/lib/notification-service-local.ts, packages/core/src/mobile-reminder-alarms.ts). Every observation not listed here is unchanged, and in the listed ones only removeFiredNotification calls and the added log lines differ.",
     "observations": [
      {
@@ -6111,7 +6111,7 @@
       "logInfo",
       "[Local Notifications] Reminder alarms cancelled",
       {
-       "releaseCheck": "v1.3.3/reminder-withdrawn-clears-tray",
+       "releaseCheck": "v1.3.4/reminder-withdrawn-clears-tray",
        "reason": "withdrawn",
        "count": 1
       }
@@ -6120,7 +6120,7 @@
       "logInfo",
       "[Local Notifications] Reminder alarms cancelled",
       {
-       "releaseCheck": "v1.3.3/reminder-withdrawn-clears-tray",
+       "releaseCheck": "v1.3.4/reminder-withdrawn-clears-tray",
        "reason": "expired",
        "count": 1
       }
@@ -6917,7 +6917,7 @@
       "logInfo",
       "[Local Notifications] Reminder alarms cancelled",
       {
-       "releaseCheck": "v1.3.3/reminder-withdrawn-clears-tray",
+       "releaseCheck": "v1.3.4/reminder-withdrawn-clears-tray",
        "reason": "withdrawn",
        "count": 3
       }
@@ -6926,7 +6926,7 @@
       "logInfo",
       "[Local Notifications] Reminder alarms cancelled",
       {
-       "releaseCheck": "v1.3.3/reminder-withdrawn-clears-tray",
+       "releaseCheck": "v1.3.4/reminder-withdrawn-clears-tray",
        "reason": "expired",
        "count": 1
       }
@@ -15896,7 +15896,7 @@
       "logInfo",
       "[Local Notifications] Reminder alarms cancelled",
       {
-       "releaseCheck": "v1.3.3/reminder-withdrawn-clears-tray",
+       "releaseCheck": "v1.3.4/reminder-withdrawn-clears-tray",
        "reason": "expired",
        "count": 3
       }
@@ -19613,7 +19613,7 @@
       "logInfo",
       "[Local Notifications] Reminder alarms cancelled",
       {
-       "releaseCheck": "v1.3.3/reminder-withdrawn-clears-tray",
+       "releaseCheck": "v1.3.4/reminder-withdrawn-clears-tray",
        "reason": "withdrawn",
        "count": 1
       }
@@ -19622,7 +19622,7 @@
       "logInfo",
       "[Local Notifications] Reminder alarms cancelled",
       {
-       "releaseCheck": "v1.3.3/reminder-withdrawn-clears-tray",
+       "releaseCheck": "v1.3.4/reminder-withdrawn-clears-tray",
        "reason": "expired",
        "count": 2
       }
@@ -22198,7 +22198,7 @@
       "logInfo",
       "[Local Notifications] Reminder alarms cancelled",
       {
-       "releaseCheck": "v1.3.3/reminder-withdrawn-clears-tray",
+       "releaseCheck": "v1.3.4/reminder-withdrawn-clears-tray",
        "reason": "withdrawn",
        "count": 2
       }

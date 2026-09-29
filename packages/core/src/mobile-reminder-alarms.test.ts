@@ -119,7 +119,7 @@ describe('mobile reminder alarms', () => {
                 const counts = countReminderAlarmCancelReasons(plan);
                 const reasonLines = error === null
                     ? (['withdrawn', 'expired'] as const).filter((reason) => counts[reason] > 0)
-                        .map((reason) => ({ releaseCheck: 'v1.3.3/reminder-withdrawn-clears-tray', reason, count: counts[reason] }))
+                        .map((reason) => ({ releaseCheck: 'v1.3.4/reminder-withdrawn-clears-tray', reason, count: counts[reason] }))
                     : [];
                 const saved = writeReminderAlarmMap(alarms);
                 const saves = saved === lastSaved ? [] : [saved];

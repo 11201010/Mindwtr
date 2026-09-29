@@ -1331,7 +1331,7 @@ describe('notification-service-local', () => {
     expect(mockRestorePersistentCaptureNotification).toHaveBeenCalledTimes(1);
     expect(mockLogInfo).toHaveBeenCalledWith(
       '[Local Notifications] Denied-permission cleanup ran on stop',
-      expect.objectContaining({ extra: { releaseCheck: 'v1.3.3/denied-resume-cleanup' } }),
+      expect.objectContaining({ extra: { releaseCheck: 'v1.3.4/denied-resume-cleanup' } }),
     );
   });
 

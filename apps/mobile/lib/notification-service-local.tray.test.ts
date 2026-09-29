@@ -125,7 +125,7 @@ const fire = (key: string) => {
 };
 const withdrawnLines = () => harness.logs.filter(([message, extra]) => (
   message === '[Local Notifications] Reminder alarms cancelled'
-  && extra?.releaseCheck === 'v1.3.3/reminder-withdrawn-clears-tray'
+  && extra?.releaseCheck === 'v1.3.4/reminder-withdrawn-clears-tray'
 )).map(([, extra]) => ({ reason: extra?.reason, count: extra?.count }));
 
 describe.each(['android', 'ios'])('delivered reminders on %s', (platform) => {

@@ -97,8 +97,8 @@ type NativeEmitterSubscription = {
 // (mobile-reminder-alarms.ts); this file binds them to the alarm library.
 const POMODORO_ALERT_DELIVERY_RELEASE_CHECK = 'v1.3.0/pomodoro-alert-delivery';
 const DAILY_DIGEST_INDEPENDENT_RELEASE_CHECK = 'v1.3.1/daily-digest-independent';
-const REMINDER_CANCEL_RELEASE_CHECK = 'v1.3.3/reminder-withdrawn-clears-tray';
-const DENIED_RESUME_CLEANUP_RELEASE_CHECK = 'v1.3.3/denied-resume-cleanup';
+const REMINDER_CANCEL_RELEASE_CHECK = 'v1.3.4/reminder-withdrawn-clears-tray';
+const DENIED_RESUME_CLEANUP_RELEASE_CHECK = 'v1.3.4/denied-resume-cleanup';
 
 let started = false;
 let alarmApi: AlarmNotificationsApi | null = null;
