@@ -117,11 +117,11 @@ describe('useRootLayoutAppleRemindersAutoImport', () => {
     act(() => tree.unmount());
   });
 
-  it('logs the run once reminders were imported', async () => {
+  it('shows the import toast without retaining the confirmed release diagnostic', async () => {
     importMocks.runAppleRemindersAutoImport.mockResolvedValue({ ...emptyResult, importedCount: 2 });
     const tree = await mount();
 
-    expect(logMocks.logInfo).toHaveBeenCalledOnce();
+    expect(logMocks.logInfo).not.toHaveBeenCalled();
     expect(showToast).toHaveBeenCalledOnce();
     act(() => tree.unmount());
   });

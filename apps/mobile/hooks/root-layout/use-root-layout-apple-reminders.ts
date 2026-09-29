@@ -4,7 +4,7 @@ import { AppState } from 'react-native';
 import { resolveI18nText, useTaskStore } from '@mindwtr/core';
 
 import { runAppleRemindersAutoImport } from '@/lib/apple-reminders-import';
-import { logError, logInfo } from '@/lib/app-log';
+import { logError } from '@/lib/app-log';
 import { createMobileRecoverySnapshot } from '@/lib/data-transfer';
 import { flushPendingTaskActionSave } from '@/lib/pending-capture-persistence';
 
@@ -55,23 +55,6 @@ export function useRootLayoutAppleRemindersAutoImport({
                 getTaskById: (id) => useTaskStore.getState()._tasksById.get(id),
             });
             if (!result || !enabledRef.current) return;
-            // A foreground where nothing changed is the normal case: say
-            // nothing at all rather than write a log line every 30 seconds.
-            const changed = result.importedCount
-                + result.deletedCount
-                + result.failedCount
-                + result.deleteFailedCount;
-            if (changed === 0) return;
-            void logInfo('Apple Reminders auto-import ran', {
-                scope: 'import',
-                extra: {
-                    releaseCheck: 'v1.3.2/apple-reminders-auto-import',
-                    imported: result.importedCount,
-                    skipped: result.skippedDuplicateCount + result.skippedCompletedCount + result.skippedEmptyTitleCount,
-                    deleted: result.deletedCount,
-                    failed: result.failedCount + result.deleteFailedCount,
-                },
-            });
             if (result.importedCount > 0) {
                 showToastRef.current({
                     title: resolveI18nText(tRef.current, 'settings.appleRemindersImport.appleReminders'),

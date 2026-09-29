@@ -4,7 +4,7 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dir, "../..");
 const skippedDirectories = new Set([
-  "node_modules", "dist", ".worktrees", "test", "tests", "__tests__", "__mocks__",
+  "node_modules", "dist", "build", ".worktrees", "test", "tests", "__tests__", "__mocks__",
 ]);
 const sourceExtension = /\.(?:[cm]?[jt]sx?|rs|swift|kt|kts|java)$/;
 
