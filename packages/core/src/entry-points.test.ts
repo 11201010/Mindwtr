@@ -229,6 +229,13 @@ describe('native host contract: resolveNativeEntryPoint', () => {
             .toEqual({ tone: 'warning', title: 'Share unavailable', message: 'Mindwtr could not read text or a URL from the shared item.' });
     });
 
+    it('answers an over-long share or note with the share notice, never a bare refusal', () => {
+        const notice = { tone: 'warning', title: 'Share unavailable', message: 'Mindwtr could not read text or a URL from the shared item.' };
+        expect(value(host.resolveNativeEntryPoint({ kind: 'share', text: 'x'.repeat(500_001), title: null, subject: null }))).toEqual({ ...none, notice });
+        expect(value(host.resolveNativeEntryPoint({ kind: 'share', text: 'Body', title: 't'.repeat(100_001), subject: null }))).toEqual({ ...none, notice });
+        expect(value(host.resolveNativeEntryPoint({ kind: 'createNote', name: 'n'.repeat(100_001), text: null, extraText: null }))).toEqual({ ...none, notice });
+    });
+
     it('opens nothing for another scheme, and refuses malformed input', () => {
         expect(value(host.resolveNativeEntryPoint({ kind: 'link', url: 'mindwtr://focus', scheme: SCHEME }))).toEqual(none);
         expect(value(host.resolveNativeEntryPoint({ kind: 'link', url: 'MINDWTR-NATIVE-DEV://focus', scheme: SCHEME })).route).toBe('/focus');

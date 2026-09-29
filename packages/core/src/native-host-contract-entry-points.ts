@@ -89,7 +89,8 @@ const URL_LIMIT = 16_000;
 /** The capture popup's text limit (native-host-contract-quick-capture.ts). */
 const TEXT_LIMIT = 100_000;
 const SCHEME_PATTERN = /^[a-z][a-z0-9+.-]{0,31}$/;
-const isOptionalText = (value: unknown, max: number): value is string | null => value === null || isText(value, max);
+const isOptionalString = (value: unknown): value is string | null => value === null || typeof value === 'string';
+const longerThan = (value: string | null, max: number) => (value?.length ?? 0) > max;
 
 /**
  * A quick-add token for [value] with [marker]: bare, or in straight double quotes with backslash escapes (the parser's
@@ -107,6 +108,10 @@ export function createEntryPointMethods(deps: EntryPointDeps) {
     const notice = (titleKey: string, title: string, messageKey: string, message: string): QuickCaptureNotice => ({
         tone: 'warning', title: tFallback(deps.t(), titleKey, title), message: tFallback(deps.t(), messageKey, message),
     });
+
+    /** React Native's toast for a shared item it cannot read. */
+    const shareUnreadable = () => notice('share.unavailable', 'Share unavailable',
+        'share.readFailed', 'Mindwtr could not read text, a URL, or a file from the shared item.');
 
     /** The capture popup's fresh options with the entry's note and project, as React Native's popup starts from a preset. */
     const captureOf = (text: string, preset: { description?: string; projectId?: string }, returnToPreviousApp: boolean) => {
@@ -221,35 +226,32 @@ export function createEntryPointMethods(deps: EntryPointDeps) {
                 return resolveLink(input.url, input.scheme);
             }
             if (input.kind === 'share') {
-                if (!isOptionalText(input.text, TEXT_LIMIT * 5) || !isOptionalText(input.title, TEXT_LIMIT) || !isOptionalText(input.subject, TEXT_LIMIT)) {
+                if (!isOptionalString(input.text) || !isOptionalString(input.title) || !isOptionalString(input.subject)) {
                     return fail('INVALID_INPUT', 'A share\'s text, title and subject are text or null');
                 }
                 // React Native's root layout takes no share in sandbox mode, and the provider reports none without text.
                 const share = isSandboxMode() ? null : readAndroidTextShare(input);
                 if (!share) return opened({});
                 const draft = buildShareCaptureDraft({ shareSubject: share.subject, shareText: share.text, shareWebUrl: share.webUrl });
-                // The popup takes at most its text limit; a longer share is one the app cannot read.
-                if (!draft || draft.title.length > TEXT_LIMIT) {
-                    return opened({
-                        notice: notice('share.unavailable', 'Share unavailable',
-                            'share.readFailed', 'Mindwtr could not read text, a URL, or a file from the shared item.'),
-                    });
+                // The popup takes at most its text limit (its note five times that); a longer share is one the app cannot
+                // read, and says so as React Native does for a share it cannot read.
+                if (!draft || draft.title.length > TEXT_LIMIT || longerThan(input.text, TEXT_LIMIT * 5)
+                    || longerThan(input.title, TEXT_LIMIT) || longerThan(input.subject, TEXT_LIMIT)) {
+                    return opened({ notice: shareUnreadable() });
                 }
                 return opened({ capture: captureOf(draft.title, draft.description !== undefined ? { description: draft.description } : {}, false) });
             }
             if (input.kind === 'createNote') {
-                if (!isOptionalText(input.name, TEXT_LIMIT) || !isOptionalText(input.text, TEXT_LIMIT) || !isOptionalText(input.extraText, TEXT_LIMIT)) {
+                if (!isOptionalString(input.name) || !isOptionalString(input.text) || !isOptionalString(input.extraText)) {
                     return fail('INVALID_INPUT', 'A note\'s name and text are text or null');
                 }
                 const payload = buildCreateNoteCapture(input);
                 // React Native's root layout handles no capture link and shows no share failure in sandbox mode.
                 if (isSandboxMode()) return opened(payload ? { route: '/inbox' } : {});
-                // React Native leaves an empty note as it came, and its share reader then refuses the unknown action.
-                if (!payload) {
-                    return opened({
-                        notice: notice('share.unavailable', 'Share unavailable',
-                            'share.readFailed', 'Mindwtr could not read text, a URL, or a file from the shared item.'),
-                    });
+                // React Native leaves an empty note as it came, and its share reader then refuses the unknown action; a note
+                // longer than the popup takes is one this app cannot read either.
+                if (!payload || [input.name, input.text, input.extraText].some((value) => longerThan(value, TEXT_LIMIT))) {
+                    return opened({ notice: shareUnreadable() });
                 }
                 return opened({ route: '/inbox', capture: payloadCapture(payload) });
             }

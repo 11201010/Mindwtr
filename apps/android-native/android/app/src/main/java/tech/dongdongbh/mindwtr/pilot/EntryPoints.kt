@@ -111,16 +111,26 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
                 }
             } catch (failure: Throwable) {
                 ui { failed(entry, failure.message) }
+                // A refused input shows its own notice; any other failure is the read's, with the screen's retry.
+                if (!entryRetryable(failure.message)) return@perform
                 throw failure
             }
             ui { menu.whenIdle { opened(entry, reply, view) } }
         }
     }
 
-    /** Core's read failed: the entry stays and is read again after the lifecycle's wait, unless core refused the input itself. */
+    /**
+     * Core's read failed: the entry stays and is read again after the lifecycle's wait; or core refused the input itself, and
+     * core's words show as a notice before the entry leaves, never a silent drop.
+     */
     private fun failed(entry: EntryQueue.Entry, message: String?) {
-        val outcome = lifecycle.failed(entry, message)
-        if (outcome is EntryLifecycle.Failure.Retry) main.postDelayed({ pump() }, outcome.delayMs)
+        when (val outcome = lifecycle.failed(entry, message)) {
+            is EntryLifecycle.Failure.Retry -> main.postDelayed({ pump() }, outcome.delayMs)
+            is EntryLifecycle.Failure.Refused -> {
+                shell.showToast(null, outcome.notice, "warning")
+                lifecycle.dismissed(entry)
+            }
+        }
         head = lifecycle.head
     }
 

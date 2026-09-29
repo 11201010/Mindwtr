@@ -62,6 +62,20 @@ class EntryLifecycleTest {
         assertEquals(EntryLifecycle.Failure.Retry(5_000), lifecycle.failed(lifecycle.next(blocked = false)!!, "NOT_READY"))
     }
 
+    @Test fun aRefusedEntryLeavesOnlyAfterItsNoticeShowed() {
+        val (queue, lifecycle) = process()
+        queue.add("""{"kind":"link"}""")
+        queue.add("""{"n":2}""")
+        val read = lifecycle.next(blocked = false)!!
+        // Core refused the input: its words (without the code) are the notice, and the entry waits until it showed.
+        assertEquals(EntryLifecycle.Failure.Refused("A link needs its URL and the app's scheme"),
+            lifecycle.failed(read, "INVALID_INPUT: A link needs its URL and the app's scheme"))
+        assertEquals(2, queue.all().size)
+        assertNull(lifecycle.next(blocked = false))
+        lifecycle.dismissed(read)
+        assertEquals("""{"n":2}""", lifecycle.next(blocked = false)!!.input)
+    }
+
     @Test fun severalQueuedEntriesOpenInOrderAcrossARestart() {
         val (queue, lifecycle) = process()
         for (n in 1..3) queue.add("""{"n":$n}""")

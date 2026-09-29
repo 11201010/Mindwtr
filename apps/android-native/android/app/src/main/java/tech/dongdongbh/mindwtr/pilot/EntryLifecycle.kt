@@ -3,15 +3,16 @@ package tech.dongdongbh.mindwtr.pilot
 /**
  * EntryRouter's decisions about the [queue], apart from Android so JVM tests drive them: which entry core reads now (one at a
  * time, the oldest, never while work is open or a failed read waits), how long a failed read waits before the next try, and
- * when an entry leaves: only after its screen or popup opened, or after core refused its input. [now] is the clock (uptime).
+ * when an entry leaves: only after its screen or popup opened, or after core refused its input and that notice showed. [now]
+ * is the clock (uptime).
  * Main thread only.
  */
 class EntryLifecycle(private val queue: EntryQueue, private val now: () -> Long) {
     sealed interface Failure {
         /** Keep the entry; read it again after [delayMs]. */
         data class Retry(val delayMs: Long) : Failure
-        /** Core refused the input itself: it can never open, and has left the queue. */
-        data object Refused : Failure
+        /** Core refused the input itself: it can never open. Show [notice] (core's words), then [dismissed] lets it leave. */
+        data class Refused(val notice: String) : Failure
     }
 
     /** The entry core is reading, or whose screen waits to open. */
@@ -43,17 +44,23 @@ class EntryLifecycle(private val queue: EntryQueue, private val now: () -> Long)
         if (reading == entry.id) reading = null
     }
 
-    /** Core's read failed with [message]: kept with a wait that doubles from 5 s up to a minute, or gone when core refused the input. */
+    /**
+     * Core's read failed with [message]: kept with a wait that doubles from 5 s up to a minute; or, when core refused the input,
+     * held (nothing else is read) until its notice showed and [dismissed] lets it leave. Never a silent drop.
+     */
     fun failed(entry: EntryQueue.Entry, message: String?): Failure {
+        if (!entryRetryable(message)) return Failure.Refused(message.orEmpty().substringAfter(": "))
         reading = null
-        if (entryRetryable(message)) {
-            failures += 1
-            val delay = minOf(MAX_WAIT_MS, FIRST_WAIT_MS shl minOf(failures - 1, 4))
-            retryAt = now() + delay
-            return Failure.Retry(delay)
-        }
+        failures += 1
+        val delay = minOf(MAX_WAIT_MS, FIRST_WAIT_MS shl minOf(failures - 1, 4))
+        retryAt = now() + delay
+        return Failure.Retry(delay)
+    }
+
+    /** A refused entry's notice showed: now it leaves. */
+    fun dismissed(entry: EntryQueue.Entry) {
+        if (reading == entry.id) reading = null
         queue.remove(entry.id)
-        return Failure.Refused
     }
 
     private companion object {
