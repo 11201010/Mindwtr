@@ -8,7 +8,7 @@ import {
     seedMenuViewsStore,
 } from './menu-views-model.replay';
 import { applyListFilterEdit, EMPTY_LIST_FILTER_STATE, resolveListFilterState } from './list-filter-state';
-import { buildSomedayFilterOptions, buildSomedayViewModel, buildWaitingViewModel } from './menu-views-model';
+import { buildSomedayFilterOptions, buildSomedayViewModel, buildWaitingViewModel, getSomedayGroupSectionId } from './menu-views-model';
 import { buildMoreMenuModel, resolveMobileQuickAccessView } from './more-menu-model';
 import { createNativeHostContract } from './native-host-contract';
 import {
@@ -141,6 +141,23 @@ describe('list view models', () => {
         expect(model.groups).toBeUndefined();
         expect(model.showEmptyState).toBe(true);
         expect(model.labels.emptyTitle).toBe('No tasks match these filters.');
+    });
+
+    it('keeps an empty imported none heading and the true No section heading separate', () => {
+        const loose = { id: 'loose', title: 'Loose', status: 'someday', contexts: [], tags: [], createdAt: '', updatedAt: '' } as Task;
+        const orphan = { ...loose, id: 'orphan', viewSectionIds: { someday: 'removed' } };
+        const settings = { gtd: { viewSections: { someday: [{ id: 'none', title: 'Imported', order: 0 }] } } } as AppSettings;
+        const model = buildSomedayViewModel({
+            tasks: [loose, orphan], projects: [], areaById: new Map(), resolvedAreaFilter: { mode: 'all' },
+            settings, sortBy: 'default', groupBy: 'viewSection', showDetails: false,
+            criteria: {}, searchQuery: '', filterChips: [], t,
+        });
+        expect(model.groups?.map(({ id, title, tasks }) => [id, title, tasks.map((task) => task.id)])).toEqual([
+            ['view-section:someday:none', 'Imported', []],
+            ['view-section:someday:', 'No section', ['loose', 'orphan']],
+        ]);
+        expect(getSomedayGroupSectionId('view-section:someday:none')).toBe('none');
+        expect(getSomedayGroupSectionId('view-section:someday:')).toBeUndefined();
     });
 
     it('gives filtered Someday the standard chip hint and Clear action', () => {

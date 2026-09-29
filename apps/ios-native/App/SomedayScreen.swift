@@ -255,9 +255,10 @@ struct SomedayPanel: View {
                 Button { close() } label: { Color.black.opacity(isFilter ? 0.35 : 0.28).contentShape(Rectangle()) }
                     .buttonStyle(.plain).ignoresSafeArea().accessibilityLabel(model.label("common.close"))
                     .accessibilityIdentifier("someday-panel-dismiss")
-                    .disabled(model.somedaySectionCreatePending || model.somedaySectionTaskPending
+                    .disabled(model.somedaySectionCreatePending || model.somedaySectionCreateAwaitingRefresh
+                              || model.somedaySectionTaskPending
                               || model.somedayMovePending || model.somedayMoveAwaitingRefresh
-                              || model.busy || model.retryNeeded)
+                              || model.somedayMoveLookupOwed || model.busy || model.retryNeeded)
                 VStack(alignment: .leading, spacing: 0) {
                     if isCreate {
                         ViewThatFits(in: .vertical) {
@@ -395,7 +396,7 @@ struct SomedayPanel: View {
             onChipAction: { action in Task { await model.editSomedayFilter(action.object("filterEdit")) } },
             onArchived: { _ in }, onOpenPicker: model.openSomedayPicker, onBack: model.closeSomedayPicker,
             onMore: model.loadMoreSomedayPicker, onRetry: { Task { await model.retrySomeday() } },
-            onRetryPicker: model.retrySomedayPicker, onClose: model.closeSomedayPanel, focusedField: $focusedField)
+            onRetryPicker: model.retrySomedayPicker, onClose: { model.closeSomedayPanel() }, focusedField: $focusedField)
     }
 
     private var createContent: some View {
@@ -439,8 +440,10 @@ struct SomedayPanel: View {
                         .contentShape(Rectangle())
                 }
                     .buttonStyle(.plain)
-                    .disabled(model.somedaySectionCreatePending || model.busy || model.retryNeeded)
-                    .opacity(model.somedaySectionCreatePending || model.busy || model.retryNeeded ? 0.5 : 1)
+                    .disabled(model.somedaySectionCreatePending || model.somedaySectionCreateAwaitingRefresh
+                              || model.busy || model.retryNeeded)
+                    .opacity(model.somedaySectionCreatePending || model.somedaySectionCreateAwaitingRefresh
+                             || model.busy || model.retryNeeded ? 0.5 : 1)
                     .accessibilityIdentifier("someday-section-create-cancel")
                 Button {
                     focusedField = nil
@@ -559,6 +562,14 @@ struct SomedayPanel: View {
                 .buttonStyle(.plain).disabled(!model.somedayMoveActionsEnabled)
                 .accessibilityIdentifier("someday-section-move-more")
             }
+            Button { Task { await model.openSomedaySectionCreate(fromMove: true) } } label: {
+                Text("+ " + model.label("viewSections.add")).rnFont(15, .medium)
+                    .foregroundStyle(palette.tint)
+                    .frame(maxWidth: .infinity, minHeight: 45, alignment: .leading)
+                    .padding(.horizontal, 10).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(!model.somedayMoveActionsEnabled)
+            .accessibilityIdentifier("someday-section-move-new-section")
         }
     }
 
@@ -589,7 +600,10 @@ struct SomedayPanel: View {
             } else {
                 moveChoices
             }
-            Button { close() } label: {
+            Button {
+                focusedField = nil
+                model.closeSomedayPanel(abandonCreatedMove: true)
+            } label: {
                 Text(model.somedayMoveOptions.text("cancelLabel").isEmpty
                      ? model.label("common.cancel") : model.somedayMoveOptions.text("cancelLabel"))
                     .rnFont(14, .semibold).frame(maxWidth: .infinity, minHeight: 44)
@@ -605,7 +619,11 @@ struct SomedayPanel: View {
         .frame(maxWidth: .infinity, maxHeight: scrollChoices ? .infinity : nil, alignment: .topLeading)
     }
 
-    private func close() { focusedField = nil; model.closeSomedayPanel() }
+    private func close() {
+        focusedField = nil
+        if isCreate { model.cancelSomedaySectionCreate() }
+        else { model.closeSomedayPanel() }
+    }
     private func backOrClose() {
         focusedField = nil
         if isCreate || isTaskCreate || isMove { close() }

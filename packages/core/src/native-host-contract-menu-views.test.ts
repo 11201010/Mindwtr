@@ -275,8 +275,32 @@ describe('native host contract: More sheet and list views', () => {
         expect(recorder.log.map((entry) => (entry as unknown[])[0])).toEqual(['updateSettings']);
         expect(useTaskStore.getState()._tasksById.get('s-a')?.viewSectionIds).toEqual({ someday: 's-later' });
         const view = value(host.getSomedayView({ offset: 0, limit: 100 }));
-        const noSection = view.items.findIndex((item) => item.type === 'heading' && item.id === 'view-section:someday:none');
+        const noSection = view.items.findIndex((item) => item.type === 'heading' && item.id === 'view-section:someday:');
         expect(view.items.slice(noSection).some((item) => item.type === 'task' && item.row.id === 's-a')).toBe(true);
+    });
+
+    it('keeps imported none and No section headings distinct, including Add task assignments', async () => {
+        const base = fixture.settings.sections;
+        const data = {
+            ...fixture,
+            tasks: [...fixture.tasks, { ...fixture.tasks.find((task) => task.id === 's-a')!, id: 's-none', viewSectionIds: { someday: 'none' } }],
+            settings: {
+                ...fixture.settings,
+                sections: {
+                    ...base,
+                    gtd: { ...base.gtd, viewSections: { someday: [...(base.gtd?.viewSections?.someday ?? []), { id: 'none', title: 'Imported', order: 3 }] } },
+                },
+            },
+        };
+        const { host, recorder } = await openHost(scenario('someday', 'sections'), undefined, data);
+        const view = value(host.getSomedayView({ offset: 0, limit: 100 }));
+        const imported = view.items.find((item) => item.type === 'heading' && item.id === 'view-section:someday:none');
+        const noSection = view.items.find((item) => item.type === 'heading' && item.id === 'view-section:someday:');
+        expect(imported).toMatchObject({ title: 'Imported', addTask: { sectionId: 'none' } });
+        expect(noSection).toMatchObject({ addTask: { sectionId: null } });
+        expect(view.items.find((item) => item.type === 'task' && item.row.id === 's-none')).toMatchObject({ groupId: 'view-section:someday:none' });
+        expect(view.items.find((item) => item.type === 'task' && item.row.id === 's-c')).toMatchObject({ groupId: 'view-section:someday:' });
+        expect(recorder.log).toEqual([]);
     });
 
     it('retries a failed section move exactly: one write, and Undo still restores the first sections', async () => {

@@ -382,7 +382,7 @@ export const scenarios: MenuViewScenario[] = [
       ['moveToSection', [], null],
       ['moveToSection', ['s-c'], 's-later'],
       ['addTask', 'view-section:someday:s-empty', '  Book flights  '],
-      ['addTask', 'view-section:someday:none', 'Loose idea'],
+      ['addTask', 'view-section:someday:', 'Loose idea'],
       ['newSection', 'Hobbies'],
       ['newSection', ' later '],
       ['status', 's-a', 'next'],

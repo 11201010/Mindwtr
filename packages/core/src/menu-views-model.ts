@@ -228,8 +228,8 @@ export function buildWaitingViewModel(input: {
 
 export const SOMEDAY_GROUP_OPTIONS = ['viewSection', 'none', 'project', 'area'] as const;
 export type SomedayGroupBy = typeof SOMEDAY_GROUP_OPTIONS[number];
-const SOMEDAY_NO_SECTION_GROUP_ID = 'view-section:someday:none';
 const SOMEDAY_SECTION_GROUP_PREFIX = 'view-section:someday:';
+const SOMEDAY_NO_SECTION_GROUP_ID = SOMEDAY_SECTION_GROUP_PREFIX;
 
 function getSomedayGroupByLabel(groupBy: SomedayGroupBy, t: Translate): string {
     switch (groupBy) {

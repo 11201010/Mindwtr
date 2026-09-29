@@ -96,7 +96,7 @@ describe('view sections', () => {
         expect(resolveTaskViewSection(orphan, 'someday', definitions)).toBeUndefined();
         expect(groupTasksByViewSection([known, orphan], 'someday', definitions, 'No section')).toEqual([
             expect.objectContaining({ id: 'view-section:someday:books', tasks: [known] }),
-            expect.objectContaining({ id: 'view-section:someday:none', tasks: [orphan], muted: true }),
+            expect.objectContaining({ id: 'view-section:someday:', tasks: [orphan], muted: true }),
         ]);
         expect(JSON.stringify(orphan)).toBe(before);
         expect(setTaskViewSectionId({ waiting: 'future-value' }, 'someday', 'books')).toEqual({
@@ -104,5 +104,19 @@ describe('view sections', () => {
             waiting: 'future-value',
         });
         expect(setTaskViewSectionId({ someday: 'books' }, 'someday', undefined)).toEqual({});
+    });
+
+    it('keeps an imported section named none distinct from unassigned and orphan tasks', () => {
+        const named = task('named', 'none');
+        const unassigned = task('unassigned');
+        const orphan = task('orphan', 'missing-heading');
+        const definitions = [{ id: 'none', title: 'Imported', order: 0 }];
+        expect(groupTasksByViewSection([named, unassigned, orphan], 'someday', definitions, 'No section')).toEqual([
+            { id: 'view-section:someday:none', title: 'Imported', tasks: [named] },
+            { id: 'view-section:someday:', title: 'No section', tasks: [unassigned, orphan], muted: true },
+        ]);
+        expect([named.viewSectionIds, unassigned.viewSectionIds, orphan.viewSectionIds]).toEqual([
+            { someday: 'none' }, undefined, { someday: 'missing-heading' },
+        ]);
     });
 });

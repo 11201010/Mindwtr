@@ -423,6 +423,7 @@ final class CoreModel: ObservableObject {
     private var processInboxEditTask: Task<Void, Never>?
     private var processInboxTransitioning = false
     private var refreshRequested = false
+    var taskStatusMenuPresented = false
     private var viewedTaskID = ""
     private var taskSavePending = false
     private var taskChecklistLoaded = false
@@ -479,6 +480,8 @@ final class CoreModel: ObservableObject {
     private var historyViewTestReadFailures = 0
     private var boardPickerTestReadFailures = 0
     private var somedayUndoTestReadFailures = 0
+    private var somedayCreateMoveTestReadFailures = 0
+    private var somedayCreateMoveLookupTestReadFailures = 0
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -607,6 +610,8 @@ final class CoreModel: ObservableObject {
     private var somedayPickerNeedsRead = false
     private var somedaySectionCreateRequest: String?
     private var somedaySectionCreateRequestID: String?
+    private var somedaySectionCreateReturnsToMove = false
+    private var somedayMoveCreatedSectionID: String?
     private var somedaySectionTaskSectionID: String?
     private var somedaySectionTaskEnvelope: String?
     private var somedaySectionTaskRequestID: String?
@@ -1169,9 +1174,11 @@ final class CoreModel: ObservableObject {
             && !somedaySectionTaskDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     var somedayMovePending: Bool { somedayMoveRequest != nil || somedayMoveUndoRequest != nil }
+    var somedayMoveLookupOwed: Bool { somedayPanel == "moveSection" && somedayMoveCreatedSectionID != nil }
     var somedayMoveActionsEnabled: Bool {
         somedayActionsEnabled && somedayPanel == "moveSection" && !somedayMoveOptions.isEmpty
             && somedayMoveReadError == nil && !somedayMoveAwaitingRefresh && !somedayMovePending
+            && somedayMoveCreatedSectionID == nil
     }
     var somedayMoveUndoEnabled: Bool {
         somedayActionsEnabled && !somedayMoveNotice.isEmpty && somedayMoveUndoError == nil
@@ -1303,6 +1310,8 @@ final class CoreModel: ObservableObject {
                     historyViewTestReadFailures = arguments.contains("--native-history-view-read-failure") ? 2 : 0
                     boardPickerTestReadFailures = arguments.contains("--native-board-picker-read-failure") ? 2 : 0
                     somedayUndoTestReadFailures = arguments.contains("--native-someday-undo-read-failure") ? 2 : 0
+                    somedayCreateMoveTestReadFailures = arguments.contains("--native-someday-create-move-read-failure") ? 2 : 0
+                    somedayCreateMoveLookupTestReadFailures = arguments.contains("--native-someday-create-move-lookup-failure") ? 2 : 0
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1511,7 +1520,7 @@ final class CoreModel: ObservableObject {
 
     func refresh() async {
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
-        guard ready, !retryNeeded, !capturePresented, !taskPresented, !calendarItemPresented,
+        guard ready, !retryNeeded, !capturePresented, !taskPresented, !taskStatusMenuPresented, !calendarItemPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
               !projectRenameEditing else { return }
         guard !busy else { refreshRequested = true; return }
@@ -1528,7 +1537,9 @@ final class CoreModel: ObservableObject {
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
         guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
-              !projectRenameEditing else { return }
+              !projectRenameEditing, !somedaySectionCreatePending, !somedaySectionCreateAwaitingRefresh,
+              !somedayMovePending, !somedayMoveAwaitingRefresh, !somedayMoveUndoAwaitingRefresh,
+              somedayMoveCreatedSectionID == nil else { return }
         morePresented = false
         guard selectedSurface != surface else { return }
         projectTaskOrderPresented = false
@@ -6356,8 +6367,10 @@ final class CoreModel: ObservableObject {
 
     func closeSomeday() async {
         guard selectedSurface == .someday, !busy, !retryNeeded, !taskPresented,
-              !somedaySectionCreatePending, !somedaySectionTaskPending, !somedayMovePending,
-              !somedayMoveAwaitingRefresh, !somedayMoveUndoAwaitingRefresh else { return }
+              !somedaySectionCreatePending, !somedaySectionCreateAwaitingRefresh,
+              !somedaySectionTaskPending, !somedayMovePending,
+              !somedayMoveAwaitingRefresh, !somedayMoveUndoAwaitingRefresh,
+              somedayMoveCreatedSectionID == nil else { return }
         closeSomedayPicker()
         clearSomedayMoveNotice()
         somedayMoveUndoError = nil
@@ -6366,9 +6379,11 @@ final class CoreModel: ObservableObject {
         await refresh()
     }
 
-    func closeSomedayPanel() {
+    func closeSomedayPanel(abandonCreatedMove: Bool = false) {
         guard !busy, !retryNeeded, !somedaySectionCreatePending, !somedaySectionTaskPending,
-              !somedayMovePending, !somedayMoveAwaitingRefresh else { return }
+              !somedaySectionCreateAwaitingRefresh, !somedayMovePending,
+              !somedayMoveAwaitingRefresh,
+              somedayMoveCreatedSectionID == nil || (abandonCreatedMove && somedayPanel == "moveSection") else { return }
         somedayPanel = ""
         closeSomedayPicker()
         somedaySectionCreateDraft = ""
@@ -6388,17 +6403,33 @@ final class CoreModel: ObservableObject {
         somedayMoveError = nil
         somedayMoveChoiceSectionID = NSNull()
         somedayMoveChoiceToast = ""
+        somedayMoveCreatedSectionID = nil
+        somedaySectionCreateReturnsToMove = false
     }
 
-    func openSomedaySectionCreate() async {
-        guard somedayActionsEnabled, somedayPanel == "menu", !somedaySectionCreatePending,
-              !capturePresented, !areaPickerPresented else { return }
+    func openSomedaySectionCreate(fromMove: Bool = false) async {
+        guard somedayActionsEnabled, somedayPanel == (fromMove ? "moveSection" : "menu"),
+              !somedaySectionCreatePending, !capturePresented, !areaPickerPresented,
+              !fromMove || somedayMoveActionsEnabled else { return }
+        somedaySectionCreateReturnsToMove = fromMove
         somedayPanel = "newSection"
         somedaySectionCreateDraft = ""
         somedaySectionCreateError = nil
         somedaySectionCreateReadError = nil
         somedaySectionCreateAwaitingRefresh = false
         await readSomedaySectionCreateOptions()
+    }
+
+    func cancelSomedaySectionCreate() {
+        guard selectedSurface == .someday, somedayPanel == "newSection", !busy, !retryNeeded,
+              !somedaySectionCreatePending, !somedaySectionCreateAwaitingRefresh else { return }
+        if !somedaySectionCreateReturnsToMove { closeSomedayPanel(); return }
+        somedaySectionCreateReturnsToMove = false
+        somedaySectionCreateDraft = ""
+        somedaySectionCreateOptions = [:]
+        somedaySectionCreateError = nil
+        somedaySectionCreateReadError = nil
+        somedayPanel = "moveSection"
     }
 
     func setSomedaySectionCreateDraft(_ text: String) {
@@ -6462,6 +6493,7 @@ final class CoreModel: ObservableObject {
               existing.boolValue || result.text("id") == requestID else {
             throw CocoaError(.coderReadCorrupt)
         }
+        if somedaySectionCreateReturnsToMove { somedayMoveCreatedSectionID = result.text("id") }
         somedaySectionCreateRequest = nil
         somedaySectionCreateRequestID = nil
         somedaySectionCreateOptions = [:]
@@ -6476,11 +6508,17 @@ final class CoreModel: ObservableObject {
         guard selectedSurface == .someday, somedaySectionCreateAwaitingRefresh else { return }
         if await readSomeday() {
             somedaySectionCreateAwaitingRefresh = false
-            somedayPanel = ""
             somedaySectionCreateDraft = ""
             somedaySectionCreateOptions = [:]
             somedaySectionCreateError = nil
             somedaySectionCreateReadError = nil
+            if somedaySectionCreateReturnsToMove {
+                somedaySectionCreateReturnsToMove = false
+                somedayPanel = "moveSection"
+                await resumeSomedayMoveAfterCreate()
+            } else {
+                somedayPanel = ""
+            }
         } else {
             somedaySectionCreateReadError = somedayError ?? label("settings.feedback.actionFailed")
         }
@@ -6703,13 +6741,36 @@ final class CoreModel: ObservableObject {
 
     private func readSomedayMoveOptions() async {
         guard selectedSurface == .someday, somedayPanel == "moveSection", !busy, !retryNeeded,
-              !somedayMovePending else { return }
+              !somedayMovePending, somedayMoveCreatedSectionID == nil else { return }
         busy = true
         somedayMoveOptions = [:]
         somedayMoveReadError = nil
         defer { finishOperation() }
         do { somedayMoveOptions = try await fetchSomedayMovePage(offset: 0) }
         catch { somedayMoveReadError = error.localizedDescription }
+    }
+
+    private func appendedSomedayMovePage(_ options: CoreObject) async throws -> CoreObject {
+        let choices = options.object("choices")
+        let entries = choices.objects("items")
+        guard entries.count < choices.number("total") else { throw CocoaError(.coderReadCorrupt) }
+        let page = try await fetchSomedayMovePage(offset: entries.count, revision: options.text("revision"))
+        guard page.text("revision") == options.text("revision"),
+              page.text("taskRevision") == options.text("taskRevision"),
+              page.object("choices").number("total") == choices.number("total"),
+              page.text("title") == options.text("title"),
+              page.text("cancelLabel") == options.text("cancelLabel"),
+              page.text("undoLabel") == options.text("undoLabel"),
+              page.text("errorTitle") == options.text("errorTitle"),
+              page.text("moveFailed") == options.text("moveFailed"),
+              page.text("undoFailed") == options.text("undoFailed") else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        var merged = options
+        var mergedChoices = choices
+        mergedChoices["items"] = entries + page.object("choices").objects("items")
+        merged["choices"] = mergedChoices
+        return merged
     }
 
     func loadMoreSomedayMoveChoices() async {
@@ -6720,23 +6781,31 @@ final class CoreModel: ObservableObject {
         busy = true
         defer { finishOperation() }
         do {
-            let page = try await fetchSomedayMovePage(offset: entries.count, revision: somedayMoveOptions.text("revision"))
-            guard page.text("revision") == somedayMoveOptions.text("revision"),
-                  page.text("taskRevision") == somedayMoveOptions.text("taskRevision"),
-                  page.object("choices").number("total") == choices.number("total"),
-                  page.text("title") == somedayMoveOptions.text("title"),
-                  page.text("cancelLabel") == somedayMoveOptions.text("cancelLabel"),
-                  page.text("undoLabel") == somedayMoveOptions.text("undoLabel"),
-                  page.text("errorTitle") == somedayMoveOptions.text("errorTitle"),
-                  page.text("moveFailed") == somedayMoveOptions.text("moveFailed"),
-                  page.text("undoFailed") == somedayMoveOptions.text("undoFailed") else {
-                throw CocoaError(.coderReadCorrupt)
-            }
-            var mergedChoices = choices
-            mergedChoices["items"] = entries + page.object("choices").objects("items")
-            somedayMoveOptions["choices"] = mergedChoices
+            somedayMoveOptions = try await appendedSomedayMovePage(somedayMoveOptions)
         } catch {
             somedayMoveOptions = [:]
+            somedayMoveReadError = error.localizedDescription
+        }
+    }
+
+    private func resumeSomedayMoveAfterCreate() async {
+        guard selectedSurface == .someday, somedayPanel == "moveSection",
+              let createdID = somedayMoveCreatedSectionID, busy, !somedayMovePending else { return }
+        somedayMoveOptions = [:]
+        somedayMoveReadError = nil
+        do {
+            var options = try await fetchSomedayMovePage(offset: 0)
+            while true {
+                if let choice = options.object("choices").objects("items").first(where: { $0.text("sectionId") == createdID }) {
+                    somedayMoveOptions = options
+                    somedayMoveCreatedSectionID = nil
+                    await writeSomedayMove(sectionID: createdID, toast: choice.text("toast"),
+                                          taskRevision: options.text("taskRevision"))
+                    return
+                }
+                options = try await appendedSomedayMovePage(options)
+            }
+        } catch {
             somedayMoveReadError = error.localizedDescription
         }
     }
@@ -6746,18 +6815,23 @@ final class CoreModel: ObservableObject {
         let entries = somedayMoveOptions.object("choices").objects("items")
         guard entries.indices.contains(index), let sectionID = entries[index]["sectionId"],
               sectionID is NSNull || sectionID is String else { return }
+        busy = true
+        defer { finishOperation() }
+        await writeSomedayMove(sectionID: sectionID, toast: entries[index].text("toast"),
+                              taskRevision: somedayMoveOptions.text("taskRevision"))
+    }
+
+    private func writeSomedayMove(sectionID: Any, toast: String, taskRevision: String) async {
         somedayMoveChoiceSectionID = sectionID
-        somedayMoveChoiceToast = entries[index].text("toast")
+        somedayMoveChoiceToast = toast
         let requestID = UUID().uuidString.lowercased()
         do {
             let request = try json(["requestId": requestID, "taskId": somedayMoveTaskID,
-                                    "taskRevision": somedayMoveOptions.text("taskRevision"),
+                                    "taskRevision": taskRevision,
                                     "sectionId": sectionID])
             somedayMoveRequest = request
             somedayMoveRequestID = requestID
             somedayMoveError = nil
-            busy = true
-            defer { finishOperation() }
             do {
                 let result = try await query("somedaySectionMoveWrite", [request])
                 try acknowledgeSomedayMove(result)
@@ -6834,7 +6908,11 @@ final class CoreModel: ObservableObject {
         if retryNeeded { await retry(); return }
         guard selectedSurface == .someday, somedayPanel == "moveSection", !busy,
               !somedayMovePending else { return }
-        if somedayMoveAwaitingRefresh {
+        if somedayMoveCreatedSectionID != nil {
+            busy = true
+            defer { finishOperation() }
+            await resumeSomedayMoveAfterCreate()
+        } else if somedayMoveAwaitingRefresh {
             busy = true
             defer { finishOperation() }
             await refreshSomedayAfterMove()
@@ -12588,6 +12666,17 @@ final class CoreModel: ObservableObject {
         if method == "menuRead", args.first as? String == "someday",
            somedayMoveUndoAwaitingRefresh, somedayUndoTestReadFailures > 0 {
             somedayUndoTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "menuRead", args.first as? String == "someday",
+           somedaySectionCreateReturnsToMove, somedaySectionCreateAwaitingRefresh,
+           somedayCreateMoveTestReadFailures > 0 {
+            somedayCreateMoveTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "somedaySectionMoveOptions", somedayMoveCreatedSectionID != nil,
+           !somedaySectionCreateAwaitingRefresh, somedayCreateMoveLookupTestReadFailures > 0 {
+            somedayCreateMoveLookupTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
         if projectAreaCreatedID != nil {

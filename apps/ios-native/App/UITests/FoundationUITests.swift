@@ -2991,7 +2991,7 @@ final class FoundationUITests: XCTestCase {
         task79OpenSomeday(app)
         let books = "view-section:someday:task80-books"
         let imported = "view-section:someday:no-section"
-        let unsectioned = "view-section:someday:none"
+        let unsectioned = "view-section:someday:"
         let cancelled = task80OpenTaskPrompt(app, headingID: books)
         XCTAssertFalse(app.buttons["someday-section-task-save"].isEnabled)
         cancelled.tap(); cancelled.typeText("   ")
@@ -3262,6 +3262,287 @@ final class FoundationUITests: XCTestCase {
         task81OpenMove(app); boardTap(app, "someday-section-move-cancel")
         app.terminate(); app.launch(); task79OpenSomeday(app)
         XCTAssertFalse(app.buttons["someday-section-move-undo"].exists)
+        app.terminate()
+    }
+
+    private func task82OpenMove(_ app: XCUIApplication) {
+        let status = app.buttons["task-status-task82-move"]
+        revealPagedElement(app, status, in: app.scrollViews["someday-scroll"], more: "someday-more",
+                           ready: app.buttons["someday-overflow-button"])
+        boardTap(app, "task-status-task82-move")
+        boardTap(app, "task-move-section-task82-move")
+        XCTAssertTrue(app.staticTexts["someday-section-move-title"].waitForExistence(timeout: 10))
+        boardEnabled(app.buttons["someday-section-move-cancel"])
+    }
+
+    private func task82OpenNestedCreate(_ app: XCUIApplication) -> XCUIElement {
+        let entry = app.buttons["someday-section-move-new-section"]
+        if !entry.isHittable && app.scrollViews["someday-section-move-scroll"].exists {
+            revealPagedElement(app, entry, in: app.scrollViews["someday-section-move-scroll"],
+                               ready: app.buttons["someday-section-move-cancel"])
+        }
+        boardEnabled(entry)
+        XCTAssertGreaterThanOrEqual(entry.frame.height, 44 - 0.001)
+        entry.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).tap()
+        let input = app.textFields["someday-section-create-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["someday-section-create-title"].exists)
+        XCTAssertGreaterThanOrEqual(input.frame.height, 44 - 0.001)
+        for id in ["someday-section-create-cancel", "someday-section-create-save"] {
+            XCTAssertGreaterThanOrEqual(app.buttons[id].frame.height, 44 - 0.001)
+        }
+        return input
+    }
+
+    private func task82SaveNested(_ app: XCUIApplication, text: String) {
+        let input = task82OpenNestedCreate(app)
+        input.tap(); input.typeText(text)
+        boardEnabled(app.buttons["someday-section-create-save"])
+        let prompt = XCTAttachment(screenshot: app.screenshot())
+        prompt.name = "Someday nested section title prompt"; prompt.lifetime = .keepAlways; add(prompt)
+        app.buttons["someday-section-create-save"]
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).tap()
+    }
+
+    private func task82UndoConfirmedMove(_ app: XCUIApplication) {
+        let undo = app.buttons["someday-section-move-undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 20))
+        boardEnabled(undo)
+        undo.tap()
+        task81NoticeGone(app)
+        XCTAssertFalse(app.staticTexts["someday-section-undo-error"].exists)
+    }
+
+    func testSomedayNestedCreateMoveNormal() {
+        task82NestedCreateMoveFlow(library: "ca8c8d3c-5179-4e53-9b73-9b8baba6c7e3", largest: false)
+    }
+
+    func testSomedayStatusMenuSurvivesTimedRefresh() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "5ccfa368-ee16-4f06-8fe1-af7edaa8511b"]
+        app.launch(); task79OpenSomeday(app)
+        let status = app.buttons["task-status-task82-move"]
+        revealPagedElement(app, status, in: app.scrollViews["someday-scroll"],
+                           ready: app.buttons["someday-overflow-button"])
+        boardTap(app, "task-status-task82-move")
+        let move = app.buttons.matching(identifier: "task-move-section-task82-move").firstMatch
+        boardEnabled(move)
+        let minute = expectation(description: "Someday's real refresh interval elapsed with status menu open")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 62) { minute.fulfill() }
+        wait(for: [minute], timeout: 70)
+        boardEnabled(move)
+        XCTAssertTrue(move.isHittable)
+        move.tap()
+        boardTap(app, "someday-section-move-cancel")
+        task82OpenMove(app)
+        boardTap(app, "someday-section-move-cancel")
+        app.terminate()
+    }
+
+    func testSomedayNestedCreateMoveLargestText() {
+        task82NestedCreateMoveFlow(library: "3b7ff576-64a7-45f9-9666-cf8d0f200cfa", largest: true)
+    }
+
+    private func task82NestedCreateMoveFlow(library: String, largest: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        task79OpenSomeday(app); task82OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Books").isSelected)
+        let draft = task82OpenNestedCreate(app)
+        XCTAssertFalse(app.buttons["someday-section-create-save"].isEnabled)
+        draft.tap(); draft.typeText("   ")
+        XCTAssertFalse(app.buttons["someday-section-create-save"].isEnabled)
+        draft.typeText("Task82 Cancelled")
+        app.buttons["someday-section-create-cancel"]
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).tap()
+        boardEnabled(app.buttons["someday-section-move-cancel"])
+        XCTAssertTrue(task81Choice(app, title: "Books").isSelected)
+        XCTAssertFalse(app.textFields["someday-section-create-input"].exists)
+
+        task82SaveNested(app, text: "  Task82 New section  ")
+        task82UndoConfirmedMove(app)
+        task82OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Books").isSelected)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+            "someday-section-move-choice-", "Task82 New section")).count, 1)
+        boardTap(app, "someday-section-move-cancel")
+
+        task82OpenMove(app)
+        task82SaveNested(app, text: "  IMPORTED IDEAS  ")
+        task82UndoConfirmedMove(app)
+        task82OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Books").isSelected)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+            "someday-section-move-choice-", "Task82 New section")).count, 1)
+        boardTap(app, "someday-section-move-cancel")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = largest ? "Task82 nested create largest text" : "Task82 nested create normal"
+        shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "someday-back")
+        XCTAssertTrue(app.staticTexts["inbox-title"].waitForExistence(timeout: 10))
+        app.terminate(); app.launch(); task79OpenSomeday(app); task82OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Books").isSelected)
+        boardTap(app, "someday-section-move-cancel")
+        app.terminate()
+    }
+
+    func testSomedayNestedCreateMovePaged() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "0432c489-8039-45c2-b024-b2aa656b751c"]
+        app.launch(); task79OpenSomeday(app); task82OpenMove(app)
+        task82SaveNested(app, text: "Task82 Paged")
+        boardEnabled(app.buttons["someday-section-move-undo"], timeout: 30)
+        task81NoticeGone(app)
+        XCTAssertFalse(app.staticTexts["someday-section-move-error"].exists)
+        // Root's full-table fixture check proves the returned ID beyond page 100 was assigned.
+        app.terminate(); app.launch(); task79OpenSomeday(app)
+        XCTAssertFalse(app.buttons["someday-section-move-undo"].exists)
+        app.terminate()
+    }
+
+    func testSomedayNestedCreateReadFailureRetriesReadOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "05283a09-ba31-486c-9aab-877855dd8af4",
+                               "--native-someday-create-move-read-failure"]
+        app.launch(); task79OpenSomeday(app); task82OpenMove(app)
+        task82SaveNested(app, text: "Task82 Read retry")
+        XCTAssertTrue(app.staticTexts["someday-section-create-error"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["someday-section-create-cancel"].isEnabled)
+        XCTAssertFalse(app.buttons["someday-section-create-save"].isEnabled)
+        boardTap(app, "someday-section-create-retry")
+        boardEnabled(app.buttons["someday-section-move-undo"], timeout: 30)
+        task81NoticeGone(app)
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", "05283a09-ba31-486c-9aab-877855dd8af4"]
+        app.launch(); task79OpenSomeday(app); task82OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Task82 Read retry").isSelected)
+        boardTap(app, "someday-section-move-cancel")
+        app.terminate()
+    }
+
+    /// Run before the paired cold test; root's fixture rejects Create SQLite writes until disarmed.
+    func testSomedayNestedCreateSaveFailureKeepsExactRequest() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "69902e2e-21ec-4a05-b7b3-5475befe5f4a"]
+        app.launch(); task79OpenSomeday(app); task82OpenMove(app)
+        task82SaveNested(app, text: "  Task82 Create retry  ")
+        let failure = app.staticTexts["someday-section-create-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["someday-section-create-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["someday-section-create-save"].isEnabled)
+            XCTAssertFalse(app.buttons["someday-panel-dismiss"].isEnabled)
+            let back = app.buttons["someday-back"]
+            XCTAssertTrue(!back.exists || !back.isEnabled)
+            boardTap(app, "someday-section-create-retry")
+            boardEnabled(app.buttons["someday-section-create-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    /// Root disarms the Create trigger while retaining its pending journal.
+    func testSomedayNestedCreateColdRecoveryLeavesTaskUnmoved() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "69902e2e-21ec-4a05-b7b3-5475befe5f4a"]
+        app.launch(); task79OpenSomeday(app, recovered: true); task82OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Books").isSelected)
+        XCTAssertTrue(task81Choice(app, title: "Task82 Create retry").exists)
+        XCTAssertFalse(app.buttons["someday-section-move-undo"].exists)
+        boardTap(app, "someday-section-move-cancel")
+        app.terminate(); app.launch(); task79OpenSomeday(app); task82OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Books").isSelected)
+        boardTap(app, "someday-section-move-cancel")
+        app.terminate()
+    }
+
+    /// Run before the paired cold test; root's fixture permits Create then rejects Move SQLite writes.
+    func testSomedayNestedMoveSaveFailureKeepsExactRequest() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "b850a6e5-f9c3-417c-abb3-f6a3942779cc"]
+        app.launch(); task79OpenSomeday(app); task82OpenMove(app)
+        task82SaveNested(app, text: "Task82 Move retry")
+        let failure = app.staticTexts["someday-section-move-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["someday-section-move-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["someday-panel-dismiss"].isEnabled)
+            let back = app.buttons["someday-back"]
+            XCTAssertTrue(!back.exists || !back.isEnabled)
+            boardTap(app, "someday-section-move-retry")
+            boardEnabled(app.buttons["someday-section-move-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    /// Root disarms the Move trigger while retaining its pending journal.
+    func testSomedayNestedMoveColdRecoveryDoesNotRepeatCreate() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "b850a6e5-f9c3-417c-abb3-f6a3942779cc"]
+        app.launch(); task79OpenSomeday(app, recovered: true); task82OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Task82 Move retry").isSelected)
+        XCTAssertFalse(app.buttons["someday-section-move-undo"].exists)
+        boardTap(app, "someday-section-move-cancel")
+        app.terminate(); app.launch(); task79OpenSomeday(app); task82OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Task82 Move retry").isSelected)
+        boardTap(app, "someday-section-move-cancel")
+        app.terminate()
+    }
+
+    func testSomedayNestedCreateLookupFailureRequiresExplicitCancelOrRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "bd94271f-07c4-40b9-92a9-a32aa81ee545",
+                               "--native-someday-create-move-lookup-failure"]
+        app.launch(); task79OpenSomeday(app); task82OpenMove(app)
+        task82SaveNested(app, text: "Task82 Lookup retry")
+        XCTAssertTrue(app.staticTexts["someday-section-move-error"].waitForExistence(timeout: 20))
+        boardTap(app, "someday-section-move-cancel")
+        task82OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Books").isSelected)
+        XCTAssertTrue(task81Choice(app, title: "Task82 Lookup retry").exists)
+        task82SaveNested(app, text: "Task82 Lookup retry")
+        XCTAssertTrue(app.staticTexts["someday-section-move-error"].waitForExistence(timeout: 20))
+        let backdrop = app.buttons["someday-panel-dismiss"]
+        XCTAssertFalse(backdrop.isEnabled)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)).tap()
+        XCTAssertTrue(app.staticTexts["someday-section-move-error"].exists)
+        XCTAssertTrue(app.staticTexts["someday-section-move-title"].exists)
+        boardTap(app, "someday-section-move-retry")
+        boardEnabled(app.buttons["someday-section-move-undo"], timeout: 30)
+        task81NoticeGone(app)
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", "bd94271f-07c4-40b9-92a9-a32aa81ee545"]
+        app.launch(); task79OpenSomeday(app); task82OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Task82 Lookup retry").isSelected)
+        boardTap(app, "someday-section-move-cancel")
+        app.terminate()
+    }
+
+    func testSomedayImportedNoneHeadingAddsToExactSection() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "9a40c2b8-ad18-4e34-8c49-4cb1c93e5b6a"]
+        app.launch(); task79OpenSomeday(app)
+        let named = "view-section:someday:none"
+        let unsectioned = "view-section:someday:"
+        XCTAssertEqual(app.staticTexts["someday-heading-" + named].label, "Imported none")
+        XCTAssertEqual(app.staticTexts["someday-heading-" + unsectioned].label, "No section")
+        for (heading, title) in [(named, "Task82 Imported none"), (unsectioned, "Task82 No section")] {
+            let input = task80OpenTaskPrompt(app, headingID: heading)
+            input.tap(); input.typeText(title)
+            boardTap(app, "someday-section-task-save")
+            task80AssertTask(app, title: title)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Imported none and No section stay distinct"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task79OpenSomeday(app)
+        for title in ["Task82 Imported none", "Task82 No section"] { task80AssertTask(app, title: title) }
         app.terminate()
     }
 

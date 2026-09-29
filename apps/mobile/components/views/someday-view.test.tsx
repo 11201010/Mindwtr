@@ -342,6 +342,37 @@ describe('SomedayView section grouping', () => {
     expect(mocked.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: 'success' }));
   });
 
+  it('adds to imported none without mistaking it for No section', async () => {
+    setState([makeTask('loose'), makeTask('orphan', { viewSectionIds: { someday: 'removed' } })],
+      [{ id: 'none', title: 'Imported', order: 0 }]);
+    renderSomedayView();
+    expect(mocked.taskListProps.taskGroups.map((group: { id: string; tasks: Task[] }) =>
+      [group.id, group.tasks.map((task) => task.id)])).toEqual([
+      ['view-section:someday:none', []],
+      ['view-section:someday:', ['loose', 'orphan']],
+    ]);
+
+    await act(async () => { mocked.taskListProps.onAddTaskToSection('view-section:someday:none'); });
+    const input = renderer!.root.findByType('TextInput' as never);
+    await act(async () => { input.props.onChangeText('New imported'); });
+    const save = renderer!.root.findAllByProps({ accessibilityLabel: 'common.save' })[0];
+    await act(async () => { await save.props.onPress(); });
+    expect(mocked.state.addTask).toHaveBeenCalledWith('New imported', {
+      status: 'someday', viewSectionIds: { someday: 'none' },
+    });
+  });
+
+  it('adds from the true No section heading without assigning a section', async () => {
+    setState([makeTask('loose')], [{ id: 'none', title: 'Imported', order: 0 }]);
+    renderSomedayView();
+    await act(async () => { mocked.taskListProps.onAddTaskToSection('view-section:someday:'); });
+    const input = renderer!.root.findByType('TextInput' as never);
+    await act(async () => { input.props.onChangeText('New loose'); });
+    const save = renderer!.root.findAllByProps({ accessibilityLabel: 'common.save' })[0];
+    await act(async () => { await save.props.onPress(); });
+    expect(mocked.state.addTask).toHaveBeenCalledWith('New loose', { status: 'someday' });
+  });
+
   it('retries a failed heading task save without creating a duplicate', async () => {
     setState([], [{ id: 'books', title: 'Books to read', order: 0 }]);
     mocked.state.addTask.mockImplementationOnce(async (title: string, props: Partial<Task>) => {

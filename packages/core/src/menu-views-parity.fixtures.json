@@ -751,7 +751,7 @@
     ],
     [
      "addTask",
-     "view-section:someday:none",
+     "view-section:someday:",
      "Loose idea"
     ],
     [
@@ -2863,7 +2863,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -3130,7 +3130,7 @@
       ],
       [
        "heading",
-       "view-section:someday:none",
+       "view-section:someday:",
        "No section",
        true
       ],
@@ -3422,7 +3422,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -3705,7 +3705,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -3983,7 +3983,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -4250,7 +4250,7 @@
       ],
       [
        "heading",
-       "view-section:someday:none",
+       "view-section:someday:",
        "No section",
        true
       ],
@@ -4530,7 +4530,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -4822,7 +4822,7 @@
       ],
       [
        "heading",
-       "view-section:someday:none",
+       "view-section:someday:",
        "No section",
        true
       ],
@@ -5114,7 +5114,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -5402,7 +5402,7 @@
       ],
       [
        "heading",
-       "view-section:someday:none",
+       "view-section:someday:",
        "No section",
        true
       ],
@@ -5677,7 +5677,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -5967,7 +5967,7 @@
       ],
       [
        "heading",
-       "view-section:someday:none",
+       "view-section:someday:",
        "No section",
        true
       ],
@@ -6243,7 +6243,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -6543,7 +6543,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -6872,7 +6872,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -7154,7 +7154,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -7434,7 +7434,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -7710,7 +7710,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -7983,7 +7983,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -9979,7 +9979,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -10247,7 +10247,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -10767,7 +10767,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -11037,7 +11037,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -11560,7 +11560,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -13068,7 +13068,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -13329,7 +13329,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -13596,7 +13596,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -13856,7 +13856,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -14117,7 +14117,7 @@
       ],
       [
        "heading",
-       "view-section:someday:none",
+       "view-section:someday:",
        "No section",
        true
       ],
@@ -14394,7 +14394,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],
@@ -14678,7 +14678,7 @@
       ],
       [
        "heading",
-       "view-section:someday:none",
+       "view-section:someday:",
        "No section",
        true
       ],
@@ -14955,7 +14955,7 @@
      ],
      [
       "heading",
-      "view-section:someday:none",
+      "view-section:someday:",
       "No section",
       true
      ],

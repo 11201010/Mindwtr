@@ -132,7 +132,7 @@ export function groupTasksByViewSection(
     });
     if (noSectionTasks.length > 0) {
         result.push({
-            id: `view-section:${scope}:none`,
+            id: `view-section:${scope}:`,
             title: noSectionTitle,
             tasks: noSectionTasks,
             muted: true,

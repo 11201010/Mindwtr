@@ -1065,7 +1065,11 @@ struct TaskCard: View {
             }
             .frame(minHeight: 44).contentShape(Rectangle())
             if !hideStatusBadge && !meta.text("statusLabel").isEmpty {
-                Button { beforeAction?(); statusMenu = true } label: {
+                Button {
+                    beforeAction?()
+                    model.taskStatusMenuPresented = true
+                    statusMenu = true
+                } label: {
                     AppIcon(name: "status", size: 20).foregroundStyle(statusColor).frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || row.flag("readOnly") || readOnly)
@@ -1099,6 +1103,8 @@ struct TaskCard: View {
             }
             Button(model.label("common.cancel"), role: .cancel) {}
         }
+        .onChange(of: statusMenu) { model.taskStatusMenuPresented = $0 }
+        .onDisappear { if statusMenu { model.taskStatusMenuPresented = false } }
     }
 
     private func openTask() {
