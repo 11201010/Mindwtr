@@ -621,7 +621,7 @@ const comparableHttpUrl = (rawUrl: string): string | null => {
 
 /** Whether a response names a URL other than the one asked for. An answer without a URL
  *  (undici hides none, test doubles and some polyfills report '') is never a redirect. */
-const isAnsweredFromAnotherUrl = (requestedUrl: string, answeredUrl: unknown): boolean => {
+export const isAnsweredFromAnotherUrl = (requestedUrl: string, answeredUrl: unknown): boolean => {
     if (typeof answeredUrl !== 'string' || !answeredUrl) return false;
     const requested = comparableHttpUrl(requestedUrl);
     const answered = comparableHttpUrl(answeredUrl);

@@ -3,6 +3,7 @@ import {
     __webdavTestUtils,
     assertWebdavStrongEtagSupport,
     probeWebdavSyncCompatibility,
+    webdavConfirmUploadedFile,
     webdavDeleteFile,
     webdavDeleteFileVersioned,
     webdavGetFile,
@@ -999,5 +1000,38 @@ describe('error body cap', () => {
 
         await expect(webdavGetJson('https://dav.example/data.json', { fetcher: fetcher as unknown as typeof fetch }))
             .rejects.toThrow(/quota exceeded/);
+    });
+});
+
+describe('webdavConfirmUploadedFile', () => {
+    const url = 'https://dav.example.com/Mindwtr/attachments/a.bin';
+    const headAnswer = (answeredUrl: string, status: number, length: string | null) => {
+        const headers: Record<string, string> = length === null ? {} : { 'Content-Length': length };
+        const response = new Response(null, { status, headers });
+        Object.defineProperty(response, 'url', { value: answeredUrl });
+        return response;
+    };
+
+    it('confirms a file answering at the same URL with the uploaded size', async () => {
+        const fetcher = vi.fn(async () => headAnswer('https://DAV.example.com:443/Mindwtr/attachments/a.bin', 200, '1234'));
+
+        await expect(webdavConfirmUploadedFile(url, 1234, { fetcher, username: 'u', password: 'p' }))
+            .resolves.toEqual({ confirmed: true, status: 200 });
+        expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
+            method: 'HEAD',
+            headers: { 'Accept-Encoding': 'identity', Authorization: expect.stringMatching(/^Basic /) },
+        });
+    });
+
+    it.each([
+        ['a redirect (307 stored it elsewhere)', 'https://elsewhere.example.com/a.bin', 200, '1234'],
+        ['another size (the old or a partial file)', url, 200, '99'],
+        ['no size', url, 200, null],
+        ['no file (303 stored nothing)', url, 404, null],
+    ])('does not confirm %s', async (_label, answeredUrl, status, length) => {
+        const fetcher = vi.fn(async () => headAnswer(answeredUrl, status, length));
+
+        await expect(webdavConfirmUploadedFile(url, 1234, { fetcher }))
+            .resolves.toEqual({ confirmed: false, status });
     });
 });

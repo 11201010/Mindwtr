@@ -35,7 +35,7 @@ import {
   listDropboxFolderFiles,
   uploadDropboxFileVersioned,
 } from './dropbox';
-import { isAbortError } from './http-utils';
+import { isAbortError, refuseWriteRedirect } from './http-utils';
 import { withRetry } from './retry-utils';
 import type { SyncKeyMaterial } from './sync-crypto';
 import { isSyncRemoteMutationFenceError } from './sync-remote-fence';
@@ -43,6 +43,7 @@ import { getErrorStatus, isWebdavRateLimitedError } from './sync-runtime-utils';
 import {
   isWebdavRemoteWriteConflictError,
   normalizeStrongWebdavEtag,
+  webdavConfirmUploadedFile,
   webdavFileExists,
   webdavGetFile,
   webdavHeadFile,
@@ -93,6 +94,7 @@ export type MobileAttachmentBackendsCoreFunctions = {
   webdavHeadFile: typeof webdavHeadFile;
   webdavMakeDirectory: typeof webdavMakeDirectory;
   webdavPutFileVersioned: typeof webdavPutFileVersioned;
+  webdavConfirmUploadedFile: typeof webdavConfirmUploadedFile;
   cloudAttachmentExists: typeof cloudAttachmentExists;
   cloudGetFile: typeof cloudGetFile;
   cloudPutFile: typeof cloudPutFile;
@@ -113,6 +115,7 @@ const CORE_FUNCTIONS: MobileAttachmentBackendsCoreFunctions = {
   webdavHeadFile,
   webdavMakeDirectory,
   webdavPutFileVersioned,
+  webdavConfirmUploadedFile,
   cloudAttachmentExists,
   cloudGetFile,
   cloudPutFile,
@@ -520,7 +523,24 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
               },
             }
           );
-          if (!uploadedWithFileSystem) {
+          if (uploadedWithFileSystem) {
+            // The native uploader follows a redirect by itself: a 307 or 308 stores the file at
+            // another URL and a 303 stores nothing, yet the task answers 2xx. Record the cloud
+            // key only once a HEAD at this URL, not after a redirect, finds the uploaded size.
+            const sentBytes = (await files.statAttachmentFile(localPath))?.size ?? uploadBytes;
+            const landed = await core.withRetry(async () => {
+              await waitForSlot();
+              return core.webdavConfirmUploadedFile(uploadUrl, sentBytes, {
+                ...getMobileWebDavRequestOptions(webDavConfig.allowInsecureHttp),
+                username: webDavConfig.username,
+                password: webDavConfig.password,
+                signal,
+              });
+            }, WEBDAV_ATTACHMENT_RETRY_OPTIONS);
+            if (!landed.confirmed) {
+              refuseWriteRedirect({ releaseCheck: 'v1.3.4/fetch-redirect-refused-upload', method: 'PUT', status: landed.status });
+            }
+          } else {
             let uploadData = fileData;
             if (!uploadData) {
               const readResult = await files.readAttachmentBytesForUpload(localPath);

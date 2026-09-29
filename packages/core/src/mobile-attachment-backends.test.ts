@@ -7,6 +7,7 @@ import { createMobileAttachmentFiles, type MobileAttachmentSafPort } from './mob
 import { createMobileAttachmentCommon, type MobileAttachmentUploadTask } from './mobile-attachment-common';
 import { createMobileAttachmentBackends, type MobileAttachmentBackendsCoreFunctions } from './mobile-attachment-backends';
 import { createMemoryFileSystem, createMemoryStorage, createRecordingLog, MANAGED } from './__fixtures__/mobile-attachment-fakes';
+import { consoleLogger, setLogger, type LogPayload } from './logger';
 
 const now = '2026-09-28T00:00:00.000Z';
 const LOCAL = new Uint8Array([1, 2, 3, 4]);
@@ -187,18 +188,25 @@ describe('WebDAV attachment pass', () => {
     const createUploadTask = vi.fn(() => task);
     const webdavPutFileVersioned = vi.fn(async () => undefined);
     const remote = { exists: false, fingerprint: null, etag: null as string | null, lastModified: null, contentLength: null };
+    const webdavConfirmUploadedFile = vi.fn(async () => ({ confirmed: true, status: 200 }));
     const { backends, memory } = setup({
       createUploadTask,
       core: {
         webdavMakeDirectory: vi.fn(async () => undefined),
         webdavHeadFile: vi.fn(async () => remote),
         webdavPutFileVersioned,
+        webdavConfirmUploadedFile,
       },
     });
     memory.put(LOCAL_URI, LOCAL);
 
     const created = await backends.syncWebdavAttachments(withAttachment(fileAttachment()), webdavConfig, BASE_URL);
     expect(createUploadTask).toHaveBeenCalledTimes(1);
+    expect(webdavConfirmUploadedFile).toHaveBeenCalledWith(
+      `${BASE_URL}/attachments/att-1.txt`,
+      LOCAL.byteLength,
+      expect.objectContaining({ username: 'user', password: 'pw' }),
+    );
     expect(webdavPutFileVersioned).not.toHaveBeenCalled();
     expect(attachmentOf(created)?.cloudKey).toBe('attachments/att-1.txt');
 
@@ -213,6 +221,41 @@ describe('WebDAV attachment pass', () => {
       expect.objectContaining({ username: 'user' }),
     );
     expect(attachmentOf(replaced)?.cloudKey).toBe('attachments/att-1.txt');
+  });
+
+  it('records a streamed upload only once a HEAD at the same URL finds its size', async () => {
+    // The native uploader follows a redirect by itself: a 307 stores the file elsewhere and a
+    // 303 stores nothing, yet the task answers 2xx.
+    const task = { uploadAsync: vi.fn(async () => ({ status: 201 })), cancelAsync: vi.fn(async () => undefined) };
+    const { backends, memory, lines } = setup({
+      createUploadTask: () => task,
+      core: {
+        webdavMakeDirectory: vi.fn(async () => undefined),
+        webdavHeadFile: vi.fn(async () => ({ exists: false, fingerprint: null, etag: null, lastModified: null, contentLength: null })),
+        webdavPutFileVersioned: vi.fn(async () => undefined),
+        webdavConfirmUploadedFile: vi.fn(async () => ({ confirmed: false, status: 404 })),
+      },
+    });
+    memory.put(LOCAL_URI, LOCAL);
+    const logs: LogPayload[] = [];
+    setLogger((payload) => { logs.push(payload); });
+    let result: AppData | false;
+    try {
+      result = await backends.syncWebdavAttachments(withAttachment(fileAttachment()), webdavConfig, BASE_URL);
+    } finally {
+      setLogger(consoleLogger);
+    }
+
+    expect(attachmentOf(result)?.cloudKey).toBeUndefined();
+    expect(lines).toContainEqual(expect.objectContaining({
+      level: 'warn',
+      message: 'Failed to upload attachment att-1',
+      extra: { error: 'fetch failed: unexpected redirect' },
+    }));
+    expect(logs).toEqual([expect.objectContaining({
+      level: 'warn',
+      context: { releaseCheck: 'v1.3.4/fetch-redirect-refused-upload', method: 'PUT', status: 404 },
+    })]);
   });
 
   it('marks the attachment unrecoverable when the remote answers 404', async () => {
