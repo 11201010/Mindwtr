@@ -145,23 +145,9 @@ const back = async (description) => {
 };
 const closePopup = (nodes) => tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close on the capture popup'),
     (current) => !tagged(current, 'quick-capture'), 'the popup to close');
-/**
- * RN's hide-keyboard button: the screen focuses its title field when it opens, and the keyboard then covers the card's buttons,
- * as in RN. Waits up to 2.5 s for the keyboard, then taps the button until the keyboard is down.
- */
-const keyboardDown = async () => {
-    const shown = () => /mInputShown=true/.test(sh('dumpsys input_method'));
-    for (let wait = 0; wait < 12 && !shown(); wait += 1) await sleep(200);
-    if (!shown()) return;
-    await device.tap(tagged(await screen(), 'capture-modal-hide-keyboard') ?? fail('no hide-keyboard button while the keyboard is up'));
-    for (let wait = 0; wait < 15 && shown(); wait += 1) await sleep(200);
-    if (shown()) fail('the hide-keyboard button left the keyboard up');
-};
-/** RN's capture screen's Cancel (the keyboard down first): nothing is written. */
-const cancelModal = async (nodes, expected = (current) => !tagged(current, 'capture-modal'), description = 'the capture screen to close') => {
-    await keyboardDown();
-    return tapExpecting(tagged(await screen(), 'capture-modal-cancel') ?? fail('no Cancel on the capture screen'), expected, description);
-};
+/** RN's capture screen's Cancel (above the keyboard): nothing is written. */
+const cancelModal = (nodes, expected = (current) => !tagged(current, 'capture-modal'), description = 'the capture screen to close') =>
+    tapExpecting(tagged(nodes, 'capture-modal-cancel') ?? fail('no Cancel on the capture screen'), expected, description);
 
 const originalAccelerometer = sh('settings get system accelerometer_rotation');
 const originalRotation = sh('settings get system user_rotation');
@@ -225,8 +211,6 @@ try {
     // (b) A text share opens RN's capture screen with the text; Save stores it once, and the screen closes to the Inbox.
     const capturesBefore = captures();
     let nodes = await send(`-a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '${titles.shared}'`, modal(titles.shared), 'the capture screen with the shared text');
-    await keyboardDown();
-    nodes = await screen();
     await tapExpecting(tagged(nodes, 'capture-modal-save') ?? fail('no Save on the capture screen'), onTabs(en['tab.inbox']), 'the share to save');
     await waitFor('the capture command', () => captures() === capturesBefore + 1, 15_000);
     let stored = core();

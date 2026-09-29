@@ -96,10 +96,10 @@ fun CaptureModalScreen(model: InboxViewModel, modal: CaptureModal) = with(model.
         if (model.busy) return@BackHandler
         if (modal.confirm != null) cancelLines() else cancel()
     }
-    // RN's screen draws edge to edge and its card stays where it is while the keyboard is up (the hide-keyboard button is for
-    // that): the card is centered in the whole window, and the keyboard covers what is under it.
-    Box(Modifier.fillMaxSize().background(c.bg).semantics { testTagsAsResourceId = true }.testTag("capture-modal")) {
-        // RN's ScrollView: the card centered while it fits, scrolled once it does not (a long description).
+    // Edge to edge, as RN's screen: the card is centered in the whole window, and while the keyboard is up in the space above
+    // it, so Cancel and Save stay reachable (RN's KeyboardAvoidingView, 'height' on Android).
+    Box(Modifier.fillMaxSize().background(c.bg).imePadding().semantics { testTagsAsResourceId = true }.testTag("capture-modal")) {
+        // RN's ScrollView: the card centered while it fits, scrolled once it does not (the keyboard up, a long description).
         BoxWithConstraints(Modifier.fillMaxSize()) {
             Column(Modifier.verticalScroll(rememberScrollState()).heightIn(min = maxHeight).padding(16.dp), verticalArrangement = Arrangement.Center) {
                 val card = RoundedCornerShape(12.dp)
@@ -163,7 +163,7 @@ fun CaptureModalScreen(model: InboxViewModel, modal: CaptureModal) = with(model.
                 }
             }
         }
-        ToastCard(model, Modifier.align(Alignment.BottomCenter).imePadding().navigationBarsPadding().padding(bottom = 16.dp))
+        ToastCard(model, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp))
         // RN's several-lines question on the screen itself (#941): Cancel, the backdrop and Back close it.
         modal.confirm?.let { confirm ->
             PickerCard(confirm.getString("title"), { if (!locked) cancelLines() }) {

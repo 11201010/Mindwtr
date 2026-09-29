@@ -2495,6 +2495,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // Full screen over every other screen, as RN presents its modal route; a system capture ends behind the previous app.
     assert.match(activity, /if \(modal != null && writable\) CaptureModalScreen\(model, modal\)\s+else if \(open != null && writable\) TaskEditorScreen\(model, open\)/);
     assert.match(modalKt, /if \(close\.getBoolean\("returnToPreviousApp"\)\) shell\.leaveApp = true/);
+    // Edge to edge the window no longer shrinks for the keyboard: the screen lifts its card and buttons above it, as RN's
+    // KeyboardAvoidingView ('height' on Android) does.
+    assert.match(captureModalUi, /Box\(Modifier\.fillMaxSize\(\)\.background\(c\.bg\)\.imePadding\(\)\.semantics \{ testTagsAsResourceId = true \}\.testTag\("capture-modal"\)\)/);
+    assert.match(readFileSync(resolve(app, '../mobile/app/capture-modal.tsx'), 'utf8'), /behavior=\{Platform\.OS === 'ios' \? 'padding' : 'height'\}/);
     // RN's Save is its fixed blue (capture-modal.tsx styles.save), in every theme.
     assert.match(themeKt, /val captureSave = rgb\("#3B82F6"\)/);
     assert.match(captureModalUi, /background\(theme\.captureSave\)/);

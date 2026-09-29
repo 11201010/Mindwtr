@@ -5,9 +5,11 @@
 // Installs the debug APK with `install -r` (existing development data stays) and checks RN's capture confirmation screen
 // (capture-modal.tsx), which links, text shares and assistant notes open, on the development scheme mindwtr-native-dev:
 // (a) a capture link with a tag and a project opens the screen with the link's title (the tag and project are not title
-// text), and Save & edit stores one task with that tag in that project (created from the link's name) and opens its editor;
+// text), and Save & edit, tapped while the keyboard is up, stores one task with that tag in that project (created from the
+// link's name) and opens its editor;
 // (b) a share with a subject and a body with a URL opens the screen with the subject as the title and the body as the
-// description, and Save stores it once with that description; (c) Cancel writes nothing; (d) a typed draft survives a
+// description, and Save stores it once with that description; (c) the hide-keyboard button puts the keyboard down, and Cancel
+// writes nothing; (d) a typed draft survives a
 // rotation and (e) process death; (f) two lines ask core's question, and Create tasks stores one task per line. Every stored
 // fact is read by core on a copy of the app's database. Titles are 79 + a 12-digit run id + 1 to 6, and the project is
 // 79 + the run id + 9 (check-projects-device.mjs --prune-old removes earlier runs'). It types only digits, never launches
@@ -108,17 +110,21 @@ const send = async (intent, expected, description) => {
 };
 const link = (query, expected, description) => send(`-a android.intent.action.VIEW -d '${SCHEME}://capture?${query}'`, expected, description);
 const control = (nodes, tag) => tagged(nodes, tag) ?? fail(`no ${tag} on the capture screen`);
+const keyboardShown = () => /mInputShown=true/.test(sh('dumpsys input_method'));
 /**
- * RN's hide-keyboard button: the screen focuses its title field when it opens, and the keyboard then covers the card's buttons,
- * as in RN. Waits up to 2.5 s for the keyboard, then taps the button until the keyboard is down.
+ * The screen focuses its title field when it opens, as RN's does, so the keyboard comes up: a tap on the card's buttons while
+ * it is up proves they sit above it (edge to edge, the window no longer shrinks for the keyboard).
  */
+const keyboardUp = async () => {
+    for (let wait = 0; wait < 15 && !keyboardShown(); wait += 1) await sleep(200);
+    if (!keyboardShown()) fail('the keyboard did not come up for the focused title field');
+    return screen();
+};
+/** RN's hide-keyboard button, shown while the keyboard is up, puts it down. */
 const keyboardDown = async () => {
-    const shown = () => /mInputShown=true/.test(sh('dumpsys input_method'));
-    for (let wait = 0; wait < 12 && !shown(); wait += 1) await sleep(200);
-    if (!shown()) return;
-    await device.tap(tagged(await screen(), 'capture-modal-hide-keyboard') ?? fail('no hide-keyboard button while the keyboard is up'));
-    for (let wait = 0; wait < 15 && shown(); wait += 1) await sleep(200);
-    if (shown()) fail('the hide-keyboard button left the keyboard up');
+    await device.tap(tagged(await keyboardUp(), 'capture-modal-hide-keyboard') ?? fail('no hide-keyboard button while the keyboard is up'));
+    for (let wait = 0; wait < 15 && keyboardShown(); wait += 1) await sleep(200);
+    if (keyboardShown()) fail('the hide-keyboard button left the keyboard up');
 };
 /** Types [text] at the end of the title field (the keyboard's own Enter for [enter] first). */
 const typeAtEnd = async (text, { enter = false } = {}) => {
@@ -174,8 +180,8 @@ try {
     let nodes = await link(`title=${titles.link}&tags=${TAG_NAME}&project=${PROJECT}`, onModal(titles.link), 'the capture screen with the link\'s title');
     check(!tagged(nodes, 'capture-modal-description') && hasText(nodes, en['nav.addTask']), '(a) the link opens the capture screen: its title, no tag or project text');
     const before = saves('captureModal');
-    await keyboardDown();
-    nodes = await screen();
+    // With the keyboard up: Save & edit sits above it.
+    nodes = await keyboardUp();
     await tapExpecting(control(nodes, 'capture-modal-save-edit'), (current) => inEditor(current) && !tagged(current, 'capture-modal'), 'the saved task\'s editor');
     check(saves('captureModal') === before + 1, '(a) Save & edit ran one capture screen save');
     nodes = await screen();
@@ -188,8 +194,7 @@ try {
     nodes = await send(`-a android.intent.action.SEND -t text/plain --es android.intent.extra.SUBJECT '${titles.shared}' --es android.intent.extra.TEXT '${BODY}'`,
         onModal(titles.shared), 'the capture screen with the share\'s subject');
     check(tagged(nodes, 'capture-modal-description')?.text === BODY, '(b) the share\'s body is the description');
-    await keyboardDown();
-    nodes = await screen();
+    nodes = await keyboardUp();
     await tapExpecting(control(nodes, 'capture-modal-save'), atTabs, 'the share to save');
     check(saves('captureModal') === before + 2, '(b) Save ran one capture screen save');
     stored = core();
@@ -199,6 +204,7 @@ try {
     // (c) Cancel writes nothing.
     nodes = await link(`title=${titles.cancelled}&note=79`, onModal(titles.cancelled), 'the capture screen to cancel');
     check(tagged(nodes, 'capture-modal-description')?.text === '79', '(c) the link\'s note is the description');
+    // RN's hide-keyboard button, then Cancel.
     await keyboardDown();
     nodes = await screen();
     await tapExpecting(control(nodes, 'capture-modal-cancel'), atTabs, 'Cancel to close the screen');
@@ -224,7 +230,6 @@ try {
     device.launch(ACTIVITY);
     nodes = await waitFor('the draft after process death', onModal(`${titles.kept}0`), 60_000);
     check(pid() !== processId, '(e) process death keeps the typed draft');
-    await keyboardDown();
     nodes = await screen();
     await tapExpecting(control(nodes, 'capture-modal-cancel'), atTabs, 'Cancel after the relaunch');
 
@@ -232,8 +237,7 @@ try {
     await link(`title=${titles.first}`, onModal(titles.first), 'the capture screen for two lines');
     await typeAtEnd(titles.second, { enter: true });
     nodes = await waitFor('two lines in the field', onModal(`${titles.first}\n${titles.second}`), 10_000);
-    await keyboardDown();
-    nodes = await screen();
+    nodes = await keyboardUp();
     const question = en['quickAdd.bulkConfirmTitle'].replace('{{count}}', '2');
     const createLabel = en['quickAdd.bulkConfirmCreate'];
     nodes = await tapExpecting(control(nodes, 'capture-modal-save'), (current) => hasText(current, question) && hasText(current, createLabel), 'core\'s several-lines question');
