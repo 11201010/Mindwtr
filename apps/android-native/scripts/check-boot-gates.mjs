@@ -480,7 +480,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 // The Kotlin host journals every write, and says so at boot: core then requires each write's replay tokens. Only this
 // flag sets 'required'; iOS boots and recovers with none.
 assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)/);
@@ -589,8 +589,26 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 14, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, log, the fetch and secret calls, and logFile: each guarded');
+assert.equal(bridgeCallbacks.length, 20, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, log, the fetch and secret calls, logFile, and the key-value calls: each guarded');
 for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\w+", guarded \{/);
+// RN's AsyncStorage in place (plan D1): RKStorage's own table and statements, durable writes in one transaction, and a file it
+// creates left at RN's user_version 1 (at 0, RN's SQLiteOpenHelper re-runs onCreate, fails, and deletes the database).
+{
+    const kv = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/RnKeyValue.kt'), 'utf8');
+    const rnSupplier = readFileSync(resolve(app, '../../node_modules/@react-native-async-storage/async-storage/android/src/main/java/com/reactnativecommunity/asyncstorage/ReactDatabaseSupplier.java'), 'utf8');
+    for (const pin of ['DATABASE_NAME = "RKStorage"', 'DATABASE_VERSION = 1', 'TABLE_CATALYST = "catalystLocalStorage"', 'KEY_COLUMN + " TEXT PRIMARY KEY, "', 'VALUE_COLUMN + " TEXT NOT NULL"']) {
+        assert(rnSupplier.includes(pin), `AsyncStorage still has ${pin}`);
+    }
+    assert.match(kv, /"CREATE TABLE IF NOT EXISTS catalystLocalStorage \(key TEXT PRIMARY KEY, value TEXT NOT NULL\)"/);
+    assert.match(kv, /"INSERT OR REPLACE INTO catalystLocalStorage VALUES \(\?, \?\)"/);
+    assert.match(kv, /PRAGMA user_version"\)\.use \{ it\.step\(\); it\.getLong\(0\) \} == 0L\) \{[\s\S]*?connection\.exec\(CREATE\)\s+connection\.exec\("PRAGMA user_version = 1"\)/);
+    assert.match(kv, /connection\.exec\("PRAGMA synchronous = FULL"\)/);
+    assert.match(kv, /private fun write\(work: \(SQLiteConnection\) -> Unit\) = open \{ connection ->\s+connection\.exec\("BEGIN IMMEDIATE"\)/);
+    assert.match(owner, /RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)/, 'the key-value store is RN\'s own RKStorage');
+    for (const name of ['kvGet', 'kvSet', 'kvRemove', 'kvMultiGet', 'kvMultiSet', 'kvMultiRemove']) {
+        assert(bridgeCallbacks.some((line) => line.startsWith(`bridge.setProperty("${name}", guarded { args -> `)), `${name} is guarded`);
+    }
+}
 // fetch and the secrets (HostIo.kt, SecretStore.kt): started on the engine thread, run off it, answered only through the pump.
 {
     const core = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core', name), 'utf8');

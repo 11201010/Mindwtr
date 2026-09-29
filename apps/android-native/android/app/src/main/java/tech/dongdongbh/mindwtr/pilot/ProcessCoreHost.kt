@@ -6,6 +6,7 @@ import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.DiagnosticsLogFile
 import tech.dongdongbh.mindwtr.pilot.core.HostIo
 import tech.dongdongbh.mindwtr.pilot.core.LegacyRnStoreGuard
+import tech.dongdongbh.mindwtr.pilot.core.RnKeyValue
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.ExecutionException
@@ -94,7 +95,8 @@ internal object ProcessCoreHost {
             null
         }
         val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir }, HostIo(app),
-            File(app.filesDir, "journal"), deviceStore(app), File(app.filesDir, DiagnosticsLogFile.RELATIVE_PATH))
+            File(app.filesDir, "journal"), deviceStore(app), File(app.filesDir, DiagnosticsLogFile.RELATIVE_PATH),
+            RnKeyValue(app.getDatabasePath("RKStorage")))
         try {
             runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() }, legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)

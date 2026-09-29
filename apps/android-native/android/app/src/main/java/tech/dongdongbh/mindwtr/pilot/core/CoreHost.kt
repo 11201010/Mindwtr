@@ -25,6 +25,7 @@ import java.util.concurrent.Future
  * then the JS host may apply RN's AsyncStorage change after it imported RN's backup.
  * [io] runs the JS host's fetch and secret calls off this thread; their answers come back in [callAsync]'s pump loop.
  * [logFile] is RN's diagnostics log (DiagnosticsLogFile.RELATIVE_PATH under the app's files directory).
+ * [keyValue] is RN's AsyncStorage (RKStorage): the device keys RN keeps there, read and written in place.
  */
 class CoreHost(
     private val databaseFile: File,
@@ -34,6 +35,7 @@ class CoreHost(
     /** A write's deviceWrites (a setting's device-local part), kept with the journal sequence that set each key. */
     private val devices: DeviceWrites,
     private val logFile: File,
+    private val keyValue: RnKeyValue,
 ) {
     companion object {
         const val TAG = "MindwtrNativeDev"
@@ -155,6 +157,15 @@ class CoreHost(
             // RN's diagnostics log file: core's diagnostics-log.ts decides every write; this is its file IO.
             val logs = DiagnosticsLogFile(logFile)
             bridge.setProperty("logFile", guarded { args -> logs.run(args[0] as String, args.getOrNull(1)?.toString().orEmpty()) })
+            // RN's AsyncStorage (RnKeyValue): reads answer JSON (a value, or AsyncStorage's [[key, value]] pairs); a write is on disk
+            // when it returns.
+            bridge.setProperty("kvGet", guarded { args -> JSONArray().put(keyValue.get(args[0] as String) ?: JSONObject.NULL).toString() })
+            bridge.setProperty("kvSet", guarded { args -> keyValue.set(args[0] as String, args[1] as String); null })
+            bridge.setProperty("kvRemove", guarded { args -> keyValue.remove(args[0] as String); null })
+            bridge.setProperty("kvMultiGet", guarded { args -> keyValuePairs(keyValue.multiGet(stringList(args[0] as String))) })
+            bridge.setProperty("kvMultiSet", guarded { args -> keyValue.multiSet(JSONArray(args[0] as String).let { pairs ->
+                List(pairs.length()) { pairs.getJSONArray(it).let { pair -> pair.getString(0) to pair.getString(1) } } }); null })
+            bridge.setProperty("kvMultiRemove", guarded { args -> keyValue.multiRemove(stringList(args[0] as String)); null })
             engine.globalObject.setProperty("__mindwtrNative", bridge)
             engine.evaluate(bundle, "core-host.js")
             // This host journals every write (WriteJournal), so core requires each write's replay tokens.
@@ -353,6 +364,11 @@ class CoreHost(
                 .onFailure { Log.i(TAG, "Native Android net deadline $mode: ${it.message}") }
         }
     }
+
+    private fun stringList(json: String): List<String> = JSONArray(json).let { keys -> List(keys.length()) { keys.getString(it) } }
+
+    private fun keyValuePairs(values: Map<String, String?>): String =
+        JSONArray().also { out -> values.forEach { (key, value) -> out.put(JSONArray().put(key).put(value ?: JSONObject.NULL)) } }.toString()
 
     private fun debugDelay(name: String) {
         val ms = debugFault(name).toLongOrNull() ?: return

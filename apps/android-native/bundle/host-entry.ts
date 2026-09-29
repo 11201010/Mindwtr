@@ -50,6 +50,13 @@ type NativeBridge = {
     rnStateCommit(change: string): string | null;
     /** RN's diagnostics log file (files/logs/mindwtr.log): one operation of core's DiagnosticsLogFile, as text. */
     logFile(operation: string, text: string): string;
+    /** RN's AsyncStorage (RnKeyValue.kt): reads answer JSON; a write is on disk when it returns. */
+    kvGet(key: string): string;
+    kvSet(key: string, value: string): string | null;
+    kvRemove(key: string): string | null;
+    kvMultiGet(keysJson: string): string;
+    kvMultiSet(pairsJson: string): string | null;
+    kvMultiRemove(keysJson: string): string | null;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown };
@@ -76,6 +83,20 @@ const sqlite: SqliteClient = {
     exec: async (sql) => {
         for (const statement of splitSqlStatements(sql)) checked(native().sqlExec(statement));
     },
+};
+
+/**
+ * RN's AsyncStorage, in place (RKStorage, RnKeyValue.kt): RN's device keys under RN's names, as AsyncStorage's calls take and
+ * answer them. A write has reached the disk when its promise resolves.
+ */
+const keyValue = {
+    get: async (key: string): Promise<string | null> => (JSON.parse(checked(native().kvGet(key))) as [string | null])[0],
+    set: async (key: string, value: string): Promise<void> => { checked(native().kvSet(key, value)); },
+    remove: async (key: string): Promise<void> => { checked(native().kvRemove(key)); },
+    multiGet: async (keys: readonly string[]): Promise<[string, string | null][]> =>
+        JSON.parse(checked(native().kvMultiGet(JSON.stringify(keys)))) as [string, string | null][],
+    multiSet: async (pairs: readonly (readonly [string, string])[]): Promise<void> => { checked(native().kvMultiSet(JSON.stringify(pairs))); },
+    multiRemove: async (keys: readonly string[]): Promise<void> => { checked(native().kvMultiRemove(JSON.stringify(keys))); },
 };
 
 /**
