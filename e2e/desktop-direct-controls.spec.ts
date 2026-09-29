@@ -31,7 +31,7 @@ for (const theme of ['dark', 'light']) {
             await page.setViewportSize({ width: 1440, height: 900 });
             if (route !== 'agenda') await navigateWithinApp(page, route);
             const sort = page.getByRole('combobox', { name: 'Sort', exact: true });
-            const group = page.getByRole('combobox', { name: route === 'agenda' ? 'Group next actions by' : 'Group', exact: true });
+            const group = page.getByRole('combobox', { name: 'Group', exact: true });
             await expect(sort).toBeVisible();
             await expect(group).toBeVisible();
             await expect(page.getByRole('button', { name: 'View options', exact: true })).toHaveCount(0);
@@ -64,7 +64,7 @@ for (const theme of ['dark', 'light']) {
         await expect(focusSort).toBeFocused();
         await expect(focusSort).toContainText('Due date');
         await expect(focusSort).toHaveClass(/(?:^|\s)border-primary(?:\s|$)/);
-        const focusGroup = page.getByRole('combobox', { name: 'Group next actions by', exact: true });
+        const focusGroup = page.getByRole('combobox', { name: 'Group', exact: true });
         await focusGroup.click();
         const areaOption = page.locator('[role="option"][data-value="area"]');
         const areaLabel = await areaOption.innerText();

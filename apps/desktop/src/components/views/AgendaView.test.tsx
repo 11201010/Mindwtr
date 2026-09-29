@@ -1460,7 +1460,7 @@ describe('AgendaView', () => {
         });
 
         const { getByText } = renderAgenda();
-        selectToolbarOption('Group next actions by', 'Context');
+        selectToolbarOption('Group', 'Context');
 
         expect(getByText('@work')).toBeInTheDocument();
         expect(getByText('@home')).toBeInTheDocument();
@@ -1511,7 +1511,7 @@ describe('AgendaView', () => {
         });
 
         const { getByText } = renderAgenda();
-        selectToolbarOption('Group next actions by', 'Project');
+        selectToolbarOption('Group', 'Project');
 
         expect(getByText('Alpha project')).toBeInTheDocument();
         expect(getByText('No Project')).toBeInTheDocument();
@@ -1562,7 +1562,7 @@ describe('AgendaView', () => {
         });
 
         const { getByText } = renderAgenda();
-        selectToolbarOption('Group next actions by', 'Priority');
+        selectToolbarOption('Group', 'Priority');
 
         expect(getByText('Urgent')).toBeInTheDocument();
         expect(getByText('Low')).toBeInTheDocument();
@@ -2111,14 +2111,14 @@ describe('AgendaView', () => {
         let taskIds = Array.from(container.querySelectorAll<HTMLElement>('[data-task-id]'))
             .map((element) => element.dataset.taskId);
         expect(taskIds).toEqual(['low-earlier-task', 'high-later-task']);
-        expect(getByRole('combobox', { name: 'Group next actions by' })).toHaveTextContent('Project');
+        expect(getByRole('combobox', { name: 'Group' })).toHaveTextContent('Project');
 
         fireEvent.click(getByRole('button', { name: 'Start first' }));
 
         taskIds = Array.from(container.querySelectorAll<HTMLElement>('[data-task-id]'))
             .map((element) => element.dataset.taskId);
         expect(taskIds).toEqual(['high-later-task', 'low-earlier-task']);
-        expect(getByRole('combobox', { name: 'Group next actions by' })).toHaveTextContent('Context');
+        expect(getByRole('combobox', { name: 'Group' })).toHaveTextContent('Context');
     });
 
     it('cancels and confirms saved Focus filter deletion from its menu', async () => {
@@ -2473,7 +2473,7 @@ describe('AgendaView', () => {
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
         selectToolbarOption('Sort', 'Start date', { getByRole });
-        selectToolbarOption('Group next actions by', 'Project', { getByRole });
+        selectToolbarOption('Group', 'Project', { getByRole });
         fireEvent.click(getByRole('button', { name: /^Save$/i }));
         fireEvent.change(getByDisplayValue('Focus filter'), { target: { value: 'Start by project' } });
         const saveButtons = getAllByRole('button', { name: /^Save$/i });
@@ -2702,7 +2702,7 @@ describe('AgendaView', () => {
         });
 
         const { getByText } = renderAgenda();
-        selectToolbarOption('Group next actions by', 'Context');
+        selectToolbarOption('Group', 'Context');
 
         expect(getByText(/no context/i)).toBeInTheDocument();
         expect(getByText('Next task 30')).toBeInTheDocument();
@@ -2751,7 +2751,7 @@ describe('AgendaView', () => {
         });
 
         const firstRender = renderAgenda();
-        selectToolbarOption('Group next actions by', 'Context', firstRender);
+        selectToolbarOption('Group', 'Context', firstRender);
 
         const workContextGroup = firstRender.getByRole('button', { name: /@work\s*1/i });
         fireEvent.click(workContextGroup);
@@ -2766,12 +2766,12 @@ describe('AgendaView', () => {
         expect(persisted.collapsedGroups?.context).toEqual(['context:@work']);
         expect(persisted.collapsedGroups?.project ?? []).toEqual([]);
 
-        selectToolbarOption('Group next actions by', 'Project', firstRender);
+        selectToolbarOption('Group', 'Project', firstRender);
 
         expect(firstRender.getByRole('button', { name: /@work\s*1/i })).toHaveAttribute('aria-expanded', 'true');
         expect(firstRender.getByText('Work task')).toBeInTheDocument();
 
-        selectToolbarOption('Group next actions by', 'Context', firstRender);
+        selectToolbarOption('Group', 'Context', firstRender);
         firstRender.unmount();
 
         const secondRender = renderAgenda();
