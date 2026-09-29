@@ -778,6 +778,23 @@ describe('native host contract: AI commands replayed after a restart', () => {
         }
     });
 
+    it.each(['setAIKey', 'setAIEndpoint'] as const)('%s: A, then B, then A\'s request sent again in the same process keeps B', async (command) => {
+        await seed({ settings: { ai: { provider: 'openai' } } });
+        const dev = createDevice({});
+        const contract = await openHost(dev.host);
+        const send = (text: string, requestId: string) => (command === 'setAIKey'
+            ? contract.setAIKey({ requestId, field: 'assistant', provider: 'openai', value: text })
+            : contract.setAIEndpoint({ requestId, field: 'assistant', value: text }));
+        const stored = () => (command === 'setAIKey' ? dev.secrets.get('mindwtr-ai-key_openai') : useTaskStore.getState().settings.ai?.baseUrl);
+        const first = generateUUID();
+        const answerA = value(await send('http://a/v1', first));
+        value(await send('http://b/v1', generateUUID()));
+        const writes = dev.log.length;
+        expect(value(await send('http://a/v1', first))).toEqual(answerA);
+        expect(stored()).toBe('http://b/v1');
+        expect(dev.log.length).toBe(writes);
+    });
+
     it('setAIKey: a provider the view no longer shows is refused', async () => {
         await seed({ settings: { ai: { provider: 'gemini' } } });
         const dev = createDevice({});
