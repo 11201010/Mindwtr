@@ -23,7 +23,10 @@
 //   3b  damaged database with WAL frames: the native app changes no file;
 //   5   database missing, no JSON backup, other RN state present: the native app creates nothing;
 //   5b  database missing with RN's JSON backup: the native app migrates it; every persisted
-//       field of every entity and the settings equal core's plan for the backup.
+//       field of every entity and the settings equal core's plan for the backup;
+//   6   an RN user's WebDAV sync: RN v1.3.2 configures WebDAV in its own Sync screen against a local
+//       folder (sync-harness.mjs, through adb reverse); the native app finds RN's keys in RKStorage and
+//       the password in RN's secret store, shows them on its Sync screen, and syncs with them.
 //
 // RN writes every seed row through its own code: queued captures in
 // files/pending-captures, which RN imports at launch (tasks, a +Project task,
@@ -40,9 +43,10 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync 
 import { basename, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, inboxCount } from './device.mjs';
+import { bootFailure, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, inboxCount, tab, tagged, withDescription } from './device.mjs';
+import { serveWebdav, webdavDocument } from './sync-harness.mjs';
 
-const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b'];
+const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6'];
 const USAGE = `usage: node check-upgrade-device.mjs <adb-serial> [--only=${SCENARIOS.join(',')}] [--keep]`;
 const args = process.argv.slice(2);
 const serials = args.filter((arg) => !arg.startsWith('--'));
@@ -701,6 +705,87 @@ const scenarioMissingWithBackup = async () => {
     check(changed.length === 0, `(5b) every other file is unchanged${shortList(changed)}`);
 };
 
+// ---- 6: an RN user's sync configuration ----
+const SYNC_PORT = Number(process.env.MINDWTR_SYNC_WEBDAV_PORT ?? 18773);
+const { en } = await import(resolve(app, '../../packages/core/src/i18n/locales/en.ts'));
+// RN v1.3.2's English labels for its WebDAV panel (en.ts at the tag; the ones this check reads are unchanged since).
+const RN_WEBDAV = 'WebDAV';
+const RN_SAVE_WEBDAV = 'Save WebDAV';
+const scenarioSync = async () => {
+    console.log('\n# 6 RN sync configuration');
+    fresh();
+    const folder = `/dav/mindwtr-upgrade-${run}`;
+    const user = `rnuser${run}`;
+    const password = `rnpw${run}secret`;
+    const url = `http://127.0.0.1:${SYNC_PORT}${folder}`;
+    const dav = await serveWebdav({ port: SYNC_PORT, username: user, password });
+    adbRaw('reverse', `tcp:${SYNC_PORT}`, `tcp:${SYNC_PORT}`);
+    try {
+        // RN's own Sync screen (its settings link), WebDAV, the form as a user types it, Save.
+        device.launch(RN_ACTIVITY);
+        await sleep(4_000);
+        openLink('mindwtr-upgradetest://settings?settingsScreen=sync');
+        let nodes = await waitFor('RN Settings > Sync', (current) => current.some((node) => node.text === RN_WEBDAV), 60_000);
+        await tap(nodes.find((node) => node.text === RN_WEBDAV));
+        nodes = await waitFor('RN\'s WebDAV form', (current) => current.filter((node) => node.class === 'android.widget.EditText').length >= 3, 20_000);
+        const inputs = () => screen().then((current) => current.filter((node) => node.class === 'android.widget.EditText'));
+        const typeInto = async (index, text) => {
+            await tap((await inputs())[index]);
+            requireAppFront();
+            sh(`input text '${text}'`);
+            await sleep(500);
+        };
+        await typeInto(0, url);
+        const insecure = (await screen()).find((node) => node.class === 'android.widget.Switch');
+        if (insecure?.checked !== 'true') await tap(insecure ?? fail('no Allow insecure switch in RN\'s WebDAV form'));
+        await typeInto(1, user);
+        await typeInto(2, password);
+        if (/mInputShown=true/.test(sh('dumpsys input_method'))) { sh('input keyevent KEYCODE_BACK'); await sleep(600); }
+        nodes = await screen();
+        await tap(nodes.find((node) => node.text === RN_SAVE_WEBDAV) ?? fail(`no "${RN_SAVE_WEBDAV}" in RN's form`));
+        await until('RN\'s first sync into the local folder', () => webdavDocument(dav, folder) !== null, 60_000);
+        await sleep(2_000);
+        await stopApp();
+        const rnKeys = asyncStorage('6-rn-rkstorage');
+        check(rnKeys.get('@mindwtr_sync_backend') === 'webdav' && rnKeys.get('@mindwtr_webdav_url') === url && rnKeys.get('@mindwtr_webdav_username') === user,
+            '(6) RN stored its WebDAV backend, URL and username in RKStorage');
+        check(/name="key_v1-mindwtr_webdav_password"/.test(runAs('cat shared_prefs/SecureStore.xml')), '(6) RN sealed the password in its secret store');
+
+        // The native app over it: RN's keys found in place, shown on its Sync screen, and used for a sync.
+        install(APKS.native153, true);
+        device.launch(NATIVE_ACTIVITY);
+        await nativeScreen();
+        await until('the native app to start sync', () => device.logs(pid(), TAG).includes('Native Android sync started'), 30_000);
+        nodes = await screen();
+        const sheet = (current) => Boolean(tagged(current, 'more-sheet'));
+        await tap(tab(nodes, en['tab.menu']) ?? fail('no Menu tab'));
+        nodes = await waitFor('the More sheet', sheet, 10_000);
+        await tap(withDescription(nodes, en['nav.settings']) ?? fail('no Settings tile'));
+        nodes = await waitFor('native Settings', (current) => Boolean(tagged(current, 'settings-main')), 20_000);
+        let row = nodes.find((node) => (node['content-desc'] ?? '').startsWith(`${en['settings.sync']}. `));
+        for (let step = 0; step < 6 && !row; step += 1) {
+            nodes = await device.swipe(nodes, 'down');
+            row = nodes.find((node) => (node['content-desc'] ?? '').startsWith(`${en['settings.sync']}. `));
+        }
+        await tap(row ?? fail('no Sync row in native Settings'));
+        nodes = await waitFor('native Settings > Sync with RN\'s WebDAV form', (current) => Boolean(tagged(current, 'sync-url')), 30_000);
+        check(tagged(nodes, 'sync-backend-webdav')?.selected === 'true', '(6) the native Sync screen shows RN\'s backend (WebDAV chosen)');
+        check(tagged(nodes, 'sync-url')?.text === url, `(6) it shows RN's URL (${tagged(nodes, 'sync-url')?.text})`);
+        let now = nodes;
+        for (let step = 0; step < 6 && !tagged(now, 'sync-now'); step += 1) now = await device.swipe(now, 'down');
+        check(tagged(now, 'sync-username')?.text === user, '(6) it shows RN\'s username');
+        const beforeSync = dav.state.requests.length;
+        await tap(tagged(now, 'sync-now') ?? fail('no Sync now'));
+        await waitFor('the native Sync now to complete', (current) => current.some((node) => node.text === en['settings.syncCompleted']), 60_000);
+        check(dav.state.requests.slice(beforeSync).some((request) => request.startsWith(`GET ${folder}/data.json`)),
+            '(6) the native app synced with RN\'s password from RN\'s secret store (the folder answered its signed-in reads)');
+        await stopApp();
+    } finally {
+        try { adbRaw('reverse', '--remove', `tcp:${SYNC_PORT}`); } catch { /* device gone */ }
+        await dav.close();
+    }
+};
+
 let blocked4 = '';
 try {
     rmSync(work, { recursive: true, force: true });
@@ -735,6 +820,7 @@ try {
     if (want('3b')) await scenarioUnreadable('3b', true);
     if (want('5')) await scenarioMissing();
     if (want('5b')) await scenarioMissingWithBackup();
+    if (want('6')) await scenarioSync();
     console.log(`\nUpgrade device check passed${blocked4 ? '; scenario 4 BLOCKED (see above)' : ''}`);
 } catch (error) {
     evidenced(error);

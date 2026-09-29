@@ -198,7 +198,7 @@ const nativeSync: NativeSync | null = typeof (globalThis.__mindwtrNative as { kv
         },
         networkState: () => networkState,
         appendLog: async (entry, force) => {
-            try { native().log(`${entry.level}: [${entry.scope}] ${entry.message}`); } catch { /* logcat is best effort */ }
+            try { native().log(`${entry.level}: [${entry.scope}] ${entry.message}${entry.context ? ` ${JSON.stringify(entry.context)}` : ''}`); } catch { /* logcat is best effort */ }
             return diagnosticsLog.append(entry, { force });
         },
         translate: (key) => {
@@ -206,6 +206,7 @@ const nativeSync: NativeSync | null = typeof (globalThis.__mindwtrNative as { kv
             return result.ok ? result.value.strings[key] ?? key : key;
         },
         emit: (event) => { checked(native().hostEvent(JSON.stringify(event))); },
+        trace: (line) => { try { native().log(line); } catch { /* logcat is best effort */ } },
     })
     : null;
 /** The device's network state as Kotlin last reported it (HostNetwork.kt); unknown until then, which never reads as offline. */

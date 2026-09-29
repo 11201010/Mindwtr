@@ -13,7 +13,7 @@
 // RN's capture screen for each entry kind (a capture link with the keyboard up and down, a share, an assistant note, and a
 // widget's quick capture), the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
 // task, and Review), the Weekly Review's first step, the Calendar's week and month, the Board, and Settings'
-// General and GTD (their switches drawn as RN's for the props it sets), in light
+// General, GTD (their switches drawn as RN's for the props it sets) and Sync (off), in light
 // and dark mode.
 // Then it installs
 // the native upgradetest build (153) over it, on the same database, and shoots the same
@@ -350,12 +350,14 @@ const shootMenu = async (prefix, suffix, rn) => {
     }
 };
 /**
- * Settings from the More sheet's Settings tile (both apps), then General and GTD (their menu rows, core's labels): each shot
- * with its first switch on screen (General's Show task age, GTD's Pomodoro), and closed with Back; Back again leaves Settings.
+ * Settings from the More sheet's Settings tile (both apps), then General, GTD and Sync (their menu rows, core's labels): each
+ * shot with its first switch or RN's "Sync is off" box on screen, and closed with Back; Back again leaves Settings.
  */
 const SETTINGS_SCREENS = [
     { name: 'general', row: `${en['settings.general']}. ${en['settings.menuDesc.general']}`, text: en['settings.mobile.showTaskAge'] },
     { name: 'gtd', row: `${en['settings.gtd']}. ${en['settings.menuDesc.gtd']}`, text: en['settings.featurePomodoro'] },
+    // Sync is off on the fixture: the backend card, the setup guide, and RN's "Sync is off" box.
+    { name: 'sync', row: `${en['settings.sync']}. ${en['settings.menuDesc.sync']}`, text: en['settings.syncOff'] },
 ];
 const shootSettings = async (prefix, suffix, rn) => {
     const menu = await waitFor('the Menu tab', (current) => Boolean(rn ? current.find((node) => node['content-desc'] === 'Menu') : tab(current, 'Menu')), 30_000);

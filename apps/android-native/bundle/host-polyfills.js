@@ -436,6 +436,18 @@
         global.URLSearchParams.prototype.forEach = function (fn) {
             this._pairs.forEach(function (pair) { fn(pair[1], pair[0]); });
         };
+        // Iterators over a copy, as WHATWG's (core's log sanitizer walks keys()).
+        var pairIterator = function (pairs, pick) {
+            var items = pairs.map(pick);
+            var index = 0;
+            var iterator = { next: function () { return index < items.length ? { value: items[index++], done: false } : { value: undefined, done: true }; } };
+            if (typeof Symbol === 'function' && Symbol.iterator) iterator[Symbol.iterator] = function () { return iterator; };
+            return iterator;
+        };
+        global.URLSearchParams.prototype.keys = function () { return pairIterator(this._pairs, function (pair) { return pair[0]; }); };
+        global.URLSearchParams.prototype.values = function () { return pairIterator(this._pairs, function (pair) { return pair[1]; }); };
+        global.URLSearchParams.prototype.entries = function () { return pairIterator(this._pairs, function (pair) { return [pair[0], pair[1]]; }); };
+        if (typeof Symbol === 'function' && Symbol.iterator) global.URLSearchParams.prototype[Symbol.iterator] = global.URLSearchParams.prototype.entries;
         global.URLSearchParams.prototype.toString = function () {
             if (this._pairs.length === 0) return '';
             // A space goes out as "+", as WHATWG writes it, so a "+" the query came with survives String(url).

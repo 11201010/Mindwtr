@@ -249,7 +249,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** The JS host's events arrive on the engine thread; each is handed to the main thread. */
     private val syncListener: (JSONObject) -> Unit = { event -> ui { syncEvent(event) } }
 
-    private fun badgeOf(event: JSONObject?) = SyncBadge(event?.optString("badge")?.ifEmpty { null } ?: "hidden", event?.optString("color")?.ifEmpty { null }?.takeIf { event.isNull("color").not() })
+    private fun badgeOf(event: JSONObject?) = SyncBadge(event?.optString("badge")?.ifEmpty { null } ?: "hidden", event?.takeUnless { it.isNull("color") }?.optString("color"))
 
     /**
      * A sync event: a new badge; a finished cycle (a sync can change what every list shows, as RN's store updates do), so the

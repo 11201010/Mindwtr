@@ -68,6 +68,8 @@ export type NativeSyncBindings = {
     translate: (key: string) => string;
     /** An event for Kotlin (CoreHost's hostEvent): never a secret, a URL or task text. */
     emit: (event: Record<string, unknown>) => void;
+    /** A logcat line (the device checks read the badge's changes there). */
+    trace: (line: string) => void;
 };
 
 /** RN's key for the device's calendar feeds (lib/external-calendar.ts EXTERNAL_CALENDARS_KEY). */
@@ -239,6 +241,7 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
         const text = JSON.stringify(event);
         if (text === lastEvent) return;
         lastEvent = text;
+        bindings.trace(`Native Android sync state badge=${event.badge} cycles=${event.cycles}`);
         bindings.emit(event);
     };
     /** RN's useMobileSyncBadge reads the configuration again on every screen change and sync status change. */

@@ -107,10 +107,13 @@ class SyncSettingsModel(private val menu: MenuModel) {
 
     /** Settings' read of this screen: it opens once per visit (its toasts shown), then core's view for the form's typed text. */
     fun read(runtime: CoreHost): JSONObject {
-        if (!opened) {
-            val reply = runtime.syncCommand("openSyncSettings", "{}")
-            opened = true
-            shell.ui { toasts(reply) }
+        // One open per visit: a refresh and a reload can read at once, and a second open would replace the first.
+        synchronized(this) {
+            if (!opened) {
+                val reply = runtime.syncCommand("openSyncSettings", "{}")
+                opened = true
+                shell.ui { toasts(reply) }
+            }
         }
         return runtime.menuRead("syncSettings", JSONObject().put("draft", draft()).toString())
     }

@@ -475,6 +475,9 @@ class CoreHost(
         return result.getJSONObject("value")
     }
 
+    /** A polyfill function the idle pump calls often, kept once per engine (closeOnEngine drops it). */
+    private fun global(engine: QuickJSContext, name: String): JSFunction = functions.getOrPut("global:$name") { engine.globalObject.getJSFunction(name) }
+
     /** Hands each long operation that answered to its waiting caller; engine thread. */
     private fun settleWatched() {
         if (watched.isEmpty()) return
@@ -490,7 +493,7 @@ class CoreHost(
         pumpAt = Long.MAX_VALUE
         val engine = context ?: return
         if (stopped != null) return
-        runCatching { engine.globalObject.getJSFunction("__pumpTimers").call() }.onFailure { Log.w(TAG, "Native Android idle pump failed", it) }
+        runCatching { global(engine, "__pumpTimers").call() }.onFailure { Log.w(TAG, "Native Android idle pump failed", it) }
         settleWatched()
         schedulePump()
     }
@@ -502,7 +505,7 @@ class CoreHost(
     private fun schedulePump() {
         val engine = context ?: return
         if (stopped != null) return
-        val delay = (engine.globalObject.getJSFunction("__nextTimerDelay").call() as? Number)?.toLong() ?: return
+        val delay = (global(engine, "__nextTimerDelay").call() as? Number)?.toLong() ?: return
         if (delay < 0) return
         val at = SystemClock.uptimeMillis() + delay
         if (at >= pumpAt) return

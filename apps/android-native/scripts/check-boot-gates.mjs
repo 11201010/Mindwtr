@@ -53,6 +53,16 @@ for (const init of ['?a=1&b=x+y', 'a=1', '', { grant_type: 'refresh_token', refr
 for (const text of ['https://host/dav/?dir=a+b&_=1', 'https://host/dav/', 'mindwtr:///capture?title=a', 'mailto:alex@example.com?subject=Hi']) {
     assert.equal(String(new consoleState.URL(text)), String(new URL(text)), text);
 }
+// Core's log sanitizer walks a URL's query (sanitizeUrl: searchParams.keys()); a sync error's URL is logged that way.
+for (const init of ['?token=1&a=2&token=3', '']) {
+    const mine = new consoleState.URLSearchParams(init);
+    const theirs = new URLSearchParams(init);
+    assert.deepEqual([...mine.keys()], [...theirs.keys()], `keys() of ${init}`);
+    assert.deepEqual([...mine.values()], [...theirs.values()], `values() of ${init}`);
+    // The VM's pairs are another realm's arrays: compared as JSON.
+    assert.equal(JSON.stringify([...mine.entries()]), JSON.stringify([...theirs.entries()]), `entries() of ${init}`);
+    assert.equal(JSON.stringify([...mine]), JSON.stringify([...theirs]), `iterating ${init}`);
+}
 // fetch and the secret calls (HostIo.kt): the polyfill hands each call to the bridge and settles it only when the pump
 // takes the host's answer (ioNext), as timers fire. A stand-in bridge answers here.
 {
@@ -832,6 +842,24 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         const syncCommands = [.../val SYNC_COMMANDS = setOf\(([^)]*)\)/.exec(source('SyncSettings.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]).sort();
         assert.deepEqual(syncCommands, [...(kotlin[1] ?? '').matchAll(/"(\w+)"/g)].map((m) => m[1]).sort(), 'SyncSettings.kt SYNC_COMMANDS is WriteJournal.UNJOURNALED');
     }
+    // Sync's engine work between host calls: a host-call answer wakes the idle pump, and the next timer schedules it; neither
+    // runs after the host stopped or closed.
+    assert.match(coreHost, /io\.wake = \{ runCatching \{ executor\.execute \{ idlePump\(\) \} \} \}/);
+    assert.match(coreHost, /private fun idlePump\(\) \{[\s\S]*?val engine = context \?: return\s+if \(stopped != null\) return/);
+    assert.match(coreHost, /pumpTask = executor\.schedule\(\{ idlePump\(\) \}, delay, TimeUnit\.MILLISECONDS\)/);
+    assert.match(coreHost, /executeExistingDelayedTasksAfterShutdownPolicy = false/);
+    // The network state as RN's expo-network reads it (Android 10+): reachable is an active network, connected a known transport.
+    {
+        const expoNetwork = readFileSync(resolve(app, '../../node_modules/expo-network/android/src/main/java/expo/modules/network/NetworkModule.kt'), 'utf8');
+        const hostNetwork = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/HostNetwork.kt'), 'utf8');
+        assert.match(expoNetwork, /val isInternetReachable = network != null/);
+        assert.match(hostNetwork, /put\("isInternetReachable", network != null\)/);
+        const transports = (text) => [...new Set([...text.matchAll(/TRANSPORT_(\w+)/g)].map((m) => m[1]))].sort();
+        assert.deepEqual(transports(hostNetwork), transports(expoNetwork), 'HostNetwork counts expo-network\'s transports as connected');
+        assert.match(hostNetwork, /override fun onAvailable\(network: Network\) = report\(\)\s+override fun onLost\(network: Network\) = report\(\)/);
+        assert.match(readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8'), /android\.permission\.ACCESS_NETWORK_STATE/);
+    }
+
     // callAsync journals before the engine call and settles after the reply; answer() is the only engine call, used by callAsync
     // and the replay; nothing else calls a host method.
     const callAsyncFn = coreHost.slice(coreHost.indexOf('private fun callAsync('), coreHost.indexOf('private fun answer('));
