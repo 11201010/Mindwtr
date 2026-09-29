@@ -69,11 +69,11 @@ const webdavFields = { url: `http://127.0.0.1:${WEBDAV_PORT}${FOLDER}`, username
 const cloudFields = { url: `http://127.0.0.1:${CLOUD_PORT}`, token: TOKEN, allowInsecureHttp: true };
 const titles = {
     host: `Sync ✓ Grüße 😀 ${run}`,
-    phone: `81${run}`,
-    down: `82${run}`,
-    failed: `83${run}`,
+    phone: `93${run}1`,
+    down: `93${run}2`,
+    failed: `93${run}3`,
     cloudHost: `Cloud ✓ 雲 😀 ${run}`,
-    offline: `84${run}`,
+    offline: `93${run}4`,
 };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
