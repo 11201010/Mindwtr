@@ -47,7 +47,7 @@ assert.equal(new consoleState.URL('mindwtr://contexts?token=home+office&contextA
 assert.equal(new consoleState.URL('mindwtr://activate-context?name=%40home+office%2Bgym').searchParams.get('name'), '@home office+gym');
 // URLSearchParams.toString() has no "?", as WHATWG writes it: core posts it as a form body (dropbox-auth-tokens.ts) and puts
 // its own "?" before it (sync-helpers.ts); String(url) still writes the "?" before a query.
-for (const init of ['?a=1&b=x+y', 'a=1', '', { grant_type: 'refresh_token', refresh_token: 'r t+s' }]) {
+for (const init of ['?a=1&b=x+y', 'a=1', '', { grant_type: 'refresh_token', refresh_token: 'r t+s' }, { a: 'x y', b: '1+1' }]) {
     assert.equal(new consoleState.URLSearchParams(init).toString(), new URLSearchParams(init).toString(), JSON.stringify(init));
 }
 for (const text of ['https://host/dav/?dir=a+b&_=1', 'https://host/dav/', 'mindwtr:///capture?title=a', 'mailto:alex@example.com?subject=Hi']) {
