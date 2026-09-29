@@ -479,13 +479,13 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
     };
 
     /** The push options a delete compares: on or off, the Mindwtr calendar, the chosen calendar. */
-    const pushRevision = async (host: NativeCalendarHost): Promise<{ revision: string; managedId: string | null }> => {
+    const pushRevision = async (host: NativeCalendarHost): Promise<string> => {
         const [enabled, managedId, targetId] = await Promise.all([
             host.storage.getItem(CALENDAR_PUSH_ENABLED_KEY),
             host.storage.getItem(CALENDAR_PUSH_CALENDAR_ID_KEY),
             host.storage.getItem(CALENDAR_PUSH_TARGET_ID_KEY),
         ]);
-        return { revision: JSON.stringify([enabled === '1', managedId, targetId?.trim() || null]), managedId };
+        return JSON.stringify([enabled === '1', managedId, targetId?.trim() || null]);
     };
     let shownPushRevision = JSON.stringify([false, null, null]);
 
@@ -663,7 +663,7 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
     });
     const staleFeeds = () => fail('STALE_REVISION', 'The subscriptions changed since the view showed them; read the view again');
     const refreshShownRevision = async (host: NativeCalendarHost) => {
-        shownPushRevision = (await pushRevision(host)).revision;
+        shownPushRevision = await pushRevision(host);
     };
 
     // ---------------------------------------------------------------------------
@@ -742,10 +742,10 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                 if (!pushAvailable) return fail('ACTION_FAILED', 'Calendar push is not available on this host yet');
                 if (current.push.deleting) return fail('ACTION_FAILED', 'The Mindwtr calendar is being deleted');
                 const now = await pushRevision(current.host);
-                if (now.revision !== edit.revision) {
+                if (now !== edit.revision) {
                     // Done already (a replay after a restart): push is off, no Mindwtr calendar is saved,
                     // and the one the view showed is gone. Anything else changed since: refused.
-                    const [isEnabled, isManaged] = JSON.parse(now.revision) as [boolean, string | null];
+                    const [isEnabled, isManaged] = JSON.parse(now) as [boolean, string | null];
                     const wasManaged = (JSON.parse(edit.revision) as [boolean, string | null])[1];
                     const gone = !wasManaged || !(await current.host.calendars.getCalendars()).some((calendar) => calendar.id === wasManaged);
                     if (!isEnabled && isManaged === null && gone) return result(false);
