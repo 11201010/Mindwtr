@@ -263,7 +263,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
             // calendar and board 68 (plus the 1-2 of its two captures; the Board's Duplicate keeps the title), toolbars 69 (plus the 1-6 of its six captures),
             // settings and editor 70 (plus the 1 of its injected Done list task), Mind Sweep and saved search 75 (plus the 1 of its
             // injected task and the 2-3 of its two captures), entry points 77 (plus the 1 of its shared text; 2 to 8 are never saved),
-            // the capture screen 79 (plus the 1-8 of its captures; 3 and 4 are never saved).
+            // the capture screen 79 (plus the 0-8 of its captures; 3 and 4 are never saved).
             // No other title matches. [0-9], not \\d: this code sits in a template literal, which drops the backslash.
             const shapes = {
                 lifecycle: /^8[1-6][0-9]{12}$/,
@@ -279,7 +279,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
                 settingsEditor: /^70[0-9]{12}1$/,
                 sweepSaved: /^75[0-9]{12}[1-3]$/,
                 entryPoints: /^77[0-9]{12}[1-8]$/,
-                captureModal: /^79[0-9]{12}[1-8]$/,
+                captureModal: /^79[0-9]{12}[0-8]$/,
             };
             for (const [check, shape] of Object.entries(shapes)) {
                 const ids = live(store()._allTasks).filter((item) => shape.test(item.title)).map((item) => item.id);

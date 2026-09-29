@@ -2485,6 +2485,14 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(modalKt, /keep\(if \(refused\) current\.copy\(pending = null, captureId = UUID\.randomUUID\(\)\.toString\(\), confirm = null, lineIds = emptyList\(\)\) else current\.copy\(confirm = null\)\)/);
     assert.match(modalKt, /shell\.acknowledged\(action\)/);
     assert.match(modalKt, /val refused = UPDATE_REFUSALS\.any \{ failure\.message\?\.startsWith\(it\) == true \}/);
+    // ACTION_FAILED: core wrote no task and the journal dropped the entry, so, as RN, the card shows the failure and the next Save
+    // is a fresh attempt (as MenuModel's LANDLESS); nothing is owed.
+    assert.match(modalKt, /if \(failure\.message\?\.startsWith\("ACTION_FAILED"\) == true\) \{\s+shell\.acknowledged\(action\)\s+shell\.ui \{ failed\(refused = true\) \}\s+return@perform\s+\}/);
+    // Cancel (and Back) stay usable while a save is owed: the screen closes, and the exact retry stays owed on the tabs' banner
+    // (the journal replays it at the next boot anyway, so it is never dropped).
+    assert.match(modalKt, /if \(shell\.failedAction != null\) \{ keep\(null\); inFlight = null; return \}/);
+    assert.match(captureModalUi, /control\(actions\.getString\("cancel"\), "capture-modal-cancel", !model\.busy\)/);
+    assert.match(captureModalUi, /BackHandler \{\s+if \(model\.busy\) return@BackHandler/);
     // A refusal wrote nothing, so a refused retry of an owed save settles it: the screen unlocks (as the popup's freeCapture).
     assert.match(modalKt, /if \(refused\) shell\.acknowledged\(action\)\s+shell\.ui \{ failed\(refused\) \}/);
     // The Bundle holds only whether the screen is open; the screen itself is on disk, each write synced and renamed into place.

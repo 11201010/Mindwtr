@@ -93,7 +93,7 @@ fun CaptureModalScreen(model: InboxViewModel, modal: CaptureModal) = with(model.
     DisposableEffect(Unit) { onDispose { keyboard?.hide() } }
     // Edits wait while an action runs; they go on once none does.
     LaunchedEffect(model.busy, owed) { if (!model.busy && !owed) pump() }
-    BackHandler(enabled = !owed) {
+    BackHandler {
         if (model.busy) return@BackHandler
         if (modal.confirm != null) cancelLines() else cancel(leave = false)
     }
@@ -149,7 +149,7 @@ fun CaptureModalScreen(model: InboxViewModel, modal: CaptureModal) = with(model.
                         // RN's row stretches its buttons to the bordered Save & edit's height; RN's Android text line (font padding) is 19.
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                             val button = RoundedCornerShape(8.dp)
-                            Box(Modifier.clip(button).background(c.inputBg).control(actions.getString("cancel"), "capture-modal-cancel", !locked) { cancel() }
+                            Box(Modifier.clip(button).background(c.inputBg).control(actions.getString("cancel"), "capture-modal-cancel", !model.busy) { cancel() }
                                 .padding(horizontal = 14.dp, vertical = 11.dp)) {
                                 Text(actions.getString("cancel"), style = rnText(14, 400, 19), color = c.text)
                             }

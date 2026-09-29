@@ -193,10 +193,13 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
 
     /**
      * RN's Cancel: nothing is written; core's discard says whether the app then goes behind the previous one ([leave]). Back
-     * passes false: RN's Back pops the route and the app stays.
+     * passes false: RN's Back pops the route and the app stays. It stays usable while a save is owed, as RN's Cancel does.
      */
     fun cancel(leave: Boolean = true) {
         val current = open ?: return
+        // While a save is owed (or any command), no read runs: the screen closes in the app, and the exact retry stays owed on the
+        // tabs' banner. It cannot be dropped: the write may have landed, and the journal replays it at the next boot.
+        if (shell.failedAction != null) { keep(null); inFlight = null; return }
         shell.perform { runtime ->
             val close = runtime.menuRead("captureModalDiscard", JSONObject().put("params", current.params).toString()).getJSONObject("close")
             shell.ui { if (open?.session == current.session) end(close, leave) }
@@ -212,6 +215,13 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
         val reply = try {
             if (action.kind == "captureModal") runtime.submitCaptureModal(request) else runtime.submitCaptureModalLines(request)
         } catch (failure: Exception) {
+            // ACTION_FAILED: core wrote no task and the journal dropped the entry. As RN, the card says so and the next Save is
+            // a fresh attempt; nothing is owed (MenuModel's LANDLESS).
+            if (failure.message?.startsWith("ACTION_FAILED") == true) {
+                shell.acknowledged(action)
+                shell.ui { failed(refused = true) }
+                return@perform
+            }
             val refused = UPDATE_REFUSALS.any { failure.message?.startsWith(it) == true }
             // A refused retry of an owed save wrote nothing either: nothing is owed any more, and the screen unlocks.
             if (refused) shell.acknowledged(action)

@@ -9,10 +9,12 @@
 // link's name) and opens its editor over that project, as RN's openTaskScreen does;
 // (b) a share with a subject and a body with a URL opens the screen with the subject as the title and the body as the
 // description, and Save stores it once with that description; (c) the hide-keyboard button puts the keyboard down, and Cancel
-// writes nothing; (d) a typed draft survives a rotation and (e) process death; (f) two lines ask core's question, and Create tasks stores one task per line; (g) a failed
-// save (debug fail_commit) shows RN's failure line and the app's Try again, which stores it once; (h) a process death during a
-// delayed save (debug delay_before_ms) is sent again at the relaunch and stored once, under the capture UUID on disk. Every stored
-// fact is read by core on a copy of the app's database. Titles are 79 + a 12-digit run id + 1 to 8, and the project is
+// writes nothing; (d) a typed draft survives a rotation and (e) process death; (f) two lines ask core's question, and
+// Create tasks stores one task per line; (g) a failed save (debug fail_commit) shows RN's failure line and the app's Try
+// again, which stores it once; (h) Cancel stays usable while a save is owed: the screen closes and the tabs' Try again stores
+// the save once; (i) a process death during a delayed save (debug delay_before_ms) is sent again at the relaunch and stored
+// once, under the capture UUID on disk. Every stored fact is read by core on a copy of the app's database. Titles are
+// 79 + a 12-digit run id + 0 to 8, and the project is
 // 79 + the run id + 9 (check-projects-device.mjs --prune-old removes earlier runs'). It types only digits, never launches
 // over another app, and leaves the app on its Inbox in portrait. Leave the device on its home screen before running.
 // It needs host `bun`. Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
@@ -50,7 +52,7 @@ const { en } = await import(resolve(coreSrc, 'i18n/locales/en.ts'));
 // Digits only: no letter goes through a keyboard.
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
 const titles = { link: `79${run}1`, shared: `79${run}2`, cancelled: `79${run}3`, kept: `79${run}4`, first: `79${run}5`, second: `79${run}6`,
-    failed: `79${run}7`, killed: `79${run}8` };
+    failed: `79${run}7`, killed: `79${run}8`, cancelled2: `79${run}0` };
 const PROJECT = `79${run}9`;
 const TAG_NAME = '79tag';
 const BODY = `79 body https://example.com/${run}`;
@@ -271,7 +273,20 @@ try {
     check(core().failed.length === 1 && lines('native-android-dev-task-command', '"operation":"captureModal"', '"outcome":"failed"') >= 1,
         '(g) Try again stored the failed save once');
 
-    // (h) Process death during a save: the exact request (its capture UUID) is on disk before the call, and the relaunch sends it
+    // (h) Cancel stays usable while a save is owed, as RN's does: the screen closes, and the exact retry stays owed on the tabs'
+    // banner (the write may have landed; the journal would replay it), so Try again there stores it once.
+    nodes = await link(`title=${titles.cancelled2}`, onModal(titles.cancelled2), 'the capture screen for a failed save to cancel');
+    setProp('fail_commit', '1');
+    nodes = await keyboardUp();
+    nodes = await tapExpecting(control(nodes, 'capture-modal-save'), (current) => hasText(current, en['task.addFailed']) && Boolean(owedRetry(current)),
+        'the failed save\'s line and Try again');
+    check(control(nodes, 'capture-modal-cancel').enabled === 'true', '(h) Cancel is usable while the save is owed');
+    nodes = await tapExpecting(control(nodes, 'capture-modal-cancel'), (current) => atTabs(current) && Boolean(owedRetry(current)), 'the tabs with the owed retry');
+    setProp('fail_commit', '');
+    await tapExpecting(owedRetry(nodes), (current) => atTabs(current) && !owedRetry(current), 'Try again on the tabs');
+    check(core().cancelled2.length === 1, '(h) Cancel closed the screen, and the owed retry stored the save once');
+
+    // (i) Process death during a save: the exact request (its capture UUID) is on disk before the call, and the relaunch sends it
     // again first; core writes it once, under that UUID.
     nodes = await link(`title=${titles.killed}`, onModal(titles.killed), 'the capture screen for a killed save');
     setProp('delay_before_ms', '8000');
@@ -290,7 +305,7 @@ try {
     await waitFor('the relaunch to send the owed save and close the screen', atTabs, 60_000);
     stored = core();
     check(stored.killed.length === 1 && stored.killed[0].id === pendingId.toLowerCase(),
-        `(h) the relaunch sent the owed save once: one task, under the capture UUID ${pendingId} read before the kill`);
+        `(i) the relaunch sent the owed save once: one task, under the capture UUID ${pendingId} read before the kill`);
     check(stored.cancelled.length === 0 && stored.kept.length === 0 && stored.kept0.length === 0, '(c, e) Cancel stored nothing');
     check(stored.link.length === 1 && stored.shared.length === 1, '(a, b) each save stored once');
     console.log('Capture screen device check passed');
