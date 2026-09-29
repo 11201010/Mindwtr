@@ -83,6 +83,8 @@ class HostIo(context: Context) {
     private var nextId = 0L
     /** Calls started and not yet taken by [next], cancelled ones included. */
     private var open = 0
+    /** Called on the answering thread once an answer is queued: CoreHost's idle pump settles it when no call is running. */
+    @Volatile var wake: () -> Unit = {}
 
     init {
         Log.i(CoreHost.TAG, "Native Android fetch limit bytes=$maxResponseBytes ceiling=$ceiling heap=${Runtime.getRuntime().maxMemory()}")
@@ -119,6 +121,7 @@ class HostIo(context: Context) {
             override fun onFailure(call: Call, e: IOException) {
                 calls.remove(id)
                 answers.add(failure(id, call, e))
+                wake()
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -129,6 +132,7 @@ class HostIo(context: Context) {
                 } finally {
                     calls.remove(id)
                 }
+                wake()
             }
         })
         open += 1
@@ -157,6 +161,7 @@ class HostIo(context: Context) {
                     else -> JSONObject.NULL.also { secrets.delete(key) }
                 }).toString()
             }.getOrElse { JSONObject().put("id", id).put("error", it.message ?: it.javaClass.simpleName).toString() }.let { Answer(it) })
+            wake()
         }
         open += 1
         return id

@@ -31,7 +31,7 @@ import java.util.UUID
  */
 
 /** Settings' commands (host-entry.ts MENU_COMMANDS). */
-val SETTINGS_KINDS = setOf("generalSetting", "gtdSetting", "manageEditor", "manageDelete", "somedayRename", "somedayReorder", "somedayDelete", "dataSetting")
+val SETTINGS_KINDS = setOf("generalSetting", "gtdSetting", "manageEditor", "manageDelete", "somedayRename", "somedayReorder", "somedayDelete", "dataSetting", "syncPreference")
 
 /** RN's device keys (core's LANGUAGE_STORAGE_KEY, MOBILE_THEME_STORAGE_KEY, MANAGE_OPEN_SECTIONS_STORAGE_KEY, MOBILE_TASK_OPEN_MODE_STORAGE_KEY). */
 const val LANGUAGE_KEY = "mindwtr-language"
@@ -84,6 +84,8 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     private val shell get() = menu.shell
     private val prefs get() = menu.prefs
     private val main = Handler(Looper.getMainLooper())
+    /** Settings › Sync's screen state and commands (SyncSettings.kt). */
+    val sync = SyncSettingsModel(menu)
 
     /** RN's settings stack: "main", then "general", "manage", "data", "advanced", or a GTD screen ("gtd", "gtd-pomodoro", ...). */
     var stack by mutableStateOf(saved.get<String>("settingsStack")?.split(',') ?: listOf("main")); private set
@@ -109,7 +111,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         return when (screen) {
             "main" -> view.getString("title")
             "advanced" -> view.getJSONObject("advanced").getString("title")
-            "general", "manage", "data" -> view.getString("title")
+            "general", "manage", "data", "sync" -> view.getString("title")
             "gtd" -> view.getJSONObject("hub").getString("title")
             else -> gtdScreen(view)?.getString("title") ?: t("settings.title")
         }
@@ -117,6 +119,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
 
     /** RN pushes a new Settings: its menu, no search. */
     fun reset() {
+        sync.leave()
         keepStack(listOf("main"))
         logToShare = null
         query = ""
@@ -138,6 +141,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     /** RN's Back inside Settings: the screen it opened from; false on the menu itself. */
     fun back(): Boolean {
         if (stack.size < 2) return false
+        if (screen == "sync") sync.leave()
         keepStack(stack.dropLast(1))
         logToShare = null
         keepLocal(JSONObject())
@@ -174,7 +178,8 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
 
     /** The open screen's core read and its input: the device values core's doc names (RN's keys), sent as stored. */
     private fun request(screen: String): Pair<String, JSONObject> = when {
-        screen == "main" || screen == "advanced" -> "settingsMenu" to JSONObject().put("query", query)
+        // The Sync row's badge as RN's useMobileSyncBadge resolves it (core's state from the JS host's sync events).
+        screen == "main" || screen == "advanced" -> "settingsMenu" to JSONObject().put("query", query).put("syncBadge", shell.syncBadge.state)
         screen == "general" -> "generalSettings" to JSONObject().put("deviceTheme", prefs.getString(THEME_KEY, null) ?: JSONObject.NULL)
         screen == "manage" -> "manageSettings" to JSONObject().put("openSections", prefs.getString(MANAGE_SECTIONS_KEY, null) ?: JSONObject.NULL)
         screen == "data" -> "dataSettings" to JSONObject()
@@ -187,6 +192,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
      * refresh reads it again from its first window.
      */
     private fun read(runtime: CoreHost, screen: String, depth: Map<String, Int>): SettingsPage {
+        if (screen == "sync") return SettingsPage(screen, sync.read(runtime), emptyMap(), null)
         val (name, input) = request(screen)
         val view = runtime.menuRead(name, input.toString())
         check(view.optInt("version", 1) == 1) { "Unsupported core contract" }
@@ -227,6 +233,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     /** Core's answer on screen, when it is still for the open screen; Manage writes RN's normalized open sections back, as RN does. */
     private fun show(next: SettingsPage) {
         if (menu.list != "settings" || next.screen != screen) return
+        if (screen == "sync") sync.follow(next.view)
         page = next
         next.view.optJSONObject("openSectionsRestore")?.takeIf { prefs.getString(it.getString("key"), null) != it.getString("value") }?.let { store(JSONArray().put(it)) }
     }

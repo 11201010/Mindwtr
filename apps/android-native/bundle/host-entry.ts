@@ -39,6 +39,7 @@ import {
     webdavPutFile,
     webdavPutJson,
 } from '@mindwtr/core';
+import { createNativeSync, type NativeSync } from './host-sync';
 
 type NativeBridge = {
     sqlRun(sql: string, params: string): string | null;
@@ -57,6 +58,8 @@ type NativeBridge = {
     kvMultiGet(keysJson: string): string;
     kvMultiSet(pairsJson: string): string | null;
     kvMultiRemove(keysJson: string): string | null;
+    /** An event for Kotlin (CoreHost's event listener): sync's badge and cycle count, an automatic sync's warning. */
+    hostEvent(json: string): string | null;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown };
@@ -177,14 +180,53 @@ const submit = (work: (signal: AbortSignal) => Promise<unknown>): string => {
     return String(id);
 };
 
-const contract = createNativeHostContract();
+/**
+ * Sync (host-sync.ts), on a host with RN's AsyncStorage bridge (Android). The iOS host and the gates' stand-in bridge have
+ * none, so their contract has no Settings › Sync device, as before.
+ */
+const nativeSync: NativeSync | null = typeof (globalThis.__mindwtrNative as { kvGet?: unknown } | undefined)?.kvGet === 'function'
+    ? createNativeSync({
+        keyValue,
+        secrets: {
+            getSecret: (key) => (globalThis.__mindwtrSecrets as HostSecrets).getSecret(key),
+            setSecret: (key, value) => (globalThis.__mindwtrSecrets as HostSecrets).setSecret(key, value),
+            deleteSecret: (key) => (globalThis.__mindwtrSecrets as HostSecrets).deleteSecret(key),
+        },
+        localData: () => {
+            if (!bootAdapter) throw new Error('Native storage is not loaded yet');
+            return bootAdapter;
+        },
+        networkState: () => networkState,
+        appendLog: async (entry, force) => {
+            try { native().log(`${entry.level}: [${entry.scope}] ${entry.message}`); } catch { /* logcat is best effort */ }
+            return diagnosticsLog.append(entry, { force });
+        },
+        translate: (key) => {
+            const result = contract.getStrings({ keys: [key] });
+            return result.ok ? result.value.strings[key] ?? key : key;
+        },
+        emit: (event) => { checked(native().hostEvent(JSON.stringify(event))); },
+    })
+    : null;
+/** The device's network state as Kotlin last reported it (HostNetwork.kt); unknown until then, which never reads as offline. */
+let networkState: { isConnected: boolean | null; isInternetReachable: boolean | null } = { isConnected: null, isInternetReachable: null };
+const requireSync = (): NativeSync => {
+    if (!nativeSync) throw new Error('Sync is not available on this host');
+    return nativeSync;
+};
+
+const contract = createNativeHostContract(nativeSync ? { syncSettings: nativeSync.settingsHost } : {});
 const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: string; message: string } }): T => {
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
 };
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
     | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
-    | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting';
+    | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting'
+    | 'syncPreference' | SyncScreenCommand;
+/** Settings › Sync's screen commands: never journaled (core's NATIVE_UNJOURNALED_COMMANDS), sent by CoreHost.syncCommand. */
+type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncBackend' | 'saveSyncBackend' | 'syncNow' | 'testSyncConnection'
+    | 'pickSyncFolder' | 'connectDropbox' | 'disconnectDropbox' | 'runSyncEncryptionAction';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
     | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
@@ -445,6 +487,8 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     },
     somedaySections: (input) => contract.getSomedaySections(input),
     dataSettings: () => contract.getDataSettings(),
+    // Settings › Sync's view (native-host-contract-settings-sync.ts) for the form's typed URL and token.
+    syncSettings: (input) => contract.getSyncSettings(input),
     // Mind Sweep and a saved search's screen.
     mindSweep: (input) => contract.getMindSweep(input),
     savedSearch: (input) => contract.getSavedSearchView(input),
@@ -497,6 +541,18 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
     somedayDelete: (input) => contract.deleteSomedaySection(input),
     // Settings › Data's Debug logging switch.
     dataSetting: (input) => contract.setDataSetting(input),
+    // Settings › Sync: a sync option (journaled), and the screen's commands (never journaled: CoreHost.syncCommand).
+    syncPreference: (input) => contract.setSyncPreference(input),
+    openSyncSettings: (input) => contract.openSyncSettings(input),
+    closeSyncSettings: (input) => contract.closeSyncSettings(input),
+    selectSyncBackend: (input) => contract.selectSyncBackend(input),
+    saveSyncBackend: (input) => contract.saveSyncBackend(input),
+    syncNow: (input) => contract.syncNow(input),
+    testSyncConnection: (input) => contract.testSyncConnection(input),
+    pickSyncFolder: (input) => contract.pickSyncFolder(input),
+    connectDropbox: (input) => contract.connectDropbox(input),
+    disconnectDropbox: (input) => contract.disconnectDropbox(input),
+    runSyncEncryptionAction: (input) => contract.runSyncEncryptionAction(input),
 };
 
 let bootAdapter: ValidatedSqliteAdapter | null = null;
@@ -1818,6 +1874,33 @@ globalThis.MindwtrHost = {
             if (!read) throw new Error(`INVALID_INPUT: no menu read ${name}`);
             return unwrap(read(JSON.parse(json) as never));
         });
+    },
+    /**
+     * Sync (host-sync.ts), after the boot's validated load and journal replay: the network state first, then the automatic
+     * triggers start and the app's first sync is asked for. `appState` is RN's AppState ('active' or 'background').
+     * Each answers the badge and the finished-cycle count.
+     */
+    syncStart(appState: string): string {
+        return submit(async () => requireSync().start(appState));
+    },
+    /** RN's AppState change: resume and leave run core's triggers. */
+    syncAppState(appState: string): string {
+        return submit(async () => requireSync().appState(appState));
+    },
+    /** `json` is the device's network state (`{ isConnected, isInternetReachable }`, as expo-network reads it). */
+    syncNetwork(json: string): string {
+        return submit(async () => {
+            const next = JSON.parse(json) as { isConnected?: unknown; isInternetReachable?: unknown };
+            networkState = {
+                isConnected: typeof next.isConnected === 'boolean' ? next.isConnected : null,
+                isInternetReachable: typeof next.isInternetReachable === 'boolean' ? next.isInternetReachable : null,
+            };
+            return requireSync().network(networkState);
+        });
+    },
+    /** The badge and the finished-cycle count now. */
+    syncState(): string {
+        return submit(async () => requireSync().state());
     },
     /** After the journal's boot replay: drops request receipts older than 30 days. */
     pruneReceipts(): string {

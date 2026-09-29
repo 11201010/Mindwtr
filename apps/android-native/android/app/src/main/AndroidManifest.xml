@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The network state core's sync reads (HostNetwork.kt), as RN's expo-network does. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- RN's network security config (apps/mobile/plugins/android-network-security-config.js). -->
     <application

@@ -14,10 +14,15 @@ import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.BuildConfig
 import java.io.File
 import java.security.SecureRandom
+import android.os.SystemClock
 import java.util.concurrent.Callable
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
-import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * QuickJS and SQLite share one worker thread; Compose never enters either runtime.
@@ -51,6 +56,11 @@ class CoreHost(
         const val NETWORK_DEADLINE_MS = HostIo.CALL_TIMEOUT_MS + OPERATION_DEADLINE_MS
         /** How long a timed-out operation may take to end once cancelled, before the host stops for good. */
         const val DRAIN_MS = 10_000L
+        /**
+         * How long a caller waits for a long operation ([callLong]: a Sync screen command, whose sync can make several requests
+         * of up to HostIo's 5 min each). Past it the caller stops waiting; the operation holds no engine time, so it goes on.
+         */
+        const val SYNC_WAIT_MS = 30 * 60 * 1000L
 
         /**
          * A Kotlin exception must not cross the QuickJS JNI boundary: the
@@ -78,9 +88,20 @@ class CoreHost(
     private val collators = HashMap<String, Collator>()
     private var hostObject: JSObject? = null
     @Volatile private var engineThread: Thread? = null
-    private val executor = Executors.newSingleThreadExecutor { task ->
-        Thread(task, "mindwtr-core").also { engineThread = it }
+    private val executor = ScheduledThreadPoolExecutor(1) { task -> Thread(task, "mindwtr-core").also { engineThread = it } }.apply {
+        executeExistingDelayedTasksAfterShutdownPolicy = false
+        removeOnCancelPolicy = true
     }
+    /** The next idle pump ([schedulePump]) and when it runs (uptime); engine thread only. */
+    private var pumpTask: ScheduledFuture<*>? = null
+    private var pumpAt = Long.MAX_VALUE
+    /** Long operations ([callLong]) by id, each answered from the pump; engine thread only. */
+    private val watched = HashMap<String, CompletableFuture<String>>()
+    /**
+     * The JS host's events (bundle/host-sync.ts): sync's badge and finished-cycle count, an automatic sync's warning. Called on
+     * the engine thread, so a listener only hands the text on and never calls back into this host.
+     */
+    @Volatile var onEvent: ((String) -> Unit)? = null
 
     private fun <T> onEngine(work: () -> T): T {
         if (Thread.currentThread() === engineThread) return work()
@@ -166,7 +187,11 @@ class CoreHost(
             bridge.setProperty("kvMultiSet", guarded { args -> keyValue.multiSet(JSONArray(args[0] as String).let { pairs ->
                 List(pairs.length()) { pairs.getJSONArray(it).let { pair -> pair.getString(0) to pair.getString(1) } } }); null })
             bridge.setProperty("kvMultiRemove", guarded { args -> keyValue.multiRemove(stringList(args[0] as String)); null })
+            // An event for the screens: handed on as text; a listener that throws never reaches JS.
+            bridge.setProperty("hostEvent", guarded { args -> runCatching { onEvent?.invoke(args[0] as String) }; null })
             engine.globalObject.setProperty("__mindwtrNative", bridge)
+            // A fetch or secret answer queued while no call runs wakes the idle pump, which settles it at once.
+            io.wake = { runCatching { executor.execute { idlePump() } } }
             engine.evaluate(bundle, "core-host.js")
             // This host journals every write (WriteJournal), so core requires each write's replay tokens.
             callAsync("boot", legacyState, legacyBackup, "journaled").also { netCheck() }
@@ -335,6 +360,28 @@ class CoreHost(
     /** Settings › Data's Clear log: core deletes the diagnostics log file. */
     fun logClear(): JSONObject = callAsync("logClear")
 
+    /**
+     * Sync (bundle/host-sync.ts), after the boot's validated load and journal replay: core's automatic triggers start and the
+     * app's first sync is asked for. [appState] is RN's AppState ("active" or "background"). Each of these answers the sync
+     * badge and the finished-cycle count (`{ badge, color, cycles }`).
+     */
+    fun syncStart(appState: String): JSONObject = callAsync("syncStart", appState)
+
+    /** RN's AppState change: resuming or leaving runs core's triggers. */
+    fun syncAppState(appState: String): JSONObject = callAsync("syncAppState", appState)
+
+    /** The device's network state ([json]: `{ isConnected, isInternetReachable }`, as expo-network reads it). */
+    fun syncNetwork(json: String): JSONObject = callAsync("syncNetwork", json)
+
+    /** The sync badge and the finished-cycle count now. */
+    fun syncState(): JSONObject = callAsync("syncState")
+
+    /**
+     * A Settings › Sync screen command (host-entry.ts MENU_COMMANDS, one of WriteJournal.UNJOURNALED) with [json] unchanged. It
+     * may sync for minutes, so it never holds the engine ([callLong]); it is never journaled (it can carry a password).
+     */
+    fun syncCommand(name: String, json: String): JSONObject = callLong("menuCommand", name, json)
+
     /** Core's getProjects: its Active, Deferred, and Archived groups in its order. */
     fun projects(): JSONObject = callAsync("projects")
 
@@ -399,6 +446,71 @@ class CoreHost(
         result.getJSONObject("value")
     }
 
+    /**
+     * A long operation (a Sync screen command) that never holds the engine: it starts here, then the idle pump and every other
+     * call's pump advance it while the caller waits on this thread. Only an unjournaled write comes here, so no journaled write
+     * skips the journal. Past [SYNC_WAIT_MS] the caller stops waiting; nothing holds the engine, so nothing needs to stop.
+     */
+    private fun callLong(method: String, vararg args: Any?): JSONObject {
+        require(WriteJournal.unjournaled(method, args.toList())) { "$method is not an unjournaled command" }
+        check(Thread.currentThread() !== engineThread) { "A long operation is waited for off the engine thread" }
+        val done = CompletableFuture<String>()
+        val id = onEngine {
+            stopped?.let { throw IllegalStateException(it) }
+            (call(method, *args) as String).also {
+                watched[it] = done
+                idlePump()
+            }
+        }
+        val answer = try {
+            done.get(SYNC_WAIT_MS, TimeUnit.MILLISECONDS)
+        } catch (_: TimeoutException) {
+            onEngine { watched.remove(id) }
+            throw IllegalStateException("Core $method timed out")
+        } catch (failure: ExecutionException) {
+            throw failure.cause ?: failure
+        }
+        val result = JSONObject(answer)
+        if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
+        return result.getJSONObject("value")
+    }
+
+    /** Hands each long operation that answered to its waiting caller; engine thread. */
+    private fun settleWatched() {
+        if (watched.isEmpty()) return
+        for (id in watched.keys.toList()) (call("poll", id) as String?)?.let { watched.remove(id)?.complete(it) }
+    }
+
+    /**
+     * Engine work between host calls: due timers (auto-sync's pacing, a debounced save) and the answers of host calls started
+     * outside one (a sync's requests). Engine thread; a stopped or closed host pumps nothing.
+     */
+    private fun idlePump() {
+        pumpTask = null
+        pumpAt = Long.MAX_VALUE
+        val engine = context ?: return
+        if (stopped != null) return
+        runCatching { engine.globalObject.getJSFunction("__pumpTimers").call() }.onFailure { Log.w(TAG, "Native Android idle pump failed", it) }
+        settleWatched()
+        schedulePump()
+    }
+
+    /**
+     * The next idle pump, when the next timer is due (a host call's answer wakes it through HostIo). A pump already due earlier
+     * stays; engine thread.
+     */
+    private fun schedulePump() {
+        val engine = context ?: return
+        if (stopped != null) return
+        val delay = (engine.globalObject.getJSFunction("__nextTimerDelay").call() as? Number)?.toLong() ?: return
+        if (delay < 0) return
+        val at = SystemClock.uptimeMillis() + delay
+        if (at >= pumpAt) return
+        pumpTask?.cancel(false)
+        pumpAt = at
+        pumpTask = executor.schedule({ idlePump() }, delay, TimeUnit.MILLISECONDS)
+    }
+
     /** Operation [method]'s reply, `{ ok, value }` or `{ ok: false, error }`; one past [deadlineMs] is cancelled and throws. */
     private fun answer(method: String, args: Array<out Any?>, deadlineMs: Long): JSONObject {
         val id = call(method, *args) as String
@@ -416,6 +528,9 @@ class CoreHost(
             checkNotNull(context).globalObject.getJSFunction("__resumeHostCalls").call()
             throw IllegalStateException("Core $method timed out")
         }
+        // Work this call's pump advanced: a long operation it finished, and the timers it left.
+        settleWatched()
+        schedulePump()
         return JSONObject(answer)
     }
 
@@ -495,6 +610,10 @@ class CoreHost(
     private fun closeOnEngine() {
         functions.clear()
         hostObject = null
+        pumpTask?.cancel(false)
+        pumpTask = null
+        watched.values.forEach { it.completeExceptionally(IllegalStateException(stopped ?: "Core host is closed")) }
+        watched.clear()
         io.close()
         try {
             sqlite?.close()

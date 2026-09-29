@@ -89,6 +89,7 @@ fun SettingsList(model: InboxViewModel) = with(model.menu.settings) {
             "general" -> GeneralSettings(model, shown.view)
             "manage" -> ManageSettings(model, shown)
             "data" -> DataSettings(model, shown.view)
+            "sync" -> SyncSettings(model, shown.view)
             else -> GtdSettings(model, shown.view)
         }
         Spacer(Modifier.height(16.dp))
@@ -155,7 +156,7 @@ private fun MenuCard(model: InboxViewModel, rows: List<JSONObject>) = with(model
 
 /** RN's sectionTitle: 13/600 capitals, in the secondary text color unless the screen sets another (Data's Diagnostics: the text color). */
 @Composable
-private fun SectionTitle(text: String, top: Int = 0, color: Color = LocalTheme.current.colors.secondaryText) =
+internal fun SectionTitle(text: String, top: Int = 0, color: Color = LocalTheme.current.colors.secondaryText) =
     Text(text.uppercase(), style = rnText(13, 600), color = color,
         modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = top.dp).semantics { heading() })
 
@@ -166,7 +167,7 @@ private fun Description(text: String, top: Int = 0) =
 
 /** RN's settingCard. */
 @Composable
-private fun Card(top: Int = 0, content: @Composable ColumnScope.() -> Unit) =
+internal fun Card(top: Int = 0, content: @Composable ColumnScope.() -> Unit) =
     Column(Modifier.padding(top = top.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(LocalTheme.current.colors.cardBg), content = content)
 
 /**

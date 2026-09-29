@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
@@ -73,7 +74,14 @@ fun RowScope.MenuTab(model: InboxViewModel) {
         Modifier.weight(1f).fillMaxHeight().selectable(selected = open, role = Role.Tab, onClick = { model.menu.toggleSheet() }),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
     ) {
-        Icon(Lucide.Menu, null, tint = color, modifier = Modifier.size(if (open) 26.dp else 24.dp).fade(if (open) 1f else 0.8f))
+        Box {
+            Icon(Lucide.Menu, null, tint = color, modifier = Modifier.size(if (open) 26.dp else 24.dp).fade(if (open) 1f else 0.8f))
+            // RN's menuSyncDot: the sync badge's color, top right of the glyph; hidden from TalkBack, as RN's is.
+            coreColorOrNull(model.syncBadge.color)?.let { dot ->
+                Box(Modifier.fade(0.85f).align(Alignment.TopEnd).offset(x = 7.dp, y = (-2).dp).size(7.dp).clip(CircleShape).background(dot)
+                    .border(1.5.dp, c.cardBg, CircleShape).clearAndSetSemantics { }.testTag("menu-sync-dot"))
+            }
+        }
         Text(t("tab.menu"), style = rnText(10, if (open) 700 else 600, 12), color = color, maxLines = 1,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
     }

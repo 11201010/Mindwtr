@@ -2,14 +2,18 @@ package tech.dongdongbh.mindwtr.pilot
 
 import android.app.Application
 import android.util.Log
+import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.DiagnosticsLogFile
 import tech.dongdongbh.mindwtr.pilot.core.HostIo
+import tech.dongdongbh.mindwtr.pilot.core.HostNetwork
 import tech.dongdongbh.mindwtr.pilot.core.LegacyRnStoreGuard
 import tech.dongdongbh.mindwtr.pilot.core.RnKeyValue
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
 import java.util.concurrent.FutureTask
 
 /**
@@ -101,7 +105,7 @@ internal object ProcessCoreHost {
             runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() }, legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)
             loadTheme(runtime, legacy?.theme)
-            replay(runtime)
+            if (replay(runtime)) startSync(app, runtime)
             return runtime
         } catch (failure: Throwable) {
             runCatching { runtime.close() }
@@ -115,14 +119,69 @@ internal object ProcessCoreHost {
      * (InboxViewModel.retryOwed, kind "journal"), as for any owed command. Only a replay that left nothing prunes core's old
      * receipts, so an entry never outlives the receipt its replay needs; a failed prune only logs (the next boot prunes).
      */
-    private fun replay(runtime: CoreHost) {
+    private fun replay(runtime: CoreHost): Boolean {
         val replay = runtime.replayJournal()
-        replay.owed?.let { return recordFailure(PendingFailure(FailedAction("journal", ""), it, null)) }
+        replay.owed?.let { recordFailure(PendingFailure(FailedAction("journal", ""), it, null)); return false }
         // Only once the journal is empty on disk: an entry whose delete did not reach the disk still needs its receipt.
-        if (replay.left > 0) return
+        if (replay.left > 0) return false
         runCatching { runtime.pruneReceipts() }
             .onSuccess { Log.i(CoreHost.TAG, "Native Android receipts pruned=${it.optInt("pruned")}") }
             .onFailure { Log.w(CoreHost.TAG, "Native Android receipts prune failed", it) }
+        return true
+    }
+
+    // ---- Sync (bundle/host-sync.ts: core's service and triggers decide every cycle) ----
+
+    /** RN's AppState: "active" while MainActivity is resumed, else "background" (RN's onHostResume and onHostPause). */
+    @Volatile private var appState = "background"
+    /** Set once sync started; its app state and network changes go through [syncThread], in order. */
+    @Volatile private var syncHost: CoreHost? = null
+    private val syncThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-sync-events") }
+    private val syncListeners = CopyOnWriteArraySet<(JSONObject) -> Unit>()
+    /** The last sync badge and finished-cycle count (host-sync.ts's `sync` event), for a screen that opens later. */
+    @Volatile var syncState: JSONObject? = null
+        private set
+
+    /** A screen's listener for the JS host's events (a `sync` state, an automatic sync's `toast`); called on the engine thread. */
+    fun listenSync(listener: (JSONObject) -> Unit) = syncListeners.add(listener)
+    fun unlistenSync(listener: (JSONObject) -> Unit) = syncListeners.remove(listener)
+
+    private fun dispatch(event: JSONObject) {
+        if (event.optString("type") == "sync") syncState = event
+        syncListeners.forEach { runCatching { it(event) } }
+    }
+
+    /**
+     * Sync starts only after the boot's validated load and a journal replay that left nothing (plan block 1: a sync never runs
+     * before the replay finished); a replay that stopped starts it once its owed retry went through ([journalReplayed]). The
+     * network state goes first, then core's triggers start and ask for the app's first sync. A failure here never fails the
+     * boot: the app runs without automatic sync, and Settings › Sync still opens.
+     */
+    private fun startSync(app: Application, runtime: CoreHost) {
+        if (syncHost != null) return
+        runtime.onEvent = { text -> runCatching { dispatch(JSONObject(text)) } }
+        runCatching {
+            val network = HostNetwork(app) { state -> syncThread.execute { runCatching { runtime.syncNetwork(state) } } }
+            runtime.syncNetwork(network.state())
+            val startedWith = appState
+            syncState = runtime.syncStart(startedWith).put("type", "sync")
+            syncHost = runtime
+            network.start()
+            // Resumed or paused while the triggers started.
+            appState.takeIf { it != startedWith }?.let { now -> syncThread.execute { runCatching { runtime.syncAppState(now) } } }
+            Log.i(CoreHost.TAG, "Native Android sync started appState=$appState")
+        }.onFailure { Log.w(CoreHost.TAG, "Native Android sync start failed", it) }
+    }
+
+    /** The owed journal retry went through: sync may start now, as after a clean boot replay. */
+    fun journalReplayed(app: Application, runtime: CoreHost) = startSync(app, runtime)
+
+    /** MainActivity resumed ("active") or paused ("background"): core's triggers sync on resume and on leaving. */
+    fun appState(state: String) {
+        if (state == appState) return
+        appState = state
+        val runtime = syncHost ?: return
+        syncThread.execute { runCatching { runtime.syncAppState(state) }.onFailure { Log.w(CoreHost.TAG, "Native Android sync app state failed", it) } }
     }
 
     /** Core's setLanguage, then the label map read again in that language. Screens render only after this. */

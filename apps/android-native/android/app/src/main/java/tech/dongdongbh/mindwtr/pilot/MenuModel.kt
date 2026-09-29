@@ -288,6 +288,12 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     /** A saved search of the More sheet (core's route `/saved-search/<id>`). */
     private fun isSavedSearch(id: String) = more?.collection("savedSearches")?.any { it.getString("id") == id && it.getString("route").startsWith("/saved-search/") } == true
 
+    /** An automatic sync's warning toast's Open: RN's Settings › Sync. */
+    fun openSyncSettings() {
+        open(MenuScreen.Settings)
+        settings.push("sync")
+    }
+
     /** RN's saved search screen (`/saved-search/<id>`), pushed over the tabs under RN's stack header. */
     fun openSavedSearch(id: String) {
         editOwn("savedSearch") { put("id", id) }
@@ -1284,7 +1290,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         // Bulk organize's create, Mind Sweep's Add and a saved search's Delete: core's whole input and the request UUID.
         "bulkCreate", "mindSweepAdd", "savedSearchDelete" -> JSONObject(action.title).put("requestId", action.id)
         // Settings: core's whole input and the request UUID; Manage's Someday section writes are target-state and take none.
-        "generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting" -> JSONObject(action.title).put("requestId", action.id)
+        "generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting", "syncPreference" -> JSONObject(action.title).put("requestId", action.id)
         "somedayRename", "somedayReorder", "somedayDelete" -> JSONObject(action.title)
         else -> JSONObject().put("requestId", action.id).put("action", JSONObject(action.title))
     }.toString()

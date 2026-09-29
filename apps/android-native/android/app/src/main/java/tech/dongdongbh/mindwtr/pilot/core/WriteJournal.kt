@@ -46,15 +46,26 @@ class WriteJournal(
             "activateProject" to "{projectId,projectRevision}", "somedayMove" to "{requestId,taskIds[]}", "somedayUndo" to "{moveRequestId,requestId}",
             "somedayTask" to "{captureId}", "somedaySection" to "{requestId}", "taskListSort" to "{sortBy}", "somedayRename" to "{id}",
             "somedayReorder" to "{ids[]}", "somedayDelete" to "{id}",
+            // Settings › Sync's screen commands: never on disk (UNJOURNALED), so their shapes are never checked.
+            "openSyncSettings" to "{}", "closeSyncSettings" to "{}", "selectSyncBackend" to "{requestId}", "saveSyncBackend" to "{requestId,revision}",
+            "syncNow" to "{requestId}", "testSyncConnection" to "{}", "pickSyncFolder" to "{requestId}", "connectDropbox" to "{requestId}",
+            "disconnectDropbox" to "{requestId}", "runSyncEncryptionAction" to "{}",
         ) + listOf("archiveAction", "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction",
             "boardCreate", "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd",
-            "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "manageEditor", "manageDelete").associateWith { "{requestId}" }
+            "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "manageEditor", "manageDelete", "syncPreference").associateWith { "{requestId}" }
         val WRITES = SHAPES.keys
         /**
          * Writes never journaled: a key (the host method, or a Menu command's name) whose core command is in core's
          * NATIVE_UNJOURNALED_COMMANDS, a payload that can carry a secret. check-boot-gates.mjs keeps it equal to core's set.
          */
-        val UNJOURNALED = emptySet<String>()
+        val UNJOURNALED = setOf("openSyncSettings", "closeSyncSettings", "selectSyncBackend", "saveSyncBackend", "syncNow", "testSyncConnection",
+            "pickSyncFolder", "connectDropbox", "disconnectDropbox", "runSyncEncryptionAction")
+
+        /** Whether [method] with [args] is an [UNJOURNALED] write: CoreHost's long calls (callLong) take only these. */
+        fun unjournaled(method: String, args: List<Any?>): Boolean = method in WRITES && key(method, args) in UNJOURNALED
+
+        /** A write's journal key: the host method, or a Menu command's name. */
+        fun key(method: String, args: List<Any?>): Any? = if (method == "menuCommand") args.firstOrNull() else method
         const val ASIDE = "aside"
         private val NAME = Regex("""^(\d{16})\.json$""")
         /** A sequence number on disk: an entry's, one set aside here, or one cut short. */
@@ -194,8 +205,6 @@ class WriteJournal(
             if (key.endsWith("[]")) json.opt(key.dropLast(2)) is JSONArray else (json.opt(key) as? String).orEmpty().isNotEmpty()
         }
     }
-
-    private fun key(method: String, args: List<Any?>): Any? = if (method == "menuCommand") args.firstOrNull() else method
 
     /** [file] moved into [ASIDE] as it is (never over a file there); true once it moved. */
     private fun moveAside(file: File): Boolean {

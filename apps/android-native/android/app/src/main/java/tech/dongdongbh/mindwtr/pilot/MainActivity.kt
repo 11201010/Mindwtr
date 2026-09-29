@@ -187,6 +187,18 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** RN's AppState: "active" while resumed; core's sync triggers run on resume and on leaving. */
+    override fun onResume() {
+        super.onResume()
+        model.appState("active")
+    }
+
+    /** RN's AppState "background" on pause; a rotation is no leave (RN's activity handles it without pausing). */
+    override fun onPause() {
+        super.onPause()
+        if (!isChangingConfigurations) model.appState("background")
+    }
+
     /** RN's MainActivity is singleTask: a link, share or note sent while the app runs arrives here. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)

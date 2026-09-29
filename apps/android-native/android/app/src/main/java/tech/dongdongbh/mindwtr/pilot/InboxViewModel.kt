@@ -239,7 +239,47 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private var attaches = 0
     private val main = Handler(Looper.getMainLooper())
 
+    /** The booted host, for work that takes no lock (Settings › Sync's commands); null before the boot ends. */
+    internal fun coreHost(): CoreHost? = host
+
+    /** The sync badge (RN's useMobileSyncBadge, core's state): the Menu tab's dot and the Settings row's badge. */
+    data class SyncBadge(val state: String, val color: String?)
+    var syncBadge by mutableStateOf(badgeOf(ProcessCoreHost.syncState)); private set
+    private var syncCycles = ProcessCoreHost.syncState?.optInt("cycles") ?: 0
+    /** The JS host's events arrive on the engine thread; each is handed to the main thread. */
+    private val syncListener: (JSONObject) -> Unit = { event -> ui { syncEvent(event) } }
+
+    private fun badgeOf(event: JSONObject?) = SyncBadge(event?.optString("badge")?.ifEmpty { null } ?: "hidden", event?.optString("color")?.ifEmpty { null }?.takeIf { event.isNull("color").not() })
+
+    /**
+     * A sync event: a new badge; a finished cycle (a sync can change what every list shows, as RN's store updates do), so the
+     * lists and the open screen are read again; an automatic sync's warning, with Open for Settings › Sync.
+     */
+    private fun syncEvent(event: JSONObject) {
+        when (event.optString("type")) {
+            "sync" -> {
+                syncBadge = badgeOf(event)
+                val cycles = event.optInt("cycles")
+                if (cycles != syncCycles) {
+                    syncCycles = cycles
+                    if (writable) refreshAll()
+                } else if (menu.list == "settings") menu.settings.refresh()
+            }
+            "toast" -> showToast(event.optString("title").ifEmpty { null }, event.getString("message"), event.optString("tone", "warning"),
+                event.optString("action").ifEmpty { null }) { if (event.optString("open") == "sync") menu.openSyncSettings() }
+        }
+    }
+
+    /** RN's AppState for core's sync triggers: "active" on resume, "background" on leaving (MainActivity). */
+    fun appState(state: String) = ProcessCoreHost.appState(state)
+
+    override fun onCleared() {
+        ProcessCoreHost.unlistenSync(syncListener)
+        super.onCleared()
+    }
+
     init {
+        ProcessCoreHost.listenSync(syncListener)
         saved["projectRequestId"] = projectRequestId
         val at = depth()
         val savedDraft = editorKey?.let(drafts::read)
@@ -886,6 +926,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             "journal" -> perform(action) { runtime ->
                 runtime.replayJournal().owed?.let { throw IllegalStateException(it) }
                 acknowledged(action)
+                // The replay finished: sync may start now (it never runs before the replay).
+                ProcessCoreHost.journalReplayed(getApplication(), runtime)
             }
             // A read that met an unsaved write: read again under the same lock; its success clears it.
             "storage" -> perform(action) { runtime ->
