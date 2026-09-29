@@ -72,7 +72,8 @@ fun Context.readPickedText(uri: Uri): String? = runCatching {
  * The entries waiting to open, oldest first ([EntryQueue], on disk from the intent's arrival, so a process death or a
  * force-stop keeps them). The oldest opens once no command runs or is owed and nothing the user is working in is open (the
  * editor, Process Inbox, Mind Sweep, the capture popup, a Menu or Focus dialog, the Calendar's composer, the search's save
- * dialog): that work stays, and the entry opens when it ends. An entry leaves the queue only after its screen or popup opened;
+ * dialog, a Settings field typed and not yet sent, the Add new project field with text): that work stays, and the entry opens
+ * when it ends. An entry leaves the queue only after its screen or popup opened;
  * a failed read keeps it for another try (after [EntryLifecycle]'s wait), unless core refused the input itself.
  */
 class EntryRouter(private val shell: InboxViewModel, dir: File) {
@@ -95,6 +96,11 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
         !writable || busy || failedAction != null || editor != null || processing?.hidden == false || capture != null
             || menu.dialog != null || menu.focusControls.dialog != null || menu.calendar.composer != null || search?.saveName != null
             || menu.screen == MenuScreen.MindSweep
+            // Typed text not yet sent: a Settings field before its commit, and the Add new project field while the list shows it
+            // (the draft itself survives any route; only covering the field would take it from under the user's typing).
+            || (menu.screen == MenuScreen.Settings && menu.settings.uncommitted)
+            || (projectDraft.isNotBlank() && openProjectId == null && (menu.screen == MenuScreen.Projects
+                || (menu.screen == null && screen == Screen.Projects && menu.quickView == "projects")))
     }
 
     /** Reads the oldest entry once the app is free, then opens it once no action runs; MainActivity calls it whenever that may change. */

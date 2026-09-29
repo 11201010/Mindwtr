@@ -1990,6 +1990,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(entryKt, /if \(!queue\.add\(input\.toString\(\)\)\)/);
     // Any open unsaved work holds the entry back (the capture popup and its draft included): a share never replaces it.
     assert.match(entryKt, /!writable \|\| busy \|\| failedAction != null \|\| editor != null \|\| processing\?\.hidden == false \|\| capture != null\s+\|\| menu\.dialog != null \|\| menu\.focusControls\.dialog != null \|\| menu\.calendar\.composer != null \|\| search\?\.saveName != null\s+\|\| menu\.screen == MenuScreen\.MindSweep/);
+    // Typed text not yet sent holds entries back too: the Add new project field while the Projects list shows it, and a
+    // Settings field before its commit (a GTD text field, a Someday section's inline rename).
+    assert.match(entryKt, /\|\| \(menu\.screen == MenuScreen\.Settings && menu\.settings\.uncommitted\)\s+\|\| \(projectDraft\.isNotBlank\(\) && openProjectId == null && \(menu\.screen == MenuScreen\.Projects\s+\|\| \(menu\.screen == null && screen == Screen\.Projects && menu\.quickView == "projects"\)\)\)/);
+    assert.match(source('SettingsModel.kt'), /val uncommitted: Boolean get\(\) = local\.has\("renaming"\) \|\| local\.keys\(\)\.asSequence\(\)\.any \{ it\.startsWith\("typed:"\) \}/);
     assert.match(entryKt, /val reply = runtime\.menuRead\("entryPoint", entry\.input\)/);
     assert.match(entryKt, /runtime\.openQuickCapture\(\)\s+runtime\.quickCaptureView\(JSONObject\(\)\.put\("text", open\.getString\("text"\)\)\.put\("options", open\.getJSONObject\("options"\)\)\.toString\(\)\)/);
     // An entry leaves the queue only after it opened, or when core refused its input; a failed read keeps it for a later try.

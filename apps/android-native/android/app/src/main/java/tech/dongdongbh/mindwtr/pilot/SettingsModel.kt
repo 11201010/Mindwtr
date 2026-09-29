@@ -265,6 +265,9 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     /** A GTD text field as typed, kept with the screen until it commits. */
     fun type(name: String, text: String) = editLocal { put("typed:$name", text) }
 
+    /** Text typed here and not yet sent: a GTD field before its commit, or a Someday section's inline rename (EntryPoints.kt waits). */
+    val uncommitted: Boolean get() = local.has("renaming") || local.keys().asSequence().any { it.startsWith("typed:") }
+
     /**
      * Manage's editor (RN's modal): core's `edit` target and its starting fields, with a request UUID that stays with the dialog,
      * so a failed Save is retried exactly.
