@@ -264,8 +264,9 @@ try {
     share(titles.second);
     nodes = await waitFor('the first share\'s popup', popup(titles.first), 20_000);
     await holds(popup(titles.first), 3_000, 'the first share\'s popup');
-    await closePopup(nodes);
-    nodes = await waitFor('the second share\'s popup', popup(titles.second), 20_000);
+    // Closing the first popup opens the second share's at once: it waited in the queue.
+    nodes = await tapExpecting(withDescription(await screen(), en['common.close']) ?? fail('no Close on the capture popup'), popup(titles.second),
+        'the second share\'s popup');
     await closePopup(nodes);
     check(true, '(e) two shares open in the order they came, the second after the first\'s popup closed');
 
