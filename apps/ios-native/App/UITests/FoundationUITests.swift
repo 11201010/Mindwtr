@@ -2879,7 +2879,7 @@ final class FoundationUITests: XCTestCase {
         cancelled.tap(); cancelled.typeText("   ")
         XCTAssertFalse(app.buttons["someday-section-create-save"].isEnabled)
         cancelled.typeText("Task79 Cancelled")
-        boardTap(app, "someday-section-create-cancel")
+        app.buttons["someday-section-create-cancel"].coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).tap()
         boardEnabled(app.buttons["someday-overflow-button"])
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label == %@", "Task79 Cancelled")).firstMatch.exists)
 
@@ -2888,7 +2888,7 @@ final class FoundationUITests: XCTestCase {
         input.tap(); input.typeText("  Task79 Books  ")
         boardEnabled(app.buttons["someday-section-create-save"])
         if saveWithReturn { input.typeText("\n") }
-        else { boardTap(app, "someday-section-create-save") }
+        else { app.buttons["someday-section-create-save"].coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).tap() }
         let headings = task79SectionHeadings(app)
         XCTAssertTrue(headings.firstMatch.waitForExistence(timeout: 20))
         XCTAssertEqual(headings.count, 1)
