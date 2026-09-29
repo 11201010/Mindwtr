@@ -260,21 +260,38 @@ describe('WebDAV attachment pass', () => {
   });
 
   describe('after a redirected HEAD (a CDN for downloads, or a write redirect)', () => {
-    const run = async (putResult: () => Promise<undefined>) => {
+    const redirectedHead = { confirmed: false, redirected: true, status: 200 };
+    const run = async (
+      putResult: () => Promise<undefined>,
+      proofAfterConflict = redirectedHead,
+    ) => {
       const task = { uploadAsync: vi.fn(async () => ({ status: 201 })), cancelAsync: vi.fn(async () => undefined) };
       const webdavPutFileVersioned = vi.fn(putResult);
+      const webdavConfirmUploadedFile = vi.fn()
+        .mockResolvedValueOnce(redirectedHead)
+        .mockResolvedValue(proofAfterConflict);
       const { backends, memory, lines } = setup({
         createUploadTask: () => task,
         core: {
           webdavMakeDirectory: vi.fn(async () => undefined),
           webdavHeadFile: vi.fn(async () => ({ exists: false, fingerprint: null, etag: null, lastModified: null, contentLength: null })),
           webdavPutFileVersioned,
-          webdavConfirmUploadedFile: vi.fn(async () => ({ confirmed: false, redirected: true, status: 200 })),
+          webdavConfirmUploadedFile,
         },
       });
       memory.put(LOCAL_URI, LOCAL);
-      const result = await backends.syncWebdavAttachments(withAttachment(fileAttachment()), webdavConfig, BASE_URL);
-      return { result, lines, task, webdavPutFileVersioned };
+      const logs: LogPayload[] = [];
+      setLogger((payload) => { logs.push(payload); });
+      let result: AppData | false;
+      try {
+        result = await backends.syncWebdavAttachments(withAttachment(fileAttachment()), webdavConfig, BASE_URL);
+      } finally {
+        setLogger(consoleLogger);
+      }
+      return { result, lines, logs, task, webdavPutFileVersioned, webdavConfirmUploadedFile };
+    };
+    const conflict = async (): Promise<undefined> => {
+      throw new WebDavRemoteWriteConflictError(412);
     };
 
     it('falls back once to the checked byte PUT and records it', async () => {
@@ -296,13 +313,39 @@ describe('WebDAV attachment pass', () => {
       }));
     });
 
-    it('takes a 412 from that create-only PUT as the streamed create that already landed', async () => {
-      const { result, webdavPutFileVersioned } = await run(async () => {
-        throw new WebDavRemoteWriteConflictError(412);
-      });
+    it('records a 412 from that create-only PUT once a HEAD at the same URL finds the file', async () => {
+      const { result, webdavPutFileVersioned, webdavConfirmUploadedFile } = await run(
+        conflict,
+        { confirmed: true, redirected: false, status: 200 },
+      );
 
       expect(webdavPutFileVersioned).toHaveBeenCalledTimes(1);
+      expect(webdavConfirmUploadedFile).toHaveBeenCalledTimes(2);
+      expect(webdavConfirmUploadedFile).toHaveBeenLastCalledWith(
+        `${BASE_URL}/attachments/att-1.txt`,
+        LOCAL.byteLength,
+        expect.objectContaining({ username: 'user' }),
+      );
       expect(attachmentOf(result)?.cloudKey).toBe('attachments/att-1.txt');
+    });
+
+    it.each([
+      ['the HEAD is redirected again', redirectedHead],
+      ['the HEAD finds another size (another writer created it)', { confirmed: false, redirected: false, status: 200 }],
+      ['the HEAD finds no file', { confirmed: false, redirected: false, status: 404 }],
+    ])('keeps a 412 unsynced for a retry when %s', async (_case, proof) => {
+      // A 412 proves only that some file exists there, not that it holds these bytes.
+      const { result, lines, logs } = await run(conflict, proof);
+
+      expect(attachmentOf(result)?.cloudKey).toBeUndefined();
+      expect(lines).toContainEqual(expect.objectContaining({
+        message: 'Failed to upload attachment att-1',
+        extra: { error: 'fetch failed: unexpected redirect' },
+      }));
+      expect(logs).toContainEqual(expect.objectContaining({
+        level: 'warn',
+        context: { releaseCheck: 'v1.3.4/fetch-redirect-refused-upload', method: 'PUT', status: proof.status },
+      }));
     });
 
     it('fails the upload only when the byte PUT is refused', async () => {

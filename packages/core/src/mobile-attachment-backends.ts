@@ -523,14 +523,13 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
               },
             }
           );
-          let storedByStream = uploadedWithFileSystem;
-          if (uploadedWithFileSystem) {
-            // The native uploader follows a redirect by itself: a 307 or 308 stores the file at
-            // another URL and a 303 stores nothing, yet the task answers 2xx. Record the cloud
-            // key only once a HEAD at this URL, not after a redirect, finds the file (with the
-            // uploaded size when it states one).
+          // The native uploader follows a redirect by itself: a 307 or 308 stores the file at
+          // another URL and a 303 stores nothing, yet the task answers 2xx. Record the cloud
+          // key only once a HEAD at this URL, not after a redirect, finds the file (with the
+          // uploaded size when it states one).
+          const findUploadAtUrl = async () => {
             const sentBytes = (await files.statAttachmentFile(localPath))?.size ?? uploadBytes;
-            const landed = await core.withRetry(async () => {
+            return core.withRetry(async () => {
               await waitForSlot();
               return core.webdavConfirmUploadedFile(uploadUrl, sentBytes, {
                 ...getMobileWebDavRequestOptions(webDavConfig.allowInsecureHttp),
@@ -539,6 +538,10 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
                 signal,
               });
             }, WEBDAV_ATTACHMENT_RETRY_OPTIONS);
+          };
+          let storedByStream = uploadedWithFileSystem;
+          if (uploadedWithFileSystem) {
+            const landed = await findUploadAtUrl();
             if (landed.redirected) {
               // A redirected HEAD (a download CDN, or a write redirect) proves nothing about this
               // URL, so the bytes go once more through the buffered PUT, whose redirect core
@@ -586,9 +589,14 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
               );
             } catch (error) {
               // After a stream this PUT is create-only, and the HEAD before the stream found no
-              // file here; a 412 now means the stream's own create landed (same key, same bytes),
-              // not another version, so it is recorded instead of failing and looping.
+              // file here. A 412 now says some file exists, not that it holds these bytes (another
+              // writer may have created it), so it is recorded only when the same HEAD proof finds
+              // it; otherwise it stays unsynced and the next sync sends it as an overwrite.
               if (!(uploadedWithFileSystem && getErrorStatus(error) === 412)) throw error;
+              const stored = await findUploadAtUrl();
+              if (!stored.confirmed) {
+                refuseWriteRedirect({ releaseCheck: 'v1.3.4/fetch-redirect-refused-upload', method: 'PUT', status: stored.status });
+              }
               files.logAttachmentInfo('WebDAV attachment already stored by the streamed upload', { id: attachment.id });
             }
           }
