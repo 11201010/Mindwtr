@@ -12,12 +12,21 @@ import {
     type AIProviderId,
     type Language,
     getChecklistEditStatus,
-    getUsedTaskTokens,
     tFallback,
     type StoreActionResult,
     useTaskStore,
 } from '@mindwtr/core';
 
+import {
+    appendTaskBreakdownSteps,
+    buildTaskBreakdownInput,
+    buildTaskClarifyInput,
+    getAIClarifyDialog,
+    getTaskBreakdownDialog,
+    getTaskBreakdownSteps,
+    getTaskClarifySuggestionEdit,
+    type TaskAIProjectContext,
+} from '@mindwtr/core/ai-task-actions';
 import type { AIResponseAction } from '../ai-response-modal';
 import { buildAIConfig, isAIKeyRequired, loadAIKey } from '../../lib/ai-config';
 import { logTaskError, logTaskWarn } from './task-edit-modal.utils';
@@ -65,7 +74,7 @@ type TaskEditActionsParams = {
     isAIWorking: boolean;
     onClose: () => void;
     prioritiesEnabled: boolean;
-    projectContext?: Record<string, unknown> | null;
+    projectContext?: TaskAIProjectContext | null;
     resetTaskChecklist: (taskId: string) => Promise<StoreActionResult>;
     skipRecurringTaskOccurrence: (taskId: string) => Promise<StoreActionResult>;
     restoreTask: (taskId: string) => Promise<StoreActionResult>;
@@ -444,16 +453,14 @@ export function useTaskEditActions({
         return createAIProvider(buildAIConfig(settings, apiKey, language));
     }, [aiEnabled, language, settings, t]);
 
-    const applyAISuggestion = useCallback((suggested: { title?: string; context?: string; timeEstimate?: TimeEstimate }) => {
+    const applyAISuggestion = useCallback((suggested: { title: string; context?: string; timeEstimate?: TimeEstimate }) => {
         if (!canMutate()) return;
-        if (suggested.title) {
-            setTitleImmediate(suggested.title);
+        const edit = getTaskClarifySuggestionEdit(taskEditDraft?.draft.contexts, suggested);
+        if (edit.title) {
+            setTitleImmediate(edit.title);
         }
-        if (suggested.timeEstimate) setDraftField('timeEstimate', suggested.timeEstimate);
-        if (suggested.context) {
-            const contexts = (taskEditDraft?.draft.contexts ?? '').split(',').map((value) => value.trim()).filter(Boolean);
-            setDraftField('contexts', Array.from(new Set([...contexts, suggested.context])).join(', '));
-        }
+        if (edit.patch.timeEstimate) setDraftField('timeEstimate', edit.patch.timeEstimate);
+        if (edit.patch.contexts !== undefined) setDraftField('contexts', edit.patch.contexts);
     }, [canMutate, setDraftField, setTitleImmediate, taskEditDraft?.draft.contexts]);
 
     const handleAIClarify = useCallback(async () => {
@@ -464,42 +471,34 @@ export function useTaskEditActions({
         try {
             const provider = await getAIProvider();
             if (!provider) return;
-            const contextOptions = Array.from(new Set([
-                ...getUsedTaskTokens(tasks, (item) => item.contexts, { prefix: '@' }),
-                ...(mergedTask.contexts ?? []),
-            ]));
-            const response = await provider.clarifyTask({
+            const response = await provider.clarifyTask(buildTaskClarifyInput({
                 title,
-                contexts: contextOptions,
-                startTime: mergedTask.startTime ?? task.startTime,
-                dueDate: mergedTask.dueDate ?? task.dueDate,
-                reviewAt: mergedTask.reviewAt ?? task.reviewAt,
-                ...(projectContext ?? {}),
-            });
-            const actions: AIResponseAction[] = response.options.slice(0, 3).map((option) => ({
-                label: option.label,
-                onPress: () => {
-                    setTitleImmediate(option.action);
-                    closeAIModal();
-                },
+                tasks,
+                task,
+                merged: mergedTask,
+                projectContext,
             }));
-            if (response.suggestedAction?.title) {
-                actions.push({
-                    label: t('ai.applySuggestion'),
-                    variant: 'primary',
-                    onPress: () => {
-                        applyAISuggestion(response.suggestedAction!);
-                        closeAIModal();
-                    },
-                });
-            }
-            actions.push({
-                label: t('common.cancel'),
-                variant: 'secondary',
-                onPress: closeAIModal,
+            const dialog = getAIClarifyDialog(response, t);
+            const actions: AIResponseAction[] = dialog.choices.map((choice) => {
+                const { apply } = choice;
+                return {
+                    label: choice.label,
+                    ...(choice.variant ? { variant: choice.variant } : {}),
+                    onPress: apply.type === 'title'
+                        ? () => {
+                            setTitleImmediate(apply.title);
+                            closeAIModal();
+                        }
+                        : apply.type === 'suggestion'
+                            ? () => {
+                                applyAISuggestion(apply.suggestion);
+                                closeAIModal();
+                            }
+                            : closeAIModal,
+                };
             });
             setAiModal({
-                title: response.question || t('taskEdit.aiClarify'),
+                title: dialog.title,
                 actions,
             });
         } catch (error) {
@@ -533,32 +532,26 @@ export function useTaskEditActions({
         try {
             const provider = await getAIProvider();
             if (!provider) return;
-            const response = await provider.breakDownTask({
+            const response = await provider.breakDownTask(buildTaskBreakdownInput({
                 title,
-                description: String(descriptionDraft ?? ''),
-                ...(projectContext ?? {}),
-            });
-            const steps = response.steps.map((step) => step.trim()).filter(Boolean).slice(0, 8);
+                description: descriptionDraft,
+                projectContext,
+            }));
+            const steps = getTaskBreakdownSteps(response);
             if (steps.length === 0) return;
+            const dialog = getTaskBreakdownDialog(steps, t);
             setAiModal({
-                title: t('ai.breakdownTitle'),
-                message: steps.map((step, index) => `${index + 1}. ${step}`).join('\n'),
+                title: dialog.title,
+                message: dialog.message,
                 actions: [
                     {
-                        label: t('common.cancel'),
-                        variant: 'secondary',
+                        ...dialog.cancel,
                         onPress: closeAIModal,
                     },
                     {
-                        label: t('ai.addSteps'),
-                        variant: 'primary',
+                        ...dialog.add,
                         onPress: () => {
-                            const newItems = steps.map((step) => ({
-                                id: generateUUID(),
-                                title: step,
-                                isCompleted: false,
-                            }));
-                            applyChecklistUpdate([...(taskEditDraft?.checklist || []), ...newItems]);
+                            applyChecklistUpdate(appendTaskBreakdownSteps(taskEditDraft?.checklist || [], steps, generateUUID));
                             closeAIModal();
                         },
                     },

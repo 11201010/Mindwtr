@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createAIProvider, type AIProviderId, type AppData, type Language, type TimeEstimate } from '@mindwtr/core';
+import {
+    applyTaskCopilotParts,
+    getTaskCopilotParts,
+    getTaskCopilotText,
+    keepTaskCopilotSuggestion,
+    TASK_COPILOT_DELAY_MS,
+    type TaskCopilotPart,
+} from '@mindwtr/core/ai-task-actions';
 import type { TaskDraft, TaskDraftSetter } from '@mindwtr/core/task-draft';
 import { buildCopilotConfig, isAIKeyRequired, loadAIKey } from '../../lib/ai-config';
 import { logError } from '../../lib/app-log';
@@ -12,7 +20,7 @@ type CopilotSuggestion = {
 };
 
 /** One separately applicable piece of a copilot suggestion. */
-export type CopilotPart = { kind: 'context' | 'timeEstimate' | 'tag'; value: string };
+export type CopilotPart = TaskCopilotPart;
 
 type UseTaskEditCopilotArgs = {
     settings: AppData['settings'];
@@ -86,10 +94,8 @@ export function useTaskEditCopilot({
             setCopilotSuggestion(null);
             return;
         }
-        const title = String(titleDraft ?? '').trim();
-        const description = String(descriptionDraft ?? '').trim();
-        const input = [title, description].filter(Boolean).join('\n');
-        if (input.length < 4) {
+        const input = getTaskCopilotText(titleDraft, descriptionDraft);
+        if (!input) {
             setCopilotSuggestion(null);
             return;
         }
@@ -112,15 +118,12 @@ export function useTaskEditCopilot({
                     abortController ? { signal: abortController.signal } : undefined
                 );
                 if (cancelled || !copilotMountedRef.current) return;
-                if (!suggestion.context && (!timeEstimatesEnabled || !suggestion.timeEstimate) && !suggestion.tags?.length) {
-                    setCopilotSuggestion(null);
-                } else {
-                    setCopilotSuggestion({ ...suggestion, language });
-                }
+                const kept = keepTaskCopilotSuggestion(suggestion, timeEstimatesEnabled);
+                setCopilotSuggestion(kept ? { ...kept, language } : null);
             } catch {
                 if (!cancelled && copilotMountedRef.current) setCopilotSuggestion(null);
             }
-        }, 800);
+        }, TASK_COPILOT_DELAY_MS);
         return () => {
             cancelled = true;
             clearTimeout(handle);
@@ -159,44 +162,28 @@ export function useTaskEditCopilot({
 
     // The suggestion splits into parts the user applies one at a time (#1022);
     // a part leaves the pending list once it is in the applied markers below.
-    const pendingCopilotParts = useMemo<CopilotPart[]>(() => {
-        if (!visibleCopilotSuggestion) return [];
-        const parts: CopilotPart[] = [];
-        if (visibleCopilotSuggestion.context && visibleCopilotSuggestion.context !== copilotContext) {
-            parts.push({ kind: 'context', value: visibleCopilotSuggestion.context });
-        }
-        if (timeEstimatesEnabled && visibleCopilotSuggestion.timeEstimate && visibleCopilotSuggestion.timeEstimate !== copilotEstimate) {
-            parts.push({ kind: 'timeEstimate', value: visibleCopilotSuggestion.timeEstimate });
-        }
-        for (const tag of visibleCopilotSuggestion.tags ?? []) {
-            if (!copilotTags.includes(tag)) parts.push({ kind: 'tag', value: tag });
-        }
-        return parts;
-    }, [copilotContext, copilotEstimate, copilotTags, timeEstimatesEnabled, visibleCopilotSuggestion]);
+    const pendingCopilotParts = useMemo<CopilotPart[]>(() => getTaskCopilotParts(
+        visibleCopilotSuggestion,
+        { context: copilotContext, timeEstimate: copilotEstimate, tags: copilotTags },
+        timeEstimatesEnabled,
+    ), [copilotContext, copilotEstimate, copilotTags, timeEstimatesEnabled, visibleCopilotSuggestion]);
 
     // Batched on purpose: applying several tags one call at a time would each
     // re-read the same stale draft string and drop all but the last.
     const applyCopilotParts = useCallback((parts: CopilotPart[]) => {
         if (parts.length === 0) return;
-        const splitTokens = (value: string | undefined) => (
-            (value ?? '').split(',').map((token) => token.trim()).filter(Boolean)
-        );
-        const context = parts.find((part) => part.kind === 'context')?.value;
-        const estimate = parts.find((part) => part.kind === 'timeEstimate')?.value;
-        const tags = parts.filter((part) => part.kind === 'tag').map((part) => part.value);
-        if (context) {
-            const next = Array.from(new Set([...splitTokens(draft?.contexts), context]));
-            setDraftField('contexts', next.join(', '));
-            setCopilotContext(context);
+        const applied = applyTaskCopilotParts({ contexts: draft?.contexts, tags: draft?.tags }, parts, timeEstimatesEnabled);
+        if (applied.context) {
+            setDraftField('contexts', applied.patch.contexts ?? '');
+            setCopilotContext(applied.context);
         }
-        if (tags.length) {
-            const nextTags = Array.from(new Set([...splitTokens(draft?.tags), ...tags]));
-            setDraftField('tags', nextTags.join(', '));
-            setCopilotTags((prev) => Array.from(new Set([...prev, ...tags])));
+        if (applied.tags.length) {
+            setDraftField('tags', applied.patch.tags ?? '');
+            setCopilotTags((prev) => Array.from(new Set([...prev, ...applied.tags])));
         }
-        if (estimate && timeEstimatesEnabled) {
-            setDraftField('timeEstimate', estimate as TimeEstimate);
-            setCopilotEstimate(estimate as TimeEstimate);
+        if (applied.timeEstimate) {
+            setDraftField('timeEstimate', applied.timeEstimate);
+            setCopilotEstimate(applied.timeEstimate);
         }
     }, [draft?.contexts, draft?.tags, setDraftField, timeEstimatesEnabled]);
 

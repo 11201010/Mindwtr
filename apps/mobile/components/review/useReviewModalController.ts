@@ -6,7 +6,6 @@ import {
     buildReviewSteps,
     buildReviewSuggestionUpdates,
     createAIProvider,
-    filterReviewSuggestions,
     getExternalCalendarDaySummaries,
     getReviewCalendarRange,
     getReviewStepRail,
@@ -32,6 +31,7 @@ import {
     type WeeklyReviewStepId,
     useTaskStore,
 } from '@mindwtr/core';
+import { readWeeklyReviewAnalysis } from '@mindwtr/core/ai-task-actions';
 import {
     Calendar as CalendarIcon,
     CheckCircle2,
@@ -359,14 +359,9 @@ export function useReviewModalController({
         try {
             const provider = createAIProvider(buildAIConfig(settings, apiKey, language));
             const response = await provider.analyzeReview({ items: staleItems });
-            // Filter here, not in the apply path, so what is displayed and what
-            // can be written never diverge.
-            const suggestions = filterReviewSuggestions(response.suggestions || [], staleItems);
-            setAiSuggestions(suggestions);
-            const defaultSelected = new Set(
-                suggestions.filter(isActionableReviewSuggestion).map((suggestion) => suggestion.id),
-            );
-            setAiSelectedIds(defaultSelected);
+            const analysis = readWeeklyReviewAnalysis(response, staleItems);
+            setAiSuggestions(analysis.suggestions);
+            setAiSelectedIds(new Set(analysis.selectedIds));
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             setAiError(message || 'AI request failed.');

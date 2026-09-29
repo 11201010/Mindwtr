@@ -1,4 +1,4 @@
-import { WHISPER_MODELS as CORE_WHISPER_MODELS, WHISPER_MODEL_BASE_URL, type WhisperModelDescriptor } from '@mindwtr/core/whisper-models';
+import { WHISPER_MODEL_BASE_URL } from '@mindwtr/core/whisper-models';
 
 export type SettingsScreen =
     | 'main'
@@ -64,24 +64,20 @@ export { SETTINGS_LANGUAGE_OPTIONS as LANGUAGES } from '@mindwtr/core';
 
 export { WHISPER_MODEL_BASE_URL };
 
-// Mobile only offers the small models people can realistically download over
-// a phone connection — the full catalogue (including whisper-large-v3-turbo,
-// desktop-only) lives in core as the single source of truth for hashes and
-// sizes. This subset is a product decision, not a data copy: the numbers
-// themselves always come from @mindwtr/core/whisper-models.
-const MOBILE_WHISPER_MODEL_IDS = new Set(['whisper-tiny', 'whisper-tiny.en', 'whisper-base', 'whisper-base.en']);
-export const WHISPER_MODELS: WhisperModelDescriptor[] = CORE_WHISPER_MODELS
-    .filter((model) => MOBILE_WHISPER_MODEL_IDS.has(model.id));
-export const DEFAULT_WHISPER_MODEL = WHISPER_MODELS[0]?.id ?? 'whisper-tiny';
+// Mobile's Whisper subset, the consent key and the FOSS model suggestions are core's
+// (ai-settings-model.ts); the full Whisper catalogue lives in whisper-models.ts.
+export {
+    AI_PROVIDER_CONSENT_KEY,
+    FOSS_LOCAL_LLM_COPILOT_OPTIONS,
+    FOSS_LOCAL_LLM_MODEL_OPTIONS,
+    MOBILE_DEFAULT_WHISPER_MODEL as DEFAULT_WHISPER_MODEL,
+    MOBILE_WHISPER_MODELS as WHISPER_MODELS,
+} from '@mindwtr/core/ai-settings-model';
 
 export const UPDATE_BADGE_AVAILABLE_KEY = 'mindwtr-update-available';
 export const UPDATE_BADGE_LAST_CHECK_KEY = 'mindwtr-update-last-check';
 export const UPDATE_BADGE_LATEST_KEY = 'mindwtr-update-latest';
 export const UPDATE_BADGE_INTERVAL_MS = 1000 * 60 * 60 * 24;
-export const AI_PROVIDER_CONSENT_KEY = 'mindwtr-ai-provider-consent-v1';
-
-export const FOSS_LOCAL_LLM_MODEL_OPTIONS = ['llama3.2', 'qwen2.5', 'mistral', 'phi-4-mini'];
-export const FOSS_LOCAL_LLM_COPILOT_OPTIONS = ['llama3.2', 'qwen2.5', 'mistral', 'phi-4-mini'];
 
 export type MobileExtraConfig = {
     analyticsHeartbeatUrl?: string;

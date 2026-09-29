@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Task } from '@mindwtr/core';
+import { getTaskAIProjectContext } from '@mindwtr/core/ai-task-actions';
 
 type UseTaskEditPreviewParams = {
     editedProjectId?: string;
@@ -28,18 +29,7 @@ export function useTaskEditPreview({
 }: UseTaskEditPreviewParams) {
     const projectContext = React.useMemo(() => {
         if (!includeProjectContext) return null;
-        const nextProjectId = editedProjectId ?? projectId;
-        if (!nextProjectId) return null;
-        const project = projects.find((item) => item.id === nextProjectId);
-        const projectTasks = tasks
-            .filter((item) => item.projectId === nextProjectId && item.id !== task?.id && !item.deletedAt)
-            .map((item) => `${item.title}${item.status ? ` (${item.status})` : ''}`)
-            .filter(Boolean)
-            .slice(0, 20);
-        return {
-            projectTitle: project?.title || '',
-            projectTasks,
-        };
+        return getTaskAIProjectContext({ projectId: editedProjectId ?? projectId, projects, tasks, taskId: task?.id });
     }, [editedProjectId, includeProjectContext, projectId, projects, task?.id, tasks]);
 
     const handlePreviewProjectPress = React.useCallback((nextProjectId: string) => {

@@ -67,6 +67,7 @@ import {
   type TimeEstimate,
 } from '@mindwtr/core';
 
+import { buildInboxClarifyInput, getAIClarifyDialog } from '@mindwtr/core/ai-task-actions';
 import type { AIResponseAction } from '../ai-response-modal';
 import { useLanguage } from '../../contexts/language-context';
 import { useTheme } from '../../contexts/theme-context';
@@ -1097,45 +1098,36 @@ export function useInboxProcessingController({
     setIsAIWorking(true);
     try {
       const provider = createAIProvider(buildAIConfig(settings ?? {}, apiKey, language));
-      const contextOptions = Array.from(new Set([
-        ...contextSuggestionPool,
-        ...selectedContexts,
-        ...(currentTask.contexts ?? []),
-      ]));
-      const response = await provider.clarifyTask({
-        title: processingTitle || currentTask.title,
-        contexts: contextOptions,
-      });
-      const actions: AIResponseAction[] = [];
-      response.options.slice(0, 3).forEach((option) => {
-        actions.push({
-          label: option.label,
-          onPress: () => {
-            setProcessingTitle(option.action);
-            closeAIModal();
-          },
-        });
-      });
-      if (response.suggestedAction?.title) {
-        actions.push({
-          label: t('ai.applySuggestion'),
-          variant: 'primary',
-          onPress: () => {
-            setProcessingTitle(response.suggestedAction!.title);
-            if (response.suggestedAction?.context) {
-              setSelectedContexts((prev) => Array.from(new Set([...prev, response.suggestedAction!.context!])));
+      const response = await provider.clarifyTask(buildInboxClarifyInput({
+        title: processingTitle,
+        task: currentTask,
+        contextPool: contextSuggestionPool,
+        selectedContexts,
+      }));
+      const dialog = getAIClarifyDialog(response, t);
+      const actions: AIResponseAction[] = dialog.choices.map((choice) => {
+        const { apply } = choice;
+        return {
+          label: choice.label,
+          ...(choice.variant ? { variant: choice.variant } : {}),
+          onPress: apply.type === 'title'
+            ? () => {
+              setProcessingTitle(apply.title);
+              closeAIModal();
             }
-            closeAIModal();
-          },
-        });
-      }
-      actions.push({
-        label: t('common.cancel'),
-        variant: 'secondary',
-        onPress: closeAIModal,
+            : apply.type === 'suggestion'
+              ? () => {
+                setProcessingTitle(apply.suggestion.title);
+                if (apply.suggestion.context) {
+                  setSelectedContexts((prev) => Array.from(new Set([...prev, apply.suggestion.context!])));
+                }
+                closeAIModal();
+              }
+              : closeAIModal,
+        };
       });
       setAiModal({
-        title: response.question || t('taskEdit.aiClarify'),
+        title: dialog.title,
         actions,
       });
     } catch (error) {
