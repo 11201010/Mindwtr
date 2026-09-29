@@ -167,6 +167,11 @@ fun TaskRowItem(
                             Icon(Lucide.Repeat, null, tint = c.secondaryText,
                                 modifier = Modifier.padding(start = 4.dp).size(12.dp))
                         }
+                        // Hidden details keep one cue that the task has more to read (#1287).
+                        if (!details && meta.hasDescription) {
+                            Icon(Lucide.AlignLeft, null, tint = c.secondaryText,
+                                modifier = Modifier.padding(start = 4.dp).size(12.dp))
+                        }
                         if (showStar) StarButton(model, task, starBlocked?.takeIf { !task.isFocusedToday })
                     }
                     // TalkBack hears the line in core's label above, so it is not read twice.
@@ -217,7 +222,11 @@ private fun MetaPartView(part: MetaPart) {
         }
         "due" -> MetaText(part.text, when (part.tone) { "overdue" -> c.danger; "dueSoon" -> c.warning; else -> c.secondaryText }, 600)
         "checklist" -> MetaIcon(Lucide.ListChecks, "${part.done}/${part.of}", 13)
-        "assignedTo" -> MetaIcon(Lucide.UserRound, part.text)
+        // The person is what a Waiting row is read for, so the name stands out, as on RN (#1282).
+        "assignedTo" -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Lucide.UserRound, null, tint = c.secondaryText, modifier = Modifier.size(12.dp))
+            MetaText(part.text, c.text, 600, Modifier.padding(start = 4.dp))
+        }
         "recurrence" -> MetaIcon(Lucide.Repeat, part.text)
         "timeSpent" -> MetaIcon(Lucide.History, part.text)
         "attachments" -> MetaIcon(Lucide.Paperclip, part.text)

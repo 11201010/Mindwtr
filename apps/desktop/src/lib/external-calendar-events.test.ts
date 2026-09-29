@@ -25,6 +25,10 @@ vi.mock('@tauri-apps/api/core', () => ({
     invoke: invokeMock,
 }));
 
+vi.mock('./tauri-http', () => ({
+    getTauriHttpFetch: vi.fn(async () => null),
+}));
+
 vi.mock('./system-calendar', () => ({
     fetchSystemCalendarEvents: fetchSystemCalendarEventsMock,
 }));
@@ -108,6 +112,23 @@ describe('external calendar events', () => {
         expect(fetch).toHaveBeenCalledWith('https://calendar.example/work.ics', expect.anything());
         expect(result.calendars.map((calendar) => calendar.id)).toEqual(['work']);
         expect(result.events.map((event) => event.title)).toEqual(['Team Meeting']);
+    });
+
+    it('asks the desktop HTTP client to send no Origin header for subscribed feeds', async () => {
+        isTauriRuntimeMock.mockReturnValue(true);
+        getCalendarsMock.mockResolvedValue([
+            { id: 'work', name: 'Work', url: 'https://calendar.example/work.ics', enabled: true },
+        ]);
+
+        await fetchExternalCalendarEvents(
+            new Date('2026-04-26T00:00:00.000Z'),
+            new Date('2026-04-27T00:00:00.000Z'),
+        );
+
+        expect(fetch).toHaveBeenCalledWith(
+            'https://calendar.example/work.ics',
+            expect.objectContaining({ headers: { Origin: '' } }),
+        );
     });
 
     it('caches subscribed ICS calendars by month for adjacent visible ranges', async () => {

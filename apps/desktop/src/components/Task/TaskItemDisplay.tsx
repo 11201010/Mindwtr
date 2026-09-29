@@ -1,4 +1,4 @@
-import { AlertTriangle, Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Link2, ListChecks, Paperclip, RotateCcw, Copy, MapPin, History, Hourglass, Play, Zap, MoreHorizontal, XCircle } from 'lucide-react';
+import { AlertTriangle, AlignLeft, Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Link2, ListChecks, Paperclip, RotateCcw, Copy, MapPin, History, Hourglass, Play, Zap, MoreHorizontal, XCircle } from 'lucide-react';
 import type { Area, Attachment, Project, RangeSelectionOptions, Section, Task, TaskStatus, RecurrenceRule, RecurrenceStrategy, Language } from '@mindwtr/core';
 import { DEFAULT_AREA_COLOR, TASK_PRIORITY_COLORS, formatRecurrenceLabel, formatTimeEstimateLabel, formatTimeSpentLabel, getChecklistProgress, getContextColor, getInlineMarkdownPreview, getRecurringTaskPreviewDate, getTaskAgeLabel, getTaskDateCoherenceIssues, getTaskStaleness, getTaskUrgency, hasTimeComponent, isTaskActionable, isTaskCancelled, isTaskCompleted, isTaskFinished, safeFormatDate, resolveTaskTextDirection, tFallback } from '@mindwtr/core';
 import { cn } from '../../lib/utils';
@@ -826,6 +826,9 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                             !isViewOpen && !showCompactMeta && !isReference && recurrenceLabel
                                 ? `${tFallback(t, 'taskEdit.recurrenceLabel', 'Recurrence')}: ${recurrenceLabel}`
                                 : null,
+                            !isViewOpen && !showCompactMeta && !isReference && descriptionPreview
+                                ? tFallback(t, 'taskEdit.descriptionLabel', 'Description')
+                                : null,
                         ].filter(Boolean).join('. ')}
                         title={!selectionMode && !readOnly && showHoverHint ? hoverHintText : undefined}
                         dir={resolvedDirection}
@@ -843,6 +846,12 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                             {!isViewOpen && !showCompactMeta && !isReference && recurrenceLabel && (
                                 <span title={recurrenceLabel} className="ms-1 inline-block align-[-2px]">
                                     <Repeat aria-hidden="true" className="h-3.5 w-3.5" />
+                                </span>
+                            )}
+                            {/* Hidden details keep one cue that the task has more to read (#1287). */}
+                            {!isViewOpen && !showCompactMeta && !isReference && descriptionPreview && (
+                                <span title={tFallback(t, 'taskEdit.descriptionLabel', 'Description')} className="ms-1 inline-block align-[-2px]">
+                                    <AlignLeft aria-hidden="true" className="h-3.5 w-3.5" />
                                 </span>
                             )}
                             {showPinnedFocusStar && (

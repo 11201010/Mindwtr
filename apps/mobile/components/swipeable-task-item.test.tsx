@@ -200,6 +200,7 @@ vi.mock('../hooks/use-theme-tokens', () => ({
 }));
 
 vi.mock('lucide-react-native', () => ({
+  AlignLeft: (props: any) => React.createElement('AlignLeft', props),
   ArrowRight: (props: any) => React.createElement('ArrowRight', props),
   Check: (props: any) => React.createElement('Check', props),
   CircleDot: (props: any) => React.createElement('CircleDot', props),
@@ -1194,9 +1195,16 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     expect(hasText(hidden, 'Prep the deck')).toBe(false);
     expect(hasText(hidden, start)).toBe(true);
     expect(hasText(hidden, age)).toBe(false);
+    // #1287: the hidden description leaves one cue; the shown preview needs none.
+    const alignLeft = (tree: renderer.ReactTestRenderer) => tree.root.findAll((node) => String(node.type) === 'AlignLeft').length;
+    expect(alignLeft(hidden)).toBe(1);
+    expect(alignLeft(shown)).toBe(0);
 
     const waiting = renderRow(true, true);
     expect(hasText(waiting, 'Sam')).toBe(true);
+    // #1282: the waiting name reads at full contrast and weight, not as grey meta.
+    const name = waiting.root.findAll((node) => node.props.children === 'Sam' && Array.isArray(node.props.style))[0];
+    expect(Object.assign({}, ...name.props.style.flat())).toMatchObject({ color: '#ffffff', fontWeight: '600' });
     expect(waiting.root.findAll((node) => String(node.type) === 'UserRound')).toHaveLength(1);
   });
 

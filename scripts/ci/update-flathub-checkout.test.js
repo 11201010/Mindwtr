@@ -57,6 +57,7 @@ test("updates an unpatched Flathub manifest fixture", () => {
   expect(updated).toContain('local_spec = f"file:{locked_resolved}"');
   expect(updated).toContain("- shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json");
   expect(updated).not.toContain("appstream-homepage.patch");
+  expect(updated).not.toContain("patches/mindwtr-hotfix.patch");
   expect(updated).not.toContain("org.tech_dongdongbh_mindwtr.SingleInstance");
   expect(updated).toContain("- --socket=pulseaudio");
   expect(updated).toContain("- --talk-name=org.freedesktop.Notifications");

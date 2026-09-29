@@ -116,3 +116,31 @@ export function buildProjectGroups({
         },
     };
 }
+
+/**
+ * Move up or Move down in a shown area group (#1263): the project swaps places with its shown neighbour.
+ * A list with starred projects pinned on top only moves a project past one with the same star state.
+ * Returns the area's stored order with the two swapped, for reorderProjects, or null at an edge.
+ */
+export function planProjectMove(
+    group: ProjectAreaGroup,
+    projects: Project[],
+    projectId: string,
+    direction: 'up' | 'down',
+): { areaId?: string; orderedIds: string[] } | null {
+    const index = group.projects.findIndex((project) => project.id === projectId);
+    const project = group.projects[index];
+    const neighbour = project ? group.projects[index + (direction === 'up' ? -1 : 1)] : undefined;
+    if (!project || !neighbour || (project.isFocused === true) !== (neighbour.isFocused === true)) return null;
+    const areaId = project.areaId ?? undefined;
+    if ((neighbour.areaId ?? undefined) !== areaId) return null;
+    const orderedIds = projects
+        .filter((candidate) => !candidate.deletedAt && (candidate.areaId ?? undefined) === areaId)
+        .sort((a, b) => projectOrder(a) - projectOrder(b) || a.title.localeCompare(b.title))
+        .map((candidate) => candidate.id);
+    const from = orderedIds.indexOf(project.id);
+    const to = orderedIds.indexOf(neighbour.id);
+    if (from < 0 || to < 0) return null;
+    [orderedIds[from], orderedIds[to]] = [orderedIds[to], orderedIds[from]];
+    return { areaId, orderedIds };
+}

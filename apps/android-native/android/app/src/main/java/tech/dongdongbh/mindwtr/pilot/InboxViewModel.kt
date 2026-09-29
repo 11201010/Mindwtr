@@ -38,7 +38,7 @@ data class RowSwipe(val target: String, val label: String, val icon: String)
 /** Core's TaskRowMeta: the meta line in order, the priority strip, the status label, the star rule, the swipe, and TalkBack's label. */
 data class RowMeta(
     val parts: List<MetaPart>, val priority: String?, val statusLabel: String?, val canFocus: Boolean,
-    val swipe: RowSwipe, val rtl: Boolean, val accessibilityLabel: String,
+    val swipe: RowSwipe, val rtl: Boolean, val accessibilityLabel: String, val hasDescription: Boolean = false,
 )
 /**
  * One task row as core sent it (NativeTaskRow). Kotlin never parses or formats a date:
@@ -101,7 +101,8 @@ fun JSONObject.taskRow() = getJSONObject("meta").let { meta ->
         RowMeta(meta.getJSONArray("parts").let { parts -> List(parts.length()) { parts.getJSONObject(it).metaPart() } },
             meta.text("priority"), meta.text("statusLabel"), meta.getBoolean("canFocus"),
             meta.getJSONObject("swipe").let { RowSwipe(it.getString("target"), it.getString("label"), it.getString("icon")) },
-            meta.getString("textDirection") == "rtl", meta.getString("accessibilityLabel")),
+            meta.getString("textDirection") == "rtl", meta.getString("accessibilityLabel"),
+            !meta.text("descriptionPreview").isNullOrEmpty()),
         text("revealLabel"), getBoolean("laterToday"), optString("taskRevision"))
 }
 

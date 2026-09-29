@@ -187,7 +187,7 @@ def find_block_end(start_index: int, base_indent: int) -> int:
             break
     return block_end_index
 
-def remove_patch_source(path: str) -> None:
+def remove_patch_source(matches) -> None:
     index = 0
     while index < len(lines):
         if lines[index].strip() != '- type: patch':
@@ -196,12 +196,14 @@ def remove_patch_source(path: str) -> None:
         indent = len(lines[index]) - len(lines[index].lstrip())
         block_end_index = find_block_end(index, indent)
         block = [line.strip() for line in lines[index:block_end_index]]
-        if f'path: {path}' in block:
+        if any(line.startswith('path: ') and matches(line[len('path: '):]) for line in block):
             del lines[index:block_end_index]
             continue
         index += 1
 
-remove_patch_source('appstream-homepage.patch')
+# A release carries every fix, so it drops the hotfix patches the previous
+# version was rebuilt with (patches/, e.g. #1314 on 1.3.3).
+remove_patch_source(lambda path: path == 'appstream-homepage.patch' or path.startswith('patches/'))
 
 appindicator_module = "shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json"
 appindicator_module_entry = f"- {appindicator_module}"
@@ -335,6 +337,7 @@ if [ "${manifest_only}" = "1" ]; then
 fi
 
 rm -f "${flathub_dir}/appstream-homepage.patch"
+rm -rf "${flathub_dir}/patches"
 
 worktree_dir="$(mktemp -d)"
 

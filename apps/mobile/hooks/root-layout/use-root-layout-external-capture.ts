@@ -51,6 +51,8 @@ type SharedIntentFile = {
 
 type UseRootLayoutExternalCaptureParams = {
     canonicalDataReady: boolean;
+    /** The startup snapshot has painted; entity links may open from it (#1310). */
+    dataReady: boolean;
     disabled?: boolean;
     hasShareIntent: boolean;
     incomingUrl: string | null;
@@ -234,6 +236,7 @@ function resolveEntityOpenPath(kind: EntityOpenKind, id: string): { pathname: st
 
 export function useRootLayoutExternalCapture({
     canonicalDataReady,
+    dataReady,
     disabled = false,
     hasShareIntent,
     incomingUrl,
@@ -495,9 +498,29 @@ export function useRootLayoutExternalCapture({
     }, [canonicalDataReady, disabled, hasShareIntent, resolveText, resetShareIntent, router, shareFiles, shareSubject, shareText, shareWebUrl, showToast]);
 
     useEffect(() => {
-        if (!canonicalDataReady || disabled) return;
+        if (!dataReady || disabled) return;
         if (!incomingUrl) return;
         if (lastHandledKey.current === incomingUrlKey) return;
+
+        // An entity link only navigates, so it opens from the startup snapshot when
+        // the entity is already there, as a tap on a snapshot row does; waiting for
+        // canonical data made a cold widget tap sit on the Inbox (#1310). A link to
+        // an entity the snapshot lacks waits for canonical data before falling back.
+        const entityPayload = parseEntityOpenUrl(incomingUrl);
+        if (entityPayload) {
+            const target = resolveEntityOpenPath(entityPayload.kind, entityPayload.id);
+            if (!target && !canonicalDataReady) return;
+            lastHandledKey.current = incomingUrlKey;
+            if (target && !canonicalDataReady) {
+                void logInfo('Entity link opened from the startup snapshot', {
+                    scope: 'routing',
+                    extra: { releaseCheck: 'v1.3.4/entity-link-snapshot-open', kind: entityPayload.kind },
+                });
+            }
+            router.replace(target ?? '/inbox');
+            return;
+        }
+        if (!canonicalDataReady) return;
 
         const featurePayload = parseOpenFeatureUrl(incomingUrl);
         if (featurePayload) {
@@ -511,13 +534,6 @@ export function useRootLayoutExternalCapture({
             return;
         }
 
-        const entityPayload = parseEntityOpenUrl(incomingUrl);
-        if (entityPayload) {
-            lastHandledKey.current = incomingUrlKey;
-            const target = resolveEntityOpenPath(entityPayload.kind, entityPayload.id);
-            router.replace(target ?? '/inbox');
-            return;
-        }
         if (isEntityOpenUrl(incomingUrl)) {
             lastHandledKey.current = incomingUrlKey;
             router.replace('/inbox');
@@ -555,5 +571,5 @@ export function useRootLayoutExternalCapture({
                 extra: { releaseCheck: 'v1.3.1/shortcut-failure-privacy', stage: 'navigation' },
             });
         }
-    }, [canonicalDataReady, disabled, incomingUrl, incomingUrlKey, resolveText, openCaptureConfirmation, router, showToast]);
+    }, [canonicalDataReady, dataReady, disabled, incomingUrl, incomingUrlKey, resolveText, openCaptureConfirmation, router, showToast]);
 }
