@@ -166,6 +166,11 @@ class CoreHost(
                 val bytes = collator.getCollationKey(args[0] as String).toByteArray()
                 String(CharArray(bytes.size - 1) { (bytes[it].toInt() and 0xff).toChar() })
             })
+            // The host's Intl.DateTimeFormat and Date's toLocale*String: Android's ICU, resolved and formatted as Hermes does.
+            val dates = IcuDateTimeFormat()
+            bridge.setProperty("dateTimeFormat", guarded { args -> dates.reply(args[0] as String, args[1] as String, (args[2] as Number).toDouble()) })
+            // Debug builds only: check-intl-device.mjs's cases, logged once the bundle (and so the polyfill) is loaded.
+            if (debugFault("intl_check") == "1") engine.globalObject.setProperty("__mindwtrIntlCheck", true)
             // A diagnostic line must never fail the caller: coerce and swallow.
             bridge.setProperty("log", guarded { args -> runCatching { Log.i(TAG, args.getOrNull(0).toString()) }; null })
             // fetch and the secret calls (host-polyfills.js): each only starts here; HostIo runs it off this thread and

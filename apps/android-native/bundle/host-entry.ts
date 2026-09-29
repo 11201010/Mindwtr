@@ -410,6 +410,48 @@ const runNetDeadline = async (port: string, mode: string, signal: AbortSignal) =
     return events;
 };
 
+/**
+ * Debug builds only (`debug.mindwtr.native.intl_check=1`: CoreHost sets `__mindwtrIntlCheck` before this bundle runs): the
+ * host's Intl (host-polyfills.js over IcuDateTimeFormat.kt) on core's option sets (calendar-view-model.ts,
+ * recurrence-constants.ts, date.ts, widget-payload.ts, ics.ts, ticktick-import.ts, then defaults, hour cycles and styles),
+ * in four locales and the device's own (no locale). One log line per case (logcat keeps about 4 KB a line) for
+ * check-intl-device.mjs, which compares each with Node's Intl. check-boot-gates.mjs runs the same option sets. Touches no data.
+ */
+const INTL_CHECK_OPTIONS = [{ year: 'numeric', month: 'long' }, { month: 'short', day: 'numeric' }, { weekday: 'short', month: 'long', day: 'numeric' },
+    { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }, { weekday: 'short', month: 'short', day: 'numeric' },
+    { weekday: 'long', month: 'long', day: 'numeric' }, { weekday: 'long' }, { weekday: 'short' }, { weekday: 'narrow' },
+    { timeZone: 'America/New_York', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' },
+    { timeZone: 'asia/tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }, undefined, {}, { hour: 'numeric', minute: '2-digit' },
+    { hour: 'numeric', hour12: true }, { hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }, { dateStyle: 'medium', timeStyle: 'short' },
+    { dateStyle: 'full' }, { timeStyle: 'long', timeZone: 'UTC' }, { era: 'short', year: 'numeric', timeZoneName: 'short' }];
+const runIntlCheck = () => {
+    const times = [Date.UTC(2026, 8, 6, 8, 5, 9), Date.UTC(2026, 0, 1, 0, 30, 0)];
+    const cases: { locale?: string; options?: Intl.DateTimeFormatOptions; time: number }[] = [];
+    for (const locale of ['en-US', 'de-DE', 'zh-CN', 'ja-JP', undefined]) {
+        for (const options of INTL_CHECK_OPTIONS as (Intl.DateTimeFormatOptions | undefined)[]) {
+            for (const time of times) cases.push({ locale, options, time });
+        }
+    }
+    const attempt = (work: () => unknown) => {
+        try { return work(); } catch (error) { return { error: error instanceof Error ? error.name : String(error) }; }
+    };
+    cases.forEach(({ locale, options, time }, index) => {
+        const date = new Date(time);
+        const made = attempt(() => new Intl.DateTimeFormat(locale, options));
+        const dtf = made instanceof Intl.DateTimeFormat ? made : null;
+        const result = {
+            locale, options, time,
+            resolved: dtf ? dtf.resolvedOptions() : made,
+            format: dtf ? attempt(() => dtf.format(date)) : made,
+            parts: dtf ? attempt(() => dtf.formatToParts(date)) : made,
+            toLocaleString: attempt(() => date.toLocaleString(locale, options)),
+            toLocaleDateString: attempt(() => date.toLocaleDateString(locale, options)),
+            toLocaleTimeString: attempt(() => date.toLocaleTimeString(locale, options)),
+        };
+        native().log(`Native Android intl check ${index + 1}/${cases.length} ${JSON.stringify(result)}`);
+    });
+};
+
 type Reply = { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } };
 /** What an entry point opened, by kind only: never its URL, route text, or shared text. */
 const logEntryPoint = (input: { kind?: unknown }, result: Reply): Reply => {
@@ -1933,3 +1975,7 @@ globalThis.MindwtrHost = {
         });
     },
 };
+
+if (globalThis.__mindwtrIntlCheck === true) {
+    try { runIntlCheck(); } catch (error) { native().log(`Native Android intl check failed: ${error instanceof Error ? error.message : String(error)}`); }
+}

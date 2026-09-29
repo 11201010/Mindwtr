@@ -789,18 +789,136 @@
             writable: true, configurable: true, enumerable: false,
         });
 
+        // Intl.DateTimeFormat and Date's toLocale*String, as Hermes gives them on Android: the host's `dateTimeFormat`
+        // (IcuDateTimeFormat.kt) resolves and formats with Android's ICU as Hermes's Java does; this side does Hermes's
+        // C++ part (Intl.cpp): read the locales and the options, apply toLocale*String's defaults, TimeClip the date.
+        // Without that bridge (a Node VM gate) the English stand-in below is a fallback, not ICU.
+        var dateBridge = function () {
+            var bridge = global.__mindwtrNative;
+            return bridge && typeof bridge.dateTimeFormat === 'function' ? bridge : null;
+        };
+        var askDates = function (bridge, spec, op, time) {
+            var value = bridge.dateTimeFormat(spec, op, time);
+            // Hermes turns every Java failure into a RangeError.
+            if (typeof value === 'string' && value.indexOf(NATIVE_ERROR) === 0) throw new RangeError(value.slice(NATIVE_ERROR.length));
+            return value;
+        };
+        // Hermes's kDTFOptions, in its order: hour12 is a boolean, fractionalSecondDigits a number, the rest strings.
+        var DATE_OPTIONS = ['localeMatcher', 'calendar', 'numberingSystem', 'hour12', 'hourCycle', 'timeZone', 'formatMatcher', 'weekday', 'era',
+            'year', 'month', 'dayPeriod', 'day', 'hour', 'minute', 'second', 'timeZoneName', 'dateStyle', 'timeStyle', 'fractionalSecondDigits'];
+        var DATE_FIELDS = ['weekday', 'year', 'month', 'day'];
+        var TIME_FIELDS = ['hour', 'minute', 'second'];
+        var readLocales = function (locales) {
+            if (locales === undefined) return [];
+            if (typeof locales === 'string') return [locales];
+            if (locales === null) throw new TypeError('Cannot convert null to object');
+            var list = Object(locales);
+            var length = Math.min(Math.max(Math.floor(Number(list.length)) || 0, 0), 9007199254740991);
+            var out = [];
+            for (var i = 0; i < length; i += 1) {
+                var item = list[i];
+                if (typeof item !== 'string' && (item === null || (typeof item !== 'object' && typeof item !== 'function'))) throw new TypeError('Incorrect object type');
+                out.push(String(item));
+            }
+            return out;
+        };
+        var readDateOptions = function (options) {
+            if (options === null) throw new TypeError("Options object can't be null !");
+            var out = {};
+            if (typeof options !== 'object' && typeof options !== 'function') return out;
+            DATE_OPTIONS.forEach(function (name) {
+                var value = options[name];
+                if (value === undefined) return;
+                out[name] = name === 'hour12' ? Boolean(value) : name === 'fractionalSecondDigits' ? Number(value) : String(value);
+            });
+            return out;
+        };
+        var has = function (options, names) { return names.some(function (name) { return options[name] !== undefined; }); };
+        var timeValue = function (date) {
+            var time = date === undefined ? Date.now() : Number(date);
+            if (!isFinite(time) || Math.abs(time) > 8.64e15) throw new RangeError('Invalid time value');
+            return Math.trunc(time) + 0;
+        };
+        var getTime = Date.prototype.getTime;
+        // Date.prototype.toLocale*String: Hermes's toDateTimeOptions, then a formatter for these locales and options.
+        [['toLocaleString', true, true], ['toLocaleDateString', true, false], ['toLocaleTimeString', false, true]].forEach(function (entry) {
+            var own = Date.prototype[entry[0]];
+            var date = entry[1];
+            var time = entry[2];
+            var toLocale = function (locales, options) {
+                mark('Date.' + entry[0]);
+                var bridge = dateBridge();
+                if (!bridge) return own.apply(this, arguments);
+                var value = getTime.call(this);
+                if (value !== value) return 'Invalid Date';
+                var list = readLocales(locales);
+                var read = readDateOptions(options);
+                if (!time && read.timeStyle !== undefined) throw new TypeError('Invalid timeStyle option');
+                if (!date && read.dateStyle !== undefined) throw new TypeError('Invalid dateStyle option');
+                var styled = read.dateStyle !== undefined || read.timeStyle !== undefined;
+                if (!styled && !(date && has(read, DATE_FIELDS)) && !(time && has(read, TIME_FIELDS))) {
+                    (date ? ['year', 'month', 'day'] : []).concat(time ? TIME_FIELDS : []).forEach(function (name) { read[name] = 'numeric'; });
+                }
+                return askDates(bridge, JSON.stringify({ locales: list, options: read }), 'format', value);
+            };
+            Object.defineProperty(toLocale, 'name', { value: entry[0] });
+            Object.defineProperty(Date.prototype, entry[0], { value: toLocale, writable: true, configurable: true, enumerable: false });
+        });
+
+        // A formatter's state sits in one non-enumerable slot, as Hermes's internal slots do not show.
         var DateTimeFormat = function DateTimeFormat(locales, options) {
             mark('Intl.DateTimeFormat');
-            this._options = options || {};
-            this._locale = (Array.isArray(locales) ? locales[0] : locales) || 'en';
+            var self = this instanceof DateTimeFormat ? this : Object.create(DateTimeFormat.prototype);
+            var state = {};
+            Object.defineProperty(self, '_state', { value: state });
+            var bridge = dateBridge();
+            if (!bridge) {
+                state.options = options || {};
+                state.locale = (Array.isArray(locales) ? locales[0] : locales) || 'en';
+                return self;
+            }
+            var list = readLocales(locales);
+            var read = readDateOptions(options);
+            // ECMA-402 2023 11.1.2 step 42, Hermes's checkOptions: a style with an explicit field is a TypeError.
+            if ((read.dateStyle !== undefined || read.timeStyle !== undefined)
+                && has(read, ['weekday', 'era', 'year', 'month', 'day', 'dayPeriod', 'hour', 'minute', 'second', 'fractionalSecondDigits', 'timeZoneName'])) {
+                throw new TypeError("{data/time}Style and explicit format components shouldn't be used together");
+            }
+            state.bridge = bridge;
+            state.spec = JSON.stringify({ locales: list, options: read });
+            // Hermes builds its formatter here, so a bad option throws now.
+            state.resolved = JSON.parse(askDates(bridge, state.spec, 'resolvedOptions', 0));
+            return self;
         };
         DateTimeFormat.prototype.resolvedOptions = function () {
-            return { locale: this._locale, timeZone: 'UTC', calendar: 'gregory', numberingSystem: 'latn' };
+            var state = this._state;
+            if (!state.spec) return { locale: state.locale, timeZone: 'UTC', calendar: 'gregory', numberingSystem: 'latn' };
+            var copy = {};
+            for (var name in state.resolved) copy[name] = state.resolved[name];
+            return copy;
         };
+        // Hermes's format is a getter that keeps one function bound to its formatter.
+        Object.defineProperty(DateTimeFormat.prototype, 'format', {
+            configurable: true,
+            enumerable: false,
+            get: function () {
+                var dtf = this;
+                var state = dtf._state;
+                if (!state.format) {
+                    state.format = function (date) {
+                        if (state.spec) return askDates(state.bridge, state.spec, 'format', timeValue(date));
+                        return dtf.formatToParts(date).map(function (part) { return part.value; }).join(' ');
+                    };
+                }
+                return state.format;
+            },
+        });
         DateTimeFormat.prototype.formatToParts = function (date) {
+            var state = this._state;
+            if (state.spec) return JSON.parse(askDates(state.bridge, state.spec, 'formatToParts', timeValue(date)));
             var value = date instanceof Date ? date : new Date(date);
             var parts = [];
-            var options = this._options;
+            var options = state.options;
             if (options.weekday) {
                 var weekday = WEEKDAY_LONG[value.getDay()];
                 parts.push({ type: 'weekday', value: options.weekday === 'long' ? weekday : weekday.slice(0, options.weekday === 'narrow' ? 1 : 3) });
@@ -818,9 +936,6 @@
             if (options.second) parts.push({ type: 'second', value: pad2(value.getSeconds()) });
             if (parts.length === 0) parts.push({ type: 'literal', value: value.toISOString() });
             return parts;
-        };
-        DateTimeFormat.prototype.format = function (date) {
-            return this.formatToParts(date).map(function (part) { return part.value; }).join(' ');
         };
 
         var NumberFormat = function NumberFormat(_locales, options) {

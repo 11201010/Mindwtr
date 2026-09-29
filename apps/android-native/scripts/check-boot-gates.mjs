@@ -42,6 +42,80 @@ assert.equal(String(new consoleState.URL('https://host/dav/?dir=a+b')), 'https:/
     vm.runInContext(polyfills, noKeys);
     assert.deepEqual([...vm.runInContext("['b', 'a', 'C'].sort(new Intl.Collator().compare)", noKeys)], ['C', 'a', 'b'], 'the fallback without the bridge');
 }
+// Intl.DateTimeFormat and Date's toLocale*String go to the host's `dateTimeFormat` bridge (IcuDateTimeFormat.kt: Android's
+// ICU, resolved as Hermes's Java does); the polyfill does Hermes's C++ part (Intl.cpp: the locales and options read,
+// toLocale*String's defaults, TimeClip). A stand-in bridge on Node's own Intl proves the options pass through and every
+// result is assembled exactly as Node's Intl gives it, over core's option sets.
+{
+    const polyfills = readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8');
+    const specs = [];
+    const bridge = {
+        log() {},
+        dateTimeFormat(spec, op, time) {
+            specs.push(spec);
+            const { locales, options } = JSON.parse(spec);
+            try {
+                const dtf = new Intl.DateTimeFormat(locales, options);
+                return op === 'format' ? dtf.format(time) : JSON.stringify(op === 'formatToParts' ? dtf.formatToParts(time) : dtf.resolvedOptions());
+            } catch (error) {
+                return `!MindwtrNativeError:${error.message}`;
+            }
+        },
+    };
+    const dates = vm.createContext({ console: { info() {} }, Intl: undefined, __mindwtrNative: bridge });
+    vm.runInContext(polyfills, dates);
+    const run = (code) => vm.runInContext(code, dates);
+    // The device check's option sets (host-entry.ts INTL_CHECK_OPTIONS): core's calls, then defaults, hour cycles and styles.
+    const optionSets = vm.runInNewContext(/const INTL_CHECK_OPTIONS = (\[[\s\S]*?\]);\n/.exec(readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8'))[1]);
+    assert(optionSets.length >= 20);
+    const times = [Date.UTC(2026, 8, 6, 8, 5, 9), Date.UTC(2026, 0, 1, 0, 30, 0), Date.UTC(1999, 11, 31, 23, 59, 59, 999)];
+    for (const locale of ['en-US', 'de-DE', 'zh-CN', 'ja-JP']) {
+        for (const options of optionSets) {
+            const args = `${JSON.stringify(locale)}, ${JSON.stringify(options)}`;
+            const node = new Intl.DateTimeFormat(locale, options);
+            assert.deepEqual(JSON.parse(run(`JSON.stringify(new Intl.DateTimeFormat(${args}).resolvedOptions())`)), node.resolvedOptions(), args);
+            for (const time of times) {
+                const at = `${args} at ${new Date(time).toISOString()}`;
+                assert.equal(run(`new Intl.DateTimeFormat(${args}).format(${time})`), node.format(time), `format ${at}`);
+                assert.equal(run(`JSON.stringify(new Intl.DateTimeFormat(${args}).formatToParts(new Date(${time})))`), JSON.stringify(node.formatToParts(time)), `formatToParts ${at}`);
+                for (const method of ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString']) {
+                    // A style the call cannot take is Node's TypeError and the polyfill's alike.
+                    const expected = (() => { try { return new Date(time)[method](locale, options); } catch (error) { return error.name; } })();
+                    assert.equal(run(`(() => { try { return new Date(${time}).${method}(${args}); } catch (error) { return error.name; } })()`), expected, `${method} ${at}`);
+                }
+            }
+        }
+    }
+    // No arguments: the device's locale and time zone (RN's Sync screen history dates, core's resolvedOptions().locale reads).
+    for (const method of ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString']) assert.equal(run(`new Date(${times[0]}).${method}()`), new Date(times[0])[method]());
+    assert.deepEqual(JSON.parse(run('JSON.stringify(Intl.DateTimeFormat().resolvedOptions())')), Intl.DateTimeFormat().resolvedOptions(), 'callable without new');
+    // Hermes's format is a getter that keeps one bound function; formatToParts without a date formats now.
+    assert.equal(run(`(() => { const dtf = new Intl.DateTimeFormat('de-DE', { weekday: 'long' }); const format = dtf.format; return format(${times[0]}) + (dtf.format === format); })()`), 'Sonntagtrue');
+    assert.equal(run("new Intl.DateTimeFormat('en-US', { year: 'numeric' }).formatToParts()[0].value"), String(new Date().getFullYear()));
+    // Hermes's errors: a bad time zone or option value (RangeError), a style with a field or a time style on a date call
+    // (TypeError), an invalid time (RangeError); an invalid Date prints as "Invalid Date".
+    for (const [code, name] of [["new Intl.DateTimeFormat('en', { timeZone: 'Mars/Base' })", 'RangeError'], ["new Intl.DateTimeFormat('en', { weekday: 'tiny' })", 'RangeError'],
+        ["new Intl.DateTimeFormat('en', { dateStyle: 'short', day: 'numeric' })", 'TypeError'], ["new Date(0).toLocaleDateString('en', { timeStyle: 'short' })", 'TypeError'],
+        ["new Intl.DateTimeFormat('en').format(NaN)", 'RangeError'], ["new Intl.DateTimeFormat('en', null)", 'TypeError']]) {
+        assert.equal(run(`(() => { try { ${code}; return 'none'; } catch (error) { return error.name; } })()`), name, code);
+    }
+    assert.equal(run("new Date(NaN).toLocaleString('de-DE')"), 'Invalid Date');
+    assert.equal(run("Object.keys(Date.prototype).length + Object.keys(new Intl.DateTimeFormat()).length"), 0, 'nothing enumerable added');
+    assert(specs.length > 0 && specs.every((spec) => typeof JSON.parse(spec).options === 'object'), 'every call sends its locales and options');
+    // Without the bridge (a VM gate) the English stand-in stays.
+    const noDates = vm.createContext({ console: { info() {} }, Intl: undefined, __mindwtrNative: { log() {} } });
+    vm.runInContext(polyfills, noDates);
+    assert.equal(vm.runInContext("new Intl.DateTimeFormat('de-DE', { weekday: 'long' }).format(new Date(2026, 8, 6))", noDates), 'Sunday');
+    // The Kotlin side: one guarded callback, its formatter made in start (on the engine thread) and used only there, no IO;
+    // the device check's cases run only in a debug build.
+    const kotlin = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core', name), 'utf8');
+    const host = kotlin('CoreHost.kt');
+    const icu = kotlin('IcuDateTimeFormat.kt');
+    assert.match(host, /fun start\([^)]*\): JSONObject = onEngine \{[\s\S]*?val dates = IcuDateTimeFormat\(\)\s+bridge\.setProperty\("dateTimeFormat", guarded \{ args -> dates\.reply\(args\[0\] as String, args\[1\] as String, \(args\[2\] as Number\)\.toDouble\(\)\) \}\)/);
+    assert.equal(host.match(/IcuDateTimeFormat\(\)|dates\./g).length, 2, 'made once, used only by the bridge callback');
+    assert.doesNotMatch(icu, /java\.io|java\.nio|\bFile\b|Thread|Executor|\bLog\.|debugProperty|synchronized|Volatile|quickjs|getprop/, 'pure: no IO, no threads');
+    assert.match(host, /if \(debugFault\("intl_check"\) == "1"\) engine\.globalObject\.setProperty\("__mindwtrIntlCheck", true\)/);
+}
 // A context automation link names a context with a space as "+" (core's parseContextAutomationUrl reads the query).
 assert.equal(new consoleState.URL('mindwtr://contexts?token=home+office&contextAction=activate').searchParams.get('token'), 'home office');
 assert.equal(new consoleState.URL('mindwtr://activate-context?name=%40home+office%2Bgym').searchParams.get('name'), '@home office+gym');
@@ -602,7 +676,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 21, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, log, the fetch and secret calls, logFile, the key-value calls and hostEvent: each guarded');
+assert.equal(bridgeCallbacks.length, 22, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls and hostEvent: each guarded');
 // The JS host's events (sync's badge and cycles, an automatic sync's warning): handed on as text, a listener's failure swallowed.
 assert(bridgeCallbacks.includes('bridge.setProperty("hostEvent", guarded { args -> runCatching { onEvent?.invoke(args[0] as String) }; null })'));
 for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\w+", guarded \{/);
