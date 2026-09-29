@@ -35,11 +35,7 @@ import {
 import { useKeybindings } from "../../contexts/keybinding-context";
 import { useLanguage, type Language } from "../../contexts/language-context";
 import { isFlatpakRuntime, isTauriRuntime } from "../../lib/runtime";
-import {
-  getCalendarSourceFileName,
-  isLocalCalendarFileUrl,
-  localCalendarFileUrlToPath,
-} from "../../lib/external-calendar-source";
+import { maskCalendarSourceUrl as maskCalendarUrl } from "../../lib/external-calendar-source";
 import { collectFeedbackDiagnostics } from "../../lib/app-log";
 import {
   markSettingsOpenTrace,
@@ -167,28 +163,6 @@ const LANGUAGES: { id: Language; native: string }[] = [
   { id: "en", native: "English" },
   ...Object.entries(LOCALES).map(([id, descriptor]) => ({ id: id as Language, native: descriptor.native })),
 ];
-
-const maskCalendarUrl = (url: string): string => {
-  const trimmed = url.trim();
-  if (!trimmed) return "";
-  if (isLocalCalendarFileUrl(trimmed)) {
-    const path = localCalendarFileUrlToPath(trimmed);
-    const filename = getCalendarSourceFileName(trimmed);
-    return filename ? `Local file /.../${filename}` : `Local file ${path}`;
-  }
-  const match = trimmed.match(/^(https?:\/\/)?([^/?#]+)([^?#]*)/i);
-  if (!match) {
-    return trimmed.length <= 8
-      ? "..."
-      : `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
-  }
-  const protocol = match[1] ?? "";
-  const host = match[2] ?? "";
-  const path = match[3] ?? "";
-  const lastSegment = path.split("/").filter(Boolean).pop() ?? "";
-  const suffix = lastSegment ? `...${lastSegment.slice(-6)}` : "...";
-  return `${protocol}${host}/${suffix}`;
-};
 
 type SettingsViewProps = {
   initialPage?: SettingsPage;

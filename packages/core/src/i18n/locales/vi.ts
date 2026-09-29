@@ -119,6 +119,7 @@ export const viOverrides: Record<string, string> = {
         'settings.calendarMobile.calendarColorUpdated': 'Đã cập nhật màu lịch',
         'settings.calendarMobile.calendarColorUpdatedMessage': 'Màu lịch Mindwtr đã được cập nhật.',
         'settings.calendarMobile.calendarColorSavedMessage': 'Mindwtr sẽ dùng màu này khi tạo lịch.',
+        'settings.calendarMobile.calendarColorUpdateFailed': 'Không thể đổi màu lịch Mindwtr. Hãy thử lại.',
         'common.error': 'Lỗi',
         'common.start': 'Bắt đầu',
         'common.reset': 'Đặt lại',
@@ -2141,6 +2142,7 @@ export const viOverrides: Record<string, string> = {
         'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': 'Nhiệm vụ sẽ không còn được đẩy lên lịch của bạn. Các sự kiện hiện có được giữ lại.',
         'settings.calendarMobile.test': 'Kiểm tra',
         'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': 'Lịch Mindwtr và tất cả sự kiện của nó đã bị xóa.',
+        'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'Đã xóa lịch Mindwtr. Các sự kiện đã đẩy sang lịch bạn chọn vẫn ở đó.',
 
         // GTD Mobile Settings
         'settings.gtdMobile.autoStartBreaks': 'Tự động bắt đầu nghỉ',

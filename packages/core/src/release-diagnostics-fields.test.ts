@@ -121,6 +121,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'family', 'boldFace',
     // native-android-legacy-json-import reuses releaseCheck, outcome, path, and reason above.
     'rnState', 'backupTasks', 'sqliteTasks', 'mergedTasks', 'tasksFromBackup',
+    // calendar-push-owned-only (core calendar-push-service.ts) reuses releaseCheck, outcome and error above.
     // ios-share-capture (mobile incoming share host and capture form)
     'stage', 'type', 'providerReady', 'dataReady', 'disabled',
     'fileCount', 'candidateCount', 'attachedCount', 'skippedCount',

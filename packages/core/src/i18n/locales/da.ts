@@ -2314,6 +2314,7 @@ export const daOverrides: Record<string, string> = {
     'settings.calendarMobile.calendarColorUpdated': 'Kalenderfarve opdateret',
     'settings.calendarMobile.calendarColorUpdatedMessage': 'Mindwtr kalenderfarve blev opdateret.',
     'settings.calendarMobile.calendarColorSavedMessage': 'Mindwtr vil bruge denne farve, når den opretter kalenderen.',
+    'settings.calendarMobile.calendarColorUpdateFailed': 'Farven på Mindwtr-kalenderen kunne ikke ændres. Prøv igen.',
     'settings.calendarMobile.mindwtrCalendar': 'Mindwtr kalender',
     'settings.calendarMobile.optional': 'Valgfrit',
     'settings.calendarMobile.permissionRequired': 'Tilladelse påkrævet',
@@ -2333,6 +2334,7 @@ export const daOverrides: Record<string, string> = {
     'settings.calendarMobile.test': 'Test',
     'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved':
         'Mindwtr-kalenderen og alle dens begivenheder er blevet fjernet.',
+    'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'Mindwtr-kalenderen blev fjernet. Begivenheder, der allerede er sendt til den kalender, du valgte, bliver der.',
     'settings.gtdMobile.autoStartBreaks': 'Auto-start pauser',
     'settings.gtdMobile.autoStartFocus': 'Autostart fokus',
     'settings.gtdMobile.captureDefaults': 'Standardindstillinger for registrering',

@@ -6,6 +6,7 @@ import {
     isSupportedCalendarSourceUrl,
     localCalendarFileUrlToPath,
     localPathToCalendarFileUrl,
+    maskCalendarSourceUrl,
 } from './external-calendar-source';
 
 describe('external calendar source helpers', () => {
@@ -34,5 +35,12 @@ describe('external calendar source helpers', () => {
         expect(isSupportedCalendarSourceUrl('file:///home/user/agenda.txt')).toBe(false);
         expect(isSupportedCalendarSourceUrl('file:///home/user/bad%ZZ.ics')).toBe(false);
         expect(isSupportedCalendarSourceUrl('ftp://calendar.example/work.ics')).toBe(false);
+    });
+
+    it('lists a subscription URL as its scheme and host only', () => {
+        expect(maskCalendarSourceUrl('https://alex:s3cret@calendar.example.com/team/basic.ics')).toBe('https://calendar.example.com/...');
+        expect(maskCalendarSourceUrl('webcal://alex:s3cret@calendar.example.com')).toBe('webcal://calendar.example.com');
+        expect(maskCalendarSourceUrl(' https://calendar.example.com/ical/a1b2c3d4e5f6/basic.ics ')).toBe('https://calendar.example.com/...');
+        expect(maskCalendarSourceUrl('file:///home/alex/My%20Plan.ics')).toBe('Local file /.../My Plan.ics');
     });
 });

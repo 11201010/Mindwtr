@@ -62,8 +62,8 @@ const {
         };
     }>),
     mockGetSourcesAsync: vi.fn(async () => [{ id: 'src1', type: 'local', name: 'Local' }]),
-    mockCreateCalendarAsync: vi.fn(async (_details?: { color?: string; title?: string }) => 'cal-1'),
-    mockUpdateCalendarAsync: vi.fn(async (_id: string, _details?: { color?: string; title?: string }) => 'cal-1'),
+    mockCreateCalendarAsync: vi.fn(async (_details?: { color?: string }) => 'cal-1'),
+    mockUpdateCalendarAsync: vi.fn(async () => 'cal-1'),
     mockDeleteCalendarAsync: vi.fn(async (_id: string) => {}),
     mockCreateEventAsync: vi.fn(async () => 'evt-1'),
     mockUpdateEventAsync: vi.fn(async () => 'evt-1'),
@@ -291,11 +291,6 @@ beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     mockPlatform.OS = 'ios';
-    mockGetItem.mockImplementation(async () => null);
-    mockSetItem.mockImplementation(async () => {});
-    mockRemoveItem.mockImplementation(async () => {});
-    mockCreateCalendarAsync.mockResolvedValue('cal-1');
-    mockUpdateCalendarAsync.mockResolvedValue('cal-1');
     // Default: the stored calendar still exists
     mockGetCalendarsAsync.mockResolvedValue([{ id: 'cal-1', title: 'Mindwtr' }]);
     // Mirror the storage adapter's persistent task/platform mapping contract.
@@ -350,170 +345,23 @@ describe('calendar sync storage readiness', () => {
 });
 
 describe('ensureMindwtrCalendar', () => {
-    const idStore = 'mindwtr:calendar-push-sync:calendar-id';
-    const intentStore = 'mindwtr:calendar-push-sync:creation-intent';
-
-    function setupStatefulIosCalendar() {
+    it('passes the persisted iOS temporary title to Expo and renames after binding its ID', async () => {
         const storage = new Map<string, string>();
-        const calendars: { id: string; title: string; color: string }[] = [
-            { id: 'personal-mindwtr', title: 'Mindwtr', color: '#3B82F6' },
-        ];
         mockGetItem.mockImplementation(async (key) => storage.get(key) ?? null);
         mockSetItem.mockImplementation(async (key, value) => { storage.set(key, value); });
         mockRemoveItem.mockImplementation(async (key) => { storage.delete(key); });
-        mockGetCalendarsAsync.mockImplementation(async () => calendars.map((calendar) => ({ ...calendar })));
-        mockCreateCalendarAsync.mockImplementation(async (details?: { title?: string; color?: string }) => {
-            calendars.push({ id: 'new-calendar', title: details?.title ?? '', color: details?.color ?? '' });
-            return 'new-calendar';
-        });
-        mockUpdateCalendarAsync.mockImplementation(async (id: string, details?: { title?: string }) => {
-            const calendar = calendars.find((entry) => entry.id === id);
-            if (calendar && details?.title) calendar.title = details.title;
-            return id;
-        });
-        return { storage, calendars };
-    }
+        mockGetCalendarsAsync.mockResolvedValue([]);
+        mockCreateCalendarAsync.mockResolvedValue('made-here');
 
-    it('recovers the exact iOS calendar after a lost create response and module restart', async () => {
-        const { storage, calendars } = setupStatefulIosCalendar();
-        mockCreateCalendarAsync.mockImplementationOnce(async (details?: { title?: string }) => {
-            calendars.push({ id: 'new-calendar', title: details?.title ?? '', color: '#3B82F6' });
-            throw new Error('response lost');
-        });
+        expect(await ensureMindwtrCalendar()).toBe('made-here');
 
-        await expect(ensureMindwtrCalendar()).resolves.toBeNull();
-        expect(JSON.parse(storage.get(intentStore)!)).toEqual({ title: expect.stringMatching(/^Mindwtr \([0-9a-f-]{36}\)$/) });
-        vi.resetModules();
-        const restarted = await import('@/lib/calendar-push-sync');
-        await expect(restarted.ensureMindwtrCalendar()).resolves.toBe('new-calendar');
-
-        expect(mockCreateCalendarAsync).toHaveBeenCalledOnce();
-        expect(storage.get(idStore)).toBe('new-calendar');
-        expect(storage.has(intentStore)).toBe(false);
-        expect(calendars.find((calendar) => calendar.id === 'new-calendar')?.title).toBe('Mindwtr');
-        expect(calendars.find((calendar) => calendar.id === 'personal-mindwtr')?.title).toBe('Mindwtr');
-        expect(mockDeleteCalendarAsync).not.toHaveBeenCalled();
-        expect(mockCreateEventAsync).not.toHaveBeenCalled();
-        expect(mockLogInfo).toHaveBeenCalledWith('Recovered Mindwtr calendar creation', expect.objectContaining({
-            extra: { releaseCheck: 'v1.3.4/ios-calendar-create-recovery' },
-        }));
-    });
-
-    it('keeps the intent and does not create another calendar when saving its ID fails', async () => {
-        const { storage } = setupStatefulIosCalendar();
-        mockSetItem.mockImplementation(async (key, value) => {
-            if (key === idStore) throw new Error('storage unavailable');
-            storage.set(key, value);
-        });
-
-        await expect(ensureMindwtrCalendar()).resolves.toBeNull();
-        await expect(ensureMindwtrCalendar()).resolves.toBeNull();
-
-        expect(mockCreateCalendarAsync).toHaveBeenCalledOnce();
-        expect(storage.has(intentStore)).toBe(true);
-        expect(storage.has(idStore)).toBe(false);
-    });
-
-    it('retries the same durable title after interruption before native creation', async () => {
-        const { storage, calendars } = setupStatefulIosCalendar();
-        const title = 'Mindwtr (12345678-1234-4234-8234-123456789abc)';
-        storage.set(intentStore, JSON.stringify({ title }));
-
-        await expect(ensureMindwtrCalendar()).resolves.toBe('new-calendar');
-
-        expect(mockCreateCalendarAsync).toHaveBeenCalledWith(expect.objectContaining({ title }));
-        expect(calendars.find((entry) => entry.id === 'new-calendar')?.title).toBe('Mindwtr');
-        expect(storage.get(idStore)).toBe('new-calendar');
-        expect(storage.has(intentStore)).toBe(false);
-    });
-
-    it('finishes renaming after the ID is durable and a prior rename failed', async () => {
-        const { storage, calendars } = setupStatefulIosCalendar();
-        mockUpdateCalendarAsync.mockRejectedValueOnce(new Error('rename unavailable'));
-
-        await expect(ensureMindwtrCalendar()).resolves.toBeNull();
-        expect(storage.get(idStore)).toBe('new-calendar');
-        expect(storage.has(intentStore)).toBe(true);
-        await expect(ensureMindwtrCalendar()).resolves.toBe('new-calendar');
-
-        expect(mockCreateCalendarAsync).toHaveBeenCalledOnce();
-        expect(calendars.find((entry) => entry.id === 'new-calendar')?.title).toBe('Mindwtr');
-        expect(storage.has(intentStore)).toBe(false);
-    });
-
-    it('recovers a bound intent after interruption before the stored ID write', async () => {
-        const { storage, calendars } = setupStatefulIosCalendar();
-        const title = 'Mindwtr (12345678-1234-4234-8234-123456789abc)';
-        storage.set(intentStore, JSON.stringify({ title, calendarId: 'pending' }));
-        calendars.push({ id: 'pending', title, color: '#3B82F6' });
-
-        await expect(ensureMindwtrCalendar()).resolves.toBe('pending');
-
-        expect(storage.get(idStore)).toBe('pending');
-        expect(storage.has(intentStore)).toBe(false);
-        expect(mockCreateCalendarAsync).not.toHaveBeenCalled();
-        expect(calendars.find((entry) => entry.id === 'pending')?.title).toBe('Mindwtr');
-    });
-
-    it('retries intent cleanup after the calendar was renamed', async () => {
-        const { storage } = setupStatefulIosCalendar();
-        mockRemoveItem.mockRejectedValueOnce(new Error('storage unavailable'));
-
-        await expect(ensureMindwtrCalendar()).resolves.toBeNull();
-        expect(storage.get(idStore)).toBe('new-calendar');
-        await expect(ensureMindwtrCalendar()).resolves.toBe('new-calendar');
-
-        expect(mockCreateCalendarAsync).toHaveBeenCalledOnce();
-        expect(mockUpdateCalendarAsync).toHaveBeenCalledOnce();
-        expect(storage.has(intentStore)).toBe(false);
-    });
-
-    it('does not call EventKit when intent persistence fails', async () => {
-        setupStatefulIosCalendar();
-        mockSetItem.mockRejectedValueOnce(new Error('storage unavailable'));
-
-        await expect(ensureMindwtrCalendar()).resolves.toBeNull();
-
-        expect(mockCreateCalendarAsync).not.toHaveBeenCalled();
-        expect(mockUpdateCalendarAsync).not.toHaveBeenCalled();
-    });
-
-    it('fails closed on corrupt or ambiguous creation intents', async () => {
-        const { storage, calendars } = setupStatefulIosCalendar();
-        storage.set(intentStore, JSON.stringify({ title: 'Mindwtr' }));
-        await expect(ensureMindwtrCalendar()).resolves.toBeNull();
-        const title = 'Mindwtr (12345678-1234-4234-8234-123456789abc)';
-        storage.set(intentStore, JSON.stringify({ title }));
-        calendars.push({ id: 'ambiguous-1', title, color: '#3B82F6' });
-        calendars.push({ id: 'ambiguous-2', title, color: '#3B82F6' });
-        await expect(ensureMindwtrCalendar()).resolves.toBeNull();
-
-        expect(mockCreateCalendarAsync).not.toHaveBeenCalled();
-        expect(mockDeleteCalendarAsync).not.toHaveBeenCalled();
-        expect(storage.has(idStore)).toBe(false);
-    });
-
-    it('preserves a pending calendar when a different stored calendar is still present', async () => {
-        const { storage, calendars } = setupStatefulIosCalendar();
-        const title = 'Mindwtr (12345678-1234-4234-8234-123456789abc)';
-        storage.set(idStore, 'personal-mindwtr');
-        storage.set(intentStore, JSON.stringify({ title, calendarId: 'pending' }));
-        calendars.push({ id: 'pending', title, color: '#3B82F6' });
-
-        await expect(ensureMindwtrCalendar()).resolves.toBeNull();
-
-        expect(storage.get(idStore)).toBe('personal-mindwtr');
-        expect(JSON.parse(storage.get(intentStore)!)).toEqual({ title, calendarId: 'pending' });
-        expect(mockCreateCalendarAsync).not.toHaveBeenCalled();
-        expect(mockUpdateCalendarAsync).not.toHaveBeenCalled();
-    });
-
-    it('coalesces simultaneous iOS creation calls', async () => {
-        const { storage } = setupStatefulIosCalendar();
-        const ids = await Promise.all([ensureMindwtrCalendar(), ensureMindwtrCalendar()]);
-        expect(ids).toEqual(['new-calendar', 'new-calendar']);
-        expect(mockCreateCalendarAsync).toHaveBeenCalledOnce();
-        expect(storage.get(idStore)).toBe('new-calendar');
+        const details = mockCreateCalendarAsync.mock.calls[0][0] as { title: string };
+        expect(details.title).toMatch(/^Mindwtr \([0-9a-f-]{36}\)$/);
+        expect(mockUpdateCalendarAsync).toHaveBeenCalledWith('made-here', expect.objectContaining({ title: 'Mindwtr' }));
+        expect(storage.get('mindwtr:calendar-push-sync:calendar-id')).toBe('made-here');
+        expect(storage.has('mindwtr:calendar-push-sync:creation-intent')).toBe(false);
+        const calls = mockSetItem.mock.calls.map(([key]) => key);
+        expect(calls.indexOf('mindwtr:calendar-push-sync:creation-intent')).toBeLessThan(calls.indexOf('mindwtr:calendar-push-sync:calendar-id'));
     });
 
     it('returns the stored calendar ID when the calendar still exists', async () => {
@@ -576,7 +424,8 @@ describe('ensureMindwtrCalendar', () => {
         expect(id).toBe('cal-android');
         expect(mockCreateCalendarAsync).toHaveBeenCalledWith(expect.objectContaining({
             title: 'Mindwtr',
-            name: 'mindwtr',
+            // The internal name carries this install's marker, so a create cut short is recognized.
+            name: expect.stringMatching(/^mindwtr:[0-9a-f-]{36}$/),
             ownerAccount: 'me@gmail.com',
             accessLevel: 'owner',
             isVisible: true,
@@ -604,16 +453,6 @@ describe('ensureMindwtrCalendar', () => {
 });
 
 describe('calendar push color', () => {
-    it('does not recolor an unrelated same-name iOS calendar without a stored ID', async () => {
-        mockGetItem.mockResolvedValue(null);
-        mockGetCalendarsAsync.mockResolvedValue([{ id: 'personal', title: 'Mindwtr', allowsModifications: true }]);
-
-        await expect(updateMindwtrCalendarColor('#059669')).resolves.toBe(false);
-
-        expect(mockUpdateCalendarAsync).not.toHaveBeenCalled();
-        expect(mockCreateCalendarAsync).not.toHaveBeenCalled();
-    });
-
     it('normalizes saved colors and updates the managed Mindwtr calendar when supported', async () => {
         mockGetItem.mockImplementation(async (key: string) => {
             if (key === 'mindwtr:calendar-push-sync:calendar-id') return 'cal-1';
@@ -627,7 +466,7 @@ describe('calendar push color', () => {
 
         expect(updated).toBe(true);
         expect(mockSetItem).toHaveBeenCalledWith('mindwtr:calendar-push-sync:color', '#059669');
-        expect(mockUpdateCalendarAsync).toHaveBeenCalledWith('cal-1', { title: 'Mindwtr', color: '#059669' });
+        expect(mockUpdateCalendarAsync).toHaveBeenCalledWith('cal-1', { color: '#059669' });
         // iOS updates the calendar in place — it must not recreate it.
         expect(mockDeleteCalendarAsync).not.toHaveBeenCalled();
         expect(mockCreateCalendarAsync).not.toHaveBeenCalled();
@@ -679,6 +518,20 @@ describe('calendar push color', () => {
         expect(mockSetItem).toHaveBeenCalledWith('mindwtr:calendar-push-sync:color', '#059669');
         expect(mockDeleteCalendarAsync).not.toHaveBeenCalled();
         expect(mockCreateCalendarAsync).not.toHaveBeenCalled();
+    });
+
+    it('stores nothing when the device refuses the color change, so the same pick retries it', async () => {
+        mockGetItem.mockImplementation(async (key: string) => {
+            if (key === 'mindwtr:calendar-push-sync:calendar-id') return 'cal-1';
+            if (key === 'mindwtr:calendar-push-sync:color') return '#3B82F6';
+            return null;
+        });
+        mockGetCalendarsAsync.mockResolvedValue([{ id: 'cal-1', title: 'Mindwtr', allowsModifications: true }]);
+        mockUpdateCalendarAsync.mockRejectedValueOnce(new Error('Calendar provider refused'));
+
+        await expect(updateMindwtrCalendarColor('#059669')).rejects.toThrow('refused');
+
+        expect(mockSetItem).not.toHaveBeenCalledWith('mindwtr:calendar-push-sync:color', '#059669');
     });
 });
 
@@ -816,154 +669,9 @@ describe('getCalendarPushTargetCalendars', () => {
 });
 
 describe('deleteMindwtrCalendar', () => {
-    it('refuses ambiguous pending titles without deleting either calendar', async () => {
-        const title = 'Mindwtr (12345678-1234-4234-8234-123456789abc)';
-        const storage = new Map([['mindwtr:calendar-push-sync:creation-intent', JSON.stringify({ title })]]);
-        mockGetItem.mockImplementation(async (key) => storage.get(key) ?? null);
-        mockGetCalendarsAsync.mockResolvedValue([
-            { id: 'first', title },
-            { id: 'second', title },
-        ]);
-
-        await expect(deleteMindwtrCalendar()).rejects.toThrow('Cannot identify pending Mindwtr calendar');
-
-        expect(JSON.parse(storage.get('mindwtr:calendar-push-sync:creation-intent')!)).toEqual({ title });
-        expect(mockDeleteCalendarAsync).not.toHaveBeenCalled();
-    });
-
-    it('keeps the durable ID when EventKit deletion fails', async () => {
-        const storage = new Map([['mindwtr:calendar-push-sync:calendar-id', 'managed']]);
-        mockGetItem.mockImplementation(async (key) => storage.get(key) ?? null);
-        mockRemoveItem.mockImplementation(async (key) => { storage.delete(key); });
-        mockGetCalendarsAsync.mockResolvedValue([{ id: 'managed', title: 'Mindwtr' }]);
-        mockDeleteCalendarAsync.mockRejectedValueOnce(new Error('deletion failed'));
-
-        await expect(deleteMindwtrCalendar()).rejects.toThrow('Failed to delete Mindwtr calendar');
-
-        expect(storage.get('mindwtr:calendar-push-sync:calendar-id')).toBe('managed');
-        expect(mockDeleteCalendarSyncEntry).not.toHaveBeenCalled();
-    });
-
-    it('waits for an in-flight creation and prevents a late ensure during cleanup', async () => {
-        const storage = new Map<string, string>();
-        const calendars: { id: string; title: string }[] = [];
-        mockGetItem.mockImplementation(async (key) => storage.get(key) ?? null);
-        mockSetItem.mockImplementation(async (key, value) => { storage.set(key, value); });
-        mockRemoveItem.mockImplementation(async (key) => { storage.delete(key); });
-        mockGetCalendarsAsync.mockImplementation(async () => calendars.map((calendar) => ({ ...calendar })));
-        let finishCreate!: (id: string) => void;
-        mockCreateCalendarAsync.mockImplementation(async (details?: { title?: string }) => {
-            calendars.push({ id: 'new-calendar', title: details?.title ?? '' });
-            return new Promise<string>((resolve) => { finishCreate = resolve; });
-        });
-        mockUpdateCalendarAsync.mockImplementation(async (id: string, details?: { title?: string }) => {
-            calendars[0].title = details?.title ?? calendars[0].title;
-            return id;
-        });
-        mockDeleteCalendarAsync.mockImplementation(async (id) => {
-            const index = calendars.findIndex((entry) => entry.id === id);
-            if (index >= 0) calendars.splice(index, 1);
-        });
-
-        const creating = ensureMindwtrCalendar();
-        await vi.waitFor(() => expect(mockCreateCalendarAsync).toHaveBeenCalledOnce());
-        const deleting = deleteMindwtrCalendar();
-        await expect(ensureMindwtrCalendar()).resolves.toBeNull();
-        finishCreate('new-calendar');
-        await creating;
-        await deleting;
-
-        expect(mockCreateCalendarAsync).toHaveBeenCalledOnce();
-        expect(mockDeleteCalendarAsync).toHaveBeenCalledExactlyOnceWith('new-calendar');
-        expect(storage.has('mindwtr:calendar-push-sync:calendar-id')).toBe(false);
-    });
-
-    it('waits for an in-flight iOS color update before deletion', async () => {
-        const storage = new Map([['mindwtr:calendar-push-sync:calendar-id', 'managed']]);
-        mockGetItem.mockImplementation(async (key) => storage.get(key) ?? null);
-        mockSetItem.mockImplementation(async (key, value) => { storage.set(key, value); });
-        mockRemoveItem.mockImplementation(async (key) => { storage.delete(key); });
-        mockGetCalendarsAsync.mockResolvedValue([{ id: 'managed', title: 'Mindwtr', allowsModifications: true }]);
-        let finishUpdate!: (id: string) => void;
-        mockUpdateCalendarAsync.mockImplementation(async () => new Promise<string>((resolve) => { finishUpdate = resolve; }));
-
-        const coloring = updateMindwtrCalendarColor('#059669');
-        await vi.waitFor(() => expect(mockUpdateCalendarAsync).toHaveBeenCalledOnce());
-        const deleting = deleteMindwtrCalendar();
-        expect(mockDeleteCalendarAsync).not.toHaveBeenCalled();
-        finishUpdate('managed');
-        await coloring;
-        await deleting;
-
-        expect(mockDeleteCalendarAsync).toHaveBeenCalledExactlyOnceWith('managed');
-    });
-
-    it('skips a color update when deletion begins during its pending-intent read', async () => {
-        const storage = new Map([
-            ['mindwtr:calendar-push-sync:calendar-id', 'managed'],
-            ['mindwtr:calendar-push-sync:creation-intent', JSON.stringify({
-                title: 'Mindwtr (12345678-1234-4234-8234-123456789abc)',
-                calendarId: 'managed',
-            })],
-        ]);
-        let finishIntentRead!: (value: string | null) => void;
-        let holdIntentRead = true;
-        mockGetItem.mockImplementation(async (key) => {
-            if (key === 'mindwtr:calendar-push-sync:creation-intent' && holdIntentRead) {
-                holdIntentRead = false;
-                return new Promise<string | null>((resolve) => { finishIntentRead = resolve; });
-            }
-            return storage.get(key) ?? null;
-        });
-        mockSetItem.mockImplementation(async (key, value) => { storage.set(key, value); });
-        mockRemoveItem.mockImplementation(async (key) => { storage.delete(key); });
-        mockGetCalendarsAsync.mockResolvedValue([{ id: 'managed', title: 'Mindwtr', allowsModifications: true }]);
-
-        const coloring = updateMindwtrCalendarColor('#059669');
-        await vi.waitFor(() => expect(finishIntentRead).toBeTypeOf('function'));
-        const deleting = deleteMindwtrCalendar();
-        finishIntentRead(storage.get('mindwtr:calendar-push-sync:creation-intent')!);
-        await expect(coloring).resolves.toBe(false);
-        await deleting;
-
-        expect(mockUpdateCalendarAsync).not.toHaveBeenCalled();
-        expect(mockCreateCalendarAsync).not.toHaveBeenCalled();
-        expect(mockDeleteCalendarAsync).toHaveBeenCalledExactlyOnceWith('managed');
-        expect(storage.has('mindwtr:calendar-push-sync:calendar-id')).toBe(false);
-        expect(storage.has('mindwtr:calendar-push-sync:creation-intent')).toBe(false);
-    });
-
-    it('leaves plain same-name iOS calendars untouched and deletes only an exact pending creation', async () => {
-        const intentTitle = 'Mindwtr (12345678-1234-4234-8234-123456789abc)';
-        const storage = new Map([['mindwtr:calendar-push-sync:creation-intent', JSON.stringify({ title: intentTitle })]]);
-        mockGetItem.mockImplementation(async (key) => storage.get(key) ?? null);
-        mockRemoveItem.mockImplementation(async (key) => { storage.delete(key); });
-        mockGetCalendarsAsync.mockResolvedValue([
-            { id: 'personal', title: 'Mindwtr' },
-            { id: 'pending', title: intentTitle },
-        ]);
-
-        await deleteMindwtrCalendar();
-
-        expect(mockDeleteCalendarAsync).toHaveBeenCalledExactlyOnceWith('pending');
-        expect(storage.has('mindwtr:calendar-push-sync:creation-intent')).toBe(false);
-        expect(mockDeleteEventAsync).not.toHaveBeenCalled();
-    });
-
-    it('clears an absent creation intent on explicit cleanup so creation can be retried', async () => {
-        const storage = new Map([['mindwtr:calendar-push-sync:creation-intent', JSON.stringify({ title: 'Mindwtr (12345678-1234-4234-8234-123456789abc)' })]]);
-        mockGetItem.mockImplementation(async (key) => storage.get(key) ?? null);
-        mockRemoveItem.mockImplementation(async (key) => { storage.delete(key); });
-        mockGetCalendarsAsync.mockResolvedValue([{ id: 'personal', title: 'Mindwtr' }]);
-
-        await deleteMindwtrCalendar();
-
-        expect(mockDeleteCalendarAsync).not.toHaveBeenCalled();
-        expect(storage.has('mindwtr:calendar-push-sync:creation-intent')).toBe(false);
-    });
-
-    it('removes app-created Mindwtr calendars even when the stored calendar id was lost', async () => {
-        mockPlatform.OS = 'android';
+    // Another install (another phone, or a second Mindwtr app) can own a calendar with the same
+    // title and name on the same account: only the calendar whose id this install saved is its own.
+    it('deletes no Mindwtr calendar it did not save, even one named like its own', async () => {
         mockGetItem
             .mockResolvedValueOnce(null) // stored calendar id after reinstall
             .mockResolvedValueOnce(null); // selected target id
@@ -991,19 +699,17 @@ describe('deleteMindwtrCalendar', () => {
 
         await deleteMindwtrCalendar();
 
-        expect(mockDeleteCalendarAsync).toHaveBeenCalledWith('old-app-calendar');
+        expect(mockDeleteCalendarAsync).not.toHaveBeenCalledWith('old-app-calendar');
         expect(mockDeleteCalendarAsync).not.toHaveBeenCalledWith('user-calendar');
         expect(mockDeleteCalendarAsync).not.toHaveBeenCalledWith('other');
         expect(mockRemoveItem).toHaveBeenCalledWith('mindwtr:calendar-push-sync:calendar-id');
     });
 
     it('clears the selected target and sync rows for deleted Mindwtr calendars', async () => {
-        mockGetItem.mockImplementation(async (key) => (
-            key === 'mindwtr:calendar-push-sync:calendar-id'
-            || key === 'mindwtr:calendar-push-sync:target-calendar-id'
-                ? 'stored-calendar'
-                : null
-        ));
+        mockGetItem
+            .mockResolvedValueOnce('stored-calendar')
+            .mockResolvedValueOnce(null) // no iOS creation intent
+            .mockResolvedValueOnce('stored-calendar');
         mockGetCalendarsAsync.mockResolvedValue([
             {
                 id: 'stored-calendar',
@@ -1024,6 +730,38 @@ describe('deleteMindwtrCalendar', () => {
         expect(mockRemoveItem).toHaveBeenCalledWith('mindwtr:calendar-push-sync:target-calendar-id');
         expect(mockDeleteCalendarSyncEntry).toHaveBeenCalledWith('task-1', 'ios');
         expect(mockDeleteCalendarSyncEntry).not.toHaveBeenCalledWith('task-2', 'ios');
+    });
+
+    it('keeps the saved calendar and its pushed events when the calendar cannot be deleted', async () => {
+        const storage = new Map<string, string>([
+            ['mindwtr:calendar-push-sync:calendar-id', 'stored-calendar'],
+        ]);
+        mockGetItem.mockImplementation(async (key: string) => storage.get(key) ?? null);
+        mockRemoveItem.mockImplementation(async (key: string) => { storage.delete(key); });
+        mockGetCalendarsAsync.mockResolvedValue([
+            { id: 'stored-calendar', title: 'Mindwtr', name: 'mindwtr', accessLevel: 'owner', allowsModifications: true },
+        ]);
+        mockDeleteCalendarAsync.mockRejectedValueOnce(new Error('Calendar provider refused'));
+        setCalendarSyncEntries([
+            { taskId: 'task-1', calendarEventId: 'evt-1', calendarId: 'stored-calendar', platform: 'ios', lastSyncedAt: '' },
+        ]);
+
+        await expect(deleteMindwtrCalendar()).rejects.toThrow();
+
+        expect(storage.get('mindwtr:calendar-push-sync:calendar-id')).toBe('stored-calendar');
+        expect(mockDeleteCalendarSyncEntry).not.toHaveBeenCalled();
+    });
+
+    it('clears nothing when the device cannot list its calendars', async () => {
+        mockGetItem.mockImplementation(async (key: string) => (
+            key === 'mindwtr:calendar-push-sync:target-calendar-id' ? 'google-primary' : null
+        ));
+        mockGetCalendarsAsync.mockRejectedValue(new Error('Calendar provider unavailable'));
+
+        await expect(deleteMindwtrCalendar()).rejects.toThrow('unavailable');
+
+        expect(mockRemoveItem).not.toHaveBeenCalled();
+        expect(mockDeleteCalendarAsync).not.toHaveBeenCalled();
     });
 });
 
@@ -1229,29 +967,6 @@ describe('buildEventDetails — date-only calendar events stay on the intended d
 });
 
 describe('runFullCalendarSync — selected target calendar', () => {
-    it('leaves a pending managed creation untouched while syncing a selected calendar', async () => {
-        const title = 'Mindwtr (12345678-1234-4234-8234-123456789abc)';
-        const storage = new Map([
-            ['mindwtr:calendar-push-sync:enabled', '1'],
-            ['mindwtr:calendar-push-sync:target-calendar-id', 'selected'],
-            ['mindwtr:calendar-push-sync:creation-intent', JSON.stringify({ title })],
-        ]);
-        mockGetItem.mockImplementation(async (key) => storage.get(key) ?? null);
-        mockGetCalendarsAsync.mockResolvedValue([
-            { id: 'selected', title: 'Personal', allowsModifications: true },
-            { id: 'pending', title, allowsModifications: true },
-        ]);
-        setStoreTasks([makeTask()]);
-
-        await runFullCalendarSync();
-
-        expect(mockCreateEventAsync).toHaveBeenCalledWith('selected', expect.anything());
-        expect(JSON.parse(storage.get('mindwtr:calendar-push-sync:creation-intent')!)).toEqual({ title });
-        expect(mockCreateCalendarAsync).not.toHaveBeenCalled();
-        expect(mockUpdateCalendarAsync).not.toHaveBeenCalled();
-        expect(mockDeleteCalendarAsync).not.toHaveBeenCalled();
-    });
-
     it('writes unprefixed events to a selected account calendar instead of creating the managed calendar', async () => {
         setupEnabled('cal-managed', 'google-primary');
         mockGetCalendarsAsync.mockResolvedValue([

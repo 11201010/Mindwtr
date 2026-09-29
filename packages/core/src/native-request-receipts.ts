@@ -224,9 +224,10 @@ export const withRequestProject = (projects: readonly Project[], id: string, tit
 /**
  * Commands (a receipt payload's command name, its first element) the native journal never keeps,
  * such as one that carries a secret: their receipts stay in memory and never reach the disk.
- * Empty today; the Sync settings pass fills it.
+ * calendarFeedAdd: a new calendar subscription, whose URL may carry a password
+ * (native-host-contract-settings-calendar.ts addCalendarFeed).
  */
-export const NATIVE_UNJOURNALED_COMMANDS: ReadonlySet<string> = new Set<string>();
+export const NATIVE_UNJOURNALED_COMMANDS: ReadonlySet<string> = new Set<string>(['calendarFeedAdd']);
 
 const commandOf = (payload: string): string => /^\["([^"\\]{1,64})"/.exec(payload)?.[1] ?? '';
 /** What the disk keeps of a request: its command name and a 128-bit hash of its payload, never the payload's text. */

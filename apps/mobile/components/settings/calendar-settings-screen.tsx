@@ -1,18 +1,33 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Alert, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
-    EXTERNAL_CALENDAR_COLORS,
+    addCalendarFeed,
+    addCalendarFile,
+    buildCalendarAreaChoice,
+    buildCalendarPushTargetChoices,
+    calendarSettingsToasts,
+    getCalendarFeedColorOptions,
+    getCalendarPushColorDescription,
+    getCalendarPushColorLabel,
+    getCalendarPushColorOptions,
+    getCalendarTestRange,
     getDocsGuideUrl,
     generateUUID,
-    hasExplicitExternalCalendarColor,
-    normalizeExternalCalendarColor,
+    keptPushTargetEvents,
+    nextDeviceCalendarSelection,
+    planCalendarPushColor,
+    pruneDeviceCalendarSelection,
+    removeCalendarFeed,
+    resolveCalendarFeedsOnLoad,
+    setCalendarFeedColor,
+    setCalendarFeedEnabled,
     shallow,
-    tFallback,
-    themeExternalCalendarDisplayColor,
+    toggleCalendarAreaId,
+    toggleCalendarFeedArea,
     type ExternalCalendarSubscription,
     useTaskStore,
 } from '@mindwtr/core';
@@ -30,7 +45,6 @@ import {
     type SystemCalendarPermissionStatus,
 } from '@/lib/external-calendar';
 import {
-    CALENDAR_PUSH_COLOR_OPTIONS,
     deleteMindwtrCalendar,
     getCalendarPushColor,
     getCalendarPushEnabled,
@@ -99,7 +113,7 @@ export function CalendarSettingsScreen() {
     const { themePreset } = useTheme();
     const filledButton = useFilledButtonColors();
     const { showToast } = useToast();
-    const { isChineseLanguage, language, tr, t } = useSettingsLocalization();
+    const { language, tr, t } = useSettingsLocalization();
     const { settings, areas, updateSettings } = useTaskStore((state) => ({
         settings: state.settings,
         areas: state.areas,
@@ -142,16 +156,11 @@ export function CalendarSettingsScreen() {
             setCalendarPushColorState(color);
         } catch (error) {
             console.error(error);
-            showToast({
-                title: tr('settings.syncMobile.error'),
-                message: tr('settings.calendarMobile.failedToLoadWritableCalendars'),
-                tone: 'warning',
-                durationMs: 4200,
-            });
+            showToast(calendarSettingsToasts(tr, t).loadWritableCalendarsFailed());
         } finally {
             setIsCalendarPushTargetLoading(false);
         }
-    }, [tr, showToast]);
+    }, [t, tr, showToast]);
 
     useEffect(() => {
         void (async () => {
@@ -176,12 +185,7 @@ export function CalendarSettingsScreen() {
                 : await requestCalendarWritePermission();
             if (!granted) {
                 setCalendarPushPermission('denied');
-                showToast({
-                    title: tr('settings.calendarMobile.permissionRequired'),
-                    message: tr('settings.calendarMobile.calendarAccessIsRequiredToPushTasksToYourCalendar'),
-                    tone: 'warning',
-                    durationMs: 4200,
-                });
+                showToast(calendarSettingsToasts(tr, t).pushPermissionRequired());
                 return;
             }
             setCalendarPushPermission('granted');
@@ -195,12 +199,7 @@ export function CalendarSettingsScreen() {
             await setCalendarPushEnabled(false);
             setCalendarPushEnabledState(false);
             stopCalendarPushSync();
-            showToast({
-                title: tr('settings.calendarMobile.calendarSyncDisabled'),
-                message: tr('settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting'),
-                tone: 'info',
-                durationMs: 4200,
-            });
+            showToast(calendarSettingsToasts(tr, t).pushDisabled());
         }
     };
 
@@ -211,26 +210,22 @@ export function CalendarSettingsScreen() {
         if (calendarPushEnabled) {
             void runFullCalendarSync();
         }
-        showToast({
-            title: tr('settings.calendarMobile.calendarTargetUpdated'),
-            message: tr('settings.calendarMobile.dueDateTasksWillBeWrittenToTheSelectedCalendar'),
-            tone: 'success',
-            durationMs: 3200,
-        });
+        showToast(calendarSettingsToasts(tr, t).pushTargetUpdated());
     };
 
     const handleSelectCalendarPushColor = async (color: string) => {
-        const updated = await updateMindwtrCalendarColor(color);
-        setCalendarPushColorState(color);
-        await loadCalendarPushTargetState();
-        showToast({
-            title: tFallback(t, 'settings.calendarMobile.calendarColorUpdated', 'Calendar color updated'),
-            message: updated
-                ? tFallback(t, 'settings.calendarMobile.calendarColorUpdatedMessage', 'Mindwtr calendar color was updated.')
-                : tFallback(t, 'settings.calendarMobile.calendarColorSavedMessage', 'Mindwtr will use this color when it creates the calendar.'),
-            tone: 'success',
-            durationMs: 3000,
-        });
+        if (!planCalendarPushColor(calendarPushColor, color)) return;
+        try {
+            const updated = await updateMindwtrCalendarColor(color);
+            setCalendarPushColorState(color);
+            await loadCalendarPushTargetState();
+            showToast(calendarSettingsToasts(tr, t).pushColorUpdated(updated));
+        } catch (error) {
+            // The device refused: nothing was stored, so picking the color again retries it.
+            console.error(error);
+            await loadCalendarPushTargetState();
+            showToast(calendarSettingsToasts(tr, t).pushColorFailed());
+        }
     };
 
     const performDeleteMindwtrCalendar = useCallback(async () => {
@@ -242,27 +237,19 @@ export function CalendarSettingsScreen() {
             await setCalendarPushEnabled(false);
             setCalendarPushEnabledState(false);
             stopCalendarPushSync();
+            const target = await getCalendarPushTargetCalendarId();
             await deleteMindwtrCalendar();
+            const keptTargetEvents = keptPushTargetEvents(target, await getCalendarPushTargetCalendarId());
             setCalendarPushTargetCalendarIdState(null);
             await loadCalendarPushTargetState();
-            showToast({
-                title: tr('settings.calendarMobile.calendarDeleted'),
-                message: tr('settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved'),
-                tone: 'success',
-                durationMs: 3500,
-            });
+            showToast(calendarSettingsToasts(tr, t).mindwtrCalendarDeleted(keptTargetEvents));
         } catch (error) {
             console.error(error);
-            showToast({
-                title: tr('settings.syncMobile.error'),
-                message: tr('settings.calendarMobile.failedToLoadWritableCalendars'),
-                tone: 'warning',
-                durationMs: 4200,
-            });
+            showToast(calendarSettingsToasts(tr, t).loadWritableCalendarsFailed());
         } finally {
             setIsDeletingMindwtrCalendar(false);
         }
-    }, [isDeletingMindwtrCalendar, loadCalendarPushTargetState, tr, showToast]);
+    }, [isDeletingMindwtrCalendar, loadCalendarPushTargetState, t, tr, showToast]);
 
     const handleDeleteMindwtrCalendar = useCallback(() => {
         if (isDeletingMindwtrCalendar) return;
@@ -303,16 +290,8 @@ export function CalendarSettingsScreen() {
 
             const calendars = await getSystemCalendars();
             setSystemCalendars(calendars);
-            if (stored.selectAll) return;
-
-            const validIds = new Set(calendars.map((calendar) => calendar.id));
-            const filteredSelection = stored.selectedCalendarIds.filter((id) => validIds.has(id));
-            if (
-                filteredSelection.length === stored.selectedCalendarIds.length &&
-                filteredSelection.every((id, index) => id === stored.selectedCalendarIds[index])
-            ) {
-                return;
-            }
+            const filteredSelection = pruneDeviceCalendarSelection(stored, calendars.map((calendar) => calendar.id));
+            if (!filteredSelection) return;
 
             setSystemCalendarSelectedIds(filteredSelection);
             await saveSystemCalendarSettings({
@@ -323,16 +302,11 @@ export function CalendarSettingsScreen() {
             });
         } catch (error) {
             console.error(error);
-            showToast({
-                title: tr('settings.syncMobile.error'),
-                message: tr('settings.calendarMobile.failedToLoadDeviceCalendarSettings'),
-                tone: 'warning',
-                durationMs: 4200,
-            });
+            showToast(calendarSettingsToasts(tr, t).loadDeviceCalendarsFailed());
         } finally {
             setIsSystemCalendarLoading(false);
         }
-    }, [tr, showToast]);
+    }, [t, tr, showToast]);
 
     useEffect(() => {
         void loadSystemCalendarState();
@@ -344,29 +318,21 @@ export function CalendarSettingsScreen() {
             try {
                 const stored = await getExternalCalendars();
                 if (cancelled) return;
-                if (Array.isArray(settings.externalCalendars)) {
-                    setExternalCalendars(settings.externalCalendars);
-                    if (settings.externalCalendars.length || stored.length) {
-                        await saveExternalCalendars(settings.externalCalendars);
-                    }
-                    return;
+                const shown = resolveCalendarFeedsOnLoad(settings.externalCalendars, stored);
+                setExternalCalendars(shown.feeds);
+                if (shown.saveDeviceCopy) {
+                    await saveExternalCalendars(shown.feeds);
                 }
-                setExternalCalendars(stored);
             } catch (error) {
                 console.error(error);
-                showToast({
-                    title: tr('settings.syncMobile.error'),
-                    message: tr('settings.calendarMobile.failedToLoadSavedCalendars'),
-                    tone: 'warning',
-                    durationMs: 4200,
-                });
+                showToast(calendarSettingsToasts(tr, t).loadSavedCalendarsFailed());
             }
         };
         void load();
         return () => {
             cancelled = true;
         };
-    }, [tr, settings.externalCalendars, showToast]);
+    }, [t, tr, settings.externalCalendars, showToast]);
 
     const persistSystemCalendarState = async (next: {
         enabled?: boolean;
@@ -396,66 +362,53 @@ export function CalendarSettingsScreen() {
     };
 
     const handleToggleSystemCalendarSelection = async (calendarId: string, enabled: boolean) => {
-        const allIds = systemCalendars.map((calendar) => calendar.id);
-        if (allIds.length === 0) return;
-
-        const currentSelection = systemCalendarSelectAll
-            ? allIds
-            : Array.from(new Set(systemCalendarSelectedIds.filter((id) => allIds.includes(id))));
-        const nextSelection = enabled
-            ? Array.from(new Set([...currentSelection, calendarId]))
-            : currentSelection.filter((id) => id !== calendarId);
-        const selectAll = nextSelection.length === allIds.length;
-
-        await persistSystemCalendarState({
-            selectAll,
-            selectedCalendarIds: selectAll ? [] : nextSelection,
+        const selection = nextDeviceCalendarSelection({
+            calendarIds: systemCalendars.map((calendar) => calendar.id),
+            selectAll: systemCalendarSelectAll,
+            selectedCalendarIds: systemCalendarSelectedIds,
+            calendarId,
+            enabled,
         });
+        if (!selection) return;
+
+        await persistSystemCalendarState(selection);
     };
 
     const toggleSystemCalendarArea = async (calendarId: string, areaId: string) => {
-        const current = systemCalendarAreaIds[calendarId] ?? [];
-        const next = current.includes(areaId) ? current.filter((id) => id !== areaId) : [...current, areaId];
+        const next = toggleCalendarAreaId(systemCalendarAreaIds[calendarId] ?? [], areaId);
         await persistSystemCalendarState({ areaIdsByCalendar: { ...systemCalendarAreaIds, [calendarId]: next } });
     };
 
     const toggleCalendarArea = async (calendarId: string, areaId: string) => {
-        const next = externalCalendars.map((calendar) => {
-            if (calendar.id !== calendarId) return calendar;
-            const current = calendar.areaIds ?? [];
-            return { ...calendar, areaIds: current.includes(areaId) ? current.filter((id) => id !== areaId) : [...current, areaId] };
-        });
+        const next = toggleCalendarFeedArea(externalCalendars, calendarId, areaId);
         setExternalCalendars(next);
         await saveExternalCalendars(next);
         await updateSettings({ externalCalendars: next });
     };
 
-    const areaOptions = areas.filter((area) => !area.deletedAt);
-    const renderAreaSelector = (sourceId: string, selectedIds: string[], onToggle: (areaId: string) => void) => (
-        areaOptions.length > 0 && <View style={{ marginTop: 8 }}>
+    const renderAreaSelector = (sourceId: string, selectedIds: string[], onToggle: (areaId: string) => void) => {
+        const choice = buildCalendarAreaChoice(selectedIds, areas, t);
+        return choice && <View style={{ marginTop: 8 }}>
             <TouchableOpacity accessibilityRole="button" onPress={() => setExpandedAreaSourceId(expandedAreaSourceId === sourceId ? null : sourceId)}>
-                <Text style={[styles.settingDescription, { color: tc.tint }]}>{t('settings.calendarShowInAreas')}: {selectedIds.length === 0 ? t('settings.calendarAllAreas') : areaOptions.filter((area) => selectedIds.includes(area.id)).map((area) => area.name).join(', ') || t('settings.calendarAllAreas')}</Text>
+                <Text style={[styles.settingDescription, { color: tc.tint }]}>{choice.label}</Text>
             </TouchableOpacity>
-            {expandedAreaSourceId === sourceId && areaOptions.map((area) => (
-                <TouchableOpacity key={area.id} accessibilityRole="checkbox" accessibilityState={{ checked: selectedIds.includes(area.id) }} onPress={() => onToggle(area.id)} style={{ paddingVertical: 7 }}>
-                    <Text style={[styles.settingDescription, { color: tc.text }]}>{selectedIds.includes(area.id) ? '☑' : '☐'} {area.name}</Text>
+            {expandedAreaSourceId === sourceId && choice.options.map((option) => (
+                <TouchableOpacity key={option.areaId} accessibilityRole="checkbox" accessibilityState={{ checked: option.checked }} onPress={() => onToggle(option.areaId)} style={{ paddingVertical: 7 }}>
+                    <Text style={[styles.settingDescription, { color: tc.text }]}>{option.label}</Text>
                 </TouchableOpacity>
             ))}
-        </View>
-    );
+        </View>;
+    };
 
     const handleAddCalendar = async () => {
-        const url = newCalendarUrl.trim();
-        if (!url) return;
-
-        const name = (newCalendarName.trim() || tr('nav.calendar')).trim();
-        const id = generateUUID();
-        // No color yet: an unset color means "no explicit pick", so a feed
-        // hint or the deterministic hash fallback can still apply (#974).
-        const next: ExternalCalendarSubscription[] = [
-            ...externalCalendars,
-            { id, name, url, enabled: true },
-        ];
+        if (!newCalendarUrl.trim()) return;
+        const next = addCalendarFeed(externalCalendars, {
+            id: generateUUID(),
+            name: newCalendarName,
+            url: newCalendarUrl,
+            defaultName: tr('nav.calendar'),
+        });
+        if (!next) return;
 
         setExternalCalendars(next);
         setNewCalendarName('');
@@ -474,39 +427,28 @@ export function CalendarSettingsScreen() {
             const asset = result.assets[0];
             if (!asset?.uri) return;
 
-            const fileName = (asset.name || asset.uri.split('/').pop() || '').trim();
-            const inferredName = fileName.replace(/\.ics$/iu, '').trim();
-            const name = (newCalendarName.trim() || inferredName || tr('nav.calendar')).trim();
-            const id = generateUUID();
-            const next: ExternalCalendarSubscription[] = [
-                ...externalCalendars,
-                { id, name, url: asset.uri.trim(), enabled: true },
-            ];
+            const next = addCalendarFile(externalCalendars, {
+                id: generateUUID(),
+                name: newCalendarName,
+                fileName: asset.name,
+                uri: asset.uri,
+                defaultName: tr('nav.calendar'),
+            });
 
             setExternalCalendars(next);
             setNewCalendarName('');
             setNewCalendarUrl('');
             await saveExternalCalendars(next);
             await updateSettings({ externalCalendars: next });
-            showToast({
-                title: tr('settings.calendarMobile.localIcsFileAdded'),
-                message: tr('settings.calendarMobile.localIcsFilesAreReadOnly'),
-                tone: 'success',
-                durationMs: 3500,
-            });
+            showToast(calendarSettingsToasts(tr, t).localFileAdded());
         } catch (error) {
             console.error(error);
-            showToast({
-                title: tr('settings.syncMobile.error'),
-                message: tr('settings.calendarMobile.failedToLoadSavedCalendars'),
-                tone: 'warning',
-                durationMs: 4200,
-            });
+            showToast(calendarSettingsToasts(tr, t).loadSavedCalendarsFailed());
         }
     };
 
     const handleToggleCalendar = async (id: string, enabled: boolean) => {
-        const next = externalCalendars.map((c) => (c.id === id ? { ...c, enabled } : c));
+        const next = setCalendarFeedEnabled(externalCalendars, id, enabled);
         setExternalCalendars(next);
         await saveExternalCalendars(next);
         await updateSettings({ externalCalendars: next });
@@ -515,21 +457,15 @@ export function CalendarSettingsScreen() {
     const handleCalendarColorChange = async (id: string, color: string | undefined) => {
         // `undefined` is the Auto swatch: drop the pick so the feed hint or
         // the assigned default applies again (#974).
-        const normalized = color === undefined ? undefined : normalizeExternalCalendarColor(color);
-        if (color !== undefined && !normalized) return;
-        const next = externalCalendars.map((c) => {
-            if (c.id !== id) return c;
-            if (normalized) return { ...c, color: normalized };
-            const { color: _cleared, ...rest } = c;
-            return rest;
-        });
+        const next = setCalendarFeedColor(externalCalendars, id, color);
+        if (!next) return;
         setExternalCalendars(next);
         await saveExternalCalendars(next);
         await updateSettings({ externalCalendars: next });
     };
 
     const handleRemoveCalendar = async (id: string) => {
-        const next = externalCalendars.filter((c) => c.id !== id);
+        const next = removeCalendarFeed(externalCalendars, id);
         setExternalCalendars(next);
         await saveExternalCalendars(next);
         await updateSettings({ externalCalendars: next });
@@ -537,85 +473,31 @@ export function CalendarSettingsScreen() {
 
     const handleTestFetch = async () => {
         try {
-            const now = new Date();
-            const rangeStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-            const rangeEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-            const { events } = await fetchExternalCalendarEvents(rangeStart, rangeEnd);
-            showToast({
-                title: tr('common.success'),
-                message: isChineseLanguage ? `已加载 ${events.length} 个日程` : `Loaded ${events.length} events`,
-                tone: 'success',
+            const range = getCalendarTestRange(new Date());
+            let failedFeeds = 0;
+            const { events } = await fetchExternalCalendarEvents(range.start, range.end, {
+                onFeedError: () => { failedFeeds += 1; },
             });
+            showToast(calendarSettingsToasts(tr, t).testResult(events.length, failedFeeds, language));
         } catch (error) {
             console.error(error);
-            showToast({
-                title: tr('settings.syncMobile.error'),
-                message: tr('settings.calendarMobile.failedToLoadEvents'),
-                tone: 'warning',
-            });
+            showToast(calendarSettingsToasts(tr, t).testFailed());
         }
     };
 
     const selectedSystemCalendarSet = new Set(systemCalendarSelectedIds);
-    const selectedCalendarPushTarget = calendarPushTargetCalendarId
-        ? calendarPushTargets.find((calendar) => calendar.id === calendarPushTargetCalendarId)
-        : null;
-    const selectedSharedAccountCalendarForPush = Boolean(
-        selectedCalendarPushTarget
-        && !selectedCalendarPushTarget.isMindwtrDedicated
-        && !selectedCalendarPushTarget.isLocalOnly
-    );
-    const selectedLocalCalendarForPush = calendarPushTargetCalendarId === null || Boolean(selectedCalendarPushTarget?.isLocalOnly);
-    const selectedManagedMindwtrCalendarForPush = calendarPushTargetCalendarId === null
-        || selectedCalendarPushTarget?.isMindwtrManaged === true;
-    const hasDedicatedAccountCalendarForPush = calendarPushTargets.some((calendar) =>
-        calendar.isMindwtrDedicated && !calendar.isLocalOnly
-    );
-    const getCalendarPushTargetDescription = (calendar: CalendarPushTargetCalendar): string => {
-        const kind = calendar.isMindwtrDedicated
-            ? calendar.isLocalOnly
-                ? tr('settings.calendarMobile.dedicatedLocalCalendar')
-                : tr('settings.calendarMobile.dedicatedAccountCalendar')
-            : calendar.isLocalOnly
-                ? tr('settings.calendarMobile.sharedLocalCalendar')
-                : tr('settings.calendarMobile.sharedAccountCalendar');
-        return calendar.sourceName ? `${kind} · ${calendar.sourceName}` : kind;
-    };
-    const defaultLocalTargetOption = {
-        id: null as string | null,
-        name: tr('settings.calendarMobile.mindwtrCalendar'),
-        description: tr('settings.calendarMobile.dedicatedLocalCalendar'),
+    const {
+        options: calendarPushTargetOptions,
+        localHint: selectedLocalCalendarForPush,
+        sharedAccountHint: selectedSharedAccountCalendarForPush,
+        showColors: selectedManagedMindwtrCalendarForPush,
+    } = buildCalendarPushTargetChoices({
+        targets: calendarPushTargets,
+        targetId: calendarPushTargetCalendarId,
         color: calendarPushColor,
-    };
-    const calendarPushTargetOptions: Array<{
-        id: string | null;
-        name: string;
-        description: string;
-        color?: string;
-    }> = [
-        ...(!hasDedicatedAccountCalendarForPush || calendarPushTargetCalendarId === null
-            ? [defaultLocalTargetOption]
-            : []),
-        ...calendarPushTargets
-            .filter((calendar) => {
-                if (calendar.isMindwtrManaged && calendar.id !== calendarPushTargetCalendarId) return false;
-                if (
-                    hasDedicatedAccountCalendarForPush
-                    && calendar.isMindwtrDedicated
-                    && calendar.isLocalOnly
-                    && calendar.id !== calendarPushTargetCalendarId
-                ) {
-                    return false;
-                }
-                return true;
-            })
-            .map((calendar) => ({
-                id: calendar.id as string | null,
-                name: calendar.name,
-                description: getCalendarPushTargetDescription(calendar),
-                color: calendar.color,
-            })),
-    ];
+        tr,
+        platform: Platform.OS,
+    });
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
@@ -716,19 +598,18 @@ export function CalendarSettingsScreen() {
                             {selectedManagedMindwtrCalendarForPush && (
                                 <View style={[styles.settingRowColumn, { borderTopWidth: 1, borderTopColor: tc.border }]}>
                                     <Text style={[styles.settingLabel, { color: tc.text }]}>
-                                        {tFallback(t, 'settings.calendarMobile.mindwtrCalendarColor', 'Mindwtr calendar color')}
+                                        {getCalendarPushColorLabel(t)}
                                     </Text>
                                     <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                        {tFallback(t, 'settings.calendarMobile.mindwtrCalendarColorDesc', 'Applies to the Mindwtr-created calendar; shared account calendars keep their own color.')}
+                                        {getCalendarPushColorDescription(t)}
                                     </Text>
                                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
-                                        {CALENDAR_PUSH_COLOR_OPTIONS.map((color) => {
-                                            const selected = color.toUpperCase() === calendarPushColor.toUpperCase();
+                                        {getCalendarPushColorOptions(calendarPushColor, t).map(({ color, selected, accessibilityLabel }) => {
                                             return (
                                                 <TouchableOpacity
                                                     key={color}
                                                     accessibilityRole="button"
-                                                    accessibilityLabel={`${tFallback(t, 'settings.calendarMobile.mindwtrCalendarColor', 'Mindwtr calendar color')} ${color}`}
+                                                    accessibilityLabel={accessibilityLabel}
                                                     accessibilityState={{ selected }}
                                                     onPress={() => void handleSelectCalendarPushColor(color)}
                                                     style={{
@@ -973,45 +854,45 @@ export function CalendarSettingsScreen() {
                                         </Text>
                                         {renderAreaSelector(calendar.id, calendar.areaIds ?? [], (areaId) => void toggleCalendarArea(calendar.id, areaId))}
                                         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-                                            <TouchableOpacity
-                                                accessibilityRole="button"
-                                                accessibilityState={{ selected: !hasExplicitExternalCalendarColor(calendar.id, calendar.color) }}
-                                                accessibilityLabel={`${calendar.name} ${t('taskEdit.textDirection.auto')}`}
-                                                onPress={() => void handleCalendarColorChange(calendar.id, undefined)}
-                                                style={{
-                                                    width: 22,
-                                                    height: 22,
-                                                    borderRadius: 11,
-                                                    backgroundColor: tc.cardBg,
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    borderWidth: hasExplicitExternalCalendarColor(calendar.id, calendar.color) ? 1 : 3,
-                                                    borderColor: hasExplicitExternalCalendarColor(calendar.id, calendar.color) ? tc.border : tc.tint,
-                                                }}
-                                            >
-                                                <Ionicons name="ban-outline" size={12} color={tc.secondaryText} />
-                                            </TouchableOpacity>
-                                            {EXTERNAL_CALENDAR_COLORS.map((color) => {
-                                                const selected = hasExplicitExternalCalendarColor(calendar.id, calendar.color) && calendar.color === color;
-                                                return (
+                                            {getCalendarFeedColorOptions(calendar, t, themePreset).map(({ color, fill, selected, accessibilityLabel }) => (
+                                                color === null ? (
+                                                    <TouchableOpacity
+                                                        key="auto"
+                                                        accessibilityRole="button"
+                                                        accessibilityState={{ selected }}
+                                                        accessibilityLabel={accessibilityLabel}
+                                                        onPress={() => void handleCalendarColorChange(calendar.id, undefined)}
+                                                        style={{
+                                                            width: 22,
+                                                            height: 22,
+                                                            borderRadius: 11,
+                                                            backgroundColor: tc.cardBg,
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            borderWidth: selected ? 3 : 1,
+                                                            borderColor: selected ? tc.tint : tc.border,
+                                                        }}
+                                                    >
+                                                        <Ionicons name="ban-outline" size={12} color={tc.secondaryText} />
+                                                    </TouchableOpacity>
+                                                ) : (
                                                     <TouchableOpacity
                                                         key={color}
                                                         accessibilityRole="button"
                                                         accessibilityState={{ selected }}
-                                                        accessibilityLabel={`${calendar.name} ${color}`}
+                                                        accessibilityLabel={accessibilityLabel}
                                                         onPress={() => void handleCalendarColorChange(calendar.id, color)}
                                                         style={{
                                                             width: 22,
                                                             height: 22,
                                                             borderRadius: 11,
-                                                            // Fill only — the stored pick stays canonical (#974).
-                                                            backgroundColor: themeExternalCalendarDisplayColor(color, themePreset),
+                                                            backgroundColor: fill ?? color,
                                                             borderWidth: selected ? 3 : 1,
                                                             borderColor: selected ? tc.tint : tc.border,
                                                         }}
                                                     />
-                                                );
-                                            })}
+                                                )
+                                            ))}
                                         </View>
                                     </View>
                                     <View style={{ alignItems: 'flex-end', gap: 10 }}>

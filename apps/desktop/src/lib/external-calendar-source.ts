@@ -1,3 +1,5 @@
+import { maskCalendarFeedUrl } from '@mindwtr/core';
+
 const FILE_URL_PREFIX = 'file://';
 
 function encodePathSegment(segment: string, index: number): string {
@@ -53,4 +55,19 @@ export function getCalendarSourceFileName(value: string): string {
         : value;
     const segments = source.replace(/\\/g, '/').split('/').filter(Boolean);
     return segments.length > 0 ? segments[segments.length - 1] : '';
+}
+
+/**
+ * A subscription's URL as Settings lists it: a local file by name, a URL as core
+ * masks it (its scheme and host only, never a user name, a password or the path).
+ */
+export function maskCalendarSourceUrl(url: string): string {
+    const trimmed = url.trim();
+    if (!trimmed) return '';
+    if (isLocalCalendarFileUrl(trimmed)) {
+        const path = localCalendarFileUrlToPath(trimmed);
+        const filename = getCalendarSourceFileName(trimmed);
+        return filename ? `Local file /.../${filename}` : `Local file ${path}`;
+    }
+    return maskCalendarFeedUrl(trimmed);
 }

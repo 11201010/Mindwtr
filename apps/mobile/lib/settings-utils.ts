@@ -1,9 +1,12 @@
-import { isDropboxUnauthorizedError } from '@mindwtr/core';
+import { isDropboxUnauthorizedError, maskCalendarFeedUrl } from '@mindwtr/core';
 import { logError, logWarn } from './app-log';
 
 export const formatError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export { isDropboxUnauthorizedError };
+
+// Core's (calendar-settings-model.ts), shared with the native host.
+export const maskCalendarUrl = maskCalendarFeedUrl;
 
 export const compareVersions = (v1: string, v2: string): number => {
     const parseVersionParts = (version: string): number[] => (
@@ -51,21 +54,6 @@ export const logSettingsError = (messageOrError: unknown, error?: unknown) => {
         return;
     }
     void logError(messageOrError, { scope: 'settings', extra: buildSettingsExtra(undefined, messageOrError) });
-};
-
-export const maskCalendarUrl = (url: string): string => {
-    const trimmed = url.trim();
-    if (!trimmed) return '';
-    const match = trimmed.match(/^(https?:\/\/)?([^/?#]+)([^?#]*)/i);
-    if (!match) {
-        return trimmed.length <= 8 ? '...' : `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
-    }
-    const protocol = match[1] ?? '';
-    const host = match[2] ?? '';
-    const path = match[3] ?? '';
-    const lastSegment = path.split('/').filter(Boolean).pop() ?? '';
-    const suffix = lastSegment ? `...${lastSegment.slice(-6)}` : '...';
-    return `${protocol}${host}/${suffix}`;
 };
 
 export const formatClockSkew = (ms: number): string => {
