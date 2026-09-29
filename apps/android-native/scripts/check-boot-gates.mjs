@@ -2015,7 +2015,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(activity, /LaunchedEffect\(leaveApp\) \{ if \(leaveApp\) \{ leftApp\(\); moveTaskToBack\(true\) \} \}/);
     assert.match(hostEntry, /^\s+entryPoint: \(input\) => logEntryPoint\(input, contract\.resolveNativeEntryPoint\(input\)\),$/m);
     assert.match(hostEntry, /^\s+captureImport: \(input\) => contract\.planQuickCaptureImport\(input\),$/m);
-    assert.match(hostEntry, /releaseCheck: 'v1\.3\.3\/native-android-entry-point', kind, outcome \}/);
+    assert.ok(hostEntry.includes("releaseCheck: 'v1.3.3/native-android-entry-point', kind, outcome }"));
     // A system capture (RN's origin=system) puts the app behind the previous one when the popup closes; Save and edit stays.
     assert.match(model, /private fun endCapture\(\) \{\s+val back = capture\?\.returnToPreviousApp == true\s+keepCapture\(null\)\s+if \(back\) leaveApp = true/);
     assert.equal(code(model).match(/endCapture\(\)/g).length, 4, 'Close, a saved capture that closes, and saved lines end the popup');
