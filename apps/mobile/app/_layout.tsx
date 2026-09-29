@@ -23,6 +23,7 @@ import {
   APP_ANNOUNCEMENT_DISMISSED_VALUE,
   DONATION_PROMPT_ANNOUNCEMENT,
   addBreadcrumb,
+  buildCoreLogExtra,
   consoleLogger,
   configureDateFormatting,
   getAnnouncementDismissalStorageKey,
@@ -102,29 +103,6 @@ import { useIosSceneDiagnostics } from '@/hooks/use-ios-scene-diagnostics';
 enableFreeze(true);
 
 let coreLoggerBridgeInstalled = false;
-
-const buildCoreLogExtra = (payload: {
-  category?: string;
-  context?: Record<string, unknown>;
-  error?: unknown;
-}): Record<string, unknown> | undefined => {
-  const extra: Record<string, unknown> = {
-    ...(payload.context ?? {}),
-  };
-  if (payload.category) {
-    extra.category = payload.category;
-  }
-  if (payload.error) {
-    extra.error = payload.error instanceof Error ? payload.error.message : String(payload.error);
-    if (payload.error instanceof Error && payload.error.name) {
-      extra.errorName = payload.error.name;
-    }
-    if (payload.error instanceof Error && payload.error.stack) {
-      extra.errorStack = payload.error.stack;
-    }
-  }
-  return Object.keys(extra).length > 0 ? extra : undefined;
-};
 
 const installCoreLoggerBridge = () => {
   if (coreLoggerBridgeInstalled) return;

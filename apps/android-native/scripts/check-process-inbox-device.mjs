@@ -7,7 +7,7 @@
 // database: (a) the Inbox's "Process Inbox (N)" speaks core's Inbox count; (b) it opens on
 // core's first item, question, and choices (guided); (c) Yes moves to core's next question and
 // Back returns; (d) rotation keeps the step; (e) Quick shows core's quick choices, and Guided
-// comes back. (f) Only when core's first item is one of the device checks' own captures: a
+// comes back; on core's file step the + beside Contexts is dimmed whole while the field is empty. (f) Only when core's first item is one of the device checks' own captures: a
 // Trash whose commit fails keeps its exact retry through rotation, and the retry deletes it
 // once; (g) process death before the write, after the write, and again during the replay: the app
 // lands on the Inbox, the answer is sent again, it is stored at most once, and its record on disk goes only
@@ -19,7 +19,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { button, check, connect, draftText, evidenced, fail, hasText, inboxCount, Stopped, tab, tagged, withDescription } from './device.mjs';
+import { blended, box, button, check, connect, draftText, evidenced, fail, hasText, inboxCount, Stopped, tab, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -77,7 +77,10 @@ const pullDatabase = () => {
     for (const suffix of ['', '-wal', '-shm']) if (present.includes(`${DB}${suffix}`)) device.pull(`files/${DB}${suffix}`, resolve(dir, `${DB}${suffix}`));
     return resolve(dir, DB);
 };
-/** Core's Inbox count, and its Process Inbox session in [mode] after [choices]: the item, the question, and the choices. */
+/**
+ * Core's Inbox count, and its Process Inbox session in [mode] after [choices]: the item, the question, the choices, the label
+ * of each choice made, and the file step's Contexts field and its + (when the step has them).
+ */
 const core = (mode, choices = [], taskId = '') => JSON.parse(execFileSync('bun', ['-e', `
     import { Database } from 'bun:sqlite';
     import { SqliteAdapter, createNativeHostContract, setStorageAdapter, useTaskStore } from '${coreSrc}/index.ts';
@@ -94,7 +97,9 @@ const core = (mode, choices = [], taskId = '') => JSON.parse(execFileSync('bun',
     const value = (result) => { if (!result.ok) throw new Error(result.error.code + ': ' + result.error.message); return result.value; };
     const started = value(host.startInboxProcessing({ mode: process.env.CHECK_MODE }));
     let view = started.view;
+    const picked = [];
     for (const choice of JSON.parse(process.env.CHECK_CHOICES)) {
+        picked.push(view.choices.find((item) => item.id === choice)?.label ?? choice);
         // A flow answer writes nothing, so the copy stays as the phone has it.
         view = value(await host.commitInboxProcessingStep({ sessionId: started.sessionId, taskId: view.taskId, step: view.step,
             decision: { choice }, requestId: crypto.randomUUID() })).view;
@@ -103,7 +108,8 @@ const core = (mode, choices = [], taskId = '') => JSON.parse(execFileSync('bun',
     console.log(JSON.stringify({
         total: value(host.getInboxWindow({ offset: 0, limit: 1 })).total,
         taskId: view?.taskId, title: view?.capture.title, question: view?.question, progress: view?.progress.label,
-        choices: view?.choices.map((choice) => choice.label) ?? [], deleted: task ? Boolean(task.deletedAt) : null,
+        choices: view?.choices.map((choice) => choice.label) ?? [], deleted: task ? Boolean(task.deletedAt) : null, picked,
+        contexts: view?.contexts ? { field: view.contexts.title, add: view.contexts.add.label } : null,
     }));
     process.exit(0);
 `], { encoding: 'utf8', env: { ...process.env, CHECK_DB: pullDatabase(), CHECK_MODE: mode, CHECK_CHOICES: JSON.stringify(choices), CHECK_TASK: taskId } })
@@ -193,6 +199,50 @@ try {
         && quick.choices.slice(0, 4).every((label) => withDescription(current, label)), 'core\'s quick choices');
     nodes = await tapExpecting(withDescription(nodes, en['process.modeGuided']), (current) => showsStep(current, guided), 'guided again');
     check(true, `(e) Quick shows core's choices (${quick.choices.slice(0, 4).join(', ')}, …) for the same item`);
+
+    // (e) Core's file step (Yes, longer than 2 minutes, I'll do it, single action; no answer writes): the + beside Contexts is
+    // dimmed whole while the field is empty, as RN's (opacity 0.5 over its tint), and full once a letter is typed.
+    const path = ['actionable', 'no', 'defer', 'single'];
+    const filing = core('guided', path);
+    const contexts = filing.contexts ?? fail('core\'s file step has no Contexts');
+    // Android puts the field's description on a node inside the EditText (as on the capture popup's picker field).
+    const contextField = (current) => current.find((node) => node['content-desc'] === contexts.field);
+    for (const [at, label] of filing.picked.entries()) {
+        nodes = await tapExpecting(withDescription(nodes, label) ?? fail(`no "${label}"`),
+            (current) => Boolean(at + 1 < path.length ? withDescription(current, filing.picked[at + 1]) : contextField(current)), `the step after "${label}"`);
+    }
+    /** The + in the Contexts field's row (another + can sit in More options). */
+    const plusNode = (current) => {
+        const field = contextField(current);
+        return field && current.find((node) => node['content-desc'] === contexts.add && box(node)[1] < box(field)[3] && box(node)[3] > box(field)[1]);
+    };
+    /** The +'s fill beside its glyph and the step's own color in the 8dp gap to its left, once [ready] holds for the fill (5 s at most). */
+    const plus = async (name, ready) => {
+        for (let attempt = 0; ; attempt += 1) {
+            const [left, top, , bottom] = box(plusNode(await screen()) ?? fail('no + beside Contexts'));
+            const y = Math.round((top + bottom) / 2);
+            const [fill, under] = device.colors(resolve(work, `plus-${name}.png`), [[left + 8, y], [left - 11, y]]);
+            if (ready(fill) || attempt === 10) return { fill, under };
+            await sleep(500);
+        }
+    };
+    await device.settle(nodes);
+    const emptyPlus = await plus('empty', () => true);
+    await device.focusAtEnd(contextField(await screen()));
+    requireAppFront();
+    sh('input text x');
+    // Core's reply turns the + on, and its fill changes when it does.
+    const fullPlus = await plus('typed', (fill) => fill !== emptyPlus.fill);
+    check(blended(emptyPlus.fill, fullPlus.fill, emptyPlus.under),
+        `(e) the file step's + is half its color while Contexts is empty: #${emptyPlus.fill} (full #${fullPlus.fill}, under #${emptyPlus.under})`);
+    requireAppFront();
+    sh('input keyevent KEYCODE_DEL');
+    check((await plus('cleared', (fill) => fill === emptyPlus.fill)).fill === emptyPlus.fill, '(e) the + dims again once the letter is gone');
+    // Close, then Process Inbox again: core's session starts over on its first question for (f) and (g).
+    if (/mInputShown=true/.test(sh('dumpsys input_method'))) { requireAppFront(); sh('input keyevent KEYCODE_BACK'); await sleep(600); }
+    nodes = await tapExpecting(withDescription(await screen(), en['common.close']) ?? fail('no Close'), onInbox, 'the Inbox');
+    nodes = await tapExpecting(withDescription(nodes, `${en['inbox.processButton']} (${guided.total})`) ?? fail('no Process Inbox'),
+        (current) => showsStep(current, guided), 'core\'s first question again');
 
     // (f) A failed Trash keeps its exact retry; only for the checks' own capture, never other development data.
     if (CHECK_CAPTURE.test(guided.title)) {

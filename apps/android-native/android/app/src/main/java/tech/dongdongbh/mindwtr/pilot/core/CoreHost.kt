@@ -24,6 +24,7 @@ import java.util.concurrent.Future
  * [rnDataDir] is set only when [databaseFile] is the React Native app's database:
  * then the JS host may apply RN's AsyncStorage change after it imported RN's backup.
  * [io] runs the JS host's fetch and secret calls off this thread; their answers come back in [callAsync]'s pump loop.
+ * [logFile] is RN's diagnostics log (DiagnosticsLogFile.RELATIVE_PATH under the app's files directory).
  */
 class CoreHost(
     private val databaseFile: File,
@@ -32,6 +33,7 @@ class CoreHost(
     private val journalDir: File,
     /** A write's deviceWrites (a setting's device-local part), kept with the journal sequence that set each key. */
     private val devices: DeviceWrites,
+    private val logFile: File,
 ) {
     companion object {
         const val TAG = "MindwtrNativeDev"
@@ -150,6 +152,9 @@ class CoreHost(
             bridge.setProperty("secretCall", guarded { args -> io.secret(args[0] as String) })
             bridge.setProperty("ioNext", guarded { _ -> io.next() })
             bridge.setProperty("ioBody", guarded { _ -> io.body() })
+            // RN's diagnostics log file: core's diagnostics-log.ts decides every write; this is its file IO.
+            val logs = DiagnosticsLogFile(logFile)
+            bridge.setProperty("logFile", guarded { args -> logs.run(args[0] as String, args.getOrNull(1)?.toString().orEmpty()) })
             engine.globalObject.setProperty("__mindwtrNative", bridge)
             engine.evaluate(bundle, "core-host.js")
             // This host journals every write (WriteJournal), so core requires each write's replay tokens.
@@ -306,6 +311,12 @@ class CoreHost(
 
     /** Core's General row for RN's app lock (its `value` is the stored setting); an owed save does not block it. */
     fun appLock(): JSONObject = callAsync("appLock")
+
+    /** Settings › Data's Share log: core's diagnostics log file, made when missing; `path` is null when it cannot be made. */
+    fun logShare(): JSONObject = callAsync("logShare")
+
+    /** Settings › Data's Clear log: core deletes the diagnostics log file. */
+    fun logClear(): JSONObject = callAsync("logClear")
 
     /** Core's getProjects: its Active, Deferred, and Archived groups in its order. */
     fun projects(): JSONObject = callAsync("projects")

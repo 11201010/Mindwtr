@@ -17,6 +17,17 @@
             android:name="androidx.profileinstaller.ProfileInstallReceiver"
             tools:node="remove" />
 
+        <!-- Settings › Data › Share log hands files/logs/mindwtr.log to the share sheet; nothing else is reachable. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.diagnostics"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/diagnostics_paths" />
+        </provider>
+
         <!-- singleTask, as RN's MainActivity: a link, share or note sent while the app runs reaches onNewIntent in the app's
              own task. Not exported: only its alias below, with RN's filters, starts it from outside the app. -->
         <activity

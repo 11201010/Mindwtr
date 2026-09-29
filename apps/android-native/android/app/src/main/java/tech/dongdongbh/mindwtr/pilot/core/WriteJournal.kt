@@ -47,7 +47,7 @@ class WriteJournal(
             "somedayReorder" to "{ids[]}", "somedayDelete" to "{id}",
         ) + listOf("archiveAction", "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction",
             "boardCreate", "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd",
-            "savedSearchDelete", "generalSetting", "gtdSetting", "manageEditor", "manageDelete").associateWith { "{requestId}" }
+            "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "manageEditor", "manageDelete").associateWith { "{requestId}" }
         val WRITES = SHAPES.keys
         /**
          * Writes never journaled: a key (the host method, or a Menu command's name) whose core command is in core's

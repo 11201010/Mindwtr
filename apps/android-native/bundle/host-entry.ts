@@ -4,7 +4,11 @@ import {
     STATUS_COLORS_BY_THEME,
     type SqliteAdapter,
     TASK_PRIORITY_COLORS,
+    consoleLogger,
+    createDiagnosticsLog,
     createNativeHostContract,
+    diagnosticsEntryFromLogPayload,
+    isDiagnosticsLoggingEnabled,
     legacyImportMismatch,
     assertNativeLegacyBackupSafe,
     loadNativeRequestReceipts,
@@ -13,12 +17,14 @@ import {
     planLegacyJsonImport,
     pruneNativeRequestReceipts,
     setNativeReplayTokens,
+    setLogger,
     setStorageAdapter,
     splitSqlStatements,
     sqliteHasAnyData,
     themeDescriptor,
     resolveThemeStatusPreset,
     type AppTheme,
+    type DiagnosticsLogFile,
     type FocusTaskSectionKey,
     type SqliteClient,
     useTaskStore,
@@ -42,6 +48,8 @@ type NativeBridge = {
     randomBytes(length: number): string;
     log(line: string): void;
     rnStateCommit(change: string): string | null;
+    /** RN's diagnostics log file (files/logs/mindwtr.log): one operation of core's DiagnosticsLogFile, as text. */
+    logFile(operation: string, text: string): string;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown };
@@ -69,6 +77,34 @@ const sqlite: SqliteClient = {
         for (const statement of splitSqlStatements(sql)) checked(native().sqlExec(statement));
     },
 };
+
+/**
+ * RN's diagnostics log on Kotlin's file bridge: core decides every write (diagnostics-log.ts: the Debug logging switch or a
+ * forced line, the JSON line, the size cap, one write at a time); Kotlin appends each line in one write, so a kill keeps it.
+ */
+const logFile = (operation: string, text = ''): string => checked(native().logFile(operation, text));
+const nativeLogFile: DiagnosticsLogFile = {
+    path: async () => logFile('path') || null,
+    ensure: async () => logFile('ensure') || null,
+    exists: async () => logFile('exists') === '1',
+    read: async () => logFile('read'),
+    write: async (text) => { logFile('write', text); },
+    delete: async () => logFile('delete') === '1',
+    append: async (line) => { logFile('append', line); return true; },
+    size: async () => Number(logFile('size')),
+    moveAside: async () => { logFile('moveAside'); },
+};
+const diagnosticsLog = createDiagnosticsLog({
+    isEnabled: () => isDiagnosticsLoggingEnabled(useTaskStore.getState().settings),
+    files: [nativeLogFile],
+});
+// Core's logger, as RN's _layout.tsx bridges it: logcat (the console), then the log file with RN's line.
+setLogger((payload) => {
+    consoleLogger(payload);
+    try {
+        void diagnosticsLog.append(diagnosticsEntryFromLogPayload(payload), { force: payload.force });
+    } catch { /* a diagnostic line must never fail its caller */ }
+});
 
 type LoadedData = Awaited<ReturnType<SqliteAdapter['getData']>>;
 // Core's receipt adapter: a write's request receipt commits in the same transaction as its data.
@@ -127,7 +163,7 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
 };
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
     | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
-    | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete';
+    | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
     | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
@@ -135,7 +171,7 @@ const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[
     const meta = {
         scope: ios ? 'native-ios' : 'native-android',
         category: 'storage' as const,
-        extra: { releaseCheck: ios ? 'v1.3.3/native-ios-dev-task-command' : 'v1.3.3/native-android-dev-task-command', operation, outcome: result.ok ? 'saved' : 'failed' },
+        context: { releaseCheck: ios ? 'v1.3.3/native-ios-dev-task-command' : 'v1.3.3/native-android-dev-task-command', operation, outcome: result.ok ? 'saved' : 'failed' },
     };
     try {
         const message = ios ? 'Native iOS task command' : 'Native Android task command';
@@ -195,7 +231,7 @@ const logLegacyImport = (plan: ReturnType<typeof planLegacyJsonImport>, rnState:
     };
     if (plan.reason) extra.reason = plan.reason;
     for (const [name, count] of Object.entries(plan.counts ?? {})) extra[name] = String(count);
-    const meta = { scope: ios ? 'native-ios' : 'native-android', category: 'storage' as const, extra };
+    const meta = { scope: ios ? 'native-ios' : 'native-android', category: 'storage' as const, context: extra };
     try {
         const message = ios ? 'Native iOS legacy JSON import' : 'Native Android legacy JSON import';
         if (rnState === 'failed') logWarn(message, meta);
@@ -318,7 +354,7 @@ const logEntryPoint = (input: { kind?: unknown }, result: Reply): Reply => {
         : entry.search ? 'search' : entry.route ? 'screen' : 'nothing';
     const kind = ['link', 'share', 'createNote'].includes(input?.kind as string) ? input.kind as string : 'other';
     try {
-        logInfo('Native Android entry point', { scope: 'native-android', extra: { releaseCheck: 'v1.3.3/native-android-entry-point', kind, outcome } });
+        logInfo('Native Android entry point', { scope: 'native-android', context: { releaseCheck: 'v1.3.3/native-android-entry-point', kind, outcome } });
     } catch { /* a diagnostic sink must not change what the entry opens */ }
     return result;
 };
@@ -378,6 +414,7 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     manageList: (input) => contract.getManageSettingsList(input),
     manageCheck: (input) => contract.checkManageEditor(input),
     somedaySections: (input) => contract.getSomedaySections(input),
+    dataSettings: () => contract.getDataSettings(),
     // Mind Sweep and a saved search's screen.
     mindSweep: (input) => contract.getMindSweep(input),
     savedSearch: (input) => contract.getSavedSearchView(input),
@@ -423,6 +460,8 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
     somedayRename: (input) => contract.renameSomedaySection(input),
     somedayReorder: (input) => contract.reorderSomedaySections(input),
     somedayDelete: (input) => contract.deleteSomedaySection(input),
+    // Settings › Data's Debug logging switch.
+    dataSetting: (input) => contract.setDataSetting(input),
 };
 
 let bootAdapter: ValidatedSqliteAdapter | null = null;
@@ -1520,6 +1559,17 @@ globalThis.MindwtrHost = {
     inboxEnd(sessionId: string): string {
         return submit(async () => {
             unwrap(contract.endInboxProcessing({ sessionId }));
+            return {};
+        });
+    },
+    /** Settings › Data's Share log: the log file's path, made when missing (null when it cannot be made). Nothing is sent. */
+    logShare(): string {
+        return submit(async () => ({ path: await diagnosticsLog.ensurePath() }));
+    },
+    /** Settings › Data's Clear log: deletes the log file. */
+    logClear(): string {
+        return submit(async () => {
+            await diagnosticsLog.clear();
             return {};
         });
     },

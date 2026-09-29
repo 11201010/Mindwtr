@@ -1284,7 +1284,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         // Bulk organize's create, Mind Sweep's Add and a saved search's Delete: core's whole input and the request UUID.
         "bulkCreate", "mindSweepAdd", "savedSearchDelete" -> JSONObject(action.title).put("requestId", action.id)
         // Settings: core's whole input and the request UUID; Manage's Someday section writes are target-state and take none.
-        "generalSetting", "gtdSetting", "manageEditor", "manageDelete" -> JSONObject(action.title).put("requestId", action.id)
+        "generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting" -> JSONObject(action.title).put("requestId", action.id)
         "somedayRename", "somedayReorder", "somedayDelete" -> JSONObject(action.title)
         else -> JSONObject().put("requestId", action.id).put("action", JSONObject(action.title))
     }.toString()

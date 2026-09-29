@@ -1040,12 +1040,12 @@ private fun Chip(active: Boolean, enabled: Boolean, description: String, onClick
                  shape: RoundedCornerShape = RoundedCornerShape(16.dp), compact: Boolean = false, horizontal: Int = if (compact) 10 else 12,
                  toggle: Boolean = false, content: @Composable (androidx.compose.ui.graphics.Color) -> Unit) {
     val c = LocalTheme.current.colors
-    Row(modifier.heightIn(min = 44.dp).clip(shape).background(if (active) c.tint else c.filterBg).border(1.dp, if (active) c.tint else c.border, shape)
+    Row(modifier.fade(if (enabled || active) 1f else 0.6f).heightIn(min = 44.dp).clip(shape).background(if (active) c.tint else c.filterBg).border(1.dp, if (active) c.tint else c.border, shape)
         // One node for TalkBack and the checks: the click, the label, and the state.
         .semantics { contentDescription = description }
         .then(if (toggle) Modifier.toggleable(value = active, enabled = enabled, role = Role.Button, onValueChange = { onClick() })
             else Modifier.selectable(selected = active, enabled = enabled, role = Role.Tab, onClick = onClick))
-        .fade(if (enabled || active) 1f else 0.6f).padding(horizontal = horizontal.dp, vertical = 10.dp),
+        .padding(horizontal = horizontal.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = if (compact) Arrangement.Center else Arrangement.Start) {
         content(if (active) c.onTint else c.secondaryText)
     }

@@ -161,14 +161,14 @@ private fun Tile(model: InboxViewModel, item: JSONObject, modifier: Modifier) {
     val shape = RoundedCornerShape(8.dp)
     val label = item.getString("label")
     Column(
-        modifier.heightIn(min = 104.dp).clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
+        modifier.fade(if (enabled) 1f else 0.45f).heightIn(min = 104.dp).clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
             // One accessibility node holds the label, the role and the state (a separate semantics node kept
             // "enabled" on the labelled node, so TalkBack read a missing screen as a working button).
             .clearAndSetSemantics {
                 contentDescription = label; role = Role.Button
                 if (enabled) onClick { model.menu.openTile(id); true } else disabled()
             }
-            .clickable(enabled = enabled) { model.menu.openTile(id) }.fade(if (enabled) 1f else 0.45f)
+            .clickable(enabled = enabled) { model.menu.openTile(id) }
             .padding(horizontal = 8.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
     ) {

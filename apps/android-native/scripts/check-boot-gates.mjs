@@ -472,12 +472,13 @@ for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt, ro
 const guard = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/LegacyRnStoreGuard.kt'), 'utf8');
 const themeKt = source('Theme.kt');
 const iconsKt = source('Icons.kt');
+const logFileKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/DiagnosticsLogFile.kt'), 'utf8');
 const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, snapshotsKt, coreHost, sqliteBridge, guard,
-    menuModel, ...Object.values(menuScreens)];
+    menuModel, logFileKt, ...Object.values(menuScreens)];
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 // The Kotlin host journals every write, and says so at boot: core then requires each write's replay tokens. Only this
 // flag sets 'required'; iOS boots and recovers with none.
 assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)/);
@@ -586,7 +587,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 13, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, log, and the fetch and secret calls: each guarded');
+assert.equal(bridgeCallbacks.length, 14, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, log, the fetch and secret calls, and logFile: each guarded');
 for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\w+", guarded \{/);
 // fetch and the secrets (HostIo.kt, SecretStore.kt): started on the engine thread, run off it, answered only through the pump.
 {
@@ -723,7 +724,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         'activateProject', 'moveSomedayTasksToSection', 'undoSomedaySectionMove', 'addSomedaySectionTask', 'createSomedaySection', 'setTaskListSort',
         'runArchiveAction', 'runContextsAction', 'runTrashAction', 'runReviewAction', 'runCalendarAction', 'runBoardAction', 'runBulkAction', 'setFocusGroupBy',
         'saveFocusFilter', 'removeFocusFilterCriterion', 'deleteFocusFilter', 'reorderFocus', 'createBulkOrganizeDestination', 'addMindSweepItem', 'deleteSavedSearch',
-        'setGeneralSetting', 'setGtdSetting', 'saveManageEditor', 'deleteManageItem', 'renameSomedaySection', 'reorderSomedaySections', 'deleteSomedaySection'];
+        'setGeneralSetting', 'setGtdSetting', 'setDataSetting', 'saveManageEditor', 'deleteManageItem', 'renameSomedaySection', 'reorderSomedaySections', 'deleteSomedaySection'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -1448,7 +1449,8 @@ for (const [name, text] of Object.entries({ menuModel, ...menuScreens })) {
 }
 // The More sheet: core's destinations (getMoreMenu); a tile this app builds opens, the others are drawn disabled, never a dead tap.
 // One accessibility node holds the label, the role and the state, so TalkBack hears an unbuilt tile as disabled.
-assert.equal(moreUi.match(/\.clearAndSetSemantics \{\s+contentDescription = label; role = Role\.Button\s+if \(enabled\) onClick \{ model\.menu\.openTile\(id\); true \} else disabled\(\)\s+\}\s+\.clickable\(enabled = enabled\) \{ model\.menu\.openTile\(id\) \}\.fade\(if \(enabled\) 1f else 0\.45f\)/g)?.length, 2, "an unbuilt tile is disabled and dimmed on its labelled node; a built one is dimmed only while a command runs or a retry is owed");
+assert.equal(moreUi.match(/\.clearAndSetSemantics \{\s+contentDescription = label; role = Role\.Button\s+if \(enabled\) onClick \{ model\.menu\.openTile\(id\); true \} else disabled\(\)\s+\}\s+\.clickable\(enabled = enabled\) \{ model\.menu\.openTile\(id\) \}/g)?.length, 2, "an unbuilt tile is disabled and dimmed on its labelled node; a built one is dimmed only while a command runs or a retry is owed");
+assert.equal(moreUi.match(/\.fade\(if \(enabled\) 1f else 0\.45f\)/g)?.length, 2, 'both tile kinds dim at 45% while disabled');
 assert.match(menuModel, /fun opens\(id: String\) = id in setOf\("waiting", "someday", "reference", "history", "projects", "review", "contexts", "trash", "calendar", "board", "settings"\)/);
 assert.match(activity, /if \(menu\.sheet\) MoreSheet\(model\)/);
 assert.match(activity, /else if \(listed != null && writable\) MenuScreenHost\(model, listed\)/);
@@ -1833,7 +1835,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(settingsModel, /fun gtd\(edit: JSONObject\) = menu\.command\("gtdSetting", JSONObject\(\)\.put\("edit", edit\)\)/);
     assert.match(settingsModel, /fun saveEditor\(action: FailedAction\) = menu\.create\(action\)/);
     assert.match(settingsModel, /return FailedAction\("manageEditor", open\.getString\("requestId"\), input\.toString\(\)\)/, 'the editor\'s request UUID stays with its dialog');
-    assert.match(menuModel, /"generalSetting", "gtdSetting", "manageEditor", "manageDelete" -> JSONObject\(action\.title\)\.put\("requestId", action\.id\)/);
+    assert.match(menuModel, /"generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting" -> JSONObject\(action\.title\)\.put\("requestId", action\.id\)/);
     assert.match(menuModel, /"somedayRename", "somedayReorder", "somedayDelete" -> JSONObject\(action\.title\)/);
     for (const call of ['"manageDelete")', '"somedayDelete")']) {
         const at = settingsUi.indexOf(call);
@@ -2027,7 +2029,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // General's switch: off sends core's edit at once; on only after the device lock's yes; a no shows core's errors[reason] under the row.
     assert.match(lockKt, /if \(!edit\.getBoolean\("value"\)\) return settings\.general\(edit\)\s+ask\(row\.getJSONObject\("enablePrompt"\)\.getString\("promptMessage"\)\) \{ reason ->\s+if \(reason == null\) shell\.menu\.whenIdle \{ settings\.general\(edit\) \} else settings\.editLocal \{ put\(SWITCH_FAILURE, reason\) \}/);
     assert.match(lockKt, /row\.getJSONObject\("errors"\)\.getString\(it\)/);
-    assert.match(settingsUi, /RnSwitch\(lock\.getBoolean\("value"\), model\.failedAction == null && !model\.lock\.authenticating, lock\.getString\("label"\)\) \{ model\.lock\.toggle\(lock\) \}/);
+    assert.match(settingsUi, /RnSwitch\(lock\.getBoolean\("value"\), model\.failedAction == null && !model\.lock\.authenticating, lock\.getString\("label"\), theme\.generalSwitch\) \{ model\.lock\.toggle\(lock\) \}/);
     assert.match(settingsModel, /"appLock" -> shell\.lock\.stored\(input\.getJSONObject\("edit"\)\.getBoolean\("value"\)\)/);
     // The phone check (findings 6 and 7): each database change happens with the app's process gone, from an untouched pulled copy,
     // staged and size-checked beside the database, the old WAL and SHM removed, then renamed over it; the restore proves core's value,
@@ -2274,7 +2276,185 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(entryCode, /\bText\(|contentDescription|showToast\("/, 'EntryPoints.kt: every word is core\'s');
 }
 
+// Pass A4 (L1): RN's diagnostics log (files/logs/mindwtr.log) written by core's diagnostics-log.ts through Kotlin's file bridge,
+// and Settings › Data's Diagnostics card on core's getDataSettings.
+{
+    const coreLog = readFileSync(resolve(app, '../../packages/core/src/diagnostics-log.ts'), 'utf8');
+    const relative = /export const DIAGNOSTICS_LOG_RELATIVE_PATH = '([^']+)'/.exec(coreLog)[1];
+    assert.equal(relative, 'logs/mindwtr.log', 'RN\'s log path, relative to its documents directory (Android files/)');
+    assert.match(logFileKt, new RegExp(`const val RELATIVE_PATH = "${relative}"`), 'Kotlin\'s log path is core\'s');
+    assert.match(owner, /File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\)/);
+    // Plain IO only: one unbuffered append per line (a kill keeps every returned line), a replace through a synced rename.
+    assert.match(logFileKt, /"append" -> \{\s+FileOutputStream\(file, true\)\.use \{ it\.write\(text\.toByteArray\(\)\) \}/);
+    assert.match(logFileKt, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(text\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
+    assert.doesNotMatch(code(logFileKt), /[Bb]uffered|appendText|JSONObject|loggingEnabled|500_?000|mindwtr-native-dev/, 'Kotlin holds no log policy');
+    assert.match(coreHost, /val logs = DiagnosticsLogFile\(logFile\)\s+bridge\.setProperty\("logFile", guarded \{ args -> logs\.run\(/);
+    assert.match(coreHost, /fun logShare\(\): JSONObject = callAsync\("logShare"\)/);
+    assert.match(coreHost, /fun logClear\(\): JSONObject = callAsync\("logClear"\)/);
+    // Core's logger writes through the file port; the gate reads the store's setting, as RN's isLoggingEnabled does.
+    assert.match(hostEntry, /setLogger\(\(payload\) => \{\s+consoleLogger\(payload\);\s+try \{\s+void diagnosticsLog\.append\(diagnosticsEntryFromLogPayload\(payload\), \{ force: payload\.force \}\);/);
+    assert.match(hostEntry, /isEnabled: \(\) => isDiagnosticsLoggingEnabled\(useTaskStore\.getState\(\)\.settings\),\s+files: \[nativeLogFile\],/);
+    assert.match(hostEntry, /logShare\(\): string \{\s+return submit\(async \(\) => \(\{ path: await diagnosticsLog\.ensurePath\(\) \}\)\);/);
+    assert.match(hostEntry, /logClear\(\): string \{\s+return submit\(async \(\) => \{\s+await diagnosticsLog\.clear\(\);/);
+    // The host's diagnostic lines put their fields in the payload's context, the part the log file keeps.
+    assert.doesNotMatch(hostEntry, /\bextra: \{|, extra \}/);
+    assert.match(hostEntry, /^\s+dataSettings: \(\) => contract\.getDataSettings\(\),$/m);
+    assert.match(hostEntry, /^\s+dataSetting: \(input\) => contract\.setDataSetting\(input\),$/m);
+    // Share log: only the logs folder is shareable, through a private FileProvider and the system share sheet; nothing is sent by the app.
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+    assert.match(manifest, /<provider\s+android:name="androidx\.core\.content\.FileProvider"\s+android:authorities="\$\{applicationId\}\.diagnostics"\s+android:exported="false"\s+android:grantUriPermissions="true">/);
+    const paths = readFileSync(resolve(app, 'android/app/src/main/res/xml/diagnostics_paths.xml'), 'utf8');
+    assert.deepEqual(paths.match(/<[\w-]+-path [^>]*>/g), ['<files-path name="logs" path="logs/" />']);
+    const settingsModelKt = source('SettingsModel.kt');
+    const share = code(settingsModelKt.slice(settingsModelKt.indexOf('fun shareLog()'), settingsModelKt.indexOf('fun clearLog()')));
+    assert.match(share, /FileProvider\.getUriForFile\(activity, "\$\{activity\.packageName\}\.diagnostics", File\(path\)\)/);
+    assert.match(share, /Intent\(Intent\.ACTION_SEND\)\.setType\("text\/plain"\)\.putExtra\(Intent\.EXTRA_STREAM, uri\)\s+\.addFlags\(Intent\.FLAG_GRANT_READ_URI_PERMISSION\)/);
+    assert.equal(share.match(/startActivity\(/g).length, 1);
+    assert.match(share, /activity\.startActivity\(Intent\.createChooser\(send, null\)\)/, 'the share sheet from the activity, as RN\'s expo-sharing: the user picks where it goes');
+    assert.doesNotMatch(share, /FLAG_ACTIVITY_NEW_TASK|getApplication/, 'never a new task from the application context');
+    // The made file waits as screen state; the Data screen opens the sheet from its own activity, so a rotation keeps it.
+    assert.match(share, /logToShare = path/);
+    for (const word of ['logMissing', 'shareUnavailable']) assert.match(share, new RegExp(`words\\.getString\\("${word}"\\)`), `RN's ${word} toast, core's words`);
+    assert.match(settingsModelKt, /fun data\(edit: JSONObject\) = menu\.command\("dataSetting", JSONObject\(\)\.put\("edit", edit\)\)/);
+    // The Data screen draws core's view: the switch sends core's edit; Share and Clear show only when core sends them.
+    const settingsUiKt = source('SettingsScreen.kt');
+    const data = code(settingsUiKt.slice(settingsUiKt.indexOf('private fun DataSettings('), settingsUiKt.indexOf('private fun ActionRow(')));
+    // The Debug logging switch takes ToggleRow's default: SettingToggleRow's pair, which RN's switch sets itself (checked below).
+    assert.match(data, /ToggleRow\(model, diagnostics\.getJSONObject\("debugLogging"\), true\) \{ settings\.data\(it\) \}/);
+    assert.match(data, /diagnostics\.optJSONObject\("shareLog"\)\?\.let/);
+    assert.match(data, /val activity = LocalActivity\.current\s+LaunchedEffect\(settings\.logToShare\) \{ if \(settings\.logToShare != null\) activity\?\.let\(settings::openShareSheet\) \}/);
+    assert.match(data, /diagnostics\.optJSONObject\("clearLog"\)\?\.let/);
+    assert.doesNotMatch(data, /\bt\(|"settings\./, 'every word is the view\'s');
+    // Review 2026-09-28. (1) RN draws this heading in tc.text (General's are secondaryText).
+    const rnDataCard = readFileSync(resolve(app, '../../apps/mobile/components/settings/sync-settings-sections.tsx'), 'utf8');
+    assert.match(rnDataCard, /style=\{\[styles\.sectionTitle, \{ color: tc\.text, marginTop: 24 \}\]\}>\{t\('settings\.diagnostics'\)\}/);
+    assert.match(data, /SectionTitle\(diagnostics\.getString\("title"\), top = 24, color = c\.text\)/);
+    // (3) Share and Clear touch no app data: they run in every state, as RN's do (a tester needs the log most after a failed save).
+    assert.match(data, /ActionRow\(share\.getString\("label"\), share\.getString\("description"\), c\.tint, true, "settings-share-log"\)/);
+    assert.match(data, /ActionRow\(clear\.getString\("label"\), null, c\.secondaryText, true, "settings-clear-log"\)/);
+    const clear = code(settingsModelKt.slice(settingsModelKt.indexOf('fun clearLog()'), settingsModelKt.indexOf('\n    }\n', settingsModelKt.indexOf('fun clearLog()'))));
+    for (const body of [share, clear]) {
+        assert.match(body, /shell\.anyTime\(\{ runtime ->/);
+        assert.doesNotMatch(body, /perform|background\(/);
+    }
+    assert.match(model, /internal fun anyTime\(work: \(CoreHost\) -> Unit, failed: \(Throwable\) -> Unit\) \{\s+val runtime = host \?: return/);
+    // (6) A Share answered after the Data screen closed opens nothing on a later visit.
+    assert.match(share, /screen == "data" && menu\.list == "settings" -> logToShare = path/);
+    for (const fn of ['fun reset()', 'fun push(', 'fun back()']) {
+        const at = settingsModelKt.indexOf(fn);
+        assert.match(settingsModelKt.slice(at, settingsModelKt.indexOf('\n    }\n', at)), /logToShare = null/, `${fn} drops a pending share`);
+    }
+    // (5) RN's settingInfo keeps 16dp to its right.
+    const actionRow = code(settingsUiKt.slice(settingsUiKt.indexOf('private fun ActionRow('), settingsUiKt.indexOf('\n}\n', settingsUiKt.indexOf('private fun ActionRow('))));
+    assert.match(actionRow, /Column\(Modifier\.padding\(end = 16\.dp\)\)/);
+    // (2, 7) Kotlin's file: a file core cannot read is moved aside whole; a folder where the log should be is removed, as RN does.
+    assert.match(logFileKt, /"moveAside" -> \{\s+val aside = File\(file\.parentFile, "\$\{file\.name\}\.unreadable"\)\s+aside\.delete\(\)\s+check\(file\.renameTo\(aside\)\)/);
+    assert.match(logFileKt, /if \(file\.isDirectory\) file\.deleteRecursively\(\)\s+file\.createNewFile\(\)/);
+    assert.match(logFileKt, /file\.isDirectory -> \{ file\.deleteRecursively\(\); "" \}/);
+    assert.match(hostEntry, /moveAside: async \(\) => \{ logFile\('moveAside'\); \},/);
+}
+
+// Every native switch draws RN's Switch on Android (ReactSwitch over AppCompat 1.7.0's SwitchCompat) for the props its RN call
+// site sets. RN multiplies SwitchCompat's opaque track image by trackColor, so the track is that color, solid. Without
+// thumbColor the thumb is AppCompat's (colorAccent on, colorSwitchThumbNormal off, the disabled color when disabled), by the
+// system's night mode. Nothing fades.
+{
+    const rnSource = (file) => readFileSync(resolve(app, '../../apps/mobile', file), 'utf8');
+    const props = (name) => new RegExp(`val ${name} = RnSwitchProps\\(([^\\n]*)\\)\\n`).exec(themeKt)?.[1] ?? '';
+    // SettingToggleRow's default: GTD's switches, and Data's Debug logging, which sets the same pair itself.
+    const legacy = /LEGACY_SWITCH_TRACK_COLOR = \{ false: '(#\w{6})', true: '(#\w{6})' \}/.exec(rnSource('components/settings/setting-row.tsx'));
+    assert.equal(props('settingsSwitch'), `rgb("${legacy[1].toUpperCase()}"), rgb("${legacy[2].toUpperCase()}")`);
+    const rnDebug = /<Switch value=\{loggingEnabled\} onValueChange=\{toggleDebugLogging\} ([^/]*)\/>/.exec(rnSource('components/settings/sync-settings-sections.tsx'))?.[1] ?? '';
+    assert.equal(rnDebug.trim(), `trackColor={{ false: '${legacy[1]}', true: '${legacy[2]}' }}`, 'RN\'s Debug logging switch sets only SettingToggleRow\'s pair');
+    const gtd = rnSource('components/settings/gtd-settings-screen.tsx');
+    assert(gtd.includes('<SettingToggleRow') && !/trackColor|thumbColor/.test(gtd), 'RN\'s GTD switches keep SettingToggleRow\'s default');
+    // General's three switches: trackColor { false: secondaryText, true: tint }, no thumbColor.
+    const general = rnSource('components/settings/general-settings-screen.tsx');
+    assert.equal(general.match(/trackColor=\{\{ false: tc\.secondaryText, true: tc\.tint \}\}/g)?.length, 3);
+    assert.doesNotMatch(general, /thumbColor/);
+    assert.equal(props('generalSwitch'), 'colors.secondaryText, colors.tint');
+    // The capture popup's Add another sets both.
+    assert.match(rnSource('components/quick-capture-sheet/QuickCaptureSheetBody.tsx'), /thumbColor=\{addAnother \? tc\.tint : tc\.border\}\s+trackColor=\{\{ false: tc\.border, true: `\$\{tc\.tint\}55` \}\}/);
+    assert.equal(props('captureSwitch'), 'colors.border, tintTrack, colors.border, colors.tint');
+    assert.match(themeKt, /val tintTrack = colors\.tint\.copy\(alpha = 0x55 \/ 255f\)/);
+    // Reference's filter sheet (task-list.tsx).
+    assert.match(rnSource('components/task-list.tsx'), /trackColor=\{\{ false: themeColors\.border, true: themeColors\.tint \}\}/);
+    assert.equal(props('referenceSwitch'), 'colors.border, colors.tint');
+    // AppCompat 1.7.0's thumb: switch_thumb_disabled_material, colorAccent (material_deep_teal_500 / _200), colorSwitchThumbNormal.
+    assert.match(themeKt, /!enabled -> if \(systemDark\) rgb\("#616161"\) else rgb\("#BDBDBD"\)\s+on -> if \(systemDark\) rgb\("#80CBC4"\) else rgb\("#008577"\)\s+else -> if \(systemDark\) rgb\("#BDBDBD"\) else rgb\("#F1F1F1"\)/);
+    // The drawing: the track solid in RN's color, the thumb RN's or AppCompat's, and no fade.
+    const graphicAt = captureUi.indexOf('internal fun RnSwitchGraphic(');
+    const graphic = code(captureUi.slice(graphicAt, captureUi.indexOf('\n}\n', graphicAt)));
+    assert.match(graphic, /background\(if \(on\) props\.trackOn else props\.trackOff\)/);
+    assert.match(graphic, /theme\.switchThumbShade\(\(if \(on\) props\.thumbOn else props\.thumbOff\) \?: theme\.switchThumb\(on, enabled, isSystemInDarkTheme\(\)\)\)/);
+    // SwitchCompat's thumb image is #FAFAFA (AppCompat 1.7.0's abc_btn_switch_to_on_mtrl), multiplied by the thumb color.
+    assert.match(themeKt, /private const val THUMB_IMAGE = 250f \/ 255f/);
+    assert.match(themeKt, /Color\(red = color\.red \* THUMB_IMAGE, green = color\.green \* THUMB_IMAGE, blue = color\.blue \* THUMB_IMAGE, alpha = color\.alpha\)/);
+    const rnSwitch = code(captureUi.slice(captureUi.indexOf('internal fun RnSwitch('), graphicAt));
+    assert.doesNotMatch(rnSwitch + graphic, /fade\(|alpha/, 'RN never fades a disabled switch');
+    // RN's SwitchCompat as measured on the S23 (3x, parity pairs popup-another and popup-empty): a 140x81px view, a 71px x 42px
+    // track, a 60px thumb whose center moves 59px.
+    assert.match(graphic, /Box\(Modifier\.size\(46\.67\.dp, 27\.dp\), contentAlignment = Alignment\.Center\)/);
+    assert.match(graphic, /Box\(Modifier\.size\(24\.dp, 14\.dp\)/);
+    assert.match(graphic, /offset\(x = if \(on\) 10\.dp else \(-10\)\.dp\)\.size\(20\.dp\)/);
+    // Each call site passes its RN props: General's three, the capture popup, Reference's sheet; GTD and Data take the default.
+    const settingsUiKt = code(source('SettingsScreen.kt'));
+    assert.equal(settingsUiKt.match(/theme\.generalSwitch/g)?.length, 3);
+    assert.match(settingsUiKt, /props: RnSwitchProps = LocalTheme\.current\.settingsSwitch/);
+    assert.match(code(captureUi), /RnSwitch\(on, enabled = !locked, label = label, props = theme\.captureSwitch\)/);
+    assert.match(code(menuUi), /RnSwitchGraphic\(on, true, LocalTheme\.current\.referenceSwitch\)/);
+    assert.doesNotMatch(code(menuUi), /fun RnSwitch\(/, 'one switch drawing');
+}
+
+// RN dims the capture popup's Save and Save and edit to half, the whole button, and makes them inert while the text is
+// blank. The fade is a layer over the whole pill, so it comes before the pill's background and border, not after them.
+{
+    const rnSheet = readFileSync(resolve(app, '../../apps/mobile/components/quick-capture-sheet/QuickCaptureSheetBody.tsx'), 'utf8');
+    assert.equal(rnSheet.match(/opacity: value\.trim\(\) && !saving \? 1 : 0\.5/g)?.length, 2);
+    assert.equal(rnSheet.match(/disabled=\{saving \|\| !value\.trim\(\)\}/g)?.length, 2);
+    const buttons = code(captureUi).match(/Box\(Modifier\.fade\(if \(canSave\) 1f else 0\.5f\)\.widthIn\(min = 1(12|04)\.dp\)[^\n]*/g) ?? [];
+    assert.equal(buttons.length, 2, 'Save and edit and Save fade as a whole');
+    assert.doesNotMatch(code(captureUi), /\.clickable\(enabled = canSave[^\n]*\n[^\n]*\.fade\(/, 'no fade after a pill\'s background');
+    assert.match(readFileSync(resolve(app, '../../packages/core/src/quick-capture-model.ts'), 'utf8'), /canSave: Boolean\(text\.trim\(\)\)/);
+}
+
+// RN's settingRow is alignItems 'flex-start': a row's switch, chevron or field sits at the top beside its label, not centered.
+{
+    const rnStyles = readFileSync(resolve(app, '../../apps/mobile/components/settings/settings.styles.ts'), 'utf8');
+    assert.match(rnStyles, /settingRow: \{[^}]*alignItems: 'flex-start',/);
+    const settingsKt = source('SettingsScreen.kt');
+    const row = code(settingsKt.slice(settingsKt.indexOf('private fun SettingRow('), settingsKt.indexOf('\n}\n', settingsKt.indexOf('private fun SettingRow('))));
+    assert.match(row, /\.padding\(16\.dp\),\s+verticalAlignment = Alignment\.Top\)/, 'SettingRow aligns its trailing control to the top, as RN');
+}
+
+// A fade is a layer over what comes after it in a modifier chain. A fade after a background or border leaves them at full
+// strength (the capture popup's Save stayed full blue), while RN's opacity dims the whole button. Every fade comes first.
+{
+    const pilot = resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot');
+    const blank = (text) => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (comment) => comment.replace(/[^\n]/g, ' '));
+    const late = [];
+    for (const name of readdirSync(pilot).filter((file) => file.endsWith('.kt'))) {
+        const text = blank(readFileSync(resolve(pilot, name), 'utf8'));
+        for (const match of text.matchAll(/\.fade\(/g)) {
+            // Walk back to the start of this chain: an open bracket, or a comma, `=` or `;` outside brackets.
+            let depth = 0;
+            let at = match.index;
+            while (--at >= 0) {
+                const char = text[at];
+                if (char === ')' || char === '}') depth++;
+                else if (char === '(' || char === '{') { if (depth === 0) break; depth--; }
+                else if (depth === 0 && /[,=;]/.test(char)) break;
+            }
+            if (/\.(background|border)\(/.test(text.slice(at + 1, match.index))) late.push(`${name}:${text.slice(0, match.index).split('\n').length}`);
+        }
+    }
+    assert.deepEqual(late, [], `a fade after a background or border: ${late.join(', ')}`);
+}
+
 const fakeCore = `
+export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLoggingEnabled } from ${JSON.stringify(resolve(app, '../../packages/core/src/diagnostics-log.ts'))};
+export function setLogger(logger) { globalThis.coreLogger = logger; }
+export function consoleLogger() {}
 export class SqliteAdapter {
   async getData() {
     globalThis.events.push('load');
@@ -2439,7 +2619,7 @@ const built = await build({
     entryPoints: [resolve(app, 'bundle/host-entry.ts')], bundle: true, write: false, format: 'iife',
     plugins: [{ name: 'fake-core', setup(plugin) {
         plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'test' }));
-        plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCore, loader: 'js' }));
+        plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCore, loader: 'js', resolveDir: app }));
     } }],
 });
 const makeState = (taskCount, fakeDataSequence = []) => {
@@ -2460,6 +2640,7 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         updateResult: { ok: true, value: { id: 't', changed: true } },
         saveDraftResult: { ok: true, value: { id: 't', draft: { title: 'b' } } },
         inboxCommitResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
+        logText: null, logOps: [], logFailure: null,
         __mindwtrNative: {
             sqlAll(sql) {
                 // 'auto': the tasks count matches the load, as a real database would.
@@ -2471,6 +2652,22 @@ const makeState = (taskCount, fakeDataSequence = []) => {
             },
             sqlRun() {}, sqlExec() {},
             rnStateCommit(change) { state.events.push(`commit:${change}`); return state.commitResult; },
+            // Kotlin's DiagnosticsLogFile on one in-memory file (logText null: no file).
+            logFile(operation, text) {
+                state.logOps.push(operation);
+                if (state.logFailure) return `!MindwtrNativeError:${state.logFailure}`;
+                switch (operation) {
+                    case 'path': return 'files/logs/mindwtr.log';
+                    case 'ensure': state.logText ??= ''; return 'files/logs/mindwtr.log';
+                    case 'exists': return state.logText === null ? '' : '1';
+                    case 'read': return state.logText;
+                    case 'size': return String(Buffer.byteLength(state.logText ?? ''));
+                    case 'append': state.logText += text; return '';
+                    case 'write': state.logText = text; return '';
+                    case 'delete': { const had = state.logText !== null; state.logText = null; return had ? '1' : ''; }
+                    default: throw new Error(`unknown log operation ${operation}`);
+                }
+            },
         },
     };
     vm.runInNewContext(built.outputFiles[0].text, state);
@@ -2890,6 +3087,37 @@ assert.equal(brokenStorage.activationCount, 0);
         assert.deepEqual([child.status, child.stdout], [status, 'props\nreverse\n'], ending);
     }
 }
+// Core's logger on the file bridge, with core's real diagnostics-log.ts: RN's gate, force, line and sanitizer; one append per line.
+{
+    const log = makeState(0);
+    assert.equal((await poll(log, log.MindwtrHost.boot())).ok, true);
+    const tick = () => new Promise((resolveTick) => setImmediate(resolveTick));
+    const lines = () => (log.logText ?? '').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    log.logOps.length = 0;
+    log.coreLogger({ level: 'info', message: 'not written' });
+    await tick();
+    assert.deepEqual(log.logOps, [], 'debug logging off: no file work at all');
+    log.coreLogger({ level: 'warn', message: 'forced token=secret-value', scope: 'diagnostics', force: true });
+    await tick();
+    assert.deepEqual(lines().map(({ ts: _ts, ...line }) => line), [{ level: 'warn', scope: 'diagnostics', message: 'forced token=[redacted]' }]);
+    log.settings = { diagnostics: { loggingEnabled: true } };
+    log.coreLogger({ level: 'info', message: 'Native Android task command', category: 'storage', context: { operation: 'complete', password: 'p' } });
+    await tick();
+    const last = lines().at(-1);
+    assert.deepEqual(Object.keys(last), ['ts', 'level', 'scope', 'message', 'context']);
+    assert.deepEqual({ ...last, ts: '' }, { ts: '', level: 'info', scope: 'core', message: 'Native Android task command', context: { operation: 'complete', password: '[redacted]', category: 'storage' } });
+    assert.match(last.ts, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    assert.equal(log.logOps.filter((op) => op === 'append').length, 2, 'one append per line');
+    assert.equal(log.logOps.filter((op) => op === 'write').length, 0, 'no rewrite under the size cap');
+    assert.deepEqual(await poll(log, log.MindwtrHost.logShare()), { ok: true, value: { path: 'files/logs/mindwtr.log' } });
+    assert.deepEqual(await poll(log, log.MindwtrHost.logClear()), { ok: true, value: {} });
+    assert.equal(log.logText, null);
+    // A failing bridge never reaches the caller: the line is dropped, and Share gets no path.
+    log.logFailure = 'disk full';
+    assert.doesNotThrow(() => log.coreLogger({ level: 'error', message: 'lost', force: true }));
+    await tick();
+    assert.deepEqual(await poll(log, log.MindwtrHost.logShare()), { ok: true, value: { path: null } });
+}
 console.log('Storage exception rethrown in JS;', 'lifecycle ownership and debug-only fault hooks checked');
 console.log('RN legacy guard runs before the RN database opens and reads RKStorage and the database only as byte copies');
 console.log('Editor: core\'s model and suggestions in, saveTaskDraft out through perform with an exact retry, changed fields only, no Kotlin date parsing');
@@ -2909,6 +3137,7 @@ console.log('Review organize and picker search: row and batch Mark reviewed and 
 console.log('Settings and the editor\'s View tab: core\'s settings and task views through CoreHost, writes through perform with exact requests, device writes under RN\'s keys, checklist edits as core\'s edits in the one save');
 console.log('Mind Sweep and saved searches: core\'s views through CoreHost, captures and Bulk organize creates on disk first, stale windows read again whole, Focus picker search, no Kotlin policy');
 console.log('App lock: core\'s General row read at boot and after a failed save, locked on each leave but a rotation, no recents picture while on, AndroidX BiometricPrompt with Expo\'s credential fallback, General\'s switch on only after a yes, a scrolling lock screen in core\'s words, and a phone check that swaps the database atomically and restores loudly');
+console.log('Diagnostics log: core\'s rules on Kotlin\'s file bridge (RN\'s path, gate, force, line, sanitizer), Share through a private FileProvider and the share sheet, Clear, Data\'s card from core');
 // One run per phone: every device check waits for its phone's lock before anything else (device-lock.mjs).
 for (const file of ['device.mjs', 'check-net-device.mjs']) {
     assert.match(readFileSync(resolve(app, `scripts/${file}`), 'utf8'), /^import '\.\/device-lock\.mjs';$/m, `${file} waits for the phone's lock first`);

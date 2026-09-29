@@ -317,10 +317,10 @@ fun StatusMenu(model: InboxViewModel) = with(model) {
                     val current = status == task.status
                     val enabled = writable && !busy && (failedAction == null || failedAction == statusAction(task, status))
                     Row(
-                        Modifier.fillMaxWidth(0.42f).clip(RoundedCornerShape(20.dp)).then(if (current) Modifier.background(colors.bg) else Modifier)
+                        Modifier.fade(if (enabled) 1f else 0.5f).fillMaxWidth(0.42f).clip(RoundedCornerShape(20.dp)).then(if (current) Modifier.background(colors.bg) else Modifier)
                             .border(1.dp, colors.text, RoundedCornerShape(20.dp))
                             .clickable(enabled = enabled, role = Role.Button) { if (!menu.rowStatus(task, status)) changeStatus(task, status) }
-                            .semantics { selected = current }.fade(if (enabled) 1f else 0.5f)
+                            .semantics { selected = current }
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -333,9 +333,9 @@ fun StatusMenu(model: InboxViewModel) = with(model) {
             // RN's Move to section… pill, full width under the statuses (its text capitalized per word, as RN's menuText).
             menu.moveLabel(task)?.let { label ->
                 val enabled = writable && !busy && failedAction == null
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).border(1.dp, c.border, RoundedCornerShape(20.dp))
+                Row(Modifier.fade(if (enabled) 1f else 0.5f).fillMaxWidth().clip(RoundedCornerShape(20.dp)).border(1.dp, c.border, RoundedCornerShape(20.dp))
                     .clickable(enabled = enabled, role = Role.Button) { showStatusMenu(null); menu.openMove(listOf(task.id), JSONObject().put(task.id, task.taskRevision)) }
-                    .semantics { contentDescription = label }.fade(if (enabled) 1f else 0.5f).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    .semantics { contentDescription = label }.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Text(label.split(' ').joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }, style = rnText(14, 500), color = c.text)
                 }
             }

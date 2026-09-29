@@ -2,6 +2,7 @@ package tech.dongdongbh.mindwtr.pilot
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -87,6 +88,7 @@ fun SettingsList(model: InboxViewModel) = with(model.menu.settings) {
             "advanced" -> MenuCard(model, shown.view.getJSONObject("advanced").menuObjects("rows"))
             "general" -> GeneralSettings(model, shown.view)
             "manage" -> ManageSettings(model, shown)
+            "data" -> DataSettings(model, shown.view)
             else -> GtdSettings(model, shown.view)
         }
         Spacer(Modifier.height(16.dp))
@@ -151,10 +153,10 @@ private fun MenuCard(model: InboxViewModel, rows: List<JSONObject>) = with(model
 
 // ---- Shared pieces (setting-row.tsx, settings.styles.ts) ----
 
-/** RN's sectionTitle: 13/600 capitals in the secondary text color. */
+/** RN's sectionTitle: 13/600 capitals, in the secondary text color unless the screen sets another (Data's Diagnostics: the text color). */
 @Composable
-private fun SectionTitle(text: String, top: Int = 0) =
-    Text(text.uppercase(), style = rnText(13, 600), color = LocalTheme.current.colors.secondaryText,
+private fun SectionTitle(text: String, top: Int = 0, color: Color = LocalTheme.current.colors.secondaryText) =
+    Text(text.uppercase(), style = rnText(13, 600), color = color,
         modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = top.dp).semantics { heading() })
 
 /** RN's description line above a card. */
@@ -168,7 +170,8 @@ private fun Card(top: Int = 0, content: @Composable ColumnScope.() -> Unit) =
     Column(Modifier.padding(top = top.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(LocalTheme.current.colors.cardBg), content = content)
 
 /**
- * RN's SettingRow: the label and description at the left, a trailing control; a hairline above when [divider]. [failure] is App
+ * RN's SettingRow: the label and description at the left, a trailing control at the top (RN's settingRow is flex-start); a
+ * hairline above when [divider]. [failure] is App
  * lock's line in RN's danger color under the description (TalkBack hears it when it shows).
  */
 @Composable
@@ -176,7 +179,7 @@ private fun SettingRow(label: String, description: String?, divider: Boolean = f
                        trailing: @Composable RowScope.() -> Unit = {}) {
     val c = LocalTheme.current.colors
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (divider) Modifier.hairline(c.border, top = true) else Modifier).then(modifier).padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically) {
+        verticalAlignment = Alignment.Top) {
         Column(Modifier.weight(1f).padding(end = 16.dp)) {
             Text(label, style = rnText(16, 500, 21), color = c.text)
             description?.let { Text(it, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp)) }
@@ -202,10 +205,11 @@ private fun PressRow(label: String, value: String?, divider: Boolean, enabled: B
 
 /** RN's SettingToggleRow: core's label and description, and RN's Android switch sending core's edit. */
 @Composable
-private fun ToggleRow(model: InboxViewModel, toggle: JSONObject, divider: Boolean, enabled: Boolean = true, write: (JSONObject) -> Unit) {
+private fun ToggleRow(model: InboxViewModel, toggle: JSONObject, divider: Boolean, enabled: Boolean = true,
+                      props: RnSwitchProps = LocalTheme.current.settingsSwitch, write: (JSONObject) -> Unit) {
     val label = toggle.getString("label")
     SettingRow(label, toggle.menuText("description"), divider) {
-        RnSwitch(toggle.getBoolean("value"), enabled && model.failedAction == null, label) { write(toggle.getJSONObject("edit")) }
+        RnSwitch(toggle.getBoolean("value"), enabled && model.failedAction == null, label, props) { write(toggle.getJSONObject("edit")) }
     }
 }
 
@@ -274,6 +278,7 @@ private fun SettingInput(value: String, label: String, placeholder: String?, mod
 /** RN's GeneralSettingsScreen on core's getGeneralSettings; every choice sends core's edit through setGeneralSetting. */
 @Composable
 private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(model.menu) {
+    val theme = LocalTheme.current
     val appearance = view.getJSONObject("appearance")
     val privacy = view.getJSONObject("privacy")
     val language = view.getJSONObject("language")
@@ -281,9 +286,9 @@ private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(mode
     val open = { picker: String -> keepDialog(JSONObject().put("kind", "settingsPicker").put("picker", picker)) }
     SectionTitle(appearance.getString("title"))
     Card {
-        val theme = appearance.getJSONObject("theme")
-        PressRow(theme.getString("label"), theme.getString("value"), false, idle) { open("theme") }
-        ToggleRow(model, appearance.getJSONObject("showTaskAge"), true) { settings.general(it) }
+        val themeRow = appearance.getJSONObject("theme")
+        PressRow(themeRow.getString("label"), themeRow.getString("value"), false, idle) { open("theme") }
+        ToggleRow(model, appearance.getJSONObject("showTaskAge"), true, props = theme.generalSwitch) { settings.general(it) }
         val quick = appearance.getJSONObject("quickAccess")
         PressRow(quick.getString("label"), quick.getString("value"), true, idle) { open("quickAccess") }
     }
@@ -292,9 +297,9 @@ private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(mode
         // RN's app lock (AppLock.kt): turning it on asks the device lock first; a no shows core's line for why under the row.
         val lock = privacy.getJSONObject("appLock")
         SettingRow(lock.getString("label"), lock.getString("description"), failure = model.lock.switchFailure(lock)) {
-            RnSwitch(lock.getBoolean("value"), model.failedAction == null && !model.lock.authenticating, lock.getString("label")) { model.lock.toggle(lock) }
+            RnSwitch(lock.getBoolean("value"), model.failedAction == null && !model.lock.authenticating, lock.getString("label"), theme.generalSwitch) { model.lock.toggle(lock) }
         }
-        privacy.optJSONObject("appSearch")?.let { ToggleRow(model, it, true) { edit -> settings.general(edit) } }
+        privacy.optJSONObject("appSearch")?.let { ToggleRow(model, it, true, props = theme.generalSwitch) { edit -> settings.general(edit) } }
     }
     SectionTitle(language.getString("title"), top = 16)
     Description(language.getString("description"))
@@ -307,6 +312,50 @@ private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(mode
         if (expanded) for (name in listOf("weekStart", "dateFormat", "calendarSystem", "timeFormat")) {
             val picker = regional.optJSONObject(name) ?: continue
             PressRow(picker.getString("label"), picker.getString("value"), true, idle) { open(name) }
+        }
+    }
+}
+
+// ---- Data ----
+
+/**
+ * RN's Data screen's Diagnostics card (sync-settings-sections.tsx SyncDiagnosticsCard) on core's getDataSettings: the Debug
+ * logging switch sends core's edit; while logging is on, Share log and Clear log. The Data screen's other cards, RN's analytics
+ * row (builds with the heartbeat only) and its Encryption block (sync) come with their passes.
+ */
+@Composable
+private fun DataSettings(model: InboxViewModel, view: JSONObject) = with(model.menu) {
+    val theme = LocalTheme.current
+    val c = theme.colors
+    val diagnostics = view.getJSONObject("diagnostics")
+    SectionTitle(diagnostics.getString("title"), top = 24, color = c.text)
+    Card {
+        // RN always draws this row's top border (it follows the Encryption block). Share and Clear touch no app data, so they work
+        // in every state, as RN's do (a retry owed included).
+        ToggleRow(model, diagnostics.getJSONObject("debugLogging"), true) { settings.data(it) }
+        val activity = LocalActivity.current
+        LaunchedEffect(settings.logToShare) { if (settings.logToShare != null) activity?.let(settings::openShareSheet) }
+        diagnostics.optJSONObject("shareLog")?.let { share ->
+            ActionRow(share.getString("label"), share.getString("description"), c.tint, true, "settings-share-log") { settings.shareLog() }
+        }
+        diagnostics.optJSONObject("clearLog")?.let { clear ->
+            ActionRow(clear.getString("label"), null, c.secondaryText, true, "settings-clear-log") { settings.clearLog() }
+        }
+    }
+}
+
+/** RN's pressable settingRow with a colored label and no trailing control: one button node that reads its texts, as RN's does. */
+@Composable
+private fun ActionRow(label: String, description: String?, color: Color, enabled: Boolean, tag: String, onClick: () -> Unit) {
+    val c = LocalTheme.current.colors
+    val spoken = if (description == null) label else "$label, $description"
+    Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).hairline(c.border, top = true)
+        .clearAndSetSemantics { contentDescription = spoken; role = Role.Button; testTag = tag; if (enabled) onClick { onClick(); true } else disabled() }
+        .clickable(enabled = enabled, onClick = onClick).padding(16.dp)) {
+        // RN's settingInfo: 16dp to its right.
+        Column(Modifier.padding(end = 16.dp)) {
+            Text(label, style = rnText(16, 500, 21), color = color)
+            description?.let { Text(it, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp)) }
         }
     }
 }
@@ -373,9 +422,9 @@ private fun Swatch(color: String) {
 @Composable
 private fun AddButton(label: String, spoken: String, enabled: Boolean, tag: String, onClick: () -> Unit) {
     val theme = LocalTheme.current
-    Row(Modifier.widthIn(min = 86.dp).heightIn(min = 42.dp).clip(RoundedCornerShape(10.dp)).background(theme.manageButton)
+    Row(Modifier.fade(if (enabled) 1f else 0.5f).widthIn(min = 86.dp).heightIn(min = 42.dp).clip(RoundedCornerShape(10.dp)).background(theme.manageButton)
         .clearAndSetSemantics { contentDescription = spoken; role = Role.Button; testTag = tag; if (enabled) onClick { onClick(); true } else disabled() }
-        .clickable(enabled = enabled, onClick = onClick).fade(if (enabled) 1f else 0.5f).padding(horizontal = 14.dp),
+        .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
         Icon(SettingsIonicons.Add, null, tint = theme.onAction, modifier = Modifier.size(17.dp))
         Text(label, style = rnText(14, 600), color = theme.onAction, modifier = Modifier.padding(start = 6.dp))
@@ -954,9 +1003,9 @@ private fun ManageEditor(model: InboxViewModel, view: JSONObject, open: JSONObje
                     Text(cancel, style = rnText(14, 600), color = c.secondaryText)
                 }
                 val save = text.getString("saveLabel")
-                Box(Modifier.widthIn(min = 92.dp).heightIn(min = 42.dp).clip(button).background(theme.manageButton)
+                Box(Modifier.fade(if (canSave) 1f else 0.5f).widthIn(min = 92.dp).heightIn(min = 42.dp).clip(button).background(theme.manageButton)
                     .clearAndSetSemantics { contentDescription = save; role = Role.Button; testTag = "manage-editor-save"; if (canSave) onClick { settings.saveEditor(action); true } else disabled() }
-                    .clickable(enabled = canSave) { settings.saveEditor(action) }.fade(if (canSave) 1f else 0.5f).padding(horizontal = 14.dp),
+                    .clickable(enabled = canSave) { settings.saveEditor(action) }.padding(horizontal = 14.dp),
                     contentAlignment = Alignment.Center) {
                     Text(save, style = rnText(14, 600), color = theme.onAction)
                 }
@@ -1013,9 +1062,9 @@ private fun FieldSheet(model: InboxViewModel, field: JSONObject) = with(model.me
                         val can = !move.getBoolean("disabled") && edit != null && model.menu.idle
                         val label = move.getString("label")
                         val button = RoundedCornerShape(12.dp)
-                        Row(Modifier.weight(1f).heightIn(min = 44.dp).clip(button).background(c.filterBg).border(1.dp, c.border, button)
+                        Row(Modifier.fade(if (!move.getBoolean("disabled")) 1f else 0.45f).weight(1f).heightIn(min = 44.dp).clip(button).background(c.filterBg).border(1.dp, c.border, button)
                             .clearAndSetSemantics { contentDescription = label; role = Role.Button; if (can) onClick { gtd(edit!!); true } else disabled() }
-                            .clickable(enabled = can) { gtd(edit!!) }.fade(if (!move.getBoolean("disabled")) 1f else 0.45f).padding(horizontal = 12.dp),
+                            .clickable(enabled = can) { gtd(edit!!) }.padding(horizontal = 12.dp),
                             horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                             val tint = if (move.getBoolean("disabled")) c.secondaryText else c.text
                             Icon(icon, null, tint = tint, modifier = Modifier.size(16.dp))

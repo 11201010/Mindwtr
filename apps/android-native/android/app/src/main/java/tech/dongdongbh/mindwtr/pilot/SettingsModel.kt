@@ -1,9 +1,14 @@
 package tech.dongdongbh.mindwtr.pilot
 
+import android.app.Activity
+import android.content.ClipData
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import androidx.core.content.FileProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -13,18 +18,20 @@ import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.InboxViewModel.Part
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.DeviceWrites
+import java.io.File
 import java.util.Locale
 import java.util.UUID
 
 /*
- * RN's Settings (app/(drawer)/settings.tsx and components/settings/general-, manage- and gtd-settings-screen.tsx) on core's
+ * RN's Settings (app/(drawer)/settings.tsx, components/settings/general-, manage- and gtd-settings-screen.tsx, and the Data
+ * screen's Diagnostics card in sync-settings-sections.tsx) on core's
  * settings contract (native-host-contract-settings.ts), with Manage's Someday sections on core's Someday methods. Kotlin keeps
  * only RN's screen state: the open screen (RN's settings stack), the menu search, the screen state RN resets on every visit,
  * and the device choices RN keeps under its keys. Every row, label, option, confirmation and write is core's.
  */
 
 /** Settings' commands (host-entry.ts MENU_COMMANDS). */
-val SETTINGS_KINDS = setOf("generalSetting", "gtdSetting", "manageEditor", "manageDelete", "somedayRename", "somedayReorder", "somedayDelete")
+val SETTINGS_KINDS = setOf("generalSetting", "gtdSetting", "manageEditor", "manageDelete", "somedayRename", "somedayReorder", "somedayDelete", "dataSetting")
 
 /** RN's device keys (core's LANGUAGE_STORAGE_KEY, MOBILE_THEME_STORAGE_KEY, MANAGE_OPEN_SECTIONS_STORAGE_KEY, MOBILE_TASK_OPEN_MODE_STORAGE_KEY). */
 const val LANGUAGE_KEY = "mindwtr-language"
@@ -78,7 +85,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     private val prefs get() = menu.prefs
     private val main = Handler(Looper.getMainLooper())
 
-    /** RN's settings stack: "main", then "general", "manage", "advanced", or a GTD screen ("gtd", "gtd-pomodoro", ...). */
+    /** RN's settings stack: "main", then "general", "manage", "data", "advanced", or a GTD screen ("gtd", "gtd-pomodoro", ...). */
     var stack by mutableStateOf(saved.get<String>("settingsStack")?.split(',') ?: listOf("main")); private set
     val screen: String get() = stack.last()
     /** The menu's search as typed. */
@@ -102,7 +109,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         return when (screen) {
             "main" -> view.getString("title")
             "advanced" -> view.getJSONObject("advanced").getString("title")
-            "general", "manage" -> view.getString("title")
+            "general", "manage", "data" -> view.getString("title")
             "gtd" -> view.getJSONObject("hub").getString("title")
             else -> gtdScreen(view)?.getString("title") ?: t("settings.title")
         }
@@ -111,6 +118,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     /** RN pushes a new Settings: its menu, no search. */
     fun reset() {
         keepStack(listOf("main"))
+        logToShare = null
         query = ""
         saved["settingsQuery"] = ""
         keepLocal(JSONObject())
@@ -120,6 +128,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     /** A menu row or a GTD link opens its screen, as RN pushes it; its screen state starts afresh (RN resets it on every visit). */
     fun push(next: String) {
         keepStack(stack + next)
+        logToShare = null
         keepLocal(JSONObject())
         menu.keepDialog(null)
         if (!(isGtd(next) && page?.screen?.let(::isGtd) == true)) page = null
@@ -130,6 +139,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     fun back(): Boolean {
         if (stack.size < 2) return false
         keepStack(stack.dropLast(1))
+        logToShare = null
         keepLocal(JSONObject())
         menu.keepDialog(null)
         if (!(isGtd(screen) && page?.screen?.let(::isGtd) == true)) page = null
@@ -167,6 +177,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         screen == "main" || screen == "advanced" -> "settingsMenu" to JSONObject().put("query", query)
         screen == "general" -> "generalSettings" to JSONObject().put("deviceTheme", prefs.getString(THEME_KEY, null) ?: JSONObject.NULL)
         screen == "manage" -> "manageSettings" to JSONObject().put("openSections", prefs.getString(MANAGE_SECTIONS_KEY, null) ?: JSONObject.NULL)
+        screen == "data" -> "dataSettings" to JSONObject()
         else -> "gtdSettings" to JSONObject().put("taskOpenMode", prefs.getString(TASK_OPEN_MODE_KEY, null) ?: JSONObject.NULL)
     }
 
@@ -320,6 +331,62 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
 
     /** The editor's Save: its exact request, on disk (synced) before the call (a new area or person is a create). */
     fun saveEditor(action: FailedAction) = menu.create(action)
+
+    /** Data's Debug logging switch: core's edit, with a new request UUID. */
+    fun data(edit: JSONObject) = menu.command("dataSetting", JSONObject().put("edit", edit))
+
+    /** Data's made log file, waiting for the Data screen to open the share sheet from its activity (a rotation keeps it). */
+    var logToShare by mutableStateOf<String?>(null); private set
+
+    /**
+     * Data's Share log (RN's handleShareLog): core makes the log file, then the Data screen opens the share sheet with it
+     * (openShareSheet). No file shows RN's toast.
+     */
+    fun shareLog() {
+        val words = page?.view?.optJSONObject("diagnostics") ?: return
+        val missing = { shell.showToast(words.getString("toastTitle"), words.getString("logMissing"), "warning") }
+        shell.anyTime({ runtime ->
+            val reply = runtime.logShare()
+            val path = if (reply.isNull("path")) null else reply.getString("path")
+            shell.ui {
+                when {
+                    path == null -> missing()
+                    // An answer after the Data screen closed opens nothing, now or on a later visit.
+                    screen == "data" && menu.list == "settings" -> logToShare = path
+                }
+            }
+        }) { missing() }
+    }
+
+    /**
+     * The share sheet for the made log file, from [activity], as RN's expo-sharing opens it: a chooser over ACTION_SEND
+     * text/plain with the FileProvider link and its read grant. Nothing leaves the phone until the user picks a target. No share
+     * sheet shows RN's toast.
+     */
+    fun openShareSheet(activity: Activity) {
+        val path = logToShare ?: return
+        logToShare = null
+        val words = page?.view?.optJSONObject("diagnostics") ?: return
+        try {
+            val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.diagnostics", File(path))
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            send.clipData = ClipData.newRawUri(null, uri)
+            activity.startActivity(Intent.createChooser(send, null))
+        } catch (failure: Exception) {
+            Log.w(CoreHost.TAG, "Share log failed", failure)
+            shell.showToast(words.getString("toastTitle"), words.getString("shareUnavailable"), "warning")
+        }
+    }
+
+    /** Data's Clear log (RN's handleClearLog): core deletes the log file; RN's success toast. */
+    fun clearLog() {
+        val words = page?.view?.optJSONObject("diagnostics") ?: return
+        shell.anyTime({ runtime ->
+            runtime.logClear()
+            shell.ui { shell.showToast(words.getString("toastTitle"), words.getString("logCleared"), "success") }
+        }) {}
+    }
 
     /** A Someday section's rename (RN's inline field), core's reorder (a row's move ids) and delete (after core's question). */
     fun renameSection(id: String, title: String) = menu.command("somedayRename", JSONObject().put("id", id).put("title", title))

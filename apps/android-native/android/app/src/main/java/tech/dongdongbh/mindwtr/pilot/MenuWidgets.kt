@@ -664,7 +664,7 @@ private fun FilterSheet(model: InboxViewModel, view: JSONObject, open: JSONObjec
                         Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).toggleable(on, enabled = idle, role = Role.Switch) { archivedProjects(it) }
                             .semantics { contentDescription = label }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             Text(label, style = rnText(15, 500), color = c.text, modifier = Modifier.weight(1f))
-                            RnSwitch(on)
+                            RnSwitchGraphic(on, true, LocalTheme.current.referenceSwitch)
                         }
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -828,17 +828,6 @@ internal fun SheetField(value: String, placeholder: String, description: String,
         })
 }
 
-/** RN's Android Switch, as the capture popup draws it: a raised thumb on a faint track, the tint when on. */
-@Composable
-internal fun RnSwitch(on: Boolean) {
-    val theme = LocalTheme.current
-    val c = theme.colors
-    Box(Modifier.size(width = 36.dp, height = 20.dp), contentAlignment = Alignment.CenterStart) {
-        Box(Modifier.fillMaxWidth().height(14.dp).clip(CircleShape).background(if (on) theme.tintTrack else c.border))
-        Box(Modifier.offset(x = if (on) 16.dp else 0.dp).size(20.dp).clip(CircleShape).background(if (on) c.tint else c.cardBg).border(1.dp, c.border, CircleShape))
-    }
-}
-
 /**
  * RN's Move to section dialog (someday-view.tsx): a centered card, core's title, core's choices ("No section" first, the
  * current one filled), "+ New section…", and Cancel. A choice runs core's moveSomedayTasksToSection.
@@ -915,8 +904,8 @@ private fun CreateDialog(model: InboxViewModel, open: JSONObject) = with(model.m
                 .clickable(enabled = !owed && !model.busy, role = Role.Button) { backInDialog() }.semantics { contentDescription = cancel }
                 .padding(horizontal = 14.dp), contentAlignment = Alignment.Center) { Text(cancel, style = rnText(15, 400), color = c.secondaryText) }
             val save = if (owed && !section) addText?.getString("retryLabel") ?: t("common.retry") else t("common.save")
-            Box(Modifier.heightIn(min = 44.dp).widthIn(min = 88.dp).clip(shape).background(if (section) theme.restoreAction else c.tint)
-                .clickable(enabled = canSave, role = Role.Button) { saveCreate() }.semantics { contentDescription = save }.fade(if (canSave) 1f else 0.5f)
+            Box(Modifier.fade(if (canSave) 1f else 0.5f).heightIn(min = 44.dp).widthIn(min = 88.dp).clip(shape).background(if (section) theme.restoreAction else c.tint)
+                .clickable(enabled = canSave, role = Role.Button) { saveCreate() }.semantics { contentDescription = save }
                 .padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {
                 Text(save, style = rnText(15, if (section) 600 else 400), color = if (section) theme.onAction else c.onTint)
             }

@@ -1647,6 +1647,20 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     internal fun fresh(mine: Long, part: Part) = (mine > commandAt && mine > (shownAt[part] ?: 0L)).also { if (it) shownAt[part] = mine }
 
     /**
+     * Work that touches no app data (Settings › Data's Share log and Clear log): it runs in every state, as RN's does, while a
+     * retry is owed or another action runs too; the engine thread queues it. [failed] shows its failure.
+     */
+    internal fun anyTime(work: (CoreHost) -> Unit, failed: (Throwable) -> Unit) {
+        val runtime = host ?: return
+        Thread({
+            runCatching { work(runtime) }.onFailure { failure ->
+                Log.e(CoreHost.TAG, "Core action failed action=anyTime", failure)
+                ui { failed(failure) }
+            }
+        }, "mindwtr-any-time").start()
+    }
+
+    /**
      * A read the app starts itself: on resume, each minute, and after every command.
      * It never takes [busy], so it disables no control and never turns a tap away:
      * a user action that starts meanwhile runs, and the engine thread queues both.

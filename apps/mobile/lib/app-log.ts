@@ -1,4 +1,19 @@
-import { buildFeedbackDiagnostics, createFeedbackDiagnosticsBuffer, FEEDBACK_DIAGNOSTICS_SOURCE_CHARS, getBreadcrumbs, sanitizeForLog, sanitizeLogContext, sanitizeUrl, useTaskStore } from '@mindwtr/core';
+import {
+  buildDiagnosticsErrorEntry,
+  buildDiagnosticsLogEntry,
+  buildFeedbackDiagnostics,
+  createDiagnosticsLog,
+  createFeedbackDiagnosticsBuffer,
+  FEEDBACK_DIAGNOSTICS_SOURCE_CHARS,
+  getBreadcrumbs,
+  isDiagnosticsLoggingEnabled,
+  sanitizeForLog,
+  sanitizeLogContext,
+  useTaskStore,
+  type DiagnosticsLog,
+  type DiagnosticsLogEntry,
+  type DiagnosticsLogFile,
+} from '@mindwtr/core';
 import * as ExpoLegacyFileSystem from 'expo-file-system/legacy';
 import {
   createDefaultLocalFatalCrashCapture,
@@ -24,6 +39,7 @@ type ExpoFile = {
   create: (options: { intermediates?: boolean; overwrite?: boolean }) => void;
   delete: () => void;
   info?: () => { exists?: boolean; size?: number };
+  move?: (destination: ExpoFile) => void;
   open?: () => ExpoFileHandle;
   size?: number;
   write: (content: string, options?: { encoding?: string }) => void;
@@ -60,7 +76,6 @@ let LOG_DIR: ExpoDirectory | null = null;
 let LOG_FILE: ExpoFile | null = null;
 let LOG_DIR_URI: string | null = null;
 let LOG_FILE_URI: string | null = null;
-let logWriteCount = 0;
 
 const getExpoFileSystem = async (): Promise<ExpoFileSystemModule | null> => {
   if (expoFileSystemModule !== undefined) return expoFileSystemModule;
@@ -135,20 +150,10 @@ const ensureLogTargets = async (): Promise<void> => {
     LOG_FILE_URI = null;
   }
 };
-const MAX_LOG_FILE_BYTES = 500_000;
-const ROTATED_LOG_RETAIN_CHARS = 250_000;
-const LOG_ROTATION_CHECK_INTERVAL = 50;
 const RECENT_LOG_MAX_CHARS = 20_000;
 const UTF8_ENCODING = 'utf8';
 
-type LogEntry = {
-  ts: string;
-  level: 'info' | 'warn' | 'error';
-  scope: string;
-  message: string;
-  stack?: string;
-  context?: Record<string, string>;
-};
+type LogEntry = DiagnosticsLogEntry;
 
 export type LogBackend = {
   appendLogLine?: (
@@ -168,7 +173,6 @@ export type LogBackend = {
 };
 
 let customLogBackend: LogBackend | null = null;
-let logWriteQueue: Promise<void> = Promise.resolve();
 let localFatalCrashCapture: LocalFatalCrashCapture | null | undefined;
 let localFatalCrashRecovery: Promise<boolean> | null = null;
 
@@ -267,7 +271,7 @@ async function ensureLegacyLogFilePath(): Promise<string | null> {
 export function isLoggingEnabled(): boolean {
   // settings can be briefly undefined (store still hydrating, partial test
   // stores); a log call must never throw over it.
-  return useTaskStore.getState().settings?.diagnostics?.loggingEnabled === true;
+  return isDiagnosticsLoggingEnabled(useTaskStore.getState().settings);
 }
 
 function getFileSize(file: ExpoFile | null): number {
@@ -278,15 +282,6 @@ function getFileSize(file: ExpoFile | null): number {
   } catch {
   }
   return typeof file.size === 'number' ? file.size : 0;
-}
-
-async function rotateLogIfNeeded(force = false): Promise<void> {
-  if (!LOG_FILE || !fileExists(LOG_FILE)) return;
-  if (!force && logWriteCount > 0 && logWriteCount % LOG_ROTATION_CHECK_INTERVAL !== 0) return;
-  if (getFileSize(LOG_FILE) <= MAX_LOG_FILE_BYTES) return;
-  const current = await LOG_FILE.text().catch(() => '');
-  const next = current.slice(-ROTATED_LOG_RETAIN_CHARS);
-  LOG_FILE.write(next, { encoding: UTF8_ENCODING });
 }
 
 function appendWithFileHandle(line: string): boolean {
@@ -307,60 +302,111 @@ function appendWithFileHandle(line: string): boolean {
   }
 }
 
+/** Expo's file API: appends in place, trimmed by core's size cap. */
+const primaryLogFile: DiagnosticsLogFile = {
+  path: async () => {
+    await ensureLogTargets();
+    return LOG_FILE?.uri ?? null;
+  },
+  ensure: async () => {
+    await ensureLogDir();
+    if (!await ensureLogFile() || !LOG_FILE) return null;
+    return LOG_FILE.uri;
+  },
+  exists: async () => {
+    await ensureLogTargets();
+    return fileExists(LOG_FILE);
+  },
+  read: async () => {
+    if (!LOG_FILE) throw new Error('primary log file unavailable');
+    return LOG_FILE.text();
+  },
+  write: async (text) => {
+    if (!LOG_FILE) throw new Error('primary log file unavailable');
+    LOG_FILE.write(text, { encoding: UTF8_ENCODING });
+  },
+  delete: async () => {
+    await ensureLogTargets();
+    if (LOG_FILE && fileExists(LOG_FILE)) {
+      LOG_FILE.delete();
+      return true;
+    }
+    const fs = await getExpoFileSystem();
+    if (LOG_FILE_URI && LOG_FILE_URI !== fs?.Paths?.document?.uri && fs) {
+      const strayDir = new fs.Directory(LOG_FILE_URI);
+      if (strayDir.exists) {
+        strayDir.delete();
+      }
+    }
+    return false;
+  },
+  append: async (line) => appendWithFileHandle(line),
+  size: async () => getFileSize(LOG_FILE),
+  moveAside: async () => {
+    const fs = await getExpoFileSystem();
+    if (!fs || !LOG_FILE || !LOG_FILE_URI || typeof LOG_FILE.move !== 'function') throw new Error('primary log file unavailable');
+    const aside = new fs.File(`${LOG_FILE_URI}.unreadable`);
+    if (fileExists(aside)) aside.delete();
+    LOG_FILE.move(aside);
+    // Expo's move points the File at its new place: the next line starts a new file at the log's path.
+    LOG_FILE = new fs.File(LOG_FILE_URI);
+  },
+};
+
+const legacyLogPath = async (): Promise<{ fs: ExpoLegacyFileSystemModule; path: string } | null> => {
+  const fs = await getLegacyFileSystem();
+  const path = buildLegacyTargets(fs?.documentDirectory)?.fileUri;
+  return fs && path ? { fs, path } : null;
+};
+
+/** Expo's legacy file API (Expo Go, older runtimes): every line rewrites the file. */
+const legacyLogFile: DiagnosticsLogFile = {
+  path: async () => (await legacyLogPath())?.path ?? null,
+  ensure: ensureLegacyLogFilePath,
+  exists: async () => {
+    const target = await legacyLogPath();
+    if (!target) return false;
+    const info = await target.fs.getInfoAsync(target.path);
+    return info.exists && !info.isDirectory;
+  },
+  read: async () => {
+    const target = await legacyLogPath();
+    if (!target) throw new Error('legacy log file unavailable');
+    return target.fs.readAsStringAsync(target.path, { encoding: UTF8_ENCODING });
+  },
+  write: async (text) => {
+    const target = await legacyLogPath();
+    if (!target) throw new Error('legacy log file unavailable');
+    await target.fs.writeAsStringAsync(target.path, text, { encoding: UTF8_ENCODING });
+  },
+  delete: async () => {
+    const target = await legacyLogPath();
+    if (!target) return false;
+    await target.fs.deleteAsync(target.path, { idempotent: true });
+    return true;
+  },
+};
+
+// Core's file rules (diagnostics-log.ts): the gate, the line, the size cap, and one write at a time.
+// Several notification-path callers intentionally do not await diagnostics; the log keeps their
+// file-handle offsets and read-modify-write fallbacks ordered so adjacent receipt/outcome evidence
+// cannot overwrite an earlier line (#1028). Made on first use: tests that replace @mindwtr/core as a
+// whole still import this module.
+let diagnosticsLogInstance: DiagnosticsLog | null = null;
+const diagnosticsLog = (): DiagnosticsLog => {
+  diagnosticsLogInstance ??= createDiagnosticsLog({ isEnabled: isLoggingEnabled, files: [primaryLogFile, legacyLogFile] });
+  return diagnosticsLogInstance;
+};
+
 async function appendLogLine(entry: LogEntry, options?: { force?: boolean }): Promise<string | null> {
   feedbackDiagnosticsBuffer.record(entry);
   // Dev builds mirror every entry to the Metro console, gate or not: an Expo Go
   // tester has no way to hand over the log file, but can paste the terminal.
   logEntryToDevConsole(entry);
-  if (!options?.force && !isLoggingEnabled()) return null;
   const backend = customLogBackend;
-  const line = `${JSON.stringify(entry)}\n`;
-  const pendingWrite = logWriteQueue.then(async () => {
-    if (backend?.appendLogLine) {
-      return backend.appendLogLine(entry, options);
-    }
-    try {
-      await ensureLogDir();
-      if (!await ensureLogFile()) throw new Error('primary log file unavailable');
-      if (!LOG_FILE) return null;
-      await rotateLogIfNeeded();
-      if (appendWithFileHandle(line)) {
-        logWriteCount += 1;
-        await rotateLogIfNeeded(true);
-        return LOG_FILE.uri;
-      }
-      const current = fileExists(LOG_FILE) ? await LOG_FILE.text().catch(() => '') : '';
-      let next = current + line;
-      if (next.length > MAX_LOG_FILE_BYTES) {
-        next = next.slice(-ROTATED_LOG_RETAIN_CHARS);
-      }
-      LOG_FILE.write(next, { encoding: UTF8_ENCODING });
-      logWriteCount += 1;
-      return LOG_FILE.uri;
-    } catch (error) {
-      try {
-        const fs = await getLegacyFileSystem();
-        const path = await ensureLegacyLogFilePath();
-        if (!fs || !path) return null;
-        const info = await fs.getInfoAsync(path);
-        const current = info.exists ? await fs.readAsStringAsync(path, { encoding: UTF8_ENCODING }).catch(() => '') : '';
-        let next = current + line;
-        if (next.length > MAX_LOG_FILE_BYTES) {
-          next = next.slice(-ROTATED_LOG_RETAIN_CHARS);
-        }
-        await fs.writeAsStringAsync(path, next, { encoding: UTF8_ENCODING });
-        logWriteCount += 1;
-        return path;
-      } catch {
-        return null;
-      }
-    }
-  });
-  // Several notification-path callers intentionally do not await diagnostics.
-  // Keep their file-handle offsets and read-modify-write fallbacks ordered so
-  // adjacent receipt/outcome evidence cannot overwrite an earlier line (#1028).
-  logWriteQueue = pendingWrite.then(() => undefined, () => undefined);
-  return pendingWrite;
+  if (!backend?.appendLogLine) return diagnosticsLog().append(entry, options);
+  if (!options?.force && !isLoggingEnabled()) return null;
+  return diagnosticsLog().serialize(() => backend.appendLogLine!(entry, options));
 }
 
 const getLocalFatalCrashCapture = (
@@ -433,10 +479,7 @@ export async function getLogPath(): Promise<string | null> {
   if (customLogBackend?.getLogPath) {
     return customLogBackend.getLogPath();
   }
-  await ensureLogTargets();
-  if (LOG_FILE?.uri) return LOG_FILE.uri;
-  const fs = await getLegacyFileSystem();
-  return buildLegacyTargets(fs?.documentDirectory)?.fileUri ?? null;
+  return diagnosticsLog().path();
 }
 
 export async function ensureLogFilePath(): Promise<string | null> {
@@ -446,17 +489,8 @@ export async function ensureLogFilePath(): Promise<string | null> {
     const logPath = await customLogBackend.ensureLogFilePath();
     return retainedCrashPath ?? logPath;
   }
-  await ensureLogTargets();
-  try {
-    await ensureLogDir();
-    if (!await ensureLogFile()) return retainedCrashPath ?? await ensureLegacyLogFilePath();
-    if (!LOG_FILE) return null;
-    if (!fileExists(LOG_FILE)) return null;
-    return retainedCrashPath ?? LOG_FILE.uri;
-  } catch (error) {
-    logInternalFailure('ensure log file path', error);
-    return retainedCrashPath ?? await ensureLegacyLogFilePath();
-  }
+  const logPath = await diagnosticsLog().ensurePath();
+  return retainedCrashPath ?? logPath;
 }
 
 export async function clearLog(): Promise<void> {
@@ -464,38 +498,13 @@ export async function clearLog(): Promise<void> {
     await localFatalCrashRecovery.catch(() => false);
   }
   feedbackDiagnosticsBuffer.clear();
-  await logWriteQueue;
   try {
-    if (customLogBackend?.clearLog) {
-      await customLogBackend.clearLog();
+    const backend = customLogBackend;
+    if (backend?.clearLog) {
+      await diagnosticsLog().serialize(() => backend.clearLog!());
       return;
     }
-    await ensureLogTargets();
-    try {
-      if (LOG_FILE && fileExists(LOG_FILE)) {
-        LOG_FILE.delete();
-        logWriteCount = 0;
-        return;
-      }
-      const fs = await getExpoFileSystem();
-      if (LOG_FILE_URI && LOG_FILE_URI !== fs?.Paths?.document?.uri && fs) {
-        const strayDir = new fs.Directory(LOG_FILE_URI);
-        if (strayDir.exists) {
-          strayDir.delete();
-        }
-      }
-    } catch (error) {
-      logInternalFailure('clear log', error);
-    }
-    try {
-      const fs = await getLegacyFileSystem();
-      const path = buildLegacyTargets(fs?.documentDirectory)?.fileUri;
-      if (!fs || !path) return;
-      await fs.deleteAsync(path, { idempotent: true });
-      logWriteCount = 0;
-    } catch (error) {
-      logInternalFailure('legacy clear log', error);
-    }
+    await diagnosticsLog().clear();
   } finally {
     try {
       getLocalFatalCrashCapture()?.clear();
@@ -516,29 +525,7 @@ const withRetainedFatalCrash = (
 export async function readRecentLogText(maxChars = RECENT_LOG_MAX_CHARS): Promise<string | null> {
   await recoverRetainedFatalCrash();
   const retainedCrashText = readRetainedFatalCrashText();
-  await logWriteQueue;
-  await ensureLogTargets();
-  try {
-    if (!LOG_FILE || !fileExists(LOG_FILE)) throw new Error('primary log file unavailable');
-    const raw = await LOG_FILE.text();
-    const trimmed = raw.trim();
-    return withRetainedFatalCrash(trimmed || null, retainedCrashText, maxChars);
-  } catch (error) {
-    logInternalFailure('read recent log', error);
-    try {
-      const fs = await getLegacyFileSystem();
-      const path = buildLegacyTargets(fs?.documentDirectory)?.fileUri;
-      if (!fs || !path) return withRetainedFatalCrash(null, retainedCrashText, maxChars);
-      const info = await fs.getInfoAsync(path);
-      if (!info.exists || info.isDirectory) return withRetainedFatalCrash(null, retainedCrashText, maxChars);
-      const raw = await fs.readAsStringAsync(path, { encoding: UTF8_ENCODING });
-      const trimmed = raw.trim();
-      return withRetainedFatalCrash(trimmed || null, retainedCrashText, maxChars);
-    } catch (fallbackError) {
-      logInternalFailure('legacy read recent log', fallbackError);
-      return withRetainedFatalCrash(null, retainedCrashText, maxChars);
-    }
-  }
+  return withRetainedFatalCrash(await diagnosticsLog().read(), retainedCrashText, maxChars);
 }
 
 export async function collectFeedbackDiagnostics(maxChars = RECENT_LOG_MAX_CHARS): Promise<string | null> {
@@ -571,57 +558,21 @@ export async function logError(
   error: unknown,
   context: { scope: string; url?: string; extra?: Record<string, unknown>; force?: boolean; message?: string }
 ): Promise<string | null> {
-  const rawMessage = context.message ?? (error instanceof Error ? error.message : String(error));
-  const rawStack = error instanceof Error ? error.stack : undefined;
-  const message = sanitizeForLog(rawMessage);
-  const stack = rawStack ? sanitizeForLog(rawStack) : undefined;
-  const extra: Record<string, unknown> = {
-    ...(context.extra ?? {}),
-    ...(getBreadcrumbs().length > 0 ? { breadcrumbs: getBreadcrumbs().join(';') } : {}),
-  };
-  if (context.url) {
-    const sanitizedUrl = sanitizeUrl(context.url);
-    if (sanitizedUrl) {
-      extra.url = sanitizedUrl;
-    }
-  }
-
-  return appendLogLine({
-    ts: new Date().toISOString(),
-    level: 'error',
-    scope: context.scope,
-    message,
-    stack,
-    context: sanitizeLogContext(extra),
-  }, { force: context.force });
+  return appendLogLine(buildDiagnosticsErrorEntry(error, context), { force: context.force });
 }
 
 export async function logInfo(
   message: string,
   context?: { scope?: string; extra?: Record<string, unknown>; force?: boolean }
 ): Promise<string | null> {
-  const safeMessage = sanitizeForLog(message);
-  return appendLogLine({
-    ts: new Date().toISOString(),
-    level: 'info',
-    scope: context?.scope ?? 'info',
-    message: safeMessage,
-    context: sanitizeLogContext(context?.extra),
-  }, { force: context?.force });
+  return appendLogLine(buildDiagnosticsLogEntry('info', message, context), { force: context?.force });
 }
 
 export async function logWarn(
   message: string,
   context?: { scope?: string; extra?: Record<string, unknown>; force?: boolean }
 ): Promise<string | null> {
-  const safeMessage = sanitizeForLog(message);
-  return appendLogLine({
-    ts: new Date().toISOString(),
-    level: 'warn',
-    scope: context?.scope ?? 'warn',
-    message: safeMessage,
-    context: sanitizeLogContext(context?.extra),
-  }, { force: context?.force });
+  return appendLogLine(buildDiagnosticsLogEntry('warn', message, context), { force: context?.force });
 }
 
 export async function logSyncError(

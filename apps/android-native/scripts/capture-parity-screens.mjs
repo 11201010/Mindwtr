@@ -11,7 +11,8 @@
 // task opened from Focus, global search for "kitchen", Process Inbox's first step, the
 // capture popup (empty, with text and core's preview, and with the contexts picker open),
 // the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
-// task, and Review), the Weekly Review's first step, the Calendar's week and month, and the Board, in light
+// task, and Review), the Weekly Review's first step, the Calendar's week and month, the Board, and Settings'
+// General and GTD (their switches drawn as RN's for the props it sets), in light
 // and dark mode.
 // Then it installs
 // the native upgradetest build (153) over it, on the same database, and shoots the same
@@ -26,7 +27,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, chipOn, connect, evidenced, hasText, inEditor, inList, Stopped, tab, tabSelected, withDescription } from './device.mjs';
+import { button, check, chipOn, connect, evidenced, hasText, inEditor, inList, Stopped, switchOn, tab, tabSelected, withDescription } from './device.mjs';
 
 const [serial] = process.argv.slice(2);
 if (!serial) {
@@ -215,6 +216,13 @@ const shootPopup = async (prefix, suffix) => {
     await tap(nodes.find((node) => node['content-desc'] === 'Add Task'));
     const field = (current) => current.find((node) => node.class === 'android.widget.EditText');
     await shoot(`${prefix}-popup-empty-${suffix}`, (current) => Boolean(field(current)));
+    // Add another switched on (a switch on shows where its track starts), its bounds printed, then off again (it is remembered).
+    const another = 'Add another';
+    await tap(withDescription(await device.screen(), another));
+    await shoot(`${prefix}-popup-another-${suffix}`, (current) => switchOn(current, another));
+    console.log(`bounds ${prefix}-popup-another-${suffix} ${withDescription(await device.screen(), another)?.bounds}`);
+    await tap(withDescription(await device.screen(), another));
+    await waitFor('Add another off', (current) => !switchOn(current, another), 15_000);
     requireAppFront();
     sh(`input text '${CAPTURE_TEXT.replace(/ /g, '%s')}'`);
     await shoot(`${prefix}-popup-text-${suffix}`, (current) => field(current)?.text === CAPTURE_TEXT && hasText(current, '@phone'));
@@ -295,6 +303,31 @@ const shootMenu = async (prefix, suffix, rn) => {
         await sleep(1000);
     }
 };
+/**
+ * Settings from the More sheet's Settings tile (both apps), then General and GTD (their menu rows, core's labels): each shot
+ * with its first switch on screen (General's Show task age, GTD's Pomodoro), and closed with Back; Back again leaves Settings.
+ */
+const SETTINGS_SCREENS = [
+    { name: 'general', row: `${en['settings.general']}. ${en['settings.menuDesc.general']}`, text: en['settings.mobile.showTaskAge'] },
+    { name: 'gtd', row: `${en['settings.gtd']}. ${en['settings.menuDesc.gtd']}`, text: en['settings.featurePomodoro'] },
+];
+const shootSettings = async (prefix, suffix, rn) => {
+    const menu = await waitFor('the Menu tab', (current) => Boolean(rn ? current.find((node) => node['content-desc'] === 'Menu') : tab(current, 'Menu')), 30_000);
+    await tap(rn ? menu.find((node) => node['content-desc'] === 'Menu') : tab(menu, 'Menu'));
+    const sheet = await waitFor('the Settings tile', (current) => Boolean(withDescription(current, en['nav.settings'])), 15_000);
+    await tap(withDescription(sheet, en['nav.settings']));
+    for (const screen of SETTINGS_SCREENS) {
+        const rows = await waitFor(`the ${screen.name} row`, (current) => Boolean(withDescription(current, screen.row)), 30_000);
+        await tap(withDescription(rows, screen.row));
+        await shoot(`${prefix}-settings-${screen.name}-${suffix}`, (current) => hasText(current, screen.text));
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        await sleep(1000);
+    }
+    requireAppFront();
+    sh('input keyevent KEYCODE_BACK');
+    await sleep(1000);
+};
 const SCREENS = [
     { name: 'inbox', link: 'inbox', tab: 'Inbox', text: T.call },
     { name: 'focus', link: 'focus', tab: 'Focus', text: T.outline },
@@ -318,6 +351,12 @@ try {
     device.launch(RN_ACTIVITY);
     for (const mode of ['no', 'yes']) {
         await setNight(mode);
+        // RN's activity handles uiMode itself, so AppCompat's own colors (a switch's default thumb) stay as they were at launch:
+        // start RN again in dark mode, as a user who opens it in dark mode sees it.
+        if (mode === 'yes') {
+            await stopApp();
+            device.launch(RN_ACTIVITY);
+        }
         for (const screen of SCREENS) {
             openLink(screen.link);
             await shoot(`rn-${screen.name}-${mode === 'yes' ? 'dark' : 'light'}`, (nodes) => hasText(nodes, screen.text));
@@ -335,6 +374,8 @@ try {
         await shootPopup('rn', mode === 'yes' ? 'dark' : 'light');
         openLink('inbox');
         await shootMenu('rn', mode === 'yes' ? 'dark' : 'light', true);
+        openLink('inbox');
+        await shootSettings('rn', mode === 'yes' ? 'dark' : 'light', true);
     }
     await stopApp();
 
@@ -377,6 +418,7 @@ try {
         await shootProcess(`native-process-${mode === 'yes' ? 'dark' : 'light'}`);
         await shootPopup('native', mode === 'yes' ? 'dark' : 'light');
         await shootMenu('native', mode === 'yes' ? 'dark' : 'light', false);
+        await shootSettings('native', mode === 'yes' ? 'dark' : 'light', false);
     }
     await stopApp();
 

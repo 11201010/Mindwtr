@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.foundation.border
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -183,19 +184,26 @@ private fun JSONObject.text(name: String): String? = if (!has(name) || isNull(na
 private fun JSONObject.child(name: String): JSONObject? = if (!has(name) || isNull(name)) null else getJSONObject(name)
 private fun JSONObject.items(name: String): List<JSONObject> = optJSONArray(name)?.let { list -> List(list.length()) { list.getJSONObject(it) } }.orEmpty()
 
+/** RN's Switch at a call site with RN's [props] (MindwtrTheme's *Switch); its touch area is the switch, as RN's. */
+@Composable
+internal fun RnSwitch(on: Boolean, enabled: Boolean, label: String, props: RnSwitchProps, toggle: () -> Unit) {
+    Box(Modifier.toggleable(on, enabled = enabled, role = Role.Switch) { toggle() }.semantics { contentDescription = label }) {
+        RnSwitchGraphic(on, enabled, props)
+    }
+}
+
 /**
- * RN's Switch on Android (SwitchCompat): a 34x14dp track at 30% of RN's track color, and a raised 20dp thumb in RN's
- * thumb color (tint on, border off), so the off thumb stays visible on the border-colored track.
+ * RN's Switch on Android (SwitchCompat) as drawn, measured on the test phone: a 46.67x27dp view, a 24x14dp track in RN's track
+ * color, solid, and a raised 20dp thumb 10dp either side of the center, in RN's thumb color or AppCompat's where RN sets none.
+ * A disabled switch changes only AppCompat's thumb, as in RN.
  */
 @Composable
-internal fun RnSwitch(on: Boolean, enabled: Boolean, label: String, toggle: () -> Unit) {
+internal fun RnSwitchGraphic(on: Boolean, enabled: Boolean, props: RnSwitchProps) {
     val theme = LocalTheme.current
-    val c = theme.colors
-    Box(Modifier.size(48.dp).toggleable(on, enabled = enabled, role = Role.Switch) { toggle() }.semantics { contentDescription = label }
-        .fade(if (enabled) 1f else 0.5f), contentAlignment = Alignment.Center) {
-        val track = if (on) theme.tintTrack else c.border
-        Box(Modifier.size(34.dp, 14.dp).clip(CircleShape).background(track.copy(alpha = track.alpha * 0.3f)))
-        Box(Modifier.offset(x = if (on) 7.dp else (-7).dp).size(20.dp).shadow(2.dp, CircleShape).clip(CircleShape).background(if (on) c.tint else c.border))
+    Box(Modifier.size(46.67.dp, 27.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(24.dp, 14.dp).clip(CircleShape).background(if (on) props.trackOn else props.trackOff))
+        val thumb = theme.switchThumbShade((if (on) props.thumbOn else props.thumbOff) ?: theme.switchThumb(on, enabled, isSystemInDarkTheme()))
+        Box(Modifier.offset(x = if (on) 10.dp else (-10).dp).size(20.dp).shadow(2.dp, CircleShape).clip(CircleShape).background(thumb))
     }
 }
 
@@ -288,20 +296,21 @@ fun CapturePopup(model: InboxViewModel, draft: CaptureDraft) = with(model) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val on = addAnother.getBoolean("value")
                         val label = addAnother.getString("label")
-                        RnSwitch(on, enabled = !locked, label = label) { setCaptureAddAnother(addAnother) }
+                        RnSwitch(on, enabled = !locked, label = label, props = theme.captureSwitch) { setCaptureAddAnother(addAnother) }
                         Text(label, style = rnText(12, 600), color = c.text, maxLines = 2, modifier = Modifier.padding(start = 8.dp))
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
                         val pill = RoundedCornerShape(999.dp)
                         val saveAndEdit = copy.getString("saveAndEdit")
-                        Box(Modifier.widthIn(min = 112.dp).heightIn(min = 48.dp).clip(pill).border(1.dp, c.border, pill)
+                        // RN fades each button whole (opacity 0.5) while the text is blank: the layer comes before the pill's border and fill.
+                        Box(Modifier.fade(if (canSave) 1f else 0.5f).widthIn(min = 112.dp).heightIn(min = 48.dp).clip(pill).border(1.dp, c.border, pill)
                             .clickable(enabled = canSave, role = Role.Button) { focusManager.clearFocus(); saveCapture(openAfterSave = true) }
-                            .fade(if (canSave) 1f else 0.5f).padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                            .padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                             Text(saveAndEdit, style = rnText(13, 700), color = c.text, maxLines = 1)
                         }
-                        Box(Modifier.widthIn(min = 104.dp).heightIn(min = 48.dp).clip(pill).background(theme.filledBg)
+                        Box(Modifier.fade(if (canSave) 1f else 0.5f).widthIn(min = 104.dp).heightIn(min = 48.dp).clip(pill).background(theme.filledBg)
                             .clickable(enabled = canSave, role = Role.Button) { saveCapture(openAfterSave = false) }
-                            .fade(if (canSave) 1f else 0.5f).padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                            .padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                             Text(copy.getString("save"), style = rnText(13, 700), color = theme.filledText, maxLines = 1)
                         }
                     }

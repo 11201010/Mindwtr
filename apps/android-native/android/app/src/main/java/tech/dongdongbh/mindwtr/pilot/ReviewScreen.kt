@@ -99,9 +99,9 @@ fun ReviewList(model: InboxViewModel) = with(model.menu) {
                 val off = expansion.getBoolean("disabled")
                 val shape = RoundedCornerShape(10.dp)
                 val label = expansion.getString("label")
-                Box(Modifier.size(42.dp).clip(shape).background(c.filterBg).border(1.dp, c.border, shape)
+                Box(Modifier.fade(if (off) 0.45f else 1f).size(42.dp).clip(shape).background(c.filterBg).border(1.dp, c.border, shape)
                     .clickable(enabled = idle && !off, role = Role.Button) { reviewExpansion(JSONObject().put("type", "cycle")) }
-                    .semantics { contentDescription = label }.fade(if (off) 0.45f else 1f), contentAlignment = Alignment.Center) {
+                    .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
                     Icon(if (expansion.getBoolean("allExpanded")) Lucide.ChevronsUp else Lucide.ChevronsDown, null, tint = c.secondaryText, modifier = Modifier.size(20.dp))
                 }
                 val start = view.getJSONObject("startReview")
@@ -223,7 +223,7 @@ private fun ReviewBulkBar(model: InboxViewModel, bulk: JSONObject, selected: Lis
                 val filled = id == "organize" || id == "markReviewed"
                 val on = idle && action.getBoolean("enabled") && selected.isNotEmpty()
                 Text(action.getString("label"), style = rnText(12, 600), color = if (filled) c.onTint else c.text,
-                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(if (filled) c.tint else c.filterBg)
+                    modifier = Modifier.fade(if (on) 1f else 0.5f).clip(RoundedCornerShape(6.dp)).background(if (filled) c.tint else c.filterBg)
                         .clickable(enabled = on, role = Role.Button) {
                             when (id) {
                                 "organize" -> openOrganize()
@@ -238,7 +238,7 @@ private fun ReviewBulkBar(model: InboxViewModel, bulk: JSONObject, selected: Lis
                                 }
                                 "delete" -> confirm(bulk.getJSONObject("deleteConfirmation"), trashTasks(selected, bulk.getJSONObject("taskRevisions")), "reviewAction")
                             }
-                        }.semantics { if (!on) disabled() }.fade(if (on) 1f else 0.5f).padding(horizontal = 10.dp, vertical = 6.dp))
+                        }.semantics { if (!on) disabled() }.padding(horizontal = 10.dp, vertical = 6.dp))
             }
         }
     }

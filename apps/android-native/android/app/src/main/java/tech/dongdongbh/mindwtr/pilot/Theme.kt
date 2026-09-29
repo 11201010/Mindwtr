@@ -126,6 +126,13 @@ fun coreColorOrNull(hex: String?): Color? {
 
 private fun coreColor(hex: String): Color = requireNotNull(coreColorOrNull(hex)) { "Unsupported color $hex" }
 
+/** SwitchCompat's thumb image, #FAFAFA, as a factor. */
+private const val THUMB_IMAGE = 250f / 255f
+
+/** RN's Switch props at one call site: its trackColor, and its thumbColor when it sets one (null: AppCompat's own thumb). */
+@Immutable
+class RnSwitchProps(val trackOff: Color, val trackOn: Color, val thumbOff: Color? = null, val thumbOn: Color? = null)
+
 /** Everything a screen draws with: RN's tokens for one theme and scheme, plus RN's few fixed colors. */
 @Immutable
 class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial: Boolean, private val statuses: Map<String, StatusColors>, private val priorities: Map<String, Color>) {
@@ -168,6 +175,34 @@ class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial:
     val starWash = star.copy(alpha = 0x22 / 255f)
     val dangerWash = colors.danger.copy(alpha = 0x1A / 255f)
     val tintTrack = colors.tint.copy(alpha = 0x55 / 255f)
+    /*
+     * RN's Switch on Android (ReactSwitch over AppCompat 1.7.0's SwitchCompat) at each call site, by the props RN sets there. RN
+     * multiplies SwitchCompat's opaque track image by trackColor, so the track is that color, solid (its own alpha kept); a call
+     * site without thumbColor gets AppCompat's thumb (switchThumb).
+     */
+    /** setting-row.tsx's SettingToggleRow default (LEGACY_SWITCH_TRACK_COLOR): GTD's switches and Data's Debug logging. */
+    val settingsSwitch = RnSwitchProps(rgb("#767577"), rgb("#3B82F6"))
+    /** General's switches (general-settings-screen.tsx): trackColor { false: secondaryText, true: tint }. */
+    val generalSwitch = RnSwitchProps(colors.secondaryText, colors.tint)
+    /** The capture popup's Add another: trackColor { false: border, true: `${tint}55` }, thumbColor tint on and border off. */
+    val captureSwitch = RnSwitchProps(colors.border, tintTrack, colors.border, colors.tint)
+    /** Reference's filter sheet (task-list.tsx): trackColor { false: border, true: tint }. */
+    val referenceSwitch = RnSwitchProps(colors.border, colors.tint)
+    /**
+     * AppCompat 1.7.0's own switch thumb, by the system's night mode (RN never sets the app's), not RN's theme:
+     * switch_thumb_disabled_material when disabled, colorAccent on, colorSwitchThumbNormal off.
+     */
+    fun switchThumb(on: Boolean, enabled: Boolean, systemDark: Boolean): Color = when {
+        !enabled -> if (systemDark) rgb("#616161") else rgb("#BDBDBD")
+        on -> if (systemDark) rgb("#80CBC4") else rgb("#008577")
+        else -> if (systemDark) rgb("#BDBDBD") else rgb("#F1F1F1")
+    }
+    /**
+     * A switch thumb as drawn: SwitchCompat's thumb image is #FAFAFA, and RN's thumbColor or AppCompat's tint multiplies it, so
+     * every thumb is its color times 250/255 (RN's #F1F1F1 thumb reads #ECECEC on screen).
+     */
+    fun switchThumbShade(color: Color): Color =
+        Color(red = color.red * THUMB_IMAGE, green = color.green * THUMB_IMAGE, blue = color.blue * THUMB_IMAGE, alpha = color.alpha)
     /** RN's highlight of a project's available next action. */
     val availableBg = if (isDark) rgba(59, 130, 246, 0.08f) else rgba(59, 130, 246, 0.05f)
     val availableBorder = if (isDark) rgba(59, 130, 246, 0.34f) else rgba(59, 130, 246, 0.24f)

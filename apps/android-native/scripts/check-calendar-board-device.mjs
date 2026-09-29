@@ -4,8 +4,8 @@
 //
 // Installs the debug APK with `install -r` (existing development data stays), captures two tasks with titles unique to this run,
 // and checks the screens against core's own views on a copy of the app's database: (a) the Calendar's month details open the
-// composer, which schedules this run's first capture as an existing task, stored once; (b) the day view shows its block and the
-// block opens core's item sheet; (c) the block held and moved stores core's new start once (the move core accepts on a copy);
+// composer, whose Save is dimmed whole until a task is chosen, which schedules this run's first capture as an existing task,
+// stored once; (b) the day view shows its block and the block opens core's item sheet; (c) the block held and moved stores core's new start once (the move core accepts on a copy);
 // (d) the week view shows core's block for it, and the next week, rotation and process death keep the open week; (e) the Board
 // shows the second capture in core's Inbox column, and moving the card into Next stores that status once and changes no other
 // row; (f) Duplicate with an injected failed commit stores nothing, and Try again stores exactly one copy and keeps the original.
@@ -18,7 +18,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { box, button, check, chipOn, connect, evidenced, fail, inboxCount, inEditor, mainList, owedRetry, Stopped, tab, tabSelected, tagged, withDescription } from './device.mjs';
+import { blended, box, button, check, chipOn, connect, evidenced, fail, inboxCount, inEditor, mainList, owedRetry, Stopped, tab, tabSelected, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -347,11 +347,22 @@ try {
     nodes = await waitFor('today\'s cell', (current) => Boolean(seen.today && withDescription(current, seen.today)), 20_000);
     nodes = await tapExpecting(withDescription(nodes, seen.today), (current) => Boolean(tagged(current, 'calendar-add')), 'today\'s details');
     nodes = await tapExpecting(tagged(nodes, 'calendar-add'), (current) => Boolean(tagged(current, 'calendar-composer')), 'the composer');
+    // Save fills beside its label, over the sheet in the 10dp gap to its left; RN dims the whole pill to half while core says saveDisabled.
+    const savePill = async (name) => {
+        const [left, top, , bottom] = box(tagged(await device.settle(await screen()), 'calendar-composer-save') ?? fail('no Save'));
+        const [fill, sheet] = device.colors(resolve(work, `save-${name}.png`), [[left + 8, Math.round((top + bottom) / 2)], [left - 14, Math.round((top + bottom) / 2)]]);
+        return { fill, sheet };
+    };
+    await hideKeyboard();
+    const emptySave = await savePill('empty');
     nodes = await tapExpecting(withDescription(nodes, seen.composer.existing) ?? fail('no Existing task'), (current) => Boolean(tagged(current, 'calendar-composer-query')), 'Existing task');
     await typeInto('calendar-composer-query', titles.calendar);
     nodes = await waitFor('the capture among core\'s candidates', (current) => Boolean(withDescription(current, titles.calendar)), 15_000);
     await hideKeyboard();
     nodes = await tapExpecting(withDescription(await screen(), titles.calendar), (current) => chipOn(current, titles.calendar), 'the capture chosen');
+    const fullSave = await savePill('chosen');
+    check(blended(emptySave.fill, fullSave.fill, emptySave.sheet),
+        `(a) the empty composer's Save is half its color over the sheet: #${emptySave.fill} (full #${fullSave.fill}, sheet #${emptySave.sheet})`);
     const createsBefore = commands('calendarCreate');
     await tapExpecting(tagged(await screen(), 'calendar-composer-save') ?? fail('no Save'), (current) => !tagged(current, 'calendar-composer'), 'the composer to close');
     await waitFor('the composer\'s write', () => commands('calendarCreate') === createsBefore + 1, 15_000);

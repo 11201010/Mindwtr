@@ -323,6 +323,16 @@ describe('durable request receipts: the native host over SQLite', () => {
         expect(store().settings.timeFormat).toBe('24h');
     });
 
+    it('Debug logging switched off later: a replay of the earlier switch-on keeps it off', async () => {
+        const env = await open({});
+        const on = { requestId: newRequestId(), edit: { type: 'debugLogging' as const, value: true } };
+        const first = await env.host.setDataSetting(on);
+        expect(first.ok).toBe(true);
+        expect(value(await env.host.setDataSetting({ requestId: newRequestId(), edit: { type: 'debugLogging', value: false } })).changed).toBe(true);
+        expect(await env.replay((restarted) => restarted.setDataSetting(on))).toEqual({ result: first, wrote: false, receipts: false });
+        expect(store().settings.diagnostics?.loggingEnabled).toBe(false);
+    });
+
     // An archived project's task set back to Next reactivates the project, and the store saves
     // that inside the write (before its receipt exists).
     const reactivation = {

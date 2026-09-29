@@ -3,7 +3,8 @@
 //   node apps/android-native/scripts/check-capture-device.mjs <adb-serial> [apk]
 //
 // Installs the debug APK with `install -r` (existing development data stays) and checks RN's capture popup
-// (the tab bar's +) against core's own quick capture on a copy of the app's database: (a) a capture with a
+// (the tab bar's +) against core's own quick capture on a copy of the app's database: (0) on an empty draft Save is dimmed to
+// half, the whole pill (read from screenshots), and inert, as RN's; (a) a capture with a
 // context and a tag stores exactly what core's submitQuickCapture stores for the same draft; (b) "Add another"
 // keeps the popup open for a second capture, then goes off again; (c) a project picked in More's picker (created
 // through the picker's own Create row on the first run) is stored; (d) two lines ask core's question, write core's
@@ -15,7 +16,7 @@
 // Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
 import { execFileSync } from 'node:child_process';
 import { createHash, randomInt } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { box, button, check, connect, draftText, evidenced, fail, inboxCount, owedRetry, Stopped, switchOn, tagged, withDescription } from './device.mjs';
@@ -50,7 +51,7 @@ const PROJECT = '5600';
 const titles = { a: `53${run}`, b1: `54${run}`, b2: `55${run}`, c: `56${run}`, d1: `57${run}1`, d2: `57${run}2`, e: `58${run}`, f: `59${run}` };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
-const { sh, home, front, requireAppFront, pid, screen, waitFor, tapExpecting } = device;
+const { adbRaw, sh, home, front, requireAppFront, pid, screen, waitFor, tapExpecting } = device;
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 const commands = (operation, outcome) => device.logs(pid(), TAG).replace(/\\/g, '').split('\n').filter((line) => line.includes('native-android-dev-task-command')
     && line.includes(`"operation":"${operation}"`) && line.includes(`"outcome":"${outcome}"`)).length;
@@ -130,6 +131,20 @@ const pickerField = (nodes) => {
     return nodes.find((node) => node.class === 'android.widget.EditText' && labels.some((label) => label === node || within(label, node)));
 };
 const addAnother = (nodes) => withDescription(nodes, en['quickAdd.addAnother']);
+/**
+ * The Save pill's fill beside its label (inside its 16dp padding) and the sheet's own color at the same height, read from a
+ * screenshot with ImageMagick.
+ */
+const savePill = (nodes, name) => {
+    const label = nodes.find((node) => node.text === en['common.save'] && node.class === 'android.widget.TextView') ?? fail('no Save label');
+    const [left, top, , bottom] = box(label);
+    const y = Math.round((top + bottom) / 2);
+    const file = resolve(work, `save-${name}.png`);
+    writeFileSync(file, adbRaw('exec-out', 'screencap', '-p'));
+    const at = (x) => execFileSync('magick', [file, '-format', `%[hex:p{${x},${y}}]`, 'info:'], { encoding: 'utf8' }).trim().slice(0, 6).toUpperCase();
+    return { fill: at(left - 8), sheet: at(8), label };
+};
+const channels = (hex) => [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
 const addAnotherOn = (nodes) => switchOn(nodes, en['quickAdd.addAnother']);
 
 const originalAccelerometer = sh('settings get system accelerometer_rotation');
@@ -164,9 +179,22 @@ try {
     sh('settings put system user_rotation 0');
     await waitFor('the Inbox', onInbox, 60_000);
 
+    // (0) An empty draft: Save is dimmed to half, the whole pill, and inert, as RN's (opacity 0.5, disabled while the text is blank).
+    let nodes = await device.settle(await device.openCapture());
+    const empty = savePill(nodes, 'empty');
+    const saves = commands('quickCapture', 'saved');
+    await device.tap(empty.label);
+    await sleep(1500);
+    nodes = await screen();
+    check(inPopup(nodes) && title(nodes) === '' && commands('quickCapture', 'saved') === saves, '(0) a tap on the empty draft\'s Save does nothing');
+
     // (a) A context and a tag: core's preview shows them, and the stored task is exactly what core stores for this draft.
     const textA = `${titles.a} @c${run} #t${run}`;
-    let nodes = await typeCapture(textA.replace(/ /g, '%s'), textA);
+    nodes = await typeCapture(textA.replace(/ /g, '%s'), textA);
+    const full = savePill(await device.settle(nodes), 'typed');
+    const half = channels(full.fill).map((value, i) => (value + channels(empty.sheet)[i]) / 2);
+    check(channels(empty.fill).every((value, i) => Math.abs(value - half[i]) <= 4) && full.fill !== empty.fill,
+        `(0) the empty draft's Save is half its color over the sheet: #${empty.fill} (full #${full.fill}, sheet #${empty.sheet})`);
     nodes = await waitFor('core\'s preview', (current) => current.some((node) => node.text === `@c${run}`) && current.some((node) => node.text === `#t${run}`), 15_000);
     await save(onInbox, 'the capture to close the popup');
     let seen = core(textA, titles.a);
