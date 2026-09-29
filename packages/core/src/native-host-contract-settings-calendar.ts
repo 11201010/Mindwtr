@@ -33,12 +33,14 @@
  * while its save is owed a retry only saves. A new subscription is
  * addCalendarFeed; its URL may carry a password, so it is never journaled and
  * keeps only a hash of its input. Every other write is setCalendarSetting with an
- * edit the view gave, journaled. Each is target-state or compare-and-set, so a
- * replay after a restart writes nothing wrong: a subscription added takes the
+ * edit the view gave, journaled. Its receipt is durable on the native host, device
+ * writes included, so a replay of a request that landed answers its first reply
+ * and runs nothing. Where no receipt was kept (a death before it committed), each
+ * is target-state or compare-and-set, so a replay writes nothing wrong: a subscription added takes the
  * request UUID as its ID (a retry finds it), a subscription removed is gone, and every
  * subscription edit carries the list's `revision` (the synced list's write
- * stamp) and answers STALE_REVISION once the list changed since; push on or off
- * and the push calendar and color compare
+ * stamp) and answers STALE_REVISION once the list changed since; the push switch
+ * carries the value it showed (`before`), and the push calendar and color compare
  * the stored value, the device calendar choices compare the whole stored choice,
  * and Delete Mindwtr calendar carries the push options' `revision` (a later
  * Mindwtr calendar is never deleted by a replay). No log line carries a URL or an
@@ -136,7 +138,7 @@ export type NativeCalendarToast = { title: string; message: string; tone: Calend
 type Permission = SystemCalendarPermissionStatus;
 
 export type NativeCalendarSettingsEdit =
-    | { type: 'push'; enabled: boolean }
+    | { type: 'push'; before: boolean; enabled: boolean }
     | { type: 'pushTarget'; before: string | null; calendarId: string | null }
     | { type: 'pushColor'; before: string; color: string }
     | { type: 'deleteMindwtrCalendar'; revision: string }
@@ -286,7 +288,7 @@ function isEdit(edit: unknown): edit is NativeCalendarSettingsEdit {
     if (!isObjectRecord(edit)) return false;
     const keys = Object.keys(edit).sort().join(',');
     switch (edit.type) {
-        case 'push': return keys === 'enabled,type' && typeof edit.enabled === 'boolean';
+        case 'push': return keys === 'before,enabled,type' && typeof edit.before === 'boolean' && typeof edit.enabled === 'boolean';
         case 'pushTarget': return keys === 'before,calendarId,type'
             && (edit.before === null || isText(edit.before, 500)) && (edit.calendarId === null || isText(edit.calendarId, 500));
         case 'pushColor': return keys === 'before,color,type' && isText(edit.before, 20) && isText(edit.color, 20);
@@ -525,7 +527,7 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                 title: tr('settings.calendarMobile.pushTasksToCalendar'),
                 description: tr('settings.calendarMobile.scheduledTasksAndTasksWithDueDatesAreAddedTo'),
                 enabled: push.enabled,
-                toggle: { type: 'push', enabled: !push.enabled },
+                toggle: { type: 'push', before: push.enabled, enabled: !push.enabled },
                 denied: push.enabled && push.permission === 'denied' ? tr('settings.calendarMobile.calendarAccessWasDeniedPleaseGrantAccessInSettings') : null,
                 target: push.enabled && push.permission === 'granted' ? {
                     title: tr('settings.calendarMobile.syncTarget'),
@@ -704,7 +706,9 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
         const pushAvailable = hasCalendarPush(current.host);
         switch (edit.type) {
             case 'push': {
-                if (await push.getCalendarPushEnabled() === edit.enabled) return result(false);
+                const enabledNow = await push.getCalendarPushEnabled();
+                if (enabledNow === edit.enabled) return result(false);
+                if (enabledNow !== edit.before) return fail('STALE_REVISION', 'Calendar push changed since the view showed it; read the view again');
                 if (!edit.enabled) {
                     await push.setCalendarPushEnabled(false);
                     current.push.enabled = false;

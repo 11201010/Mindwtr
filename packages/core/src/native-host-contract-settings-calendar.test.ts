@@ -653,6 +653,86 @@ describe('native host contract: Settings › Calendar', () => {
         });
     });
 
+    describe('durable receipts', () => {
+        afterEach(() => { resetNativeRequestReceipts(); });
+
+        /** The native host over a real SQLite file with its request receipts, booted again by `restart` (process death). */
+        async function receiptHost(settings: AppSettings, handset: ReturnType<typeof phone>) {
+            const dir = mkdtempSync(join(tmpdir(), 'mindwtr-calendar-receipts-'));
+            const { client, close } = openScratchSqlite(join(dir, 'mindwtr.db'));
+            await new SqliteAdapter(client).saveData({ tasks: [], projects: [], sections: [], areas: fixture.areas, people: [], settings });
+            const boot = async () => {
+                resetForTests();
+                resetNativeRequestReceipts();
+                useTaskStore.setState({
+                    _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
+                    settings: {}, error: null, persistenceFailure: null, isLoading: false, editLockCount: 0, lastDataChangeAt: 0,
+                } as never);
+                setStorageAdapter(new NativeReceiptSqliteAdapter(client));
+                await loadNativeRequestReceipts(client);
+                const contract = createNativeHostContract({ calendar: handset.host, replayTokens: 'required' });
+                value(await contract.setLanguage({ storedLanguage: 'en', systemLocale: null }));
+                value(await contract.activate({ writeSafetyReady: true }));
+                return contract;
+            };
+            return {
+                contract: await boot(),
+                client,
+                restart: async () => { await flushPendingSave(); return boot(); },
+                close: () => { close(); rmSync(dir, { recursive: true, force: true }); },
+            };
+        }
+
+        it('every write keeps a receipt: a replay after process death answers its first reply and writes nothing, even after a later opposite change', async () => {
+            freezeClock();
+            const handset = phone({
+                calendars: ['primary', 'managed', 'phone'],
+                storage: { [KEYS.pushEnabled]: '1', [KEYS.pushCalendar]: 'g-mindwtr', [KEYS.system]: JSON.stringify({ enabled: true }) },
+            });
+            const env = await receiptHost(fixture.settings.synced, handset);
+            try {
+                const contract = env.contract;
+                value(await contract.openCalendarSettings());
+                const view = () => value(contract.getCalendarSettings());
+                const sent: { requestId: string; edit: NativeCalendarSettingsEdit; answer: unknown }[] = [];
+                const send = async (edit: NativeCalendarSettingsEdit) => {
+                    const requestId = generateUUID();
+                    const answer = value(await contract.setCalendarSetting({ requestId, edit }));
+                    await settle();
+                    expect(answer.changed).toBe(true);
+                    sent.push({ requestId, edit, answer });
+                };
+                // The switch carries the value it showed (compare-and-set where no receipt answers).
+                expect(view().push.toggle).toEqual({ type: 'push', before: true, enabled: false });
+                await send(view().push.target!.colors!.options.find((option) => option.color === '#059669')!.edit);
+                await send(view().push.target!.options.find((option) => option.key === 'g-primary')!.edit);
+                await send(view().device.calendars[0].edit!);
+                await send(view().feeds.items[1].toggle);
+                await send(view().push.target!.delete.edit);
+                // Push off by the delete, then on and off again: a replay of an older toggle must not undo the later one.
+                await send(view().push.toggle);
+                await send(view().push.toggle);
+                const rows = await env.client.all<{ request_id: string }>('SELECT request_id FROM native_request_receipts');
+                expect(new Set(rows.map((row) => row.request_id))).toEqual(new Set(sent.map((entry) => entry.requestId)));
+
+                const restarted = await env.restart();
+                const before = { device: handset.snapshot(), calendars: handset.state.calendars.map((calendar) => calendar.id), writes: handset.state.calendarWrites.length,
+                    settings: useTaskStore.getState().settings.externalCalendars };
+                for (const entry of sent) {
+                    const replay = value(await restarted.setCalendarSetting({ requestId: entry.requestId, edit: entry.edit }));
+                    expect(replay).toEqual({ ...(entry.answer as object), toasts: [] });
+                }
+                await settle();
+                expect({ device: handset.snapshot(), calendars: handset.state.calendars.map((calendar) => calendar.id), writes: handset.state.calendarWrites.length,
+                    settings: useTaskStore.getState().settings.externalCalendars }).toEqual(before);
+                expect(handset.snapshot()[KEYS.pushEnabled]).toBe('0');
+            } finally {
+                env.close();
+            }
+        });
+
+    });
+
     describe('a subscription URL never reaches the disk', () => {
         afterEach(() => { resetNativeRequestReceipts(); });
 
