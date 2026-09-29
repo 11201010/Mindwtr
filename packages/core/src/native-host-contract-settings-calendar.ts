@@ -23,26 +23,26 @@
  * one), which Area choice is open (its `key`; one at a time), and the name and
  * URL drafts (send them as `draft`; a command's `clearDraft` empties both). The
  * host runs the system document picker for "Choose local .ics file" and sends
- * the picked file as an addFile edit; a cancelled pick sends nothing. Delete
+ * the picked file with addCalendarFeed; a cancelled pick sends nothing. Delete
  * Mindwtr calendar asks first with `push.target.delete.confirm`.
  *
  * Toasts are React Native's, in order: each command answers the toasts shown
  * since the last answer (`toasts`).
  *
- * Replay rules. Every write is setCalendarSetting with a request UUID and an
- * edit the view gave (native-request-receipts.ts): while its save is owed a
- * retry only saves. Each edit is target-state or compare-and-set, so a replay
- * after a restart writes nothing wrong: a subscription added takes the request
- * UUID as its ID (a replay finds it), a subscription removed is gone, and every
+ * Replay rules. Every write takes a request UUID (native-request-receipts.ts):
+ * while its save is owed a retry only saves. A new subscription is
+ * addCalendarFeed; its URL may carry a password, so it is never journaled and
+ * keeps only a hash of its input. Every other write is setCalendarSetting with an
+ * edit the view gave, journaled. Each is target-state or compare-and-set, so a
+ * replay after a restart writes nothing wrong: a subscription added takes the
+ * request UUID as its ID (a retry finds it), a subscription removed is gone, and every
  * subscription edit carries the list's `revision` (the synced list's write
  * stamp) and answers STALE_REVISION once the list changed since; push on or off
  * and the push calendar and color compare
  * the stored value, the device calendar choices compare the whole stored choice,
  * and Delete Mindwtr calendar carries the push options' `revision` (a later
- * Mindwtr calendar is never deleted by a replay). A subscription URL may carry
- * credentials; it is stored in the synced settings as React Native stores it, so
- * the journal keeps no more than the database already holds. No log line carries
- * a URL or an event title.
+ * Mindwtr calendar is never deleted by a replay). No log line carries a URL or an
+ * event title.
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -140,12 +140,23 @@ export type NativeCalendarSettingsEdit =
     | { type: 'pushColor'; before: string; color: string }
     | { type: 'deleteMindwtrCalendar'; revision: string }
     | { type: 'deviceCalendars'; before: SystemCalendarSettings; value: SystemCalendarSettings }
-    | { type: 'addFeed'; name: string; url: string; revision: string }
-    | { type: 'addFile'; name: string; fileName: string | null; uri: string; revision: string }
     | { type: 'feed'; feedId: string; field: 'enabled'; value: boolean; revision: string }
     | { type: 'feed'; feedId: string; field: 'color'; value: string | null; revision: string }
     | { type: 'feed'; feedId: string; field: 'areaIds'; value: string[]; revision: string }
     | { type: 'removeFeed'; feedId: string; revision: string };
+
+/** addCalendarFeed's input: a subscription URL, or a local .ics file the picker gave. */
+export type NativeCalendarFeedAdd =
+    | { requestId: string; name: string; url: string; revision: string }
+    | { requestId: string; name: string; fileName: string | null; uri: string; revision: string };
+
+function isFeedAdd(input: unknown): input is NativeCalendarFeedAdd {
+    if (!isObjectRecord(input) || typeof input.requestId !== 'string' || !isText(input.name, 500) || !isText(input.revision, 200)) return false;
+    const keys = Object.keys(input).sort().join(',');
+    if (keys === 'name,requestId,revision,url') return isText(input.url, 4000) && input.url.trim().length > 0;
+    return keys === 'fileName,name,requestId,revision,uri' && (input.fileName === null || isText(input.fileName, 500))
+        && isText(input.uri, 4000) && input.uri.trim().length > 0;
+}
 
 /** An Area choice (#1305): `key` is its source; the host keeps one open at a time. */
 export type NativeCalendarAreaChoice = {
@@ -206,12 +217,12 @@ export type NativeCalendarSettings = {
         guide: { title: string; description: string; url: string };
         name: { label: string; placeholder: string };
         url: { label: string; placeholder: string };
-        /** Add: enabled once the URL draft has text; its edit carries the drafts. */
-        add: { label: string; enabled: boolean; edit: NativeCalendarSettingsEdit | null };
+        /** Add: enabled once the URL draft has text; it sends addCalendarFeed with the drafts and `revision`. */
+        add: { label: string; enabled: boolean };
         test: { label: string };
-        /** Choose local .ics file: the host picks, then sends { type: 'addFile', name (the name draft), fileName, uri, revision }. */
+        /** Choose local .ics file: the host picks, then sends addCalendarFeed with the name draft, the file's name and URI, and `revision`. */
         chooseFile: { label: string };
-        /** The list's revision, which every subscription edit carries. */
+        /** The list's revision, which every subscription edit and addCalendarFeed carries. */
         revision: string;
         /** "External calendars", while there is a subscription. */
         listTitle: string | null;
@@ -280,10 +291,6 @@ function isEdit(edit: unknown): edit is NativeCalendarSettingsEdit {
         case 'pushColor': return keys === 'before,color,type' && isText(edit.before, 20) && isText(edit.color, 20);
         case 'deleteMindwtrCalendar': return keys === 'revision,type' && isText(edit.revision, 2000);
         case 'deviceCalendars': return keys === 'before,type,value' && isSystemCalendarSettings(edit.before) && isSystemCalendarSettings(edit.value);
-        case 'addFeed': return keys === 'name,revision,type,url' && isText(edit.revision, 200)
-            && isText(edit.name, 500) && isText(edit.url, 4000) && edit.url.trim().length > 0;
-        case 'addFile': return keys === 'fileName,name,revision,type,uri' && isText(edit.revision, 200) && isText(edit.name, 500)
-            && (edit.fileName === null || isText(edit.fileName, 500)) && isText(edit.uri, 4000) && edit.uri.trim().length > 0;
         case 'removeFeed': return keys === 'feedId,revision,type' && isText(edit.revision, 200) && isText(edit.feedId, 500);
         case 'feed': {
             if (keys !== 'feedId,field,revision,type,value' || !isText(edit.revision, 200) || !isText(edit.feedId, 500)) return false;
@@ -608,11 +615,7 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                 },
                 name: { label: t('settings.externalCalendarName'), placeholder: tr('settings.calendarMobile.optional') },
                 url: { label: t('settings.externalCalendarUrl'), placeholder: t('settings.externalCalendarUrlPlaceholder') },
-                add: {
-                    label: t('settings.externalCalendarAdd'),
-                    enabled: url.trim().length > 0,
-                    edit: url.trim().length > 0 ? { type: 'addFeed', name: draft.name ?? '', url, revision } : null,
-                },
+                add: { label: t('settings.externalCalendarAdd'), enabled: url.trim().length > 0 },
                 test: { label: tr('settings.calendarMobile.test') },
                 chooseFile: { label: tr('settings.calendarMobile.chooseLocalIcsFile') },
                 revision,
@@ -676,10 +679,24 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
         return settleWrite(written, { changed: true, toasts: [] as NativeCalendarToast[], open: extra.open ?? null, clearDraft: extra.clearDraft ?? false });
     };
 
+    /** A new subscription, named by its request UUID (a retry finds it). */
+    const applyAdd = async (current: Session, input: NativeCalendarFeedAdd): Promise<NativeHostResult<NativeCalendarCommandResult> | NativeUnsavedWrite<NativeCalendarCommandResult>> => {
+        const shown = shownFeeds(current);
+        if (shown.some((feed) => feed.id === input.requestId)) return result(false, { clearDraft: true });
+        if (feedsRevision(current) !== input.revision) return staleFeeds();
+        const { tr, toastsOf } = translators();
+        const next = 'url' in input
+            ? addCalendarFeed(shown, { id: input.requestId, name: input.name, url: input.url, defaultName: tr('nav.calendar') })
+            : addCalendarFile(shown, { id: input.requestId, name: input.name, fileName: input.fileName, uri: input.uri, defaultName: tr('nav.calendar') });
+        if (!next) return fail('INVALID_INPUT', 'A subscription needs a URL');
+        const written = await writeFeeds(current, next, { clearDraft: true });
+        if (!('url' in input) && (written.ok || written.error.code === 'SAVE_FAILED')) showToast(toastsOf.localFileAdded());
+        return written;
+    };
+
     const applyEdit = async (
         current: Session,
         edit: NativeCalendarSettingsEdit,
-        requestId: string,
     ): Promise<NativeHostResult<NativeCalendarCommandResult> | NativeUnsavedWrite<NativeCalendarCommandResult>> => {
         const { toastsOf } = translators();
         const { feeds, push } = device(current.host);
@@ -784,20 +801,6 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                 if (turnedOn && current.device.permission !== 'granted') await loadDevice(current, true);
                 return result(true, turnedOn ? { open: 'device' } : {});
             }
-            case 'addFeed':
-            case 'addFile': {
-                const shown = shownFeeds(current);
-                if (shown.some((feed) => feed.id === requestId)) return result(false, { clearDraft: true });
-                if (feedsRevision(current) !== edit.revision) return staleFeeds();
-                const { tr } = translators();
-                const next = edit.type === 'addFeed'
-                    ? addCalendarFeed(shown, { id: requestId, name: edit.name, url: edit.url, defaultName: tr('nav.calendar') })
-                    : addCalendarFile(shown, { id: requestId, name: edit.name, fileName: edit.fileName, uri: edit.uri, defaultName: tr('nav.calendar') });
-                if (!next) return fail('INVALID_INPUT', 'A subscription needs a URL');
-                const written = await writeFeeds(current, next, { clearDraft: true });
-                if (edit.type === 'addFile' && (written.ok || written.error.code === 'SAVE_FAILED')) showToast(toastsOf.localFileAdded());
-                return written;
-            }
             case 'removeFeed': {
                 const shown = shownFeeds(current);
                 if (!shown.some((feed) => feed.id === edit.feedId)) return result(false);
@@ -893,7 +896,36 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                 async () => {
                     const current = opened ?? newSession(host);
                     if (!opened) await loadSession(current);
-                    return applyEdit(current, input.edit, input.requestId);
+                    return applyEdit(current, input.edit);
+                },
+            );
+            return outcome.ok ? { ok: true, value: { ...outcome.value, toasts: takeToasts() } } : outcome;
+        },
+
+        /**
+         * A new subscription: a URL (`url`), or a local .ics file the picker gave
+         * (`fileName`, `uri`). Its URL may carry a user name and password, so this
+         * command is never journaled (NATIVE_UNJOURNALED_COMMANDS) and its receipt
+         * keeps only a hash of its input. The subscription takes the request UUID as
+         * its ID: a retry finds it. It needs no open screen.
+         */
+        async addCalendarFeed(input: NativeCalendarFeedAdd): Promise<NativeHostResult<NativeCalendarCommandResult>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const host = deps.host();
+            if (!host) return fail('ACTION_FAILED', 'Calendars are not available on this host yet');
+            if (!isFeedAdd(input) || !deps.requestIdPattern.test(input.requestId)) {
+                return fail('INVALID_INPUT', 'A request UUID, a name, a URL (or a file name and URI) and the list\'s revision are required');
+            }
+            const opened = session?.host === host ? session : null;
+            const outcome = await receipts.run<NativeCalendarCommandResult>(
+                input.requestId,
+                // The payload's name is in NATIVE_UNJOURNALED_COMMANDS; the rest is a hash, never the URL.
+                JSON.stringify(['calendarFeedAdd', deterministicHash128Hex(JSON.stringify(input))]),
+                async () => {
+                    const current = opened ?? newSession(host);
+                    if (!opened) await loadSession(current);
+                    return applyAdd(current, input);
                 },
             );
             return outcome.ok ? { ok: true, value: { ...outcome.value, toasts: takeToasts() } } : outcome;

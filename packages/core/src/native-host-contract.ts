@@ -292,6 +292,7 @@ export {
     NATIVE_CALENDAR_FEED_SLOTS,
     type NativeCalendarAreaChoice,
     type NativeCalendarCommandResult,
+    type NativeCalendarFeedAdd,
     type NativeCalendarFeedSlot,
     type NativeCalendarHost,
     type NativeCalendarSettings,

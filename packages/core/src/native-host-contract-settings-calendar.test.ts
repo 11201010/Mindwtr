@@ -1,9 +1,14 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { DeviceCalendar } from './external-calendar-feeds';
 import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
 import type { NativeCalendarHost, NativeCalendarSettings, NativeCalendarSettingsEdit, NativeCalendarToast } from './native-host-contract-settings-calendar';
+import { loadNativeRequestReceipts, NATIVE_UNJOURNALED_COMMANDS, NativeReceiptSqliteAdapter, resetNativeRequestReceipts } from './native-request-receipts';
+import { openScratchSqlite } from './screen-parity.replay';
+import { SqliteAdapter } from './sqlite-adapter';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppSettings, Area } from './types';
 import { generateUUID } from './uuid';
@@ -217,6 +222,15 @@ function calendarDriver(contract: Host, device: ReturnType<typeof phone>, openin
         }
     };
     const run = async (command: Promise<NativeHostResult<{ toasts: NativeCalendarToast[] }>>) => { addToasts(value(await command).toasts); };
+    /** A new subscription: its own command, never journaled (its URL may carry a password). */
+    const add = async (input: Parameters<Host['addCalendarFeed']>[0]) => {
+        const answer = value(await contract.addCalendarFeed(input));
+        addToasts(answer.toasts);
+        if (answer.clearDraft) {
+            screen.name = '';
+            screen.url = '';
+        }
+    };
 
     /** React Native's layout, from the view and the screen state. */
     const layout = () => {
@@ -298,17 +312,14 @@ function calendarDriver(contract: Host, device: ReturnType<typeof phone>, openin
         texts.push(feeds.url.label);
         inputs.push([feeds.url.placeholder, screen.url, (text) => { screen.url = text; }]);
         texts.push(feeds.add.label);
-        control(feeds.add.label, null, !feeds.add.enabled, async () => {
-            const edit = feeds.add.edit;
-            if (edit?.type === 'addFeed') await send(edit, nextFeedId());
-        });
+        control(feeds.add.label, null, !feeds.add.enabled, () => add({ requestId: nextFeedId(), name: screen.name, url: screen.url, revision: feeds.revision }));
         texts.push(feeds.test.label);
         control(feeds.test.label, null, false, () => run(contract.testCalendarFeeds()));
         texts.push(feeds.chooseFile.label);
         control(feeds.chooseFile.label, null, false, async () => {
             const picked = pending.shift() ?? null;
             if (!picked) return;
-            await send({ type: 'addFile', name: screen.name, fileName: picked.name, uri: picked.uri, revision: feeds.revision }, nextFeedId());
+            await add({ requestId: nextFeedId(), name: screen.name, fileName: picked.name, uri: picked.uri, revision: feeds.revision });
         });
         if (feeds.listTitle) texts.push(feeds.listTitle);
         for (const item of feeds.items) {
@@ -556,25 +567,32 @@ describe('native host contract: Settings › Calendar', () => {
             expect(JSON.parse(handset.state.storage.get(KEYS.system)!).enabled).toBe(false);
         });
 
-        it.each(['addFeed', 'addFile'] as const)('%s: the replay finds the subscription it made, and never adds one removed since', async (type) => {
+        it.each(['url', 'file'] as const)('a new subscription (%s): a retry finds the subscription it made, and never adds one removed since', async (type) => {
             const { handset, contract, view } = await boot({ calendars: [] });
             const requestId = generateUUID();
             const revision = view().feeds.revision;
-            const change: NativeCalendarSettingsEdit = type === 'addFeed'
-                ? { type, name: 'Team', url: 'https://example.com/team.ics', revision }
-                : { type, name: '', fileName: 'Plan.ics', uri: 'content://downloads/7', revision };
-            expect(value(await edit(contract, change, requestId)).changed).toBe(true);
-            const replayed = await replay(handset, requestId, change);
+            const input = type === 'url'
+                ? { requestId, name: 'Team', url: 'https://example.com/team.ics', revision }
+                : { requestId, name: '', fileName: 'Plan.ics', uri: 'content://downloads/7', revision };
+            const addAgain = async () => {
+                const restarted = await restart(handset);
+                const before = everything(handset);
+                const answer = await restarted.addCalendarFeed(input);
+                await settle();
+                return { answer, before, after: everything(handset) };
+            };
+            expect(value(await contract.addCalendarFeed(input)).changed).toBe(true);
+            const replayed = await addAgain();
             expect(value(replayed.answer)).toMatchObject({ changed: false, clearDraft: true });
             expect(replayed.after).toEqual(replayed.before);
             expect(useTaskStore.getState().settings.externalCalendars).toEqual([
-                type === 'addFeed'
+                type === 'url'
                     ? { id: requestId, name: 'Team', url: 'https://example.com/team.ics', enabled: true }
                     : { id: requestId, name: 'Plan', url: 'content://downloads/7', enabled: true },
             ]);
             const restarted = await restart(handset, true);
             expect(value(await edit(restarted, value(restarted.getCalendarSettings()).feeds.items[0].remove.edit)).changed).toBe(true);
-            const removed = await replay(handset, requestId, change);
+            const removed = await addAgain();
             expect(removed.answer).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
             expect(removed.after).toEqual(removed.before);
             expect(useTaskStore.getState().settings.externalCalendars).toEqual([]);
@@ -631,6 +649,51 @@ describe('native host contract: Settings › Calendar', () => {
             expect(value(await contract.setCalendarSetting({ requestId, edit: change })).changed).toBe(true);
             expect(writes).toHaveLength(1);
             expect(useTaskStore.getState().settings.externalCalendars?.[1].enabled).toBe(true);
+        });
+    });
+
+    describe('a subscription URL never reaches the disk', () => {
+        afterEach(() => { resetNativeRequestReceipts(); });
+
+        it('addCalendarFeed keeps no durable receipt and no journal entry, and setCalendarSetting takes no URL', async () => {
+            freezeClock();
+            expect(NATIVE_UNJOURNALED_COMMANDS.has('calendarFeedAdd')).toBe(true);
+            const dir = mkdtempSync(join(tmpdir(), 'mindwtr-calendar-receipts-'));
+            const { client, close } = openScratchSqlite(join(dir, 'mindwtr.db'));
+            try {
+                await new SqliteAdapter(client).saveData({ tasks: [], projects: [], sections: [], areas: fixture.areas, people: [], settings: fixture.settings.synced });
+                resetForTests();
+                useTaskStore.setState({
+                    _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
+                    settings: {}, error: null, persistenceFailure: null, isLoading: false, editLockCount: 0, lastDataChangeAt: 0,
+                } as never);
+                setStorageAdapter(new NativeReceiptSqliteAdapter(client));
+                await loadNativeRequestReceipts(client);
+                const handset = phone({ calendars: [] });
+                const contract = createNativeHostContract({ calendar: handset.host, replayTokens: 'required' });
+                value(await contract.setLanguage({ storedLanguage: 'en', systemLocale: null }));
+                value(await contract.activate({ writeSafetyReady: true }));
+                const view = value(await contract.openCalendarSettings());
+                const url = 'https://alex:s3cret@calendar.example.com/private.ics';
+                const added = generateUUID();
+                expect(value(await contract.addCalendarFeed({ requestId: added, name: 'Private', url, revision: view.feeds.revision })).changed).toBe(true);
+                const toggled = generateUUID();
+                expect(value(await contract.setCalendarSetting({ requestId: toggled, edit: value(contract.getCalendarSettings()).feeds.items[0].toggle })).changed).toBe(true);
+                await flushPendingSave();
+                const receipts = await client.all<{ request_id: string; method: string; reply: string }>('SELECT request_id, method, reply FROM native_request_receipts');
+                expect(receipts.map((row) => row.request_id)).toEqual([toggled]);
+                expect(JSON.stringify(receipts)).not.toContain('s3cret');
+                // A URL is no setCalendarSetting edit.
+                for (const edit of [
+                    { type: 'addFeed', name: 'Private', url, revision: view.feeds.revision },
+                    { type: 'addFile', name: '', fileName: 'x.ics', uri: 'content://x', revision: view.feeds.revision },
+                ]) {
+                    expect(await contract.setCalendarSetting({ requestId: generateUUID(), edit: edit as never })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+                }
+            } finally {
+                close();
+                rmSync(dir, { recursive: true, force: true });
+            }
         });
     });
 
