@@ -20,9 +20,9 @@ permissions:
 env:
   APPIMAGETOOL_VERSION: "1.9.1"
   APPIMAGETOOL_X86_64_SHA256: "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
-  APPIMAGE_RUNTIME_COMMIT: "75849dce7cc37e4319b633df1f116ca895c71a12"
-  APPIMAGE_RUNTIME_ASSET_ID: "456065460"
-  APPIMAGE_RUNTIME_X86_64_SHA256: "1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf"
+  APPIMAGE_RUNTIME_VERSION: "20251108"
+  APPIMAGE_RUNTIME_COMMIT: "dd6cebedcbddde9c82f89b011e8e1d40b6e43868"
+  APPIMAGE_RUNTIME_X86_64_SHA256: "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 concurrency:
@@ -124,7 +124,7 @@ jobs:
           esac
 
           TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
-          RUNTIME_URL="https://api.github.com/repos/AppImage/type2-runtime/releases/assets/${APPIMAGE_RUNTIME_ASSET_ID}"
+          RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/${APPIMAGE_RUNTIME_VERSION}/runtime-x86_64"
           TOOL_WORKDIR="$(mktemp -d)"
           TOOL_PATH="$TOOL_WORKDIR/appimagetool.AppImage"
           RUNTIME_PATH="$TOOL_WORKDIR/runtime-x86_64"
@@ -136,12 +136,8 @@ jobs:
             cd "$TOOL_WORKDIR"
             sha256sum --check --strict appimagetool.sha256
           )
-          echo "Downloading AppImage type2 runtime from release commit ${APPIMAGE_RUNTIME_COMMIT} (asset ${APPIMAGE_RUNTIME_ASSET_ID})"
-          curl -fsSL \
-            -H "Accept: application/octet-stream" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "$RUNTIME_URL" \
-            -o "$RUNTIME_PATH"
+          echo "Downloading AppImage type2 runtime ${APPIMAGE_RUNTIME_VERSION} from release commit ${APPIMAGE_RUNTIME_COMMIT}"
+          curl -fsSL "$RUNTIME_URL" -o "$RUNTIME_PATH"
           printf '%s  runtime-x86_64\n' "$APPIMAGE_RUNTIME_X86_64_SHA256" \
             > "$TOOL_WORKDIR/runtime.sha256"
           (
