@@ -95,7 +95,7 @@ fun CaptureModalScreen(model: InboxViewModel, modal: CaptureModal) = with(model.
     LaunchedEffect(model.busy, owed) { if (!model.busy && !owed) pump() }
     BackHandler(enabled = !owed) {
         if (model.busy) return@BackHandler
-        if (modal.confirm != null) cancelLines() else cancel()
+        if (modal.confirm != null) cancelLines() else cancel(leave = false)
     }
     // Edge to edge, as RN's screen: the card is centered in the whole window, and while the keyboard is up in the space above
     // it, so Cancel and Save stay reachable (RN's KeyboardAvoidingView, 'height' on Android).

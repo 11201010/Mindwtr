@@ -190,12 +190,15 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
     /** The question's Cancel, its backdrop, and Back: no task is created. */
     fun cancelLines() { open?.let { keep(it.copy(confirm = null, lineIds = emptyList())) } }
 
-    /** RN's Cancel (and Back): nothing is written; core's discard says whether the app then goes behind the previous one. */
-    fun cancel() {
+    /**
+     * RN's Cancel: nothing is written; core's discard says whether the app then goes behind the previous one ([leave]). Back
+     * passes false: RN's Back pops the route and the app stays.
+     */
+    fun cancel(leave: Boolean = true) {
         val current = open ?: return
         shell.perform { runtime ->
             val close = runtime.menuRead("captureModalDiscard", JSONObject().put("params", current.params).toString()).getJSONObject("close")
-            shell.ui { if (open?.session == current.session) end(close) }
+            shell.ui { if (open?.session == current.session) end(close, leave) }
         }
     }
 
@@ -250,9 +253,9 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
      * The screen closes to the screen behind it (this app always has one, so core's returnTo is never needed); a system
      * capture then puts the app behind the previous one (RN's finishCapture, #1169).
      */
-    private fun end(close: JSONObject) {
+    private fun end(close: JSONObject, leave: Boolean = true) {
         keep(null)
         inFlight = null
-        if (close.getBoolean("returnToPreviousApp")) shell.leaveApp = true
+        if (leave && close.getBoolean("returnToPreviousApp")) shell.leaveApp = true
     }
 }

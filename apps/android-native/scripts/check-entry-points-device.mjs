@@ -10,7 +10,8 @@
 // Someday (open-feature), the Calendar, the global search with its query, a task (the editor over Focus), a project, the
 // capture popup (open-feature capture), the capture screen with a capture link's title or an assistant note's name
 // (CREATE_NOTE), and a capture link without a title (core's toast); (d) a widget's quick capture link (capture-quick) opens
-// the capture screen, and its Cancel puts the app behind the previous screen (RN's #1169); (e) two shares sent together open
+// the capture screen, its Cancel puts the app behind the previous screen (RN's #1169), and a warm Back stays in the app;
+// (e) two shares sent together open
 // one after the other; (f) a share arriving over a typed capture draft waits until the draft closes; (g) the closed screens
 // stored nothing; (h) a share waiting behind the editor survives a force-stop and opens after the relaunch. Nothing but (b)'s share is saved; its title is 77 + a 12-digit run id + 1
 // (check-projects-device.mjs --prune-old removes earlier runs'). It types only digits, never launches over another app, and
@@ -261,6 +262,15 @@ try {
     check(true, '(d) capture-quick opens the capture screen, and its Cancel returns to the previous screen');
     device.launch(ACTIVITY);
     await waitFor('the tabs again', (current) => Boolean(tab(current, en['tab.inbox'])), 30_000);
+    // A warm Back pops the screen as RN's Back pops its route: the app stays (the first Back may only close the keyboard).
+    await link('/capture-quick', modal(''), 'the quick capture screen again');
+    for (let press = 0; press < 2 && tagged(await screen(), 'capture-modal'); press += 1) {
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        await sleep(1_000);
+    }
+    await waitFor('the tabs after Back', atTabs, 10_000);
+    check(front().includes(`${PKG}/`), '(d) Back from the quick capture screen stays in the app');
 
     // (e) Two shares sent together open one after the other: the second waits in the queue while the first's screen is open.
     nodes = await waitFor('the tabs', atTabs, 20_000);

@@ -2500,7 +2500,9 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(captureModalUi, /edit\(help\.getJSONObject\("edit"\)\)/, 'the ? button sends core\'s toggleHelp');
     // Full screen over every other screen, as RN presents its modal route; a system capture ends behind the previous app.
     assert.match(activity, /if \(modal != null && writable\) CaptureModalScreen\(model, modal\)\s+else if \(open != null && writable\) TaskEditorScreen\(model, open\)/);
-    assert.match(modalKt, /if \(close\.getBoolean\("returnToPreviousApp"\)\) shell\.leaveApp = true/);
+    assert.match(modalKt, /if \(leave && close\.getBoolean\("returnToPreviousApp"\)\) shell\.leaveApp = true/);
+    // Back pops the screen as RN's Back pops its route: the app stays; Cancel and a save end a system capture behind the previous app.
+    assert.match(captureModalUi, /if \(modal\.confirm != null\) cancelLines\(\) else cancel\(leave = false\)/);
     // Edge to edge the window no longer shrinks for the keyboard: the screen lifts its card and buttons above it, as RN's
     // KeyboardAvoidingView ('height' on Android) does.
     assert.match(captureModalUi, /Box\(Modifier\.fillMaxSize\(\)\.background\(c\.bg\)\.imePadding\(\)\.semantics \{ testTagsAsResourceId = true \}\.testTag\("capture-modal"\)\)/);
