@@ -4,29 +4,21 @@
 set -euo pipefail
 
 requested="${1:-26}"
-channel="${2:-any}"
 case "$requested" in
   26|27) ;;
   *) echo "Unsupported iOS SDK major: $requested" >&2; exit 1 ;;
-esac
-case "$channel" in
-  any|stable) ;;
-  *) echo "Unsupported Xcode channel: $channel" >&2; exit 1 ;;
 esac
 
 applications="${MINDWTR_XCODE_APPLICATIONS_DIR:-/Applications}"
 selected=""
 while IFS= read -r candidate; do
-  if [ "$channel" = "stable" ] && [[ "$(basename "$candidate")" == *_beta.app ]]; then
-    continue
-  fi
   if [ -d "$candidate/Contents/Developer" ]; then
     selected="$candidate/Contents/Developer"
   fi
 done < <(find "$applications" -maxdepth 1 -type d -name "Xcode_${requested}*.app" | sort -V)
 
 if [ -z "$selected" ]; then
-  echo "Required $channel Xcode $requested is not installed in $applications. Validation did not run." >&2
+  echo "Required Xcode $requested is not installed in $applications. Validation did not run." >&2
   exit 1
 fi
 
