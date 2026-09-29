@@ -1,14 +1,18 @@
 import {
     DEFAULT_GLOBAL_SEARCH_FILTERS,
+    NativeReceiptSqliteAdapter,
     STATUS_COLORS_BY_THEME,
-    SqliteAdapter,
+    type SqliteAdapter,
     TASK_PRIORITY_COLORS,
     createNativeHostContract,
     legacyImportMismatch,
     assertNativeLegacyBackupSafe,
+    loadNativeRequestReceipts,
     logInfo,
     logWarn,
     planLegacyJsonImport,
+    pruneNativeRequestReceipts,
+    setNativeReplayTokens,
     setStorageAdapter,
     splitSqlStatements,
     sqliteHasAnyData,
@@ -67,7 +71,8 @@ const sqlite: SqliteClient = {
 };
 
 type LoadedData = Awaited<ReturnType<SqliteAdapter['getData']>>;
-class ValidatedSqliteAdapter extends SqliteAdapter {
+// Core's receipt adapter: a write's request receipt commits in the same transaction as its data.
+class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter {
     latestData: LoadedData | null = null;
 
     override async getData(): Promise<LoadedData> {
@@ -435,10 +440,15 @@ const activateAndVerify = async (adapter: ValidatedSqliteAdapter, recoveryLoad =
     }
     return unwrap(contract.getInboxWindow({ offset: 0, limit: 50 }));
 };
-const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false): string => submit(async () => {
+const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, journaled = false): string => submit(async () => {
+    // A host that journals every write replays it after process death, so each write must carry its replay tokens.
+    setNativeReplayTokens(journaled ? 'required' : 'optional');
     const adapter = new ValidatedSqliteAdapter(sqlite, { rejectConcurrentWrites: true });
     // Schema setup may write only after the native host's validated checkpoint.
     setStorageAdapter(adapter);
+    // Before the journal's replay (Kotlin, after boot): a landed request answers from its receipt. A host without
+    // a journal keeps its receipts in memory, as before.
+    if (journaled) await loadNativeRequestReceipts(sqlite);
     await adapter.getData();
     if (legacyState) await importLegacyJson(adapter, JSON.parse(legacyState) as LegacyState, legacyBackup);
     const result = await activateAndVerify(adapter, recoveryLoad);
@@ -464,9 +474,12 @@ globalThis.MindwtrHost = {
             ? { ok: true, value: slot.value }
             : { ok: false, error: slot.error });
     },
-    /** `legacyState` is "" for the dev database; else LegacyRnStoreGuard's reading of RN's AsyncStorage. */
-    boot(legacyState: string, legacyBackup: string): string {
-        return boot(legacyState, legacyBackup);
+    /**
+     * `legacyState` is "" for the dev database; else LegacyRnStoreGuard's reading of RN's AsyncStorage.
+     * `writeJournal` is "journaled" from a host that journals every write (Kotlin's WriteJournal); iOS sends nothing.
+     */
+    boot(legacyState: string, legacyBackup: string, writeJournal = ''): string {
+        return boot(legacyState, legacyBackup, false, writeJournal === 'journaled');
     },
     /** Private iOS journal recovery: no dynamic load maintenance before exact replay. */
     bootRecovery(legacyState: string, legacyBackup: string): string {
@@ -1401,17 +1414,18 @@ globalThis.MindwtrHost = {
     capturePicker(json: string): string {
         return submit(async () => taskResult('quickCapturePicker', await contract.submitQuickCapturePickerQuery(JSON.parse(json))));
     },
-    complete(id: string): string {
-        return submit(async () => taskResult('complete', await contract.completeTask({ id })));
+    // A revision left out ("", as iOS sends none) is no revision: core requires one only from a journaling host.
+    complete(id: string, taskRevision = ''): string {
+        return submit(async () => taskResult('complete', await contract.completeTask({ id, taskRevision: taskRevision || undefined })));
     },
     /** A target state, so an exact retry re-sends the same target. A `{ blocked }` reply wrote nothing. */
-    taskFocus(id: string, focused: boolean): string {
-        return submit(async () => taskResult('taskFocus', await contract.setTaskFocus({ id, focused })));
+    taskFocus(id: string, focused: boolean, taskRevision = ''): string {
+        return submit(async () => taskResult('taskFocus', await contract.setTaskFocus({ id, focused, taskRevision: taskRevision || undefined })));
     },
-    projectFocus(id: string, focused: boolean): string {
-        return submit(async () => taskResult('projectFocus', await contract.setProjectFocus({ id, focused })));
+    projectFocus(id: string, focused: boolean, projectRevision = ''): string {
+        return submit(async () => taskResult('projectFocus', await contract.setProjectFocus({ id, focused, projectRevision: projectRevision || undefined })));
     },
-    /** `areaId` "" is no area. Core dedupes a retry by `requestId` within this process. */
+    /** `areaId` "" is no area. Core names the new project by `requestId`, so a replay finds it. */
     createProject(title: string, areaId: string, requestId: string): string {
         return submit(async () => taskResult('createProject', await contract.createProject({ title, areaId: areaId || null, requestId })));
     },
@@ -1504,6 +1518,10 @@ globalThis.MindwtrHost = {
             if (!read) throw new Error(`INVALID_INPUT: no menu read ${name}`);
             return unwrap(read(JSON.parse(json) as never));
         });
+    },
+    /** After the journal's boot replay: drops request receipts older than 30 days. */
+    pruneReceipts(): string {
+        return submit(async () => ({ pruned: await pruneNativeRequestReceipts(sqlite) }));
     },
     /** Debug builds only: runNetCheck against check-net-device.mjs's server on `port`. */
     netCheck(port: string): string {

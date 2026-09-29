@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import vm from 'node:vm';
 import { build } from 'esbuild';
@@ -264,6 +264,21 @@ const coreHost = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongd
 const sqliteBridge = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/SqliteBridge.kt'), 'utf8');
 const hostEntry = readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8');
 assert.match(hostEntry, /new ValidatedSqliteAdapter\(sqlite, \{ rejectConcurrentWrites: true \}\)/);
+// Durable request receipts: core's adapter commits a write's receipt in its data's transaction (the hook right before
+// COMMIT in both data saves, into native_request_receipts), and boot loads them before activation and the journal's replay.
+{
+    assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
+    const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
+    assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
+    const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
+    assert.match(coreAdapter, /await this\.beforeCommit\(\{ data \}\);\s*saveStep = 'commit';\s*const commitStartedAt = Date\.now\(\);\s*await runTimed\('COMMIT'\);/);
+    assert.match(coreAdapter, /await this\.beforeCommit\(\{ task \}\);\s*await this\.client\.run\('COMMIT'\);/);
+    const coreReceipts = readFileSync(resolve(app, '../../packages/core/src/native-request-receipts.ts'), 'utf8');
+    assert.match(coreReceipts, /CREATE TABLE IF NOT EXISTS native_request_receipts \(/);
+    assert.match(coreReceipts, /class NativeReceiptSqliteAdapter extends SqliteAdapter \{[\s\S]*?protected override async beforeCommit\([\s\S]*?INSERT INTO native_request_receipts/);
+}
 assert.match(sqliteBridge, /PRAGMA synchronous = FULL/);
 // Nothing writes the RN database before its .prewrite snapshot: the open sets only foreign_keys (a connection
 // setting), and WAL (which rewrites a rollback-journal header) and synchronous follow VACUUM INTO or the
@@ -278,7 +293,7 @@ assert.equal(sqliteBridge.match(/journal_mode|synchronous =/g).length, 2);
 assert.doesNotMatch(bridgeCheckpoint, /\breturn\b/);
 assert.match(sqliteBridge, /syncFile\(partial\)[\s\S]*?renameTo\(checkpointFile\)[\s\S]*?syncDirectory/);
 assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('engine.evaluate(bundle'));
-assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('callAsync("boot", legacyState, legacyBackup)'));
+assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('callAsync("boot", legacyState, legacyBackup, "journaled")'));
 const source = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot', name), 'utf8');
 const activity = source('MainActivity.kt');
 const model = source('InboxViewModel.kt');
@@ -338,7 +353,10 @@ for (const [name, text] of Object.entries({ activity, editorUi, searchUi, proces
     assert.match(retry, /"saveDraft" -> sendDraft\(action\)/);
     assert.match(retry, /"inboxCommit", "inboxSkip" -> sendAnswer\(action,/);
 }
-assert.match(rowUi, /failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)/);
+assert.match(rowUi, /failedAction == null \|\| failedAction == completeAction\(task\.id, task\.taskRevision\)/);
+// Every task row carries core's revision (NativeTaskRow.taskRevision), parsed as core sent it; Kotlin never computes one.
+assert.match(model, /text\("revealLabel"\), getBoolean\("laterToday"\), optString\("taskRevision"\)\)/);
+assert.match(model, /fun completeAction\(id: String, taskRevision: String\) = FailedAction\("complete", id, patch = mapOf\("taskRevision" to taskRevision\)\)/);
 // The swipe is core's meta.swipe (RN's getLeftAction moved to core); it and TalkBack's custom action are one command with one enabled rule.
 // Done keeps core's completeTask and its retry; Restore and Next are the status change with theirs. RN draws no Done button.
 assert.match(rowUi, /val target = meta\.swipe\.target\s+val swipeLabel = meta\.swipe\.label/);
@@ -354,7 +372,7 @@ assert.match(rowUi, /when \(swipe\.icon\) \{ "restore" -> Lucide\.RotateCcw; "do
 // A selecting row has no swipe; a list with core's bulk contract (RowActions without a status) keeps the row's own swipe.
 assert.match(rowUi, /val listed = actions\?\.status\s+val swipeOn = !selecting && if \(listed != null\) canEdit else completable && \(if \(target == "done"\) canComplete else canMove\)/);
 assert.match(rowUi, /val canMove = writable && !busy && \(failedAction == null \|\| failedAction == statusAction\(task, target\)\)/);
-assert.match(rowUi, /val onSwipe = listed\?\.let \{ status -> \{ status\(target\) \} \} \?: \{ if \(target == "done"\) complete\(task\.id\) else changeStatus\(task, target\) \}/);
+assert.match(rowUi, /val onSwipe = listed\?\.let \{ status -> \{ status\(target\) \} \} \?: \{ if \(target == "done"\) complete\(task\.id, task\.taskRevision\) else changeStatus\(task, target\) \}/);
 assert.match(rowUi, /SwipeAction\(enabled = swipeOn, swipe = meta\.swipe, shape = shape, onSwipe = onSwipe, onMenu = \{ showStatusMenu\(task\) \}, onDelete = onDelete\)/);
 assert.match(rowUi, /if \(swipeOn\) customActions = listOf\(CustomAccessibilityAction\(swipeLabel\) \{ onSwipe\(\); true \},\s*CustomAccessibilityAction\(t\("taskStatus\.changeStatus"\)\) \{ showStatusMenu\(task\); true \}\)/);
 assert.doesNotMatch(code(rowUi + activity), /IconButton\(onClick = \{ complete\(/, 'no visible Done button: RN has none');
@@ -368,7 +386,12 @@ assert.doesNotMatch(code(rowUi), /SwipeToDismissBox|combinedClickable\([^)]*\)[^
 // Every failed command holds its exact retry, except an update or editor save core refused before writing.
 assert.match(model, /internal val UPDATE_REFUSALS = listOf\("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND"\)/);
 assert.match(model, /private val REFUSABLE = setOf\("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker"\) \+ MENU_KINDS/);
-assert.match(model, /val refused = action\?\.kind in REFUSABLE && UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}/);
+assert.match(model, /val refused = message\.startsWith\("STALE_REVISION"\) \|\| \(action\?\.kind in REFUSABLE && UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}\)/);
+// A command refused as stale wrote nothing: it is never owed (no retry loop on a revision that can never match), its lists are
+// read again, and nothing shows but the conflict line of the editor save, the status menu and an open draft's Save.
+assert.match(model, /stale = action != null && action\.kind !in STALE_SHOWN && message\.startsWith\("STALE_REVISION"\)/);
+assert.match(model, /private val STALE_SHOWN = setOf\("saveDraft", "update", "calendarCreate", "manageEditor"\)/);
+assert.match(model, /if \(stale\) acknowledged\(action!!\)\s+else ui \{/);
 assert.match(model, /\(action != null && !refused\) \|\| message\.startsWith\("SAVE_FAILED"\)/);
 // While a failed command's retry is owed, only that exact command runs: no read starts, and the retry
 // keeps the failure on screen. A read's failure never replaces an owed command, in the ViewModel or the process record.
@@ -379,7 +402,7 @@ assert.match(model, /if \(failedAction == null\) error = null\s+\}/, 'a read\'s 
 assert.match(model, /val owed = failedAction\?\.takeIf \{ action == null && it\.kind != "storage" \}\s+if \(owed == null\) \{\s+error = message[\s\S]{0,120}?if \(failed != null\) failedAction = failed/);
 assert.match(owner, /if \(pending\.action\.kind == "storage" && failure\?\.action\?\.kind\.let \{ it != null && it != "storage" \}\) return/);
 // User actions go through perform: the three commands with their action, the reads the user asked for without one.
-assert.equal(code(model).match(/\bperform\(action\)/g).length, 14, 'complete, editor save, Reset checklist, task star, project star, status, project create, area filter, saved search, Process Inbox answer, the storage retry, and the capture popup\'s capture, lines and picker create');
+assert.equal(code(model).match(/\bperform\(action\)/g).length, 15, 'complete, editor save, Reset checklist, task star, project star, status, project create, area filter, saved search, Process Inbox answer, the storage retry, the journal replay\'s retry, and the capture popup\'s capture, lines and picker create');
 assert.equal(code(model).match(/\bperform\s*\{/g).length, 10, 'editor, reload, Try again, two More (Focus, a project), open project, open Process Inbox, open the capture popup, a Focus control\'s edit, Import .txt');
 // Background reads (resume, each minute, after a command) never take busy, so they disable no control and never
 // turn a user's tap away: only perform sets busy, and its guard knows nothing of reads in flight.
@@ -390,9 +413,9 @@ assert.equal(code(model).match(/\bbusy = true\b/g).length, 1, 'only a user actio
 assert.match(model, /fun refreshFocus\(\) \{\s+val depth = focus\.depth\(\)\s+val controls = menu\.focusControls\.state\.toString\(\)\s+background\(/);
 assert.match(model, /fun refreshProjects\(\) \{\s+val at = depth\(\)\s+background\(/);
 assert.match(model, /private fun refreshAll\(\) \{\s+val at = depth\(\)\s+background\(Part\.entries, \{ runtime -> read\(runtime, at\) \}, ::showLists\)/);
-// A command's lists are read again only after it succeeds, in the background, once busy is released.
+// A command's lists are read again only after it succeeds (or was refused as stale), in the background, once busy is released.
 assert.match(model, /try \{ work\(runtime\); done = true \}/);
-assert.match(model, /ui \{\s+busy = false\s+if \(done && action != null\) refreshAll\(\)\s+\}/);
+assert.match(model, /ui \{\s+busy = false\s+if \(\(done \|\| stale\) && action != null\) refreshAll\(\)\s+\}/);
 assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('fun openEditor('))), /read\(runtime/);
 // Stale results never overwrite newer state: every list read takes a number; a command outdates every earlier read;
 // a result is shown only if nothing newer was shown first (a background failure too).
@@ -413,7 +436,7 @@ for (const read of ['fun refresh()', 'fun loadMoreFocus(', 'fun openProject(', '
 }
 assert.equal(code(model).match(/(?<!var )\bcommandAt = /g).length, 1, 'only a command\'s start outdates reads');
 // The exact retry of a failed Done is enabled wherever its row shows: Inbox, Focus, and a project.
-assert.match(rowUi, /val canComplete = writable && !busy &&\s*\(failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)\)/);
+assert.match(rowUi, /val canComplete = writable && !busy &&\s*\(failedAction == null \|\| failedAction == completeAction\(task\.id, task\.taskRevision\)\)/);
 // Only the capture draft survives process death; a restored unchanged draft reuses its capture UUID.
 // The editor draft survives process death through a synced file in the no-backup folder; the Bundle holds only its key.
 // The model is read again from core, and the saved edits go on top with their own bases.
@@ -425,8 +448,9 @@ assert.match(model, /TaskEditor\.restore\(readEditor\(runtime, draft\.getString\
 assert.match(editorUi, /put\("bases", JSONObject\(edited\.keys\.associateWith \{ base\(it\) \}\)\)/);
 // An uncertain save's exact request is on disk before the call; after process death it is sent again before the draft unlocks.
 assert.match(model, /val action = saveDraftAction\(current\)\s+pendingSave = action\s+keepEditor\(current\)\s+sendDraft\(action\)/);
-assert.match(model, /pendingSave\?\.let \{ state\.put\("pending", JSONObject\(\)\.put\("base", JSONObject\(it\.base\)\)\.put\("patch", JSONObject\(it\.patch\)\)\.put\("checklist", it\.title\)\) \}\s+drafts\.write\(key, state\)/);
-assert.match(model, /val action = FailedAction\("saveDraft", restored\.id, pending\.optString\("checklist"\), base = map\("base"\), patch = map\("patch"\)\)\s+failedAction = action\s+sendDraft\(action\)/);
+// The pending save keeps its request UUID, so the re-send after process death answers core's receipt for the first send.
+assert.match(model, /pendingSave\?\.let \{\s+state\.put\("pending", JSONObject\(\)\.put\("base", JSONObject\(it\.base\)\)\.put\("patch", JSONObject\(it\.patch\)\)\.put\("checklist", it\.title\)\.put\("requestId", it\.requestId\)\)\s+\}\s+drafts\.write\(key, state\)/);
+assert.match(model, /val action = FailedAction\("saveDraft", restored\.id, pending\.optString\("checklist"\), base = map\("base"\), patch = map\("patch"\),\s+requestId = pending\.optString\("requestId"\)\)\s+failedAction = action\s+sendDraft\(action\)/);
 // Unresolved typed text is an unsaved edit: Close asks, and Save waits for core, then saves.
 assert.match(editorUi, /val dirty get\(\) = patch\.isNotEmpty\(\) \|\| waiting \|\| checklistChanged/);
 assert.match(editorUi, /val leave = \{ if \(editor\.readOnly \|\| \(!editor\.dirty && !editsPending\)\) closeEditor\(\) else confirmLeave = true \}/);
@@ -453,8 +477,14 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
-assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+// The Kotlin host journals every write, and says so at boot: core then requires each write's replay tokens. Only this
+// flag sets 'required'; iOS boots and recovers with none.
+assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)/);
+assert.equal(coreHost.match(/"journaled"/g).length, 1);
+assert.match(hostEntry, /setNativeReplayTokens\(journaled \? 'required' : 'optional'\)/);
+assert.match(hostEntry, /bootRecovery\(legacyState: string, legacyBackup: string\): string \{\s*return boot\(legacyState, legacyBackup, true\);/);
+assert.equal(hostEntry.match(/setNativeReplayTokens\(/g).length, 1);
 assert.equal(kotlinFiles.join('\n').match(/LegacyRnStoreGuard\.requireClear\(/g).length, 1);
 assert.match(guard, /private const val DATABASE = "files\/SQLite\/mindwtr\.db"/);
 assert.match(guard, /val database = File\(dataDir, DATABASE\)/);
@@ -520,20 +550,25 @@ assert.match(model, /pending\.editor\?\.let\(::keepEditor\)/);
 // ...and a failure on Focus reopens Focus with its rows, since reads wait for the retry.
 assert.match(model, /focus = pending\.focus\s+projects = pending\.projects\s+keepProject\(pending\.project\?\.projectId\)\s+project = pending\.project\s+show\(pending\.screen\)/);
 assert.equal(model.match(/ProcessCoreHost\.failure\?\.let \{ pending -> ui \{ host = runtime; restore\(pending, storedProcessing, storedCapture\) \}/g).length, 2);
-assert.match(model, /runtime\.completeTask\(id\)\s+acknowledged\(action\)/);
-assert.match(model, /runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\), action\.title\)\s+\} catch \(failure: Exception\) \{[\s\S]{0,300}?throw failure\s+\}\s+acknowledged\(action\)\s+ui \{ closeEditor\(\) \}/);
+assert.match(model, /runtime\.completeTask\(id, taskRevision\)\s+acknowledged\(action\)/);
+assert.match(model, /runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\), action\.title, action\.requestId\)\s+\} catch \(failure: Exception\) \{[\s\S]{0,300}?throw failure\s+\}\s+acknowledged\(action\)\s+ui \{ closeEditor\(\) \}/);
 // The new contract commands: each is a perform(action) with its exact retry, acknowledged only after core's reply.
 for (const [call, fn] of [
-    ['runtime\\.setTaskFocus\\(id, focused\\)', 'fun setTaskFocus('], ['runtime\\.setProjectFocus\\(id, focused\\)', 'fun setProjectFocus('],
-    ['runtime\\.updateTask\\(action\\.id, json\\(action\\.base\\), json\\(action\\.patch\\)\\)', 'private fun sendUpdate('],
+    ['runtime\\.setTaskFocus\\(id, focused, taskRevision\\)', 'fun setTaskFocus('], ['runtime\\.setProjectFocus\\(id, focused, projectRevision\\)', 'fun setProjectFocus('],
+    ['runtime\\.updateTask\\(action\\.id, json\\(action\\.base\\), json\\(action\\.patch\\), action\\.requestId\\)', 'private fun sendUpdate('],
     ['runtime\\.createProject\\(action\\.title, areaId, action\\.id\\)', 'fun createProject('], ['runtime\\.setAreaFilter\\(action\\.id\\)', 'private fun sendAreaFilter('],
 ]) {
     const body = model.slice(model.indexOf(fn), model.indexOf('\n    }\n', model.indexOf(fn)));
     assert.match(body, new RegExp(`perform\\(action\\) \\{ runtime ->\\s+(val reply = )?${call}\\s+acknowledged\\(action\\)`), `${fn} runs through perform(action) with its exact retry`);
 }
-// A star's retry re-sends the same target; a new project's retry re-sends the same request UUID, kept with its draft.
-assert.match(model, /FailedAction\("taskFocus", id, patch = mapOf\("focused" to "\$focused"\)\)/);
-assert.match(model, /FailedAction\("projectFocus", id, patch = mapOf\("focused" to "\$focused"\)\)/);
+// A star's retry re-sends the same target at the same revision; a new project's retry re-sends the same request UUID, kept with its draft.
+assert.match(model, /FailedAction\("taskFocus", id, patch = mapOf\("focused" to "\$focused", "taskRevision" to taskRevision\)\)/);
+assert.match(model, /FailedAction\("projectFocus", id, patch = mapOf\("focused" to "\$focused", "projectRevision" to projectRevision\)\)/);
+// The rows' revisions are core's: CoreHost passes them straight to host-entry's complete, taskFocus and projectFocus.
+assert.match(coreHost, /fun completeTask\(id: String, taskRevision: String\): JSONObject = callAsync\("complete", id, taskRevision\)/);
+assert.match(coreHost, /fun setTaskFocus\(id: String, focused: Boolean, taskRevision: String\): JSONObject = callAsync\("taskFocus", id, focused, taskRevision\)/);
+assert.match(coreHost, /fun setProjectFocus\(id: String, focused: Boolean, projectRevision: String\): JSONObject = callAsync\("projectFocus", id, focused, projectRevision\)/);
+assert.match(projectsUi, /it\.getBoolean\("focusedWithoutNextAction"\), it\.optString\("projectRevision"\)\)/);
 assert.match(model, /FailedAction\("createProject", projectRequestId, projectDraft, base = mapOf\("areaId" to areaId\)\)/);
 for (const field of ['projectDraft', 'projectRequestId']) assert.match(model, new RegExp(`saved\\.get<String>\\("${field}"\\)`));
 assert.match(model, /if \(action\.kind == "createProject"\) setProjectDraft\(action\.title, action\.base\["areaId"\], action\.id\)/, 'a new screen restores the owed create, never re-sends it');
@@ -546,7 +581,7 @@ for (const [fn, js] of [['setTaskFocus', 'taskFocus'], ['setProjectFocus', 'proj
 }
 assert.equal([activity, owner, editorUi, focusUi, projectsUi, rowUi, areaUi].join('\n').match(/\.setTaskFocus\(|\.setProjectFocus\(|\.createProject\(|\.setAreaFilter\(|\.areaFilter\(\)/g), null);
 assert.equal(model.match(/clearFailure/g).length, 1);
-assert.doesNotMatch(owner, /SharedPreferences|SavedStateHandle|File\(app\.filesDir, "(?!mindwtr-native-dev\.db"|SQLite\/mindwtr\.db")/);
+assert.doesNotMatch(owner, /SharedPreferences|SavedStateHandle|File\(app\.filesDir, "(?!mindwtr-native-dev\.db"|SQLite\/mindwtr\.db"|journal")/);
 assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
@@ -618,7 +653,7 @@ for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\
     assert.equal(/CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(hostIo)[1], /CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(rnClient)[1]);
     assert.match(hostIo, /\.connectTimeout\(CONNECT_TIMEOUT_MS, TimeUnit\.MILLISECONDS\)/);
     assert.match(coreHost, /if \(io\.busy\(\)\) io\.await\(if \(delay < 0\) 25L else minOf\(delay, 25L\)\)\s+else if \(delay > 0\) Thread\.sleep\(minOf\(delay, 25L\)\)/);
-    assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup\)\.also \{ netCheck\(\) \}/);
+    assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)\.also \{ netCheck\(\) \}/);
     assert.match(coreHost, /val port = debugFault\("net_check"\)\.ifEmpty \{ return \}/, 'the net check is debug-only');
     // RN's network security config (cleartext as RN allows it, user CAs trusted), and the INTERNET permission.
     const rnConfig = /NETWORK_SECURITY_CONFIG_XML = `([\s\S]*?)`;/.exec(readFileSync(resolve(app, '../mobile/plugins/android-network-security-config.js'), 'utf8'))[1];
@@ -652,14 +687,147 @@ assert.match(coreHost, /fun debugProperty\(name: String\): String \{\s*if \(!Bui
 // The only other debug property: the capture check's clipboard, put there for the field's real Paste.
 assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, captureUi].join('\n').match(/debugProperty\(/g).length, 1);
 assert.match(captureUi, /withContext\(Dispatchers\.IO\) \{ debugProperty\("clipboard"\) \}\.takeIf \{ it\.isNotEmpty\(\) \}\?\.let \{ clipboard\.setText\(/);
-assert.equal(coreHost.match(/failCommits =/g).length, 1);
+// The command path's fault hook, and the same hook for a journal replay (a replay can meet a failed save too).
+assert.equal(coreHost.match(/failCommits =/g).length, 2);
 assert.match(coreHost, /failCommits = debugFault\("fail_commit"\) == "1"/);
 assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt].join('\n').match(/failCommits|debugFault|getprop/g), null);
 // The language override is the same debug-only property read, and it replaces only the stored language.
 assert.match(coreHost, /fun language\(stored: String, system: String\): JSONObject =\s*callAsync\("language", debugFault\("language"\)\.ifEmpty \{ stored \}, system\)/);
 assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
-// update and the editor's saveDraft are task commands: the fault hooks and the diagnostic line cover them.
-assert.match(coreHost, /val command = method in setOf\("captureSubmit", "captureLines", "capturePicker", "complete", "update", "saveDraft", "resetChecklist", "taskFocus", "projectFocus",\s*"createProject", "setAreaFilter", "saveSearch", "inboxCommit", "inboxSkip", "menuCommand"\)/);
+// The write-ahead journal (WriteJournal.kt). Every write goes through callAsync, the one call path: it is on disk before the
+// engine sees it, and core's reply settles it. The write list is host-entry's task commands, and those call exactly core's
+// write commands (the crash-safe table), so a new write cannot skip the journal. The fault hooks cover the same writes.
+{
+    const journalKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/WriteJournal.kt'), 'utf8');
+    const shapes = Object.fromEntries([.../val SHAPES = mapOf\(([\s\S]*?)\n        \)\n/.exec(journalKt)[1].matchAll(/"(\w+)" to listOf\(([^)]*)\)/g)]
+        .map(([, name, kinds]) => [name, [...kinds.matchAll(/"([^"]+)"/g)].map((m) => m[1])]));
+    assert.match(journalKt, /val WRITES = SHAPES\.keys/);
+    const writes = Object.keys(shapes).sort();
+    const host = hostEntry.slice(hostEntry.indexOf('globalThis.MindwtrHost = {'));
+    const methods = [...host.matchAll(/\n    (\w+)\([^)]*\): [^{\n]+\{([\s\S]*?)\n    \},/g)].map(([, name, body]) => ({ name, body }));
+    assert(methods.length > 40 && methods.some((m) => m.name === 'menuCommand'), 'host-entry\'s methods parsed');
+    // The iOS host's prepared commits and its Calendar preference write: its own journal holds them, and Kotlin never calls them.
+    const iosPreparedCommits = ['captureCommit', 'draftCommit'];
+    const iosOnlyWrites = ['setCalendarPreference'];
+    // Core writes no host method calls yet (the capture confirmation screen, reminder actions, Settings › Sync's option):
+    // wiring one into host-entry fails the write-list checks above until the journal takes it.
+    const unwiredWrites = ['submitCaptureModal', 'submitCaptureModalLines', 'completeReminderTask', 'snoozeReminder', 'setSyncPreference'];
+    assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
+    assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
+    const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
+    const called = (text) => [...text.matchAll(/contract\.(\w+)\(/g)].map((m) => m[1]);
+    assert.deepEqual(called(hostEntry).filter((name) => unwiredWrites.includes(name)), [], 'no host method calls an unwired core write');
+    // Core's write commands: every command of the crash-safe table (native-request-receipts.ts states the rule each follows).
+    const coreWrites = ['setTaskFocus', 'completeTask', 'setProjectFocus', 'createProject', 'saveSearch', 'updateTask', 'saveTaskDraft', 'resetTaskChecklist',
+        'submitQuickCapture', 'submitQuickCaptureLines', 'submitQuickCapturePickerQuery', 'commitInboxProcessingStep', 'skipInboxProcessingTask', 'setAreaFilter',
+        'activateProject', 'moveSomedayTasksToSection', 'undoSomedaySectionMove', 'addSomedaySectionTask', 'createSomedaySection', 'setTaskListSort',
+        'runArchiveAction', 'runContextsAction', 'runTrashAction', 'runReviewAction', 'runCalendarAction', 'runBoardAction', 'runBulkAction', 'setFocusGroupBy',
+        'saveFocusFilter', 'removeFocusFilterCriterion', 'deleteFocusFilter', 'reorderFocus', 'createBulkOrganizeDestination', 'addMindSweepItem', 'deleteSavedSearch',
+        'setGeneralSetting', 'setGtdSetting', 'saveManageEditor', 'deleteManageItem', 'renameSomedaySection', 'reorderSomedaySections', 'deleteSomedaySection'];
+    const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
+        .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
+    const contractSource = contractFiles.join('\n');
+    for (const name of coreWrites) assert.match(contractSource, new RegExp(`\\b(async )?${name}\\(input`), `core defines the write ${name}`);
+    const writeCalls = [...methods.filter((m) => writes.includes(m.name)).flatMap((m) => called(m.body)), ...called(table('MENU_COMMANDS'))];
+    assert.deepEqual([...new Set(writeCalls)].sort(), [...coreWrites].sort(), 'the journaled methods call exactly core\'s write commands');
+    const readCalls = [...methods.filter((m) => !writes.includes(m.name)).flatMap((m) => called(m.body)), ...called(table('MENU_READS'))];
+    assert.deepEqual(readCalls.filter((name) => coreWrites.includes(name)), [], 'no unjournaled host method calls a core write');
+    assert.match(host, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];/);
+    // An entry replays only while it fits its write as host-entry takes it (WriteJournal.SHAPES): a JSON object for `json`, a
+    // boolean for a boolean, a Menu command for menuCommand's name, text for the rest; MENU names exactly host-entry's
+    // MENU_COMMANDS. One that does not fit is set aside intact, and the log names only its file.
+    for (const [name, kinds] of Object.entries(shapes)) {
+        const params = new RegExp(`\\n    ${name}\\(([^)]*)\\): string \\{`).exec(host)[1].split(',').map((param) => param.trim());
+        assert.equal(kinds.length, params.length, `${name} takes ${params.length} arguments`);
+        params.forEach((param, index) => {
+            const kind = kinds[index];
+            const fits = param.startsWith('json:') ? kind.startsWith('{') : /: boolean$/.test(param) ? kind === 'bool'
+                : param.startsWith('name:') ? kind === 'menu' : ['id', 'text'].includes(kind);
+            assert(fits, `${name}'s ${param} is journaled as ${kind}`);
+        });
+    }
+    {
+        const [pairs, shared] = /val MENU = mapOf\(([\s\S]*?)\) \+ listOf\(([\s\S]*?)\)\.associateWith/.exec(journalKt).slice(1);
+        const menuNames = [...[...pairs.matchAll(/"(\w+)" to /g)].map((m) => m[1]), ...[...shared.matchAll(/"(\w+)"/g)].map((m) => m[1])].sort();
+        assert.deepEqual(menuNames, [...table('MENU_COMMANDS').matchAll(/\n    (\w+): /g)].map((m) => m[1]).sort(), 'WriteJournal.MENU is host-entry\'s MENU_COMMANDS');
+    }
+    assert.match(journalKt, /if \(!fits\(method, args\) \|\| key\(method, args\) in UNJOURNALED\) return null/);
+    assert.match(journalKt, /val moved = file\.renameTo\(target\)\s+log\(if \(moved\) "Native Android journal entry set aside \$\{file\.name\}" else "Native Android journal entry not moved aside \$\{file\.name\}"\)/);
+    // SHAPES is only the first filter: a replay core refuses as malformed (INVALID_INPUT, an unknown Menu command too) moves
+    // aside intact; a first send's refusal is dropped like any other.
+    assert.match(journalKt, /fun malformed\(error: String\?\): Boolean = error\?\.startsWith\("INVALID_INPUT"\) == true/);
+    assert.match(journalKt, /if \(replay && malformed\(error\)\) \{\s+if \(!moveAside\(entry\.file\)\) return false\s+\} else if \(!entry\.file\.delete\(\) && entry\.file\.exists\(\)\) \{/);
+    // Never journaled: a write whose core command is in core's NATIVE_UNJOURNALED_COMMANDS (a payload that can carry a secret; the
+    // names are receipt payloads' first elements). Each name leads, through the core write that builds that payload, to its journal
+    // key (the host method, or a Menu command's name); WriteJournal.UNJOURNALED holds exactly those keys, and append skips them.
+    {
+        const receiptsTs = readFileSync(resolve(app, '../../packages/core/src/native-request-receipts.ts'), 'utf8');
+        const set = /export const NATIVE_UNJOURNALED_COMMANDS: ReadonlySet<string> = new Set<string>\(([^)]*)\);/.exec(receiptsTs);
+        assert(set, 'core\'s NATIVE_UNJOURNALED_COMMANDS parsed');
+        const unjournaledCore = [...set[1].matchAll(/'(\w+)'/g)].map((m) => m[1]);
+        const receiptNames = new Map([...coreWrites, ...iosOnlyWrites, ...unwiredWrites].map((name) => [name, []]));
+        let sites = 0;
+        for (const file of contractFiles) {
+            const defs = [...file.matchAll(new RegExp(`\\n {8}(?:async )?(${[...coreWrites, ...iosOnlyWrites, ...unwiredWrites].join('|')})\\(input`, 'g'))];
+            for (const site of file.matchAll(/JSON\.stringify\(\['(\w+)'/g)) {
+                const owner = defs.filter((def) => def.index < site.index).at(-1);
+                assert(owner, `core's receipt payload '${site[1]}' sits inside a core write`);
+                receiptNames.get(owner[1]).push(site[1]);
+                if (coreWrites.includes(owner[1])) sites += 1;
+            }
+        }
+        assert(sites >= 26, 'core\'s receipt payloads parsed');
+        for (const name of unjournaledCore) assert([...receiptNames.values()].flat().includes(name), `core's unjournaled ${name} is a core write's receipt payload`);
+        const menuKeys = [...table('MENU_COMMANDS').matchAll(/\n    (\w+): \(input\) => contract\.(\w+)\(input\),/g)].map(([, key, write]) => ({ key, writes: [write] }));
+        assert.equal(menuKeys.length, table('MENU_COMMANDS').match(/\n    \w+: /g).length, 'every Menu command parsed');
+        const keys = [...methods.filter((m) => writes.includes(m.name) && m.name !== 'menuCommand').map((m) => ({ key: m.name, writes: called(m.body) })), ...menuKeys];
+        const expected = keys.filter((key) => key.writes.some((write) => receiptNames.get(write).some((name) => unjournaledCore.includes(name)))).map((key) => key.key).sort();
+        const kotlin = /val UNJOURNALED = (?:emptySet<String>\(\)|setOf\(([^)]*)\))\n/.exec(journalKt);
+        assert(kotlin, 'WriteJournal.UNJOURNALED parsed');
+        assert.deepEqual([...(kotlin[1] ?? '').matchAll(/"(\w+)"/g)].map((m) => m[1]).sort(), expected, 'WriteJournal.UNJOURNALED is core\'s NATIVE_UNJOURNALED_COMMANDS by journal key');
+        assert.match(journalKt, /require\(method in WRITES\) \{ "\$method is not a write" \}\s+if \(key\(method, args\) in UNJOURNALED\) return null/);
+        assert.match(journalKt, /private fun key\(method: String, args: List<Any\?>\): Any\? = if \(method == "menuCommand"\) args\.firstOrNull\(\) else method/);
+    }
+    // callAsync journals before the engine call and settles after the reply; answer() is the only engine call, used by callAsync
+    // and the replay; nothing else calls a host method.
+    const callAsyncFn = coreHost.slice(coreHost.indexOf('private fun callAsync('), coreHost.indexOf('private fun answer('));
+    assert.match(callAsyncFn, /val entry = if \(method in WriteJournal\.WRITES\) checkNotNull\(journal\)\.append\(method, args\.toList\(\)\) else null[\s\S]*?val result = answer\(method, args, deadlineMs\)\s+if \(entry != null\) \{\s+debugDelay\("delay_after_ms"\)\s+journalStop\(stop, "after", entry\)\s+\}\s+if \(method in WriteJournal\.WRITES\) settle\(entry, result, replay = false\)/);
+    assert.match(callAsyncFn, /if \(entry != null\) \{\s+checkNotNull\(sqlite\)\.failCommits = debugFault\("fail_commit"\) == "1"\s+debugDelay\("delay_before_ms"\)\s+journalStop\(stop, "before", entry\)\s+\}/);
+    assert.equal(coreHost.match(/\banswer\(/g).length, 3, 'answer(): its definition, callAsync and replayJournal');
+    assert.equal(coreHost.match(/\bcall\(method, \*args\)/g).length, 1);
+    assert.deepEqual([...coreHost.matchAll(/\bcall\("(\w+)"/g)].map((m) => m[1]), ['cancel', 'poll'], 'the engine\'s own calls: cancel and poll');
+    assert.equal(coreHost.match(/journalStop\(stop, /g).length, 2, 'the stop hooks run for a first send only, never for a replay');
+    assert.match(coreHost, /val stop = if \(entry != null\) debugFault\("journal_stop"\) else ""/, 'the stop hook is debug-only');
+    // Drop and keep: SAVE_FAILED keeps an entry, every other reply drops it; no reply (a throw) leaves it.
+    assert.match(journalKt, /fun keeps\(error: String\?\): Boolean = error\?\.startsWith\("SAVE_FAILED"\) == true/);
+    // An entry leaves (in memory too) only after its delete and the folder sync; a failed one stays for the next boot.
+    assert.match(journalKt, /fun settle\(entry: Entry, error: String\?, replay: Boolean = false\): Boolean \{\s+if \(keeps\(error\)\) return false\s+if \(replay && malformed\(error\)\) \{[\s\S]*?\} else if \(!entry\.file\.delete\(\) && entry\.file\.exists\(\)\) \{\s+log\([^\n]*\)\s+return false\s+\}\s+try \{\s+syncDirectory\(dir\)\s+\} catch \(failure: Exception\) \{\s+log\([^\n]*\)\s+return false\s+\}\s+entries\.remove\(entry\)\s+return true/);
+    assert.match(journalKt, /entries\.firstOrNull \{ it\.text == text \}\?\.let \{ return it \}/, 'an owed retry reuses its entry');
+    assert.match(journalKt, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(text\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)[\s\S]*?syncDirectory\(dir\)\s+return Entry/);
+    // Replay: in journal order, one at a time, stopped by a kept entry or no reply; at boot after the validated load and the
+    // language, before this boot hands the host to any screen (get() waits on the boot); a stop is the screens' owed retry.
+    const replayFn = coreHost.slice(coreHost.indexOf('fun replayJournal()'), coreHost.indexOf('private fun journalStop('));
+    assert.match(replayFn, /for \(entry in journal\.pending\(\)\) \{[\s\S]*?answer\(entry\.method, entry\.args\.toTypedArray\(\), OPERATION_DEADLINE_MS\)\.also \{ if \(settle\(entry, it, replay = true\)\) dropped \+= 1 \}\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
+    assert.match(replayFn, /Log\.i\(TAG, "Native Android journal replay sent=/);
+    assert(coreHost.indexOf('journal = WriteJournal(journalDir') < coreHost.indexOf('engine.evaluate(bundle'));
+    assert.match(owner, /private fun replay\(runtime: CoreHost\) \{\s+val replay = runtime\.replayJournal\(\)\s+replay\.owed\?\.let \{ return recordFailure\(PendingFailure\(FailedAction\("journal", ""\), it, null\)\) \}\s+\/\/[^\n]*\s+if \(replay\.left > 0\) return\s+runCatching \{ runtime\.pruneReceipts\(\) \}/);
+    // Core's receipts are pruned once per boot, and only after a replay that left nothing: never before the replay, never while an
+    // entry that may need its receipt is left.
+    assert.match(coreHost, /fun pruneReceipts\(\): JSONObject = callAsync\("pruneReceipts"\)/);
+    assert.equal([activity, model, owner, menuModel].join('\n').match(/pruneReceipts\(\)/g).length, 1, 'one prune call, after the boot replay');
+    assert.equal(owner.match(/replay\(runtime\)|replayJournal\(\)/g).length, 2);
+    assert.match(model, /"journal" -> perform\(action\) \{ runtime ->\s+runtime\.replayJournal\(\)\.owed\?\.let \{ throw IllegalStateException\(it\) \}\s+acknowledged\(action\)\s+\}/);
+    assert.equal([activity, model, owner, menuModel].join('\n').match(/replayJournal\(\)/g).length, 2, 'the boot and the owed retry replay; nothing else');
+    // The JVM tests keep the file rules (order, the atomic write, drop and keep, move-aside, writes only).
+    const journalTest = readFileSync(resolve(app, 'android/app/src/test/java/tech/dongdongbh/mindwtr/pilot/core/WriteJournalTest.kt'), 'utf8');
+    for (const name of ['entriesKeepTheirOrderAcrossAReopen', 'anEntryIsDurableBeforeAppendReturns', 'aWriteCutShortIsNeverAnEntry', 'anyFinalReplyDropsTheEntry',
+        'saveFailedKeepsTheEntryAndItsRetryReusesIt', 'damagedOrUnknownEntriesMoveAsideAndAreNeverReplayed', 'onlyWriteMethodsAreJournaled', 'onlySaveFailedKeeps',
+        'aJournalThatCannotBeListedRefusesToOpen', 'anAppendNeverReplacesAnEntryOnDisk', 'theSequenceResumesAfterTheHighestNameSeen',
+        'aDropIsDurableBeforeTheEntryLeaves', 'aDeleteThatFailsKeepsTheEntry', 'aDropWhoseFolderSyncFailsKeepsTheEntry', 'entriesThatNoLongerFitAWriteMoveAsideIntact',
+        'aReplayCoreRefusesAsMalformedMovesAsideIntact']) {
+        assert.match(journalTest, new RegExp(`@Test fun ${name}\\(\\)`));
+    }
+}
 
 // The editor reads core's model (getTaskEditorModel, getTaskView's saved checklist and attachments, and editTaskChecklist's field)
 // and saves only through core's saveTaskDraft (draft fields and checklist in one write), via perform with an exact FailedAction.
@@ -667,10 +835,10 @@ assert.match(coreHost, /val command = method in setOf\("captureSubmit", "capture
 assert.match(coreHost, /fun taskEditorModel\(id: String\): JSONObject = callAsync\("editorModel", id\)/);
 assert.match(coreHost, /fun taskView\(json: String\): JSONObject = callAsync\("taskView", json\)/);
 assert.match(coreHost, /fun editTaskChecklist\(id: String, draftJson: String, checklistJson: String, editJson: String\): JSONObject =\s*callAsync\("editChecklist"/);
-assert.match(coreHost, /fun resetTaskChecklist\(id: String, requestId: String\): JSONObject =\s*callAsync\("resetChecklist", JSONObject\(\)\.put\("id", id\)\.put\("requestId", requestId\)\.toString\(\)\)/);
+assert.match(coreHost, /fun resetTaskChecklist\(id: String, requestId: String, taskRevision: String\): JSONObject =\s*callAsync\("resetChecklist", JSONObject\(\)\.put\("id", id\)\.put\("requestId", requestId\)\.put\("taskRevision", taskRevision\)\.toString\(\)\)/);
 assert.match(coreHost, /fun editorSuggestions\(id: String, field: String, query: String, limit: Int\): JSONObject =\s*callAsync\("editorSuggestions", id, field, query, limit\)/);
-assert.match(coreHost, /fun saveTaskDraft\(id: String, baseJson: String, patchJson: String, checklistJson: String\): JSONObject =\s*callAsync\("saveDraft", JSONObject\(\)\.put\("id", id\)\.put\("base", JSONObject\(baseJson\)\)\.put\("patch", JSONObject\(patchJson\)\)\s*\.apply \{ if \(checklistJson\.isNotEmpty\(\)\) put\("checklist", JSONObject\(checklistJson\)\) \}\.toString\(\)\)/);
-assert.match(coreHost, /fun updateTask\(id: String, baseJson: String, patchJson: String\): JSONObject =\s*callAsync\("update", JSONObject\(\)\.put\("id", id\)\.put\("base", JSONObject\(baseJson\)\)\.put\("patch", JSONObject\(patchJson\)\)\.toString\(\)\)/);
+assert.match(coreHost, /fun saveTaskDraft\(id: String, baseJson: String, patchJson: String, checklistJson: String, requestId: String\): JSONObject =\s*callAsync\("saveDraft", JSONObject\(\)\.put\("id", id\)\.put\("base", JSONObject\(baseJson\)\)\.put\("patch", JSONObject\(patchJson\)\)\s*\.apply \{ if \(checklistJson\.isNotEmpty\(\)\) put\("checklist", JSONObject\(checklistJson\)\) \}\.put\("requestId", requestId\)\.toString\(\)\)/);
+assert.match(coreHost, /fun updateTask\(id: String, baseJson: String, patchJson: String, requestId: String\): JSONObject =\s*callAsync\("update", JSONObject\(\)\.put\("id", id\)\.put\("base", JSONObject\(baseJson\)\)\.put\("patch", JSONObject\(patchJson\)\)\s*\.put\("requestId", requestId\)\.toString\(\)\)/);
 assert.doesNotMatch(coreHost + hostEntry, /taskEditor\(|getTaskEditor\(/, 'the seven-field editor reply is gone');
 assert.match(hostEntry, /editorModel\(id: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskEditorModel\(\{ id \}\)\);/);
 assert.match(hostEntry, /taskView\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskView\(JSON\.parse\(json\)\)\);/);
@@ -690,12 +858,16 @@ assert.equal([activity, editorUi, focusUi, projectsUi, rowUi, areaUi, viewStateK
 // The save: exactly the changed draft fields, base = their loaded values, as a perform with its exact FailedAction; no change means no call.
 assert.match(editorUi, /val patch: Map<String, String\?> get\(\) = edited\.filter \{ \(field, literal\) -> literal != base\(field\) \}/);
 assert.match(editorUi, /val base: Map<String, String\?> get\(\) = patch\.keys\.associateWith \{ base\(it\) \}/);
-assert.match(model, /fun saveDraftAction\(current: TaskEditor\) = FailedAction\("saveDraft", current\.id, current\.checklistSave, base = current\.base, patch = current\.patch\)/);
+assert.match(model, /fun saveDraftAction\(current: TaskEditor\) =\s+withRequestId\(FailedAction\("saveDraft", current\.id, current\.checklistSave, base = current\.base, patch = current\.patch\), failedAction\)/);
+// An update and an editor save carry a request UUID (core's receipt answers a repeat with the first reply); the same command while
+// it is owed is the owed request itself, so its control sends the exact retry. Kotlin never derives a request UUID from the request.
+assert.match(model, /private fun withRequestId\(action: FailedAction, owed: FailedAction\?\) =\s+owed\?\.takeIf \{ it\.copy\(requestId = ""\) == action \} \?: action\.copy\(requestId = UUID\.randomUUID\(\)\.toString\(\)\)/);
+assert.match(model, /fun statusAction\(task: TaskRow, status: String\) =\s+withRequestId\(FailedAction\("update", task\.id, base = mapOf\("status" to task\.status\), patch = mapOf\("status" to status\)\), failedAction\)/);
 assert.match(model, /val current = editor \?: return\s+if \(current\.waiting \|\| editsPending\) \{ saveQueued = true; return \}\s+if \(current\.patch\.isEmpty\(\) && !current\.checklistChanged\) \{ closeEditor\(\); return \}/);
 // The checklist rides the same save: its base is the checklist the editor loaded (getTaskView's checklistBase), sent only when changed.
 assert.match(editorUi, /val checklistSave: String get\(\) = if \(!checklistChanged\) "" else JSONObject\(\)\.put\("base", JSONArray\(model\.checklistBase\)\)\.put\("value", JSONArray\(checklistNow\)\)\.toString\(\)/);
 assert.match(editorUi, /val checklistBase: String = content\.getJSONArray\("checklistBase"\)\.toString\(\)/);
-assert.match(model, /private fun sendDraft\(action: FailedAction\) = perform\(action\) \{ runtime ->\s+try \{\s+runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\), action\.title\)/);
+assert.match(model, /private fun sendDraft\(action: FailedAction\) = perform\(action\) \{ runtime ->\s+try \{\s+runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\), action\.title, action\.requestId\)/);
 // Draft values are core's own JSON, compared and sent as JSON text; null stays JSON null.
 assert.match(editorUi, /fun draftJson\(values: Map<String, String\?>\): String =\s*JSONObject\(\)\.apply \{ values\.forEach \{ \(field, literal\) -> put\(field, draftValue\(literal\)\) \} \}\.toString\(\)/);
 // Typed token and person text becomes core's draft value (getTaskEditorSuggestions), applied only while the text is unchanged; Save waits for it.
@@ -861,7 +1033,7 @@ assert.match(labelsKt, /strings = LABEL_KEYS\.filter\(values::has\)\.associateWi
 assert.match(labelsKt, /if \(logged\.add\(name\)\) Log\.w\(/, 'a missing key is logged once');
 assert.equal(kotlinFiles.join('\n').match(/Labels\.load\(/g).length, 1);
 assert.match(owner, /runtime\.language\(stored \?: "", Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
-assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+return runtime/);
+assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+replay\(runtime\)\s+return runtime/);
 assert.equal(kotlinFiles.join('\n').match(/runtime\.language\(|runtime\.strings\(/g).length, 2);
 // Core's editor statuses and priorities each have their label key.
 const contractSource = readFileSync(resolve(app, '../../packages/core/src/native-host-contract.ts'), 'utf8');
@@ -1075,7 +1247,7 @@ assert.match(searchUi, /val owed = failedAction != null \|\| state\.submitted !=
 assert.match(model, /if \(action\.kind == "saveSearch"\) keepSearch\(SearchState\(action\.title, saveName = action\.patch\["name"\], saveRequestId = action\.id, submitted = action\.patch\["name"\]\)\)/,
     'a new screen reopens the save dialog on an owed save, never re-sends it');
 assert.match(searchUi, /failedAction == null \|\| failedAction == saveSearchAction\(state, sent\)/);
-assert.match(searchUi, /failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)/, 'Mark Done from search is the lists\' Done with its exact retry');
+assert.match(searchUi, /failedAction == null \|\| failedAction == completeAction\(task\.id, task\.taskRevision\)/, 'Mark Done from search is the lists\' Done with its exact retry');
 assert.match(model, /private fun refreshAll\(\) \{[\s\S]*?if \(search != null\) readSearch\(\)\s+\}/, 'search is read again after every command');
 // Search results are core's: core's highlight segments, date line and tone, and tap target; Kotlin never sorts or filters them.
 assert.doesNotMatch(code(searchUi), /\.(sort\w*|sorted\w*|groupBy|reversed|shuffled|distinct\w*)\b/);
@@ -1319,21 +1491,44 @@ for (const [name, text] of Object.entries(reviewScreens)) {
 }
 // Destructive actions stay as safe as RN: delete forever, the selection's delete forever, and Clear Trash only after core's question;
 // Clear Trash sends the revision its question showed (core refuses a stale one).
-for (const call of ['purgeItem(kind, id)', 'purgeItems(tasks, projects)', 'emptyTrash(clear.getString("revision"))']) {
+for (const call of ['purgeItem(kind, id, revision)', 'purgeItems(view.getJSONObject("selected"))', 'emptyTrash(clear.getString("revision"))']) {
     const at = trashUi.indexOf(call);
     assert(at > 0 && trashUi.slice(Math.max(0, at - 160), at).includes('confirm('), `Trash sends ${call} only from core's confirmation`);
 }
 assert.equal(code(trashUi).match(/\b(purgeItem|purgeItems|emptyTrash)\(/g).length, 3, 'Trash builds each destructive action once, inside its confirmation');
 assert.match(menuUi, /confirmButton = \{ TextButton\(onClick = \{ keepDialog\(null\); act\(open\.optString\("command", "archiveAction"\), open\.getJSONObject\("action"\)\) \}, enabled = idle\)/);
 // Bulk trash (Contexts, Review) asks core's question first too; a row's trash is the recoverable move with core's Undo, as in RN.
-assert.match(contextsUi, /confirm\(bulk\.getJSONObject\("deleteConfirmation"\), trashTasks\(selected\), "contextsAction"\)/);
-assert.match(reviewUi, /"delete" -> confirm\(bulk\.getJSONObject\("deleteConfirmation"\), trashTasks\(selected\), "reviewAction"\)/);
+assert.match(contextsUi, /confirm\(bulk\.getJSONObject\("deleteConfirmation"\), trashTasks\(selected, revisions\), "contextsAction"\)/);
+assert.match(reviewUi, /"delete" -> confirm\(bulk\.getJSONObject\("deleteConfirmation"\), trashTasks\(selected, bulk\.getJSONObject\("taskRevisions"\)\), "reviewAction"\)/);
+// Every Contexts, Trash and Review action that writes existing rows carries the revision core's view showed: a row's taskRevision,
+// the view's taskRevisions for the selection (Contexts' top-level, Review's bar's), Trash's item revision and selection revisions.
+for (const [helper, revision] of [['setTaskStatus', 'taskRevision'], ['trashTask', 'taskRevision'], ['trashTasks', 'taskRevisions'], ['moveTasks', 'taskRevisions'],
+    ['editTaskTokens', 'taskRevisions'], ['restoreItem', 'revision'], ['purgeItem', 'revision'], ['addTag', 'taskRevisions'], ['removeTags', 'taskRevisions'],
+    ['markReviewedTasks', 'taskRevisions'], ['organizeTasks', 'taskRevisions'], ['followUpToday', 'taskRevision']]) {
+    const at = listActionsKt.indexOf(`internal fun ${helper}(`);
+    const body = listActionsKt.slice(at, listActionsKt.slice(at + 1).search(/\n(internal|private) fun |\n\/\*\*/) + at + 1);
+    assert.match(body, new RegExp(`\\.put\\("${revision}", ${revision}\\)`), `${helper} sends its ${revision}`);
+}
+assert.match(listActionsKt, /\.put\("taskRevisions", selected\.getJSONObject\("taskRevisions"\)\)\.put\("projectRevisions", selected\.getJSONObject\("projectRevisions"\)\)/);
+for (const text of [contextsUi, reviewUi, weeklyUi, dailyUi]) {
+    assert.doesNotMatch(code(text), /setTaskStatus\(row\.id, status\)|trashTask\(row\.id\)/, 'a row action sends the row\'s taskRevision');
+}
 // The status menu on a list whose contract writes its rows sends that list's setTaskStatus; elsewhere it keeps updateTask.
 assert.match(rowUi, /\.clickable\(enabled = enabled, role = Role\.Button\) \{ if \(!menu\.rowStatus\(task, status\)\) changeStatus\(task, status\) \}/);
 assert.match(menuModel, /private val ROW_KINDS = mapOf\("contexts" to "contextsAction", "review" to "reviewAction", "weekly" to "reviewAction", "daily" to "reviewAction"\)/);
 // The Weekly Review's project Add task creates a task: its exact request (the request UUID core makes the task's id) is on disk first.
 assert.match(menuModel, /private val CREATES = setOf\("somedayTask", "somedaySection", "reviewTask", "calendarCreate", "boardCreate", "focusSave", "manageEditor", "bulkCreate", "mindSweepAdd"\)/);
 assert.match(menuModel, /"projectTask" -> FailedAction\("reviewTask", open\.getString\("requestId"\), addProjectTask\(open\.getString\("projectId"\), open\.optString\("text"\)\)\.toString\(\)\)/);
+// The menu inputs send core's revisions (crash-safe writes): a parked project's projectRevision with Activate, the moved tasks'
+// revisions with a Someday move (a row's, or the bulk bar's moveToSection.taskRevisions), and a new section its request UUID.
+assert.match(menuModel, /"activateProject" -> JSONObject\(\)\.put\("projectId", action\.id\)\.put\("projectRevision", action\.patch\["projectRevision"\]\)/);
+assert.match(menuModel, /\.put\("sectionId", action\.patch\["sectionId"\] \?: JSONObject\.NULL\)\.put\("taskRevisions", JSONObject\(action\.patch\["taskRevisions"\] \?: "\{\}"\)\)/);
+assert.match(menuModel, /"somedaySection" -> JSONObject\(\)\.put\("title", action\.title\)\.put\("requestId", action\.id\)/);
+assert.match(menuUi, /val revision = project\.optString\("projectRevision"\)[\s\S]*?menu\.activate\(id, revision\)/);
+assert.match(rowUi, /menu\.openMove\(listOf\(task\.id\), JSONObject\(\)\.put\(task\.id, task\.taskRevision\)\)/);
+assert.match(bulkUi, /openMove\(it\.getJSONArray\("taskIds"\)\.ids\(\), it\.getJSONObject\("taskRevisions"\)\)/);
+assert.match(rowUi, /setTaskFocus\(task\.id, target, task\.taskRevision\)/);
+assert.match(searchUi, /complete\(task\.id, task\.taskRevision\)/);
 assert.equal(code(weeklyUi).match(/saveCreate\(\)/g).length, 3, 'Return, Save & edit and Add all send the one persisted request');
 // A review's place is core's checkpoint, stored under core's key (RN's session keys) and sent back; Finish deletes it.
 {
@@ -1426,7 +1621,18 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.equal(code(calendarUi).match(/calendar\.move\(/g).length, 1);
     assert.match(calendarModel, /if \(startMinutes == timed\.getInt\("startMinutes"\)\) return/, 'a block let go where it was sends nothing');
     assert.equal(code(boardUi).match(/board\.move\(/g).length, 3, 'a drop into another column, a drop inside its own, and TalkBack\'s Move to');
-    assert.match(boardUi, /if \(after != before\) board\.move\(id, status, after, sameColumn = true\)/, 'a drop that changes nothing sends nothing');
+    assert.match(boardUi, /if \(after != before\) board\.move\(id, revision, status, after, sameColumn = true\)/, 'a drop that changes nothing sends nothing');
+    // A card's move and Delete, and the Calendar's move, Done, Remove from calendar and Delete, carry the task's revision as core's
+    // view showed it (the card's and the item's row.taskRevision, the sheet's taskRevision); the composer is echoed as core built it.
+    assert.match(boardUi, /val revision = row\.optString\("taskRevision"\)/);
+    assert.match(boardModel, /\.put\("type", "moveCard"\)[^\n]*\.put\("taskRevision", taskRevision\)/);
+    assert.match(boardModel, /\.put\("type", "trashTask"\)\.put\("taskId", taskId\)\.put\("taskRevision", taskRevision\)/);
+    for (const type of ['completeTask', 'moveTask', 'unscheduleTask', 'deleteTask']) {
+        const at = calendarModel.indexOf(`.put("type", "${type}")`);
+        assert(at > 0 && /\.put\("taskRevision", /.test(calendarModel.slice(at, calendarModel.indexOf('\n', calendarModel.indexOf('\n', at) + 1))), `the Calendar's ${type} sends the task's revision`);
+    }
+    assert.match(calendarModel, /val revision = sheet\?\.optString\("taskRevision"\)\.orEmpty\(\)/);
+    assert.match(calendarModel, /internal fun JSONObject\.rowRevision\(\): String = optJSONObject\("row"\)\?\.optString\("taskRevision"\)\.orEmpty\(\)/);
     assert.match(boardModel, /if \(sameColumn\) action\.put\("afterId", afterId \?: JSONObject\.NULL\)/);
     // TalkBack reaches every card action (RN's swipes and a Move to per other column), with core's words, and hears the card
     // disabled with no actions while a command runs or a retry is owed (one semantics block: label, role and state).
@@ -1488,7 +1694,8 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // selectionEdit, Select all as core's stateless one; read-only rows never select.
     assert.match(menuModel, /bulk\?\.let \{ input -> page = page\.withBulk\(runtime\.menuRead\("bulk", JSONObject\(input\.toString\(\)\)\.put\("params", sent\)\.toString\(\)\)\) \}/);
     assert.match(menuModel, /bulk\.optJSONArray\("except"\)\?\.let \{ put\("selectAll", JSONObject\(\)\.put\("except", it\)\) \} \?: put\("taskIds", bulk\.optJSONArray\("selected"\) \?: JSONArray\(\)\)/);
-    assert.match(menuModel, /bulk\.optJSONObject\("selectAll"\)\?\.let \{ put\("selectAll", it\) \} \?: put\("taskIds", bulk\.getJSONArray\("selectedIds"\)\)/, 'an action takes core\'s own Select all object');
+    assert.match(menuModel, /bulk\.optJSONObject\("selectAll"\)\?\.let \{ put\("selectAll", it\) \}\s+\?: put\("taskIds", bulk\.getJSONArray\("selectedIds"\)\)\.put\("taskRevisions", bulk\.getJSONObject\("taskRevisions"\)\)/,
+        'an action takes core\'s own Select all object, or the explicit selection with the revisions core\'s bar showed');
     assert.match(menuModel, /reload\(bulkEdit = JSONObject\(\)\.put\("selectionEdit", JSONObject\(\)\.put\("taskId", taskId\)\.put\("range", range\)\)\)/);
     assert.match(menuModel, /if \(list !in BULK_LISTS \|\| readOnly\) return null/);
     for (const [name, text] of Object.entries({ inboxUi, statusListUi, waitingUi, somedayUi })) assert.match(text, /actions = bulkRow\(/, `${name}: rows start and show selection mode`);
@@ -1499,8 +1706,12 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(code(archiveUi + menuUi), /getJSONObject\("filters"\)\.menuObjects\("chips"\)/, 'chips come from the view\'s own `chips`, not the deprecated filters.chips');
     assert.match(menuModel, /if \(dialog\?\.optString\("kind"\) == "filters"\) put\("filterSheetOpen", true\)/);
     assert.match(menuModel, /own\.optJSONArray\("except"\)\?\.let \{ put\("selectAll", JSONObject\(\)\.put\("except", it\)\) \} \?: put\("selectedIds", own\.optJSONArray\("selected"\) \?: JSONArray\(\)\)/);
-    assert.match(menuModel, /view\?\.optJSONObject\("selectAll"\)\?\.let \{ put\("selectAll", it\) \} \?: put\("taskIds", view\?\.optJSONArray\("selectedIds"\) \?: JSONArray\(\)\)/);
-    assert.match(menuModel, /archive\(JSONObject\(\)\.put\("type", "setCompletedAt"\)\.put\("taskId", open\.getString\("taskId"\)\)\.put\("day", open\.getString\("day"\)\)\.put\("time", time\)\)/);
+    assert.match(menuModel, /view\?\.optJSONObject\("selectAll"\)\?\.let \{ put\("selectAll", it\) \}\s+\?: put\("taskIds", view\?\.optJSONArray\("selectedIds"\) \?: JSONArray\(\)\)\.put\("taskRevisions", view\?\.optJSONObject\("taskRevisions"\) \?: JSONObject\(\)\)/);
+    assert.match(menuModel, /archive\(JSONObject\(\)\.put\("type", "setCompletedAt"\)\.put\("taskId", open\.getString\("taskId"\)\)\.put\("day", open\.getString\("day"\)\)\.put\("time", time\)\s+\.put\("taskRevision", open\.optString\("taskRevision"\)\)\)/);
+    // Archive's row and project actions carry the revision core's view showed (the row's taskRevision, the item's projectRevision).
+    for (const type of ['moveToInbox', 'trashTask']) assert.match(archiveUi, new RegExp(`\\.put\\("type", "${type}"\\)\\.put\\("taskId", row\\.id\\)\\.put\\("taskRevision", row\\.taskRevision\\)`));
+    for (const type of ['reactivateProject', 'trashProject']) assert.match(archiveUi, new RegExp(`\\.put\\("type", "${type}"\\)\\.put\\("projectId", id\\)\\.put\\("projectRevision", revision\\)`));
+    assert.match(menuModel, /\.put\("taskRevision", row\.taskRevision\)\.put\("day", start\.getString\("day"\)\)/, 'the completion time picker keeps the row\'s revision');
     assert.match(archiveUi, /DayPickerDialog\(open\.getString\("day"\), [^\n]*\) \{ pickCompletedDay\(it\) \}/, 'the date dialog starts on core\'s day');
     assert.match(archiveUi, /val \(hour, minute\) = pickerClock\(open\.getString\("time"\)\)/, 'the time dialog starts on core\'s time');
     // Picker search (menu lists, the Inbox, Archive): core's matches for the typed query, read again when the list changes.
@@ -1511,7 +1722,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     for (const key of ['focusControls', 'focusDialog', 'focusReorder']) assert.match(focusModelKt, new RegExp(`saved(\\.get<\\w+>\\("${key}"\\)|\\["${key}"\\])`), `${key} rides the Bundle`);
     assert.match(focusModelKt, /keepState\(controls\.getJSONObject\("state"\)\)\s+if \(reordering && controls\.isNull\("reorder"\)\) keepReordering\(false\)/);
     assert.match(model, /private fun showFocus\(view: FocusView\?\) \{\s+focus = view\s+view\?\.let\(menu\.focusControls::adopt\)/);
-    assert.match(focusControlsUi, /if \(to != index\) reorderTo\(ids\.toMutableList\(\)\.apply \{ add\(to, removeAt\(index\)\) \}\)/, 'a drop that moves nothing sends nothing; a move sends one reorderFocus');
+    assert.match(focusControlsUi, /if \(to != index\) reorderTo\(ids\.toMutableList\(\)\.apply \{ add\(to, removeAt\(index\)\) \}, revisions\)/, 'a drop that moves nothing sends nothing; a move sends one reorderFocus');
+    // reorderFocus sends each reorder row's taskRevision as core showed it.
+    assert.match(focusControlsUi, /val revisions = JSONObject\(\)\.apply \{ rows\.forEach \{ put\(it\.getString\("id"\), it\.optString\("taskRevision"\)\) \} \}/);
+    assert.match(focusModelKt, /command\("focusReorder", JSONObject\(\)\.put\("ids", JSONArray\(ids\)\)\.put\("taskRevisions", taskRevisions\)\)/);
     assert.match(focusControlsUi, /row\.optJSONArray\("moveUp"\)\?\.let \{ order -> CustomAccessibilityAction/, 'TalkBack moves a row by core\'s own order');
     // One node per new control: its label, role and state together (the device checks and TalkBack read it there). A backdrop
     // keeps a plain label: clearing its semantics would hide the sheet inside it.
@@ -1629,9 +1843,32 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(code(settingsModel), /menuCommand\(|\bsend\(|shell\.perform\(action|\.perform\([A-Za-z]/, 'SettingsModel writes only through MenuModel.command or create');
     // Core's device writes are stored under RN's keys before the command counts as done; a new language reloads core's words, a theme its colors.
     assert.match(menuModel, /if \(action\.kind in SETTINGS_KINDS\) settings\.applied\(runtime, reply\)\s+shell\.acknowledged\(action\)/);
-    assert.match(settingsModel, /internal fun applied\(runtime: CoreHost, reply: JSONObject\) \{\s+val writes = reply\.optJSONArray\("deviceWrites"\) \?: return\s+store\(writes\)/);
+    assert.match(settingsModel, /internal fun applied\(runtime: CoreHost, reply: JSONObject\) \{\s+val writes = reply\.optJSONArray\("deviceWrites"\) \?: return\s+val keys = /);
+    // A setting's deviceWrites are stored in CoreHost's one call path (the first send and the journal's replay), durably, before the
+    // write's journal entry settles; the Settings screen only reloads the language and theme after.
+    assert.doesNotMatch(settingsModel.slice(settingsModel.indexOf('internal fun applied(')), /^\s+store\(writes\)/m);
+    // Each device key keeps the journal sequence of the write that set it (DeviceWrites, one commit with the value): a replay
+    // applies a key only when its entry is newer, so an old entry whose delete failed never undoes a newer setting; the journal
+    // numbers new entries above every recorded sequence, so the numbering never goes back after the journal empties.
+    assert.match(settingsModel, /fun deviceStore\(prefs: SharedPreferences\) = DeviceWrites\(\{ prefs\.all \}, \{ changes ->\s+prefs\.edit\(\)\.apply \{[^\n]*\}\.commit\(\)\s+\}\)/);
+    assert.match(settingsModel, /fun deviceStore\(app: Context\) = deviceStore\(app\.getSharedPreferences\(DEVICE_PREFS, Context\.MODE_PRIVATE\)\)/);
+    assert.match(settingsModel, /private fun store\(writes: JSONArray\) = deviceStore\(prefs\)\.store\(writes, null, replay = false\)/);
+    {
+        const devicesKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/DeviceWrites.kt'), 'utf8');
+        assert.match(devicesKt, /if \(replay && sequence != null && sequenceOf\(now\[key \+ SEQUENCE\]\) >= sequence\) continue\s+changes\[key\] = [^\n]+\s+if \(sequence != null\) changes\[key \+ SEQUENCE\] = sequence\.toString\(\)/);
+        assert.match(devicesKt, /if \(changes\.isNotEmpty\(\)\) check\(commit\(changes\)\) \{ "Cannot store the device settings" \}/);
+        assert.match(coreHost, /journal = WriteJournal\(journalDir, log = \{ Log\.i\(TAG, it\) \}, floor = devices\.highestSequence\(\)\)/);
+        assert.match(readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/WriteJournal.kt'), 'utf8'), /\n        next = maxOf\(next, floor \+ 1\)\n/);
+        const devicesTest = readFileSync(resolve(app, 'android/app/src/test/java/tech/dongdongbh/mindwtr/pilot/core/DeviceWritesTest.kt'), 'utf8');
+        for (const name of ['aReplayNeverUndoesANewerSetting', 'theJournalStartsAboveEverySequenceASettingHolds', 'aFirstSendAlwaysAppliesAndAFailedCommitThrows']) {
+            assert.match(devicesTest, new RegExp(`@Test fun ${name}\\(\\)`));
+        }
+    }
+    assert.match(model, /app\.getSharedPreferences\(DEVICE_PREFS, /);
+    assert.match(coreHost, /private fun settle\(entry: WriteJournal\.Entry\?, result: JSONObject, replay: Boolean\): Boolean \{\s+result\.optJSONObject\("value"\)\?\.optJSONArray\("deviceWrites"\)\?\.let \{ devices\.store\(it, entry\?\.sequence, replay\) \}\s+return entry != null && checkNotNull\(journal\)\.settle\(entry, result\.error\(\), replay\)/);
+    assert.equal(coreHost.match(/(?<!\.)\bsettle\(entry, /g).length, 2, 'settle(): the first send and the replay');
     assert.match(settingsModel, /runtime\.language\(prefs\.getString\(LANGUAGE_KEY, null\)\.orEmpty\(\), Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
-    assert.match(model, /val runtime = ProcessCoreHost\.get\(getApplication\(\)\)\s+\/\/[^\n]*\s+applyDeviceChoices\(runtime, prefs\)/, 'the device\'s own language and theme apply at boot, before any screen');
+    assert.match(model, /val runtime = ProcessCoreHost\.get\(getApplication\(\), prefs\.getString\(LANGUAGE_KEY, null\)\)\s+\/\/[^\n]*\s+applyDeviceChoices\(runtime, prefs\)/, 'the device\'s own language and theme apply at boot, before any screen');
     for (const [kotlin, file, core] of [['LANGUAGE_KEY', 'i18n/i18n-constants.ts', 'LANGUAGE_STORAGE_KEY'], ['THEME_KEY', 'general-settings-model.ts', 'MOBILE_THEME_STORAGE_KEY'],
         ['MANAGE_SECTIONS_KEY', 'manage-settings-model.ts', 'MANAGE_OPEN_SECTIONS_STORAGE_KEY'], ['TASK_OPEN_MODE_KEY', 'gtd-settings-model.ts', 'MOBILE_TASK_OPEN_MODE_STORAGE_KEY']]) {
         const value = new RegExp(`export const ${core} = '([^']+)'`).exec(coreFile(file))[1];
@@ -1696,9 +1933,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(model, /val to = index \+ edit\.getInt\("step"\)\s+return if \(to in 0 until items\.length\(\)\) sent\.put\("from", index\)\.put\("to", to\) else null/);
     assert.match(model, /val listEdit = queued\?\.let \{ currentChecklistEdit\(it, current\.checklistNow\) \}/);
     assert.equal(code(model).match(/currentChecklistEdit\(/g).length, 2, 'resolved in one place, in stepEditor, right before the send');
-    // Reset checklist writes at once through perform with its exact retry (its request UUID), then the reset task is the editor's base.
-    assert.match(model, /sendReset\(FailedAction\("resetChecklist", current\.id, UUID\.randomUUID\(\)\.toString\(\)\)\)/);
-    assert.match(model, /private fun sendReset\(action: FailedAction\) = perform\(action\) \{ runtime ->\s+runtime\.resetTaskChecklist\(action\.id, action\.title\)\s+acknowledged\(action\)/);
+    // Reset checklist writes at once through perform with its exact retry (its request UUID and the View tab's taskRevision), then the
+    // reset task is the editor's base. A task changed since (STALE_REVISION) wrote nothing: the View tab is read again, with its new revision.
+    assert.match(model, /val revision = taskView\?\.takeIf \{ it\.getString\("id"\) == current\.id \}\?\.optString\("taskRevision"\) \?: return\s+sendReset\(FailedAction\("resetChecklist", current\.id, UUID\.randomUUID\(\)\.toString\(\), patch = mapOf\("taskRevision" to revision\)\)\)/);
+    assert.match(model, /private fun sendReset\(action: FailedAction\) = perform\(action\) \{ runtime ->\s+try \{\s+runtime\.resetTaskChecklist\(action\.id, action\.title, action\.patch\["taskRevision"\]\.orEmpty\(\)\)\s+\} catch \(failure: Exception\) \{\s+[^\n]*\n\s+if \(failure\.message\?\.startsWith\("STALE_REVISION"\) == true\) ui \{ menu\.whenIdle \{ readTaskView\(\) \} \}\s+throw failure\s+\}\s+acknowledged\(action\)/);
     assert.match(model, /"resetChecklist" -> sendReset\(action\)/);
     // A link is core's target: a web, mail or phone link opens outside the app; a project, task, context or tag leaves the editor as
     // Close does (asking first while edits are unsaved).
@@ -2059,6 +2297,10 @@ export function assertNativeLegacyBackupSafe() { globalThis.events.push('legacyC
 // Core compares every persisted field; the fake compares the whole snapshot.
 export function legacyImportMismatch(merged, saved) { return JSON.stringify(merged) === JSON.stringify(saved) ? null : 'tasks'; }
 export function splitSqlStatements(sql) { return [sql]; }
+export class NativeReceiptSqliteAdapter extends SqliteAdapter {}
+export async function loadNativeRequestReceipts() { globalThis.receiptsLoadedAt = globalThis.events.length; return 0; }
+export function setNativeReplayTokens(mode) { globalThis.replayTokens = mode; }
+export async function pruneNativeRequestReceipts() { return 3; }
 export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
 export async function flushPendingSave() { globalThis.events.push('flush'); }
 // The debug net check's WebDAV calls: bundled, never run here.
@@ -2261,6 +2503,24 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
 assert.equal(ready.activationCount, 1);
 // Activation may write (core backfills a person per assignee): the store is checked against a load taken after its save.
 assert.deepEqual(ready.events.slice(ready.events.lastIndexOf('activate')), ['activate', 'load', 'flush', 'load']);
+// Replay tokens and durable receipts: a boot without the journal flag (iOS) keeps tokens optional and receipts in
+// memory; the Kotlin host's "journaled" requires tokens and loads the receipts before the validated load, so before
+// activation and any replay (pruning is Kotlin's call after its replay).
+assert.equal(ready.replayTokens, 'optional');
+assert.equal(ready.receiptsLoadedAt, undefined);
+{
+    const journaled = makeState(0);
+    assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);
+    assert.equal(journaled.replayTokens, 'required');
+    assert.equal(journaled.receiptsLoadedAt, 0);
+}
+// A revision a host leaves out ("") is none: core requires one only from a journaling host.
+for (const [method, call] of [['complete', 'completeTask({ id, taskRevision: taskRevision || undefined })'],
+    ['taskFocus', 'setTaskFocus({ id, focused, taskRevision: taskRevision || undefined })'],
+    ['projectFocus', 'setProjectFocus({ id, focused, projectRevision: projectRevision || undefined })']]) {
+    assert(hostEntry.includes(`contract.${call}`), `${method} sends no revision for ""`);
+}
+assert.deepEqual(await poll(ready, ready.MindwtrHost.pruneReceipts()), { ok: true, value: { pruned: 3 } });
 // The capture popup: every call passes Kotlin's JSON to core unchanged; the snapshot comes wrapped, null in sandbox mode.
 {
     const draft = { text: 'Call @phone', options: { addAnother: false } };
@@ -2356,13 +2616,13 @@ assert.deepEqual(await poll(ready, ready.MindwtrHost.projectDetail('p1', 50, 50,
 ready.projectDetailResult = { ok: true, value: { version: 1, revision: 'r', projectId: 'p1', readOnly: false, total: 0, items: [] } };
 assert.equal((await poll(ready, ready.MindwtrHost.projectDetail('p1', 0, 50, ''))).ok, true);
 assert.deepEqual(ready.projectInputs, ['projects', '{"projectId":"p1","offset":50,"limit":50,"revision":"r"}', '{"projectId":"p1","offset":0,"limit":50}']);
-// The new commands pass Kotlin's arguments to core unchanged: the star's target, the request UUID, "" as no area, a `next` selection.
-assert.deepEqual(await poll(ready, ready.MindwtrHost.taskFocus('t', true)), { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } });
-assert.deepEqual(await poll(ready, ready.MindwtrHost.projectFocus('p', false)), { ok: true, value: { blocked: '' } });
+// The new commands pass Kotlin's arguments to core unchanged: the star's target and the row's revision, the request UUID, "" as no area, a `next` selection.
+assert.deepEqual(await poll(ready, ready.MindwtrHost.taskFocus('t', true, 'rt')), { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } });
+assert.deepEqual(await poll(ready, ready.MindwtrHost.projectFocus('p', false, 'rp')), { ok: true, value: { blocked: '' } });
 assert.deepEqual(await poll(ready, ready.MindwtrHost.createProject('New', '', '123')), { ok: true, value: { id: 'p' } });
 assert.equal((await poll(ready, ready.MindwtrHost.areaFilter())).value.label, 'All');
 assert.equal((await poll(ready, ready.MindwtrHost.setAreaFilter('{"included":["a"],"excluded":[]}'))).ok, true);
-assert.deepEqual(ready.newInputs, ['["taskFocus",{"id":"t","focused":true}]', '["projectFocus",{"id":"p","focused":false}]',
+assert.deepEqual(ready.newInputs, ['["taskFocus",{"id":"t","focused":true,"taskRevision":"rt"}]', '["projectFocus",{"id":"p","focused":false,"projectRevision":"rp"}]',
     '["createProject",{"title":"New","areaId":null,"requestId":"123"}]', 'areaFilter', '["setAreaFilter",{"included":["a"],"excluded":[]}]']);
 ready.taskFocusResult = { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } };
 assert.deepEqual(await poll(ready, ready.MindwtrHost.taskFocus('t', true)), { ok: false, error: 'SAVE_FAILED: disk full' });
@@ -2498,7 +2758,7 @@ assert.equal((await poll(ready, ready.MindwtrHost.strings('["tab.inbox"]'))).ok,
 const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
 const bootOrder = ['await adapter.getData();', 'await importLegacyJson(adapter,', 'await activateAndVerify(adapter, recoveryLoad)'].map((text) => bootBody.indexOf(text));
 assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `boot order ${bootOrder}`);
-assert.match(hostEntry, /boot\(legacyState: string, legacyBackup: string\): string \{\s*return boot\(legacyState, legacyBackup\);/);
+assert.match(hostEntry, /boot\(legacyState: string, legacyBackup: string, writeJournal = ''\): string \{\s*return boot\(legacyState, legacyBackup, false, writeJournal === 'journaled'\);/);
 const importBody = hostEntry.slice(hostEntry.indexOf('const importLegacyJson'), hostEntry.indexOf('// After a failed save'));
 const importOrder = ['adapter.latestData', 'planLegacyJsonImport(', 'legacyImportMismatch(plan.merged, loaded)', 'await adapter.saveData(plan.merged)',
     'legacyImportMismatch(plan.merged, await adapter.getData())', 'Legacy import not confirmed', 'native().rnStateCommit(',

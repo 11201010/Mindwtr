@@ -213,14 +213,15 @@ class BoardModel(private val menu: MenuModel, private val saved: SavedStateHandl
      * A drop: into another column only the status ([afterId] absent); inside its column after [afterId] (null: first), among the
      * cards as these filters show them. Core plans the write from the moved card's id (no column is renumbered here).
      */
-    fun move(taskId: String, status: String, afterId: String?, sameColumn: Boolean) {
-        val action = JSONObject().put("type", "moveCard").put("taskId", taskId).put("status", status).put("filters", filters)
+    fun move(taskId: String, taskRevision: String, status: String, afterId: String?, sameColumn: Boolean) {
+        val action = JSONObject().put("type", "moveCard").put("taskId", taskId).put("status", status).put("filters", filters).put("taskRevision", taskRevision)
         if (sameColumn) action.put("afterId", afterId ?: JSONObject.NULL)
         menu.command("boardAction", JSONObject().put("action", action))
     }
 
-    /** RN's swipe-left panel: Delete (core's trashTask; RN asks nothing and offers no Undo here). */
-    fun trash(taskId: String) = menu.command("boardAction", JSONObject().put("action", JSONObject().put("type", "trashTask").put("taskId", taskId)))
+    /** RN's swipe-left panel: Delete (core's trashTask at the card's revision; RN asks nothing and offers no Undo here). */
+    fun trash(taskId: String, taskRevision: String) =
+        menu.command("boardAction", JSONObject().put("action", JSONObject().put("type", "trashTask").put("taskId", taskId).put("taskRevision", taskRevision)))
 
     /** RN's swipe-right panel: Duplicate, which keeps the original; the request UUID becomes the copy's id, on disk first. */
     fun duplicate(taskId: String) = menu.create(FailedAction("boardCreate", UUID.randomUUID().toString(),

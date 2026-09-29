@@ -51,7 +51,11 @@
  * (native-request-receipts.ts). Each write is target-state, so a replay after a
  * restart writes nothing: a setting already holding the value, an area already
  * named and colored, a person already added, a token nobody carries any more,
- * an item already deleted.
+ * an item already deleted. A new area or person takes the request UUID as its ID,
+ * so a replay finds it. An edit or delete of an area, person, context or tag is
+ * also compare-and-set on the `revision` its row's target carries (echo `edit.target`
+ * and `delete` as the view gives them): a replay after a restart never undoes a later
+ * change (STALE_REVISION).
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -109,8 +113,8 @@ import {
 } from './manage-settings-model';
 import { NATIVE_HOST_CONTRACT_VERSION, type NativeHostResult } from './native-host-contract';
 import { fail, firstWindow, isObjectRecord, isPaging, isText, page, type NativeWindow } from './native-host-contract-menu-views';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
-import { getPersonTaskCounts } from './people';
+import { createNativeRequestReceipts, isRevision, refuseStale, revisionOf, revisionsToken, runStoreWrite, settleWrite } from './native-request-receipts';
+import { getPersonNameKey, getPersonTaskCounts } from './people';
 import { SETTINGS_THEME_VALUE_SET } from './settings-options';
 import {
     buildSettingsAdvancedMenu,
@@ -123,7 +127,7 @@ import { useTaskStore } from './store';
 import { normalizeTagId } from './store-helpers';
 import { formatTagIdPreservingCase } from './store-projects/shared';
 import { DEFAULT_TASK_EDITOR_ORDER, isTaskEditorSectionableField, TASK_EDITOR_SECTION_ORDER } from './task-editor-layout';
-import type { TaskEditorFieldId } from './types';
+import type { Project, Task, TaskEditorFieldId } from './types';
 import { sortViewSectionDefinitions } from './view-sections';
 
 type Translate = (key: string) => string;
@@ -165,16 +169,25 @@ export type NativeGtdSettings = GtdSettingsModel & { version: typeof NATIVE_HOST
 /** A write's answer: whether the store changed, and what the host stores on the device. */
 export type NativeSettingsWriteResult = { changed: boolean; deviceWrites: SettingsDeviceWrite[] };
 
-/** What the editor edits, as a host sends it back; the contract reads the current values. */
+/**
+ * What the editor edits, as a host sends it back (a row's `edit.target`); the contract
+ * reads the current values. `revision` is the row's as the view showed it: an area's
+ * or person's revision, or a context's or tag's carriers (every task and project that
+ * carries it, at its revision). A write refuses a target changed since (STALE_REVISION).
+ */
 export type NativeManageEditorTarget =
-    | { type: 'area'; id: string }
+    | { type: 'area'; id: string; revision: string }
     | { type: 'newArea' }
     | { type: 'unassignedArea' }
     | { type: 'newPerson' }
-    | { type: 'person'; id: string }
-    | { type: 'context' | 'tag'; name: string };
+    | { type: 'person'; id: string; revision: string }
+    | { type: 'context' | 'tag'; name: string; revision: string };
 
-export type NativeManageDeleteTarget = { type: 'area' | 'person'; id: string } | { type: 'context' | 'tag'; name: string };
+/** A row's `delete`, with its revision as for NativeManageEditorTarget. */
+export type NativeManageDeleteTarget = { type: 'area' | 'person'; id: string; revision: string } | { type: 'context' | 'tag'; name: string; revision: string };
+
+/** A target as read from a host: checkManageEditor takes one without its revision too. */
+type ReadTarget = NativeManageEditorTarget | { type: 'area' | 'person'; id: string } | { type: 'context' | 'tag'; name: string };
 
 /** Opens the editor: send `target` to saveManageEditor with the fields, which start at `draft`. */
 type NativeManageEdit = { target: NativeManageEditorTarget; draft: ManageEditorDraft };
@@ -352,6 +365,44 @@ export function createSettingsMethods(deps: SettingsDeps) {
         return _allTasks.some((task) => (task.tags ?? []).some(match)) || _allProjects.some((project) => (project.tagIds ?? []).some(match));
     };
 
+    /**
+     * Every context's or tag's carriers revision, by name, in one pass: how many tasks and
+     * projects carry it (as the store's rename and delete match them) and a hash of each
+     * carrier's revision. A new carrier, or a change to one, changes it.
+     */
+    const carriersRevisions = (type: 'context' | 'tag') => {
+        const { _allTasks, _allProjects } = useTaskStore.getState();
+        const keyOf = type === 'context' ? (name: string) => name.trim().toLowerCase() : normalizeTagId;
+        const byKey = new Map<string, string[]>();
+        const add = (row: Task | Project, names: readonly string[] | undefined) => {
+            for (const key of new Set((names ?? []).map(keyOf))) {
+                const carriers = byKey.get(key);
+                const entry = `${row.id}@${revisionOf(row)}`;
+                if (carriers) carriers.push(entry);
+                else byKey.set(key, [entry]);
+            }
+        };
+        _allTasks.forEach((task) => add(task, type === 'context' ? task.contexts : task.tags));
+        if (type === 'tag') _allProjects.forEach((project) => add(project, project.tagIds));
+        return (name: string) => {
+            const carriers = byKey.get(keyOf(name)) ?? [];
+            return revisionsToken([...carriers].sort());
+        };
+    };
+
+    /** Compare-and-set, right before a write, on the target the row showed. */
+    const refuseStaleTarget = (target: NativeManageEditorTarget | NativeManageDeleteTarget): NativeHostResult<never> | null => {
+        if (!('revision' in target)) return null;
+        const state = useTaskStore.getState();
+        switch (target.type) {
+            case 'area': return refuseStale([state._allAreas.find((area) => area.id === target.id)], [target.revision], 'The area changed since Manage showed it; read Manage again');
+            case 'person': return refuseStale([state._allPeople.find((person) => person.id === target.id)], [target.revision], 'The person changed since Manage showed them; read Manage again');
+            default: return carriersRevisions(target.type)(target.name) === target.revision
+                ? null
+                : fail('STALE_REVISION', `The ${target.type} changed since Manage showed it; read Manage again`);
+        }
+    };
+
     const storeData = () => {
         const state = useTaskStore.getState();
         return [state._allTasks, state._allProjects, state._allAreas, state._allPeople, state.settings];
@@ -379,15 +430,24 @@ export function createSettingsMethods(deps: SettingsDeps) {
         });
     };
 
-    const runEditorWrite = async (write: ManageEditorWrite) => {
+    /**
+     * One editor write. A new area or person takes `newId` (the request UUID) as its ID,
+     * except when the store finds one of that name (returned as it is, or restored from
+     * Trash): an ID in the props would rewrite that row's ID.
+     */
+    const runEditorWrite = async (write: ManageEditorWrite, newId: string) => {
         const state = useTaskStore.getState();
         switch (write.kind) {
             case 'updateSettings':
                 return state.updateSettings(write.updates);
-            case 'addArea':
-                return (await state.addArea(write.name, write.props)) ? undefined : { success: false, error: 'Area creation failed' };
-            case 'addPerson':
-                return (await state.addPerson(write.name, write.props)) ? undefined : { success: false, error: 'Person creation failed' };
+            case 'addArea': {
+                const named = state._allAreas.some((area) => area.name?.trim().toLowerCase() === write.name.trim().toLowerCase());
+                return (await state.addArea(write.name, named ? write.props : { ...write.props, id: newId })) ? undefined : { success: false, error: 'Area creation failed' };
+            }
+            case 'addPerson': {
+                const named = state._allPeople.some((person) => getPersonNameKey(person.name) === getPersonNameKey(write.name));
+                return (await state.addPerson(write.name, named ? write.props : { ...write.props, id: newId })) ? undefined : { success: false, error: 'Person creation failed' };
+            }
             case 'updatePerson':
                 return state.updatePerson(write.id, write.updates);
             case 'renamePerson':
@@ -402,7 +462,7 @@ export function createSettingsMethods(deps: SettingsDeps) {
     };
 
     /** The editor target with the values it holds now; null when it no longer exists. */
-    const resolveTarget = (target: NativeManageEditorTarget): ManageEditorTarget | null => {
+    const resolveTarget = (target: ReadTarget): ManageEditorTarget | null => {
         const state = useTaskStore.getState();
         switch (target.type) {
             case 'area': {
@@ -415,13 +475,21 @@ export function createSettingsMethods(deps: SettingsDeps) {
             }
             case 'unassignedArea':
                 return { type: 'unassignedArea', color: state.settings.appearance?.unassignedAreaColor || DEFAULT_AREA_COLOR };
+            case 'context':
+            case 'tag':
+                return { type: target.type, name: target.name };
             default:
                 return target;
         }
     };
 
-    const readEditorTarget = (value: unknown): NativeManageEditorTarget | null => {
+    /** A target as a host sends it; an area, person, context or tag may carry its row's `revision`. */
+    const readEditorTarget = (value: unknown): ReadTarget | null => {
         if (!isObjectRecord(value)) return null;
+        const revision = 'revision' in value ? value.revision : undefined;
+        if (revision !== undefined && !isRevision(revision)) return null;
+        const keys = Object.keys(value).length - ('revision' in value ? 1 : 0);
+        const withRevision = <T extends object>(target: T) => (revision === undefined ? target : { ...target, revision });
         switch (value.type) {
             case 'newArea':
             case 'newPerson':
@@ -429,13 +497,20 @@ export function createSettingsMethods(deps: SettingsDeps) {
                 return Object.keys(value).length === 1 ? { type: value.type } : null;
             case 'area':
             case 'person':
-                return Object.keys(value).length === 2 && isName(value.id) ? { type: value.type, id: value.id } : null;
+                return keys === 2 && isName(value.id) ? withRevision({ type: value.type, id: value.id }) : null;
             case 'context':
             case 'tag':
-                return Object.keys(value).length === 2 && isName(value.name) ? { type: value.type, name: value.name } : null;
+                return keys === 2 && isName(value.name) ? withRevision({ type: value.type, name: value.name }) : null;
             default:
                 return null;
         }
+    };
+    /** A write's target: an area, person, context or tag carries the revision its row showed. */
+    const readWriteTarget = (value: unknown): NativeManageEditorTarget | null => {
+        const target = readEditorTarget(value);
+        return target && (target.type === 'newArea' || target.type === 'newPerson' || target.type === 'unassignedArea' || 'revision' in target)
+            ? target as NativeManageEditorTarget
+            : null;
     };
 
     // Keys not in en.ts yet; mobile resolves the same fallbacks (manage-settings-screen.tsx).
@@ -466,31 +541,39 @@ export function createSettingsMethods(deps: SettingsDeps) {
         const { allContexts, allTags } = state.getDerivedState();
         const somedayCount = sortViewSectionDefinitions(state.settings.gtd?.viewSections?.someday).length;
         const unassignedColor = state.settings.appearance?.unassignedAreaColor || DEFAULT_AREA_COLOR;
-        const areaRows: NativeManageAreaRow[] = areas.map((area) => ({
-            id: area.id,
-            name: area.name,
-            color: area.color || DEFAULT_AREA_COLOR,
-            edit: { target: { type: 'area', id: area.id }, draft: getManageEditorDraft({ type: 'area', id: area.id, name: area.name, color: area.color }) },
-            delete: { type: 'area', id: area.id },
-            deleteConfirm: getManageDeleteConfirm(t, area.name, 'areas.deleteConfirm'),
-        }));
-        const personRows: NativeManagePersonRow[] = people.map((person) => ({
-            id: person.id,
-            name: person.name,
-            ...buildManagePersonRow(person, counts, t),
-            edit: {
-                target: { type: 'person', id: person.id },
-                draft: getManageEditorDraft({ type: 'person', id: person.id, name: person.name, note: person.note, referenceLink: person.referenceLink }),
-            },
-            delete: { type: 'person', id: person.id },
-            deleteConfirm: getManageDeleteConfirm(t, person.name, 'people.deleteConfirm'),
-        }));
-        const valueRows = (type: 'context' | 'tag', values: readonly string[]): NativeManageValueRow[] => values.map((value) => ({
-            value,
-            edit: { target: { type, name: value }, draft: getManageEditorDraft({ type, name: value }) },
-            delete: { type, name: value },
-            deleteConfirm: getManageDeleteConfirm(t, value),
-        }));
+        // Each row's target carries its revision; the host echoes it with an edit or delete.
+        const areaRows: NativeManageAreaRow[] = areas.map((area) => {
+            const target = { type: 'area' as const, id: area.id, revision: revisionOf(area) };
+            return {
+                id: area.id,
+                name: area.name,
+                color: area.color || DEFAULT_AREA_COLOR,
+                edit: { target, draft: getManageEditorDraft({ type: 'area', id: area.id, name: area.name, color: area.color }) },
+                delete: target,
+                deleteConfirm: getManageDeleteConfirm(t, area.name, 'areas.deleteConfirm'),
+            };
+        });
+        const personRows: NativeManagePersonRow[] = people.map((person) => {
+            const target = { type: 'person' as const, id: person.id, revision: revisionOf(person) };
+            return {
+                id: person.id,
+                name: person.name,
+                ...buildManagePersonRow(person, counts, t),
+                edit: {
+                    target,
+                    draft: getManageEditorDraft({ type: 'person', id: person.id, name: person.name, note: person.note, referenceLink: person.referenceLink }),
+                },
+                delete: target,
+                deleteConfirm: getManageDeleteConfirm(t, person.name, 'people.deleteConfirm'),
+            };
+        });
+        const valueRows = (type: 'context' | 'tag', values: readonly string[]): NativeManageValueRow[] => {
+            const revisionFor = carriersRevisions(type);
+            return values.map((value) => {
+                const target = { type, name: value, revision: revisionFor(value) };
+                return { value, edit: { target, draft: getManageEditorDraft({ type, name: value }) }, delete: target, deleteConfirm: getManageDeleteConfirm(t, value) };
+            });
+        };
         const counted: Record<ManageSectionKey, number> = {
             areas: areas.length, somedaySections: somedayCount, people: people.length, contexts: allContexts.length, tags: allTags.length,
         };
@@ -778,16 +861,25 @@ export function createSettingsMethods(deps: SettingsDeps) {
         }): Promise<NativeHostResult<{ changed: boolean }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const target = isObjectRecord(input) ? readEditorTarget(input.target) : null;
+            const target = isObjectRecord(input) ? readWriteTarget(input.target) : null;
             if (!target || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)
                 || (input.name !== undefined && !isText(input.name, 500))
                 || (input.color !== undefined && !isText(input.color, 50))
                 || (input.note !== undefined && !isText(input.note, 10_000))
                 || (input.referenceLink !== undefined && !isText(input.referenceLink, 2000))) {
-                return fail('INVALID_INPUT', 'A request UUID, an editor target and text fields are required');
+                return fail('INVALID_INPUT', 'A request UUID, an editor target (with the revision its row showed) and text fields are required');
             }
             const fields = { name: input.name ?? '', color: input.color ?? null, note: input.note ?? '', referenceLink: input.referenceLink ?? '' };
-            return receipts.run<{ changed: boolean }>(input.requestId, JSON.stringify(['manageEditor', target, fields]), async () => {
+            const { requestId } = input;
+            return receipts.run<{ changed: boolean }>(requestId, JSON.stringify(['manageEditor', target, fields]), async () => {
+                // A new area or person takes the request UUID as its ID: a replay after a restart
+                // finds it (renamed or deleted since) and writes nothing.
+                const newId = requestId.toLowerCase();
+                const { _allAreas, _allPeople } = useTaskStore.getState();
+                if ((target.type === 'newArea' && _allAreas.some((area) => area.id === newId))
+                    || (target.type === 'newPerson' && _allPeople.some((person) => person.id === newId))) {
+                    return { ok: true, value: { changed: false } };
+                }
                 const resolved = resolveTarget(target);
                 if (!resolved) return fail('INVALID_INPUT', 'That item is not available');
                 const draft = { ...getManageEditorDraft(resolved), name: fields.name, note: fields.note, referenceLink: fields.referenceLink };
@@ -802,10 +894,12 @@ export function createSettingsMethods(deps: SettingsDeps) {
                 if (!plan) return fail('INVALID_INPUT', 'A name is required');
                 const writes = pendingWrites(plan);
                 if (writes.length === 0) return { ok: true, value: { changed: false } };
+                const refused = refuseStaleTarget(target);
+                if (refused) return refused;
                 const before = storeData();
                 const written = await runStoreWrite(async () => {
                     const results = [];
-                    for (const write of writes) results.push(await runEditorWrite(write));
+                    for (const write of writes) results.push(await runEditorWrite(write, newId));
                     return results;
                 });
                 // Adding a person who already exists asks the store, which writes nothing.
@@ -813,14 +907,18 @@ export function createSettingsMethods(deps: SettingsDeps) {
             });
         },
 
-        /** Delete an area, person, context or tag after the row's `deleteConfirm`. Target state. */
+        /**
+         * Delete an area, person, context or tag after the row's `deleteConfirm` (send the row's
+         * `delete`). Target state: one already gone answers `changed: false`. Compare-and-set on
+         * the row's revision: one changed since the view showed it is not deleted (STALE_REVISION).
+         */
         async deleteManageItem(input: { requestId: string; target: NativeManageDeleteTarget }): Promise<NativeHostResult<{ changed: boolean }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const target = isObjectRecord(input) ? readEditorTarget(input.target) : null;
+            const target = isObjectRecord(input) ? readWriteTarget(input.target) : null;
             if (!target || (target.type !== 'area' && target.type !== 'person' && target.type !== 'context' && target.type !== 'tag')
                 || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)) {
-                return fail('INVALID_INPUT', 'A request UUID and an area, person, context or tag are required');
+                return fail('INVALID_INPUT', 'A request UUID and an area, person, context or tag, with the revision its row showed, are required');
             }
             return receipts.run<{ changed: boolean }>(input.requestId, JSON.stringify(['manageDelete', target]), async () => {
                 const state = useTaskStore.getState();
@@ -830,6 +928,8 @@ export function createSettingsMethods(deps: SettingsDeps) {
                         ? state.people.some((person) => person.id === target.id)
                         : target.type === 'context' ? contextCarried(target.name) : tagCarried(target.name);
                 if (!present) return { ok: true, value: { changed: false } };
+                const refused = refuseStaleTarget(target);
+                if (refused) return refused;
                 const written = await runStoreWrite(() => {
                     switch (target.type) {
                         case 'area': return state.deleteArea(target.id);

@@ -1,5 +1,6 @@
 package tech.dongdongbh.mindwtr.pilot
 
+import android.content.Context
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
@@ -11,6 +12,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.InboxViewModel.Part
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
+import tech.dongdongbh.mindwtr.pilot.core.DeviceWrites
 import java.util.Locale
 import java.util.UUID
 
@@ -29,6 +31,20 @@ const val LANGUAGE_KEY = "mindwtr-language"
 const val THEME_KEY = "@mindwtr_theme"
 const val MANAGE_SECTIONS_KEY = "mindwtr:settings:manage:openSections"
 const val TASK_OPEN_MODE_KEY = "mindwtr:view:taskOpenMode:v1"
+
+/** The preferences file that holds RN's device keys (InboxViewModel's `prefs`). */
+const val DEVICE_PREFS = "mindwtr-view-state"
+
+/** RN's device keys in [prefs], each kept with the journal sequence of the write that set it (DeviceWrites); one commit each. */
+fun deviceStore(prefs: SharedPreferences) = DeviceWrites({ prefs.all }, { changes ->
+    prefs.edit().apply { changes.forEach { (key, value) -> if (value == null) remove(key) else putString(key, value) } }.commit()
+})
+
+/**
+ * CoreHost's store for a reply's deviceWrites (a General or GTD setting's device-local part): the first send and the journal's
+ * replay both store them before the write's journal entry goes, so a process death after core's reply loses none.
+ */
+fun deviceStore(app: Context) = deviceStore(app.getSharedPreferences(DEVICE_PREFS, Context.MODE_PRIVATE))
 
 /** Core windows Manage's lists and the Someday sections by NATIVE_HOST_MAX_WINDOW. */
 private const val WINDOW = 100
@@ -230,13 +246,8 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     // ---- Device state ----
 
     /** Core's device writes, under RN's keys (a null value removes the key), committed before anything reads them. */
-    private fun store(writes: JSONArray) {
-        val edit = prefs.edit()
-        for (write in List(writes.length()) { writes.getJSONObject(it) }) {
-            if (write.isNull("value")) edit.remove(write.getString("key")) else edit.putString(write.getString("key"), write.getString("value"))
-        }
-        edit.commit()
-    }
+    /** A device write of the screen's own (a Manage section opened or closed): no command, so no journal sequence. */
+    private fun store(writes: JSONArray) = deviceStore(prefs).store(writes, null, replay = false)
 
     /** A Manage section heading: core's `toggle` is the device write that opens or closes it; the screen is read again. */
     fun toggleSection(toggle: JSONObject) {
@@ -317,12 +328,12 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     // ---- Answers ----
 
     /**
-     * A General or GTD write's device-local part (core's deviceWrites under RN's keys), on the command's own thread before it
-     * counts as done; a new language reloads core's words (setLanguage, then the labels), a new theme core's colors.
+     * A General or GTD write's device-local part (core's deviceWrites under RN's keys), which CoreHost stored before the reply
+     * came back (deviceStore): on the command's own thread, a new language reloads core's words (setLanguage, then the labels),
+     * a new theme core's colors.
      */
     internal fun applied(runtime: CoreHost, reply: JSONObject) {
         val writes = reply.optJSONArray("deviceWrites") ?: return
-        store(writes)
         val keys = List(writes.length()) { writes.getJSONObject(it).getString("key") }
         if (LANGUAGE_KEY in keys) {
             runtime.language(prefs.getString(LANGUAGE_KEY, null).orEmpty(), Locale.getDefault().toLanguageTag())

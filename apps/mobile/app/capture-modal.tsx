@@ -18,31 +18,43 @@ import { useNavigation, usePreventRemove } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import {
   executeCaptureTransaction,
-  prepareCaptureTask,
   buildQuickAddParseOptions,
   buildQuickAddPreviewEntries,
   createAIProvider,
   getUsedTaskTokens,
-  isSandboxMode,
-  isSelectableProjectForTaskAssignment,
   parseQuickAdd,
   resolveDefaultNewTaskAreaId,
   formatQuickAddHelp,
   resolveFeatureFlags,
-  sanitizeAttachmentUriForSyncMerge,
   shallow,
   splitQuickAddBulkLines,
   tFallback,
   type AIProviderId,
   type Attachment,
-  type CaptureAssemblyInput,
-  type CaptureTransactionOptions,
   type Language,
   type Project,
-  type Task,
   type TimeEstimate,
   useTaskStore,
 } from '@mindwtr/core';
+import {
+  applyCaptureModalCopilotParts,
+  buildCaptureModalRequest,
+  formatCaptureModalCopilotApplied,
+  getCaptureModalBulkConfirm,
+  getCaptureModalCloseTarget,
+  getCaptureModalCopilotParts,
+  keepCaptureModalCopilotSuggestion,
+  readCaptureModalInitialProps,
+  readCaptureModalInitialText,
+  readCaptureModalOrigin,
+  readCaptureModalProjectParam,
+  resolveCaptureModalAfterSave,
+  sanitizeCaptureReturnToParam,
+  saveCaptureModalLines,
+  shouldRequestCaptureModalCopilot,
+  type CaptureModalCopilotPart,
+  type CaptureModalParams,
+} from '@mindwtr/core/capture-modal-model';
 import { canUploadAttachmentFrom, getAttachmentsDir } from '@/lib/attachment-sync-utils';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useToast } from '@/contexts/toast-context';
@@ -55,115 +67,10 @@ import { showInvalidDateCommandToast } from '@/lib/quick-add-toast';
 import { ThemedAlertHost } from '@/components/themed-alert';
 import { SandboxWorkspaceCue } from '@/components/sandbox-workspace-cue';
 import { QuickAddPreview } from '@/components/QuickAddPreview';
-import type { CopilotPart } from '@/components/task-edit/use-task-edit-copilot';
 import { openTaskScreen, stashPendingCaptureTaskOpen } from '@/lib/task-meta-navigation';
-import { getProjectQuickCaptureReturnToProjectId } from '@/components/projects-screen/projects-screen.utils';
 
-type CaptureSearchParams = {
-  initialProps?: string;
-  initialValue?: string;
-  /** 'system' when a widget, tile, shortcut or notification opened this route (#1169). */
-  origin?: string;
-  project?: string;
-  returnTo?: string;
-  text?: string;
-  title?: string;
-};
-
-const URL_INITIAL_TASK_STATUSES = new Set<Task['status']>(['inbox', 'next', 'waiting', 'someday', 'reference']);
-const BULK_PREVIEW_LINE_LIMIT = 5;
-
-const firstSearchParam = (value: string | string[] | undefined): string => {
-  if (Array.isArray(value)) return value[0] ?? '';
-  return typeof value === 'string' ? value : '';
-};
-
-const decodeSearchParam = (value: string | string[] | undefined): string => {
-  const raw = firstSearchParam(value);
-  if (!raw) return '';
-  try {
-    return decodeURIComponent(raw);
-  } catch {
-    return raw;
-  }
-};
-
-export const sanitizeCaptureReturnToParam = (value: string | string[] | undefined): string | null => {
-  const decoded = decodeSearchParam(value).trim();
-  if (!decoded || !decoded.startsWith('/') || decoded.startsWith('//')) return null;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(decoded)) return null;
-  if (/[\u0000-\u001F\u007F]/.test(decoded)) return null;
-  return decoded;
-};
-
-const parseInitialPropsJson = (value: string | string[] | undefined): Record<string, unknown> => {
-  const decoded = decodeSearchParam(value);
-  if (!decoded) return {};
-  try {
-    const parsed = JSON.parse(decoded);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return parsed as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-};
-
-const normalizeInitialTokenList = (value: unknown, prefix?: '@' | '#'): string[] | undefined => {
-  if (!Array.isArray(value)) return undefined;
-  const seen = new Set<string>();
-  const next: string[] = [];
-  value.forEach((item) => {
-    if (typeof item !== 'string') return;
-    const trimmed = item.trim();
-    if (!trimmed) return;
-    const normalized = prefix && !trimmed.startsWith(prefix) ? `${prefix}${trimmed}` : trimmed;
-    const key = normalized.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    next.push(normalized);
-  });
-  return next.length > 0 ? next : undefined;
-};
-
-const MAX_INITIAL_ATTACHMENTS = 6;
-
-// Share-intent file captures arrive as attachment records in the route's
-// initialProps (the share handler already copied the bytes into the managed
-// attachments dir). Route params are attacker-reachable via deep links, so
-// only structurally valid file records survive here; capture request assembly
-// additionally drops any uri outside the managed attachments dir.
-const sanitizeInitialAttachments = (value: unknown): Attachment[] | undefined => {
-  if (!Array.isArray(value)) return undefined;
-  const next: Attachment[] = [];
-  for (const item of value) {
-    if (next.length >= MAX_INITIAL_ATTACHMENTS) break;
-    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-    const record = item as Record<string, unknown>;
-    if (record.kind !== 'file') continue;
-    const id = typeof record.id === 'string' ? record.id.trim() : '';
-    const uri = sanitizeAttachmentUriForSyncMerge(record.uri) ?? '';
-    if (!id || !uri) continue;
-    const now = new Date().toISOString();
-    const createdAt = typeof record.createdAt === 'string' && record.createdAt ? record.createdAt : now;
-    const attachment: Attachment = {
-      id,
-      kind: 'file',
-      title: typeof record.title === 'string' && record.title.trim() ? record.title.trim() : 'Attachment',
-      uri,
-      createdAt,
-      updatedAt: typeof record.updatedAt === 'string' && record.updatedAt ? record.updatedAt : createdAt,
-      localStatus: 'available',
-    };
-    if (typeof record.mimeType === 'string' && record.mimeType.trim()) {
-      attachment.mimeType = record.mimeType.trim();
-    }
-    if (typeof record.size === 'number' && Number.isFinite(record.size)) {
-      attachment.size = record.size;
-    }
-    next.push(attachment);
-  }
-  return next.length > 0 ? next : undefined;
-};
+// The route params, and every rule about them, are core's (capture-modal-model.ts).
+export { sanitizeCaptureReturnToParam };
 
 const filterManagedAttachments = async (attachments: Attachment[]): Promise<Attachment[]> => {
   const dir = await getAttachmentsDir();
@@ -171,47 +78,8 @@ const filterManagedAttachments = async (attachments: Attachment[]): Promise<Atta
   return attachments.filter((attachment) => canUploadAttachmentFrom(attachment.uri));
 };
 
-const sanitizeInitialPropsParam = (
-  value: string | string[] | undefined,
-  projects: Project[],
-  areas: Array<{ id: string; deletedAt?: string | null }>,
-): Partial<Task> => {
-  const parsed = parseInitialPropsJson(value);
-  const next: Partial<Task> = {};
-
-  const attachments = isSandboxMode() ? undefined : sanitizeInitialAttachments(parsed.attachments);
-  if (attachments) next.attachments = attachments;
-
-  if (typeof parsed.description === 'string' && parsed.description.trim()) {
-    next.description = parsed.description;
-  }
-
-  const tags = normalizeInitialTokenList(parsed.tags, '#');
-  if (tags) next.tags = tags;
-
-  const contexts = normalizeInitialTokenList(parsed.contexts, '@');
-  if (contexts) next.contexts = contexts;
-
-  const status = typeof parsed.status === 'string' ? parsed.status.trim().toLowerCase() : '';
-  if (URL_INITIAL_TASK_STATUSES.has(status as Task['status'])) {
-    next.status = status as Task['status'];
-  }
-
-  const projectId = typeof parsed.projectId === 'string' ? parsed.projectId.trim() : '';
-  if (projectId && projects.some((project) => project.id === projectId && isSelectableProjectForTaskAssignment(project))) {
-    next.projectId = projectId;
-  }
-
-  const areaId = typeof parsed.areaId === 'string' ? parsed.areaId.trim() : '';
-  if (!next.projectId && areaId && areas.some((area) => area.id === areaId && !area.deletedAt)) {
-    next.areaId = areaId;
-  }
-
-  return next;
-};
-
 export default function CaptureScreen() {
-  const params = useLocalSearchParams<CaptureSearchParams>();
+  const params = useLocalSearchParams<CaptureModalParams>();
   const router = useRouter();
   const navigation = useNavigation();
   const { addProject, addTask, addTasks, projects, tasks, allTasks, settings, areas, people } = useTaskStore((state) => ({
@@ -228,13 +96,9 @@ export default function CaptureScreen() {
   const tc = useThemeColors();
   const { showToast } = useToast();
   const { t, language } = useLanguage();
-  const initialText = (
-    decodeSearchParam(params.initialValue)
-    || decodeSearchParam(params.text)
-    || decodeSearchParam(params.title)
-  );
+  const initialText = readCaptureModalInitialText(params);
   const initialProps = React.useMemo(
-    () => sanitizeInitialPropsParam(params.initialProps, projects, areas),
+    () => readCaptureModalInitialProps(params.initialProps, projects, areas),
     [areas, params.initialProps, projects]
   );
   const defaultNewTaskAreaId = resolveDefaultNewTaskAreaId(settings, areas);
@@ -243,7 +107,7 @@ export default function CaptureScreen() {
     [params.returnTo]
   );
   const initialDescription = String(initialProps.description ?? '');
-  const initialProjectTitle = decodeSearchParam(params.project).trim();
+  const initialProjectTitle = readCaptureModalProjectParam(params);
   const [value, setValue] = useState(initialText);
   const [pendingBulkLines, setPendingBulkLines] = useState<string[] | null>(null);
   const [descriptionValue, setDescriptionValue] = useState(initialDescription);
@@ -347,12 +211,8 @@ export default function CaptureScreen() {
   }, [areas, projects, quickAddParseOptions, t, value]);
 
   useEffect(() => {
-    if (!aiEnabled || (keyRequired && !aiKey)) {
-      setCopilotSuggestion(null);
-      return;
-    }
     const title = value.trim();
-    if (title.length < 4) {
+    if (!shouldRequestCaptureModalCopilot({ aiEnabled, keyRequired, hasKey: Boolean(aiKey), title })) {
       setCopilotSuggestion(null);
       return;
     }
@@ -368,11 +228,8 @@ export default function CaptureScreen() {
           abortController ? { signal: abortController.signal } : undefined
         );
         if (cancelled || !copilotMountedRef.current) return;
-        if (!suggestion.context && (!timeEstimatesEnabled || !suggestion.timeEstimate) && !suggestion.tags?.length) {
-          setCopilotSuggestion(null);
-        } else {
-          setCopilotSuggestion({ ...suggestion, language });
-        }
+        const kept = keepCaptureModalCopilotSuggestion(suggestion, timeEstimatesEnabled);
+        setCopilotSuggestion(kept ? { ...kept, language } : null);
       } catch {
         if (!cancelled) {
           setCopilotSuggestion(null);
@@ -424,36 +281,22 @@ export default function CaptureScreen() {
 
   // Same per-part apply as the task editor (#1022); here the parts are stashed
   // for task creation instead of written into a draft.
-  const pendingCopilotParts = React.useMemo<CopilotPart[]>(() => {
-    if (!visibleCopilotSuggestion) return [];
-    const parts: CopilotPart[] = [];
-    if (visibleCopilotSuggestion.context && visibleCopilotSuggestion.context !== copilotContext) {
-      parts.push({ kind: 'context', value: visibleCopilotSuggestion.context });
-    }
-    if (timeEstimatesEnabled && visibleCopilotSuggestion.timeEstimate && visibleCopilotSuggestion.timeEstimate !== copilotEstimate) {
-      parts.push({ kind: 'timeEstimate', value: visibleCopilotSuggestion.timeEstimate });
-    }
-    for (const tag of visibleCopilotSuggestion.tags ?? []) {
-      if (!copilotTags.includes(tag)) parts.push({ kind: 'tag', value: tag });
-    }
-    return parts;
-  }, [copilotContext, copilotEstimate, copilotTags, timeEstimatesEnabled, visibleCopilotSuggestion]);
+  const appliedCopilot = { context: copilotContext, timeEstimate: copilotEstimate, tags: copilotTags };
+  const pendingCopilotParts = getCaptureModalCopilotParts(visibleCopilotSuggestion, appliedCopilot, timeEstimatesEnabled);
+  const appliedCopilotText = formatCaptureModalCopilotApplied(t, appliedCopilot, timeEstimatesEnabled);
 
-  const hasAppliedCopilot = Boolean(copilotContext) || Boolean(copilotEstimate) || copilotTags.length > 0;
-
-  const applyCopilotParts = (parts: CopilotPart[]) => {
-    const context = parts.find((part) => part.kind === 'context')?.value;
-    const estimate = parts.find((part) => part.kind === 'timeEstimate')?.value;
-    const tags = parts.filter((part) => part.kind === 'tag').map((part) => part.value);
-    if (context) setCopilotContext(context);
-    if (estimate && timeEstimatesEnabled) setCopilotEstimate(estimate as TimeEstimate);
-    if (tags.length) setCopilotTags((prev) => Array.from(new Set([...prev, ...tags])));
+  const applyCopilotParts = (parts: CaptureModalCopilotPart[]) => {
+    const next = applyCaptureModalCopilotParts(appliedCopilot, parts, timeEstimatesEnabled);
+    setCopilotContext(next.context);
+    setCopilotEstimate(next.timeEstimate);
+    setCopilotTags(next.tags);
   };
 
   const placeholderColor = tc.secondaryText;
 
-  const launchedFromSystem = firstSearchParam(params.origin) === 'system';
-  const launchedFromShare = firstSearchParam(params.origin) === 'share';
+  const origin = readCaptureModalOrigin(params);
+  const launchedFromSystem = origin === 'system';
+  const launchedFromShare = origin === 'share';
 
   useEffect(() => {
     if (!launchedFromShare) return;
@@ -468,15 +311,12 @@ export default function CaptureScreen() {
     // so leaving a project took one back tap per task added (#938). returnTo
     // stays as the fallback for a capture with nothing behind it (a restored
     // session that reopened straight into the capture route).
-    if (router.canGoBack()) {
+    const target = getCaptureModalCloseTarget(router.canGoBack(), returnTo);
+    if (target === 'back') {
       router.back();
       return;
     }
-    if (returnTo) {
-      router.replace(returnTo as never);
-      return;
-    }
-    router.replace('/inbox');
+    router.replace(target as never);
   }, [returnTo, router]);
 
   // A capture that a widget, tile, shortcut or notification opened ends back
@@ -516,20 +356,6 @@ export default function CaptureScreen() {
     if (screenMountedRef.current) setIsSubmitting(false);
   };
 
-  const formatBulkConfirmTitle = (count: number) => (
-    tFallback(t, 'quickAdd.bulkConfirmTitle', 'Create {{count}} tasks?')
-      .replace('{{count}}', String(count))
-  );
-
-  const formatBulkConfirmMessage = (lines: string[]) => {
-    const preview = lines.slice(0, BULK_PREVIEW_LINE_LIMIT).join('\n');
-    const remaining = Math.max(0, lines.length - BULK_PREVIEW_LINE_LIMIT);
-    const suffix = remaining > 0
-      ? `\n${tFallback(t, 'quickAdd.bulkMoreLines', '+{{count}} more').replace('{{count}}', String(remaining))}`
-      : '';
-    return `${preview}${suffix}`;
-  };
-
   const showCaptureFailure = () => {
     if (!screenMountedRef.current) return;
     setCaptureError({
@@ -539,18 +365,15 @@ export default function CaptureScreen() {
 
   const buildCaptureRequestFromInput = async (
     inputValue: string,
-    currentProjects = projects,
-  ): Promise<{ input: CaptureAssemblyInput; options: CaptureTransactionOptions } | null> => {
+    currentProjects: readonly Project[] = projects,
+  ): Promise<ReturnType<typeof buildCaptureModalRequest> | null> => {
     if (!inputValue.trim()) return null;
     // Invalid date commands are not checked here: prepareCaptureTask rejects
     // them with a typed reason, so the warning is raised once, where the write
     // actually fails.
-    const parsed = parseQuickAdd(inputValue, currentProjects, new Date(), areas, quickAddParseOptions);
-
-    // The deep-link `project` param is contextual (an id or a title). It is a
-    // best-effort fallback, not a typed +Project token: resolve a selectable
-    // match up front, and simply skip it when it names an archived project.
-    const surfaceProps: Partial<Task> = { ...initialProps };
+    const parsed = parseQuickAdd(inputValue, currentProjects as Project[], new Date(), areas, quickAddParseOptions);
+    // Shared files are saved only from the app's own attachments folder.
+    const surfaceProps = { ...initialProps };
     if (surfaceProps.attachments?.length) {
       const managed = await filterManagedAttachments(surfaceProps.attachments);
       if (managed.length > 0) {
@@ -559,52 +382,17 @@ export default function CaptureScreen() {
         delete surfaceProps.attachments;
       }
     }
-    let fallbackProjectTitleToCreate: string | undefined;
-    if (!parsed.props.projectId && !parsed.projectTitle && initialProjectTitle) {
-      const ref = initialProjectTitle.toLowerCase();
-      const match = currentProjects.find((project) => (
-        project.id === initialProjectTitle || project.title.toLowerCase() === ref
-      ));
-      if (!match) {
-        fallbackProjectTitleToCreate = initialProjectTitle;
-      } else if (isSelectableProjectForTaskAssignment(match)) {
-        surfaceProps.projectId = match.id;
-      }
-    }
-
-    const input: CaptureAssemblyInput = {
-      parsed: fallbackProjectTitleToCreate
-        ? { ...parsed, projectTitle: fallbackProjectTitleToCreate }
-        : parsed,
-      rawInput: inputValue,
+    return buildCaptureModalRequest({
+      parsed,
+      text: inputValue,
       projects: currentProjects,
       initialProps: surfaceProps,
-      selectedAreaId: defaultNewTaskAreaId,
-      starNewTask: false,
-    };
-    const options: CaptureTransactionOptions = {
-      transformProps: (props) => {
-        const taskProps = { ...props };
-        const description = descriptionValue.trim();
-        const parsedDescription = typeof taskProps.description === 'string' ? taskProps.description.trim() : '';
-        if (description) {
-          taskProps.description = parsedDescription && parsedDescription !== description
-            ? `${description}\n${parsedDescription}`
-            : description;
-        }
-        if (copilotContext) {
-          taskProps.contexts = Array.from(new Set([...(taskProps.contexts ?? []), copilotContext]));
-        }
-        if (timeEstimatesEnabled && copilotEstimate && !taskProps.timeEstimate) {
-          taskProps.timeEstimate = copilotEstimate;
-        }
-        if (copilotTags.length) {
-          taskProps.tags = Array.from(new Set([...(taskProps.tags ?? []), ...copilotTags]));
-        }
-        return taskProps;
-      },
-    };
-    return { input, options };
+      projectParam: initialProjectTitle,
+      defaultAreaId: defaultNewTaskAreaId,
+      description: descriptionValue,
+      copilot: appliedCopilot,
+      timeEstimatesEnabled,
+    });
   };
 
   const createTaskFromInput = async (
@@ -661,79 +449,58 @@ export default function CaptureScreen() {
       logIosShareDiagnostic({ stage: 'transaction-returned', type: 'single', outcome: 'success', count: 1 });
     }
     if (!screenMountedRef.current) return false;
-    const createdTaskId = result.createdTaskId;
-    if (openAfterSave && createdTaskId) {
-      // Leave this route, don't push over it: the capture screen must not
-      // stay on the stack holding the saved text, or backing out of the
-      // editor reopens it pre-filled (#1029).
-      const returnToProjectId = getProjectQuickCaptureReturnToProjectId(returnTo);
-      allowCaptureRemovalRef.current = true;
-      if (returnToProjectId && result.props.projectId === returnToProjectId) {
-        // Opened from this project's own + button, so the project screen is
-        // what capture closes back to. Navigating to it would stack a
-        // duplicate of it (#938 trap — an extra back tap through an
-        // identical page); stash the editor request for the screen's focus
-        // effect and close exactly like a plain save.
-        stashPendingCaptureTaskOpen({ taskId: createdTaskId, projectId: returnToProjectId, taskTab: 'task' });
-        closeCapture();
-      } else {
-        openTaskScreen(createdTaskId, result.props.projectId, 'task', { replace: true });
-      }
-      return false;
+    const after = resolveCaptureModalAfterSave({
+      openAfterSave,
+      taskId: result.createdTaskId,
+      projectId: result.props.projectId,
+      returnTo,
+      origin,
+    });
+    if (after.kind === 'close') return true;
+    // Leave this route, don't push over it: the capture screen must not
+    // stay on the stack holding the saved text, or backing out of the
+    // editor reopens it pre-filled (#1029).
+    allowCaptureRemovalRef.current = true;
+    if (after.kind === 'openInProject') {
+      // Opened from this project's own + button, so the project screen is
+      // what capture closes back to. Navigating to it would stack a
+      // duplicate of it (#938 trap — an extra back tap through an
+      // identical page); stash the editor request for the screen's focus
+      // effect and close exactly like a plain save.
+      stashPendingCaptureTaskOpen({ taskId: after.taskId, projectId: after.projectId, taskTab: 'task' });
+      closeCapture();
+    } else {
+      openTaskScreen(after.taskId, after.projectId, 'task', { replace: true });
     }
-    return true;
+    return false;
   };
 
   const createBulkTasks = async (lines: string[]) => {
     let thrownOutcome: 'prepare-failed' | 'transaction-threw' = 'prepare-failed';
     try {
-      const taskInputs: Array<{ title: string; initialProps: Partial<Task> }> = [];
-      let currentProjects = projects;
-      for (const line of lines) {
-        const request = await buildCaptureRequestFromInput(line, currentProjects);
-        if (!request) {
-          if (launchedFromShare) {
-            logIosShareDiagnostic({ stage: 'submit-rejected', type: 'bulk', outcome: 'validation-rejected' });
-          }
-          showCaptureFailure();
-          return;
-        }
-        const prepared = await prepareCaptureTask(request.input, { addProject }, request.options);
-        if (!prepared.success) {
-          if (launchedFromShare) {
-            logIosShareDiagnostic({
-              stage: 'submit-rejected',
-              type: 'bulk',
-              outcome: prepared.reason === 'invalid-date-command' ? 'validation-rejected' : 'prepare-failed',
-            });
-          }
-          if (screenMountedRef.current && prepared.reason === 'invalid-date-command') {
-            showInvalidDateCommandToast(showToast, t, prepared.invalidDateCommands);
-          } else {
-            showCaptureFailure();
-          }
-          return;
-        }
-        taskInputs.push({ title: prepared.title, initialProps: prepared.props });
-        if (prepared.createdProject) currentProjects = [...currentProjects, prepared.createdProject];
-      }
-      // Shared files belong to one task, not one copy per line: the attachment
-      // records share ids, so duplicating them across tasks would alias files.
-      taskInputs.forEach((taskInput, index) => {
-        if (index > 0) delete taskInput.initialProps.attachments;
+      const outcome = await saveCaptureModalLines({
+        lines,
+        projects,
+        buildRequest: buildCaptureRequestFromInput,
+        actions: { addProject, addTasks },
+        onWrite: () => { thrownOutcome = 'transaction-threw'; },
       });
-      thrownOutcome = 'transaction-threw';
-      const result = await addTasks(taskInputs);
-      if (result && typeof result === 'object' && result.success === false) {
+      if (outcome.kind === 'refused') {
         if (launchedFromShare) {
-          logIosShareDiagnostic({ stage: 'submit-rejected', type: 'bulk', outcome: 'transaction-rejected' });
+          logIosShareDiagnostic({ stage: 'submit-rejected', type: 'bulk', outcome: 'validation-rejected' });
         }
-        if (!screenMountedRef.current) return;
+        if (screenMountedRef.current) showInvalidDateCommandToast(showToast, t, outcome.invalidDateCommands);
+        return;
+      }
+      if (outcome.kind === 'failed') {
+        if (launchedFromShare) {
+          logIosShareDiagnostic({ stage: 'submit-rejected', type: 'bulk', outcome: outcome.stage });
+        }
         showCaptureFailure();
         return;
       }
       if (launchedFromShare) {
-        logIosShareDiagnostic({ stage: 'transaction-returned', type: 'bulk', outcome: 'success', count: taskInputs.length });
+        logIosShareDiagnostic({ stage: 'transaction-returned', type: 'bulk', outcome: 'success', count: outcome.count });
       }
       if (!screenMountedRef.current) return;
       allowCaptureRemovalRef.current = true;
@@ -782,6 +549,8 @@ export default function CaptureScreen() {
     });
     return () => subscription.remove();
   }, [launchedFromShare, pendingBulkLines]);
+
+  const bulkConfirm = pendingBulkLines ? getCaptureModalBulkConfirm(pendingBulkLines, t) : null;
 
   const cancelBulkCapture = () => {
     if (launchedFromShare) logIosShareDiagnostic({ stage: 'cancel', type: 'bulk' });
@@ -895,15 +664,12 @@ export default function CaptureScreen() {
               </Text>
             </View>
           )}
-          {hasAppliedCopilot && (
+          {appliedCopilotText !== null && (
             <View style={[styles.copilotPill, { borderColor: tc.border, backgroundColor: tc.inputBg }]}>
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', columnGap: 4 }}>
                 <Check size={13} color={tc.text} style={{ marginTop: 1 }} />
                 <Text style={[styles.copilotText, { color: tc.text, flexShrink: 1 }]}>
-                  {t('copilot.applied')}{' '}
-                  {copilotContext ? `${copilotContext} ` : ''}
-                  {timeEstimatesEnabled && copilotEstimate ? `${copilotEstimate}` : ''}
-                  {copilotTags.length ? copilotTags.join(' ') : ''}
+                  {appliedCopilotText}
                 </Text>
               </View>
             </View>
@@ -949,7 +715,7 @@ export default function CaptureScreen() {
           </View>
         </View>
       </ScrollView>
-      {pendingBulkLines ? (
+      {pendingBulkLines && bulkConfirm ? (
         <View
           style={styles.bulkConfirmOverlay}
           accessibilityViewIsModal
@@ -964,10 +730,10 @@ export default function CaptureScreen() {
           />
           <View style={[styles.bulkConfirmCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
             <Text style={[styles.bulkConfirmTitle, { color: tc.text }]} accessibilityRole="header">
-              {formatBulkConfirmTitle(pendingBulkLines.length)}
+              {bulkConfirm.title}
             </Text>
             <Text style={[styles.bulkConfirmMessage, { color: tc.secondaryText }]}>
-              {formatBulkConfirmMessage(pendingBulkLines)}
+              {bulkConfirm.message}
             </Text>
             <View style={styles.bulkConfirmActions}>
               <TouchableOpacity
@@ -977,7 +743,7 @@ export default function CaptureScreen() {
                 accessibilityRole="button"
               >
                 <Text style={[styles.bulkConfirmButtonText, { color: tc.secondaryText }]}>
-                  {t('common.cancel')}
+                  {bulkConfirm.cancelLabel}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -996,7 +762,7 @@ export default function CaptureScreen() {
                 accessibilityRole="button"
               >
                 <Text style={[styles.bulkConfirmButtonText, { color: tc.tint }]}>
-                  {tFallback(t, 'quickAdd.bulkConfirmCreate', 'Create tasks')}
+                  {bulkConfirm.confirmLabel}
                 </Text>
               </TouchableOpacity>
             </View>

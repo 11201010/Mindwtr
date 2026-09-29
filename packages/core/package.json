@@ -55,7 +55,10 @@
     "./mobile-sync-configuration-transaction": "./src/mobile-sync-configuration-transaction.ts",
     "./sync-settings-model": "./src/sync-settings-model.ts",
     "./sync-settings-transport": "./src/sync-settings-transport.ts",
-    "./sync-encryption-card": "./src/sync-encryption-card.ts"
+    "./sync-encryption-card": "./src/sync-encryption-card.ts",
+    "./mobile-reminder-alarms": "./src/mobile-reminder-alarms.ts",
+    "./mobile-notification-open": "./src/mobile-notification-open.ts",
+    "./capture-modal-model": "./src/capture-modal-model.ts"
   },
   "sideEffects": false,
   "type": "module",

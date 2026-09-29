@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import type { AIProviderConfig, AIProviderId, AppData, Language } from '@mindwtr/core';
-import { buildAIConfig as buildCoreAIConfig, buildCopilotConfig as buildCoreCopilotConfig, getAIKeyStorageKey, isSandboxMode, loadAIKeyFromStorage, saveAIKeyToStorage } from '@mindwtr/core';
+import { buildAIConfig as buildCoreAIConfig, buildCopilotConfig as buildCoreCopilotConfig, getAIKeyStorageKey, isAIKeyRequired as isCoreAIKeyRequired, isSandboxMode, loadAIKeyFromStorage, saveAIKeyToStorage } from '@mindwtr/core';
 import { logInfo } from './app-log';
 
 import {
@@ -72,10 +72,9 @@ export async function saveAIKey(provider: AIProviderId, value: string): Promise<
     }
 }
 
+/** The rule is core's (the native host asks the AI by it too). */
 export function isAIKeyRequired(settings: AppData['settings'] | undefined): boolean {
-    if (isSandboxMode()) return false;
-    const config = buildCoreAIConfig(settings ?? {}, '');
-    return !(config.provider === 'openai' && Boolean(config.endpoint));
+    return isCoreAIKeyRequired(settings);
 }
 
 const withRequestDiagnostics = (config: AIProviderConfig): AIProviderConfig => ({

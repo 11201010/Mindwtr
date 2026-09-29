@@ -15,7 +15,8 @@
  * - Select all is stateless, as on Archive: send `selectAll: { except }` (the rows
  *   deselected since) and the view returns `selectAll: { params, revision, except }`,
  *   the object an action takes. The action resolves it again and refuses with
- *   STALE_REVISION once the rows on screen changed.
+ *   STALE_REVISION once the rows on screen changed, unless no row it covers now
+ *   needs a write (then changed: false, as for the replay of one that landed).
  * - `params` are the list view's own inputs as last sent (the returned
  *   `filters.state`, no `filterEdit`, no paging). A row that a filter or a folded
  *   heading hides is not on screen: it leaves the selection and Select all skips it,
@@ -42,9 +43,12 @@
  *
  * Every write takes a request UUID and retries exactly (native-request-receipts.ts):
  * while its save is owed (SAVE_FAILED) a retry only saves. Each write is
- * target-state, so a replay after a restart writes nothing. Undo is its own
- * command: a delete's toast carries `undo.action` ({ type: 'restoreTasks' }) to
- * send with a new request UUID.
+ * target-state (a replay whose target already holds writes nothing) and
+ * compare-and-set: explicit rows go with `taskRevisions` (the view's, for exactly
+ * the ids sent), and Select all's revision folds in each row's revision, so a
+ * replay after a restart refuses (STALE_REVISION) any row changed since. Undo is its
+ * own command: a delete's toast carries `undo.action` ({ type: 'restoreTasks' },
+ * with the trashed tasks' revisions) to send with a new request UUID.
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -64,10 +68,20 @@ import {
     isText,
     matchesPickerQuery,
     page,
-    paramsKey,
     type createMenuViewMethods,
 } from './native-host-contract-menu-views';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
+import {
+    createNativeRequestReceipts,
+    isRevisions,
+    refuseStaleTasks,
+    revisionsToken,
+    runStoreWrite,
+    settleWrite,
+    taskRevisionOf,
+    taskRevisionsOf,
+    type NativeRevisions,
+    type NativeUnsavedWrite,
+} from './native-request-receipts';
 import { updateRangeSelection } from './range-selection';
 import { compareProjectsByPickerOrder, getProjectChoiceState } from './project-utils';
 import { useTaskStore } from './store';
@@ -113,15 +127,16 @@ export type NativeBulkSelectAll = {
     revision: string;
     except?: string[];
 };
-type Target = { taskIds: string[]; selectAll?: undefined } | { selectAll: NativeBulkSelectAll; taskIds?: undefined };
+/** Explicit rows carry the view's `taskRevisions` for exactly those ids; Select all's revision covers its rows. */
+type Target = { taskIds: string[]; taskRevisions: NativeRevisions; selectAll?: undefined } | { selectAll: NativeBulkSelectAll; taskIds?: undefined };
 export type NativeBulkAction =
     | ({ type: 'moveTasks'; status: TaskStatus } & Target)
     | ({ type: 'editTaskTokens'; field: 'tags'; mode: BulkTaskTokenMode; values: string[] } & Target)
     /** Bulk Organize's Apply, on the Inbox. */
     | ({ type: 'organize'; draft: Partial<BulkOrganizeDraft> } & Target)
     | ({ type: 'trashTasks' } & Target)
-    /** A delete's Undo: the ids its toast carries. */
-    | { type: 'restoreTasks'; taskIds: string[] };
+    /** A delete's Undo: the ids and revisions its toast carries. */
+    | { type: 'restoreTasks'; taskIds: string[]; taskRevisions: NativeRevisions };
 
 /** An open picker's options: the organize dialog's project or area picker, or the remove-tag picker. */
 export type NativeBulkPicker = {
@@ -159,6 +174,8 @@ export type NativeBulkActionsView = {
     list: NativeBulkList;
     /** The explicit selection still on screen, in the order it was made; send it back as `taskIds`. Empty under Select all. */
     selectedIds: string[];
+    /** Each of `selectedIds`' revision: an action on them sends it as `taskRevisions`. */
+    taskRevisions: NativeRevisions;
     selectedCount: number;
     /** Range's anchor: the last row tapped. Send it back as `anchorId`. */
     anchorId: string | null;
@@ -177,8 +194,8 @@ export type NativeBulkActionsView = {
     /** Null when the list offers no Remove tag; open `picker: { kind: 'removeTag' }` for the selection's tags. */
     removeTag: ReturnType<typeof getTaskListRemoveTagPickerText> | null;
     deleteConfirmation: ListConfirmation;
-    /** Someday: the selection's ids, for getSomedayMoveDialog and moveSomedayTasksToSection. */
-    moveToSection: { taskIds: string[] } | null;
+    /** Someday: the selection's ids and revisions, for getSomedayMoveDialog and moveSomedayTasksToSection. */
+    moveToSection: { taskIds: string[]; taskRevisions: NativeRevisions } | null;
     /** Only when `organize` is sent (the dialog is open). */
     organize: NativeBulkOrganizeView | null;
     /** Only when `picker` is sent. */
@@ -418,10 +435,21 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
         }
     };
     const selectableIds = (rows: Row[]) => rows.filter((row) => !row.readOnly).map((row) => row.id);
-    const selectAllRevision = (ids: string[]) => `${ids.length}:${paramsKey(ids)}`;
+    // Each row's revision is in it: a change to any selected row, on screen or not, makes Select all stale.
+    const selectAllRevision = (ids: string[]) => {
+        const { _tasksById } = useTaskStore.getState();
+        return revisionsToken(ids.map((id) => {
+            const task = _tasksById.get(id);
+            return `${id}@${task ? taskRevisionOf(task) : ''}`;
+        }));
+    };
 
-    /** The rows an action takes: its `taskIds`, or its Select all resolved now. */
-    const resolveTarget = (list: NativeBulkList, action: Record<string, unknown>): string[] | NativeHostResult<never> => {
+    /**
+     * The rows an action takes: its `taskIds`, or its Select all resolved now. `current` is
+     * false once Select all's revision no longer holds: the action is STALE_REVISION unless
+     * no row it covers now needs a write (a replay of one that landed: its rows changed).
+     */
+    const resolveTarget = (list: NativeBulkList, action: Record<string, unknown>): { taskIds: string[]; current: boolean } | NativeHostResult<never> => {
         if (action.taskIds !== undefined && action.selectAll !== undefined) return fail('INVALID_INPUT', 'Send taskIds or selectAll, not both');
         if (action.selectAll === undefined) {
             if (!isIdList(action.taskIds)) return fail('INVALID_INPUT', 'Task IDs or Select all are required');
@@ -429,7 +457,7 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                 const task = liveTask(id);
                 return !task || readOnly(task);
             });
-            return invalid ? fail('INVALID_INPUT', 'Every task must exist, not be in Trash, and be editable') : action.taskIds;
+            return invalid ? fail('INVALID_INPUT', 'Every task must exist, not be in Trash, and be editable') : { taskIds: action.taskIds, current: true };
         }
         const selectAll = action.selectAll;
         if (!isObjectRecord(selectAll) || typeof selectAll.revision !== 'string' || (selectAll.except !== undefined && !isIdList(selectAll.except, true))) {
@@ -438,10 +466,10 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
         const read = listRows(list, selectAll.params);
         if (!read.ok) return read;
         const ids = selectableIds(read.value.rows);
-        if (selectAllRevision(ids) !== selectAll.revision) return fail('STALE_REVISION', 'The list changed; select all again');
+        const current = selectAllRevision(ids) === selectAll.revision;
         const except = new Set(selectAll.except as string[] | undefined);
         const selected = ids.filter((id) => !except.has(id));
-        return selected.length > 0 ? selected : fail('INVALID_INPUT', 'Select all selects no task');
+        return current && selected.length === 0 ? fail('INVALID_INPUT', 'Select all selects no task') : { taskIds: selected, current };
     };
 
     const toToast = (write: TaskListBulkWrite, t: (key: string) => string): NativeListToast<NativeBulkAction> | null => {
@@ -451,11 +479,21 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
             tone: toast.tone,
             title: toast.title,
             message: toast.message,
-            undo: toast.undo ? { label: toast.undo.label, action: { type: 'restoreTasks', taskIds: toast.undo.taskIds } } : null,
+            // Read after the delete landed: the Undo restores the tasks as they are now.
+            undo: toast.undo ? { label: toast.undo.label, action: { type: 'restoreTasks', taskIds: toast.undo.taskIds, taskRevisions: taskRevisionsOf(toast.undo.taskIds) } } : null,
         };
     };
     const unchanged = (): ActionOutcome => ({ ok: true, value: { changed: false, toast: null } });
-    const perform = async (write: TaskListBulkWrite, t: (key: string) => string): Promise<ActionOutcome> => {
+    /**
+     * The write, compare-and-set against `revisions` (none under Select all: its revision covered
+     * them) on `ids`: the rows it changes, or those of them not at the target yet.
+     */
+    const perform = async (
+        write: TaskListBulkWrite, t: (key: string) => string, revisions: NativeRevisions | undefined,
+        ids = write.kind === 'update' ? write.updates.map(({ id }) => id) : write.taskIds,
+    ): Promise<ActionOutcome> => {
+        const stale = revisions ? refuseStaleTasks(ids, revisions) : null;
+        if (stale) return stale;
         const written = await runStoreWrite(() => runTaskListBulkWrite(useTaskStore.getState(), write));
         return settleWrite(written, { changed: true, toast: toToast(write, t) });
     };
@@ -572,6 +610,7 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                     revision,
                     list: input.list,
                     selectedIds: input.selectAll ? [] : selectedIds,
+                    taskRevisions: taskRevisionsOf(input.selectAll ? [] : selectedIds),
                     selectedCount: selection.length,
                     anchorId,
                     selectAll: input.selectAll
@@ -587,7 +626,7 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                     addTag: getTaskListAddTagDialogText(t),
                     removeTag: screen.removeTags ? getTaskListRemoveTagPickerText(t) : null,
                     deleteConfirmation: getBulkTrashConfirmation(t),
-                    moveToSection: screen.moveToSection ? { taskIds: selection } : null,
+                    moveToSection: screen.moveToSection ? { taskIds: selection, taskRevisions: taskRevisionsOf(selection) } : null,
                     organize,
                     picker,
                 },
@@ -675,6 +714,11 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                 const screen = TASK_LIST_BULK_SCREENS[list];
                 const t = deps.t();
                 const state = useTaskStore.getState();
+                // Explicit rows come with the revision the view showed for each, and for nothing else.
+                const revisions = action.selectAll === undefined ? action.taskRevisions : undefined;
+                if (action.selectAll === undefined && (!isIdList(action.taskIds) || !isRevisions(revisions, action.taskIds))) {
+                    return fail('INVALID_INPUT', 'Task IDs and the revision the view showed for each, or Select all, are required');
+                }
                 if (action.type === 'restoreTasks') {
                     if (!isIdList(action.taskIds) || action.taskIds.some((id) => {
                         const task = state._tasksById.get(id);
@@ -684,7 +728,7 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                     }
                     // Target state: the tasks already back stay as they are.
                     const trashed = action.taskIds.filter((id) => state._tasksById.get(id)?.deletedAt);
-                    return trashed.length > 0 ? perform({ kind: 'restore', taskIds: trashed }, t) : unchanged();
+                    return trashed.length > 0 ? perform({ kind: 'restore', taskIds: trashed }, t, revisions) : unchanged();
                 }
                 if (action.type === 'trashTasks' && isIdList(action.taskIds) && action.selectAll === undefined
                     && action.taskIds.every((id) => {
@@ -694,13 +738,23 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                     return unchanged();
                 }
                 const target = resolveTarget(list, action);
-                if (!Array.isArray(target)) return target;
-                const taskIds = target;
+                if ('ok' in target) return target;
+                const { taskIds } = target;
+                // Target state first: rows that already hold it need no write, and none left is
+                // changed: false. Then compare-and-set: a stale Select all refuses the rest.
+                const run = (write: TaskListBulkWrite | null, casIds?: string[]): Promise<ActionOutcome> | ActionOutcome => {
+                    if (!write) return unchanged();
+                    return target.current ? perform(write, t, revisions, casIds) : fail('STALE_REVISION', 'The list changed; select all again');
+                };
                 switch (action.type) {
                     case 'moveTasks': {
                         if (!getBulkMoveStatusOptions(screen.status).includes(action.status)) return fail('INVALID_INPUT', 'This list does not offer that status');
-                        if (taskIds.every((id) => state._tasksById.get(id)?.status === action.status)) return unchanged();
-                        return perform({ kind: 'move', taskIds, status: action.status }, t);
+                        // Mobile moves every selected row; only the rows not there yet are compared.
+                        const move: TaskListBulkWrite = { kind: 'move', taskIds, status: action.status };
+                        const moving = taskIds.filter((id) => state._tasksById.get(id)?.status !== action.status);
+                        // Every row there already: nothing to write, and the toast mobile shows for the move.
+                        if (moving.length === 0) return { ok: true, value: { changed: false, toast: taskIds.length > 0 ? toToast(move, t) : null } };
+                        return run(move, moving);
                     }
                     case 'editTaskTokens': {
                         if (action.field !== 'tags' || (action.mode !== 'add' && action.mode !== 'remove')
@@ -709,18 +763,17 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                             || !action.values.every((value) => isText(value) && value.trim().length > 0)) {
                             return fail('INVALID_INPUT', 'Tags to add, or tags to remove where the list offers it, are required');
                         }
-                        const write = planBulkTagEdit(taskIds, state._tasksById, action.mode, action.values);
-                        return write ? perform(write, t) : unchanged();
+                        return run(planBulkTagEdit(taskIds, state._tasksById, action.mode, action.values));
                     }
                     case 'organize': {
                         if (!screen.organize) return fail('INVALID_INPUT', 'This list does not offer Bulk organize');
                         const apply = readBulkOrganizeApply(action.draft);
                         if (!apply.ok) return apply;
                         const write = planBulkOrganize(taskIds, state._tasksById, apply.value);
-                        return write && write.kind === 'update' && !hasLanded(write.updates) ? perform(write, t) : unchanged();
+                        return run(write && write.kind === 'update' && !hasLanded(write.updates) ? write : null);
                     }
                     case 'trashTasks':
-                        return perform({ kind: 'trash', taskIds }, t);
+                        return run(taskIds.length > 0 ? { kind: 'trash', taskIds } : null);
                     default:
                         return fail('INVALID_INPUT', 'This list does not offer that action');
                 }

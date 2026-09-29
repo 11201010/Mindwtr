@@ -145,6 +145,13 @@ export async function seedQuickCaptureStore(
     await flushPendingSave();
     if (useTaskStore.getState()._allTasks.length !== data.tasks.length) throw new Error('Store seed did not load');
     const log = (name: string, args: unknown[]) => { recorder.log.push([name, ...encode(args) as unknown[]]); };
+    // The contract names a picker's new project or area by its request UUID (an `id` prop); React Native
+    // lets the store draw one, so the log leaves that id out, as the harness records the call.
+    const withoutId = <T extends object>(props: T | undefined) => {
+        if (!props || !('id' in props)) return props;
+        const { id: _id, ...rest } = props as T & { id: unknown };
+        return Object.keys(rest).length > 0 ? rest : undefined;
+    };
     useTaskStore.setState({
         addTask: async (title, props, options) => {
             log('addTask', [title, props]);
@@ -159,13 +166,13 @@ export async function seedQuickCaptureStore(
             return result;
         },
         addProject: async (title, color, props) => {
-            log('addProject', [title, color, props]);
+            log('addProject', [title, color, withoutId(props)]);
             const created = await real.addProject(title, color, props);
             if (created) recorder.createdIds.set(created.id, `<created-project:${title}>`);
             return created;
         },
         addArea: async (name, props) => {
-            log('addArea', [name, props]);
+            log('addArea', [name, withoutId(props)]);
             const created = await real.addArea(name, props);
             if (created) recorder.createdIds.set(created.id, `<created-area:${name}>`);
             return created;

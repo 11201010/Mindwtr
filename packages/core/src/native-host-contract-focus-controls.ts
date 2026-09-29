@@ -26,7 +26,9 @@
  * (native-request-receipts.ts). Each write is target-state, so a replay after a
  * restart writes nothing: a saved filter is created under its request UUID, a
  * deleted one is already marked deleted, a removed criterion is already gone,
- * the grouping or order is already stored.
+ * the grouping or order is already stored. A reorder is also compare-and-set on
+ * the revisions the reorder rows showed: a replay after a later change to any
+ * starred task is refused (STALE_REVISION).
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -58,8 +60,18 @@ import { formatTimeEstimateLabel } from './calendar-scheduling';
 import type { ListFilterEdit, ListFilterState } from './list-filter-state';
 import { NATIVE_HOST_CONTRACT_VERSION, NATIVE_HOST_MAX_WINDOW, type NativeHostResult } from './native-host-contract';
 import { fail, firstWindow, isFilterEdit, isObjectRecord, isText, matchesPickerQuery, readFilterState, type NativeWindow } from './native-host-contract-menu-views';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
+import {
+    createNativeRequestReceipts,
+    isRevisions,
+    refuseStaleTasks,
+    runStoreWrite,
+    settleWrite,
+    taskRevisionOf,
+    type NativeRevisions,
+    type NativeUnsavedWrite,
+} from './native-request-receipts';
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
+
 import { isSavedFilterSortField } from './saved-filters';
 import { useTaskStore } from './store';
 import { FOCUS_SORT_OPTIONS } from './task-list-sort-options';
@@ -122,6 +134,8 @@ type Confirm = { title: string; cancelLabel: string; confirmLabel: string };
 
 export type NativeFocusReorderRow = {
     id: string;
+    /** The task's revision: reorderFocus sends each row's as `taskRevisions`. */
+    taskRevision: string;
     title: string;
     secondaryLabel: string;
     /** The row's spoken label. */
@@ -390,6 +404,7 @@ export function buildNativeFocusControls(model: FocusControlsModel, ctx: { t: Tr
             moveDownLabel: tf('projects.moveDown', 'Move down'),
             rows: firstWindow(focused.map((task, index) => ({
                 id: task.id,
+                taskRevision: taskRevisionOf(task),
                 title: task.title,
                 secondaryLabel: getFocusReorderSecondaryLabel(task, model.projectById, ctx.formatDate),
                 positionLabel: getFocusReorderPositionLabel(t, task.title, index, focused.length),
@@ -682,12 +697,14 @@ export function createFocusControlMethods(deps: FocusControlDeps) {
         /**
          * Put Today's Focus in this order: every starred task Focus shows, once. Allowed
          * only while `controls.reorder` is (default sort, no filter), so hidden stars are
-         * never renumbered. Writes only the tasks whose position changes.
+         * never renumbered. Writes only the tasks whose position changes. `taskRevisions`
+         * holds each row's `taskRevision`: a task changed since refuses the order (STALE_REVISION).
          */
-        reorderFocus(input: { requestId: string; controls?: NativeFocusControlsInput; ids: string[] }) {
+        reorderFocus(input: { requestId: string; controls?: NativeFocusControlsInput; ids: string[]; taskRevisions: NativeRevisions }) {
             return command(
                 input,
-                (value) => (Array.isArray(value.ids) && value.ids.length <= NATIVE_HOST_MAX_WINDOW && value.ids.every(isId) ? ['reorder', value.ids] : null),
+                (value) => (Array.isArray(value.ids) && value.ids.length <= NATIVE_HOST_MAX_WINDOW && value.ids.every(isId)
+                    && isRevisions(value.taskRevisions, value.ids) ? ['reorder', value.ids, value.taskRevisions] : null),
                 async (value, state, model) => {
                     const ids = value.ids as string[];
                     const focused = model.lists.focusedTasks;
@@ -698,6 +715,8 @@ export function createFocusControlMethods(deps: FocusControlDeps) {
                     const byId = new Map(focused.map((task) => [task.id, task]));
                     // Target state: the same order again writes nothing.
                     if (ids.every((id, index) => byId.get(id)!.focusOrder === index)) return unchanged(state);
+                    const stale = refuseStaleTasks(ids, value.taskRevisions as NativeRevisions);
+                    if (stale) return stale;
                     const written = await runStoreWrite(() => useTaskStore.getState().reorderFocusedTasks(ids));
                     return settleWrite(written, { controls: state, changed: true });
                 },

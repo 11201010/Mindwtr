@@ -7,11 +7,13 @@
  *
  * Reads are windowed by NATIVE_HOST_MAX_WINDOW under one revision; nested lists
  * page through getWeeklyReviewList. Writes go through runReviewAction with a
- * request UUID: while a save is owed, a retry only saves (native-request-receipts.ts);
- * every action is target-state, so a replay after a restart writes nothing. Mark
- * reviewed and Organize's Apply are also compare-and-set on the revisions of the
- * tasks they change (the view's `taskRevisions`, a row's action): a replay after a
- * restart never undoes a later change (STALE_REVISION). Success means the change is saved.
+ * request UUID: while a save is owed, a retry only saves (native-request-receipts.ts).
+ * Every action is target-state (a replay after a restart whose target holds writes
+ * nothing), and every write to existing tasks is also compare-and-set on the revisions
+ * the view showed (a row's `taskRevision`, the bulk bar's `taskRevisions`, a row's
+ * action, an Undo's): a replay after a restart never undoes a later change
+ * (STALE_REVISION). Project Add task names its task by the request UUID. Success
+ * means the change is saved.
  *
  * Review's selection opens the lists' Bulk organize dialog: send `organize` (the draft
  * the host keeps, with a control's `edit`) and `picker` with getReviewOverview, as with
@@ -50,7 +52,18 @@ import {
     type NativeBulkOrganizeView,
     type NativeBulkPicker,
 } from './native-host-contract-bulk-actions';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite, taskRevisionOf, type NativeUnsavedWrite } from './native-request-receipts';
+import {
+    createNativeRequestReceipts,
+    isRevision,
+    isRevisions,
+    refuseStaleTasks,
+    runStoreWrite,
+    settleWrite,
+    taskRevisionOf,
+    taskRevisionsOf,
+    type NativeRevisions,
+    type NativeUnsavedWrite,
+} from './native-request-receipts';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
 import { getTrashUndoLabel } from './trash-view-model';
 import {
@@ -136,14 +149,20 @@ export type NativeReviewCalendar =
     | { status: 'error'; message: string }
     | { status: 'ready'; events: ExternalCalendarEvent[] };
 
+/**
+ * A write to existing tasks carries the revision the view showed for each: a row's
+ * `row.taskRevision`, the bulk bar's `bulk.taskRevisions` (the selection's), or the
+ * Undo's own. A task changed since is not written (STALE_REVISION).
+ */
 export type NativeReviewAction =
-    | { type: 'setTaskStatus'; taskId: string; status: TaskStatus }
-    | { type: 'trashTask'; taskId: string }
-    | { type: 'restoreTasks'; taskIds: string[] }
-    | { type: 'moveTasks'; taskIds: string[]; status: TaskStatus }
-    | { type: 'trashTasks'; taskIds: string[] }
-    | { type: 'addTag'; taskIds: string[]; tag: string }
-    | { type: 'removeTags'; taskIds: string[]; tags: string[] }
+    | { type: 'setTaskStatus'; taskId: string; status: TaskStatus; taskRevision: string }
+    | { type: 'trashTask'; taskId: string; taskRevision: string }
+    /** A delete's Undo, as its toast carries it (the revisions the tasks have in Trash). */
+    | { type: 'restoreTasks'; taskIds: string[]; taskRevisions: NativeTaskRevisions }
+    | { type: 'moveTasks'; taskIds: string[]; status: TaskStatus; taskRevisions: NativeTaskRevisions }
+    | { type: 'trashTasks'; taskIds: string[]; taskRevisions: NativeTaskRevisions }
+    | { type: 'addTag'; taskIds: string[]; tag: string; taskRevisions: NativeTaskRevisions }
+    | { type: 'removeTags'; taskIds: string[]; tags: string[]; taskRevisions: NativeTaskRevisions }
     /**
      * Organize's Apply: the draft getReviewOverview returned (`bulk.organize.draft`), as the
      * lists' Apply sends it, or a built input. `taskRevisions` is the view's `bulk.taskRevisions`:
@@ -165,13 +184,17 @@ export type NativeReviewAction =
     | { type: 'markTaskReviewed'; taskId: string; advance: boolean; taskRevision: string }
     /** The Weekly Review's project Add task (quick-add grammar). The requestId becomes the task id. */
     | { type: 'addProjectTask'; projectId: string; title: string }
-    /** The Weekly Review's AI suggestions the user left selected. */
-    | { type: 'applySuggestions'; suggestions: ReviewSuggestion[] }
+    /**
+     * The Weekly Review's AI suggestions the user left selected. `taskRevisions` holds the
+     * revision of each actionable suggestion's task (someday or archive), by the suggestion's
+     * id, as the stale step's task rows show it.
+     */
+    | { type: 'applySuggestions'; suggestions: ReviewSuggestion[]; taskRevisions: NativeTaskRevisions }
     /** The Daily Review's Follow up today. Target state: a task already due for review is not written. */
-    | { type: 'followUpToday'; taskId: string };
+    | { type: 'followUpToday'; taskId: string; taskRevision: string };
 
 /** Each target task's revision as the view showed it, by task ID. */
-export type NativeTaskRevisions = Record<string, string>;
+export type NativeTaskRevisions = NativeRevisions;
 
 export type NativeReviewActionResult = {
     /** False when the action had nothing to write. */
@@ -471,23 +494,23 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
     type Outcome = NativeHostResult<NativeReviewActionResult> | NativeUnsavedWrite<NativeReviewActionResult>;
     /** Nothing to write: the request's target state already holds (a replay after a restart lands here). */
     const unchanged = (createdId: string | null = null): Outcome => ({ ok: true, value: { changed: false, toast: null, createdId } });
-    /** Write, then answer: SAVE_FAILED carries the answer when the write landed and only its save failed. */
+    /**
+     * Write, then answer: SAVE_FAILED carries the answer when the write landed and only its save failed.
+     * A toast built by a function is built after the write, so its Undo carries the revisions it left.
+     */
     const written = async (
         call: Parameters<typeof runStoreWrite>[0],
-        toast: NativeReviewActionResult['toast'] = null,
+        toast: NativeReviewActionResult['toast'] | (() => NativeReviewActionResult['toast']) = null,
         createdId: string | null = null,
-    ): Promise<Outcome> => settleWrite(await runStoreWrite(call), { changed: true, toast, createdId });
-    /** The target revisions a command carries: one for each of its tasks, as the view showed them. */
-    const isRevisions = (value: unknown, taskIds: readonly string[]): value is NativeTaskRevisions => (
-        isObjectRecord(value) && Object.keys(value).length === taskIds.length
-        && taskIds.every((id) => isText(value[id], 200) && (value[id] as string).length > 0)
-    );
-    /** A write about to change these tasks, refused when one changed since the view showed it. */
-    const stale = (ids: readonly string[], revisions: NativeTaskRevisions): Outcome | null => (
-        ids.some((id) => { const task = knownTask(id); return !task || taskRevisionOf(task) !== revisions[id]; })
-            ? fail('STALE_REVISION', 'A task changed since Review showed it; read Review again')
-            : null
-    );
+    ): Promise<Outcome> => {
+        const result = await runStoreWrite(call);
+        return settleWrite(result, { changed: true, toast: typeof toast === 'function' ? toast() : toast, createdId });
+    };
+    /** A delete's toast: its Undo restores the tasks at the revisions the delete left. */
+    const deletedToast = (taskIds: string[], toast: Omit<NonNullable<NativeReviewActionResult['toast']>, 'undo'>, label: string) => () => ({
+        ...toast,
+        undo: { label, action: { type: 'restoreTasks' as const, taskIds, taskRevisions: taskRevisionsOf(taskIds) } },
+    });
     /** Keeps only updates that change their task. */
     const changing = (updates: { id: string; updates: Partial<Task> }[]) => updates.filter(({ id, updates: patch }) => {
         const task = knownTask(id);
@@ -953,8 +976,9 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
     // ---- Actions ---------------------------------------------------------------
 
     /**
-     * One action, target-state: the receipts cover a retry while a save is owed; a
-     * replay after that (a restart, an eviction) finds its target state and writes nothing.
+     * One action. The receipts cover a retry while a save is owed; a replay after that (a
+     * restart, an eviction) finds its target state and writes nothing, or finds a task it
+     * would change at another revision than the view showed and is refused (STALE_REVISION).
      */
     const perform = async (requestId: string, action: NativeReviewAction): Promise<Outcome> => {
         const t = deps.t();
@@ -962,38 +986,45 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
         const tasksById = Object.fromEntries(store.tasks.map((task) => [task.id, task]));
         const everyLive = (ids: unknown): ids is string[] => isIdList(ids) && ids.every((id) => liveTask(id));
         const everyKnown = (ids: unknown): ids is string[] => isIdList(ids) && ids.every((id) => knownTask(id));
+        // Compare-and-set (refuseStaleTasks) goes right before each write, on the tasks it changes.
+        const refuseStaleTask = (id: string, revision: string) => refuseStaleTasks([id], { [id]: revision });
         switch (action.type) {
             case 'setTaskStatus': {
-                if (!TASK_STATUSES.includes(action.status)) return fail('INVALID_INPUT', 'A task status is required');
+                if (!TASK_STATUSES.includes(action.status) || !isRevision(action.taskRevision)) {
+                    return fail('INVALID_INPUT', 'A task status and the task revision the row showed are required');
+                }
                 const task = liveTask(action.taskId);
                 if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
                 if (task.status === action.status) return unchanged();
-                return written(() => store.updateTask(task.id, { status: action.status }));
+                return refuseStaleTask(task.id, action.taskRevision) ?? written(() => store.updateTask(task.id, { status: action.status }));
             }
             case 'trashTask': {
+                if (!isRevision(action.taskRevision)) return fail('INVALID_INPUT', 'The task revision the row showed is required');
                 const task = knownTask(action.taskId);
                 if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
                 if (task.deletedAt) return unchanged();
                 // The row's delete: moved to Trash at once, with Undo.
-                return written(() => store.deleteTask(task.id), {
-                    tone: 'info', title: null, message: tFallback(t, 'list.taskDeleted', 'Task deleted'),
-                    undo: { label: tFallback(t, 'common.undo', 'Undo'), action: { type: 'restoreTasks', taskIds: [task.id] } },
-                });
+                return refuseStaleTask(task.id, action.taskRevision) ?? written(() => store.deleteTask(task.id), deletedToast(
+                    [task.id], { tone: 'info', title: null, message: tFallback(t, 'list.taskDeleted', 'Task deleted') }, tFallback(t, 'common.undo', 'Undo'),
+                ));
             }
             case 'restoreTasks': {
-                if (!everyKnown(action.taskIds)) return fail('INVALID_INPUT', 'Every task must be live or in Trash');
+                if (!everyKnown(action.taskIds) || !isRevisions(action.taskRevisions, action.taskIds)) {
+                    return fail('INVALID_INPUT', 'Every task must be live or in Trash, with the revision the Undo carries for each');
+                }
                 const trashed = action.taskIds.filter((id) => knownTask(id)?.deletedAt);
                 if (trashed.length === 0) return unchanged();
-                return written(() => Promise.all(trashed.map((id) => store.restoreTask(id))));
+                // A replayed Undo never restores a task trashed again since.
+                return refuseStaleTasks(trashed, action.taskRevisions) ?? written(() => Promise.all(trashed.map((id) => store.restoreTask(id))));
             }
             case 'moveTasks': {
-                if (!REVIEW_BULK_STATUSES.includes(action.status) || !everyLive(action.taskIds)) {
-                    return fail('INVALID_INPUT', 'A bulk status and tasks that exist are required');
+                if (!REVIEW_BULK_STATUSES.includes(action.status) || !everyLive(action.taskIds) || !isRevisions(action.taskRevisions, action.taskIds)) {
+                    return fail('INVALID_INPUT', 'A bulk status and tasks that exist, with the revision the view showed for each, are required');
                 }
                 const moving = action.taskIds.filter((id) => liveTask(id)!.status !== action.status);
                 if (moving.length === 0) return unchanged();
                 // Mobile counts the selection.
-                return written(() => store.batchMoveTasks(moving, action.status), doneToast(action.taskIds.length, t));
+                return refuseStaleTasks(moving, action.taskRevisions) ?? written(() => store.batchMoveTasks(moving, action.status), doneToast(action.taskIds.length, t));
             }
             case 'markReviewedTasks': {
                 if (!everyLive(action.taskIds) || !isRevisions(action.taskRevisions, action.taskIds)) {
@@ -1003,18 +1034,17 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                 const due = action.taskIds.filter((id) => isTaskDueForReview(liveTask(id)!, now));
                 if (due.length === 0) return unchanged();
                 // Compare-and-set: a replay never clears a review date set after the view.
-                const refused = stale(due, action.taskRevisions);
-                if (refused) return refused;
-                return written(() => store.batchUpdateTasks(due.map((id) => ({ id, updates: { reviewAt: undefined } }))));
+                return refuseStaleTasks(due, action.taskRevisions)
+                    ?? written(() => store.batchUpdateTasks(due.map((id) => ({ id, updates: { reviewAt: undefined } }))));
             }
             case 'trashTasks': {
-                if (!everyKnown(action.taskIds)) return fail('INVALID_INPUT', 'Every task must be live or in Trash');
+                if (!everyKnown(action.taskIds) || !isRevisions(action.taskRevisions, action.taskIds)) {
+                    return fail('INVALID_INPUT', 'Every task must be live or in Trash, with the revision the view showed for each');
+                }
                 const live = action.taskIds.filter((id) => liveTask(id));
                 if (live.length === 0) return unchanged();
-                return written(() => store.batchDeleteTasks(live), {
-                    ...doneToast(live.length, t),
-                    undo: { label: getTrashUndoLabel(t), action: { type: 'restoreTasks', taskIds: live } },
-                });
+                return refuseStaleTasks(live, action.taskRevisions)
+                    ?? written(() => store.batchDeleteTasks(live), deletedToast(live, doneToast(live.length, t), getTrashUndoLabel(t)));
             }
             case 'addTag':
             case 'removeTags':
@@ -1027,10 +1057,10 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                     if (!apply.ok) return apply;
                     organize = apply.value;
                 }
-                if (!everyLive(action.taskIds)
+                if (!everyLive(action.taskIds) || !isRevisions(action.taskRevisions, action.taskIds)
                     || (action.type === 'addTag' && (!isText(action.tag) || !action.tag.trim()))
                     || (action.type === 'removeTags' && (!isTextList(action.tags) || action.tags.length === 0))
-                    || (action.type === 'organizeTasks' && (!isOrganizeInput(organize) || !isRevisions(action.taskRevisions, action.taskIds)))) {
+                    || (action.type === 'organizeTasks' && !isOrganizeInput(organize))) {
                     return fail('INVALID_INPUT', 'Tasks that exist and a valid tag, tags or organize choice (with the revision the view showed for each task) are required');
                 }
                 const updates = changing(action.type === 'organizeTasks'
@@ -1040,12 +1070,11 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                         : buildBulkTaskTokenUpdates(action.taskIds, tasksById, 'tags', action.tags, 'remove'));
                 if (updates.length === 0) return unchanged();
                 // Compare-and-set: a replay never undoes a change made to its tasks after the view.
-                const refused = action.type === 'organizeTasks' ? stale(updates.map((update) => update.id), action.taskRevisions) : null;
-                if (refused) return refused;
-                return written(() => store.batchUpdateTasks(updates), doneToast(updates.length, t));
+                return refuseStaleTasks(updates.map((update) => update.id), action.taskRevisions)
+                    ?? written(() => store.batchUpdateTasks(updates), doneToast(updates.length, t));
             }
             case 'markTaskReviewed': {
-                if (typeof action.advance !== 'boolean' || !isText(action.taskRevision, 200) || !action.taskRevision) {
+                if (typeof action.advance !== 'boolean' || !isRevision(action.taskRevision)) {
                     return fail('INVALID_INPUT', 'A task, advance true or false, and the task revision the row showed are required');
                 }
                 const task = liveTask(action.taskId);
@@ -1054,9 +1083,7 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                 // As mobile marks a row: only a task due for review. A replay after the write landed finds it not due.
                 if (!isTaskDueForReview(task, now)) return unchanged();
                 // Compare-and-set: a task changed since the row showed it (a review date set again) is not overwritten.
-                const refused = stale([task.id], { [task.id]: action.taskRevision });
-                if (refused) return refused;
-                return written(
+                return refuseStaleTask(task.id, action.taskRevision) ?? written(
                     () => store.updateTask(task.id, { reviewAt: action.advance ? getAdvancedReviewDate(task.reviewAt, now) : undefined }),
                     { tone: 'success', title: null, message: t('review.markReviewedDone'), undo: null },
                 );
@@ -1088,8 +1115,9 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                 }, null, id);
             }
             case 'applySuggestions': {
-                if (!Array.isArray(action.suggestions) || action.suggestions.length > NATIVE_HOST_MAX_WINDOW || !action.suggestions.every(isSuggestion)) {
-                    return fail('INVALID_INPUT', 'Suggestions with an id, action and reason are required');
+                if (!Array.isArray(action.suggestions) || action.suggestions.length > NATIVE_HOST_MAX_WINDOW || !action.suggestions.every(isSuggestion)
+                    || !isRevisions(action.taskRevisions, Array.from(new Set(action.suggestions.filter(isActionableReviewSuggestion).map((entry) => entry.id))))) {
+                    return fail('INVALID_INPUT', 'Suggestions with an id, action and reason, and the revision of each actionable suggestion\'s task, are required');
                 }
                 // Only suggestions for items the review offers, as mobile applies them; a task
                 // already where the suggestion puts it is not written again.
@@ -1101,14 +1129,15 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                 ));
                 const updates = buildReviewSuggestionUpdates(suggestions, new Set(suggestions.map((entry) => entry.id)), new Date());
                 if (updates.length === 0) return unchanged();
-                return written(() => store.batchUpdateTasks(updates));
+                return refuseStaleTasks(updates.map((update) => update.id), action.taskRevisions) ?? written(() => store.batchUpdateTasks(updates));
             }
             case 'followUpToday': {
+                if (!isRevision(action.taskRevision)) return fail('INVALID_INPUT', 'The task revision the row showed is required');
                 const task = liveTask(action.taskId);
                 if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
                 const plan = planDailyReviewFollowUp(task, getReviewDay(new Date()));
                 if (!plan) return unchanged();
-                return written(() => store.updateTask(task.id, plan));
+                return refuseStaleTask(task.id, action.taskRevision) ?? written(() => store.updateTask(task.id, plan));
             }
             default:
                 return fail('INVALID_INPUT', 'Review does not offer that action');

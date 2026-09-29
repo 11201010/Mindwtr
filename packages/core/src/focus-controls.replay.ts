@@ -459,6 +459,12 @@ export function createContractFocusDriver(host: Host, t: Translate) {
         return view;
     };
     const commandInput = () => ({ requestId: generateUUID(), controls: state });
+    /** A new order, with each row's revision as the reorder screen shows it. */
+    const reorderInput = (controls: NativeFocusView['controls'], ids: string[]) => ({
+        ...commandInput(),
+        ids,
+        taskRevisions: Object.fromEntries(controls.reorder!.rows.items.map((row) => [row.id, row.taskRevision])),
+    });
 
     const observe = () => {
         const view = read();
@@ -603,11 +609,11 @@ export function createContractFocusDriver(host: Host, t: Translate) {
             case 'reorderMove': {
                 const row = controls.reorder!.rows.items.find((entry) => entry.id === args[0])!;
                 const ids = (args[1] as number) < 0 ? row.moveUp : row.moveDown;
-                if (ids) unwrap(await host.reorderFocus({ ...commandInput(), ids }));
+                if (ids) unwrap(await host.reorderFocus(reorderInput(controls, ids)));
                 break;
             }
             case 'reorderDrag':
-                unwrap(await host.reorderFocus({ ...commandInput(), ids: args[0] as string[] }));
+                unwrap(await host.reorderFocus(reorderInput(controls, args[0] as string[])));
                 break;
             case 'reorderDone':
                 reorderMode = false;

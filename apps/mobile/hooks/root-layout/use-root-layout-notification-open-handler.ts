@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
-import { isTaskActionable, useTaskStore } from '@mindwtr/core';
+import { useTaskStore } from '@mindwtr/core';
+import {
+    getReminderCompletionBlocker,
+    REMINDER_COMPLETE_UPDATE,
+    resolveNotificationOpenRoute,
+} from '@mindwtr/core/mobile-notification-open';
 
 import { logInfo } from '@/lib/app-log';
 import { setNotificationOpenHandler } from '@/lib/notification-service';
@@ -22,18 +27,6 @@ type UseRootLayoutNotificationOpenHandlerParams = {
     pathname?: string | null;
     router: RouterLike;
 };
-
-function isReviewReminderKind(kind: string | undefined): boolean {
-    return kind === 'task-review' || kind === 'project-review';
-}
-
-function isWeeklyReviewOpen(kind: string | undefined, notificationId: string): boolean {
-    return kind === 'weekly-review' || notificationId === 'digest:weekly-review';
-}
-
-function isDailyReviewOpen(kind: string | undefined, notificationId: string): boolean {
-    return kind === 'daily-digest' || notificationId === 'digest:morning' || notificationId === 'digest:evening';
-}
 
 export function useRootLayoutNotificationOpenHandler({
     appReady,
@@ -62,70 +55,61 @@ export function useRootLayoutNotificationOpenHandler({
         context?: string;
         kind?: string;
     }) => {
-        const notificationId = typeof payload?.notificationId === 'string' ? payload.notificationId.trim() : undefined;
-        const openToken = notificationId || String(Date.now());
-        const actionIdentifier = typeof payload?.actionIdentifier === 'string' ? payload.actionIdentifier : undefined;
-        const taskId = typeof payload?.taskId === 'string' ? payload.taskId : undefined;
-        const projectId = typeof payload?.projectId === 'string' ? payload.projectId : undefined;
-        const context = typeof payload?.context === 'string' ? payload.context : undefined;
-        const kind = typeof payload?.kind === 'string' ? payload.kind : undefined;
-        const normalizedAction = String(actionIdentifier || '').trim().toLowerCase();
-        if (normalizedAction === 'dismiss' || normalizedAction === 'dismiss_action' || normalizedAction === 'snooze' || normalizedAction === 'snooze_action') {
-            return;
-        }
-        if ((normalizedAction === 'complete' || normalizedAction === 'complete_action') && taskId) {
-            const actionKey = `${openToken}:${taskId}:complete`;
-            if (handledCompleteActionsRef.current.has(actionKey)) {
-                logNotificationOutcome('Complete action ignored as duplicate', { taskId });
+        // Which screen or action a tap means is core's (mobile-notification-open.ts).
+        const route = resolveNotificationOpenRoute(payload, {
+            now: () => Date.now(),
+            nextTaskOpenSequence: () => {
+                taskOpenSequenceRef.current += 1;
+                return taskOpenSequenceRef.current;
+            },
+        });
+        switch (route.type) {
+            case 'none':
+                return;
+            case 'complete': {
+                const { taskId, actionKey } = route;
+                if (handledCompleteActionsRef.current.has(actionKey)) {
+                    logNotificationOutcome('Complete action ignored as duplicate', { taskId });
+                    return;
+                }
+                handledCompleteActionsRef.current.add(actionKey);
+
+                const state = useTaskStore.getState();
+                const task = state._tasksById?.get(taskId) ?? state.tasks?.find((item) => item.id === taskId);
+                const blocker = getReminderCompletionBlocker(task);
+                if (blocker) {
+                    logNotificationOutcome('Complete action dropped', { taskId, reason: blocker });
+                    return;
+                }
+                logNotificationOutcome('Complete action applied', { taskId });
+                state.updateTask(taskId, { ...REMINDER_COMPLETE_UPDATE }).catch(() => undefined);
                 return;
             }
-            handledCompleteActionsRef.current.add(actionKey);
-
-            const state = useTaskStore.getState();
-            const task = state._tasksById?.get(taskId) ?? state.tasks?.find((item) => item.id === taskId);
-            if (!task || task.deletedAt || !isTaskActionable(task)) {
-                logNotificationOutcome('Complete action dropped', {
-                    taskId,
-                    reason: !task ? 'task-not-found' : task.deletedAt ? 'task-deleted' : 'not-actionable',
+            case 'review':
+                router.push({
+                    pathname: '/review-tab',
+                    params: {
+                        openToken: route.openToken,
+                        ...(route.taskId ? { taskId: route.taskId } : {}),
+                        ...(route.projectId ? { projectId: route.projectId } : {}),
+                    },
                 });
                 return;
-            }
-            logNotificationOutcome('Complete action applied', { taskId });
-            state.updateTask(taskId, { status: 'done', isFocusedToday: false }).catch(() => undefined);
-            return;
-        }
-        if (isReviewReminderKind(kind)) {
-            router.push({
-                pathname: '/review-tab',
-                params: {
-                    openToken,
-                    ...(taskId ? { taskId } : {}),
-                    ...(projectId ? { projectId } : {}),
-                },
-            });
-            return;
-        }
-        if (taskId) {
-            taskOpenSequenceRef.current += 1;
-            const taskOpenToken = `${notificationId || 'notification'}:${Date.now()}:${taskOpenSequenceRef.current}`;
-            useTaskStore.getState().setHighlightTask(taskId);
-            router.push({ pathname: '/focus', params: { taskId, openToken: taskOpenToken, taskTab: 'view' } });
-            return;
-        }
-        if (projectId) {
-            router.push({ pathname: '/projects-screen', params: { projectId } });
-            return;
-        }
-        if (kind === 'context-automation' && context) {
-            router.push({ pathname: '/contexts', params: { token: context } });
-            return;
-        }
-        if (isDailyReviewOpen(kind, openToken)) {
-            router.push({ pathname: '/daily-review', params: { openToken } });
-            return;
-        }
-        if (isWeeklyReviewOpen(kind, openToken)) {
-            router.push({ pathname: '/weekly-review', params: { openToken } });
+            case 'task':
+                useTaskStore.getState().setHighlightTask(route.taskId);
+                router.push({ pathname: '/focus', params: { taskId: route.taskId, openToken: route.openToken, taskTab: 'view' } });
+                return;
+            case 'project':
+                router.push({ pathname: '/projects-screen', params: { projectId: route.projectId } });
+                return;
+            case 'contexts':
+                router.push({ pathname: '/contexts', params: { token: route.token } });
+                return;
+            case 'daily-review':
+                router.push({ pathname: '/daily-review', params: { openToken: route.openToken } });
+                return;
+            case 'weekly-review':
+                router.push({ pathname: '/weekly-review', params: { openToken: route.openToken } });
         }
     }, [router]);
 

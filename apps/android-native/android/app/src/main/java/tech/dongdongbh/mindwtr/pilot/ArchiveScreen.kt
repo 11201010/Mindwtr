@@ -145,8 +145,8 @@ private fun ArchivedTask(model: InboxViewModel, item: MenuItem, labels: JSONObje
     val trash = page?.view?.getJSONObject("confirmations")?.getJSONObject("trashTask")
     val struck = if (json.getBoolean("struck")) TextDecoration.LineThrough else null
     ArchiveSwipe(model, enabled = !selecting && idle, restore = labels.getString("restore"), delete = labels.getString("delete"),
-        onRestore = { archive(JSONObject().put("type", "moveToInbox").put("taskId", row.id)) },
-        onDelete = { trash?.let { confirm(it, JSONObject().put("type", "trashTask").put("taskId", row.id)) } }) { actions ->
+        onRestore = { archive(JSONObject().put("type", "moveToInbox").put("taskId", row.id).put("taskRevision", row.taskRevision)) },
+        onDelete = { trash?.let { confirm(it, JSONObject().put("type", "trashTask").put("taskId", row.id).put("taskRevision", row.taskRevision)) } }) { actions ->
         val shape = RoundedCornerShape(12.dp)
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).clip(shape).background(c.taskItemBg)
             .border(if (selecting && isSelected) 2.dp else 1.dp, if (selecting && isSelected) c.tint else c.border, shape)
@@ -176,8 +176,8 @@ private fun ArchivedTask(model: InboxViewModel, item: MenuItem, labels: JSONObje
                 Text(json.getString("dateLabel"), style = rnText(12, 400).copy(fontStyle = FontStyle.Italic), color = c.secondaryText,
                     modifier = if (picker == null) Modifier else Modifier.clearAndSetSemantics {
                         contentDescription = edit; role = Role.Button
-                        if (on) onClick { openCompletedAt(row.id, picker); true } else disabled()
-                    }.clickable(enabled = on) { openCompletedAt(row.id, picker) }.padding(vertical = 2.dp))
+                        if (on) onClick { openCompletedAt(row, picker); true } else disabled()
+                    }.clickable(enabled = on) { openCompletedAt(row, picker) }.padding(vertical = 2.dp))
             }
             Box(Modifier.padding(start = 12.dp).width(4.dp).fillMaxHeight().clip(RoundedCornerShape(2.dp)).background(theme.gray))
         }
@@ -189,10 +189,11 @@ private fun ArchivedTask(model: InboxViewModel, item: MenuItem, labels: JSONObje
 private fun ArchivedProject(model: InboxViewModel, json: JSONObject) = with(model.menu) {
     val c = LocalTheme.current.colors
     val id = json.getString("id")
+    val revision = json.optString("projectRevision")
     val labels = page?.view?.getJSONObject("labels") ?: return
     ArchiveSwipe(model, enabled = idle, restore = labels.getString("restore"), delete = labels.getString("delete"),
-        onRestore = { archive(JSONObject().put("type", "reactivateProject").put("projectId", id)) },
-        onDelete = { confirm(json.getJSONObject("trashConfirmation"), JSONObject().put("type", "trashProject").put("projectId", id)) }) { actions ->
+        onRestore = { archive(JSONObject().put("type", "reactivateProject").put("projectId", id).put("projectRevision", revision)) },
+        onDelete = { confirm(json.getJSONObject("trashConfirmation"), JSONObject().put("type", "trashProject").put("projectId", id).put("projectRevision", revision)) }) { actions ->
         val shape = RoundedCornerShape(12.dp)
         val title = json.getString("title")
         val struck = if (json.getBoolean("struck")) TextDecoration.LineThrough else null

@@ -195,7 +195,8 @@ export function useRootLayoutSyncEffects({
                     .then((permission) => {
                         if (!triggers.isRuntimeActive()) return;
                         if (!permission.granted) {
-                            stopMobileNotifications().catch(logAppError);
+                            // The same cleanup as a denied start: the Pomodoro alarm goes too.
+                            stopMobileNotifications({ permissionDenied: true }).catch(logAppError);
                             if (!notificationPermissionWarningShown.current) {
                                 notificationPermissionWarningShown.current = true;
                                 const uiCopy = syncUiCopyRef.current;

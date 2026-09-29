@@ -19,7 +19,7 @@ import { applyCapturedProject, resolveCaptureAreaQuery, resolveCaptureProjectQue
 import { safeParseDate, type DateFormatter } from './date';
 import type { TranslateFn } from './i18n';
 import { NATIVE_HOST_CONTRACT_VERSION, NATIVE_HOST_MAX_WINDOW, type NativeHostResult } from './native-host-contract';
-import { createNativeRequestReceipts } from './native-request-receipts';
+import { createNativeRequestReceipts, requestProjects, requestRowId, withRequestProject } from './native-request-receipts';
 import { buildQuickAddParseOptions, type QuickAddParseOptions } from './quick-add';
 import {
     applyQuickCaptureEdit,
@@ -317,18 +317,31 @@ const sameTokens = (left: readonly string[] | undefined, right: readonly string[
 );
 
 /**
+ * The id of a project a capture makes: derived from the request (a batch's first
+ * capture ID) and the project's name, so lines naming one project share it, as the
+ * store's name match does, and a retry finds it whichever lines are still missing.
+ */
+export const captureProjectId = (requestId: string, title: string) => requestRowId(requestId, `project:${title.trim().toLowerCase()}`);
+
+/** The addProject a capture hands to quick-capture-model: its projects take captureProjectId (requestProjects). */
+export const captureProjects = (requestId: string) => requestProjects((title) => captureProjectId(requestId, title));
+const projectGone = () => fail('STALE_REVISION', 'The project this capture created is gone');
+
+/**
  * Whether a stored task is what this plan writes: the check before a capture ID
  * reused after a restart is acknowledged. Title, project, area, contexts,
  * tags, status, priority, due date and the star must match; the store's own
- * change on a starred capture (Inbox to Next) counts as a match.
+ * change on a starred capture (Inbox to Next) counts as a match, and so does
+ * the project this request made (captureProjectId), renamed since.
  */
-const isTaskOfPlan = (task: Task, plan: CaptureTaskPlan): boolean => {
+export const isTaskOfPlan = (task: Task, plan: CaptureTaskPlan, requestId: string): boolean => {
     const { props } = plan;
     const project = task.projectId ? useTaskStore.getState()._allProjects.find((entry) => entry.id === task.projectId) : undefined;
     const projectMatches = props.projectId
         ? task.projectId === props.projectId
         : plan.projectToCreate
-            ? project?.title.trim().toLowerCase() === plan.projectToCreate.title.trim().toLowerCase()
+            ? task.projectId === captureProjectId(requestId, plan.projectToCreate.title)
+                || project?.title.trim().toLowerCase() === plan.projectToCreate.title.trim().toLowerCase()
             : !task.projectId;
     const statusMatches = task.status === props.status
         || (props.isFocusedToday === true && props.status === 'inbox' && task.status === 'next');
@@ -432,7 +445,8 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
     // The last recovery snapshot handed to the host, and the data it holds.
     let lastSnapshot: { fileName: string; changeAt: number } | null = null;
     // ponytail: every picker create's request ID for this process, so its retry finishes an owed
-    // save instead of reading as a plain select; a restart forgets them (the data is saved then).
+    // save instead of reading as a plain select; a restart forgets them (the data is saved then,
+    // and the project or area named by the request UUID answers the replay).
     const pickerCreates = new Set<string>();
     // Captures, batches and picker creates retry exactly through the shared helper; results
     // that write nothing (refusals, a picker search that selects) never enter it.
@@ -451,6 +465,25 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
             formatDate: deps.formatDate(),
             now,
         };
+    };
+    /**
+     * context(), with each project this request made (captureProjectId of a line's `+Project`)
+     * matched first under the name the line gives it: a replay files its task there, renamed
+     * since or not, never in a project given that name since. Null when one is deleted or archived.
+     */
+    const ownedContext = (requestId: string, texts: readonly string[], options: QuickCaptureOptions): QuickCaptureContext | null => {
+        const ctx = context();
+        let projects = ctx.projects;
+        for (const text of texts) {
+            // The line's `+Project` as it reads with no project to match.
+            const bare = planQuickCaptureTask({ text, options, projects: [] }, ctx);
+            const title = bare.success ? bare.projectToCreate?.title : undefined;
+            if (!title) continue;
+            const matched = withRequestProject(projects, captureProjectId(requestId, title), title);
+            if (!matched) return null;
+            projects = matched;
+        }
+        return { ...ctx, projects };
     };
     const contextChoices = () => getQuickCaptureContextChoices(useTaskStore.getState().tasks);
     let cachedContextHistory: { tasks: Task[]; choices: string[] } | null = null;
@@ -635,7 +668,10 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
          * `failureNotices.save`; reuse `captureId` to retry: the same draft is
          * written at most once. After a restart the task that captureId created
          * answers the retry only if it matches this draft; otherwise the reuse is
-         * refused. Several lines return `confirmLines` and write nothing.
+         * refused. A `+Project` the capture creates takes an id from the capture
+         * ID and its name: a retry uses it, renamed since, and refuses one deleted
+         * or archived since (STALE_REVISION). Several lines return `confirmLines`
+         * and write nothing.
          */
         async submitQuickCapture(input: {
             text: string;
@@ -674,26 +710,30 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
                             value: { kind: 'saved', taskId, projectId, next, reset: next === 'addAnother' ? { text: '', options: freshOptions(true) } : null },
                         };
                     };
+                    const owned = ownedContext(input.captureId, [plan.text], options);
+                    if (!owned) return projectGone();
                     // After a restart the receipt is gone: the task this captureId created answers
                     // the retry, but only when it is what this draft writes.
                     const existing = useTaskStore.getState()._allTasks.find((task) => task.id === input.captureId.toLowerCase());
                     if (existing) {
-                        const replanned = planQuickCaptureTask({ text: plan.text, options }, context());
-                        return replanned.success && isTaskOfPlan(existing, replanned)
+                        const replanned = planQuickCaptureTask({ text: plan.text, options }, owned);
+                        return replanned.success && isTaskOfPlan(existing, replanned, input.captureId)
                             ? saved(existing.id, existing.projectId)
                             : fail('INVALID_INPUT', 'Capture ID already belongs to another task');
                     }
                     try {
+                        const projects = captureProjects(input.captureId);
                         const outcome = await saveQuickCapture({
                             text: plan.text,
                             options,
-                            context: context(),
+                            context: owned,
                             actions: {
-                                addProject: (title, color, props) => useTaskStore.getState().addProject(title, color, props),
+                                addProject: projects.addProject,
                                 addTask: (title, props) => useTaskStore.getState().addTask(title, props, { captureId: input.captureId }),
                             },
                             openAfterSave,
                         });
+                        if (projects.made.stale) return projectGone();
                         if (outcome.kind === 'refused') return notApplied(outcome.error ?? outcome.notice.message);
                         if (!outcome.taskId) return notApplied('Task creation failed');
                         return saved(outcome.taskId, outcome.projectId);
@@ -740,7 +780,8 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
          * `failureNotices.lines` on a failure). Every line is checked before
          * anything is written: a date command it cannot read refuses the whole
          * batch. After a restart, lines already saved answer from their tasks and
-         * only missing lines are written.
+         * only missing lines are written. Projects the lines create take ids from the
+         * first capture ID and their names, as a single capture's does.
          */
         async submitQuickCaptureLines(input: {
             text: string;
@@ -772,6 +813,8 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
             const taskIds = ids.map((id) => id.toLowerCase());
             return receipts.run<NativeQuickCaptureLinesResult>(ids[0], JSON.stringify(['lines', text, options, ids]), async () => {
                 const state = useTaskStore.getState();
+                const owned = ownedContext(ids[0], plan.lines, options);
+                if (!owned) return projectGone();
                 const missing: number[] = [];
                 // Lines saved before a restart answer from their tasks, when they match; nothing is prepared for them.
                 for (const [index, id] of taskIds.entries()) {
@@ -780,8 +823,8 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
                         missing.push(index);
                         continue;
                     }
-                    const planned = planQuickCaptureTask({ text: plan.lines[index], options }, context());
-                    if (!planned.success || !isTaskOfPlan(existing, planned)) return fail('INVALID_INPUT', 'Capture ID already belongs to another task');
+                    const planned = planQuickCaptureTask({ text: plan.lines[index], options }, owned);
+                    if (!planned.success || !isTaskOfPlan(existing, planned, ids[0])) return fail('INVALID_INPUT', 'Capture ID already belongs to another task');
                 }
                 if (missing.length === 0) {
                     rebuildParseOptions();
@@ -793,16 +836,19 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
                     return fail('STALE_REVISION', 'Take the recovery snapshot (createQuickCaptureSnapshot) right before this batch');
                 }
                 try {
+                    // The batch's projects take ids from its first capture ID (the receipt's).
+                    const projects = captureProjects(ids[0]);
                     const outcome = await saveQuickCaptureBulk({
                         lines: missing.map((index) => plan.lines[index]),
                         options,
-                        context: context(),
+                        context: owned,
                         actions: {
-                            addProject: (title, color, props) => useTaskStore.getState().addProject(title, color, props),
+                            addProject: projects.addProject,
                             addTasks: (items) => useTaskStore.getState().addTasks(items),
                         },
                         captureIds: missing.map((index) => ids[index]),
                     });
+                    if (projects.made.stale) return projectGone();
                     if (outcome.kind !== 'saved') return notApplied(outcome.kind === 'refused' ? outcome.notice.message : 'Could not create all tasks');
                     rebuildParseOptions();
                     return { ok: true, value: { kind: 'saved', taskIds } };
@@ -816,7 +862,10 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
          * Submit the project or area picker's search: choose the one with that
          * exact name, or create it, as the picker's "Create" row does. Returns the
          * options with it chosen; close the picker and read the view. Choosing an
-         * existing one writes nothing; reuse `requestId` to retry a create.
+         * existing one writes nothing; reuse `requestId` to retry a create. A
+         * created project or area takes the request UUID as its id, so a replay
+         * after a restart chooses it (renamed since or not) and writes nothing; one
+         * deleted or archived since is refused (STALE_REVISION).
          */
         async submitQuickCapturePickerQuery(input: {
             picker: 'project' | 'area';
@@ -846,16 +895,33 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
                     ? resolveCaptureProjectQuery(state.projects, query, options.areaId)
                     : resolveCaptureAreaQuery(state.areas, query);
             };
+            const createdId = input.requestId.toLowerCase();
+            /** The project or area this request created (its id is the request UUID): the replay's answer, with no write. */
+            const made = (): NativeHostResult<{ options: QuickCaptureOptions; created: boolean }> | null => {
+                const state = useTaskStore.getState();
+                if (picker === 'project') {
+                    const project = state._allProjects.find((entry) => entry.id === createdId);
+                    if (!project) return null;
+                    return isSelectableProjectForTaskAssignment(project) ? choose(project.id, false) : fail('STALE_REVISION', 'The project this request created is gone');
+                }
+                const area = state._allAreas.find((entry) => entry.id === createdId);
+                if (!area) return null;
+                return area.deletedAt ? fail('STALE_REVISION', 'The area this request created is gone') : choose(area.id, false);
+            };
             // Choosing an existing one writes nothing, so it stays out of the receipts
             // (a retry of an earlier create still goes through them, to finish its save).
-            const first = resolve();
-            if (first.kind === 'select' && !pickerCreates.has(input.requestId)) {
-                return choose('project' in first ? first.project.id : first.area.id, false);
+            if (!pickerCreates.has(input.requestId)) {
+                const replayed = made();
+                if (replayed) return replayed;
+                const first = resolve();
+                if (first.kind === 'select') return choose('project' in first ? first.project.id : first.area.id, false);
             }
             return receipts.run<{ options: QuickCaptureOptions; created: boolean }>(
                 input.requestId,
                 JSON.stringify(['picker', picker, query, draft.value.text, options]),
                 async () => {
+                    const replayed = made();
+                    if (replayed) return replayed;
                     const resolution = resolve();
                     if (resolution.kind === 'empty') return fail('INVALID_INPUT', 'A search text is required');
                     if (resolution.kind === 'select') return choose('project' in resolution ? resolution.project.id : resolution.area.id, false);
@@ -864,10 +930,13 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
                         const state = useTaskStore.getState();
                         if ('projectToCreate' in resolution) {
                             const { title, color, initialProps } = resolution.projectToCreate;
-                            const created = await state.addProject(title, color, initialProps);
+                            const created = await state.addProject(title, color, { ...initialProps, id: createdId });
                             return created ? choose(created.id, true) : notApplied(useTaskStore.getState().error ?? 'Project creation failed');
                         }
-                        const created = await state.addArea(resolution.areaToCreate.name, { color: resolution.areaToCreate.color });
+                        const { name, color } = resolution.areaToCreate;
+                        // The store restores a deleted area of that name and updates it with these props: an id there would rename it.
+                        const restores = state._allAreas.some((area) => area.name?.trim().toLowerCase() === name.trim().toLowerCase());
+                        const created = await state.addArea(name, restores ? { color } : { color, id: createdId });
                         return created ? choose(created.id, true) : notApplied(useTaskStore.getState().error ?? 'Area creation failed');
                     } catch (error) {
                         return caught(error);

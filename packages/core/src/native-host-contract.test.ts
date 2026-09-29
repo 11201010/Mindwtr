@@ -37,6 +37,8 @@ import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import { zhHans } from './i18n/locales/zh-Hans';
 import type { Language } from './i18n/i18n-types';
 import type { AppSettings, Area, ChecklistItem, Project, Section, Task } from './types';
+import { revisionOf, taskRevisionOf } from './native-request-receipts';
+import { openScreenHost, replayAfterRestart, requestId as newRequestId, value as unwrap } from './screen-parity.replay';
 
 const CAPTURE_ID = '123e4567-e89b-12d3-a456-426614174000';
 const projectParity = JSON.parse(
@@ -252,7 +254,8 @@ describe('native host contract', () => {
         expect(useTaskStore.getState().settings.savedSearches).toHaveLength(1);
         saveData.mockResolvedValue(undefined);
         const retry = await host.saveSearch(request);
-        expect(retry).toMatchObject({ ok: true, value: { existing: false } });
+        // The request UUID names the new search.
+        expect(retry).toEqual({ ok: true, value: { id: CAPTURE_ID, existing: false } });
         if (!retry.ok) return;
         expect(useTaskStore.getState().settings.savedSearches).toHaveLength(1);
         expect(useTaskStore.getState().settings.savedSearches?.[0]).toEqual({ id: retry.value.id, name: 'Launch shortcut', query: 'Launch' });
@@ -349,6 +352,7 @@ describe('native host contract', () => {
         expect(first.value.rows[0]).toEqual({
             id: 'first', title: 'first', status: 'inbox', priority: null, dueDate: null,
             startTime: null, isFocusedToday: false, projectTitle: null, hasNotes: false, revealDate: null, revealLabel: null, laterToday: false,
+            taskRevision: '0::2026-09-01T00:00:00.000Z',
             meta: expect.objectContaining({ parts: [], statusLabel: 'Inbox' }),
         });
         expect(host.getInboxWindow({ offset: 2, limit: 2, revision: first.value.revision }))
@@ -571,6 +575,7 @@ describe('native host contract', () => {
                 row: {
                     id: 'live-a1', title: 'Sketch', status: 'next', priority: null, dueDate: null, startTime: null,
                     isFocusedToday: false, projectTitle: 'Launch', hasNotes: false, revealDate: null, revealLabel: null, laterToday: false,
+                    taskRevision: '0::2026-09-01T00:00:00.000Z',
                     meta: expect.objectContaining({ statusLabel: 'Next', accessibilityLabel: 'Sketch. Status: Next' }),
                 },
                 sectionId: 'sec-a',
@@ -939,7 +944,7 @@ describe('native host contract', () => {
         });
 
         let completedSettled = false;
-        const completing = host.completeTask({ id: created.value.id }).then((result) => {
+        const completing = host.completeTask({ id: created.value.id, taskRevision: taskRevisionOf(useTaskStore.getState()._tasksById.get(created.value.id)!) }).then((result) => {
             completedSettled = true;
             return result;
         });
@@ -971,13 +976,15 @@ describe('native host contract', () => {
         expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
         saveData.mockClear();
         useTaskStore.setState({ _allTasks: [task('to-complete', '2026-09-01T00:00:00.000Z')] });
+        const input = { id: 'to-complete', taskRevision: taskRevisionOf(useTaskStore.getState()._tasksById.get('to-complete')!) };
         saveData.mockRejectedValue(new Error('disk unavailable'));
-        expect(await host.completeTask({ id: 'to-complete' }))
+        expect(await host.completeTask(input))
             .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
         const completedAt = useTaskStore.getState()._tasksById.get('to-complete')?.completedAt;
         expect(completedAt).toEqual(expect.any(String));
         saveData.mockResolvedValue(undefined);
-        expect(await host.completeTask({ id: 'to-complete' })).toEqual({ ok: true, value: { id: 'to-complete' } });
+        // The exact retry: the completion landed, so its target holds and only the save runs.
+        expect(await host.completeTask(input)).toEqual({ ok: true, value: { id: 'to-complete' } });
         expect(useTaskStore.getState()._tasksById.get('to-complete')?.completedAt).toBe(completedAt);
     });
 
@@ -1071,14 +1078,14 @@ describe('native host contract', () => {
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.createProject({ title: 'x', areaId: null, requestId: CAPTURE_ID }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
-        expect(await host.setTaskFocus({ id: 'x', focused: true }))
+        expect(await host.setTaskFocus({ id: 'x', focused: true, taskRevision: 'r' }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
-        expect(await host.setProjectFocus({ id: 'x', focused: true }))
+        expect(await host.setProjectFocus({ id: 'x', focused: true, projectRevision: 'r' }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.setAreaFilter({ included: [], excluded: [] }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
-        expect(await host.completeTask({ id: 'x' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
-        expect(await host.updateTask({ id: 'x', base: { title: 'x' }, patch: { title: 'y' } }))
+        expect(await host.completeTask({ id: 'x', taskRevision: 'r' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.updateTask({ id: 'x', base: { title: 'x' }, patch: { title: 'y' }, requestId: newRequestId() }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.activate({ writeSafetyReady: true })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(saveData).not.toHaveBeenCalled();
@@ -1107,7 +1114,8 @@ describe('native host contract', () => {
         expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
         saveData.mockClear();
         useTaskStore.setState({ _allTasks: [task('replay', '2026-09-01T00:00:00.000Z')] });
-        expect(await host.completeTask({ id: 'replay' })).toEqual({ ok: true, value: { id: 'replay' } });
+        const input = { id: 'replay', taskRevision: taskRevisionOf(useTaskStore.getState()._tasksById.get('replay')!) };
+        expect(await host.completeTask(input)).toEqual({ ok: true, value: { id: 'replay' } });
         const completedAt = useTaskStore.getState()._tasksById.get('replay')?.completedAt;
         expect(saveData).toHaveBeenCalledTimes(1);
 
@@ -1115,7 +1123,7 @@ describe('native host contract', () => {
         saveData.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseSave = resolve; }));
         expect((await useTaskStore.getState().updateTask('replay', { description: 'Pending edit' })).success).toBe(true);
         let replaySettled = false;
-        const replay = host.completeTask({ id: 'replay' }).then((result) => {
+        const replay = host.completeTask(input).then((result) => {
             replaySettled = true;
             return result;
         });
@@ -1211,7 +1219,7 @@ describe('native host contract', () => {
         expect(host.getTaskEditor({ id: '' })).toEqual({
             ok: false, error: { code: 'INVALID_INPUT', message: 'Task ID is required' },
         });
-        expect(await host.updateTask({ id: '', base: {}, patch: {} })).toEqual({
+        expect(await host.updateTask({ id: '', base: {}, patch: {}, requestId: newRequestId() })).toEqual({
             ok: false, error: { code: 'INVALID_INPUT', message: 'Task ID is required' },
         });
     });
@@ -1244,7 +1252,7 @@ describe('native host contract', () => {
         });
 
         let settled = false;
-        const saving = host.updateTask({ id: 'edit', base, patch }).then((result) => {
+        const saving = host.updateTask({ id: 'edit', base, patch, requestId: newRequestId() }).then((result) => {
             settled = true;
             return result;
         });
@@ -1265,12 +1273,12 @@ describe('native host contract', () => {
     it('clears descriptions the same way as the mobile task draft', async () => {
         const host = await activateWith([task('edit', '2026-09-01T00:00:00.000Z', { description: 'Old notes' })]);
         saveData.mockClear();
-        expect(await host.updateTask({ id: 'edit', base: { description: 'Old notes' }, patch: { description: '' } }))
+        expect(await host.updateTask({ id: 'edit', base: { description: 'Old notes' }, patch: { description: '' }, requestId: newRequestId() }))
             .toEqual({ ok: true, value: { id: 'edit', changed: true } });
         const savedData = saveData.mock.calls.at(-1)?.[0] as { tasks: Task[] };
         expect(savedData.tasks.find(({ id }) => id === 'edit')?.description).toBeUndefined();
         expect(host.getTaskEditor({ id: 'edit' })).toMatchObject({ ok: true, value: { fields: { description: null } } });
-        expect(await host.updateTask({ id: 'edit', base: { description: 'Old notes' }, patch: { description: null } }))
+        expect(await host.updateTask({ id: 'edit', base: { description: 'Old notes' }, patch: { description: null }, requestId: newRequestId() }))
             .toEqual({ ok: true, value: { id: 'edit', changed: false } });
     });
 
@@ -1304,7 +1312,7 @@ describe('native host contract', () => {
         ]);
         saveData.mockClear();
 
-        const result = await host.updateTask({ id: 'edit', base, patch } as never);
+        const result = await host.updateTask({ id: 'edit', base, patch, requestId: newRequestId() } as never);
         expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         if (!result.ok) {
             if (name === 'base and patch key mismatch') {
@@ -1325,7 +1333,7 @@ describe('native host contract', () => {
     it('rejects an empty patch without writing', async () => {
         const host = await activateWith([task('edit', '2026-09-01T00:00:00.000Z', { rev: 2 })]);
         saveData.mockClear();
-        expect(await host.updateTask({ id: 'edit', base: {}, patch: {} })).toMatchObject({
+        expect(await host.updateTask({ id: 'edit', base: {}, patch: {}, requestId: newRequestId() })).toMatchObject({
             ok: false, error: { code: 'INVALID_INPUT' },
         });
         expect(saveData).not.toHaveBeenCalled();
@@ -1357,7 +1365,7 @@ describe('native host contract', () => {
         const host = await activateWith([task('reference-edit', '2026-09-01T00:00:00.000Z', { status: taskStatus, rev: 11 })]);
         saveData.mockClear();
 
-        const result = await host.updateTask({ id: 'reference-edit', base, patch });
+        const result = await host.updateTask({ id: 'reference-edit', base, patch, requestId: newRequestId() });
         expect(result).toEqual({
             ok: false, error: { code: 'INVALID_INPUT', message: `${field} cannot be set while status is reference` },
         });
@@ -1374,6 +1382,7 @@ describe('native host contract', () => {
         saveData.mockClear();
 
         expect(await host.updateTask({
+            requestId: newRequestId(),
             id: 'archived-project-task', base: { title: 'archived-project-task' }, patch: { title: 'Changed' },
         })).toEqual({
             ok: false,
@@ -1387,7 +1396,7 @@ describe('native host contract', () => {
         const value = '2026-09-23T10:00:00+05:30';
         const host = await activateWith([task('edit', '2026-09-01T00:00:00.000Z')]);
 
-        expect(await host.updateTask({ id: 'edit', base: { dueDate: null }, patch: { dueDate: value } }))
+        expect(await host.updateTask({ id: 'edit', base: { dueDate: null }, patch: { dueDate: value }, requestId: newRequestId() }))
             .toEqual({ ok: true, value: { id: 'edit', changed: true } });
         const savedData = saveData.mock.calls.at(-1)?.[0] as { tasks: Task[] };
         expect(savedData.tasks.find(({ id }) => id === 'edit')?.dueDate).toBe(value);
@@ -1400,7 +1409,7 @@ describe('native host contract', () => {
         const revAfterOtherWrite = useTaskStore.getState()._tasksById.get('edit')?.rev;
         saveData.mockClear();
 
-        expect(await host.updateTask({ id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' } }))
+        expect(await host.updateTask({ id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' }, requestId: newRequestId() }))
             .toEqual({ ok: false, error: { code: 'STALE_REVISION', message: 'Task changed while editing: title' } });
         expect(useTaskStore.getState()._tasksById.get('edit')).toMatchObject({ title: 'Other writer', rev: revAfterOtherWrite });
         expect(saveData).not.toHaveBeenCalled();
@@ -1411,18 +1420,18 @@ describe('native host contract', () => {
         expect((await useTaskStore.getState().updateTask('edit', { description: 'Other notes' })).success).toBe(true);
         await flushPendingSave();
 
-        expect(await host.updateTask({ id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' } }))
+        expect(await host.updateTask({ id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' }, requestId: newRequestId() }))
             .toEqual({ ok: true, value: { id: 'edit', changed: true } });
         expect(useTaskStore.getState()._tasksById.get('edit')).toMatchObject({ title: 'My edit', description: 'Other notes' });
     });
 
-    it('acknowledges a repeated edit without a second store write', async () => {
+    it('answers a repeated request with its first reply, without a second store write', async () => {
         const host = await activateWith([task('edit', '2026-09-01T00:00:00.000Z', { title: 'Original' })]);
-        const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' } };
+        const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' }, requestId: newRequestId() };
         saveData.mockClear();
         expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'edit', changed: true } });
         const revAfterFirstWrite = useTaskStore.getState()._tasksById.get('edit')?.rev;
-        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'edit', changed: false } });
+        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'edit', changed: true } });
         expect(useTaskStore.getState()._tasksById.get('edit')?.rev).toBe(revAfterFirstWrite);
         expect(saveData).toHaveBeenCalledTimes(1);
     });
@@ -1431,7 +1440,7 @@ describe('native host contract', () => {
         const host = await activateWith([task('recurring', '2026-09-01T00:00:00.000Z', {
             status: 'next', recurrence: { rule: 'daily', strategy: 'fluid' }, dueDate: '2026-09-20',
         })]);
-        const input = { id: 'recurring', base: { status: 'next' }, patch: { status: 'done' } };
+        const input = { id: 'recurring', base: { status: 'next' }, patch: { status: 'done' }, requestId: newRequestId() };
         expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'recurring', changed: true } });
         const afterFirst = useTaskStore.getState()._allTasks;
         const followUps = afterFirst.filter((item) => item.id !== 'recurring' && item.status !== 'done' && item.status !== 'archived');
@@ -1439,7 +1448,7 @@ describe('native host contract', () => {
         expect(followUps).toHaveLength(1);
         const completedRev = afterFirst.find(({ id }) => id === 'recurring')?.rev;
 
-        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'recurring', changed: false } });
+        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'recurring', changed: true } });
         expect(useTaskStore.getState()._allTasks).toHaveLength(2);
         expect(useTaskStore.getState()._allTasks.find(({ id }) => id === 'recurring')?.rev).toBe(completedRev);
     });
@@ -1448,7 +1457,7 @@ describe('native host contract', () => {
         const host = await activateWith([task('recurring', '2026-09-01T00:00:00.000Z', {
             status: 'next', recurrence: { rule: 'daily', strategy: 'fluid' }, dueDate: '2026-09-20',
         })]);
-        const input = { id: 'recurring', base: { status: 'next' }, patch: { status: 'done' } };
+        const input = { id: 'recurring', base: { status: 'next' }, patch: { status: 'done' }, requestId: newRequestId() };
         saveData.mockClear();
         saveData.mockRejectedValue(new Error('disk unavailable'));
 
@@ -1461,7 +1470,7 @@ describe('native host contract', () => {
         expect(useTaskStore.getState()._allTasks.filter((item) => item.id !== 'recurring' && item.status !== 'done' && item.status !== 'archived')).toHaveLength(1);
 
         saveData.mockResolvedValue(undefined);
-        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'recurring', changed: false } });
+        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'recurring', changed: true } });
         const savedData = saveData.mock.calls.at(-1)?.[0] as { tasks: Task[] };
         expect(savedData.tasks.find(({ id }) => id === 'recurring')?.status).toBe('done');
         expect(savedData.tasks.filter((item) => item.id !== 'recurring' && item.status !== 'done' && item.status !== 'archived'))
@@ -1614,6 +1623,7 @@ describe('native host contract', () => {
             if (!future.ok) throw new Error('Draft edit failed');
             expect(future.value.focusStar).toMatchObject({ canToggle: true, queued: true });
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit', base: { startTime: '', focusedToday: false },
                 patch: { startTime: '2099-01-01', focusedToday: true },
             })).toMatchObject({ ok: true, value: { draft: { focusedToday: true } } });
@@ -1628,6 +1638,7 @@ describe('native host contract', () => {
             ], { gtd: { focusTaskLimit: 1 } });
             expect((await useTaskStore.getState().updateTask('other', { isFocusedToday: true })).success).toBe(true);
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit', base: { focusedToday: false }, patch: { focusedToday: true },
             })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
             expect(storedTask()?.isFocusedToday).toBeFalsy();
@@ -1639,6 +1650,7 @@ describe('native host contract', () => {
                 task('other', '2026-09-01T00:00:00.000Z', { status: 'next', isFocusedToday: true }),
             ], { gtd: { focusTaskLimit: 1 } });
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit', base: { startTime: '2099-01-01' }, patch: { startTime: '' },
             })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
             expect(storedTask()).toMatchObject({ startTime: '2099-01-01', isFocusedToday: true });
@@ -1659,6 +1671,7 @@ describe('native host contract', () => {
             });
             expect(changed).toMatchObject({ ok: true, value: { draft: { status: 'done', focusedToday: false } } });
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit', base: { status: 'next' }, patch: { status: 'done' },
             })).toMatchObject({ ok: true, value: { draft: { focusedToday: false } } });
         });
@@ -1703,6 +1716,7 @@ describe('native host contract', () => {
             saveData.mockClear();
 
             const result = await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit',
                 base: { title: 'Original', dueDate: '', projectId: 'p-work', relativeStartOffset: null as never },
                 patch: { title: '  Mine  ', dueDate: '2026-10-01', projectId: 'p-home', relativeStartOffset: null as never },
@@ -1724,6 +1738,7 @@ describe('native host contract', () => {
             saveData.mockClear();
 
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit', base: { title: 'Original', description: 'Old notes' }, patch: { title: 'Mine', description: 'New notes' },
             })).toEqual({ ok: false, error: { code: 'STALE_REVISION', message: 'Task changed while editing: title' } });
             expect(storedTask()).toMatchObject({ title: 'Other writer', description: 'Old notes', rev: revBefore });
@@ -1735,13 +1750,14 @@ describe('native host contract', () => {
                 editTask({ isFocusedToday: true }),
                 task('complete', '2026-09-01T00:00:00.000Z', { status: 'next' }),
             ]);
-            expect(await host.saveTaskDraft({ id: 'edit', base: { status: 'next' }, patch: { status: 'inbox' } }))
+            expect(await host.saveTaskDraft({ id: 'edit', base: { status: 'next' }, patch: { status: 'inbox' }, requestId: newRequestId() }))
                 .toMatchObject({ ok: true, value: { draft: { status: 'inbox', focusedToday: false } } });
             expect(storedTask()).toMatchObject({ status: 'inbox', isFocusedToday: false });
 
             // Status goes first, so the chosen completion time survives its cascade.
             const completedAt = '2026-09-20T10:00:00.000Z';
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'complete', base: { completedAt: '', status: 'next' }, patch: { completedAt, status: 'done' },
             })).toMatchObject({ ok: true, value: { draft: { status: 'done', completedAt } } });
             expect(storedTask('complete')).toMatchObject({ status: 'done', completedAt });
@@ -1805,7 +1821,7 @@ describe('native host contract', () => {
 
         it('retries a failed save exactly, without a second write', async () => {
             const host = await activateEditor([editTask()]);
-            const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' } };
+            const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' }, requestId: newRequestId() };
             saveData.mockClear();
             saveData.mockRejectedValue(new Error('disk unavailable'));
             expect(await host.saveTaskDraft(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
@@ -1897,12 +1913,12 @@ describe('native host contract', () => {
         it.each([
             {
                 name: 'a recurrence series stamp',
-                input: { id: 'edit', base: { recurrence: '', recurrenceRRule: '' }, patch: { recurrence: 'weekly', recurrenceRRule: 'FREQ=WEEKLY;BYDAY=MO' } },
+                input: { id: 'edit', base: { recurrence: '', recurrenceRRule: '' }, patch: { recurrence: 'weekly', recurrenceRRule: 'FREQ=WEEKLY;BYDAY=MO' }, requestId: newRequestId() },
                 saved: { recurrence: { rule: 'weekly', byDay: ['MO'] } },
             },
             {
                 name: 'a star queued for a future start',
-                input: { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' } },
+                input: { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' }, requestId: newRequestId() },
                 saved: { startTime: '2027-01-04', isFocusedToday: true },
             },
         ] as const)('retries exactly after $name', async ({ input, saved }) => {
@@ -1921,30 +1937,30 @@ describe('native host contract', () => {
         it('keeps retry state per task: A, then B, then the exact retry of A', async () => {
             const host = await activateEditor([editTask(), task('b', '2026-09-01T00:00:00.000Z'), task('other', '2026-09-01T00:00:00.000Z')]);
             // The store keeps the star queued for its future start.
-            const inputA = { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' } };
+            const inputA = { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' }, requestId: newRequestId() };
             saveData.mockRejectedValue(new Error('disk unavailable'));
             expect(await host.saveTaskDraft(inputA)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
             const savedA = storedTask();
             expect(savedA).toMatchObject({ startTime: '2027-01-04', isFocusedToday: true });
 
             saveData.mockResolvedValue(undefined);
-            expect(await host.saveTaskDraft({ id: 'b', base: { title: 'b' }, patch: { title: 'B' } })).toMatchObject({ ok: true });
+            expect(await host.saveTaskDraft({ id: 'b', base: { title: 'b' }, patch: { title: 'B' }, requestId: newRequestId() })).toMatchObject({ ok: true });
             // An unrelated write, through another path, between the failure and the retry.
             expect((await useTaskStore.getState().updateTask('other', { title: 'Other' })).success).toBe(true);
             expect(await host.saveTaskDraft(inputA)).toMatchObject({ ok: true, value: { draft: { focusedToday: true } } });
             expect(storedTask()).toBe(savedA);
         }, 15_000);
 
-        it('drops a task\'s retry state when another path writes that task', async () => {
+        it('answers a retry after another path wrote the task with the first reply, writing nothing', async () => {
             const host = await activateEditor([editTask({ description: 'Old notes' })]);
-            const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' } };
+            const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' }, requestId: newRequestId() };
             saveData.mockRejectedValue(new Error('disk unavailable'));
             expect(await host.saveTaskDraft(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
             saveData.mockResolvedValue(undefined);
             expect((await useTaskStore.getState().updateTask('edit', { description: 'Other notes' })).success).toBe(true);
             const afterOtherWrite = storedTask();
-            // The field comparison takes over: the title already holds its new value, so nothing is written.
-            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: true, value: { draft: { title: 'Mine', description: 'Other notes' } } });
+            // The request's receipt answers: its first reply, and nothing is written.
+            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: true, value: { draft: { title: 'Mine', description: 'Old notes' } } });
             expect(storedTask()).toBe(afterOtherWrite);
         }, 15_000);
 
@@ -1958,17 +1974,17 @@ describe('native host contract', () => {
                 { projectId: 'p-home', sectionId: 's-plan' },
             ]) {
                 const base = Object.fromEntries(Object.keys(patch).map((field) => [field, field === 'projectId' ? 'p-work' : 's-plan']));
-                expect(await host.saveTaskDraft({ id: 'edit', base, patch })).toEqual({
+                expect(await host.saveTaskDraft({ id: 'edit', base, patch, requestId: newRequestId() })).toEqual({
                     ok: false, error: { code: 'INVALID_INPUT', message: 'sectionId is not a valid value' },
                 });
             }
             expect(saveData).not.toHaveBeenCalled();
             expect(storedTask()).toBe(before);
 
-            expect(await host.saveTaskDraft({ id: 'edit', base: { sectionId: 's-plan' }, patch: { sectionId: 's-ship' } }))
+            expect(await host.saveTaskDraft({ id: 'edit', base: { sectionId: 's-plan' }, patch: { sectionId: 's-ship' }, requestId: newRequestId() }))
                 .toMatchObject({ ok: true, value: { draft: { sectionId: 's-ship' } } });
             // Moving projects without naming a section still drops the old one, as in the mobile editor.
-            expect(await host.saveTaskDraft({ id: 'edit', base: { projectId: 'p-work' }, patch: { projectId: 'p-home' } }))
+            expect(await host.saveTaskDraft({ id: 'edit', base: { projectId: 'p-work' }, patch: { projectId: 'p-home' }, requestId: newRequestId() }))
                 .toMatchObject({ ok: true, value: { draft: { projectId: 'p-home', sectionId: '' } } });
         });
 
@@ -1979,6 +1995,7 @@ describe('native host contract', () => {
             ]);
             const updateTask = vi.spyOn(useTaskStore.getState(), 'updateTask');
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'via-host', base: { status: 'inbox', startTime: '' }, patch: { status: 'inbox', startTime: '2026-10-01' },
             })).toMatchObject({ ok: true });
             // The mobile editor: the same draft edit through its save composition, then the store.
@@ -2048,7 +2065,7 @@ describe('native host contract', () => {
 
         it('rejects read-only tasks and invalid drafts without writing', async () => {
             const host = createNativeHostContract();
-            expect(await host.saveTaskDraft({ id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' } }))
+            expect(await host.saveTaskDraft({ id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' }, requestId: newRequestId() }))
                 .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
             getData.mockResolvedValue(editorData([
                 editTask(),
@@ -2058,9 +2075,9 @@ describe('native host contract', () => {
             const before = { edit: storedTask(), archived: storedTask('archived-project') };
             saveData.mockClear();
 
-            expect(await host.saveTaskDraft({ id: 'archived-project', base: { title: 'archived-project' }, patch: { title: 'Mine' } }))
+            expect(await host.saveTaskDraft({ id: 'archived-project', base: { title: 'archived-project' }, patch: { title: 'Mine' }, requestId: newRequestId() }))
                 .toEqual({ ok: false, error: { code: 'INVALID_INPUT', message: 'Task is read-only while its project is archived' } });
-            expect(await host.saveTaskDraft({ id: 'missing', base: { title: 'x' }, patch: { title: 'y' } }))
+            expect(await host.saveTaskDraft({ id: 'missing', base: { title: 'x' }, patch: { title: 'y' }, requestId: newRequestId() }))
                 .toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
             const invalid: Array<[Record<string, unknown>, Record<string, unknown>, string]> = [
                 [{}, {}, 'patch must include a draft field'],
@@ -2077,7 +2094,7 @@ describe('native host contract', () => {
                 [{ relativeStartOffset: null }, { relativeStartOffset: { amount: 1.5, unit: 'day' } }, 'relativeStartOffset is not a valid value'],
             ];
             for (const [base, patch, message] of invalid) {
-                expect(await host.saveTaskDraft({ id: 'edit', base, patch } as never)).toEqual({
+                expect(await host.saveTaskDraft({ id: 'edit', base, patch, requestId: newRequestId() } as never)).toEqual({
                     ok: false, error: { code: 'INVALID_INPUT', message },
                 });
             }
@@ -2187,7 +2204,7 @@ describe('native host contract', () => {
                 expect(moved.fields.relativeStart).toMatchObject({ active: true, amount: 2, unit: 'day' });
 
                 const { base, patch } = changes(draft, json(moved.draft));
-                expect(await host.saveTaskDraft({ id: 'edit', base, patch })).toMatchObject({ ok: true });
+                expect(await host.saveTaskDraft({ id: 'edit', base, patch, requestId: newRequestId() })).toMatchObject({ ok: true });
                 expect(storedTask()).toMatchObject({
                     dueDate: '2026-10-05', startTime: '2026-10-03', relativeStartOffset: { amount: -2, unit: 'day' },
                 });
@@ -2863,8 +2880,8 @@ describe('native host contract', () => {
             expect(focus.value.reviewProjects.map(({ id }) => id))
                 .toEqual(focusDerivation.getReviewDueProjects(state.projects, NOW).map(({ id }) => id));
             expect(focus.value.reviewProjects[1]).toEqual({
-                id: 'p-review', title: 'Garden', status: 'active', cancelled: false, statusLabel: 'Active', isFocused: false, focusDisabled: false, color: '#123456',
-                activeTaskCount: 0, nextActionId: null, nextActionTitle: null, focusedWithoutNextAction: false,
+                id: 'p-review', title: 'Garden', status: 'active', projectRevision: revisionOf(state._projectsById.get('p-review')!),
+                cancelled: false, statusLabel: 'Active', isFocused: false, focusDisabled: false, color: '#123456', activeTaskCount: 0, nextActionId: null, nextActionTitle: null, focusedWithoutNextAction: false,
                 reviewDateLabel: '09/20/2026',
             });
         });
@@ -2895,11 +2912,14 @@ describe('native host contract', () => {
             task('second', '2026-09-01T00:00:00.000Z', { status: 'next' }),
         ]);
         saveData.mockClear();
-        expect(await host.setTaskFocus({ id: 'first', focused: true })).toEqual({ ok: true, value: { id: 'first', focused: true } });
+        // The row's revision, as the view showed it.
+        const star = (id: string, focused: boolean) => ({ id, focused, taskRevision: taskRevisionOf(useTaskStore.getState()._tasksById.get(id)!) });
+        const starFirst = star('first', true);
+        expect(await host.setTaskFocus(starFirst)).toEqual({ ok: true, value: { id: 'first', focused: true } });
         expect(saveData).toHaveBeenCalledTimes(1);
         expect(saveData.mock.calls[0][0].tasks.find((item: Task) => item.id === 'first').isFocusedToday).toBe(true);
         const rev = useTaskStore.getState()._tasksById.get('first')?.rev;
-        expect(await host.setTaskFocus({ id: 'first', focused: true })).toMatchObject({ ok: true });
+        expect(await host.setTaskFocus(starFirst)).toMatchObject({ ok: true });
         expect(useTaskStore.getState()._tasksById.get('first')?.rev).toBe(rev);
         expect(saveData).toHaveBeenCalledTimes(1);
         await useTaskStore.getState().updateSettings({ gtd: { focusTaskLimit: 1 } });
@@ -2907,21 +2927,23 @@ describe('native host contract', () => {
         const english = getFocusStarBlockedText(getTranslator('en'), blockedAction, normalizeFocusTaskLimit(1));
         const beforeBlocked = useTaskStore.getState()._tasksById.get('second')?.rev;
         const savesBeforeBlocked = saveData.mock.calls.length;
-        expect(await host.setTaskFocus({ id: 'second', focused: true })).toEqual({ ok: true, value: { blocked: english ?? '', blockedTitle: tFallback(getTranslator('en'), 'digest.focus', 'Focus') } });
+        expect(await host.setTaskFocus(star('second', true))).toEqual({ ok: true, value: { blocked: english ?? '', blockedTitle: tFallback(getTranslator('en'), 'digest.focus', 'Focus') } });
         expect(await host.setLanguage({ storedLanguage: 'zh', systemLocale: 'zh-CN' })).toMatchObject({ ok: true });
         const chinese = getFocusStarBlockedText(getTranslator('zh'), blockedAction, normalizeFocusTaskLimit(1));
-        expect(await host.setTaskFocus({ id: 'second', focused: true })).toEqual({ ok: true, value: { blocked: chinese ?? '', blockedTitle: tFallback(getTranslator('zh'), 'digest.focus', 'Focus') } });
+        expect(await host.setTaskFocus(star('second', true))).toEqual({ ok: true, value: { blocked: chinese ?? '', blockedTitle: tFallback(getTranslator('zh'), 'digest.focus', 'Focus') } });
         expect(useTaskStore.getState()._tasksById.get('second')?.rev).toBe(beforeBlocked);
         expect(saveData).toHaveBeenCalledTimes(savesBeforeBlocked);
-        expect(await host.setTaskFocus({ id: 'first', focused: false })).toEqual({ ok: true, value: { id: 'first', focused: false } });
+        expect(await host.setTaskFocus(star('first', false))).toEqual({ ok: true, value: { id: 'first', focused: false } });
 
+        const starSecond = star('second', true);
         saveData.mockRejectedValue(new Error('disk unavailable'));
-        expect(await host.setTaskFocus({ id: 'second', focused: true }))
+        expect(await host.setTaskFocus(starSecond))
             .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         const failedRev = useTaskStore.getState()._tasksById.get('second')?.rev;
         const savesAfterFailure = saveData.mock.calls.length;
         saveData.mockResolvedValue(undefined);
-        expect(await host.setTaskFocus({ id: 'second', focused: true })).toEqual({ ok: true, value: { id: 'second', focused: true } });
+        // The exact retry: the star landed, so its target holds and only the save runs.
+        expect(await host.setTaskFocus(starSecond)).toEqual({ ok: true, value: { id: 'second', focused: true } });
         expect(useTaskStore.getState()._tasksById.get('second')?.rev).toBe(failedRev);
         expect(saveData).toHaveBeenCalledTimes(savesAfterFailure + 1);
         expect(saveData.mock.lastCall?.[0].tasks.find((item: Task) => item.id === 'second').isFocusedToday).toBe(true);
@@ -2931,22 +2953,32 @@ describe('native host contract', () => {
         freezeClock();
         const host = await activateWith([], [project('one'), project('archived', 'archived')]);
         saveData.mockClear();
-        expect(await host.setProjectFocus({ id: 'one', focused: true })).toEqual({ ok: true, value: { id: 'one', focused: true } });
+        // The row's revision, as getProjects showed it (archived projects are grouped too).
+        const star = (id: string, focused: boolean) => {
+            const view = host.getProjects();
+            if (!view.ok) throw new Error(view.error.message);
+            const row = [...view.value.active, ...view.value.archived].flatMap((group) => group.projects).find((entry) => entry.id === id)!;
+            expect(row.projectRevision).toBe(revisionOf(useTaskStore.getState()._projectsById.get(id)!));
+            return { id, focused, projectRevision: row.projectRevision };
+        };
+        const starOne = star('one', true);
+        expect(await host.setProjectFocus(starOne)).toEqual({ ok: true, value: { id: 'one', focused: true } });
         const rev = useTaskStore.getState()._projectsById.get('one')?.rev;
-        expect(await host.setProjectFocus({ id: 'one', focused: true })).toMatchObject({ ok: true });
+        expect(await host.setProjectFocus(starOne)).toMatchObject({ ok: true });
         expect(useTaskStore.getState()._projectsById.get('one')?.rev).toBe(rev);
         expect(saveData).toHaveBeenCalledTimes(1);
-        expect(await host.setProjectFocus({ id: 'archived', focused: true }))
+        expect(await host.setProjectFocus(star('archived', true)))
             .toEqual({ ok: true, value: { blocked: '' } });
         useTaskStore.setState({ error: 'stale transient error' });
-        expect(await host.setProjectFocus({ id: 'archived', focused: true }))
+        expect(await host.setProjectFocus(star('archived', true)))
             .toEqual({ ok: true, value: { blocked: '' } });
+        const unstarOne = star('one', false);
         saveData.mockRejectedValue(new Error('disk unavailable'));
-        expect(await host.setProjectFocus({ id: 'one', focused: false }))
+        expect(await host.setProjectFocus(unstarOne))
             .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         const failedRev = useTaskStore.getState()._projectsById.get('one')?.rev;
         saveData.mockResolvedValue(undefined);
-        expect(await host.setProjectFocus({ id: 'one', focused: false })).toEqual({ ok: true, value: { id: 'one', focused: false } });
+        expect(await host.setProjectFocus(unstarOne)).toEqual({ ok: true, value: { id: 'one', focused: false } });
         expect(useTaskStore.getState()._projectsById.get('one')?.rev).toBe(failedRev);
         expect(saveData.mock.lastCall?.[0].projects.find((item: Project) => item.id === 'one').isFocused).toBe(false);
     });
@@ -2968,11 +3000,12 @@ describe('native host contract', () => {
         if (!view.ok) throw new Error('Projects query failed');
         expect(view.value.active.flatMap((group) => group.projects)).toMatchObject([{ id: 'candidate', focusDisabled: true }]);
         saveData.mockClear();
-        expect(await host.setProjectFocus({ id: 'candidate', focused: true }))
+        const projectRevision = (id: string) => revisionOf(useTaskStore.getState()._projectsById.get(id)!);
+        expect(await host.setProjectFocus({ id: 'candidate', focused: true, projectRevision: view.value.active[0].projects[0].projectRevision }))
             .toEqual({ ok: true, value: { blocked: '' } });
         expect(saveData).not.toHaveBeenCalled();
         useTaskStore.setState({ error: 'stale transient error' });
-        expect(await host.setProjectFocus({ id: 'star-0', focused: false }))
+        expect(await host.setProjectFocus({ id: 'star-0', focused: false, projectRevision: projectRevision('star-0') }))
             .toEqual({ ok: true, value: { id: 'star-0', focused: false } });
         expect(host.getProjects()).toMatchObject({ ok: true, value: { active: [{ projects: [{ focusDisabled: false }] }] } });
     });
@@ -2988,7 +3021,8 @@ describe('native host contract', () => {
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.createProject(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         const created = useTaskStore.getState().projects.find((item) => item.title === 'Project')!;
-        expect(created).toMatchObject({ areaId: 'live', color: '#aabbcc' });
+        // The request UUID names the project.
+        expect(created).toMatchObject({ id: CAPTURE_ID, areaId: 'live', color: '#aabbcc' });
         await useTaskStore.getState().updateProject(created.id, { title: 'Renamed project' });
         saveData.mockResolvedValue(undefined);
         expect(await host.createProject(input)).toEqual({ ok: true, value: { id: created.id } });
@@ -3150,5 +3184,155 @@ describe('native host contract', () => {
         expect(detailAfter.value.revision).not.toBe(detailBefore.value.revision);
         expect(host.getProjectDetail({ projectId: 'in-a', offset: 1, limit: 1, revision: detailBefore.value.revision }))
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    });
+});
+
+// The native app journals each write and replays it after process death. A new host
+// holds no receipts, so each replay must write nothing wrong after a later change.
+describe('native host contract: replays after a restart', () => {
+    afterEach(async () => {
+        await flushPendingSave();
+        resetForTests();
+    });
+
+    const store = () => useTaskStore.getState();
+    const stored = (id: string) => store()._tasksById.get(id)!;
+    const open = () => openScreenHost({
+        data: {
+            tasks: [task('a', '2026-09-01T00:00:00.000Z', { status: 'next' }), task('b', '2026-09-01T00:00:00.000Z', { status: 'next' })],
+            projects: [project('p')],
+            areas: [area('area', 'Area', 0)],
+        },
+        record: {},
+        log: [],
+    });
+    const stale = { ok: false, error: { code: 'STALE_REVISION' } };
+
+    it('refuses a write without the revision the view showed', async () => {
+        const host = await open();
+        const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
+        expect(await host.completeTask({ id: 'a' } as never)).toMatchObject(invalid);
+        expect(await host.setTaskFocus({ id: 'a', focused: true, taskRevision: '' })).toMatchObject(invalid);
+        expect(await host.setProjectFocus({ id: 'p', focused: true } as never)).toMatchObject(invalid);
+        // A revision the task no longer has is refused, and nothing is written.
+        const before = stored('a');
+        expect(await host.completeTask({ id: 'a', taskRevision: '0::2020-01-01T00:00:00.000Z' })).toMatchObject(stale);
+        expect(stored('a')).toBe(before);
+    });
+
+    it('setTaskFocus: a replay never stars a task again after the star was taken off', async () => {
+        const host = await open();
+        const input = { id: 'a', focused: true, taskRevision: taskRevisionOf(stored('a')) };
+        expect(unwrap(await host.setTaskFocus(input))).toEqual({ id: 'a', focused: true });
+        // The landed request's target holds: nothing to write.
+        expect(await replayAfterRestart((restarted) => restarted.setTaskFocus(input))).toEqual({ result: { ok: true, value: { id: 'a', focused: true } }, wrote: false });
+        expect((await store().updateTask('a', { isFocusedToday: false })).success).toBe(true);
+        const { result, wrote } = await replayAfterRestart((restarted) => restarted.setTaskFocus(input));
+        expect(result).toMatchObject(stale);
+        expect(wrote).toBe(false);
+        expect(stored('a').isFocusedToday).toBe(false);
+    });
+
+    it('completeTask: a replay never completes a task reopened since', async () => {
+        const host = await open();
+        const input = { id: 'a', taskRevision: taskRevisionOf(stored('a')) };
+        expect(unwrap(await host.completeTask(input))).toEqual({ id: 'a' });
+        expect(await replayAfterRestart((restarted) => restarted.completeTask(input))).toEqual({ result: { ok: true, value: { id: 'a' } }, wrote: false });
+        expect((await store().updateTask('a', { status: 'next' })).success).toBe(true);
+        const { result, wrote } = await replayAfterRestart((restarted) => restarted.completeTask(input));
+        expect(result).toMatchObject(stale);
+        expect(wrote).toBe(false);
+        expect(stored('a').status).toBe('next');
+    });
+
+    it('setProjectFocus: a replay never stars a project again after the star was taken off', async () => {
+        const host = await open();
+        const view = unwrap(host.getProjects());
+        const input = { id: 'p', focused: true, projectRevision: view.active[0].projects[0].projectRevision };
+        expect(unwrap(await host.setProjectFocus(input))).toEqual({ id: 'p', focused: true });
+        expect(await replayAfterRestart((restarted) => restarted.setProjectFocus(input))).toEqual({ result: { ok: true, value: { id: 'p', focused: true } }, wrote: false });
+        await store().updateProject('p', { isFocused: false });
+        const { result, wrote } = await replayAfterRestart((restarted) => restarted.setProjectFocus(input));
+        expect(result).toMatchObject(stale);
+        expect(wrote).toBe(false);
+        expect(store()._projectsById.get('p')?.isFocused).toBe(false);
+    });
+
+    it('a request UUID belongs to one action across the contract\'s modules: another command under it is refused', async () => {
+        const host = await open();
+        const requestId = newRequestId();
+        // Reuses the live project "p" by title: nothing written, and its request is still spent.
+        expect(unwrap(await host.createProject({ title: store()._projectsById.get('p')!.title, areaId: null, requestId }))).toEqual({ id: 'p' });
+        expect(await host.setGeneralSetting({ requestId, edit: { type: 'timeFormat', value: '12h' } })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(store().settings.timeFormat).toBeUndefined();
+    });
+
+    it('createProject: a replay finds the project its request UUID named, renamed or deleted since', async () => {
+        const host = await open();
+        const input = { title: 'Launch', areaId: 'area', requestId: newRequestId() };
+        expect(unwrap(await host.createProject(input))).toEqual({ id: input.requestId });
+        await store().updateProject(input.requestId, { title: 'Renamed' });
+        expect(await replayAfterRestart((restarted) => restarted.createProject(input))).toEqual({ result: { ok: true, value: { id: input.requestId } }, wrote: false });
+        await store().deleteProject(input.requestId);
+        expect(await replayAfterRestart((restarted) => restarted.createProject(input))).toEqual({ result: { ok: true, value: { id: input.requestId } }, wrote: false });
+        expect(store()._allProjects.filter((entry) => entry.id === input.requestId)).toMatchObject([{ title: 'Renamed', deletedAt: expect.any(String) }]);
+        expect(store().projects.map((entry) => entry.id)).toEqual(['p']);
+    });
+
+    it('saveSearch: a replay finds the search its request UUID named; one changed since is refused', async () => {
+        const host = await open();
+        const input = { query: ' launch ', name: 'Launch', requestId: newRequestId() };
+        expect(unwrap(await host.saveSearch(input))).toEqual({ id: input.requestId, existing: false });
+        expect(await replayAfterRestart((restarted) => restarted.saveSearch(input))).toEqual({ result: { ok: true, value: { id: input.requestId, existing: false } }, wrote: false });
+        await store().updateSettings({ savedSearches: [{ id: input.requestId, name: 'Renamed', query: 'launch' }] });
+        const { result, wrote } = await replayAfterRestart((restarted) => restarted.saveSearch(input));
+        expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(wrote).toBe(false);
+        expect(store().settings.savedSearches).toEqual([{ id: input.requestId, name: 'Renamed', query: 'launch' }]);
+    });
+
+    it('updateTask: a replay after a later edit of the same field is stale; after it landed, it writes nothing', async () => {
+        const host = await open();
+        const input = { id: 'a', base: { title: 'a' }, patch: { title: 'Mine' }, requestId: newRequestId() };
+        expect(unwrap(await host.updateTask(input))).toEqual({ id: 'a', changed: true });
+        expect(await replayAfterRestart((restarted) => restarted.updateTask(input))).toEqual({ result: { ok: true, value: { id: 'a', changed: false } }, wrote: false });
+        expect((await store().updateTask('a', { title: 'Theirs' })).success).toBe(true);
+        const { result, wrote } = await replayAfterRestart((restarted) => restarted.updateTask(input));
+        expect(result).toMatchObject(stale);
+        expect(wrote).toBe(false);
+        expect(stored('a').title).toBe('Theirs');
+    });
+
+    it('saveTaskDraft: a replay after a later edit of the same field is stale; after it landed, it writes nothing', async () => {
+        const host = await open();
+        const input = { id: 'a', base: { title: 'a' }, patch: { title: 'Mine' }, requestId: newRequestId() };
+        expect(unwrap(await host.saveTaskDraft(input)).draft.title).toBe('Mine');
+        const landed = await replayAfterRestart((restarted) => restarted.saveTaskDraft(input));
+        expect(landed).toMatchObject({ result: { ok: true, value: { id: 'a', draft: { title: 'Mine' } } }, wrote: false });
+        expect((await store().updateTask('a', { title: 'Theirs' })).success).toBe(true);
+        const { result, wrote } = await replayAfterRestart((restarted) => restarted.saveTaskDraft(input));
+        expect(result).toMatchObject(stale);
+        expect(wrote).toBe(false);
+        expect(stored('a').title).toBe('Theirs');
+    });
+
+    it('createInboxTask: a replay answers the task its capture UUID made, edited since', async () => {
+        const host = await open();
+        const input = { title: 'Captured', captureId: newRequestId() };
+        const { id } = unwrap(await host.createInboxTask(input));
+        expect((await store().updateTask(id, { title: 'Edited' })).success).toBe(true);
+        expect(await replayAfterRestart((restarted) => restarted.createInboxTask(input))).toEqual({ result: { ok: true, value: { id } }, wrote: false });
+        expect(stored(id).title).toBe('Edited');
+        expect(store()._allTasks).toHaveLength(3);
+    });
+
+    it('setAreaFilter: a replay of the landed selection writes nothing and keeps a later settings change', async () => {
+        const host = await open();
+        const input = { included: ['area'], excluded: [] };
+        expect(unwrap(await host.setAreaFilter(input))).toEqual(input);
+        expect(await replayAfterRestart((restarted) => restarted.setAreaFilter(input))).toEqual({ result: { ok: true, value: input }, wrote: false });
+        await store().updateSettings({ weekStart: 'monday' });
+        expect(await replayAfterRestart((restarted) => restarted.setAreaFilter(input))).toEqual({ result: { ok: true, value: input }, wrote: false });
+        expect(store().settings).toMatchObject({ weekStart: 'monday', filters: { areaIds: ['area'] } });
     });
 });

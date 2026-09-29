@@ -66,6 +66,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import org.json.JSONObject
 
 /** What a list shows at a row's right edge, as RN's lists do: nothing, the status glyph (one-status lists), or the status badge. */
 enum class RowStatus { Hidden, Icon, Badge }
@@ -103,7 +104,7 @@ fun TaskRowItem(
     val target = meta.swipe.target
     val swipeLabel = meta.swipe.label
     val canComplete = writable && !busy &&
-        (failedAction == null || failedAction == FailedAction("complete", task.id))
+        (failedAction == null || failedAction == completeAction(task.id, task.taskRevision))
     val canEdit = writable && !busy && failedAction == null
     // Done keeps its own command (core's completeTask); Restore and Next are RN's status change, with its exact retry.
     // A list whose contract writes its rows sends that list's own status action instead; a selecting list has no swipe.
@@ -111,7 +112,7 @@ fun TaskRowItem(
     val selecting = actions?.selecting == true
     val listed = actions?.status
     val swipeOn = !selecting && if (listed != null) canEdit else completable && (if (target == "done") canComplete else canMove)
-    val onSwipe = listed?.let { status -> { status(target) } } ?: { if (target == "done") complete(task.id) else changeStatus(task, target) }
+    val onSwipe = listed?.let { status -> { status(target) } } ?: { if (target == "done") complete(task.id, task.taskRevision) else changeStatus(task, target) }
     val onDelete = actions?.delete?.takeIf { canEdit && !selecting }
     val onTap = { if (selecting) actions?.select?.invoke() else openEditor(task.id) }
     val shape = RoundedCornerShape(theme.rowRadius)
@@ -245,10 +246,10 @@ fun MetaText(text: String, color: Color, weight: Int, modifier: Modifier = Modif
 private fun StarButton(model: InboxViewModel, task: TaskRow, blocked: String?) = with(model) {
     val disabled = blocked != null
     val target = !task.isFocusedToday
-    val enabled = !disabled && writable && !busy && (failedAction == null || failedAction == taskFocusAction(task.id, target))
+    val enabled = !disabled && writable && !busy && (failedAction == null || failedAction == taskFocusAction(task.id, target, task.taskRevision))
     val label = blocked ?: t(if (task.isFocusedToday) "agenda.removeFromFocus" else "agenda.addToFocus")
     FocusStar(task.isFocusedToday, disabled, 22, Modifier.size(44.dp)
-        .clickable(enabled = enabled, role = Role.Button) { setTaskFocus(task.id, target) }
+        .clickable(enabled = enabled, role = Role.Button) { setTaskFocus(task.id, target, task.taskRevision) }
         .semantics { contentDescription = label; if (disabled) disabled() })
 }
 
@@ -333,7 +334,7 @@ fun StatusMenu(model: InboxViewModel) = with(model) {
             menu.moveLabel(task)?.let { label ->
                 val enabled = writable && !busy && failedAction == null
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).border(1.dp, c.border, RoundedCornerShape(20.dp))
-                    .clickable(enabled = enabled, role = Role.Button) { showStatusMenu(null); menu.openMove(listOf(task.id)) }
+                    .clickable(enabled = enabled, role = Role.Button) { showStatusMenu(null); menu.openMove(listOf(task.id), JSONObject().put(task.id, task.taskRevision)) }
                     .semantics { contentDescription = label }.fade(if (enabled) 1f else 0.5f).padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Text(label.split(' ').joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }, style = rnText(14, 500), color = c.text)
                 }

@@ -54,7 +54,17 @@ import {
     type NativeHostResult,
     type NativeTaskRow,
 } from './native-host-contract';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
+import {
+    createNativeRequestReceipts,
+    isRevision,
+    isRevisions,
+    refuseStaleProjects,
+    refuseStaleTasks,
+    revisionOf,
+    runStoreWrite,
+    settleWrite,
+    type NativeRevisions,
+} from './native-request-receipts';
 import {
     buildSomedaySectionManagerRows,
     buildSomedaySectionMoveDialog,
@@ -153,7 +163,9 @@ export type NativeListChip = {
     action: { filterEdit: ListFilterEdit } | { includeArchivedProjects: false };
 };
 
-type DeferredRow = DeferredProjectsSection['rows'][number];
+/** A parked project; send its `projectRevision` with activateProject. */
+type DeferredRow = DeferredProjectsSection['rows'][number] & { projectRevision: string };
+type Deferred = Omit<DeferredProjectsSection, 'rows'> & { rows: DeferredRow[] };
 export type NativeDeferredProjects = Omit<DeferredProjectsSection, 'rows'> & { rows: NativeWindow<DeferredRow> };
 type PersonOption = { label: string; person: string; selected: boolean };
 
@@ -281,7 +293,7 @@ export const isFoldIdList = (value: unknown): value is string[] => (
     Array.isArray(value) && value.every((entry) => typeof entry === 'string')
 );
 const MATCH_MODES = new Set(['all', 'any']);
-const isTimeEstimate = (value: unknown): value is TimeEstimate => (
+export const isTimeEstimate = (value: unknown): value is TimeEstimate => (
     typeof value === 'string' && (TIME_ESTIMATE_OPTIONS.includes(value as TimeEstimate) || isCustomTimeEstimate(value as TimeEstimate))
 );
 // Selections are bounded by the window, so the chips they make are bounded too.
@@ -428,6 +440,13 @@ const filterChips = (resolved: ResolvedListFilter): NativeListChip[] => resolved
 
 type MoveUndo = { previous: SomedaySectionAssignment[]; sectionId: string | null };
 
+/** Parked project rows with the revision activateProject compares. */
+const withProjectRevisions = (deferred: DeferredProjectsSection | null): Deferred | null => {
+    if (!deferred) return null;
+    const { _projectsById } = useTaskStore.getState();
+    return { ...deferred, rows: deferred.rows.map((row) => ({ ...row, projectRevision: revisionOf(_projectsById.get(row.id)!) })) };
+};
+
 /** A view's data, its revision (from the resolved inputs) and its collections. */
 type Built<T> = { revision: string; now: Date; data: T; collections: Partial<Record<MenuViewCollectionName, readonly unknown[]>> };
 
@@ -507,6 +526,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             const person = model.person;
             return {
                 model,
+                deferred: withProjectRevisions(model.deferred),
                 person,
                 people: model.people.map((entry): PersonOption => ({
                     label: entry, person: entry, selected: person.toLowerCase() === entry.toLowerCase(),
@@ -517,7 +537,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             revision: `${base}:${paramsKey(['waiting', data.person])}`,
             now,
             data,
-            collections: { people: data.people, deferredProjects: data.model.deferred?.rows ?? [] },
+            collections: { people: data.people, deferredProjects: data.deferred?.rows ?? [] },
         } satisfies Built<typeof data>;
     };
 
@@ -566,6 +586,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                 : model.tasks.map((task) => ({ type: 'task' as const, task, groupId: null }));
             return {
                 model, resolved, options, items,
+                deferred: withProjectRevisions(model.deferred),
                 tokens: tokenOptions(options, resolved.state),
                 projects: projectOptions(options, resolved.state),
             };
@@ -579,7 +600,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                 tokens: data.tokens,
                 projects: data.projects ?? [],
                 sections: data.model.sections,
-                deferredProjects: data.model.deferred?.rows ?? [],
+                deferredProjects: data.deferred?.rows ?? [],
             },
         } satisfies Built<typeof data>;
     };
@@ -710,7 +731,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
         await state.updateSettings(buildSomedaySectionsSettingsUpdate(state.settings, next));
     };
 
-    const deferredWindow = (deferred: DeferredProjectsSection | null): NativeDeferredProjects | null => (
+    const deferredWindow = (deferred: Deferred | null): NativeDeferredProjects | null => (
         deferred ? { ...deferred, rows: firstWindow(deferred.rows) } : null
     );
 
@@ -758,7 +779,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                     filterLabel: labels.filter,
                     clearLabel: person ? labels.clear : null,
                     stats: [{ value: model.count, label: labels.count }, { value: model.withDeadlineCount, label: labels.withDeadline }],
-                    deferred: deferredWindow(model.deferred),
+                    deferred: deferredWindow(built.data.deferred),
                     empty: model.showEmptyState ? { title: labels.emptyTitle, hint: labels.emptyHint } : null,
                     showDetails: true,
                 },
@@ -846,7 +867,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                     filters: nativeFilterView(resolved, options, built.data.tokens, built.data.projects, t),
                     chips: filterChips(resolved),
                     sections: firstWindow(model.sections),
-                    deferred: deferredWindow(model.deferred),
+                    deferred: deferredWindow(built.data.deferred),
                     empty: model.showEmptyState ? { title: labels.emptyTitle, hint: labels.emptyHint, clear: model.empty.actionLabel !== null } : null,
                     text: {
                         moveToSection: labels.moveToSection,
@@ -1022,15 +1043,23 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             };
         },
 
-        /** Waiting and Someday's parked projects: swiping one makes it active. Target state; a retry writes nothing. */
-        async activateProject(input: { projectId: string }): Promise<NativeHostResult<{ id: string; changed: boolean }>> {
+        /**
+         * Waiting and Someday's parked projects: swiping one makes it active. Target state; a retry writes nothing.
+         * `projectRevision` is the row's: a project changed since is not written (STALE_REVISION), so a replay
+         * after a restart never undoes a later change.
+         */
+        async activateProject(input: { projectId: string; projectRevision: string }): Promise<NativeHostResult<{ id: string; changed: boolean }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            if (!isObjectRecord(input) || !isText(input.projectId) || !input.projectId) return fail('INVALID_INPUT', 'Project ID is required');
+            if (!isObjectRecord(input) || !isText(input.projectId) || !input.projectId || !isRevision(input.projectRevision)) {
+                return fail('INVALID_INPUT', 'Project ID and the revision the view showed are required');
+            }
             const project = useTaskStore.getState()._projectsById.get(input.projectId);
             if (!project || project.deletedAt) return fail('INVALID_INPUT', 'Project is not available');
             if (project.status === 'active') return settle({ id: project.id, changed: false });
             if (project.status !== 'waiting' && project.status !== 'someday') return fail('INVALID_INPUT', 'Only a waiting or someday project can be activated');
+            const refused = refuseStaleProjects([project.id], { [project.id]: input.projectRevision });
+            if (refused) return refused;
             try {
                 const result = await useTaskStore.getState().updateProject(project.id, { status: 'active' });
                 if (!result.success) return writeFailure(result.error ?? 'Project activation failed');
@@ -1044,22 +1073,31 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
 
         /**
          * Move Someday tasks to a section (null = No section), as the move dialog
-         * does. Target state: tasks already in the section are not written, so any
-         * retry is safe. Reusing `requestId` returns the first outcome; its Undo
-         * lives in memory, like mobile's Undo toast.
+         * does. Target state: tasks already in the section are not written.
+         * `taskRevisions` holds the revision the view showed for each task sent (the
+         * rows' `taskRevision`, or the bulk view's `moveToSection.taskRevisions`): a task
+         * it would move that changed since is not written (STALE_REVISION), so a replay
+         * after a restart never undoes a later change. Reusing `requestId` returns the
+         * first outcome; its Undo lives in memory, like mobile's Undo toast.
          */
-        async moveSomedayTasksToSection(input: { taskIds: string[]; sectionId: string | null; requestId: string }): Promise<NativeHostResult<NativeSomedayMoveResult>> {
+        async moveSomedayTasksToSection(input: {
+            taskIds: string[];
+            sectionId: string | null;
+            requestId: string;
+            taskRevisions: NativeRevisions;
+        }): Promise<NativeHostResult<NativeSomedayMoveResult>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            if (!isObjectRecord(input) || !isTextList(input.taskIds) || input.taskIds.length === 0
+            const ids = isObjectRecord(input) && isTextList(input.taskIds) ? Array.from(new Set(input.taskIds)) : [];
+            if (!isObjectRecord(input) || ids.length === 0
                 || (input.sectionId !== null && !isText(input.sectionId))
-                || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)) {
-                return fail('INVALID_INPUT', 'Task IDs, a section ID or null, and a request UUID are required');
+                || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)
+                || !isRevisions(input.taskRevisions, ids)) {
+                return fail('INVALID_INPUT', 'Task IDs, a section ID or null, a request UUID, and the revision the view showed for each task are required');
             }
-            const ids = Array.from(new Set(input.taskIds));
             const destination = input.sectionId ?? undefined;
-            const requestId = input.requestId;
-            return receipts.run<NativeSomedayMoveResult>(requestId, JSON.stringify(['move', ids, input.sectionId]), async () => {
+            const { requestId, taskRevisions } = input;
+            return receipts.run<NativeSomedayMoveResult>(requestId, JSON.stringify(['move', ids, input.sectionId, taskRevisions]), async () => {
                 const t = deps.t();
                 const text = getSomedaySectionMoveText(t);
                 const refused: NativeHostResult<NativeSomedayMoveResult> = { ok: true, value: { refused: { title: text.errorTitle, message: text.moveFailed } } };
@@ -1074,6 +1112,8 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                 // Target state: tasks already in the section are not written.
                 const { updates, previous } = planSomedaySectionMove({ ids, tasks, destination });
                 if (previous.length === 0) return { ok: true, value: { moved: 0, toast: null, undoRequestId: null } };
+                const stale = refuseStaleTasks(previous.map(({ id }) => id), taskRevisions);
+                if (stale) return stale;
                 const written = await runStoreWrite(() => state.batchUpdateTasks(updates));
                 if (!written.ok && written.error.code !== 'SAVE_FAILED') return written;
                 // Landed: Undo is offered even while the save is owed.
@@ -1156,23 +1196,32 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             );
         },
 
-        /** New Someday section. A title that exists (any case) returns that section; a retry writes nothing again. */
-        async createSomedaySection(input: { title: string }): Promise<NativeHostResult<{ id: string; existing: boolean }>> {
+        /**
+         * New Someday section. A title that exists (any case) returns that section. The new
+         * section takes the request UUID as its ID: a replay after a restart finds it (renamed
+         * since or not) and writes nothing. Reuse `requestId` to retry.
+         */
+        async createSomedaySection(input: { title: string; requestId: string }): Promise<NativeHostResult<{ id: string; existing: boolean }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            if (!isObjectRecord(input) || !isText(input.title, 200) || !input.title.trim()) return fail('INVALID_INPUT', 'A section title is required');
-            const plan = planSomedaySectionCreate(somedaySections(), input.title);
-            if (plan.kind === 'blank') return fail('INVALID_INPUT', 'A section title is required');
-            if (plan.kind === 'existing') return settle({ id: plan.id, existing: true });
-            try {
-                await updateSomedaySections(plan.sections);
-            } catch (error) {
-                return caught(error);
+            if (!isObjectRecord(input) || !isText(input.title, 200) || !input.title.trim()
+                || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)) {
+                return fail('INVALID_INPUT', 'A section title and a request UUID are required');
             }
-            if (!sortViewSectionDefinitions(somedaySections()).some((section) => section.id === plan.id)) return writeFailure('Section creation failed');
-            const saved = await deps.save();
-            if (!saved.ok) return saved;
-            return { ok: true, value: { id: plan.id, existing: false } };
+            const id = input.requestId.toLowerCase();
+            const title = input.title.trim();
+            return receipts.run<{ id: string; existing: boolean }>(input.requestId, JSON.stringify(['createSection', title]), async () => {
+                // ponytail: a deleted section leaves no tombstone in settings, so a replay after its delete makes it again.
+                if ((somedaySections() ?? []).some((section) => section?.id === id)) return { ok: true, value: { id, existing: false } };
+                const plan = planSomedaySectionCreate(somedaySections(), title, () => id);
+                if (plan.kind === 'blank') return fail('INVALID_INPUT', 'A section title is required');
+                if (plan.kind === 'existing') return { ok: true, value: { id: plan.id, existing: true } };
+                const written = await runStoreWrite(() => updateSomedaySections(plan.sections));
+                if (written.ok && !sortViewSectionDefinitions(somedaySections()).some((section) => section.id === id)) {
+                    return fail('ACTION_FAILED', 'Section creation failed');
+                }
+                return settleWrite(written, { id, existing: false });
+            });
         },
 
         /** Rename a section. Target state; the same title again writes nothing. */

@@ -1,5 +1,6 @@
 import type { AppData } from './types';
 import type { AIProviderConfig, AIProviderId, AIRequestExtraBodyParams } from './ai/types';
+import { isSandboxMode } from './sandbox';
 import { COPILOT_REASONING_EFFORT, DEFAULT_ANTHROPIC_THINKING_BUDGET, DEFAULT_GEMINI_THINKING_BUDGET, DEFAULT_REASONING_EFFORT, getDefaultAIConfig, getDefaultCopilotModel } from './ai/catalog';
 
 const AI_KEY_PREFIX = 'mindwtr-ai-key';
@@ -144,6 +145,13 @@ export function buildAIConfig(settings: AppData['settings'], apiKey: string): AI
         ...(endpoint ? { endpoint } : {}),
         ...(extraBodyParams ? { extraBodyParams } : {}),
     };
+}
+
+/** Whether the AI provider needs an API key: every one but OpenAI at an OpenAI-compatible endpoint; none in sandbox mode. */
+export function isAIKeyRequired(settings: AppData['settings'] | undefined): boolean {
+    if (isSandboxMode()) return false;
+    const config = buildAIConfig(settings ?? {}, '');
+    return !(config.provider === 'openai' && Boolean(config.endpoint));
 }
 
 export function buildCopilotConfig(settings: AppData['settings'], apiKey: string): AIProviderConfig {

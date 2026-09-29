@@ -357,7 +357,8 @@ export function createContractDriver(host: BulkActionsHost): BulkDriver {
             return { selectedId: chosen?.sectionId ?? null, selectionMixed: !chosen };
         },
         run: async (state, action) => {
-            const target = { taskIds: state.selected };
+            // The selection with each row's revision, as the view shows them.
+            const target = { taskIds: state.selected, taskRevisions: view(state).taskRevisions };
             switch (action.type) {
                 case 'move': return run(state, { type: 'moveTasks', status: action.status, ...target });
                 case 'tags': return run(state, { type: 'editTaskTokens', field: 'tags', mode: action.mode, values: action.values, ...target });

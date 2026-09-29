@@ -166,9 +166,9 @@ private fun LazyListScope.dailyContent(model: InboxViewModel, shown: MenuPage) {
         val followUp = json.optJSONObject("followUp")
         TaskRowItem(model, row, status = if (json.optBoolean("hideStatusBadge")) RowStatus.Hidden else RowStatus.Badge,
             star = if (json.optBoolean("showFocusToggle")) RowStar.Shown else RowStar.Hidden, actions = RowActions(
-                status = { status -> menu.act("reviewAction", setTaskStatus(row.id, status)) },
-                delete = { menu.act("reviewAction", trashTask(row.id)) },
-                footer = followUp?.let { { FollowUpButton(menu, row.id, it) } },
+                status = { status -> menu.act("reviewAction", setTaskStatus(row.id, status, row.taskRevision)) },
+                delete = { menu.act("reviewAction", trashTask(row.id, row.taskRevision)) },
+                footer = followUp?.let { { FollowUpButton(menu, row, it) } },
             ))
     }
     content.menuText("empty")?.let { empty ->
@@ -178,12 +178,12 @@ private fun LazyListScope.dailyContent(model: InboxViewModel, shown: MenuPage) {
 
 /** RN's Follow up today on a waiting row: core's label; disabled (and dimmed) once the task is due for review, as core says. */
 @Composable
-private fun FollowUpButton(menu: MenuModel, taskId: String, followUp: JSONObject) {
+private fun FollowUpButton(menu: MenuModel, row: TaskRow, followUp: JSONObject) {
     val c = LocalTheme.current.colors
     val due = followUp.getBoolean("due")
     val enabled = !due && menu.idle
     Row(Modifier.padding(top = 4.dp).heightIn(min = 32.dp).clip(RoundedCornerShape(8.dp)).background(c.filterBg)
-        .clickable(enabled = enabled, role = Role.Button) { menu.act("reviewAction", followUpToday(taskId)) }
+        .clickable(enabled = enabled, role = Role.Button) { menu.act("reviewAction", followUpToday(row.id, row.taskRevision)) }
         .semantics { contentDescription = followUp.getString("accessibilityLabel"); if (due) disabled() }.fade(if (due) 0.7f else 1f)
         .padding(horizontal = 9.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Icon(Lucide.Clock, null, tint = if (due) c.secondaryText else c.tint, modifier = Modifier.size(13.dp))

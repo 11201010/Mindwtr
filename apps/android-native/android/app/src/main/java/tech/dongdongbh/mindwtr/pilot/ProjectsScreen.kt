@@ -64,6 +64,8 @@ data class ProjectRow(
     val activeTaskCount: Int,
     val nextActionTitle: String?,
     val focusedWithoutNextAction: Boolean,
+    /** Core's revision of the project as the view showed it; the star sends it. */
+    val projectRevision: String,
 )
 data class ProjectGroup(val areaId: String?, val areaName: String?, val areaColor: String?, val areaIcon: String?, val projects: List<ProjectRow>)
 
@@ -90,7 +92,7 @@ data class ProjectsView(val buckets: Map<String, List<ProjectGroup>>) {
                                 rows.getJSONObject(row).let {
                                     ProjectRow(it.getString("id"), it.getString("title"), it.getString("status"), it.getString("statusLabel"), it.getBoolean("isFocused"),
                                         it.getBoolean("focusDisabled"), it.getInt("activeTaskCount"), it.text("nextActionTitle"),
-                                        it.getBoolean("focusedWithoutNextAction"))
+                                        it.getBoolean("focusedWithoutNextAction"), it.optString("projectRevision"))
                                 }
                             })
                         }
@@ -326,12 +328,12 @@ private fun ProjectRowItem(model: InboxViewModel, row: ProjectRow) = with(model)
         Text("${row.activeTaskCount}", style = rnText(12, 600, 16), color = c.secondaryText, textAlign = TextAlign.End,
             modifier = Modifier.padding(start = 8.dp).widthIn(min = 20.dp).semantics { contentDescription = count })
         val disabled = row.focusDisabled && !row.isFocused
-        val enabled = !disabled && writable && !busy && (failedAction == null || failedAction == projectFocusAction(row.id, !row.isFocused))
+        val enabled = !disabled && writable && !busy && (failedAction == null || failedAction == projectFocusAction(row.id, !row.isFocused, row.projectRevision))
         val label = t(if (row.isFocused) "projects.removeFromFocus" else "projects.addToFocus")
         FocusStar(row.isFocused, disabled, 18, Modifier.padding(end = 4.dp).size(44.dp)
             .clickable(enabled = enabled, role = Role.Button) {
                 view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                setProjectFocus(row.id, !row.isFocused)
+                setProjectFocus(row.id, !row.isFocused, row.projectRevision)
             }
             .semantics { contentDescription = label; selected = row.isFocused; if (disabled) disabled() })
     }

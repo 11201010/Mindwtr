@@ -2,25 +2,53 @@ import {
   areDueDateRemindersEnabled,
   areStartDateRemindersEnabled,
   areTaskRemindersEnabled,
-  buildReminderSchedule,
   getSystemDefaultLanguage,
   getTranslations,
   hasActiveMobileNotificationFeature,
   isWeeklyReviewReminderEnabled,
   loadStoredLanguage,
   nameNotifyListener,
-  type AppLanguage,
   type Language,
-  type NotificationSettings,
-  type ReminderScheduleRequest,
   useTaskStore,
 } from '@mindwtr/core';
+import {
+  buildImmediateNotificationDetails,
+  buildPomodoroAlarmDetails,
+  cancelReminderAlarm,
+  cancelUnrequestedReminderAlarms,
+  countReminderAlarmCancelReasons,
+  getReminderAlarmCancelReason,
+  getMaxPendingOneShotReminderAlarms,
+  isExplicitPomodoroAlarmCancellation,
+  isPomodoroAlarmDue,
+  isPomodoroAlarmImmediate,
+  isPomodoroAlarmScheduleSuperseded,
+  isPomodoroAlarmUnchanged,
+  isPomodoroNativeAlarm,
+  planReminderAlarms,
+  POMODORO_ALARM_STORAGE_KEY,
+  readPomodoroAlarmEntry,
+  readReminderAlarmMap,
+  REMINDER_ALARM_MAP_STORAGE_KEY,
+  REMINDER_NOTIFICATION_CHANNEL,
+  REMINDER_NOTIFICATION_CHANNEL_NAME,
+  REMINDER_NOTIFICATION_EVENT_RESCHEDULE_DELAY_MS,
+  REMINDER_STORE_RESCHEDULE_DELAY_MS,
+  scheduleReminderAlarms,
+  shouldRemoveFiredPomodoroAlarm,
+  shouldRescheduleReminderAlarms,
+  writeReminderAlarmMap,
+  type PomodoroAlarmCancellation,
+  type PomodoroAlarmEntry,
+  type ReminderAlarmEntry,
+  type ReminderAlarmPlan,
+  type ReminderAlarmPort,
+} from '@mindwtr/core/mobile-reminder-alarms';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from 'react-native';
 
 import { isLoggingEnabled, logInfo, logWarn } from './app-log';
 import { ensureReminderNotificationChannel, restorePersistentCaptureNotification } from '@/modules/notification-open-intents';
-import { getDuplicateAlarmRetryFireAt } from './notification-service-local-utils';
 
 type NotificationOpenPayload = {
   notificationId?: string;
@@ -56,60 +84,21 @@ type AlarmNotificationsApi = {
   requestPermissions?: (permissions: { alert: boolean; badge: boolean; sound: boolean }) => Promise<unknown>;
 };
 
-type LocalAlarmMapEntry = {
-  id: AlarmId;
-  signature?: string;
-};
-
-type PomodoroAlarmEntry = {
-  id?: AlarmId;
-  fireAtMs?: number;
-  phase?: string;
-  notifiedImmediately?: boolean;
-};
-
 type PomodoroAlarmLoadResult = {
   entry: PomodoroAlarmEntry | null;
   failed: boolean;
-};
-
-type LocalAlarmMap = Record<string, LocalAlarmMapEntry>;
-
-type LocalAlarmConfig = {
-  title: string;
-  message: string;
-  fireAt: Date;
-  repeatInterval?: 'daily' | 'weekly';
-  hasSnoozeAction?: boolean;
-  hasCompleteAction?: boolean;
-  data?: Record<string, string>;
 };
 
 type NativeEmitterSubscription = {
   remove: () => void;
 };
 
-const LOCAL_ALARM_MAP_KEY = 'mindwtr:local:alarms:v1';
-const LOCAL_POMODORO_ALARM_KEY = 'mindwtr:local:pomodoro-alarm:v1';
-const LOCAL_NOTIFICATION_CHANNEL = 'mindwtr_reminders_v2';
-const LOCAL_NOTIFICATION_CHANNEL_NAME = 'Mindwtr reminders';
-const LOCAL_NOTIFICATION_COLOR = '#3b82f6';
-const LOCAL_SMALL_ICON = 'ic_launcher';
-const MAX_DUPLICATE_ALARM_RETRIES = 59;
-const MAX_PENDING_ONE_SHOT_REMINDER_ALARMS_IOS = 60;
-const MAX_PENDING_ONE_SHOT_REMINDER_ALARMS_ANDROID = 200;
-const ALARM_SCHEDULE_BATCH_SIZE = 10;
-const ONE_SHOT_TOP_UP_DELAY_MS = 5_000;
-const MAX_SETTIMEOUT_DELAY_MS = 24 * 60 * 60 * 1000;
-const NOTIFICATION_EVENT_RESCHEDULE_DEBOUNCE_MS = 250;
-// A sync cycle updates the store several times within a few seconds
-// (write-local, write-remote bookkeeping, refresh); coalesce those into one
-// full reschedule scan instead of 2-4 per cycle (#766). Alarms fire minutes
-// out, so a short scheduling delay is imperceptible.
-const STORE_RESCHEDULE_DEBOUNCE_MS = 2_500;
-const TASK_REMINDER_SNOOZE_MINUTES = 10;
+// Which alarms to hold, their signatures, caps, retries and delays are core's
+// (mobile-reminder-alarms.ts); this file binds them to the alarm library.
 const POMODORO_ALERT_DELIVERY_RELEASE_CHECK = 'v1.3.0/pomodoro-alert-delivery';
 const DAILY_DIGEST_INDEPENDENT_RELEASE_CHECK = 'v1.3.1/daily-digest-independent';
+const REMINDER_CANCEL_RELEASE_CHECK = 'v1.3.4/reminder-withdrawn-clears-tray';
+const DENIED_RESUME_CLEANUP_RELEASE_CHECK = 'v1.3.4/denied-resume-cleanup';
 
 let started = false;
 let alarmApi: AlarmNotificationsApi | null = null;
@@ -123,22 +112,12 @@ let notificationEventRescheduleTimer: ReturnType<typeof setTimeout> | null = nul
 let rescheduleQueue: Promise<void> = Promise.resolve();
 let pomodoroAlarmQueue: Promise<void> = Promise.resolve();
 let pomodoroRequestOrder = 0;
-let latestPomodoroCancellationRequest: {
-  order: number;
-  requestedAtMs: number;
-  reason: string;
-} | null = null;
-let alarmMap = new Map<string, LocalAlarmMapEntry>();
+let latestPomodoroCancellationRequest: PomodoroAlarmCancellation | null = null;
+let alarmMap = new Map<string, ReminderAlarmEntry>();
 let loadedAlarmMap = false;
 let alarmMapLoadPromise: Promise<void> | null = null;
 // Last payload `saveAlarmMap` actually wrote; null means "unknown, write it".
 let lastSavedAlarmMapJson: string | null = null;
-const configByKey = new Map<string, string>();
-
-type AlarmScheduleRequest = {
-  key: string;
-  config: LocalAlarmConfig;
-};
 
 const logNotificationError = (message: string, error?: unknown) => {
   const extra = error ? { error: error instanceof Error ? error.message : String(error) } : undefined;
@@ -155,21 +134,8 @@ const logNotificationWarn = (message: string, extra?: Record<string, unknown>) =
 
 async function loadPomodoroAlarmEntry(): Promise<PomodoroAlarmLoadResult> {
   try {
-    const raw = await AsyncStorage.getItem(LOCAL_POMODORO_ALARM_KEY);
-    if (!raw) return { entry: null, failed: false };
-    const parsed = JSON.parse(raw) as Partial<PomodoroAlarmEntry>;
-    const id = Number(parsed?.id);
-    const fireAtMs = Number(parsed?.fireAtMs);
-    const entry: PomodoroAlarmEntry = {
-      ...(Number.isFinite(id) ? { id: Math.floor(id) } : {}),
-      ...(Number.isFinite(fireAtMs) ? { fireAtMs } : {}),
-      ...(typeof parsed?.phase === 'string' ? { phase: parsed.phase } : {}),
-      ...(parsed?.notifiedImmediately === true ? { notifiedImmediately: true } : {}),
-    };
-    if (entry.id === undefined && entry.fireAtMs === undefined) {
-      return { entry: null, failed: false };
-    }
-    return { entry, failed: false };
+    const raw = await AsyncStorage.getItem(POMODORO_ALARM_STORAGE_KEY);
+    return { entry: readPomodoroAlarmEntry(raw), failed: false };
   } catch (error) {
     logNotificationError('Failed to load pomodoro alarm', error);
     return { entry: null, failed: true };
@@ -178,7 +144,7 @@ async function loadPomodoroAlarmEntry(): Promise<PomodoroAlarmLoadResult> {
 
 async function savePomodoroAlarmEntry(entry: PomodoroAlarmEntry): Promise<boolean> {
   try {
-    await AsyncStorage.setItem(LOCAL_POMODORO_ALARM_KEY, JSON.stringify(entry));
+    await AsyncStorage.setItem(POMODORO_ALARM_STORAGE_KEY, JSON.stringify(entry));
     return true;
   } catch (error) {
     logNotificationError('Failed to persist pomodoro alarm', error);
@@ -188,7 +154,7 @@ async function savePomodoroAlarmEntry(entry: PomodoroAlarmEntry): Promise<boolea
 
 async function clearPomodoroAlarmEntry(): Promise<boolean> {
   try {
-    await AsyncStorage.removeItem(LOCAL_POMODORO_ALARM_KEY);
+    await AsyncStorage.removeItem(POMODORO_ALARM_STORAGE_KEY);
     return true;
   } catch (error) {
     logNotificationError('Failed to clear pomodoro alarm', error);
@@ -207,7 +173,6 @@ function enqueuePomodoroAlarmOperation(label: string, operation: () => Promise<v
 }
 
 function resetRuntimeState(): void {
-  configByKey.clear();
   lastSavedAlarmMapJson = null;
   rescheduleQueue = Promise.resolve();
   notificationOpenHandler = null;
@@ -234,12 +199,6 @@ function clearNotificationEventRescheduleTimer(): void {
   notificationEventRescheduleTimer = null;
 }
 
-function getMaxPendingOneShotReminderAlarms(): number {
-  return Platform.OS === 'ios'
-    ? MAX_PENDING_ONE_SHOT_REMINDER_ALARMS_IOS
-    : MAX_PENDING_ONE_SHOT_REMINDER_ALARMS_ANDROID;
-}
-
 async function getAndroidNotificationPermissionStatus(): Promise<NotificationPermissionResult> {
   if (Number(Platform.Version) < 33) {
     return { granted: true, canAskAgain: true };
@@ -256,9 +215,9 @@ async function getAndroidNotificationPermissionStatus(): Promise<NotificationPer
 
 async function ensureLocalReminderNotificationChannel(): Promise<void> {
   try {
-    await ensureReminderNotificationChannel(LOCAL_NOTIFICATION_CHANNEL, LOCAL_NOTIFICATION_CHANNEL_NAME);
+    await ensureReminderNotificationChannel(REMINDER_NOTIFICATION_CHANNEL, REMINDER_NOTIFICATION_CHANNEL_NAME);
     logNotificationInfo('Android reminder notification channel ensured', {
-      channel: LOCAL_NOTIFICATION_CHANNEL,
+      channel: REMINDER_NOTIFICATION_CHANNEL,
     });
   } catch (error) {
     logNotificationError('Failed to ensure local notification channel', error);
@@ -296,30 +255,30 @@ async function clearScheduledAlarms(
   const scheduledAlarmCount = alarmMap.size;
 
   if (api) {
-    for (const entry of alarmMap.values()) {
+    // Every held alarm is withdrawn. Core cancels each on its own: what it
+    // delivered goes first, and a failed removal never stops its deletes.
+    const port = toReminderAlarmPort(api);
+    for (const key of Array.from(alarmMap.keys())) {
+      await cancelReminderAlarm(alarmMap, key, port, 'withdrawn');
+    }
+
+    // Only with the Pomodoro alert cancelled too (notifications denied): turning
+    // reminders off must not clear a delivered Pomodoro alert.
+    if (options.cancelPomodoro) {
       try {
-        api.deleteAlarm(entry.id);
-        api.deleteRepeatingAlarm(entry.id);
-        api.removeFiredNotification(entry.id);
-      } catch (error) {
-        logNotificationError('Failed to cancel local alarm', error);
+        api.removeAllFiredNotifications();
+      } catch {
+        // no-op
       }
-    }
 
-    try {
-      api.removeAllFiredNotifications();
-    } catch {
-      // no-op
-    }
-
-    // removeAllFiredNotifications() is NotificationManager.cancelAll(): it also
-    // wipes the pinned quick-capture notification, which is why the handle
-    // vanished whenever reminders were off (#819). Re-assert it from its
-    // native mirror; a no-op when the capture toggle is off.
-    try {
-      restorePersistentCaptureNotification();
-    } catch {
-      // no-op
+      // removeAllFiredNotifications() is NotificationManager.cancelAll(): it also
+      // wipes the pinned quick-capture notification (#819). Re-assert it from its
+      // native mirror; a no-op when the capture toggle is off.
+      try {
+        restorePersistentCaptureNotification();
+      } catch {
+        // no-op
+      }
     }
   }
 
@@ -327,14 +286,6 @@ async function clearScheduledAlarms(
   await saveAlarmMap();
   loadedAlarmMap = false;
   logNotificationInfo('Scheduled alarms cleared', { scheduledAlarmCount });
-}
-
-function serializeAlarmMap(map: Map<string, LocalAlarmMapEntry>): LocalAlarmMap {
-  const result: LocalAlarmMap = {};
-  for (const [key, value] of map.entries()) {
-    result[key] = value;
-  }
-  return result;
 }
 
 async function loadAlarmMapIfNeeded(): Promise<void> {
@@ -345,30 +296,11 @@ async function loadAlarmMapIfNeeded(): Promise<void> {
   }
   alarmMapLoadPromise = (async () => {
     try {
-      const raw = await AsyncStorage.getItem(LOCAL_ALARM_MAP_KEY);
-      if (!raw) {
-        alarmMap = new Map<string, LocalAlarmMapEntry>();
-        loadedAlarmMap = true;
-        return;
-      }
-      const parsed = JSON.parse(raw) as LocalAlarmMap;
-      const nextMap = new Map<string, LocalAlarmMapEntry>();
-      for (const [key, value] of Object.entries(parsed)) {
-        if (!value || typeof value !== 'object') continue;
-        const id = Number((value as LocalAlarmMapEntry).id);
-        if (!Number.isFinite(id)) continue;
-        const signature = typeof (value as LocalAlarmMapEntry).signature === 'string'
-          ? (value as LocalAlarmMapEntry).signature
-          : undefined;
-        nextMap.set(key, { id: Math.floor(id), signature });
-        if (signature) {
-          configByKey.set(key, signature);
-        }
-      }
-      alarmMap = nextMap;
+      const raw = await AsyncStorage.getItem(REMINDER_ALARM_MAP_STORAGE_KEY);
+      alarmMap = readReminderAlarmMap(raw);
       loadedAlarmMap = true;
     } catch (error) {
-      alarmMap = new Map<string, LocalAlarmMapEntry>();
+      alarmMap = new Map<string, ReminderAlarmEntry>();
       loadedAlarmMap = false;
       logNotificationError('Failed to load alarm map', error);
     }
@@ -384,10 +316,10 @@ async function saveAlarmMap(): Promise<void> {
   // touch no reminder-relevant field. Comparing the serialized form catches
   // that regardless of which path mutated the map (schedule, cancel, clear),
   // so a no-op cycle costs no AsyncStorage write (#766).
-  const serialized = JSON.stringify(serializeAlarmMap(alarmMap));
+  const serialized = writeReminderAlarmMap(alarmMap);
   if (serialized === lastSavedAlarmMapJson) return;
   try {
-    await AsyncStorage.setItem(LOCAL_ALARM_MAP_KEY, serialized);
+    await AsyncStorage.setItem(REMINDER_ALARM_MAP_STORAGE_KEY, serialized);
     lastSavedAlarmMapJson = serialized;
   } catch (error) {
     lastSavedAlarmMapJson = null;
@@ -399,11 +331,6 @@ function toAlarmFireDate(api: AlarmNotificationsApi, date: Date): string {
   const next = new Date(date);
   next.setMilliseconds(0);
   return api.parseDate(next);
-}
-
-function isDuplicateAlarmError(error: unknown): boolean {
-  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  return message.includes('duplicate alarm set at date');
 }
 
 function parseEventPayload(value: unknown): Record<string, string> | null {
@@ -492,145 +419,16 @@ function attachNativeEventListeners(): void {
   });
 }
 
-function buildAlarmConfigSignature(config: LocalAlarmConfig): string {
-  const repeatSchedule = (() => {
-    if (!config.repeatInterval) return config.fireAt.toISOString();
-    const hours = String(config.fireAt.getHours()).padStart(2, '0');
-    const minutes = String(config.fireAt.getMinutes()).padStart(2, '0');
-    if (config.repeatInterval === 'weekly') {
-      return `${config.repeatInterval}:${config.fireAt.getDay()}:${hours}:${minutes}`;
-    }
-    return `${config.repeatInterval}:${hours}:${minutes}`;
-  })();
-  return JSON.stringify({
-    title: config.title,
-    message: config.message,
-    fireAt: repeatSchedule,
-    repeatInterval: config.repeatInterval ?? 'once',
-    hasSnoozeAction: config.hasSnoozeAction === true,
-    ...(config.hasCompleteAction === true ? { hasCompleteAction: true } : {}),
-    data: config.data ?? {},
-  });
-}
-
-function normalizeNotificationMessage(title: string, message?: string): string {
-  const trimmedMessage = String(message || '').trim();
-  if (trimmedMessage) return trimmedMessage;
-
-  return String(title || '').trim();
-}
-
-async function cancelAlarmByKey(api: AlarmNotificationsApi, key: string): Promise<boolean> {
-  const entry = alarmMap.get(key);
-  if (!entry) return false;
-  try {
-    api.deleteAlarm(entry.id);
-  } catch (error) {
-    logNotificationError(`Failed to delete alarm (${key})`, error);
-  }
-  try {
-    api.deleteRepeatingAlarm(entry.id);
-  } catch {
-    // Safe to ignore when alarm is one-shot.
-  }
-  try {
-    api.removeFiredNotification(entry.id);
-  } catch {
-    // Safe to ignore if notification has not fired.
-  }
-  alarmMap.delete(key);
-  configByKey.delete(key);
-  logNotificationInfo('Alarm canceled', { alarmKey: key, alarmId: entry.id });
-  return true;
-}
-
-async function scheduleAlarmForKey(api: AlarmNotificationsApi, key: string, config: LocalAlarmConfig): Promise<void> {
-  const signature = buildAlarmConfigSignature(config);
-  const existingAlarm = alarmMap.get(key);
-  const existingSignature = configByKey.get(key) ?? existingAlarm?.signature;
-  if (existingAlarm && existingSignature === signature) {
-    configByKey.set(key, signature);
-    return;
-  }
-
-  await cancelAlarmByKey(api, key);
-
-  const baseFireAt = new Date(config.fireAt);
-  baseFireAt.setMilliseconds(0);
-
-  const detailsBase: Record<string, unknown> = {
-    title: config.title,
-    message: normalizeNotificationMessage(config.title, config.message),
-    channel: LOCAL_NOTIFICATION_CHANNEL,
-    auto_cancel: true,
-    small_icon: LOCAL_SMALL_ICON,
-    color: LOCAL_NOTIFICATION_COLOR,
-    has_button: config.hasSnoozeAction === true || config.hasCompleteAction === true,
-    has_complete_action: config.hasCompleteAction === true,
-    loop_sound: false,
-    play_sound: true,
-    schedule_type: config.repeatInterval ? 'repeat' : 'once',
-    repeat_interval: config.repeatInterval ?? 'hourly',
-    interval_value: 1,
-    use_big_text: true,
-    vibrate: false,
-    data: {
-      ...(config.data ?? {}),
-      alarmKey: key,
-      ...(config.hasCompleteAction === true ? { notificationActionComplete: 'true' } : {}),
-    },
-    ...(config.hasSnoozeAction === true ? { snooze_interval: TASK_REMINDER_SNOOZE_MINUTES } : {}),
+function toReminderAlarmPort(api: AlarmNotificationsApi): ReminderAlarmPort {
+  return {
+    parseDate: (date) => api.parseDate(date),
+    scheduleAlarm: (details) => api.scheduleAlarm(details),
+    deleteAlarm: (id) => api.deleteAlarm(id),
+    deleteRepeatingAlarm: (id) => api.deleteRepeatingAlarm(id),
+    removeFiredNotification: (id) => api.removeFiredNotification(id),
+    logInfo: logNotificationInfo,
+    logError: logNotificationError,
   };
-
-  let scheduledId: number | null = null;
-  let lastError: unknown = null;
-
-  for (let retry = 0; retry <= MAX_DUPLICATE_ALARM_RETRIES; retry += 1) {
-    // The Android alarm library treats same-minute alarms as duplicates.
-    const fireAt = getDuplicateAlarmRetryFireAt(baseFireAt, retry);
-    try {
-      const result = await api.scheduleAlarm({
-        ...detailsBase,
-        fire_date: toAlarmFireDate(api, fireAt),
-      });
-      const id = Number(result?.id);
-      if (!Number.isFinite(id)) {
-        logNotificationError(`Scheduled alarm returned invalid id for ${key}`);
-        return;
-      }
-      scheduledId = Math.floor(id);
-      logNotificationInfo('Alarm scheduled', {
-        alarmKey: key,
-        alarmId: scheduledId,
-        fireAt: fireAt.toISOString(),
-        retryCount: retry,
-        scheduleType: config.repeatInterval ? 'repeat' : 'once',
-      });
-      break;
-    } catch (error) {
-      lastError = error;
-      if (isDuplicateAlarmError(error) && retry < MAX_DUPLICATE_ALARM_RETRIES) {
-        continue;
-      }
-      logNotificationError(`Failed to schedule alarm (${key})`, error);
-      throw error;
-    }
-  }
-
-  if (scheduledId === null) {
-    logNotificationError(`Failed to schedule alarm for ${key} after duplicate retries`, lastError);
-    return;
-  }
-
-  alarmMap.set(key, { id: scheduledId, signature });
-  configByKey.set(key, signature);
-}
-
-async function scheduleAlarmRequests(api: AlarmNotificationsApi, requests: AlarmScheduleRequest[]): Promise<void> {
-  for (let index = 0; index < requests.length; index += ALARM_SCHEDULE_BATCH_SIZE) {
-    const batch = requests.slice(index, index + ALARM_SCHEDULE_BATCH_SIZE);
-    await Promise.all(batch.map((request) => scheduleAlarmForKey(api, request.key, request.config)));
-  }
 }
 
 // Pending requests the OS actually holds, for the cycle-complete log only —
@@ -655,69 +453,33 @@ async function countPendingNativeAlarms(api: AlarmNotificationsApi): Promise<num
   }
 }
 
-async function cancelInactiveKeys(api: AlarmNotificationsApi, activeKeys: Set<string>): Promise<void> {
-  for (const key of Array.from(alarmMap.keys())) {
-    if (activeKeys.has(key)) continue;
-    await cancelAlarmByKey(api, key);
+// Tester proof of the withdrawn-or-expired rule: a withdrawn alarm's delivered
+// notification was removed, an expired one's was kept.
+function logCancelReasons(plan: ReminderAlarmPlan): void {
+  const counts = countReminderAlarmCancelReasons(plan);
+  for (const reason of ['withdrawn', 'expired'] as const) {
+    if (counts[reason] === 0) continue;
+    logNotificationInfo('Reminder alarms cancelled', {
+      releaseCheck: REMINDER_CANCEL_RELEASE_CHECK,
+      reason,
+      count: counts[reason],
+    });
   }
 }
 
-function scheduleOneShotTopUp(api: AlarmNotificationsApi, sortedFireAtMs: number[], nowMs: number): void {
+function scheduleOneShotTopUp(api: AlarmNotificationsApi, delayMs: number | null): void {
   clearOneShotTopUpTimer();
-  if (sortedFireAtMs.length === 0) return;
-
-  const nextFireAtMs = sortedFireAtMs[0];
-  if (!Number.isFinite(nextFireAtMs)) return;
-
-  const rawDelayMs = Math.max(ONE_SHOT_TOP_UP_DELAY_MS, nextFireAtMs - nowMs + ONE_SHOT_TOP_UP_DELAY_MS);
-  const delayMs = Math.min(MAX_SETTIMEOUT_DELAY_MS, rawDelayMs);
+  if (delayMs === null) return;
   oneShotTopUpTimer = setTimeout(() => {
     oneShotTopUpTimer = null;
     enqueueReschedule(api);
   }, delayMs);
 }
 
-function toLocalAlarmConfig(request: ReminderScheduleRequest): LocalAlarmConfig {
-  return {
-    title: request.title,
-    message: request.message,
-    fireAt: request.fireAt,
-    repeatInterval: request.repeatInterval,
-    hasSnoozeAction: request.hasSnoozeAction,
-    hasCompleteAction: request.hasCompleteAction,
-    data: request.data,
-  };
-}
-
-// Every field a reschedule cycle actually reads (runRescheduleCycle's own
-// gates plus buildReminderSchedule's: areTaskRemindersEnabled,
-// areStartDateRemindersEnabled, areDueDateRemindersEnabled,
-// isWeeklyReviewReminderEnabled, hasActiveMobileNotificationFeature,
-// getDigestSchedule, and reviewAtNotificationsEnabled) plus `language`: the
-// cycle localizes every alarm title/body from it (see the language read near
-// the translations load below), so a language switch must re-arm too even
-// though buildReminderSchedule itself never reads it directly (correction
-// #3). A settings object can change identity every sync cycle
-// (lastSyncAt/lastSyncStatus/lastSyncStats bookkeeping) without moving any of
-// these, so the store-change guard below compares this signature instead of
-// settings identity (#766).
-function buildReminderRelevantSettingsSignature(
-  settings: NotificationSettings & { language?: AppLanguage },
-): string {
-  return JSON.stringify([
-    settings.notificationsEnabled,
-    settings.startDateNotificationsEnabled,
-    settings.dueDateNotificationsEnabled,
-    settings.weeklyReviewEnabled,
-    settings.reviewAtNotificationsEnabled,
-    settings.dailyDigestMorningEnabled,
-    settings.dailyDigestMorningTime,
-    settings.dailyDigestEveningEnabled,
-    settings.dailyDigestEveningTime,
-    settings.weeklyReviewDay,
-    settings.weeklyReviewTime,
-    settings.language,
-  ]);
+async function loadReminderTranslations(activeFeature: boolean): Promise<Record<string, string>> {
+  if (!activeFeature) return {};
+  const language: Language = await loadStoredLanguage(AsyncStorage, getSystemDefaultLanguage()).catch(() => getSystemDefaultLanguage());
+  return getTranslations(language);
 }
 
 async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
@@ -725,7 +487,6 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
   await loadAlarmMapIfNeeded();
 
   const { settings, tasks, projects } = useTaskStore.getState();
-  const activeKeys = new Set<string>();
   const taskRemindersEnabled = areTaskRemindersEnabled(settings);
   const includeStartTime = areStartDateRemindersEnabled(settings);
   const includeDueDate = areDueDateRemindersEnabled(settings);
@@ -744,12 +505,28 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
     weeklyReviewEnabled,
   });
 
-  if (!activeFeature) {
+  const port = toReminderAlarmPort(api);
+  const translations = await loadReminderTranslations(activeFeature);
+  const now = new Date();
+
+  // Derivation and the diff live in core (`planReminderAlarms` over `buildReminderSchedule`):
+  // digests, weekly review, every task's next reminder plus its due-time repeats, and project
+  // reviews, already sorted and capped. This effect layer binds the plan to the alarm library.
+  const plan = planReminderAlarms({
+    settings,
+    tasks,
+    projects,
+    now,
+    translations,
+    maxOneShotReminders: getMaxPendingOneShotReminderAlarms(Platform.OS),
+    alarms: alarmMap,
+  });
+
+  if (plan.mode !== 'active') {
     clearOneShotTopUpTimer();
-    for (const key of Array.from(alarmMap.keys())) {
-      await cancelAlarmByKey(api, key);
-    }
+    await cancelUnrequestedReminderAlarms(plan, alarmMap, port);
     await saveAlarmMap();
+    logCancelReasons(plan);
     logNotificationInfo('Reschedule cycle complete', {
       activeFeature,
       scheduledAlarmCount: alarmMap.size,
@@ -760,24 +537,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
     return;
   }
 
-  const language: Language = await loadStoredLanguage(AsyncStorage, getSystemDefaultLanguage()).catch(() => getSystemDefaultLanguage());
-  const tr = await getTranslations(language);
-  const now = new Date();
-
-  // Derivation lives in core (`buildReminderSchedule`): digests, weekly review, every task's
-  // next reminder plus its due-time repeats, and project reviews, already sorted and capped.
-  // This effect layer only reconciles the resulting request set against AlarmManager.
-  const { requests, diagnostics } = buildReminderSchedule({
-    settings,
-    tasks,
-    projects,
-    now,
-    translations: tr,
-    maxOneShotReminders: getMaxPendingOneShotReminderAlarms(),
-  });
-
-  const recurringRequests = requests.filter((request) => request.repeatInterval);
-  const oneShotRequests = requests.filter((request) => !request.repeatInterval);
+  const { diagnostics, recurring: recurringRequests, oneShot: oneShotRequests } = plan;
 
   // A rejected scheduleAlarm (revoked exact-alarm permission, the per-app pending
   // alarm cap) aborts the cycle. Whatever was created before that point is live in
@@ -785,21 +545,10 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
   // cancel those alarms. saveAlarmMap no-ops on an unchanged map and swallows its
   // own storage errors, so the extra call is free and cannot mask the original.
   try {
-    for (const request of recurringRequests) {
-      activeKeys.add(request.key);
-      await scheduleAlarmForKey(api, request.key, toLocalAlarmConfig(request));
-    }
+    await scheduleReminderAlarms(plan, alarmMap, port);
+    scheduleOneShotTopUp(api, plan.topUpDelayMs);
 
-    for (const request of oneShotRequests) {
-      activeKeys.add(request.key);
-    }
-    await scheduleAlarmRequests(api, oneShotRequests.map((request) => ({
-      key: request.key,
-      config: toLocalAlarmConfig(request),
-    })));
-    scheduleOneShotTopUp(api, oneShotRequests.map((request) => request.fireAt.getTime()), now.getTime());
-
-    await cancelInactiveKeys(api, activeKeys);
+    await cancelUnrequestedReminderAlarms(plan, alarmMap, port);
   } finally {
     await saveAlarmMap();
   }
@@ -820,14 +569,15 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
       });
     }
   }
+  logCancelReasons(plan);
   logNotificationInfo('Reschedule cycle complete', {
     activeFeature,
     scheduledAlarmCount: alarmMap.size,
     pendingNativeAlarmCount: await countPendingNativeAlarms(api),
     oneShotReminderCount: diagnostics.oneShotReminderCount,
     scheduledOneShotReminderCount: oneShotRequests.length,
-    maxPendingOneShotReminderAlarms: getMaxPendingOneShotReminderAlarms(),
-    nextOneShotFireAt: oneShotRequests[0]?.fireAt.toISOString() ?? '',
+    maxPendingOneShotReminderAlarms: getMaxPendingOneShotReminderAlarms(Platform.OS),
+    nextOneShotFireAt: oneShotRequests[0]?.config.fireAt.toISOString() ?? '',
     taskReminderCount: diagnostics.taskReminderCount,
     taskReviewReminderCount: diagnostics.taskReviewReminderCount,
     projectReviewReminderCount: diagnostics.projectReviewReminderCount,
@@ -858,7 +608,7 @@ function enqueueNotificationEventReschedule(api: AlarmNotificationsApi): void {
   notificationEventRescheduleTimer = setTimeout(() => {
     notificationEventRescheduleTimer = null;
     enqueueReschedule(api);
-  }, NOTIFICATION_EVENT_RESCHEDULE_DEBOUNCE_MS);
+  }, REMINDER_NOTIFICATION_EVENT_RESCHEDULE_DELAY_MS);
 }
 
 export function setLocalNotificationOpenHandler(handler: NotificationOpenHandler | null): void {
@@ -936,23 +686,7 @@ async function sendLocalMobileNotificationWithApi(
   if (!trimmedTitle) return false;
 
   try {
-    const details = {
-      title: trimmedTitle,
-      message: normalizeNotificationMessage(trimmedTitle, message),
-      channel: LOCAL_NOTIFICATION_CHANNEL,
-      auto_cancel: true,
-      small_icon: LOCAL_SMALL_ICON,
-      color: LOCAL_NOTIFICATION_COLOR,
-      has_button: false,
-      loop_sound: false,
-      play_sound: true,
-      use_big_text: true,
-      vibrate: false,
-      data: {
-        kind: 'pomodoro',
-        ...(data ?? {}),
-      },
-    };
+    const details = buildImmediateNotificationDetails(trimmedTitle, message, data);
 
     if (typeof api.sendNotification === 'function') {
       api.sendNotification(details);
@@ -971,24 +705,6 @@ async function sendLocalMobileNotificationWithApi(
   }
 }
 
-function nativeAlarmHasPomodoroData(value: unknown): boolean {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const record = value as Record<string, unknown>;
-    return record.kind === 'pomodoro' || nativeAlarmHasPomodoroData(record.data);
-  }
-  if (typeof value !== 'string') return false;
-  try {
-    return nativeAlarmHasPomodoroData(JSON.parse(value) as unknown);
-  } catch {
-    return value.split(';;').some((item) => {
-      const separator = item.indexOf('==>');
-      return separator >= 0
-        && item.slice(0, separator) === 'kind'
-        && item.slice(separator + 3) === 'pomodoro';
-    });
-  }
-}
-
 async function loadNativePomodoroAlarmIds(api: AlarmNotificationsApi): Promise<Set<AlarmId> | null> {
   if (typeof api.getScheduledAlarms !== 'function') {
     logNotificationWarn('Pomodoro native alarm inventory unavailable');
@@ -1002,7 +718,7 @@ async function loadNativePomodoroAlarmIds(api: AlarmNotificationsApi): Promise<S
     }
     const ids = new Set<AlarmId>();
     for (const alarm of alarms) {
-      if (!alarm || typeof alarm !== 'object' || !nativeAlarmHasPomodoroData(alarm)) continue;
+      if (!alarm || typeof alarm !== 'object' || !isPomodoroNativeAlarm(alarm)) continue;
       const id = Number((alarm as Record<string, unknown>).id);
       if (Number.isFinite(id)) ids.add(Math.floor(id));
     }
@@ -1044,10 +760,7 @@ function isPomodoroScheduleSuperseded(
   scheduleOrder: number,
   fireAtMs: number,
 ): boolean {
-  const cancellation = latestPomodoroCancellationRequest;
-  if (!cancellation || cancellation.order <= scheduleOrder) return false;
-  return cancellation.reason !== 'timer-not-running'
-    || cancellation.requestedAtMs < fireAtMs;
+  return isPomodoroAlarmScheduleSuperseded(latestPomodoroCancellationRequest, scheduleOrder, fireAtMs);
 }
 
 async function cancelLocalPomodoroCompletionNotificationUnlocked(
@@ -1057,12 +770,10 @@ async function cancelLocalPomodoroCompletionNotificationUnlocked(
 ): Promise<void> {
   const loaded = await loadPomodoroAlarmEntry();
   const reason = options.reason ?? 'unspecified';
-  const explicitCancellation = reason !== 'timer-not-running';
+  const explicitCancellation = isExplicitPomodoroAlarmCancellation(reason);
   if (loaded.failed && !explicitCancellation) return;
   const entry = loaded.entry;
-  const preserveDue = reason === 'timer-not-running'
-    && entry?.fireAtMs !== undefined
-    && entry.fireAtMs <= requestedAtMs;
+  const preserveDue = !explicitCancellation && isPomodoroAlarmDue(entry, requestedAtMs);
 
   if (preserveDue) {
     if (entry?.id !== undefined) {
@@ -1089,8 +800,7 @@ async function cancelLocalPomodoroCompletionNotificationUnlocked(
 
   let cancellationComplete = true;
   for (const id of ids) {
-    const shouldRemoveFired = options.removeFired
-      ?? (explicitCancellation || entry?.id !== id || !entry.fireAtMs || entry.fireAtMs > requestedAtMs);
+    const shouldRemoveFired = shouldRemoveFiredPomodoroAlarm({ removeFired: options.removeFired, reason, entry, id, requestedAtMs });
     cancellationComplete = cancelPomodoroAlarmId(api, id, shouldRemoveFired) && cancellationComplete;
   }
 
@@ -1179,13 +889,12 @@ export async function scheduleLocalPomodoroCompletionNotification(
     if (isPomodoroScheduleSuperseded(order, fireAtMs)) return;
     const previousEntry = loaded.entry;
     const phase = data?.phase ?? '';
-    const samePhase = !previousEntry?.phase || !phase || previousEntry.phase === phase;
-    if (previousEntry?.fireAtMs === fireAtMs && samePhase) {
+    if (isPomodoroAlarmUnchanged(previousEntry, fireAtMs, phase)) {
       logNotificationInfo('Pomodoro alarm already matches requested phase');
       return;
     }
 
-    if (fireAtMs <= Date.now() + 1000) {
+    if (isPomodoroAlarmImmediate(fireAtMs, Date.now())) {
       logNotificationInfo('Pomodoro completion already due; notifying immediately');
       const delivered = await sendLocalMobileNotificationWithApi(api, trimmedTitle, message, data);
       if (!delivered) return;
@@ -1196,7 +905,7 @@ export async function scheduleLocalPomodoroCompletionNotification(
       });
       if (!saved) return;
       if (previousEntry?.id !== undefined && previousEntry.id !== 0) {
-        if (previousEntry.fireAtMs !== undefined && previousEntry.fireAtMs <= requestedAtMs) {
+        if (isPomodoroAlarmDue(previousEntry, requestedAtMs)) {
           logPreservedDuePomodoroAlarm('phase-replaced');
         } else {
           cancelPomodoroAlarmId(api, previousEntry.id, true);
@@ -1207,28 +916,8 @@ export async function scheduleLocalPomodoroCompletionNotification(
 
     try {
       const result = await api.scheduleAlarm({
-        title: trimmedTitle,
-        message: normalizeNotificationMessage(trimmedTitle, message),
-        channel: LOCAL_NOTIFICATION_CHANNEL,
-        auto_cancel: true,
-        small_icon: LOCAL_SMALL_ICON,
-        color: LOCAL_NOTIFICATION_COLOR,
-        has_button: false,
-        // The patched iOS module reads this key into a dictionary literal, where
-        // a missing value is nil and throws NSInvalidArgumentException — the
-        // reason no pomodoro alert ever scheduled on iOS (#888). Always pass it,
-        // like the task-reminder path does.
-        has_complete_action: false,
-        loop_sound: false,
-        play_sound: true,
-        schedule_type: 'once',
-        use_big_text: true,
-        vibrate: false,
+        ...buildPomodoroAlarmDetails(trimmedTitle, message, data),
         fire_date: toAlarmFireDate(api, fireAt),
-        data: {
-          kind: 'pomodoro',
-          ...(data ?? {}),
-        },
       });
       const id = Number(result?.id);
       if (!Number.isFinite(id)) {
@@ -1254,7 +943,7 @@ export async function scheduleLocalPomodoroCompletionNotification(
       // Skip when the ids match: the iOS module keys requests by creation second,
       // so deleting the shared id would remove the replacement alarm (#888).
       if (previousEntry?.id !== undefined && previousEntry.id !== scheduledId) {
-        if (previousEntry.fireAtMs !== undefined && previousEntry.fireAtMs <= requestedAtMs) {
+        if (isPomodoroAlarmDue(previousEntry, requestedAtMs)) {
           logPreservedDuePomodoroAlarm('phase-replaced');
         } else {
           cancelPomodoroAlarmId(api, previousEntry.id, true);
@@ -1307,23 +996,20 @@ export async function startLocalMobileNotifications(): Promise<void> {
     // compare). settings re-arms only when a reminder-relevant field actually
     // moved: an unchanged sync cycle still rewrites lastSyncAt/lastSyncStatus/
     // lastSyncStats into a fresh settings object every time (#766).
-    const tasksOrProjectsChanged = state.tasks !== prevState.tasks || state.projects !== prevState.projects;
-    const settingsRelevantChanged = state.settings !== prevState.settings
-      && buildReminderRelevantSettingsSignature(state.settings) !== buildReminderRelevantSettingsSignature(prevState.settings);
-    if (!tasksOrProjectsChanged && !settingsRelevantChanged) {
+    if (!shouldRescheduleReminderAlarms(state, prevState)) {
       return;
     }
     clearRescheduleTimer();
     rescheduleTimer = setTimeout(() => {
       rescheduleTimer = null;
       enqueueReschedule(api);
-    }, STORE_RESCHEDULE_DEBOUNCE_MS);
+    }, REMINDER_STORE_RESCHEDULE_DELAY_MS);
   }));
 }
 
 // AlarmManager decides exact vs inexact when the alarm is *created*, so alarms
 // that were scheduled while "Alarms & reminders" was denied stay inexact after
-// the user allows it. `scheduleAlarmForKey` skips any key whose config
+// the user allows it. The reconciliation skips any key whose config
 // signature is unchanged, so a plain reschedule cycle would re-confirm every
 // stale alarm instead of re-creating it. Cancel first, then run the one
 // existing cycle so it rebuilds them all as exact.
@@ -1336,16 +1022,33 @@ export async function rescheduleLocalAlarmsAsExact(): Promise<void> {
     .catch(() => undefined)
     .then(async () => {
       await loadAlarmMapIfNeeded();
-      for (const key of Array.from(alarmMap.keys())) {
-        await cancelAlarmByKey(api, key);
-      }
+      // Remade at once, so what an alarm delivered stays, unless its reminder was
+      // withdrawn since the last cycle. The texts load first; the tasks are read
+      // after that await, and every alarm is judged and cancelled in the same turn,
+      // so a change that lands meanwhile is never judged from an older state.
+      const translations = await loadReminderTranslations(hasActiveMobileNotificationFeature(useTaskStore.getState().settings));
+      const { settings, tasks, projects } = useTaskStore.getState();
+      const plan = planReminderAlarms({
+        settings,
+        tasks,
+        projects,
+        now: new Date(),
+        translations,
+        maxOneShotReminders: getMaxPendingOneShotReminderAlarms(Platform.OS),
+        alarms: alarmMap,
+      });
+      const port = toReminderAlarmPort(api);
+      const keys = Array.from(alarmMap.keys());
+      await Promise.all(keys.map((key) => cancelReminderAlarm(alarmMap, key, port, getReminderAlarmCancelReason(plan, key))));
       await runRescheduleCycle(api);
     })
     .catch((error) => logNotificationError('Failed to rebuild alarms as exact', error));
   await rescheduleQueue;
 }
 
-export async function stopLocalMobileNotifications(): Promise<void> {
+// `permissionDenied`: the OS denies notifications, so the cleanup is the one a
+// denied start runs (the Pomodoro alarm and the whole tray go too).
+export async function stopLocalMobileNotifications(options: { permissionDenied?: boolean } = {}): Promise<void> {
   logNotificationInfo('Stop requested');
   clearRescheduleTimer();
   clearNotificationEventRescheduleTimer();
@@ -1361,10 +1064,13 @@ export async function stopLocalMobileNotifications(): Promise<void> {
   notificationOpenHandler = null;
 
   const api = await loadAlarmApi();
-  await clearScheduledAlarms(api, { cancelPomodoro: false });
+  await clearScheduledAlarms(api, { cancelPomodoro: options.permissionDenied === true });
   resetRuntimeState();
   started = false;
   logNotificationInfo('Service stopped');
+  if (options.permissionDenied) {
+    logNotificationInfo('Denied-permission cleanup ran on stop', { releaseCheck: DENIED_RESUME_CLEANUP_RELEASE_CHECK });
+  }
 }
 
 export async function getLocalNotificationPermissionStatus(): Promise<NotificationPermissionResult> {
@@ -1389,7 +1095,7 @@ export const __localNotificationTestUtils = {
     dismissSubscription = null;
     started = false;
     alarmApi = null;
-    alarmMap = new Map<string, LocalAlarmMapEntry>();
+    alarmMap = new Map<string, ReminderAlarmEntry>();
     loadedAlarmMap = false;
     resetRuntimeState();
     pomodoroAlarmQueue = Promise.resolve();

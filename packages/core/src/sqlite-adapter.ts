@@ -1195,6 +1195,13 @@ export class SqliteAdapter {
         return this.lastSaveDataStats;
     }
 
+    /**
+     * Runs inside every transaction that commits app data (saveData, saveTask), after
+     * its writes and just before COMMIT: a subclass adds rows that must land with that
+     * data or not at all. A throw rolls the whole transaction back.
+     */
+    protected async beforeCommit(_write: { data: AppData } | { task: Task }): Promise<void> {}
+
     async saveTask(task: Task): Promise<void> {
         await this.ensureSchema();
         await this.client.run('BEGIN IMMEDIATE');
@@ -1211,6 +1218,7 @@ export class SqliteAdapter {
                 'SELECT rowid as _rowid, * FROM tasks WHERE id = ?',
                 [task.id],
             );
+            await this.beforeCommit({ task });
             await this.client.run('COMMIT');
             this.lastSavedFingerprints?.tables.get('tasks')?.set(String(entry.row[0]), entry.fingerprint);
             const knownTables = new Map(this.lastKnownRowVersions ?? []);
@@ -1645,6 +1653,9 @@ export class SqliteAdapter {
                     [settingsJson]
                 );
             }
+
+            saveStep = 'before-commit';
+            await this.beforeCommit({ data });
 
             saveStep = 'commit';
             const commitStartedAt = Date.now();

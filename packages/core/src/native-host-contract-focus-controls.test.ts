@@ -9,9 +9,11 @@ import {
 import { loadTranslations } from './i18n/i18n-loader';
 import { EMPTY_LIST_FILTER_STATE } from './list-filter-state';
 import { createNativeHostContract } from './native-host-contract';
+import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { generateUUID } from './uuid';
+import { setNativeReplayTokens } from './native-request-receipts';
 
 const fixture = loadFocusControlsFixture();
 const scenario = (settings = 'base') => fixture.scenarios.find((entry) => entry.settings === settings && !entry.taskIds)!;
@@ -55,6 +57,10 @@ describe('native host contract: Focus controls', () => {
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         return result.value;
     };
+    type Host = ReturnType<typeof createNativeHostContract>;
+    /** Today's Focus rows' revisions, as the reorder screen shows them. */
+    const reorderRevisions = (host: Host) => Object.fromEntries(value(host.getFocus({ limit: 1, controls: DEFAULT_FOCUS_CONTROL_STATE })).controls.reorder!.rows.items
+        .map((row) => [row.id, row.taskRevision]));
     const direct = (state: FocusControlState) => {
         const store = useTaskStore.getState();
         return buildFocusControlsModel({
@@ -304,6 +310,8 @@ describe('native host contract: Focus controls', () => {
     it('refuses what Focus cannot hold or offer', async () => {
         freezeClock();
         const host = await openHost('prioritiesOff');
+        // As the journaling Android host: each write must carry its replay tokens.
+        setNativeReplayTokens('required');
         const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
         expect(host.getFocus({ limit: 1, controls: { filters: { searchQuery: 'x' } } })).toMatchObject(invalid);
         expect(host.getFocus({ limit: 1, controls: { sortBy: 'unknown' as never } })).toMatchObject(invalid);
@@ -314,10 +322,15 @@ describe('native host contract: Focus controls', () => {
         expect(await host.setFocusGroupBy({ ...input(), groupBy: 'priority' })).toMatchObject(invalid);
         expect(await host.saveFocusFilter({ ...input(), name: 'Nothing' })).toMatchObject(invalid);
         expect(await host.removeFocusFilterCriterion({ ...input(), criterionId: 'area:a-work' })).toMatchObject(invalid);
-        expect(await host.reorderFocus({ ...input(), ids: ['f2', 'f1'] })).toMatchObject(invalid);
-        expect(await host.reorderFocus({ requestId: generateUUID(), controls: withFilters({ tokens: ['@office'] }), ids: ['f2', 'f1', 'f3'] })).toMatchObject(invalid);
-        expect(await host.reorderFocus({ requestId: generateUUID(), controls: { sortBy: 'due' }, ids: ['f2', 'f1', 'f3'] })).toMatchObject(invalid);
-        expect(await host.reorderFocus({ ...input(), ids: ['f2', 'f1', 'f3'], requestId: 'not-a-uuid' })).toMatchObject(invalid);
+        const taskRevisions = reorderRevisions(host);
+        const { f3: _f3, ...twoRevisions } = taskRevisions;
+        expect(await host.reorderFocus({ ...input(), ids: ['f2', 'f1'], taskRevisions: twoRevisions })).toMatchObject(invalid);
+        expect(await host.reorderFocus({ requestId: generateUUID(), controls: withFilters({ tokens: ['@office'] }), ids: ['f2', 'f1', 'f3'], taskRevisions })).toMatchObject(invalid);
+        expect(await host.reorderFocus({ requestId: generateUUID(), controls: { sortBy: 'due' }, ids: ['f2', 'f1', 'f3'], taskRevisions })).toMatchObject(invalid);
+        expect(await host.reorderFocus({ ...input(), ids: ['f2', 'f1', 'f3'], taskRevisions, requestId: 'not-a-uuid' })).toMatchObject(invalid);
+        // The order carries the revision the reorder screen showed for each task, and for nothing else.
+        expect(await host.reorderFocus({ ...input(), ids: ['f3', 'f1', 'f2'] } as never)).toMatchObject(invalid);
+        expect(await host.reorderFocus({ ...input(), ids: ['f3', 'f1', 'f2'], taskRevisions: twoRevisions })).toMatchObject(invalid);
         expect(focusControlsWrites()).toEqual([]);
     });
 
@@ -336,7 +349,8 @@ describe('native host contract: Focus controls', () => {
         expect(value(await restarted.saveFocusFilter({ requestId, controls: withFilters({ tokens: ['@phone'] }), name: 'Calls' }))).toEqual({ ...saved, changed: false });
         expect(await restarted.saveFocusFilter({ requestId, controls: withFilters({ tokens: ['@phone'] }), name: 'Other' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(value(await restarted.deleteFocusFilter({ requestId: generateUUID(), controls, id: 'sf-list' }))).toEqual({ controls, changed: false });
-        expect(value(await restarted.reorderFocus({ requestId: generateUUID(), controls, ids: ['f2', 'f1', 'f3'] }))).toEqual({ controls, changed: false });
+        expect(value(await restarted.reorderFocus({ requestId: generateUUID(), controls, ids: ['f2', 'f1', 'f3'], taskRevisions: reorderRevisions(restarted) })))
+            .toEqual({ controls, changed: false });
         // A saved filter's grouping differs from the stored one: choosing the stored one detaches it and writes nothing.
         const bound = { ...controls, savedFilterId: 'sf-phone' };
         value(await restarted.setFocusGroupBy({ requestId: generateUUID(), controls, groupBy: 'tag' }));
@@ -408,10 +422,82 @@ describe('native host contract: Focus controls', () => {
         });
 
         it('reorderFocus', async () => {
-            await retry('base', (host, requestId) => host.reorderFocus({ requestId, controls: DEFAULT_FOCUS_CONTROL_STATE, ids: ['f3', 'f2', 'f1'] }), (saved) => {
+            // The revisions the screen showed before the first try: the retry is the same request.
+            let taskRevisions: Record<string, string> | null = null;
+            await retry('base', (host, requestId) => host.reorderFocus({
+                requestId, controls: DEFAULT_FOCUS_CONTROL_STATE, ids: ['f3', 'f2', 'f1'], taskRevisions: taskRevisions ??= reorderRevisions(host),
+            }), (saved) => {
                 expect(Object.fromEntries(saved.tasks.filter((task) => ['f1', 'f2', 'f3'].includes(task.id)).map((task) => [task.id, task.focusOrder])))
                     .toEqual({ f3: 0, f2: 1, f1: 2 });
             });
+        });
+    });
+
+    describe('a replay after a restart (a new host, no receipts) never undoes a later change', () => {
+        const savedFilters = () => useTaskStore.getState().settings.savedFilters ?? [];
+        /** Another writer's edit of one saved filter. */
+        const editFilter = (id: string, fields: Record<string, unknown>) => useTaskStore.getState().updateSettings({
+            savedFilters: savedFilters().map((filter) => (filter.id === id ? { ...filter, ...fields } : filter)),
+        });
+        const replayUnchanged = async (replay: (host: Host) => Promise<unknown>) => {
+            const { result, wrote } = await replayAfterRestart(replay as never);
+            expect(result).toMatchObject({ ok: true, value: { changed: false } });
+            expect(wrote).toBe(false);
+        };
+
+        it('setFocusGroupBy: target state keeps a later edit of the other Focus settings', async () => {
+            freezeClock();
+            const host = await openHost('base');
+            const input = { requestId: generateUUID(), controls: DEFAULT_FOCUS_CONTROL_STATE, groupBy: 'area' as const };
+            value(await host.setFocusGroupBy(input));
+            await useTaskStore.getState().updateSettings({ gtd: { ...useTaskStore.getState().settings.gtd, autoArchiveDays: 3 } });
+            await replayUnchanged((restarted) => restarted.setFocusGroupBy(input));
+            expect(useTaskStore.getState().settings.gtd).toMatchObject({ focusGroupBy: 'area', autoArchiveDays: 3 });
+        });
+
+        it('saveFocusFilter: the filter named by the request UUID answers, and keeps a later edit', async () => {
+            freezeClock();
+            const host = await openHost('base');
+            const input = { requestId: generateUUID(), controls: withFilters({ tokens: ['@phone'] }), name: 'Calls' };
+            value(await host.saveFocusFilter(input));
+            await editFilter(input.requestId.toLowerCase(), { sortOrder: 'desc' });
+            await replayUnchanged((restarted) => restarted.saveFocusFilter(input));
+            expect(savedFilters().filter((filter) => filter.name === 'Calls')).toMatchObject([{ id: input.requestId.toLowerCase(), sortOrder: 'desc' }]);
+        });
+
+        it('removeFocusFilterCriterion: target state keeps a later edit of the filter', async () => {
+            freezeClock();
+            const host = await openHost('base');
+            const input = { requestId: generateUUID(), controls: { savedFilterId: 'sf-work' }, criterionId: 'area:a-work' };
+            expect(value(await host.removeFocusFilterCriterion(input))).toMatchObject({ changed: true });
+            await editFilter('sf-work', { name: 'Work' });
+            await replayUnchanged((restarted) => restarted.removeFocusFilterCriterion(input));
+            expect(savedFilters().find((filter) => filter.id === 'sf-work')).toMatchObject({ name: 'Work' });
+        });
+
+        it('deleteFocusFilter: target state keeps a later edit of the other filters', async () => {
+            freezeClock();
+            const host = await openHost('base');
+            const input = { requestId: generateUUID(), controls: DEFAULT_FOCUS_CONTROL_STATE, id: 'sf-phone' };
+            expect(value(await host.deleteFocusFilter(input))).toMatchObject({ changed: true });
+            await editFilter('sf-work', { name: 'Work' });
+            const before = structuredClone(savedFilters());
+            await replayUnchanged((restarted) => restarted.deleteFocusFilter(input));
+            expect(savedFilters()).toEqual(before);
+        });
+
+        it('reorderFocus: STALE once a task it orders changed since', async () => {
+            freezeClock();
+            const host = await openHost('base');
+            const input = { requestId: generateUUID(), controls: DEFAULT_FOCUS_CONTROL_STATE, ids: ['f3', 'f2', 'f1'], taskRevisions: reorderRevisions(host) };
+            expect(value(await host.reorderFocus(input))).toMatchObject({ changed: true });
+            // The user puts the old order back.
+            await useTaskStore.getState().reorderFocusedTasks(['f2', 'f1', 'f3']);
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.reorderFocus(input));
+            expect(result).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(wrote).toBe(false);
+            const order = ['f1', 'f2', 'f3'].map((id) => useTaskStore.getState()._tasksById.get(id)!.focusOrder);
+            expect(order).toEqual([1, 0, 2]);
         });
     });
 
@@ -427,6 +513,6 @@ describe('native host contract: Focus controls', () => {
         expect(await host.saveFocusFilter({ ...input, name: 'x' })).toMatchObject(notReady);
         expect(await host.removeFocusFilterCriterion({ ...input, criterionId: 'area:a' })).toMatchObject(notReady);
         expect(await host.deleteFocusFilter({ ...input, id: 'sf-phone' })).toMatchObject(notReady);
-        expect(await host.reorderFocus({ ...input, ids: ['f1'] })).toMatchObject(notReady);
+        expect(await host.reorderFocus({ ...input, ids: ['f1'], taskRevisions: { f1: 'r' } })).toMatchObject(notReady);
     });
 });

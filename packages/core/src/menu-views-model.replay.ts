@@ -90,13 +90,16 @@ export const loadMenuViewsFixture = (): MenuViewsFixture => JSON.parse(
     readFileSync(new URL('./menu-views-parity.fixtures.json', import.meta.url), 'utf8'),
 );
 
+// A created task's ID; a new section's (mobile names it someday-…, the contract by its request UUID).
+const UUID_OR_SECTION_ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|someday-[0-9a-z]+-[0-9a-z]+/g;
+
 /** The store writes a scenario asks for, with created ids named after their titles. */
 export function createWriteRecorder() {
     const log: unknown[] = [];
     const createdIds = new Map<string, string>();
     const normalize = (value: unknown): unknown => JSON.parse(JSON.stringify(value, (_key, entry) => (
         entry === undefined ? '<undefined>' : entry
-    )).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|someday-[0-9a-z]+-[0-9a-z]+/g, (match) => (
+    )).replace(UUID_OR_SECTION_ID, (match) => (
         createdIds.get(match) ?? match
     )));
     const encodeArgs = (args: unknown[]) => normalize(args.map((arg) => (
@@ -170,7 +173,8 @@ export async function seedMenuViewsStore(
         updateProject: async (id, updates) => { record('updateProject', [id, updates]); return real.updateProject(id, updates); },
         updateSettings: async (updates) => {
             updates.gtd?.viewSections?.someday?.forEach((section) => {
-                if (/^someday-/.test(section.id) && !createdIds.has(section.id)) createdIds.set(section.id, `<created:${section.title}>`);
+                const id = String(section?.id);
+                if (id.replace(UUID_OR_SECTION_ID, '') === '' && !createdIds.has(id)) createdIds.set(id, `<created:${section.title}>`);
             });
             record('updateSettings', [updates]);
             return real.updateSettings(updates);
@@ -277,7 +281,7 @@ export async function replayMenuViewsScenario(options: {
 
     const changeStatus = async (id: string, status: Task['status']) => {
         if (contract) {
-            ok(await contract.updateTask({ id, base: { status: taskById(id).status }, patch: { status } }));
+            ok(await contract.updateTask({ id, base: { status: taskById(id).status }, patch: { status }, requestId: generateUUID() }));
         } else {
             await store().updateTask(id, { status });
         }
@@ -285,8 +289,15 @@ export async function replayMenuViewsScenario(options: {
     // The row's delete moves the task to Trash through the store; the contract has no delete yet.
     const remove = async (id: string) => { await store().deleteTask(id); };
     const activate = async (id: string) => {
-        if (contract) ok(await contract.activateProject({ projectId: id }));
-        else await store().updateProject(id, { status: 'active' });
+        if (!contract) {
+            await store().updateProject(id, { status: 'active' });
+            return;
+        }
+        // The parked row's revision, as the screen showed it.
+        const window = { offset: 0, limit: 1 };
+        const { deferred } = scenario.screen === 'waiting' ? ok(contract.getWaitingView(window)) : ok(contract.getSomedayView(window));
+        const row = deferred!.rows.items.find((entry) => entry.id === id)!;
+        ok(await contract.activateProject({ projectId: id, projectRevision: row.projectRevision }));
     };
 
     // ------------------------------------------------------------------ More
@@ -552,7 +563,10 @@ export async function replayMenuViewsScenario(options: {
             const failed = () => { toasts.push(['error', text.errorTitle, text.moveFailed, null]); };
             const ids = session.moveTargets!;
             if (contract) {
-                const result = ok(await contract.moveSomedayTasksToSection({ taskIds: ids, sectionId: destination, requestId: generateUUID() }));
+                // Each task's revision as the list showed it.
+                const rows = somedayRead(100).items.flatMap((item) => (item.type === 'task' ? [item.row] : []));
+                const taskRevisions = Object.fromEntries(ids.map((id) => [id, rows.find((row) => row.id === id)!.taskRevision]));
+                const result = ok(await contract.moveSomedayTasksToSection({ taskIds: ids, sectionId: destination, requestId: generateUUID(), taskRevisions }));
                 if ('refused' in result) return failed();
                 session.moveTargets = null;
                 session.selection = [];
@@ -638,7 +652,7 @@ export async function replayMenuViewsScenario(options: {
             } else if (kind === 'newSection') {
                 let created: string;
                 if (contract) {
-                    created = ok(await contract.createSomedaySection({ title: first as string })).id;
+                    created = ok(await contract.createSomedaySection({ title: first as string, requestId: generateUUID() })).id;
                 } else {
                     const settings = store().settings;
                     const plan = planSomedaySectionCreate(settings.gtd?.viewSections?.someday, first as string);

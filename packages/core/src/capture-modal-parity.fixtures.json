@@ -1,0 +1,5340 @@
+{
+ "provenance": {
+  "command": "cd apps/mobile && MINDWTR_CAPTURE_CAPTURE_MODAL=1 MINDWTR_CAPTURE_CAPTURE_MODAL_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run tests/capture-modal.parity.test.tsx",
+  "capturedAt": "68cb12ba8f31f6d2b50b58aea8f68ada56c8aaf8",
+  "rendering": "Platform.OS is android. CaptureScreen renders under react-test-renderer with the real core store; timers are fake and each step advances them 1 s, so the copilot's 800 ms wait ends. The AI key is stored and required; createAIProvider answers from the scenario's suggestions.",
+  "recaptured": [
+   {
+    "commit": "d6a0c1a313409bc85dfe5a7e790d71adecb5e387",
+    "reason": "RN bugs fixed in core (maintainer: fix every RN bug found): the description field is saved as it shows it (dc190cc92), a bad line refuses the batch before any project is created (a0a1d75f5), and the Applied line spaces every part (d6a0c1a31).",
+    "scenarios": [
+     "a share with a subject, a body and a link; Save & edit opens the editor",
+     "an invalid date command warns and writes nothing, alone or in a line",
+     "the copilot: one part, then all, typing clears what was applied",
+     "the copilot with time estimates off: an estimate alone suggests nothing"
+    ]
+   }
+  ]
+ },
+ "timeZone": "UTC",
+ "now": "2026-09-28T14:00:00.000Z",
+ "tasks": [
+  {
+   "id": "t-phone",
+   "title": "Call bank",
+   "status": "next",
+   "contexts": [
+    "@phone"
+   ],
+   "tags": [
+    "#finance"
+   ],
+   "createdAt": "2026-09-10T12:00:00.000Z",
+   "updatedAt": "2026-09-10T12:00:00.000Z"
+  },
+  {
+   "id": "t-desk",
+   "title": "Write report",
+   "status": "next",
+   "contexts": [
+    "@computer",
+    "@home office"
+   ],
+   "tags": [
+    "#work"
+   ],
+   "createdAt": "2026-09-11T12:00:00.000Z",
+   "updatedAt": "2026-09-11T12:00:00.000Z",
+   "projectId": "p-launch"
+  },
+  {
+   "id": "t-inbox",
+   "title": "Loose idea",
+   "status": "inbox",
+   "contexts": [],
+   "tags": [],
+   "createdAt": "2026-09-13T12:00:00.000Z",
+   "updatedAt": "2026-09-13T12:00:00.000Z"
+  }
+ ],
+ "projects": [
+  {
+   "id": "p-launch",
+   "title": "Launch",
+   "status": "active",
+   "color": "#2563eb",
+   "order": 0,
+   "tagIds": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-01T12:00:00.000Z",
+   "areaId": "a-work"
+  },
+  {
+   "id": "p-home",
+   "title": "Home Repairs",
+   "status": "active",
+   "color": "#94a3b8",
+   "order": 1,
+   "tagIds": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-01T12:00:00.000Z",
+   "areaId": "a-home"
+  },
+  {
+   "id": "p-old",
+   "title": "Old stuff",
+   "status": "archived",
+   "color": "#94a3b8",
+   "order": 2,
+   "tagIds": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-01T12:00:00.000Z",
+   "areaId": "a-work"
+  },
+  {
+   "id": "p-gone",
+   "title": "Removed",
+   "status": "active",
+   "color": "#94a3b8",
+   "order": 3,
+   "tagIds": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-01T12:00:00.000Z",
+   "deletedAt": "2026-09-02T12:00:00.000Z"
+  }
+ ],
+ "areas": [
+  {
+   "id": "a-home",
+   "name": "Home",
+   "color": "#16a34a",
+   "order": 1,
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-01T12:00:00.000Z"
+  },
+  {
+   "id": "a-work",
+   "name": "Work",
+   "color": "#2563eb",
+   "order": 0,
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-01T12:00:00.000Z"
+  },
+  {
+   "id": "a-gone",
+   "name": "Gone",
+   "color": "#6b7280",
+   "order": 2,
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-01T12:00:00.000Z",
+   "deletedAt": "2026-09-02T12:00:00.000Z"
+  }
+ ],
+ "settings": {
+  "base": {},
+  "ai": {
+   "ai": {
+    "enabled": true,
+    "provider": "openai"
+   }
+  },
+  "aiNoEstimates": {
+   "ai": {
+    "enabled": true,
+    "provider": "openai"
+   },
+   "features": {
+    "timeEstimates": false
+   }
+  },
+  "fixedArea": {
+   "gtd": {
+    "defaultAreaMode": "fixed",
+    "defaultAreaId": "a-home"
+   },
+   "features": {
+    "priorities": true
+   }
+  }
+ },
+ "scenarios": [
+  {
+   "name": "a capture link with a note, tags and a project no project carries",
+   "params": {
+    "initialValue": "Buy%20groceries",
+    "initialProps": "%7B%22description%22%3A%22From%20store%22%2C%22tags%22%3A%5B%22%23errands%22%2C%22%23home%22%5D%7D",
+    "project": "Shopping"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "a capture link naming a project by its id",
+   "params": {
+    "initialValue": "Plan%20trip",
+    "initialProps": "%7B%22description%22%3A%22Book%20flights%22%7D",
+    "project": "p-launch"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "type",
+     "Plan trip @phone"
+    ],
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "a capture link naming an archived project by title in another case: no project",
+   "params": {
+    "initialValue": "Clear%20desk",
+    "project": "OLD STUFF"
+   },
+   "settings": "base",
+   "canGoBack": true,
+   "actions": [
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "a capture link naming a live project by title, overridden by a typed project token",
+   "params": {
+    "initialValue": "Fix%20sink",
+    "project": "home repairs"
+   },
+   "settings": "base",
+   "canGoBack": true,
+   "actions": [
+    [
+     "type",
+     "Fix sink +Launch"
+    ],
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "a share with a subject, a body and a link; Save & edit opens the editor",
+   "params": {
+    "initialValue": "Subject",
+    "initialProps": "%7B%22description%22%3A%22Body%20with%20https%3A%2F%2Fexample.com%2Fdoc%5Cnhttps%3A%2F%2Fexample.com%2Fdoc%22%7D"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "description",
+     "Body with https://example.com/doc"
+    ],
+    [
+     "saveAndEdit"
+    ]
+   ]
+  },
+  {
+   "name": "a plain text share",
+   "params": {
+    "initialValue": "The%20paragraph%20I%20selected%20in%20another%20app"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "a multi-line share asks first, then creates one task per line",
+   "params": {
+    "initialValue": "Multi%0Aline%0Ashare"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "save"
+    ],
+    [
+     "cancelBulk"
+    ],
+    [
+     "save"
+    ],
+    [
+     "back"
+    ],
+    [
+     "save"
+    ],
+    [
+     "confirmBulk"
+    ]
+   ]
+  },
+  {
+   "name": "an assistant note, its description merged with a typed /note: token",
+   "params": {
+    "initialValue": "Voice%20note",
+    "initialProps": "%7B%22description%22%3A%22Longer%20spoken%20text%22%7D"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "type",
+     "Voice note /note:said aloud"
+    ],
+    [
+     "description",
+     "  Longer spoken text  "
+    ],
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "a widget quick capture saves, then returns to the previous app",
+   "params": {
+    "origin": "system"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "type",
+     "Call @phone about #finance +Launch /due:tomorrow"
+    ],
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "a widget quick capture cancelled over the app returns to the previous app",
+   "params": {
+    "origin": "system"
+   },
+   "settings": "base",
+   "canGoBack": true,
+   "actions": [
+    [
+     "type",
+     "Never mind"
+    ],
+    [
+     "cancel"
+    ]
+   ]
+  },
+  {
+   "name": "a widget quick capture: Save & edit stays in the app",
+   "params": {
+    "origin": "system"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "type",
+     "Draft agenda"
+    ],
+    [
+     "saveAndEdit"
+    ]
+   ]
+  },
+  {
+   "name": "a project's add button: Save & edit stays on the project",
+   "params": {
+    "initialProps": "%7B%22projectId%22%3A%22p-launch%22%7D",
+    "returnTo": "/projects-screen?projectId=p-launch"
+   },
+   "settings": "base",
+   "canGoBack": true,
+   "actions": [
+    [
+     "type",
+     "Order parts"
+    ],
+    [
+     "saveAndEdit"
+    ]
+   ]
+  },
+  {
+   "name": "a project's add button: Save & edit into another project opens the editor",
+   "params": {
+    "initialProps": "%7B%22projectId%22%3A%22p-launch%22%7D",
+    "returnTo": "/projects-screen?projectId=p-launch"
+   },
+   "settings": "base",
+   "canGoBack": true,
+   "actions": [
+    [
+     "type",
+     "Order parts +\"Home Repairs\""
+    ],
+    [
+     "saveAndEdit"
+    ]
+   ]
+  },
+  {
+   "name": "returnTo is used only with nothing behind the screen, and only a safe app path",
+   "params": {
+    "initialValue": "Unsafe",
+    "returnTo": "https%3A%2F%2Fevil.example%2F"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "a safe returnTo with nothing behind the screen",
+   "params": {
+    "initialValue": "Safe",
+    "returnTo": "%2Fprojects-screen%3FprojectId%3Dp-home"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "cancel"
+    ]
+   ]
+  },
+  {
+   "name": "link presets: status, contexts, tags, an area, and an archived project",
+   "params": {
+    "initialValue": "Preset%20task",
+    "initialProps": "%7B%22status%22%3A%22%20NEXT%20%22%2C%22contexts%22%3A%5B%22home%22%2C%22%20%40phone%20%22%2C%22Home%22%2C7%2C%22%22%5D%2C%22tags%22%3A%5B%22x%22%2C%22%23y%22%2C%22X%22%5D%2C%22projectId%22%3A%22p-old%22%2C%22areaId%22%3A%22a-home%22%2C%22description%22%3A%22%20%20%20%22%7D"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "link presets: a live project wins over an area; a deleted area and a bad status are dropped",
+   "params": {
+    "text": "From%20the%20text%20param",
+    "title": "Ignored%20title",
+    "initialProps": "%7B%22status%22%3A%22done%22%2C%22projectId%22%3A%22p-home%22%2C%22areaId%22%3A%22a-work%22%7D"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "link presets: a deleted area, a malformed props param and the title param",
+   "params": {
+    "title": "Only%20title",
+    "initialProps": "%7Bnot%20json"
+   },
+   "settings": "fixedArea",
+   "canGoBack": false,
+   "actions": [
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "shared files: only files the app manages are saved",
+   "params": {
+    "initialValue": "Receipt",
+    "initialProps": "%7B%22attachments%22%3A%5B%7B%22id%22%3A%22att-managed%22%2C%22kind%22%3A%22file%22%2C%22title%22%3A%22%20Receipt.pdf%20%22%2C%22uri%22%3A%22file%3A%2F%2F%2Fdata%2Fmindwtr%2Fattachments%2Fatt-managed.pdf%22%2C%22mimeType%22%3A%22application%2Fpdf%22%2C%22size%22%3A2048%2C%22createdAt%22%3A%222026-09-20T12%3A00%3A00.000Z%22%2C%22updatedAt%22%3A%222026-09-21T12%3A00%3A00.000Z%22%7D%2C%7B%22id%22%3A%22att-outside%22%2C%22kind%22%3A%22file%22%2C%22title%22%3A%22Elsewhere%22%2C%22uri%22%3A%22file%3A%2F%2F%2Fsdcard%2FDownload%2Felsewhere.pdf%22%2C%22createdAt%22%3A%222026-09-20T12%3A00%3A00.000Z%22%7D%2C%7B%22id%22%3A%22att-nested%22%2C%22kind%22%3A%22file%22%2C%22title%22%3A%22%22%2C%22uri%22%3A%22file%3A%2F%2F%2Fdata%2Fmindwtr%2Fattachments%2Fsub%2Fnested.pdf%22%2C%22createdAt%22%3A%222026-09-20T12%3A00%3A00.000Z%22%7D%2C%7B%22id%22%3A%22att-link%22%2C%22kind%22%3A%22link%22%2C%22title%22%3A%22A%20link%22%2C%22uri%22%3A%22https%3A%2F%2Fexample.com%22%2C%22createdAt%22%3A%222026-09-20T12%3A00%3A00.000Z%22%7D%2C%7B%22id%22%3A%22%22%2C%22kind%22%3A%22file%22%2C%22title%22%3A%22No%20id%22%2C%22uri%22%3A%22file%3A%2F%2F%2Fdata%2Fmindwtr%2Fattachments%2Fx.pdf%22%2C%22createdAt%22%3A%222026-09-20T12%3A00%3A00.000Z%22%7D%5D%2C%22description%22%3A%22Scanned%22%7D"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "shared files with several lines: only the first task carries them",
+   "params": {
+    "initialValue": "Receipt%0APay%20it",
+    "initialProps": "%7B%22attachments%22%3A%5B%7B%22id%22%3A%22att-managed%22%2C%22kind%22%3A%22file%22%2C%22title%22%3A%22%20Receipt.pdf%20%22%2C%22uri%22%3A%22file%3A%2F%2F%2Fdata%2Fmindwtr%2Fattachments%2Fatt-managed.pdf%22%2C%22mimeType%22%3A%22application%2Fpdf%22%2C%22size%22%3A2048%2C%22createdAt%22%3A%222026-09-20T12%3A00%3A00.000Z%22%2C%22updatedAt%22%3A%222026-09-21T12%3A00%3A00.000Z%22%7D%5D%7D"
+   },
+   "settings": "base",
+   "canGoBack": false,
+   "actions": [
+    [
+     "save"
+    ],
+    [
+     "confirmBulk"
+    ]
+   ]
+  },
+  {
+   "name": "an invalid date command warns and writes nothing, alone or in a line",
+   "params": {},
+   "settings": "base",
+   "canGoBack": true,
+   "actions": [
+    [
+     "type",
+     "Pay rent /due:whenever"
+    ],
+    [
+     "save"
+    ],
+    [
+     "type",
+     "Plan beds +Garden plan\nPay rent /due:whenever"
+    ],
+    [
+     "save"
+    ],
+    [
+     "confirmBulk"
+    ]
+   ]
+  },
+  {
+   "name": "the store refuses: the card shows the error until a save lands",
+   "params": {},
+   "settings": "base",
+   "canGoBack": true,
+   "actions": [
+    [
+     "type",
+     "Buy milk"
+    ],
+    [
+     "refuseWrites",
+     true
+    ],
+    [
+     "save"
+    ],
+    [
+     "type",
+     "Buy milk and eggs"
+    ],
+    [
+     "type",
+     "one\ntwo"
+    ],
+    [
+     "save"
+    ],
+    [
+     "confirmBulk"
+    ],
+    [
+     "refuseWrites",
+     false
+    ],
+    [
+     "type",
+     "Buy milk"
+    ],
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "a blank draft does nothing; a trailing blank line joins the lines",
+   "params": {},
+   "settings": "base",
+   "canGoBack": true,
+   "actions": [
+    [
+     "type",
+     "   "
+    ],
+    [
+     "save"
+    ],
+    [
+     "saveAndEdit"
+    ],
+    [
+     "type",
+     "Buy eggs\nCall plumber\n\n"
+    ],
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "the syntax help and the fixed default area",
+   "params": {},
+   "settings": "fixedArea",
+   "canGoBack": true,
+   "actions": [
+    [
+     "help"
+    ],
+    [
+     "type",
+     "Water plants"
+    ],
+    [
+     "help"
+    ],
+    [
+     "help"
+    ],
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "the copilot: one part, then all, typing clears what was applied",
+   "params": {
+    "initialValue": "Call%20the%20bank"
+   },
+   "settings": "ai",
+   "canGoBack": true,
+   "suggestions": {
+    "Call the bank": {
+     "context": "@phone",
+     "timeEstimate": "15min",
+     "tags": [
+      "#finance",
+      "#urgent"
+     ]
+    },
+    "Call the bank today": {
+     "tags": [
+      "#finance"
+     ]
+    },
+    "Pay": {
+     "context": "@computer"
+    }
+   },
+   "actions": [
+    [
+     "applyCopilot",
+     "@phone"
+    ],
+    [
+     "applyAllCopilot"
+    ],
+    [
+     "type",
+     "Call the bank today"
+    ],
+    [
+     "applyCopilot",
+     "#finance"
+    ],
+    [
+     "type",
+     "Pay"
+    ],
+    [
+     "type",
+     "Call the bank"
+    ],
+    [
+     "applyCopilot",
+     "#urgent"
+    ],
+    [
+     "applyCopilot",
+     "15min"
+    ],
+    [
+     "save"
+    ]
+   ]
+  },
+  {
+   "name": "the copilot with time estimates off: an estimate alone suggests nothing",
+   "params": {},
+   "settings": "aiNoEstimates",
+   "canGoBack": true,
+   "suggestions": {
+    "Write memo": {
+     "timeEstimate": "30min"
+    },
+    "Write memo now": {
+     "timeEstimate": "30min",
+     "context": "@computer"
+    }
+   },
+   "actions": [
+    [
+     "type",
+     "Write memo"
+    ],
+    [
+     "type",
+     "Write memo now"
+    ],
+    [
+     "applyCopilot",
+     "@computer"
+    ],
+    [
+     "save"
+    ]
+   ]
+  }
+ ],
+ "observations": {
+  "a capture link with a note, tags and a project no project carries": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Description",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Buy groceries"
+      },
+      {
+       "placeholder": "Add notes...",
+       "value": "From store"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addProject",
+      "Shopping",
+      "#94a3b8",
+      "<undefined>"
+     ],
+     [
+      "addTask",
+      "Buy groceries",
+      {
+       "status": "inbox",
+       "description": "From store",
+       "tags": [
+        "#errands",
+        "#home"
+       ],
+       "areaId": "<undefined>",
+       "projectId": "<created-project:Shopping>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Buy groceries",
+        "initialProps": {
+         "status": "inbox",
+         "description": "From store",
+         "tags": [
+          "#errands",
+          "#home"
+         ],
+         "areaId": "<undefined>",
+         "projectId": "<created-project:Shopping>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a capture link naming a project by its id": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Description",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Plan trip"
+      },
+      {
+       "placeholder": "Add notes...",
+       "value": "Book flights"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Description",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Plan trip @phone"
+      },
+      {
+       "placeholder": "Add notes...",
+       "value": "Book flights"
+      }
+     ],
+     "preview": [
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Plan trip",
+       "tone": "default"
+      },
+      {
+       "id": "context:@phone",
+       "kind": "context",
+       "value": "@phone",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Plan trip",
+      {
+       "status": "inbox",
+       "description": "Book flights",
+       "projectId": "p-launch",
+       "contexts": [
+        "@phone"
+       ],
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Plan trip",
+        "initialProps": {
+         "status": "inbox",
+         "description": "Book flights",
+         "projectId": "p-launch",
+         "contexts": [
+          "@phone"
+         ],
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a capture link naming an archived project by title in another case: no project": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Clear desk"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Clear desk",
+      {
+       "status": "inbox",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Clear desk",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "back"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a capture link naming a live project by title, overridden by a typed project token": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Fix sink"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Fix sink +Launch"
+      }
+     ],
+     "preview": [
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Fix sink",
+       "tone": "default"
+      },
+      {
+       "id": "project",
+       "kind": "project",
+       "label": "Project",
+       "value": "Launch",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Fix sink",
+      {
+       "status": "inbox",
+       "projectId": "p-launch",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Fix sink",
+        "initialProps": {
+         "status": "inbox",
+         "projectId": "p-launch",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "back"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a share with a subject, a body and a link; Save & edit opens the editor": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Description",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Subject"
+      },
+      {
+       "placeholder": "Add notes...",
+       "value": "Body with https://example.com/doc\nhttps://example.com/doc"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Description",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Subject"
+      },
+      {
+       "placeholder": "Add notes...",
+       "value": "Body with https://example.com/doc"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Subject",
+      {
+       "status": "inbox",
+       "areaId": "<undefined>",
+       "description": "Body with https://example.com/doc"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Subject",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>",
+         "description": "Body with https://example.com/doc"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "openTaskScreen",
+      "<created:Subject>",
+      "<undefined>",
+      "task",
+      {
+       "replace": true
+      }
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a plain text share": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "The paragraph I selected in another app"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "The paragraph I selected in another app",
+      {
+       "status": "inbox",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "The paragraph I selected in another app",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a multi-line share asks first, then creates one task per line": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Multi\nline\nshare"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save",
+      "Create 3 tasks?",
+      "Multi\nline\nshare",
+      "Cancel",
+      "Create tasks"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Multi\nline\nshare"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Create tasks",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Multi\nline\nshare"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save",
+      "Create 3 tasks?",
+      "Multi\nline\nshare",
+      "Cancel",
+      "Create tasks"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Multi\nline\nshare"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Create tasks",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Multi\nline\nshare"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save",
+      "Create 3 tasks?",
+      "Multi\nline\nshare",
+      "Cancel",
+      "Create tasks"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Multi\nline\nshare"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Create tasks",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTasks",
+      [
+       {
+        "title": "Multi",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       },
+       {
+        "title": "line",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       },
+       {
+        "title": "share",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "an assistant note, its description merged with a typed /note: token": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Description",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Voice note"
+      },
+      {
+       "placeholder": "Add notes...",
+       "value": "Longer spoken text"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Description",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Voice note /note:said aloud"
+      },
+      {
+       "placeholder": "Add notes...",
+       "value": "Longer spoken text"
+      }
+     ],
+     "preview": [
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Voice note",
+       "tone": "default"
+      },
+      {
+       "id": "note",
+       "kind": "note",
+       "label": "Description",
+       "value": "said aloud",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Description",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Voice note /note:said aloud"
+      },
+      {
+       "placeholder": "Add notes...",
+       "value": "  Longer spoken text  "
+      }
+     ],
+     "preview": [
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Voice note",
+       "tone": "default"
+      },
+      {
+       "id": "note",
+       "kind": "note",
+       "label": "Description",
+       "value": "said aloud",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Voice note",
+      {
+       "status": "inbox",
+       "description": "Longer spoken text\nsaid aloud",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Voice note",
+        "initialProps": {
+         "status": "inbox",
+         "description": "Longer spoken text\nsaid aloud",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a widget quick capture saves, then returns to the previous app": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": ""
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Call @phone about #finance +Launch /due:tomorrow"
+      }
+     ],
+     "preview": [
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Call about",
+       "tone": "default"
+      },
+      {
+       "id": "due",
+       "kind": "due",
+       "label": "Due Date",
+       "value": "09/29/2026",
+       "tone": "default"
+      },
+      {
+       "id": "project",
+       "kind": "project",
+       "label": "Project",
+       "value": "Launch",
+       "tone": "default"
+      },
+      {
+       "id": "context:@phone",
+       "kind": "context",
+       "value": "@phone",
+       "tone": "default"
+      },
+      {
+       "id": "tag:#finance",
+       "kind": "tag",
+       "value": "#finance",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Call about",
+      {
+       "status": "inbox",
+       "dueDate": "2026-09-29",
+       "contexts": [
+        "@phone"
+       ],
+       "tags": [
+        "#finance"
+       ],
+       "projectId": "p-launch",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Call about",
+        "initialProps": {
+         "status": "inbox",
+         "dueDate": "2026-09-29",
+         "contexts": [
+          "@phone"
+         ],
+         "tags": [
+          "#finance"
+         ],
+         "projectId": "p-launch",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ],
+     [
+      "returnToPreviousApp"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a widget quick capture cancelled over the app returns to the previous app": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": ""
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Never mind"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [
+     [
+      "back"
+     ],
+     [
+      "returnToPreviousApp"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a widget quick capture: Save & edit stays in the app": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": ""
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Draft agenda"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Draft agenda",
+      {
+       "status": "inbox",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Draft agenda",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "openTaskScreen",
+      "<created:Draft agenda>",
+      "<undefined>",
+      "task",
+      {
+       "replace": true
+      }
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a project's add button: Save & edit stays on the project": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": ""
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Order parts"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Order parts",
+      {
+       "status": "inbox",
+       "projectId": "p-launch",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Order parts",
+        "initialProps": {
+         "status": "inbox",
+         "projectId": "p-launch",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "stashPendingCaptureTaskOpen",
+      {
+       "taskId": "<created:Order parts>",
+       "projectId": "p-launch",
+       "taskTab": "task"
+      }
+     ],
+     [
+      "back"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a project's add button: Save & edit into another project opens the editor": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": ""
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Order parts +\"Home Repairs\""
+      }
+     ],
+     "preview": [
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Order parts",
+       "tone": "default"
+      },
+      {
+       "id": "project",
+       "kind": "project",
+       "label": "Project",
+       "value": "Home Repairs",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Order parts",
+      {
+       "status": "inbox",
+       "projectId": "p-home",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Order parts",
+        "initialProps": {
+         "status": "inbox",
+         "projectId": "p-home",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "openTaskScreen",
+      "<created:Order parts>",
+      "p-home",
+      "task",
+      {
+       "replace": true
+      }
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "returnTo is used only with nothing behind the screen, and only a safe app path": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Unsafe"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Unsafe",
+      {
+       "status": "inbox",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Unsafe",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a safe returnTo with nothing behind the screen": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Safe"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/projects-screen?projectId=p-home"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "link presets: status, contexts, tags, an area, and an archived project": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Preset task"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Preset task",
+      {
+       "status": "next",
+       "tags": [
+        "#x",
+        "#y"
+       ],
+       "contexts": [
+        "@home",
+        "@phone"
+       ],
+       "areaId": "a-home"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Preset task",
+        "initialProps": {
+         "status": "next",
+         "tags": [
+          "#x",
+          "#y"
+         ],
+         "contexts": [
+          "@home",
+          "@phone"
+         ],
+         "areaId": "a-home"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "link presets: a live project wins over an area; a deleted area and a bad status are dropped": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "From the text param"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "From the text param",
+      {
+       "status": "inbox",
+       "projectId": "p-home",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "From the text param",
+        "initialProps": {
+         "status": "inbox",
+         "projectId": "p-home",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "link presets: a deleted area, a malformed props param and the title param": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Only title"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Only title",
+      {
+       "status": "inbox",
+       "areaId": "a-home"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Only title",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "a-home"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "shared files: only files the app manages are saved": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Attachments",
+      "Receipt.pdf",
+      "Elsewhere",
+      "Attachment",
+      "Description",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Receipt"
+      },
+      {
+       "placeholder": "Add notes...",
+       "value": "Scanned"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Receipt",
+      {
+       "status": "inbox",
+       "attachments": [
+        {
+         "id": "att-managed",
+         "kind": "file",
+         "title": "Receipt.pdf",
+         "uri": "file:///data/mindwtr/attachments/att-managed.pdf",
+         "createdAt": "2026-09-20T12:00:00.000Z",
+         "updatedAt": "2026-09-21T12:00:00.000Z",
+         "localStatus": "available",
+         "mimeType": "application/pdf",
+         "size": 2048
+        }
+       ],
+       "description": "Scanned",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Receipt",
+        "initialProps": {
+         "status": "inbox",
+         "attachments": [
+          {
+           "id": "att-managed",
+           "kind": "file",
+           "title": "Receipt.pdf",
+           "uri": "file:///data/mindwtr/attachments/att-managed.pdf",
+           "createdAt": "2026-09-20T12:00:00.000Z",
+           "updatedAt": "2026-09-21T12:00:00.000Z",
+           "localStatus": "available",
+           "mimeType": "application/pdf",
+           "size": 2048
+          }
+         ],
+         "description": "Scanned",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "shared files with several lines: only the first task carries them": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Attachments",
+      "Receipt.pdf",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Receipt\nPay it"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Attachments",
+      "Receipt.pdf",
+      "Cancel",
+      "Save & edit",
+      "Save",
+      "Create 2 tasks?",
+      "Receipt\nPay it",
+      "Cancel",
+      "Create tasks"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Receipt\nPay it"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Create tasks",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTasks",
+      [
+       {
+        "title": "Receipt",
+        "initialProps": {
+         "status": "inbox",
+         "attachments": [
+          {
+           "id": "att-managed",
+           "kind": "file",
+           "title": "Receipt.pdf",
+           "uri": "file:///data/mindwtr/attachments/att-managed.pdf",
+           "createdAt": "2026-09-20T12:00:00.000Z",
+           "updatedAt": "2026-09-21T12:00:00.000Z",
+           "localStatus": "available",
+           "mimeType": "application/pdf",
+           "size": 2048
+          }
+         ],
+         "areaId": "<undefined>"
+        }
+       },
+       {
+        "title": "Pay it",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "an invalid date command warns and writes nothing, alone or in a line": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": ""
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Pay rent /due:whenever"
+      }
+     ],
+     "preview": [
+      {
+       "id": "warning:/due:whenever",
+       "kind": "warning",
+       "label": "Invalid date command",
+       "value": "/due:whenever",
+       "tone": "warning"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [
+     [
+      "warning",
+      "Notice",
+      "Invalid date command: /due:whenever",
+      4200
+     ]
+    ],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Pay rent /due:whenever"
+      }
+     ],
+     "preview": [
+      {
+       "id": "warning:/due:whenever",
+       "kind": "warning",
+       "label": "Invalid date command",
+       "value": "/due:whenever",
+       "tone": "warning"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Plan beds +Garden plan\nPay rent /due:whenever"
+      }
+     ],
+     "preview": [
+      {
+       "id": "warning:/due:whenever",
+       "kind": "warning",
+       "label": "Invalid date command",
+       "value": "/due:whenever",
+       "tone": "warning"
+      },
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Plan beds /due:whenever",
+       "tone": "default"
+      },
+      {
+       "id": "project",
+       "kind": "project",
+       "label": "Project",
+       "value": "Garden plan Pay rent",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save",
+      "Create 2 tasks?",
+      "Plan beds +Garden plan\nPay rent /due:whenever",
+      "Cancel",
+      "Create tasks"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Plan beds +Garden plan\nPay rent /due:whenever"
+      }
+     ],
+     "preview": [
+      {
+       "id": "warning:/due:whenever",
+       "kind": "warning",
+       "label": "Invalid date command",
+       "value": "/due:whenever",
+       "tone": "warning"
+      },
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Plan beds /due:whenever",
+       "tone": "default"
+      },
+      {
+       "id": "project",
+       "kind": "project",
+       "label": "Project",
+       "value": "Garden plan Pay rent",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Create tasks",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [
+     [
+      "warning",
+      "Notice",
+      "Invalid date command: /due:whenever",
+      4200
+     ]
+    ],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Plan beds +Garden plan\nPay rent /due:whenever"
+      }
+     ],
+     "preview": [
+      {
+       "id": "warning:/due:whenever",
+       "kind": "warning",
+       "label": "Invalid date command",
+       "value": "/due:whenever",
+       "tone": "warning"
+      },
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Plan beds /due:whenever",
+       "tone": "default"
+      },
+      {
+       "id": "project",
+       "kind": "project",
+       "label": "Project",
+       "value": "Garden plan Pay rent",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   }
+  ],
+  "the store refuses: the card shows the error until a save lands": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": ""
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Buy milk"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Buy milk"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Buy milk",
+      {
+       "status": "inbox",
+       "areaId": "<undefined>"
+      }
+     ]
+    ],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Failed to add task",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Buy milk"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Failed to add task",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Buy milk and eggs"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Failed to add task",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "one\ntwo"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Failed to add task",
+      "Cancel",
+      "Save & edit",
+      "Save",
+      "Create 2 tasks?",
+      "one\ntwo",
+      "Cancel",
+      "Create tasks"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "one\ntwo"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Create tasks",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTasks",
+      [
+       {
+        "title": "one",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       },
+       {
+        "title": "two",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Failed to add task",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "one\ntwo"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Failed to add task",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "one\ntwo"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Failed to add task",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Buy milk"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Buy milk",
+      {
+       "status": "inbox",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Buy milk",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "back"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "a blank draft does nothing; a trailing blank line joins the lines": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": ""
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "   "
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "   "
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "   "
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Buy eggs\nCall plumber\n\n"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Buy eggs\nCall plumber",
+      {
+       "status": "inbox",
+       "areaId": "<undefined>"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Buy eggs\nCall plumber",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "back"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "the syntax help and the fixed default area": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": ""
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Quick add supports /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": ""
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Quick add supports /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Water plants"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Water plants"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Quick add supports /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Water plants"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Water plants",
+      {
+       "status": "inbox",
+       "areaId": "a-home"
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Water plants",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "a-home"
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "back"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "the copilot: one part, then all, typing clears what was applied": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [
+     [
+      "predictMetadata",
+      {
+       "title": "Call the bank",
+       "contexts": [
+        "@computer",
+        "@home office",
+        "@phone"
+       ],
+       "tags": [
+        "#finance",
+        "#work"
+       ]
+      }
+     ]
+    ],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Suggested",
+      "@phone",
+      "15min",
+      "#finance",
+      "#urgent",
+      "Apply all",
+      "Tap to apply",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Call the bank"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "@phone",
+       "disabled": false
+      },
+      {
+       "label": "15min",
+       "disabled": false
+      },
+      {
+       "label": "#finance",
+       "disabled": false
+      },
+      {
+       "label": "#urgent",
+       "disabled": false
+      },
+      {
+       "label": "Apply all",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Suggested",
+      "15min",
+      "#finance",
+      "#urgent",
+      "Apply all",
+      "Tap to apply",
+      "Applied @phone",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Call the bank"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "15min",
+       "disabled": false
+      },
+      {
+       "label": "#finance",
+       "disabled": false
+      },
+      {
+       "label": "#urgent",
+       "disabled": false
+      },
+      {
+       "label": "Apply all",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Applied @phone 15min #finance #urgent",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Call the bank"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [
+     [
+      "predictMetadata",
+      {
+       "title": "Call the bank today",
+       "contexts": [
+        "@computer",
+        "@home office",
+        "@phone"
+       ],
+       "tags": [
+        "#finance",
+        "#work"
+       ]
+      }
+     ]
+    ],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Suggested",
+      "#finance",
+      "Tap to apply",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Call the bank today"
+      }
+     ],
+     "preview": [
+      {
+       "id": "due",
+       "kind": "due",
+       "label": "Due Date",
+       "value": "09/28/2026",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "#finance",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Applied #finance",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Call the bank today"
+      }
+     ],
+     "preview": [
+      {
+       "id": "due",
+       "kind": "due",
+       "label": "Due Date",
+       "value": "09/28/2026",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Pay"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [
+     [
+      "predictMetadata",
+      {
+       "title": "Call the bank",
+       "contexts": [
+        "@computer",
+        "@home office",
+        "@phone"
+       ],
+       "tags": [
+        "#finance",
+        "#work"
+       ]
+      }
+     ]
+    ],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Suggested",
+      "@phone",
+      "15min",
+      "#finance",
+      "#urgent",
+      "Apply all",
+      "Tap to apply",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Call the bank"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "@phone",
+       "disabled": false
+      },
+      {
+       "label": "15min",
+       "disabled": false
+      },
+      {
+       "label": "#finance",
+       "disabled": false
+      },
+      {
+       "label": "#urgent",
+       "disabled": false
+      },
+      {
+       "label": "Apply all",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Suggested",
+      "@phone",
+      "15min",
+      "#finance",
+      "Apply all",
+      "Tap to apply",
+      "Applied #urgent",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Call the bank"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "@phone",
+       "disabled": false
+      },
+      {
+       "label": "15min",
+       "disabled": false
+      },
+      {
+       "label": "#finance",
+       "disabled": false
+      },
+      {
+       "label": "Apply all",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Suggested",
+      "@phone",
+      "#finance",
+      "Apply all",
+      "Tap to apply",
+      "Applied 15min #urgent",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Call the bank"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "@phone",
+       "disabled": false
+      },
+      {
+       "label": "#finance",
+       "disabled": false
+      },
+      {
+       "label": "Apply all",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Call the bank",
+      {
+       "status": "inbox",
+       "areaId": "<undefined>",
+       "timeEstimate": "15min",
+       "tags": [
+        "#urgent"
+       ]
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Call the bank",
+        "initialProps": {
+         "status": "inbox",
+         "areaId": "<undefined>",
+         "timeEstimate": "15min",
+         "tags": [
+          "#urgent"
+         ]
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "back"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ],
+  "the copilot with time estimates off: an estimate alone suggests nothing": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": ""
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [
+     [
+      "predictMetadata",
+      {
+       "title": "Write memo",
+       "contexts": [
+        "@computer",
+        "@home office",
+        "@phone"
+       ],
+       "tags": [
+        "#finance",
+        "#work"
+       ]
+      }
+     ]
+    ],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Write memo"
+      }
+     ],
+     "preview": [],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [
+     [
+      "predictMetadata",
+      {
+       "title": "Write memo now",
+       "contexts": [
+        "@computer",
+        "@home office",
+        "@phone"
+       ],
+       "tags": [
+        "#finance",
+        "#work"
+       ]
+      }
+     ]
+    ],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Suggested",
+      "@computer",
+      "Tap to apply",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Write memo now"
+      }
+     ],
+     "preview": [
+      {
+       "id": "due",
+       "kind": "due",
+       "label": "Due Date",
+       "value": "09/28/2026, 2:00 PM",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "@computer",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "ai": [],
+    "screen": {
+     "texts": [
+      "Add Task",
+      "?",
+      "Applied @computer",
+      "Cancel",
+      "Save & edit",
+      "Save"
+     ],
+     "fields": [
+      {
+       "placeholder": "e.g. Call mom /due:tomorrow @phone",
+       "value": "Write memo now"
+      }
+     ],
+     "preview": [
+      {
+       "id": "due",
+       "kind": "due",
+       "label": "Due Date",
+       "value": "09/28/2026, 2:00 PM",
+       "tone": "default"
+      }
+     ],
+     "controls": [
+      {
+       "label": "?",
+       "disabled": false
+      },
+      {
+       "label": "Cancel",
+       "disabled": false
+      },
+      {
+       "label": "Save & edit",
+       "disabled": false
+      },
+      {
+       "label": "Save",
+       "disabled": false
+      }
+     ]
+    }
+   },
+   {
+    "writes": [
+     [
+      "addTask",
+      "Write memo now",
+      {
+       "status": "inbox",
+       "dueDate": "2026-09-28T14:00:00.000Z",
+       "areaId": "<undefined>",
+       "contexts": [
+        "@computer"
+       ]
+      }
+     ],
+     [
+      "addTasks",
+      [
+       {
+        "title": "Write memo now",
+        "initialProps": {
+         "status": "inbox",
+         "dueDate": "2026-09-28T14:00:00.000Z",
+         "areaId": "<undefined>",
+         "contexts": [
+          "@computer"
+         ]
+        }
+       }
+      ]
+     ]
+    ],
+    "toasts": [],
+    "navigation": [
+     [
+      "back"
+     ]
+    ],
+    "ai": [],
+    "screen": null
+   }
+  ]
+ }
+}

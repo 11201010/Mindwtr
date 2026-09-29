@@ -1,0 +1,1065 @@
+{
+ "provenance": {
+  "command": "cd apps/mobile && MINDWTR_CAPTURE_REMINDER_ALARMS=1 MINDWTR_CAPTURE_REMINDER_ALARMS_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run tests/use-root-layout-notification-open-handler.parity.test.tsx",
+  "capturedAt": "5763d0113d86facc76f7d73c885294ff37a03c08",
+  "sourceState": "Every file under apps/ and packages/ was at HEAD except the reminder alarm and notification open parity harnesses and their fixtures.",
+  "rendering": "hooks/root-layout/use-root-layout-notification-open-handler.ts mounted with react-test-renderer (appReady, pathname /inbox) under a fake Date. The store (tasks by ID, setHighlightTask, updateTask), the handler registration, the cold-start payload (none) and the log are replaced. Each observation lists, in order, what one payload made the hook do: router pushes, highlights, store writes and log lines."
+ },
+ "timeZone": "UTC",
+ "now": "2026-09-28T10:00:00.000Z",
+ "scenarios": [
+  {
+   "name": "dismiss and snooze open nothing",
+   "tasks": [
+    {
+     "id": "t-next",
+     "title": "Task t-next",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-inbox",
+     "title": "Task t-inbox",
+     "status": "inbox",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-done",
+     "title": "Task t-done",
+     "status": "done",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-archived",
+     "title": "Task t-archived",
+     "status": "archived",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-reference",
+     "title": "Task t-reference",
+     "status": "reference",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-deleted",
+     "title": "Task t-deleted",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "deletedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "payloads": [
+    {
+     "actionIdentifier": "dismiss",
+     "taskId": "t-next",
+     "notificationId": "n-1"
+    },
+    {
+     "actionIdentifier": "DISMISS_ACTION",
+     "taskId": "t-next"
+    },
+    {
+     "actionIdentifier": "snooze",
+     "taskId": "t-next",
+     "notificationId": "n-2"
+    },
+    {
+     "actionIdentifier": " Snooze_Action ",
+     "kind": "weekly-review"
+    },
+    {
+     "actionIdentifier": "snooze_action",
+     "kind": "daily-digest",
+     "notificationId": "digest:morning"
+    }
+   ]
+  },
+  {
+   "name": "Done completes an actionable task once per notification",
+   "tasks": [
+    {
+     "id": "t-next",
+     "title": "Task t-next",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-inbox",
+     "title": "Task t-inbox",
+     "status": "inbox",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-done",
+     "title": "Task t-done",
+     "status": "done",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-archived",
+     "title": "Task t-archived",
+     "status": "archived",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-reference",
+     "title": "Task t-reference",
+     "status": "reference",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-deleted",
+     "title": "Task t-deleted",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "deletedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "payloads": [
+    {
+     "actionIdentifier": "complete",
+     "taskId": "t-next",
+     "notificationId": "task:t-next"
+    },
+    {
+     "actionIdentifier": "complete",
+     "taskId": "t-next",
+     "notificationId": "task:t-next"
+    },
+    {
+     "actionIdentifier": "COMPLETE_ACTION",
+     "taskId": "t-next",
+     "notificationId": " task:t-next "
+    },
+    {
+     "actionIdentifier": "complete_action",
+     "taskId": "t-inbox",
+     "notificationId": "task:t-inbox:r2"
+    },
+    {
+     "actionIdentifier": "complete",
+     "taskId": "t-inbox"
+    },
+    {
+     "actionIdentifier": "complete",
+     "taskId": "t-inbox"
+    }
+   ]
+  },
+  {
+   "name": "Done on a missing, deleted or finished task changes nothing",
+   "tasks": [
+    {
+     "id": "t-next",
+     "title": "Task t-next",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-inbox",
+     "title": "Task t-inbox",
+     "status": "inbox",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-done",
+     "title": "Task t-done",
+     "status": "done",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-archived",
+     "title": "Task t-archived",
+     "status": "archived",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-reference",
+     "title": "Task t-reference",
+     "status": "reference",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-deleted",
+     "title": "Task t-deleted",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "deletedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "payloads": [
+    {
+     "actionIdentifier": "complete",
+     "taskId": "t-missing",
+     "notificationId": "task:t-missing"
+    },
+    {
+     "actionIdentifier": "complete",
+     "taskId": "t-deleted",
+     "notificationId": "task:t-deleted"
+    },
+    {
+     "actionIdentifier": "complete",
+     "taskId": "t-done",
+     "notificationId": "task:t-done"
+    },
+    {
+     "actionIdentifier": "complete",
+     "taskId": "t-archived",
+     "notificationId": "task:t-archived"
+    },
+    {
+     "actionIdentifier": "complete",
+     "taskId": "t-reference",
+     "notificationId": "task:t-reference"
+    },
+    {
+     "actionIdentifier": "complete",
+     "notificationId": "digest:weekly-review"
+    },
+    {
+     "actionIdentifier": "complete",
+     "projectId": "p-1",
+     "notificationId": "project:p-1"
+    }
+   ]
+  },
+  {
+   "name": "review reminders open Review before any task or project",
+   "tasks": [
+    {
+     "id": "t-next",
+     "title": "Task t-next",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-inbox",
+     "title": "Task t-inbox",
+     "status": "inbox",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-done",
+     "title": "Task t-done",
+     "status": "done",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-archived",
+     "title": "Task t-archived",
+     "status": "archived",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-reference",
+     "title": "Task t-reference",
+     "status": "reference",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-deleted",
+     "title": "Task t-deleted",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "deletedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "payloads": [
+    {
+     "kind": "task-review",
+     "taskId": "t-next",
+     "notificationId": "task:t-next"
+    },
+    {
+     "kind": "project-review",
+     "projectId": "p-1",
+     "notificationId": "project:p-1"
+    },
+    {
+     "kind": "task-review",
+     "taskId": "t-next",
+     "projectId": "p-1",
+     "notificationId": "  "
+    },
+    {
+     "kind": "project-review"
+    },
+    {
+     "kind": "task-review",
+     "actionIdentifier": "open",
+     "taskId": "t-missing",
+     "notificationId": "review-1"
+    }
+   ]
+  },
+  {
+   "name": "task, project and context opens",
+   "tasks": [
+    {
+     "id": "t-next",
+     "title": "Task t-next",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-inbox",
+     "title": "Task t-inbox",
+     "status": "inbox",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-done",
+     "title": "Task t-done",
+     "status": "done",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-archived",
+     "title": "Task t-archived",
+     "status": "archived",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-reference",
+     "title": "Task t-reference",
+     "status": "reference",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-deleted",
+     "title": "Task t-deleted",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "deletedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "payloads": [
+    {
+     "taskId": "t-next",
+     "notificationId": "task:t-next"
+    },
+    {
+     "taskId": "t-next",
+     "notificationId": "task:t-next"
+    },
+    {
+     "taskId": "t-done",
+     "actionIdentifier": "open"
+    },
+    {
+     "taskId": "t-next",
+     "projectId": "p-1",
+     "kind": "task-reminder",
+     "notificationId": " task:t-next:r1 "
+    },
+    {
+     "projectId": "p-1",
+     "notificationId": "project:p-1"
+    },
+    {
+     "kind": "context-automation",
+     "context": "@home",
+     "notificationId": "ctx-1"
+    },
+    {
+     "kind": "context-automation",
+     "notificationId": "ctx-2"
+    },
+    {
+     "kind": "pomodoro",
+     "taskId": "t-next"
+    }
+   ]
+  },
+  {
+   "name": "daily and weekly review opens, by kind or by alarm key",
+   "tasks": [
+    {
+     "id": "t-next",
+     "title": "Task t-next",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-inbox",
+     "title": "Task t-inbox",
+     "status": "inbox",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-done",
+     "title": "Task t-done",
+     "status": "done",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-archived",
+     "title": "Task t-archived",
+     "status": "archived",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-reference",
+     "title": "Task t-reference",
+     "status": "reference",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-deleted",
+     "title": "Task t-deleted",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "deletedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "payloads": [
+    {
+     "kind": "daily-digest",
+     "notificationId": "daily-1"
+    },
+    {
+     "kind": "daily-digest"
+    },
+    {
+     "notificationId": "digest:morning"
+    },
+    {
+     "notificationId": "digest:evening"
+    },
+    {
+     "kind": "weekly-review",
+     "notificationId": "weekly-1"
+    },
+    {
+     "notificationId": " digest:weekly-review "
+    },
+    {
+     "kind": "weekly-review",
+     "actionIdentifier": "OPEN"
+    }
+   ]
+  },
+  {
+   "name": "payloads that open nothing, and values that are not text",
+   "tasks": [
+    {
+     "id": "t-next",
+     "title": "Task t-next",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-inbox",
+     "title": "Task t-inbox",
+     "status": "inbox",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-done",
+     "title": "Task t-done",
+     "status": "done",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-archived",
+     "title": "Task t-archived",
+     "status": "archived",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-reference",
+     "title": "Task t-reference",
+     "status": "reference",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "t-deleted",
+     "title": "Task t-deleted",
+     "status": "next",
+     "tags": [],
+     "contexts": [],
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "deletedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "payloads": [
+    {},
+    {
+     "notificationId": "something-else"
+    },
+    {
+     "kind": "pomodoro",
+     "notificationId": "pomodoro-1"
+    },
+    {
+     "taskId": 42,
+     "projectId": false,
+     "kind": 7,
+     "notificationId": 9,
+     "actionIdentifier": 3
+    },
+    {
+     "kind": "daily-digest",
+     "notificationId": 12
+    }
+   ]
+  }
+ ],
+ "observations": {
+  "dismiss and snooze open nothing": [
+   [],
+   [],
+   [],
+   [],
+   []
+  ],
+  "Done completes an actionable task once per notification": [
+   [
+    [
+     "logInfo",
+     "[Local Notifications] Complete action applied",
+     {
+      "taskId": "t-next"
+     }
+    ],
+    [
+     "updateTask",
+     "t-next",
+     {
+      "status": "done",
+      "isFocusedToday": false
+     }
+    ]
+   ],
+   [
+    [
+     "logInfo",
+     "[Local Notifications] Complete action ignored as duplicate",
+     {
+      "taskId": "t-next"
+     }
+    ]
+   ],
+   [
+    [
+     "logInfo",
+     "[Local Notifications] Complete action ignored as duplicate",
+     {
+      "taskId": "t-next"
+     }
+    ]
+   ],
+   [
+    [
+     "logInfo",
+     "[Local Notifications] Complete action applied",
+     {
+      "taskId": "t-inbox"
+     }
+    ],
+    [
+     "updateTask",
+     "t-inbox",
+     {
+      "status": "done",
+      "isFocusedToday": false
+     }
+    ]
+   ],
+   [
+    [
+     "logInfo",
+     "[Local Notifications] Complete action applied",
+     {
+      "taskId": "t-inbox"
+     }
+    ],
+    [
+     "updateTask",
+     "t-inbox",
+     {
+      "status": "done",
+      "isFocusedToday": false
+     }
+    ]
+   ],
+   [
+    [
+     "logInfo",
+     "[Local Notifications] Complete action ignored as duplicate",
+     {
+      "taskId": "t-inbox"
+     }
+    ]
+   ]
+  ],
+  "Done on a missing, deleted or finished task changes nothing": [
+   [
+    [
+     "logInfo",
+     "[Local Notifications] Complete action dropped",
+     {
+      "taskId": "t-missing",
+      "reason": "task-not-found"
+     }
+    ]
+   ],
+   [
+    [
+     "logInfo",
+     "[Local Notifications] Complete action dropped",
+     {
+      "taskId": "t-deleted",
+      "reason": "task-deleted"
+     }
+    ]
+   ],
+   [
+    [
+     "logInfo",
+     "[Local Notifications] Complete action dropped",
+     {
+      "taskId": "t-done",
+      "reason": "not-actionable"
+     }
+    ]
+   ],
+   [
+    [
+     "logInfo",
+     "[Local Notifications] Complete action dropped",
+     {
+      "taskId": "t-archived",
+      "reason": "not-actionable"
+     }
+    ]
+   ],
+   [
+    [
+     "logInfo",
+     "[Local Notifications] Complete action dropped",
+     {
+      "taskId": "t-reference",
+      "reason": "not-actionable"
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/weekly-review",
+      "params": {
+       "openToken": "digest:weekly-review"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/projects-screen",
+      "params": {
+       "projectId": "p-1"
+      }
+     }
+    ]
+   ]
+  ],
+  "review reminders open Review before any task or project": [
+   [
+    [
+     "push",
+     {
+      "pathname": "/review-tab",
+      "params": {
+       "openToken": "task:t-next",
+       "taskId": "t-next"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/review-tab",
+      "params": {
+       "openToken": "project:p-1",
+       "projectId": "p-1"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/review-tab",
+      "params": {
+       "openToken": "1790589600000",
+       "taskId": "t-next",
+       "projectId": "p-1"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/review-tab",
+      "params": {
+       "openToken": "1790589600000"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/review-tab",
+      "params": {
+       "openToken": "review-1",
+       "taskId": "t-missing"
+      }
+     }
+    ]
+   ]
+  ],
+  "task, project and context opens": [
+   [
+    [
+     "setHighlightTask",
+     "t-next"
+    ],
+    [
+     "push",
+     {
+      "pathname": "/focus",
+      "params": {
+       "taskId": "t-next",
+       "openToken": "task:t-next:1790589600000:1",
+       "taskTab": "view"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "setHighlightTask",
+     "t-next"
+    ],
+    [
+     "push",
+     {
+      "pathname": "/focus",
+      "params": {
+       "taskId": "t-next",
+       "openToken": "task:t-next:1790589600000:2",
+       "taskTab": "view"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "setHighlightTask",
+     "t-done"
+    ],
+    [
+     "push",
+     {
+      "pathname": "/focus",
+      "params": {
+       "taskId": "t-done",
+       "openToken": "notification:1790589600000:3",
+       "taskTab": "view"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "setHighlightTask",
+     "t-next"
+    ],
+    [
+     "push",
+     {
+      "pathname": "/focus",
+      "params": {
+       "taskId": "t-next",
+       "openToken": "task:t-next:r1:1790589600000:4",
+       "taskTab": "view"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/projects-screen",
+      "params": {
+       "projectId": "p-1"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/contexts",
+      "params": {
+       "token": "@home"
+      }
+     }
+    ]
+   ],
+   [],
+   [
+    [
+     "setHighlightTask",
+     "t-next"
+    ],
+    [
+     "push",
+     {
+      "pathname": "/focus",
+      "params": {
+       "taskId": "t-next",
+       "openToken": "notification:1790589600000:5",
+       "taskTab": "view"
+      }
+     }
+    ]
+   ]
+  ],
+  "daily and weekly review opens, by kind or by alarm key": [
+   [
+    [
+     "push",
+     {
+      "pathname": "/daily-review",
+      "params": {
+       "openToken": "daily-1"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/daily-review",
+      "params": {
+       "openToken": "1790589600000"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/daily-review",
+      "params": {
+       "openToken": "digest:morning"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/daily-review",
+      "params": {
+       "openToken": "digest:evening"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/weekly-review",
+      "params": {
+       "openToken": "weekly-1"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/weekly-review",
+      "params": {
+       "openToken": "digest:weekly-review"
+      }
+     }
+    ]
+   ],
+   [
+    [
+     "push",
+     {
+      "pathname": "/weekly-review",
+      "params": {
+       "openToken": "1790589600000"
+      }
+     }
+    ]
+   ]
+  ],
+  "payloads that open nothing, and values that are not text": [
+   [],
+   [],
+   [],
+   [],
+   [
+    [
+     "push",
+     {
+      "pathname": "/daily-review",
+      "params": {
+       "openToken": "1790589600000"
+      }
+     }
+    ]
+   ]
+  ]
+ }
+}

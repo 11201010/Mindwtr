@@ -165,14 +165,15 @@ class CalendarModel(private val menu: MenuModel, private val saved: SavedStateHa
 
     fun showCompleted(on: Boolean) = act(JSONObject().put("type", "setShowCompleted").put("on", on))
     fun density(days: Int) = act(JSONObject().put("type", "setWeekVisibleDays").put("days", days))
-    fun complete(taskId: String) = act(JSONObject().put("type", "completeTask").put("taskId", taskId))
+    /** Done, at the task's revision as the view showed it (an item's row, or the sheet's). */
+    fun complete(taskId: String, taskRevision: String) = act(JSONObject().put("type", "completeTask").put("taskId", taskId).put("taskRevision", taskRevision))
 
-    /** A timeline block let go at [startMinutes] into [dayKey] (core's grid cell): one moveTask with the task's own duration. */
+    /** A timeline block let go at [startMinutes] into [dayKey] (core's grid cell): one moveTask with the task's own duration, at its row's revision. */
     fun move(item: JSONObject, dayKey: String, startMinutes: Int) {
         val timed = item.getJSONObject("timed")
         if (startMinutes == timed.getInt("startMinutes")) return
         act(JSONObject().put("type", "moveTask").put("taskId", item.getString("taskId")).put("day", dayKey)
-            .put("startMinutes", startMinutes).put("durationMinutes", timed.getInt("durationMinutes")))
+            .put("startMinutes", startMinutes).put("durationMinutes", timed.getInt("durationMinutes")).put("taskRevision", item.rowRevision()))
     }
 
     // ---- The item sheet ----
@@ -189,16 +190,17 @@ class CalendarModel(private val menu: MenuModel, private val saved: SavedStateHa
 
     fun closeSheet() = keepSheet(null)
 
-    /** A sheet button by core's id: Edit opens the editor; the rest are core's actions; Cancel and OK only close. */
+    /** A sheet button by core's id: Edit opens the editor; the rest are core's actions, at the sheet's taskRevision; Cancel and OK only close. */
     fun press(id: String) {
         val taskId = sheet?.menuText("taskId")
+        val revision = sheet?.optString("taskRevision").orEmpty()
         keepSheet(null)
         if (taskId == null) return
         when (id) {
             "edit" -> shell.openEditor(taskId)
-            "unschedule" -> act(JSONObject().put("type", "unscheduleTask").put("taskId", taskId))
-            "done" -> complete(taskId)
-            "delete" -> act(JSONObject().put("type", "deleteTask").put("taskId", taskId))
+            "unschedule" -> act(JSONObject().put("type", "unscheduleTask").put("taskId", taskId).put("taskRevision", revision))
+            "done" -> complete(taskId, revision)
+            "delete" -> act(JSONObject().put("type", "deleteTask").put("taskId", taskId).put("taskRevision", revision))
         }
     }
 
@@ -320,3 +322,6 @@ class CalendarModel(private val menu: MenuModel, private val saved: SavedStateHa
         scrollTo = if (reply.isNull("scrollToMinutes")) null else reply.getInt("scrollToMinutes")
     }
 }
+
+/** A calendar item's task revision as the view showed it (its `row.taskRevision`); a write to that task sends it. */
+internal fun JSONObject.rowRevision(): String = optJSONObject("row")?.optString("taskRevision").orEmpty()

@@ -4,6 +4,7 @@ import { buildGtdSettingsModel, type GtdSettingsEdit, type GtdSettingsOption, ty
 import { getTranslator } from './i18n';
 import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
+import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { DEFAULT_TASK_EDITOR_ORDER } from './task-editor-layout';
@@ -526,6 +527,19 @@ describe('native host contract: Settings › GTD', () => {
             expect(value(await host.setGtdSetting({ requestId: generateUUID(), edit })).changed).toBe(true);
             expect(value(await host.setGtdSetting({ requestId: generateUUID(), edit })).changed).toBe(false);
         }
+    });
+
+    it('a replay after a restart answers changed: false and keeps a later change to another GTD setting', async () => {
+        freezeClock();
+        await seed('base');
+        const host = await openHost();
+        const input = { requestId: generateUUID(), edit: { type: 'dailyReviewFocusStep' as const, value: false } };
+        expect(value(await host.setGtdSetting(input)).changed).toBe(true);
+        await useTaskStore.getState().updateSettings({ gtd: { ...useTaskStore.getState().settings.gtd, weeklyReview: { includeContextStep: false } } });
+        const { result, wrote } = await replayAfterRestart((restarted) => restarted.setGtdSetting(input));
+        expect(result).toEqual({ ok: true, value: { changed: false, deviceWrites: [] } });
+        expect(wrote).toBe(false);
+        expect(useTaskStore.getState().settings.gtd).toMatchObject({ dailyReview: { includeFocusStep: false }, weeklyReview: { includeContextStep: false } });
     });
 
     describe('exact retry after a failed save: one write, and the retry finishes the save', () => {

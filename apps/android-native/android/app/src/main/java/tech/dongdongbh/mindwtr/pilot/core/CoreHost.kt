@@ -25,7 +25,14 @@ import java.util.concurrent.Future
  * then the JS host may apply RN's AsyncStorage change after it imported RN's backup.
  * [io] runs the JS host's fetch and secret calls off this thread; their answers come back in [callAsync]'s pump loop.
  */
-class CoreHost(private val databaseFile: File, private val rnDataDir: File? = null, private val io: HostIo) {
+class CoreHost(
+    private val databaseFile: File,
+    private val rnDataDir: File? = null,
+    private val io: HostIo,
+    private val journalDir: File,
+    /** A write's deviceWrites (a setting's device-local part), kept with the journal sequence that set each key. */
+    private val devices: DeviceWrites,
+) {
     companion object {
         const val TAG = "MindwtrNativeDev"
         /** Must match NATIVE_ERROR in bundle/host-entry.ts. */
@@ -58,6 +65,8 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     private val startedAt = System.nanoTime()
     private var context: QuickJSContext? = null
     private var sqlite: SqliteBridge? = null
+    /** The write-ahead journal (WriteJournal), opened at start on this thread. */
+    private var journal: WriteJournal? = null
     private val functions = HashMap<String, JSFunction>()
     /** Set when an operation outlived its deadline and its drain. The engine is gone, so that operation never resumes. */
     @Volatile private var stopped: String? = null
@@ -88,6 +97,7 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     /** [legacyState] and [legacyBackup] come from LegacyRnStoreGuard; both are "" for the dev database. */
     fun start(bundle: String, legacyState: String = "", legacyBackup: String = ""): JSONObject = onEngine {
         try {
+            journal = WriteJournal(journalDir, log = { Log.i(TAG, it) }, floor = devices.highestSequence())
             val engine = QuickJSContext.create()
             context = engine
             val database = SqliteBridge(databaseFile)
@@ -142,7 +152,8 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
             bridge.setProperty("ioBody", guarded { _ -> io.body() })
             engine.globalObject.setProperty("__mindwtrNative", bridge)
             engine.evaluate(bundle, "core-host.js")
-            callAsync("boot", legacyState, legacyBackup).also { netCheck() }
+            // This host journals every write (WriteJournal), so core requires each write's replay tokens.
+            callAsync("boot", legacyState, legacyBackup, "journaled").also { netCheck() }
         } catch (error: Throwable) {
             closeOnEngine()
             throw error
@@ -180,13 +191,14 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     /** Core's submitQuickCapturePickerQuery with [json] unchanged; its requestId makes a create's retry exact. */
     fun submitQuickCapturePickerQuery(json: String): JSONObject = callAsync("capturePicker", json)
 
-    fun completeTask(id: String): JSONObject = callAsync("complete", id)
+    /** Core's completeTask; [taskRevision] is the row's: a task changed since is refused (STALE_REVISION). */
+    fun completeTask(id: String, taskRevision: String): JSONObject = callAsync("complete", id, taskRevision)
 
-    /** Core's setTaskFocus to the target [focused]. A reply with `blocked` wrote nothing. */
-    fun setTaskFocus(id: String, focused: Boolean): JSONObject = callAsync("taskFocus", id, focused)
+    /** Core's setTaskFocus to the target [focused], at the row's [taskRevision]. A reply with `blocked` wrote nothing. */
+    fun setTaskFocus(id: String, focused: Boolean, taskRevision: String): JSONObject = callAsync("taskFocus", id, focused, taskRevision)
 
-    /** Core's setProjectFocus to the target [focused]. `{ blocked: "" }` wrote nothing. */
-    fun setProjectFocus(id: String, focused: Boolean): JSONObject = callAsync("projectFocus", id, focused)
+    /** Core's setProjectFocus to the target [focused], at the row's [projectRevision]. `{ blocked: "" }` wrote nothing. */
+    fun setProjectFocus(id: String, focused: Boolean, projectRevision: String): JSONObject = callAsync("projectFocus", id, focused, projectRevision)
 
     /** Core's createProject; [areaId] "" is no area, and [requestId] is kept for the exact retry. */
     fun createProject(title: String, areaId: String, requestId: String): JSONObject =
@@ -249,9 +261,12 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
         callAsync("editChecklist", JSONObject().put("id", id).put("draft", JSONObject(draftJson)).put("checklist", JSONArray(checklistJson))
             .apply { if (editJson.isNotEmpty()) put("edit", JSONObject(editJson)) }.toString())
 
-    /** Core's resetTaskChecklist, written at once; [requestId] makes a retry only finish a failed save. */
-    fun resetTaskChecklist(id: String, requestId: String): JSONObject =
-        callAsync("resetChecklist", JSONObject().put("id", id).put("requestId", requestId).toString())
+    /**
+     * Core's resetTaskChecklist, written at once; [requestId] makes a retry only finish a failed save, and [taskRevision] (getTaskView's)
+     * refuses a task changed since (STALE_REVISION).
+     */
+    fun resetTaskChecklist(id: String, requestId: String, taskRevision: String): JSONObject =
+        callAsync("resetChecklist", JSONObject().put("id", id).put("requestId", requestId).put("taskRevision", taskRevision).toString())
 
     /** Core's getTaskEditorSuggestions for a context, tag, or person input's whole text as typed. */
     fun editorSuggestions(id: String, field: String, query: String, limit: Int): JSONObject =
@@ -259,15 +274,22 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
 
     /**
      * [baseJson], [patchJson] and [checklistJson] (`{ base, value }`, "" when the checklist is unchanged) go to core's saveTaskDraft
-     * unchanged, in one write; core decides everything.
+     * unchanged, in one write; core decides everything. [requestId] makes a repeat answer the first reply (core's receipt).
      */
-    fun saveTaskDraft(id: String, baseJson: String, patchJson: String, checklistJson: String): JSONObject =
+    fun saveTaskDraft(id: String, baseJson: String, patchJson: String, checklistJson: String, requestId: String): JSONObject =
         callAsync("saveDraft", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson))
-            .apply { if (checklistJson.isNotEmpty()) put("checklist", JSONObject(checklistJson)) }.toString())
+            .apply { if (checklistJson.isNotEmpty()) put("checklist", JSONObject(checklistJson)) }.put("requestId", requestId).toString())
 
-    /** The status menu and the Restore and Next swipes: [baseJson] and [patchJson] go to core's updateTask unchanged. */
-    fun updateTask(id: String, baseJson: String, patchJson: String): JSONObject =
-        callAsync("update", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson)).toString())
+    /**
+     * The status menu and the Restore and Next swipes: [baseJson] and [patchJson] go to core's updateTask unchanged, with the
+     * request's [requestId].
+     */
+    fun updateTask(id: String, baseJson: String, patchJson: String, requestId: String): JSONObject =
+        callAsync("update", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson))
+            .put("requestId", requestId).toString())
+
+    /** Core's receipts older than 30 days go; ProcessCoreHost calls it once, after a boot replay that left no entry. */
+    fun pruneReceipts(): JSONObject = callAsync("pruneReceipts")
 
     /**
      * Core's setLanguage: [stored] is RN's saved language ("" for none), [system] the device locale tag.
@@ -320,14 +342,32 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
         if (ms > 0) Thread.sleep(minOf(ms, 60_000L))
     }
 
+    /**
+     * Every host call. A write ([WriteJournal.WRITES]) is on disk in the journal before the engine sees it, and core's reply
+     * settles it: a final reply drops it, SAVE_FAILED keeps it for the owed retry, and no reply (a timeout, a stopped engine,
+     * process death) keeps it for the next boot's replay.
+     */
     private fun callAsync(method: String, vararg args: Any?, deadlineMs: Long = OPERATION_DEADLINE_MS): JSONObject = onEngine {
         stopped?.let { throw IllegalStateException(it) }
-        val command = method in setOf("captureSubmit", "captureLines", "capturePicker", "complete", "update", "saveDraft", "resetChecklist", "taskFocus", "projectFocus",
-            "createProject", "setAreaFilter", "saveSearch", "inboxCommit", "inboxSkip", "menuCommand")
-        if (command) {
+        val entry = if (method in WriteJournal.WRITES) checkNotNull(journal).append(method, args.toList()) else null
+        val stop = if (entry != null) debugFault("journal_stop") else ""
+        if (entry != null) {
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             debugDelay("delay_before_ms")
+            journalStop(stop, "before", entry)
         }
+        val result = answer(method, args, deadlineMs)
+        if (entry != null) {
+            debugDelay("delay_after_ms")
+            journalStop(stop, "after", entry)
+        }
+        if (method in WriteJournal.WRITES) settle(entry, result, replay = false)
+        if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
+        result.getJSONObject("value")
+    }
+
+    /** Operation [method]'s reply, `{ ok, value }` or `{ ok: false, error }`; one past [deadlineMs] is cancelled and throws. */
+    private fun answer(method: String, args: Array<out Any?>, deadlineMs: Long): JSONObject {
         val id = call(method, *args) as String
         val answer = pumpUntil(id, deadlineMs) ?: run {
             // Past its deadline: its signal fires, its fetches reject and new host calls are refused, so it ends now, before
@@ -343,10 +383,63 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
             checkNotNull(context).globalObject.getJSFunction("__resumeHostCalls").call()
             throw IllegalStateException("Core $method timed out")
         }
-        val result = JSONObject(answer)
-        if (command) debugDelay("delay_after_ms")
-        if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
-        result.getJSONObject("value")
+        return JSONObject(answer)
+    }
+
+    private fun JSONObject.error(): String? = if (getBoolean("ok")) null else getString("error")
+
+    /**
+     * Core's reply to a write, on the first send and on the journal's [replay] alike: a success's deviceWrites (a setting's
+     * device-local part) are on disk first (a replay's only for keys no newer write set), then [entry] settles (a replay core
+     * refuses as malformed is set aside); true once it left the journal. A device write that fails throws before the entry
+     * settles, so the entry stays for a retry or the next boot.
+     */
+    private fun settle(entry: WriteJournal.Entry?, result: JSONObject, replay: Boolean): Boolean {
+        result.optJSONObject("value")?.optJSONArray("deviceWrites")?.let { devices.store(it, entry?.sequence, replay) }
+        return entry != null && checkNotNull(journal).settle(entry, result.error(), replay)
+    }
+
+    /** What one replay did: requests [sent], [dropped] after a final reply, entries [left], and the failure that stopped it. */
+    data class Replay(val sent: Int, val dropped: Int, val left: Int, val owed: String?)
+
+    /**
+     * The journal's requests, sent again in journal order, one at a time, each exactly as first sent: at boot (ProcessCoreHost,
+     * after the validated load and before any screen gets this host), and as the owed retry of a replay that stopped. A reply
+     * that keeps its entry (SAVE_FAILED), or no reply, stops the replay; that entry and the ones after it wait for the retry.
+     */
+    fun replayJournal(): Replay = onEngine {
+        stopped?.let { throw IllegalStateException(it) }
+        val journal = checkNotNull(journal)
+        var sent = 0
+        var dropped = 0
+        var owed: String? = null
+        for (entry in journal.pending()) {
+            sent += 1
+            checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
+            val error = try {
+                answer(entry.method, entry.args.toTypedArray(), OPERATION_DEADLINE_MS).also { if (settle(entry, it, replay = true)) dropped += 1 }.error()
+            } catch (failure: Throwable) {
+                owed = failure.message ?: failure.javaClass.simpleName
+                break
+            }
+            if (WriteJournal.keeps(error)) { owed = error; break }
+        }
+        stopped?.let { throw IllegalStateException(it) }
+        Replay(sent, dropped, journal.pending().size, owed).also {
+            Log.i(TAG, "Native Android journal replay sent=${it.sent} dropped=${it.dropped} left=${it.left} owed=${owed?.substringBefore(':') ?: "none"}")
+        }
+    }
+
+    /**
+     * Debug builds only (check-journal-device.mjs): [stop] is `debug.mindwtr.native.journal_stop`; set to `<at>:<op>`, the
+     * process dies at [at] ("before": the entry is on disk and the engine has not seen it; "after": core replied and the entry
+     * is not settled) of the write [op] (the method, or a Menu command's name). A replay never stops.
+     */
+    private fun journalStop(stop: String, at: String, entry: WriteJournal.Entry) {
+        val op = if (entry.method == "menuCommand") entry.args[0] else entry.method
+        if (stop != "$at:$op") return
+        Log.i(TAG, "Native Android journal stop at=$at op=$op entry=${entry.file.name}")
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     /** Pumps timers and host call answers until operation [id] answers (its JSON), or null once [ms] have passed. */
