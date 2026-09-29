@@ -11,7 +11,7 @@
 //       proves it, then RN's keys are stored in place: RKStorage holds the backend, URL and username under RN's names at
 //       RN's user_version 1, the password is only in RN's secret store, never in RKStorage, the journal or the log);
 //   (3) convergence with the second device: it joins the same folder and adds a task with an emoji title; Sync now on the
-//       phone brings it in exactly; the phone completes it and adds one, its automatic sync (a data change) uploads both,
+//       phone brings it in exactly; the phone swipes it on and adds one, its automatic sync (a data change) uploads both,
 //       and the second device reads them back with the emoji title intact;
 //   (4) the WebDAV server down (503): the phone's automatic sync after a capture fails, the status line shows the
 //       failure, the Menu tab's dot turns to attention, the capture stays on the phone and nothing reaches the server;
@@ -332,17 +332,21 @@ try {
         console.log(`evidence - app log:\n${logs().split('\n').filter((line) => /sync state|Core action failed|background|refresh/i.test(line)).slice(-30).join('\n')}`);
     }
     check(Boolean(taskRow(shown, titles.host)), '(3) the Inbox shows the emoji title as the second device wrote it');
-    await device.completeUntil(titles.host, 'the second device\'s task done', (current) => !taskRow(current, titles.host));
+    // RN's swipe on an Inbox row moves the task on (its quick status): it leaves the Inbox.
+    await device.completeUntil(titles.host, 'the second device\'s task moved on', (current) => !taskRow(current, titles.host));
+    const movedTo = phoneTasks()[titles.host];
+    check(Boolean(movedTo) && movedTo !== 'inbox', `(3) the phone moved the emoji task on (${movedTo})`);
     await capture(titles.phone);
+    // Core paces automatic cycles by how long the last one took (up to 9 times it), so allow a few minutes.
     await until('the phone\'s automatic sync to upload its change and its capture', () => {
         const document = webdavDocument(dav, FOLDER);
         const host = document?.tasks.find((task) => task.title === titles.host);
-        return host?.status === 'done' && document.tasks.some((task) => task.title === titles.phone && !task.deletedAt);
-    }, 120_000);
-    check(true, '(3) a data change on the phone synced by itself (core\'s data-change trigger): the done task and the capture are in the folder');
+        return host?.status === movedTo && document.tasks.some((task) => task.title === titles.phone && !task.deletedAt);
+    }, 300_000, 3_000);
+    check(true, `(3) a data change on the phone synced by itself (core's data-change trigger): the ${movedTo} task and the capture are in the folder`);
     await second.syncNow('webdav', { ...webdavFields, password: null });
     const secondNow = await second.titles();
-    check(secondNow.includes(titles.phone) && !secondNow.includes(titles.host), '(3) the second device has the phone\'s capture, and the emoji task left its Inbox as done');
+    check(secondNow.includes(titles.phone) && !secondNow.includes(titles.host), `(3) the second device has the phone's capture, and the emoji task left its Inbox (${movedTo})`);
     check(webdavDocument(dav, FOLDER).tasks.find((task) => task.title === titles.host)?.title === titles.host, '(3) the emoji title round-tripped byte for byte');
 
     // (4) The server down: an automatic sync fails on the status line and changes no data.
@@ -366,11 +370,12 @@ try {
     dav.state.failWrites = 1_000;
     const failedAt = badge()[1];
     await capture(titles.failed);
-    await until('a sync whose writes fail', () => Number(badge()[1]) > Number(failedAt) && badge()[0] === 'attention', 180_000);
+    // After the outage's long cycle core waits up to 9 times its length (at most 5 min), plus its failure cooldown.
+    await until('a sync whose writes fail', () => Number(badge()[1]) > Number(failedAt) && badge()[0] === 'attention', 480_000, 3_000);
     check(!webdavDocument(dav, FOLDER).tasks.some((task) => task.title === titles.failed), '(5) the failed write left the folder without the capture');
     dav.state.failWrites = 0;
     await until('the retry to upload the capture with no tap', () => webdavDocument(dav, FOLDER).tasks.some((task) => task.title === titles.failed)
-        && webdavDocument(dav, FOLDER).tasks.some((task) => task.title === titles.down), 240_000, 3_000);
+        && webdavDocument(dav, FOLDER).tasks.some((task) => task.title === titles.down), 600_000, 3_000);
     check(true, '(5) once the server took writes again, the retry uploaded both captures by itself');
     await until('the badge healthy again', () => badge()[0] === 'healthy', 30_000);
 
@@ -397,7 +402,7 @@ try {
     const skipsBefore = offlineSkips();
     await cloud.stop();
     await capture(titles.offline);
-    await until('the automatic sync to meet the stopped cloud', () => offlineSkips() > skipsBefore, 180_000, 3_000);
+    await until('the automatic sync to meet the stopped cloud', () => offlineSkips() > skipsBefore, 480_000, 3_000);
     check(phoneTasks()[titles.offline] === 'inbox', '(6) with the cloud stopped the capture stays on the phone (read as offline, as on RN)');
     cloud = await startCloud({ repo, port: CLOUD_PORT, token: TOKEN, dataDir: resolve(work, `cloud-${run}`) });
     nodes = await openSync();
