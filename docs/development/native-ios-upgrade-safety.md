@@ -52,3 +52,5 @@ Use an actual RN installation with disposable data, preserving its application/c
 6. Preferences, credentials, attachment references, app-group queues, file bookmarks and provider state across the actual signed channel. An unsigned simulator cannot prove Keychain/App Group/CloudKit access after an App Store update.
 
 No release or beta replacement is authorized by a successful isolated-host test. Keep the RN release path and recovery capability until these checks and the migration roadmap's remaining gates pass.
+
+Device77 development update rehearsal (2026-09-28): install over Device76 on iPhone 12/iOS 17.5.1 preserved all nine tables. Capture and completion added one synthetic Task while keeping every earlier raw row exact. Show completed, Completed collapse, task-view return, Projects-list Search return and cold preference retention then kept all nine tables exact, with no pending journal. The local preference survived restart and the group returned collapsed. This tests the isolated native development identity; production RN signed replacement, Keychain/App Group/CloudKit continuity and full accessibility remain unproven.

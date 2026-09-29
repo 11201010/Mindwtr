@@ -5336,6 +5336,181 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testProjectCompletedViewFlushesNotesAndResetsAfterTypeChange() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "36654896-3803-4740-a74b-87899cdb5dd8"]
+        app.launch()
+        func open() {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+            let row = app.buttons["project-open-8fd27048-fa48-432a-9b21-c2f210be3f88"]
+            revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+            row.tap(); boardEnabled(app.buttons["project-details-toggle"])
+        }
+        func tap(_ id: String) {
+            if ["project-task-view-options-button", "project-view-completed-option", "project-view-options-close"].contains(id) {
+                boardTap(app, id)
+            } else { projectManagerTap(app, id) }
+        }
+        open(); tap("project-details-toggle"); tap("project-notes-toggle")
+        let input = app.textViews["project-notes-input"]
+        revealPagedElement(app, input, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+        boardEnabled(input); replaceProjectNotesText(input, with: "Saved before completed view\n")
+        tap("project-task-view-options-button")
+        boardEnabled(app.buttons["project-view-completed-option"])
+        tap("project-view-completed-option")
+        XCTAssertEqual(input.value as? String, "Saved before completed view\n")
+        tap("project-notes-toggle"); tap("project-completed-toggle")
+        XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Collapse")
+        tap("project-flow-type")
+        let sequential = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Sequential"),
+            object: app.staticTexts["project-detail-meta-type"])
+        XCTAssertEqual(XCTWaiter.wait(for: [sequential], timeout: 15), .completed)
+        XCTAssertFalse(app.buttons["project-completed-toggle"].exists)
+        tap("project-flow-type")
+        let parallel = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Parallel"),
+            object: app.staticTexts["project-detail-meta-type"])
+        XCTAssertEqual(XCTWaiter.wait(for: [parallel], timeout: 15), .completed)
+        XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Expand")
+        app.terminate(); app.launch(); open(); tap("project-details-toggle"); tap("project-notes-toggle")
+        XCTAssertEqual(input.value as? String, "Saved before completed view\n")
+        XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Expand")
+        app.terminate()
+    }
+
+    func testProjectCompletedViewPersistsAndCollapsesLikeRN() {
+        projectCompletedView(library: "0777753b-1f9b-4923-9d3d-4b8504d77161")
+    }
+
+    func testProjectCompletedViewLargestText() {
+        projectCompletedView(library: "335af245-0318-4746-8e95-780fa9bb0334")
+    }
+
+    private func projectCompletedView(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        func projects() {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        }
+        func open(_ id: String) {
+            let row = app.buttons["project-open-" + id]
+            revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+            row.tap(); boardEnabled(app.buttons["project-details-toggle"])
+        }
+        func tap(_ id: String) {
+            let button = app.buttons[id]
+            if id == "project-completed-toggle" {
+                revealPagedElement(app, button, in: app.scrollViews["project-detail-scroll"])
+            }
+            boardEnabled(button)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+            button.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+        }
+        func option(_ selected: Bool) {
+            tap("project-task-view-options-button")
+            boardEnabled(app.buttons["project-view-completed-option"])
+            XCTAssertEqual(app.buttons["project-view-completed-option"].isSelected, selected)
+        }
+        projects()
+        let draft = app.textFields["projects-create-title"]
+        boardEnabled(draft); draft.tap(); draft.typeText("Retained completed view draft")
+        projectManagerTap(app, "projects-create-area-af884128-31d5-41eb-978c-2fd1a44b62e8")
+        open("8fd27048-fa48-432a-9b21-c2f210be3f88")
+        XCTAssertFalse(app.buttons["project-completed-toggle"].exists)
+        XCTAssertFalse(app.buttons["task-title-bf985bef-aab5-4a64-8ccb-72695daa4f0f"].exists)
+        option(false); tap("project-view-completed-option")
+        boardEnabled(app.buttons["project-completed-toggle"])
+        XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Expand")
+        XCTAssertFalse(app.buttons["task-title-bf985bef-aab5-4a64-8ccb-72695daa4f0f"].exists)
+        tap("project-completed-toggle")
+        let done = app.buttons["task-title-bf985bef-aab5-4a64-8ccb-72695daa4f0f"]
+        revealPagedElement(app, done, in: app.scrollViews["project-detail-scroll"])
+        boardEnabled(done); done.tap(); boardTap(app, "task-view-close")
+        XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Collapse")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Project completed group and RN task-view control"
+        shot.lifetime = .keepAlways; add(shot)
+        option(true); tap("project-view-completed-option")
+        XCTAssertFalse(app.buttons["project-completed-toggle"].exists)
+        option(false); tap("project-view-completed-option")
+        XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Expand")
+        boardTap(app, "project-back")
+        XCTAssertEqual(draft.value as? String, "Retained completed view draft")
+        XCTAssertTrue(app.buttons["projects-create-area-af884128-31d5-41eb-978c-2fd1a44b62e8"].isSelected)
+        boardTap(app, "search-open"); boardEnabled(app.textFields["search-input"]); boardTap(app, "search-close")
+        XCTAssertEqual(draft.value as? String, "Retained completed view draft")
+        open("8fd27048-fa48-432a-9b21-c2f210be3f88")
+        XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Expand")
+        boardTap(app, "project-back")
+        open("7b208aac-9534-4433-b301-ffbd036a6c66")
+        XCTAssertFalse(app.buttons["project-completed-toggle"].exists)
+        let inline = app.buttons["task-title-774d586d-7ea6-46de-930a-e8ecfd33a34c"]
+        revealPagedElement(app, inline, in: app.scrollViews["project-detail-scroll"])
+        XCTAssertTrue(inline.exists)
+        option(true); tap("project-view-options-close"); boardTap(app, "project-back")
+        let closed = app.buttons["projects-section-archived"]
+        revealPagedElement(app, closed, in: app.scrollViews["projects-scroll"])
+        if closed.value as? String == "Expand" { closed.tap() }
+        open("89b11efe-3801-4a20-9ff5-dc096795a045")
+        XCTAssertFalse(app.buttons["project-task-view-options-button"].exists)
+        let archived = app.buttons["task-title-df02dc4c-dc78-4dda-b53f-dd1f8f147bbf"]
+        revealPagedElement(app, archived, in: app.scrollViews["project-detail-scroll"])
+        XCTAssertTrue(archived.exists)
+        XCTAssertFalse(app.buttons["task-status-df02dc4c-dc78-4dda-b53f-dd1f8f147bbf"].isEnabled)
+        app.terminate(); app.launch(); projects(); open("8fd27048-fa48-432a-9b21-c2f210be3f88")
+        option(true); tap("project-view-options-close")
+        XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Expand")
+        XCTAssertFalse(app.buttons["task-title-bf985bef-aab5-4a64-8ccb-72695daa4f0f"].exists)
+        app.terminate()
+    }
+
+    func testProjectCompletedReadFailureRetainsSelectionAndRetries() {
+        projectCompletedFailure(library: "69a072e4-f8b9-4189-b5ef-3a511c4d6b35", cold: false)
+    }
+
+    func testProjectCompletedReadFailureDoesNotPersist() {
+        projectCompletedFailure(library: "4122fa71-f1aa-4d1b-b3bb-9adca10f4689", cold: true)
+    }
+
+    private func projectCompletedFailure(library: String, cold: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "--native-project-view-read-failure"]
+        app.launch()
+        func open() {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+            let row = app.buttons["project-open-8fd27048-fa48-432a-9b21-c2f210be3f88"]
+            revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+            row.tap(); boardEnabled(app.buttons["project-task-view-options-button"])
+        }
+        open()
+        boardTap(app, "project-task-view-options-button")
+        XCTAssertFalse(app.buttons["project-view-completed-option"].isSelected)
+        boardTap(app, "project-view-completed-option")
+        XCTAssertTrue(app.staticTexts["project-error"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["project-task-view-options-button"].isSelected)
+        XCTAssertFalse(app.buttons["project-task-view-options-button"].isEnabled)
+        XCTAssertFalse(app.buttons["project-completed-toggle"].exists)
+        XCTAssertTrue(app.buttons["task-title-b05710fd-01cc-4a41-af99-dd47a51bb1db"].exists)
+        if cold {
+            app.terminate(); app.launchArguments = ["--native-ui-test-library", library]; app.launch(); open()
+            boardTap(app, "project-task-view-options-button")
+            XCTAssertFalse(app.buttons["project-view-completed-option"].isSelected)
+            boardTap(app, "project-view-options-close")
+        } else {
+            let retry = app.buttons["project-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews["project-detail-scroll"])
+            boardEnabled(retry); XCTAssertGreaterThanOrEqual(retry.frame.height, 44 - 0.001)
+            retry.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: retry.frame.width - 4, dy: 4)).tap()
+            boardEnabled(app.buttons["project-task-view-options-button"])
+            XCTAssertTrue(app.buttons["project-task-view-options-button"].isSelected)
+            XCTAssertEqual(app.buttons["project-completed-toggle"].value as? String, "Expand")
+        }
+        app.terminate()
+    }
+
     func testProjectTagFiltersPreserveDraftsAndNavigation() {
         projectTagFilters(library: "47c10eb8-9f1c-4971-b288-5fdf4e6fd3c9")
     }
