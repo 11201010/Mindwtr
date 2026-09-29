@@ -1081,7 +1081,19 @@ export function useInboxProcessingController({
       });
       return;
     }
-    const apiKey = await loadAIKey(aiProvider);
+    let apiKey: string;
+    try {
+      apiKey = await loadAIKey(aiProvider);
+    } catch (error) {
+      // An unreadable keystore fails like a request, never as an unhandled rejection.
+      void logWarn('Inbox processing failed', {
+        scope: 'inbox',
+        extra: { error: redactAIError(error, '', settings).message },
+      });
+      const alert = getAIErrorAlert(error, t, '', settings);
+      Alert.alert(alert.title, alert.message);
+      return;
+    }
     if (isAIKeyRequired(settings) && !apiKey) {
       showToast({
         title: t('ai.errorTitle'),

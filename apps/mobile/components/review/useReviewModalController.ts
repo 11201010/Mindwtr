@@ -345,7 +345,14 @@ export function useReviewModalController({
             setAiError(t('ai.disabledBody'));
             return;
         }
-        const apiKey = await loadAIKey(aiProvider);
+        let apiKey: string;
+        try {
+            apiKey = await loadAIKey(aiProvider);
+        } catch (error) {
+            // An unreadable keystore fails like a request, never as an unhandled rejection.
+            setAiError(getWeeklyReviewAnalysisError(error, t, '', settings));
+            return;
+        }
         if (isAIKeyRequired(settings) && !apiKey) {
             setAiError(t('ai.missingKeyBody'));
             return;

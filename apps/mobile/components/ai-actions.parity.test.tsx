@@ -63,6 +63,8 @@ const harness = vi.hoisted(() => ({
   toasts: [] as unknown[][],
   routes: [] as unknown[],
   logs: [] as unknown[][],
+  /** A keystore that cannot be read (locked, or its key lost). */
+  secretsFail: false,
 }));
 
 const translate = (key: string) => harness.strings[key] ?? key;
@@ -97,7 +99,10 @@ vi.mock('@mindwtr/core', async (importOriginal) => {
 });
 vi.mock('expo-secure-store', () => ({
   isAvailableAsync: async () => true,
-  getItemAsync: async (key: string) => harness.secrets.get(key) ?? null,
+  getItemAsync: async (key: string) => {
+    if (harness.secretsFail) throw new Error('Keystore unavailable');
+    return harness.secrets.get(key) ?? null;
+  },
   setItemAsync: async (key: string, value: string) => { harness.secrets.set(key, value); },
   deleteItemAsync: async (key: string) => { harness.secrets.delete(key); },
   WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'whenUnlockedThisDeviceOnly',
@@ -708,6 +713,19 @@ describe('React Native AI actions parity fixture', () => {
       name: 'blank failure', screen: 'review', settings: 'openai', device: { secrets: KEYS, queues: { analyzeReview: [{ error: '' }] } }, actions: [['run']],
     }) as { error: string }[];
     expect(empty.error).toBe('Please try again.');
+  });
+
+  it('answers an unreadable keystore with the AI error, never an unhandled failure', async () => {
+    harness.secretsFail = true;
+    try {
+      const [, inbox] = await runScenario({ name: 'inbox', screen: 'inbox', settings: 'openai', device: {}, actions: [['clarify']] }) as { alerts: unknown[][]; working: boolean }[];
+      expect(inbox.alerts).toEqual([['AI request failed', 'Please try again.\n\nKeystore unavailable']]);
+      expect(inbox.working).toBe(false);
+      const [, review] = await runScenario({ name: 'review', screen: 'review', settings: 'openai', device: {}, actions: [['run']] }) as { error: string; loading: boolean }[];
+      expect(review).toMatchObject({ error: 'Keystore unavailable', loading: false });
+    } finally {
+      harness.secretsFail = false;
+    }
   });
 
   it('never shows or logs the API key when a provider echoes it', async () => {
