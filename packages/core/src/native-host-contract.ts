@@ -233,6 +233,7 @@ import { createProjectCreateMethods } from './native-host-contract-project-creat
 import { createProjectFocusMethods } from './native-host-contract-project-focus';
 import { createProjectRenameMethods } from './native-host-contract-project-rename';
 import { createProjectFlowMethods } from './native-host-contract-project-flow';
+import { createProjectTaskSortMethods } from './native-host-contract-project-sort';
 import { createProjectNotesWriteMethods } from './native-host-contract-project-notes';
 import { createProjectTagsWriteMethods } from './native-host-contract-project-tags';
 import { createProjectStatusMethods } from './native-host-contract-project-status';
@@ -1397,6 +1398,9 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
 
         ...createProjectFlowMethods({ readiness, save,
             revision: projectMutationRevision }),
+
+        ...createProjectTaskSortMethods({ readiness, save,
+            revision: projectMutationRevision, t: (key) => translate(key) }),
 
         ...createProjectNotesWriteMethods({ readiness, save,
             revision: projectMutationRevision }),

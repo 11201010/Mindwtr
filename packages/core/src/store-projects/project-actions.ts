@@ -16,12 +16,12 @@ import { logInfo, logWarn } from '../logger';
 import { clearDerivedCache } from '../store-settings';
 import { generateUUID as uuidv4 } from '../uuid';
 import { DEFAULT_PROJECT_COLOR } from '../color-constants';
-import { findSelectableProjectByTitleAndArea } from '../project-utils';
+import { findSelectableProjectByTitleAndArea, normalizeProjectTaskSortBy } from '../project-utils';
 import { PROJECT_SQLITE_COLUMNS, projectToSqliteRow } from '../project-sync-schema';
 import { taskEditValuesEqual } from '../json-value-equality';
-import type { Area } from '../types';
+import type { Area, TaskSortBy } from '../types';
 import type { Project, ProjectCoreActions, ProjectActionContext, Task, TaskStatus } from './shared';
-import type { PreparedProjectArea, PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, ProjectFlowAction, TaskStore } from '../store-types';
+import type { PreparedProjectArea, PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, ProjectFlowAction, TaskStore } from '../store-types';
 import { projectTagsForIntent, type ProjectTagsIntent } from '../project-tags';
 import type { PendingRemoteAttachmentDelete } from '../types';
 import {
@@ -183,6 +183,20 @@ export const projectFlowEffect = (project: Project, action: ProjectFlowAction, d
         ...project, ...transition.projectUpdates,
         updatedAt: now, rev: nextRevision(project.rev), revBy: deviceId,
     }) } };
+};
+
+/** RN updateProject's Project-only sort result, normalized for synced storage. */
+export const projectTaskSortEffect = (project: Project, sortBy: TaskSortBy, deviceId: string,
+    now: string): PreparedProjectTaskSort['effect'] | null => {
+    const desired = normalizeProjectTaskSortBy(sortBy);
+    if (normalizeProjectTaskSortBy(project.taskSortBy) === desired) return null;
+    const transition = applyProjectLifecycleTransition(project, { taskSortBy: desired }, [], [], now, deviceId);
+    const after = normalizeProjectLifecycleFields({
+        ...project, ...transition.projectUpdates,
+        updatedAt: now, rev: nextRevision(project.rev), revBy: deviceId,
+    });
+    if (!desired) delete after.taskSortBy;
+    return { project: { before: project, after } };
 };
 
 /** Empty against absent or empty Notes is a no-op; every other character is raw data. */
@@ -497,6 +511,35 @@ export const createProjectCoreActions = ({
                 || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
                 || !sameProjectSqliteRow(current, input.scope.project)) return state;
             const planned = projectFlowEffect(current, input.request.action,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!planned || !taskEditValuesEqual(planned, input.effect)) return state;
+            const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { projects,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allProjects: projects, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedProjectTaskSort: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project task sort conflicts with current data' };
+        set((state) => {
+            const current = state._projectsById.get(input.request.projectId);
+            if (current && (!input.deviceIdToInitialize || state.settings.deviceId === input.deviceIdToInitialize)
+                && sameProjectSqliteRow(current, input.effect.project.after)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            if (!current || current.deletedAt || current.purgedAt || current.status === 'archived'
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || !sameProjectSqliteRow(current, input.scope.project)) return state;
+            const planned = projectTaskSortEffect(current, input.request.sortBy,
                 input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
             if (!planned || !taskEditValuesEqual(planned, input.effect)) return state;
             const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);

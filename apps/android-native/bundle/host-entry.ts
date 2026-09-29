@@ -928,6 +928,34 @@ globalThis.MindwtrHost = {
     projectFlowCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectFlow(JSON.parse(json))));
     },
+    projectTaskSortOptions(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getProjectTaskSortOptions(JSON.parse(json)));
+        });
+    },
+    projectTaskSortWrite(_json: string): string {
+        return submit(async () => { throw new Error('INVALID_INPUT: Project task sort writes require a durable host journal'); });
+    },
+    projectTaskSortRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeProjectTaskSortOutcome(JSON.parse(json)));
+        });
+    },
+    /** Private iOS preparation and commit; Swift owns the durable journal. */
+    projectTaskSortPrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.prepareProjectTaskSort(JSON.parse(json)));
+        });
+    },
+    projectTaskSortValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedProjectTaskSort(JSON.parse(json))));
+    },
+    projectTaskSortCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedProjectTaskSort(JSON.parse(json))));
+    },
     projectNotesEditOptions(json: string): string {
         return submit(async () => {
             requireSaved();

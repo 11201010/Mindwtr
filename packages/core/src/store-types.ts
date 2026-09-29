@@ -66,6 +66,15 @@ export type PreparedProjectFlow = {
     updateAt: string;
 };
 
+/** One frozen synced Project task sort change; Task and Section rows are untouched. */
+export type PreparedProjectTaskSort = {
+    scope: { project: Project };
+    effect: { project: { before: Project; after: Project } };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    updateAt: string;
+};
+
 /** One frozen native raw Project Notes edit and its complete Project receipt. */
 export type PreparedProjectNotesWrite = {
     scope: { project: Project };
@@ -443,6 +452,7 @@ export interface TaskStore {
     commitPreparedProjectFocus: (input: PreparedProjectFocus & { request: { projectId: string; focused: boolean } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectRename: (input: PreparedProjectRename & { request: { projectId: string; title: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectFlow: (input: PreparedProjectFlow & { request: { projectId: string; action: ProjectFlowAction } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectTaskSort: (input: PreparedProjectTaskSort & { request: { projectId: string; sortBy: import('./types').TaskSortBy } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectNotesWrite: (input: PreparedProjectNotesWrite & { request: { projectId: string; text: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectTagsWrite: (input: PreparedProjectTagsWrite & { request: { projectId: string; intent: import('./project-tags').ProjectTagsIntent } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectStatus: (input: PreparedProjectStatus & { request: { projectId: string; status: 'active' | 'waiting' | 'someday' } }) => Promise<PreparedTaskEditResult>;

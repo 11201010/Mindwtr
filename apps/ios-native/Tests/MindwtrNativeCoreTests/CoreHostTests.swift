@@ -7274,6 +7274,14 @@ final class CoreHostTests: XCTestCase {
                 "expected": project.filter { $0.key != "id" }]
     }
 
+    private func projectTaskSortRequest(_ core: CoreHost, sortBy: String,
+                                        projectID: String = "focus-target") async throws -> [String: Any] {
+        let options = try object(await core.call("projectTaskSortOptions", argumentsJSON: json([json(["projectId": projectID])])))
+        let project = try XCTUnwrap(options["project"] as? [String: Any])
+        return ["requestId": UUID().uuidString.lowercased(), "projectId": projectID, "sortBy": sortBy,
+                "expected": project.filter { $0.key != "id" }]
+    }
+
     private func projectNotesWriteRequest(_ core: CoreHost, text: String,
                                           projectID: String = "focus-target") async throws -> [String: Any] {
         let options = try object(await core.call("projectNotesEditOptions", argumentsJSON: json([json(["projectId": projectID])])))
@@ -14097,5 +14105,292 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try nineTableSnapshot(check), before)
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
         await core.close()
+    }
+
+
+    func testProjectTaskSortTitleDefaultNoopAndArchivedPreserveRows() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        var applied = 0
+        faults.commandDiagnostic = { if $0 == "projectTaskSortApplied" { applied += 1 } }
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try object(await core.call("projectTaskSortOptions", argumentsJSON: json([json(["projectId": "focus-target"])])))
+        XCTAssertEqual(options["effectiveSortBy"] as? String, "default")
+        XCTAssertEqual(options["canEdit"] as? Bool, true)
+        XCTAssertEqual((options["choices"] as? [[String: Any]])?.first?["id"] as? String, "default")
+        let beforeRow = try XCTUnwrap(projectRows("focus-target").first)
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        let title = try await projectTaskSortRequest(core, sortBy: "title")
+        let titleResult = try object(await core.call("projectTaskSortWrite", argumentsJSON: json([json(title)])))
+        XCTAssertEqual(titleResult["taskSortBy"] as? String, "title")
+        let titleRow = try XCTUnwrap(projectRows("focus-target").first)
+        XCTAssertEqual(titleRow["taskSortBy"] as? String, "title")
+        XCTAssertEqual(titleRow["rev"] as? Int, (beforeRow["rev"] as? Int ?? 0) + 1)
+        for (field, value) in beforeRow where !["taskSortBy", "rev", "revBy", "updatedAt"].contains(field) {
+            XCTAssertEqual(try json([titleRow[field] ?? NSNull()]), try json([value]), field)
+        }
+        let afterSQLite = try SQLiteBridge(url: database)
+        let after = try nineTableSnapshot(afterSQLite)
+        afterSQLite.close()
+        for index in [0, 2, 3, 4, 5, 6, 7, 8] { XCTAssertEqual(after[index], before[index]) }
+        let defaultRequest = try await projectTaskSortRequest(core, sortBy: "default")
+        let cleared = try object(await core.call("projectTaskSortWrite", argumentsJSON: json([json(defaultRequest)])))
+        XCTAssertTrue(cleared["taskSortBy"] is NSNull)
+        XCTAssertTrue(try projectRows("focus-target").first?["taskSortBy"] is NSNull)
+        XCTAssertEqual(applied, 2)
+        let unchanged = try await projectTaskSortRequest(core, sortBy: "default")
+        let unchangedRow = try XCTUnwrap(projectRows("focus-target").first)
+        var writes = 0, journals = 0
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE") || $0.hasPrefix("INSERT") { writes += 1 } }
+        faults.journalWrite = { journals += 1 }
+        let noOp = try object(await core.call("projectTaskSortWrite", argumentsJSON: json([json(unchanged)])))
+        XCTAssertTrue(noOp["taskSortBy"] is NSNull)
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("focus-target").first)), try json(unchangedRow))
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0); XCTAssertEqual(applied, 2)
+        await core.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET status = 'archived', rev = rev + 1 WHERE id = 'focus-target'")
+        edit.close()
+        let archived = host()
+        _ = try await archived.start()
+        let archivedOptions = try object(await archived.call("projectTaskSortOptions", argumentsJSON: json([json(["projectId": "focus-target"])])))
+        XCTAssertEqual(archivedOptions["canEdit"] as? Bool, false)
+        let blockedRequest = try await projectTaskSortRequest(archived, sortBy: "title")
+        let blocked = try object(await archived.call("projectTaskSortWrite", argumentsJSON: json([json(blockedRequest)])))
+        XCTAssertEqual(blocked["blocked"] as? String, "")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await archived.close()
+    }
+
+    func testProjectTaskSortExactPendingRetryAndStaleRequestNeverRewrite() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let request = try await projectTaskSortRequest(core, sortBy: "created-desc")
+        let beforeRow = try XCTUnwrap(projectRows("focus-target").first)
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project task sort COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("projectTaskSortWrite", argumentsJSON: json([json(request)]))
+        }
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertEqual(try object(String(contentsOf: journal))["method"] as? String, "projectTaskSortCommit")
+        faults.beforeSQL = nil
+        let retryValue = try await core.retryPending()
+        let retry = try object(XCTUnwrap(retryValue))
+        XCTAssertEqual(retry["id"] as? String, "focus-target")
+        XCTAssertEqual(retry["taskSortBy"] as? String, "created-desc")
+        let savedRow = try XCTUnwrap(projectRows("focus-target").first)
+        XCTAssertEqual(savedRow["rev"] as? Int, (beforeRow["rev"] as? Int ?? 0) + 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        var writes = 0, journals = 0
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE") || $0.hasPrefix("INSERT") { writes += 1 } }
+        faults.journalWrite = { journals += 1 }
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("projectTaskSortWrite", argumentsJSON: json([json(request)]))
+        }
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("projectTaskSortRetryOutcome", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("focus-target").first)), try json(savedRow))
+        await core.close()
+    }
+
+    func testProjectTaskSortFailedCommitAndColdReplayPreserveNestedAttachment() async throws {
+        try await seedProjectRenameRows()
+        let nested = #"[{"zNested":{"z":1,"a":[{"z":2,"a":1},null]},"id":"focus-file","kind":"file","title":"Keep attachment","uri":"file:///retained.txt","createdAt":"2026-09-01T12:00:00.000Z","updatedAt":"2026-09-01T12:00:00.000Z"}]"#
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET attachments = ? WHERE id = 'focus-target'", parametersJSON: json([nested]))
+        edit.close()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectTaskSortRequest(writer, sortBy: "title")
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project task sort COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectTaskSortWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try object(String(contentsOf: journal))
+        XCTAssertEqual(pending["method"] as? String, "projectTaskSortCommit")
+        let rolledBack = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(rolledBack), before)
+        rolledBack.close()
+        await writer.close()
+        let replay = host()
+        let startup = try object(await replay.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "projectTaskSortCommit")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["taskSortBy"] as? String, "title")
+        let afterRow = try XCTUnwrap(projectRows("focus-target").first)
+        XCTAssertEqual(afterRow["taskSortBy"] as? String, "title")
+        let savedAttachment = try XCTUnwrap(afterRow["attachments"] as? String)
+        XCTAssertEqual(try json(JSONSerialization.jsonObject(with: Data(savedAttachment.utf8))),
+                       try json(JSONSerialization.jsonObject(with: Data(nested.utf8))))
+        let saved = try SQLiteBridge(url: database)
+        let after = try nineTableSnapshot(saved)
+        saved.close()
+        for index in [0, 2, 3, 4, 5, 6, 7, 8] { XCTAssertEqual(after[index], before[index]) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await replay.close()
+    }
+
+    func testProjectTaskSortPendingBeforeRowConflictRefusesWithoutWrites() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectTaskSortRequest(writer, sortBy: "title")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pending Project task sort") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectTaskSortWrite", argumentsJSON: json([json(request)]))
+        }
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET title = 'Newer name', rev = rev + 1 WHERE id = 'focus-target'")
+        let before = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.hasPrefix("UPDATE") || sql.hasPrefix("INSERT") || sql.hasPrefix("DELETE") { writes += 1 }
+        }
+        let replay = host(replayFaults)
+        await expectFailure("STALE_REVISION") { _ = try await replay.start() }
+        XCTAssertEqual(writes, 0)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+        await replay.close()
+    }
+
+    func testProjectTaskSortTerminalCleanupAfterRenameOrDeleteUsesReceipt() async throws {
+        let parent = directory!
+        for kind in ["rename", "delete"] {
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedProjectRenameRows()
+            let faults = HostIOFaults()
+            let writer = host(faults)
+            _ = try await writer.start()
+            let request = try await projectTaskSortRequest(writer, sortBy: "title")
+            faults.journalRemove = { throw HostFailure("Injected Project task sort cleanup failure") }
+            await expectFailure("cleanup failure") {
+                _ = try await writer.call("projectTaskSortWrite", argumentsJSON: json([json(request)]))
+            }
+            let pending = try object(String(contentsOf: journal))
+            XCTAssertEqual(pending["method"] as? String, "projectTaskSortCommit")
+            XCTAssertNotNil(pending["terminal"])
+            await writer.close()
+            let edit = try SQLiteBridge(url: database)
+            if kind == "rename" {
+                _ = try edit.execute("UPDATE projects SET title = 'Later name', rev = rev + 1 WHERE id = 'focus-target'")
+            } else {
+                _ = try edit.execute("UPDATE projects SET deletedAt = ?, rev = rev + 1 WHERE id = 'focus-target'",
+                                     parametersJSON: json([recentAreaTestTime(daysAgo: 0)]))
+            }
+            let before = try nineTableSnapshot(edit)
+            edit.close()
+            let replayFaults = HostIOFaults()
+            var writes = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.hasPrefix("UPDATE") || sql.hasPrefix("INSERT") || sql.hasPrefix("DELETE") { writes += 1 }
+            }
+            let replay = host(replayFaults)
+            let startup = try object(await replay.start())
+            let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+            XCTAssertEqual(recovery["method"] as? String, "projectTaskSortCommit")
+            XCTAssertEqual((recovery["result"] as? [String: Any])?["taskSortBy"] as? String, "title")
+            XCTAssertEqual(writes, 0)
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), before)
+            check.close()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await replay.close()
+            directory = parent
+        }
+    }
+
+    func testProjectTaskSortMalformedPublicAndForgedJournalsRefuseBeforeSQLite() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectTaskSortRequest(writer, sortBy: "title")
+        var sql = 0, journals = 0
+        faults.beforeSQL = { _ in sql += 1 }
+        faults.journalWrite = { journals += 1 }
+        for bad in [
+            ["requestId": UUID().uuidString.lowercased(), "projectId": "focus-target", "sortBy": "unknown", "expected": request["expected"]!],
+            ["requestId": UUID().uuidString.lowercased(), "projectId": "focus-target", "sortBy": "title", "expected": [:]],
+            ["requestId": UUID().uuidString.lowercased(), "projectId": "focus-target", "sortBy": "title", "expected": request["expected"]!, "extra": true],
+        ] as [[String: Any]] {
+            await expectFailure("INVALID_INPUT") { _ = try await writer.call("projectTaskSortWrite", argumentsJSON: json([json(bad)])) }
+        }
+        var oversized = request
+        oversized["projectId"] = String(repeating: "x", count: 2_000_001)
+        await expectFailure("INVALID_INPUT") {
+            _ = try await writer.call("projectTaskSortWrite", argumentsJSON: json([json(oversized)]))
+        }
+        await expectFailure { _ = try await writer.call("projectTaskSortPrepare", argumentsJSON: json([json(request)])) }
+        await expectFailure { _ = try await writer.call("projectTaskSortValidate", argumentsJSON: json([json(request)])) }
+        await expectFailure { _ = try await writer.call("projectTaskSortCommit", argumentsJSON: json([json(request)])) }
+        XCTAssertEqual(sql, 0); XCTAssertEqual(journals, 0)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project task sort pending write") } }
+        faults.journalWrite = nil
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectTaskSortWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try object(String(contentsOf: journal))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(pending["argumentsJSON"] as? String).utf8)) as? [String])
+        let original = try object(XCTUnwrap(args.first))
+        await writer.close()
+        for kind in ["scope", "effect", "terminal", "raw"] {
+            var envelope = original
+            var method = "projectTaskSortCommit"
+            var terminal: [String: Any]? = nil
+            if kind == "scope" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                var scope = try XCTUnwrap(prepared["scope"] as? [String: Any])
+                var project = try XCTUnwrap(scope["project"] as? [String: Any])
+                project.removeValue(forKey: "tagIds")
+                scope["project"] = project; prepared["scope"] = scope; envelope["prepared"] = prepared
+            } else if kind == "effect" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                var pair = try XCTUnwrap(effect["project"] as? [String: Any])
+                var after = try XCTUnwrap(pair["after"] as? [String: Any])
+                after["title"] = "Forged"
+                pair["after"] = after; effect["project"] = pair; prepared["effect"] = effect; envelope["prepared"] = prepared
+            } else if kind == "terminal" {
+                terminal = ["success": ["_0": try json(["id": "focus-target", "taskSortBy": NSNull()])]]
+            } else { method = "projectTaskSortWrite" }
+            var forged: [String: Any] = ["version": 2, "method": method,
+                "argumentsJSON": kind == "raw" ? try json([json(request)]) : try json([json(envelope)])]
+            if let terminal { forged["terminal"] = terminal }
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var statements = 0, removals = 0
+            blockedFaults.beforeSQL = { _ in statements += 1 }
+            blockedFaults.journalRemove = { removals += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(statements, 0); XCTAssertEqual(removals, 0)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes)
+            await blocked.close()
+        }
     }
 }

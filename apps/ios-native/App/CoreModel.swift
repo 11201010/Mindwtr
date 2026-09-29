@@ -99,6 +99,10 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectRenameReadError: String?
     @Published private(set) var projectFlowError: String?
     @Published private(set) var projectFlowReadError: String?
+    @Published private(set) var projectTaskSortOptions: CoreObject = [:]
+    @Published private(set) var projectTaskSortPresented = false
+    @Published private(set) var projectTaskSortError: String?
+    @Published private(set) var projectTaskSortReadError: String?
     @Published private(set) var projectStatusOpen = false
     @Published private(set) var projectStatusError: String?
     @Published private(set) var projectStatusReadError: String?
@@ -424,6 +428,8 @@ final class CoreModel: ObservableObject {
     private var projectRenameExpectedID: String?
     private var projectFlowRequest: String?
     private var projectFlowExpectedResult: CoreObject?
+    private var projectTaskSortRequest: String?
+    private var projectTaskSortExpectedResult: CoreObject?
     private var projectStatusOptions: CoreObject = [:]
     private var projectStatusOptionsCurrent = false
     private var projectStatusRequest: String?
@@ -631,6 +637,16 @@ final class CoreModel: ObservableObject {
             && !projectTagsPresented && projectDateField == nil && !projectStatusOpen
     }
     var projectViewReadPending: Bool { pendingProjectView != nil }
+    var projectTaskSortPending: Bool { projectTaskSortRequest != nil }
+    var projectTaskSortInputEnabled: Bool {
+        projectViewOpenEnabled && projectTaskSortOptions.flag("canEdit")
+            && projectTaskSortOptions.text("revision") == projectDetail.text("mutationRevision")
+            && projectTaskSortReadError == nil && projectTaskSortRequest == nil
+    }
+    var projectTaskViewActive: Bool {
+        projectDetail.object("controls").flag("showCompleted")
+            || projectTaskSortOptions.text("effectiveSortBy") != "default"
+    }
     var projectRenameOpenEnabled: Bool {
         projectActionsEnabled && !projectDetail.flag("readOnly") && !capturePresented
             && !areaPickerPresented && !areaManagerPresented && !morePresented
@@ -1142,7 +1158,7 @@ final class CoreModel: ObservableObject {
                 calendarComposerRecoveredResult = recovery.object("result")
             } else if recovery.text("method") == "mindSweepCommit" {
                 mindSweepRecoveredResult = recovery.object("result")
-            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit", "projectTagsWriteCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit", "areaRenameCommit",
+            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit", "projectTagsWriteCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit", "areaRenameCommit",
                        "areaDeleteCommit"].contains(recovery.text("method")) {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
@@ -1839,6 +1855,117 @@ final class CoreModel: ObservableObject {
             projectFlowReadError = nil
             error = nil
         } catch { projectFlowReadError = error.localizedDescription }
+    }
+
+    func openProjectTaskSort() async {
+        guard await flushProjectNotesEdit(), projectViewOptionsPresented, projectTaskSortInputEnabled else { return }
+        projectViewOptionsPresented = false
+        projectTaskSortPresented = true
+    }
+
+    func closeProjectTaskSort() {
+        guard !busy, !retryNeeded, !projectTaskSortPending else { return }
+        projectTaskSortPresented = false
+    }
+
+    private func readProjectTaskSortOptions(projectID: String, revision: String) async throws -> CoreObject {
+        let options = try await query("projectTaskSortOptions", [try json(["projectId": projectID])])
+        let project = options.object("project")
+        let choices = options.objects("choices")
+        let sorts = ["default", "due", "start", "review", "timeEstimate", "title", "created", "created-desc"]
+        guard options.count == 6, options.text("revision") == revision, !revision.isEmpty,
+              let canEdit = options["canEdit"] as? NSNumber, CFGetTypeID(canEdit) == CFBooleanGetTypeID(),
+              project.count == 7, project.text("id") == projectID, project["title"] is String,
+              !project.text("status").isEmpty, !project.text("updatedAt").isEmpty,
+              project["rev"] is Int || project["rev"] is NSNull,
+              project["revBy"] is String || project["revBy"] is NSNull,
+              project["taskSortBy"] is NSNull || (sorts + ["completed"]).contains(project.text("taskSortBy")),
+              !choices.isEmpty, Set(choices.map { $0.text("id") }).count == choices.count,
+              choices.allSatisfy({ choice in
+                  choice.count == 3 && sorts.contains(choice.text("id")) && !choice.text("label").isEmpty
+                    && (choice["selected"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true
+              }), choices.filter({ $0.flag("selected") }).count == 1,
+              choices.first(where: { $0.flag("selected") })?.text("id") == options.text("effectiveSortBy"),
+              !options.text("label").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        return options
+    }
+
+    func setProjectTaskSort(_ sortBy: String) async {
+        guard await flushProjectNotesEdit(), projectTaskSortPresented, projectTaskSortInputEnabled,
+              projectTaskSortOptions.objects("choices").contains(where: { $0.text("id") == sortBy }) else { return }
+        busy = true
+        projectTaskSortError = nil
+        defer { finishOperation() }
+        let id = projectHeader.text("id")
+        do {
+            let options = try await readProjectTaskSortOptions(projectID: id, revision: projectDetail.text("mutationRevision"))
+            guard options.flag("canEdit"), options.objects("choices").contains(where: { $0.text("id") == sortBy }) else {
+                try await refreshProjectFlowAfterWrite()
+                return
+            }
+            var expected = options.object("project")
+            expected.removeValue(forKey: "id")
+            projectTaskSortRequest = try json(["requestId": UUID().uuidString.lowercased(), "projectId": id,
+                                              "sortBy": sortBy, "expected": expected])
+            projectTaskSortExpectedResult = ["id": id, "taskSortBy": sortBy == "default" ? NSNull() : sortBy as Any]
+        } catch {
+            projectTaskSortReadError = error.localizedDescription
+            return
+        }
+        do {
+            let result = try await query("projectTaskSortWrite", [projectTaskSortRequest!])
+            try acknowledgeProjectTaskSort(result)
+        } catch { await handleProjectTaskSortWriteError(error); return }
+        do { try await refreshProjectFlowAfterWrite() }
+        catch { projectTaskSortReadError = error.localizedDescription }
+    }
+
+    private func acknowledgeProjectTaskSort(_ result: CoreObject) throws {
+        guard projectTaskSortRequest != nil, let expected = projectTaskSortExpectedResult else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let blocked = result.count == 1 && result["blocked"] as? String == ""
+        if !blocked {
+            guard result.count == 2, result.text("id") == expected.text("id"),
+                  result["taskSortBy"] is String || result["taskSortBy"] is NSNull,
+                  (result["taskSortBy"] as? String) == (expected["taskSortBy"] as? String) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+        }
+        projectTaskSortRequest = nil
+        projectTaskSortExpectedResult = nil
+        projectTaskSortPresented = false
+        retryNeeded = false
+        projectTaskSortError = nil
+        projectTaskSortReadError = nil
+        error = nil
+    }
+
+    private func handleProjectTaskSortWriteError(_ failure: Error) async {
+        if projectTaskSortRequest != nil && isDefiniteRejection(failure) {
+            projectTaskSortRequest = nil
+            projectTaskSortExpectedResult = nil
+            retryNeeded = false
+            projectTaskSortError = failure.localizedDescription
+            error = nil
+            do { try await refreshProjectFlowAfterWrite() }
+            catch { projectTaskSortReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectTaskSortRequest != nil
+            projectTaskSortError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    func retryProjectTaskSortRead() async {
+        guard ready, selectedSurface == .project, !busy, !retryNeeded, !projectTaskSortPending else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshProjectFlowAfterWrite()
+            projectTaskSortReadError = nil
+            error = nil
+        } catch { projectTaskSortReadError = error.localizedDescription }
     }
 
     func openProjectStatus() async {
@@ -6760,6 +6887,10 @@ final class CoreModel: ObservableObject {
         projectHeader = row
         projectDetail = [:]
         projectViewOptionsPresented = false
+        projectTaskSortPresented = false
+        projectTaskSortOptions = [:]
+        projectTaskSortError = nil
+        projectTaskSortReadError = nil
         projectCompletedCollapsed = true
         pendingProjectView = nil
         projectLoadedDepth = pageSize
@@ -7006,6 +7137,7 @@ final class CoreModel: ObservableObject {
                     items += window.objects("items")
                 }
                 next["items"] = items
+                let sortOptions = try await readProjectTaskSortOptions(projectID: id, revision: next.text("mutationRevision"))
                 if projectNotes.text("revision") != next.text("mutationRevision") { projectNotesCurrent = false }
                 if projectNotesEditOptions.text("revision") != next.text("mutationRevision") {
                     projectNotesEditOptionsCurrent = false
@@ -7042,6 +7174,7 @@ final class CoreModel: ObservableObject {
                 projectCompletedCollapsed = collapsed
                 pendingProjectView = nil
                 projectDetail = next
+                projectTaskSortOptions = sortOptions
                 projectCurrent = true
                 return
             } catch {
@@ -9510,6 +9643,15 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = projectTaskSortRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectTaskSortRetryOutcome", [request]) }
+                try acknowledgeProjectTaskSort(result)
+                do { try await refreshProjectFlowAfterWrite() }
+                catch { projectTaskSortReadError = error.localizedDescription }
+                return
+            }
             if let request = projectFlowRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -9776,6 +9918,10 @@ final class CoreModel: ObservableObject {
         } catch {
             if projectRenameRequest != nil {
                 await handleProjectRenameWriteError(error)
+                return
+            }
+            if projectTaskSortRequest != nil {
+                await handleProjectTaskSortWriteError(error)
                 return
             }
             if projectFlowRequest != nil {

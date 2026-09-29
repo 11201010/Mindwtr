@@ -881,24 +881,25 @@ struct ProjectDetailScreen: View {
                     .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectFlowPending)
                         .accessibilityIdentifier("project-flow-read-retry")
                     }
+                    if !model.projectTaskSortPresented { projectTaskSortErrors }
                     if model.projectDateField == nil || !model.projectCurrent {
                         projectDateErrorView
                     }
             }
             .padding(.horizontal, 16).padding(.vertical, 8).background(palette.card)
             .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
-            if model.projectDetail.object("controls").flag("canToggleCompleted") {
+            if !model.projectDetail.isEmpty {
                 HStack {
                     Button { resignProjectNotesInput(); Task { await model.openProjectViewOptions() } } label: {
                         Image(systemName: "ellipsis").font(.system(size: 20))
-                            .foregroundStyle(model.projectDetail.object("controls").flag("showCompleted") ? palette.tint : palette.secondary)
+                            .foregroundStyle(model.projectTaskViewActive ? palette.tint : palette.secondary)
                             .frame(width: 44, height: 44).contentShape(Rectangle())
                             .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
                     }
                     .buttonStyle(.plain).disabled(!model.projectViewOpenEnabled)
                     .accessibilityLabel(model.label("taskEdit.moreOptions"))
-                    .accessibilityAddTraits(model.projectDetail.object("controls").flag("showCompleted") ? .isSelected : [])
+                    .accessibilityAddTraits(model.projectTaskViewActive ? .isSelected : [])
                     .accessibilityIdentifier("project-task-view-options-button")
                     Spacer(minLength: 0)
                 }
@@ -1028,42 +1029,11 @@ struct ProjectDetailScreen: View {
                 .presentationDetents(model.retryNeeded ? [.large] : [.medium, .large])
                 .interactiveDismissDisabled(model.projectDatePending || model.retryNeeded || model.busy)
         }
-        .sheet(isPresented: Binding(get: { model.projectViewOptionsPresented },
-                                    set: { if !$0 { model.closeProjectViewOptions() } })) {
-            VStack(spacing: 16) {
-                HStack {
-                    Text(model.label("taskEdit.moreOptions")).rnFont(18, .semibold).foregroundStyle(palette.text)
-                        .accessibilityAddTraits(.isHeader)
-                    Spacer(minLength: 0)
-                    Button { model.closeProjectViewOptions() } label: {
-                        Text(model.label("common.close")).rnFont(14, .semibold)
-                            .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain).accessibilityIdentifier("project-view-options-close")
-                }
-                Button { Task { await model.toggleProjectShowCompleted() } } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: model.projectDetail.object("controls").flag("showCompleted") ? "eye" : "eye.slash")
-                            .accessibilityHidden(true)
-                        Text(model.projectDetail.object("controls").text("label")).rnFont(16)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                        if model.projectDetail.object("controls").flag("showCompleted") {
-                            Image(systemName: "checkmark").accessibilityHidden(true)
-                        }
-                    }
-                    .foregroundStyle(palette.text)
-                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).disabled(!model.projectViewOpenEnabled)
-                .accessibilityAddTraits(model.projectDetail.object("controls").flag("showCompleted") ? .isSelected : [])
-                .accessibilityIdentifier("project-view-completed-option")
-                Spacer(minLength: 0)
-            }
-            .padding(16).background(palette.card).tint(palette.tint)
-            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
-            .accessibilityIdentifier("project-view-options-sheet")
-            .presentationDetents([.medium, .large])
+        .sheet(isPresented: Binding(get: { model.projectViewOptionsPresented || model.projectTaskSortPresented },
+                                    set: { if !$0 { model.closeProjectViewOptions(); model.closeProjectTaskSort() } })) {
+            projectTaskViewSheet
+                .presentationDetents(model.projectTaskSortPresented ? [.large] : [.medium, .large])
+                .interactiveDismissDisabled(model.busy || model.retryNeeded || model.projectTaskSortPending)
         }
         .sheet(isPresented: Binding(get: { model.projectAreaPresented },
                                     set: { if !$0 { model.closeProjectArea() } })) {
@@ -1126,6 +1096,117 @@ struct ProjectDetailScreen: View {
             }
             .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectDatePending)
             .accessibilityIdentifier("project-date-read-retry")
+        }
+    }
+
+    private var projectTaskViewSheet: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Text(model.projectTaskSortPresented ? model.projectTaskSortOptions.text("label") : model.label("taskEdit.moreOptions"))
+                    .rnFont(18, .semibold).foregroundStyle(palette.text).accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
+                Button {
+                    model.closeProjectViewOptions()
+                    model.closeProjectTaskSort()
+                } label: {
+                    Text(model.label("common.close")).rnFont(14, .semibold)
+                        .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectTaskSortPending)
+                .accessibilityIdentifier(model.projectTaskSortPresented ? "project-sort-close" : "project-view-options-close")
+            }
+            ScrollView {
+                VStack(spacing: 8) {
+                    if model.projectTaskSortPresented {
+                        projectTaskSortErrors
+                        ForEach(model.projectTaskSortOptions.objects("choices").indices, id: \.self) { index in
+                            let choice = model.projectTaskSortOptions.objects("choices")[index]
+                            Button { Task { await model.setProjectTaskSort(choice.text("id")) } } label: {
+                                HStack(spacing: 12) {
+                                    Text(choice.text("label")).rnFont(16).fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 0)
+                                    if choice.flag("selected") { Image(systemName: "checkmark").accessibilityHidden(true) }
+                                }
+                                .foregroundStyle(palette.text).padding(.horizontal, 12)
+                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).contentShape(Rectangle())
+                                .background(choice.flag("selected") ? palette.filter : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain).disabled(!model.projectTaskSortInputEnabled)
+                            .accessibilityAddTraits(choice.flag("selected") ? .isSelected : [])
+                            .accessibilityIdentifier("project-sort-option-" + choice.text("id"))
+                        }
+                    } else {
+                        Button { Task { await model.openProjectTaskSort() } } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.up.arrow.down").accessibilityHidden(true)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(model.projectTaskSortOptions.text("label")).rnFont(16)
+                                    Text(model.projectTaskSortOptions.objects("choices").first(where: { $0.flag("selected") })?.text("label") ?? "")
+                                        .rnFont(13).foregroundStyle(palette.secondary)
+                                    if !model.projectTaskSortOptions.flag("canEdit") {
+                                        Text(model.label("projects.reactivate")).rnFont(13).foregroundStyle(palette.secondary)
+                                    }
+                                }.fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right").accessibilityHidden(true)
+                            }
+                            .foregroundStyle(palette.text)
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(!model.projectTaskSortInputEnabled)
+                        .accessibilityAddTraits(model.projectTaskSortOptions.text("effectiveSortBy") != "default" ? .isSelected : [])
+                        .accessibilityHint(model.projectTaskSortOptions.flag("canEdit") ? "" : model.label("projects.reactivate"))
+                        .accessibilityIdentifier("project-view-sort-option")
+                        if model.projectDetail.object("controls").flag("canToggleCompleted") {
+                            Button { Task { await model.toggleProjectShowCompleted() } } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: model.projectDetail.object("controls").flag("showCompleted") ? "eye" : "eye.slash")
+                                        .accessibilityHidden(true)
+                                    Text(model.projectDetail.object("controls").text("label")).rnFont(16)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 0)
+                                    if model.projectDetail.object("controls").flag("showCompleted") {
+                                        Image(systemName: "checkmark").accessibilityHidden(true)
+                                    }
+                                }
+                                .foregroundStyle(palette.text)
+                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).disabled(!model.projectViewOpenEnabled)
+                            .accessibilityAddTraits(model.projectDetail.object("controls").flag("showCompleted") ? .isSelected : [])
+                            .accessibilityIdentifier("project-view-completed-option")
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16).background(palette.card).tint(palette.tint)
+        .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+        .accessibilityIdentifier(model.projectTaskSortPresented ? "project-sort-sheet" : "project-view-options-sheet")
+    }
+
+    @ViewBuilder private var projectTaskSortErrors: some View {
+        if let error = model.projectTaskSortError {
+            Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                .accessibilityIdentifier("project-sort-error")
+            if model.projectTaskSortPending {
+                Button { Task { await model.retry() } } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.busy).accessibilityIdentifier("project-sort-retry")
+            }
+        }
+        if let error = model.projectTaskSortReadError {
+            Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                .accessibilityIdentifier("project-sort-read-error")
+            Button { Task { await model.retryProjectTaskSortRead() } } label: {
+                Text(model.label("common.retry")).rnFont(14, .semibold)
+                    .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectTaskSortPending)
+            .accessibilityIdentifier("project-sort-read-retry")
         }
     }
 
