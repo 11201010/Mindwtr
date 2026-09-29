@@ -2417,6 +2417,15 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(readFileSync(resolve(app, '../../packages/core/src/quick-capture-model.ts'), 'utf8'), /canSave: Boolean\(text\.trim\(\)\)/);
 }
 
+// RN's settingRow is alignItems 'flex-start': a row's switch, chevron or field sits at the top beside its label, not centered.
+{
+    const rnStyles = readFileSync(resolve(app, '../../apps/mobile/components/settings/settings.styles.ts'), 'utf8');
+    assert.match(rnStyles, /settingRow: \{[^}]*alignItems: 'flex-start',/);
+    const settingsKt = source('SettingsScreen.kt');
+    const row = code(settingsKt.slice(settingsKt.indexOf('private fun SettingRow('), settingsKt.indexOf('\n}\n', settingsKt.indexOf('private fun SettingRow('))));
+    assert.match(row, /\.padding\(16\.dp\),\s+verticalAlignment = Alignment\.Top\)/, 'SettingRow aligns its trailing control to the top, as RN');
+}
+
 const fakeCore = `
 export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLoggingEnabled } from ${JSON.stringify(resolve(app, '../../packages/core/src/diagnostics-log.ts'))};
 export function setLogger(logger) { globalThis.coreLogger = logger; }

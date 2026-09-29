@@ -170,7 +170,8 @@ private fun Card(top: Int = 0, content: @Composable ColumnScope.() -> Unit) =
     Column(Modifier.padding(top = top.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(LocalTheme.current.colors.cardBg), content = content)
 
 /**
- * RN's SettingRow: the label and description at the left, a trailing control; a hairline above when [divider]. [failure] is App
+ * RN's SettingRow: the label and description at the left, a trailing control at the top (RN's settingRow is flex-start); a
+ * hairline above when [divider]. [failure] is App
  * lock's line in RN's danger color under the description (TalkBack hears it when it shows).
  */
 @Composable
@@ -178,7 +179,7 @@ private fun SettingRow(label: String, description: String?, divider: Boolean = f
                        trailing: @Composable RowScope.() -> Unit = {}) {
     val c = LocalTheme.current.colors
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (divider) Modifier.hairline(c.border, top = true) else Modifier).then(modifier).padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically) {
+        verticalAlignment = Alignment.Top) {
         Column(Modifier.weight(1f).padding(end = 16.dp)) {
             Text(label, style = rnText(16, 500, 21), color = c.text)
             description?.let { Text(it, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp)) }
