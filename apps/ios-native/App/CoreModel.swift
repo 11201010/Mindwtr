@@ -34,6 +34,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var mindSweepAddFailed = false
     @Published private(set) var mindSweepGuideError: String?
     @Published private(set) var focus: CoreObject = [:]
+    @Published private(set) var focusShowDetails = false
     @Published private(set) var focusCurrent = false
     @Published private(set) var focusLoading = false
     @Published private(set) var focusError: String?
@@ -191,6 +192,8 @@ final class CoreModel: ObservableObject {
     private var pendingProjectView: (showCompleted: Bool, collapsed: Bool)?
     private var projectShowCompletedPreference = "nativeFoundation.project.showCompleted"
     private var initialProjectShowCompleted = false
+    private var focusShowDetailsPreference = "nativeFoundation.focus.showDetails"
+    private var initialFocusShowDetails = false
     @Published private(set) var projectNotes: CoreObject = [:]
     @Published private(set) var projectNotesExpanded = false
     @Published private(set) var projectNotesCurrent = false
@@ -1171,6 +1174,15 @@ final class CoreModel: ObservableObject {
                     preference = "nativeRNRehearsal.capture.addAnother"
                     initialProjectShowCompleted = try legacy.value(forKey: "mindwtr:view:project-detail:show-completed:v1") == "true"
                     projectShowCompletedPreference = "nativeRNRehearsal.project.showCompleted"
+                    focusShowDetailsPreference = "nativeRNRehearsal.focus.showDetails"
+                    initialFocusShowDetails = false
+                    if let raw = try legacy.value(forKey: "mindwtr:view:focus:v1"),
+                       let data = raw.data(using: .utf8),
+                       let state = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                       let value = state["showDetails"] as? NSNumber,
+                       CFGetTypeID(value) == CFBooleanGetTypeID() {
+                        initialFocusShowDetails = value.boolValue
+                    }
                     host = CoreHost(databaseURL: database, bundleURL: bundle, legacyStorage: legacy)
                 }
                 #endif
@@ -1182,6 +1194,8 @@ final class CoreModel: ObservableObject {
             }
             projectShowCompleted = (preferenceDefaults.object(forKey: projectShowCompletedPreference) as? Bool)
                 ?? initialProjectShowCompleted
+            focusShowDetails = (preferenceDefaults.object(forKey: focusShowDetailsPreference) as? Bool)
+                ?? initialFocusShowDetails
             let startup = try decode(await host!.start())
             let recovery = startup.object("recovery")
             if recovery.text("method") == "boardCommit" {
@@ -6858,7 +6872,7 @@ final class CoreModel: ObservableObject {
         }
     }
 
-    func openProject(_ row: CoreObject) async {
+    func openProject(_ row: CoreObject, descriptionSourceID: String? = nil) async {
         guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               selectedSurface != .project, selectedSurface != .trash, !row.text("id").isEmpty else { return }
         if selectedSurface == .review {
@@ -6872,7 +6886,8 @@ final class CoreModel: ObservableObject {
                 }) }) else { return }
         }
         if selectedSurface == .focus {
-            guard focusActionsEnabled, focus.objects("reviewProjects").contains(where: { $0.text("id") == row.text("id") })
+            guard focusActionsEnabled, visibleDescriptionReference(descriptionSourceID, kind: "project", id: row.text("id"))
+                || focus.objects("reviewProjects").contains(where: { $0.text("id") == row.text("id") })
                 || focus.objects("sections").contains(where: { section in
                     section.objects("rows").contains(where: { task in
                         task.object("meta").objects("parts").contains(where: {
@@ -6882,11 +6897,13 @@ final class CoreModel: ObservableObject {
                 }) else { return }
         }
         if selectedSurface == .waiting {
-            guard waitingActionsEnabled, waiting.object("deferred").object("rows").objects("items")
+            guard waitingActionsEnabled, visibleDescriptionReference(descriptionSourceID, kind: "project", id: row.text("id"))
+                || waiting.object("deferred").object("rows").objects("items")
                 .contains(where: { $0.text("id") == row.text("id") }) else { return }
         }
         if selectedSurface == .someday {
-            guard somedayActionsEnabled, someday.object("deferred").object("rows").objects("items")
+            guard somedayActionsEnabled, visibleDescriptionReference(descriptionSourceID, kind: "project", id: row.text("id"))
+                || someday.object("deferred").object("rows").objects("items")
                 .contains(where: { $0.text("id") == row.text("id") }) else { return }
         }
         if selectedSurface == .reference {
@@ -7379,6 +7396,8 @@ final class CoreModel: ObservableObject {
         var collapsed = pendingProjectView?.collapsed ?? projectCompletedCollapsed
         for attempt in 0..<2 {
             do {
+                // Reference labels may be aliases; resolve the destination header through core.
+                if projectHeader["title"] == nil { try await readProjectRenameOptions() }
                 var next = try await projectDetailWindow(projectID: id, offset: 0, limit: pageSize,
                     showCompleted: showCompleted, collapsed: collapsed, filters: filters,
                     sheetOpen: sheetOpen, edit: edit)
@@ -8022,7 +8041,28 @@ final class CoreModel: ObservableObject {
         requestFocusRead(delay: 0)
     }
 
-    func openTask(_ id: String) async {
+    private func visibleDescriptionReference(_ sourceID: String?, kind: String, id: String) -> Bool {
+        guard let sourceID else { return false }
+        let rows: [CoreObject]
+        switch selectedSurface {
+        case .focus where focusShowDetails:
+            rows = focus.objects("sections").flatMap { $0.objects("rows") }
+        case .waiting where waiting.flag("showDetails"):
+            rows = waiting.objects("rows")
+        case .someday where someday.flag("showDetails"):
+            rows = someday.objects("items").filter { $0.text("type") == "task" }.map { $0.object("row") }
+        default: return false
+        }
+        return rows.contains { row in
+            row.text("id").utf8.elementsEqual(sourceID.utf8)
+                && row.object("meta").object("description").objects("inline").contains { run in
+                    run.text("type") == "link" && run.object("target").text("kind") == kind
+                        && run.object("target").text("id").utf8.elementsEqual(id.utf8)
+                }
+        }
+    }
+
+    func openTask(_ id: String, descriptionSourceID: String? = nil) async {
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
         guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !projectRenameEditing, selectedSurface != .trash else { return }
@@ -8036,7 +8076,8 @@ final class CoreModel: ObservableObject {
         }
         if selectedSurface == .calendar { guard calendarActionsEnabled, calendarEditableTask(id) else { return } }
         if selectedSurface == .focus {
-            guard focusActionsEnabled, focus.objects("sections").contains(where: {
+            guard focusActionsEnabled, visibleDescriptionReference(descriptionSourceID, kind: "task", id: id)
+                || focus.objects("sections").contains(where: {
                 $0.objects("rows").contains(where: { $0.text("id") == id })
             }) else { return }
         }
@@ -8054,12 +8095,14 @@ final class CoreModel: ObservableObject {
             }) else { return }
         }
         if selectedSurface == .someday {
-            guard somedayActionsEnabled, someday.objects("items").contains(where: {
+            guard somedayActionsEnabled, visibleDescriptionReference(descriptionSourceID, kind: "task", id: id)
+                || someday.objects("items").contains(where: {
                 $0.text("type") == "task" && $0.object("row").text("id") == id
             }) else { return }
         }
         if selectedSurface == .waiting {
-            guard waitingActionsEnabled, waiting.objects("rows").contains(where: { $0.text("id") == id }) else { return }
+            guard waitingActionsEnabled, visibleDescriptionReference(descriptionSourceID, kind: "task", id: id)
+                || waiting.objects("rows").contains(where: { $0.text("id") == id }) else { return }
         }
         if selectedSurface == .project {
             guard projectActionsEnabled, projectDetail.objects("items").contains(where: {
@@ -10395,6 +10438,12 @@ final class CoreModel: ObservableObject {
     func closeFocusPanel() {
         focusPanel = ""
         closeFocusPicker()
+    }
+
+    func toggleFocusShowDetails() {
+        guard focusControlsEnabled else { return }
+        focusShowDetails.toggle()
+        preferenceDefaults.set(focusShowDetails, forKey: focusShowDetailsPreference)
     }
 
     func editFocusControl(_ edit: CoreObject) {

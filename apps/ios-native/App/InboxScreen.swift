@@ -311,6 +311,7 @@ struct InboxScreen: View {
                                     }
                                     TaskCard(row: row, model: model, palette: palette,
                                              footer: row.text("revealLabel").isEmpty ? row.text("laterTodayLabel") : row.text("revealLabel"),
+                                             showDetails: model.focusShowDetails,
                                              onProject: { project in Task { await model.openProject(project) } })
                                         .padding(.leading, section.objects("groups").isEmpty ? 0 : 25)
                                         .overlay(alignment: .leading) {
@@ -441,7 +442,7 @@ struct InboxScreen: View {
                     }
                         .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                         .frame(width: 24, height: 24).scaleEffect(20.0 / 24).frame(width: 20, height: 20)
-                        .foregroundStyle(controls.object("viewOptions").flag("active") ? palette.tint : palette.secondary)
+                        .foregroundStyle(controls.object("viewOptions").flag("active") || model.focusShowDetails ? palette.tint : palette.secondary)
                         .frame(width: 44, height: 44)
                         .accessibilityHidden(true)
                 }
@@ -897,6 +898,15 @@ struct TaskCard: View {
                     titleContent.frame(minHeight: 44).contentShape(Rectangle())
                         .onTapGesture { openTask() }
                 } else { titleContent }
+                if showDetails && !meta.text("descriptionPreview").isEmpty {
+                    Text(NativeMarkdownInline.attributedText(meta.object("description").objects("inline"),
+                         labels: meta.object("description").object("labels"), palette: palette, referenceLinks: true)).rnFont(14)
+                        .foregroundStyle(palette.secondary).lineLimit(row.text("status") == "reference" ? 3 : 1)
+                        .accessibilityIdentifier("task-description-" + row.text("id"))
+                        .onTapGesture { openTask() }
+                        .environment(\.openURL, OpenURLAction { openDescriptionURL($0) })
+                        .accessibilityAction { openTask() }
+                }
                 let parts = meta.objects("parts").filter { showDetails || !$0.flag("detail") }
                 if !parts.isEmpty {
                     if onProject != nil || onToken != nil {
@@ -936,6 +946,20 @@ struct TaskCard: View {
                 if !footer.isEmpty {
                     Text(footer).rnFont(12, .semibold).foregroundStyle(palette.secondary).padding(.top, 4)
                 }
+                if showDetails && !meta.text("ageLabel").isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "hourglass").font(.system(size: 11)).accessibilityHidden(true)
+                        Text(meta.text("ageLabel")).rnFont(12)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(meta.text("ageLabel"))
+                    .accessibilityIdentifier("task-age-" + row.text("id"))
+                    .foregroundStyle(palette.secondary)
+                    .simultaneousGesture(TapGesture().onEnded { _ in
+                        if onProject != nil || onToken != nil { openTask() }
+                    })
+                    .accessibilityAction { openTask() }
+                }
             }
             .frame(minHeight: 44).contentShape(Rectangle())
             .onTapGesture { if onProject == nil && onToken == nil { openTask() } }
@@ -973,6 +997,25 @@ struct TaskCard: View {
     private func openTask() {
         beforeAction?()
         Task { await model.openTask(row.text("id")) }
+    }
+
+    private func openDescriptionURL(_ url: URL) -> OpenURLAction.Result {
+        if url.scheme == "mindwtr-native-row", url.host == "reference",
+           let index = Int(url.lastPathComponent),
+           url.absoluteString == "mindwtr-native-row://reference/\(index)" {
+            let runs = meta.object("description").objects("inline")
+            guard runs.indices.contains(index), runs[index].text("type") == "link" else { return .discarded }
+            let target = runs[index].object("target")
+            beforeAction?()
+            if target.text("kind") == "task" {
+                Task { await model.openTask(target.text("id"), descriptionSourceID: row.text("id")) }
+            } else if target.text("kind") == "project" {
+                Task { await model.openProject(["id": target.text("id")],
+                                               descriptionSourceID: row.text("id")) }
+            } else { return .discarded }
+            return .handled
+        }
+        return ["http", "https", "mailto", "tel"].contains(url.scheme?.lowercased() ?? "") ? .systemAction : .discarded
     }
 
     private var titleContent: some View {

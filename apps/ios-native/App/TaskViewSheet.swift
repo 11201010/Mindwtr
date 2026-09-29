@@ -874,14 +874,14 @@ struct NativeMarkdownInline: View {
     var weight: Font.Weight = .regular
 
     var body: some View {
-        Text(inlineText(runs)).rnFont(size, weight).textSelection(.enabled)
+        Text(Self.attributedText(runs, labels: labels, palette: palette)).rnFont(size, weight).textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func inlineText(_ runs: [CoreObject]) -> AttributedString {
+    static func attributedText(_ runs: [CoreObject], labels: CoreObject, palette: AppPalette, referenceLinks: Bool = false) -> AttributedString {
         var result = AttributedString()
-        for run in runs {
+        for (index, run) in runs.enumerated() {
             var text = AttributedString(run.text("text"))
             switch run.text("type") {
             case "bold": text.inlinePresentationIntent = .stronglyEmphasized
@@ -889,7 +889,9 @@ struct NativeMarkdownInline: View {
             case "strike": text.swiftUI.strikethroughStyle = Text.LineStyle(pattern: .solid)
             case "code": text.swiftUI.font = .system(.footnote, design: .monospaced)
             case "link":
-                if let url = externalURL(run) {
+                let reference = referenceLinks && ["task", "project"].contains(run.object("target").text("kind"))
+                    ? URL(string: "mindwtr-native-row://reference/\(index)") : nil
+                if let url = externalURL(run) ?? reference {
                     text.link = url
                     text.swiftUI.foregroundColor = palette.tint
                     text.swiftUI.underlineStyle = Text.LineStyle(pattern: .solid)
@@ -910,7 +912,7 @@ struct NativeMarkdownInline: View {
         return result
     }
 
-    private func externalURL(_ run: CoreObject) -> URL? {
+    private static func externalURL(_ run: CoreObject) -> URL? {
         let target = run.object("target")
         guard run.text("type") == "link", target.text("kind") == "external",
               let url = URL(string: target.text("href")),

@@ -102,7 +102,8 @@ struct FocusControlsPanel: View {
             sectionLabel(view.object("group").text("label"))
             options(view.object("group").objects("options"), prefix: "focus-group", enabled: false)
             sectionLabel(view.object("details").text("sectionLabel"))
-            chip(view.object("details").text("showLabel"), selected: false, id: "focus-details", enabled: false) {}
+            chip(view.object("details").text(model.focusShowDetails ? "hideLabel" : "showLabel"),
+                 selected: model.focusShowDetails, id: "focus-details") { model.toggleFocusShowDetails() }
         }
     }
 

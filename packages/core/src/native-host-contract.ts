@@ -188,7 +188,7 @@ import { getProjectAccentColor } from './task-accent-color';
 import { formatListItemCount } from './list-count';
 import type { ContextOrTagMatchMode } from './hierarchy-utils';
 import { getInlineMarkdownPreview } from './markdown';
-import { createMarkdownLinkLookup, resolveMarkdownBlocks, type ResolvedMarkdownBlock } from './markdown-blocks';
+import { createMarkdownLinkLookup, resolveMarkdownBlocks, resolveMarkdownInline, type MarkdownInline, type ResolvedMarkdownBlock } from './markdown-blocks';
 import { resolveAutoTextDirection } from './text-direction';
 import { taskMatchesFilterSelections } from './task-filter-selections';
 import type { TaskGroupItem } from './task-group-sections';
@@ -326,6 +326,13 @@ export type NativeHostResult<T> = { ok: true; value: T } | {
     error: { code: NativeHostErrorCode; message: string };
 };
 
+export type NativeTaskRowMeta = TaskRowMeta & {
+    description?: {
+        inline: MarkdownInline[];
+        labels: { deletedTask: string; deletedProject: string };
+    };
+};
+
 export type NativeTaskRow = Pick<Task, 'id' | 'title' | 'status'> & {
     priority: Task['priority'] | null;
     dueDate: string | null;
@@ -344,7 +351,7 @@ export type NativeTaskRow = Pick<Task, 'id' | 'title' | 'status'> & {
      * hide detail parts, the age and the description (mobile lists always do);
      * Focus shows them only with its details toggle on (off by default).
      */
-    meta: TaskRowMeta;
+    meta: NativeTaskRowMeta;
 };
 export type NativeInboxRow = NativeTaskRow;
 export type NativeInboxWindow = {
@@ -839,6 +846,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
     let cachedProjectDetailKey = '';
     let cachedProjectDetail: ProjectDetailCache | null = null;
     let cachedContextHistory: { tasks: Task[]; tokens: string[] } | null = null;
+    let cachedMarkdownLookup: { tasks: Task[]; projects: Project[]; lookup: ReturnType<typeof createMarkdownLinkLookup> } | null = null;
     const retainedContexts = (tasks: Task[]): string[] => {
         if (cachedContextHistory?.tasks === tasks) return cachedContextHistory.tokens;
         const tokens = getRetainedTaskContexts(tasks);
@@ -972,9 +980,9 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         };
     };
 
-    const rowMeta = (task: Task, now: Date, options: RowMetaOptions = {}): TaskRowMeta => {
+    const rowMeta = (task: Task, now: Date, options: RowMetaOptions = {}): NativeTaskRowMeta => {
         const state = useTaskStore.getState();
-        return buildTaskRowMeta({
+        const base = buildTaskRowMeta({
             ...options,
             task,
             lookup: resolveTaskRowLookup(task, state.projects, state.areas, state._sectionsById),
@@ -984,6 +992,24 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             t: translate,
             now,
         });
+        if (!base.descriptionPreview) return base;
+        if (cachedMarkdownLookup?.tasks !== state._allTasks || cachedMarkdownLookup.projects !== state._allProjects) {
+            cachedMarkdownLookup = {
+                tasks: state._allTasks,
+                projects: state._allProjects,
+                lookup: createMarkdownLinkLookup(state._allTasks, state._allProjects),
+            };
+        }
+        return {
+            ...base,
+            description: {
+                inline: resolveMarkdownInline(base.descriptionPreview, cachedMarkdownLookup.lookup),
+                labels: {
+                    deletedTask: tFallback(translate, 'markdown.referenceDeletedTask', 'deleted task'),
+                    deletedProject: tFallback(translate, 'markdown.referenceDeletedProject', 'deleted project'),
+                },
+            },
+        };
     };
 
     // The RN Focus screen's pass for a control state (focus-controls.ts): area-visible

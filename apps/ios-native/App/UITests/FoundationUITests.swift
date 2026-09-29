@@ -2029,6 +2029,155 @@ final class FoundationUITests: XCTestCase {
         XCTAssertFalse(app.buttons[title + " changed"].exists)
     }
 
+    func testFocusShowDetailsAndRestart() { focusDetailsFlow(library: "102a6841-a77e-456e-8fa6-2db0e1e38fb0") }
+    func testFocusShowDetailsLargestTextAndRestart() { focusDetailsFlow(library: "ddd588d0-4618-4628-83ee-9d682b487b78") }
+
+    func testFocusDetailsTextOpensTask() { focusDetailsFlow(library: "d1980ea3-24b9-4292-bb1e-8ca84db7f4ba", checkTextTaps: true) }
+
+    func testFocusDescriptionReferencesOpenLinkedTargets() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "69f11d50-6500-4170-a3bc-3371ecbaa399"]
+        app.launch(); boardEnabled(app.buttons["tab-focus"], timeout: 30); boardTap(app, "tab-focus")
+        boardEnabled(app.buttons["focus-view-options"]); boardTap(app, "focus-view-options")
+        let toggle = app.buttons["focus-details"]
+        revealPagedElement(app, toggle, in: app.scrollViews.containing(.button, identifier: "focus-details").firstMatch)
+        toggle.tap(); boardTap(app, "focus-controls-close")
+        func link(_ label: String, sourceID: String) {
+            let preview = app.descendants(matching: .any).matching(identifier: "task-description-" + sourceID).firstMatch
+            revealPagedElement(app, preview, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+            XCTAssertTrue(preview.label.contains(label))
+            let link = app.links.matching(NSPredicate(format: "label == %@", label)).firstMatch
+            if link.exists { link.tap() } else { preview.tap() }
+        }
+        link("Open linked task", sourceID: "b2468ac9-a2e9-46f4-978b-71d00b19b88d")
+        boardEnabled(app.buttons["task-mode-edit"])
+        XCTAssertTrue(app.staticTexts["Linked preview reference"].exists)
+        boardTap(app, "task-view-close")
+        link("Open linked Project", sourceID: "c65e201b-6868-411a-80aa-5cc6a8f8ec63")
+        boardEnabled(app.buttons["project-details-toggle"])
+        XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Linked preview Project")
+        boardTap(app, "project-back"); boardEnabled(app.buttons["focus-view-options"])
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Focus resolved internal description links"
+        shot.lifetime = .keepAlways; add(shot); app.terminate()
+    }
+
+    func testWaitingAndSomedayDescriptionLinksOpenTargets() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "3e588702-b6d0-4dd0-9a87-32a6b4061248"]
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        for (surface, taskSource, projectSource) in [
+            ("waiting", "8d0bb037-7dc5-4c67-b001-dabb5546aa51", "bd999c43-7c51-4634-9a0a-b731176a404b"),
+            ("someday", "7eb15219-68b4-433c-8156-12e383629acf", "fcc02a38-1e34-4d44-86d4-2f9b15586c0d")
+        ] {
+            if app.buttons["waiting-back"].exists { boardTap(app, "waiting-back") }
+            boardTap(app, "tab-menu"); boardTap(app, "menu-" + surface)
+            if surface == "someday" {
+                boardTap(app, "someday-overflow-button"); boardTap(app, "someday-toggle-details")
+            }
+            for (source, label) in [(taskSource, "Open linked task"), (projectSource, "Open linked Project")] {
+                let preview = app.descendants(matching: .any).matching(identifier: "task-description-" + source).firstMatch
+                XCTAssertTrue(preview.waitForExistence(timeout: 10))
+                revealPagedElement(app, preview, in: app.scrollViews.containing(.any, identifier: preview.identifier).firstMatch)
+                let link = app.links.matching(NSPredicate(format: "label == %@", label)).firstMatch
+                XCTAssertTrue(link.exists); link.tap()
+                if source == taskSource {
+                    boardEnabled(app.buttons["task-mode-edit"])
+                    XCTAssertTrue(app.staticTexts["Linked preview reference"].exists)
+                    boardTap(app, "task-view-close")
+                } else {
+                    boardEnabled(app.buttons["project-details-toggle"])
+                    XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Linked preview Project")
+                    boardTap(app, "project-back")
+                }
+            }
+        }
+        app.terminate()
+    }
+
+    // Root stages and restores a copied RN library and the app preference domain.
+    func testFocusLegacyDetailsTrueAndLocalFalseOverride() { focusLegacyDetails(expected: true) }
+    func testFocusLegacyDetailsInvalidDefaultsFalse() { focusLegacyDetails(expected: false) }
+
+    private func focusLegacyDetails(expected: Bool) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-rn-rehearsal"]
+        func view() {
+            boardEnabled(app.buttons["tab-focus"], timeout: 30); boardTap(app, "tab-focus")
+            boardTap(app, "focus-view-options")
+            revealPagedElement(app, app.buttons["focus-details"],
+                in: app.scrollViews.containing(.button, identifier: "focus-details").firstMatch)
+            boardEnabled(app.buttons["focus-details"])
+        }
+        app.launch(); view()
+        XCTAssertEqual(app.buttons["focus-details"].isSelected, expected)
+        if expected {
+            app.buttons["focus-details"].tap()
+            XCTAssertFalse(app.buttons["focus-details"].isSelected)
+            boardTap(app, "focus-controls-close")
+            app.terminate(); app.launch(); view()
+            XCTAssertFalse(app.buttons["focus-details"].isSelected, "Explicit native false overrides legacy true")
+        }
+        boardTap(app, "focus-controls-close"); app.terminate()
+    }
+
+    private func focusDetailsFlow(library: String, checkTextTaps: Bool = false) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        let taskID = "9f16a906-178b-411f-a2a3-e57a7d00047a"
+        let description = app.descendants(matching: .any).matching(identifier: "task-description-" + taskID).firstMatch
+        let age = app.descendants(matching: .any).matching(identifier: "task-age-" + taskID).firstMatch
+        func focus() {
+            boardEnabled(app.buttons["tab-focus"], timeout: 30); boardTap(app, "tab-focus")
+            boardEnabled(app.buttons["focus-view-options"])
+        }
+        func view() {
+            let button = app.buttons["focus-view-options"]
+            revealPagedElement(app, button, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+            button.tap()
+            let toggle = app.buttons["focus-details"]
+            revealPagedElement(app, toggle, in: app.scrollViews.containing(.button, identifier: "focus-details").firstMatch)
+            boardEnabled(toggle)
+        }
+        func visibleDetails() {
+            revealPagedElement(app, description, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+            XCTAssertTrue(description.exists); XCTAssertTrue(description.label.contains("Detail preview"))
+            revealPagedElement(app, age, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+            XCTAssertTrue(age.exists); XCTAssertFalse(age.label.isEmpty)
+        }
+        func toggle(_ selected: Bool) {
+            let button = app.buttons["focus-details"]
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+            button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 4)).tap()
+            expectation(for: NSPredicate(format: "selected == %@", NSNumber(value: selected)), evaluatedWith: button)
+            waitForExpectations(timeout: 10)
+            XCTAssertEqual(button.label, selected ? "Hide details" : "Show details")
+        }
+        app.launch(); focus()
+        XCTAssertFalse(description.exists); XCTAssertFalse(age.exists)
+        view(); XCTAssertFalse(app.buttons["focus-details"].isSelected); toggle(true)
+        let options = XCTAttachment(screenshot: app.screenshot()); options.name = "Focus Show details View options"
+        options.lifetime = .keepAlways; add(options)
+        boardTap(app, "focus-controls-close"); visibleDetails()
+        let rows = XCTAttachment(screenshot: app.screenshot()); rows.name = "Focus task description and age"
+        rows.lifetime = .keepAlways; add(rows)
+        if checkTextTaps {
+            XCTAssertFalse(app.buttons["hourglass"].exists, "The decorative age icon must not be an accessibility action")
+            for text in [description, age] {
+                visibleDetails(); text.tap()
+                boardEnabled(app.buttons["task-mode-edit"]); boardTap(app, "task-view-close")
+            }
+        }
+        let title = app.buttons.matching(identifier: "task-title-" + taskID).firstMatch
+        revealPagedElement(app, title, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+        title.tap(); boardEnabled(app.buttons["task-mode-edit"]); boardTap(app, "task-view-close")
+        visibleDetails()
+        let filters = app.buttons["focus-filters-open"]
+        revealPagedElement(app, filters, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+        filters.tap(); boardTap(app, "focus-controls-close"); visibleDetails()
+        boardTap(app, "tab-inbox"); focus(); visibleDetails()
+        app.terminate(); app.launch(); focus(); visibleDetails()
+        view(); XCTAssertTrue(app.buttons["focus-details"].isSelected); toggle(false)
+        boardTap(app, "focus-controls-close"); XCTAssertFalse(description.exists); XCTAssertFalse(age.exists)
+        app.terminate(); app.launch(); focus(); XCTAssertFalse(description.exists); XCTAssertFalse(age.exists)
+        app.terminate()
+    }
+
     func testFocusControlsTokensSortEditSearchAndRestart() {
         let app = XCUIApplication()
         app.launch()
