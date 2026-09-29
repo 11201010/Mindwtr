@@ -10,7 +10,8 @@
 // database, and shoots Inbox, Focus, Projects, the task editor (Form tab) for one
 // task opened from Focus, global search for "kitchen", Process Inbox's first step, the
 // capture popup (empty, with text and core's preview, and with the contexts picker open),
-// the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
+// RN's capture screen for each entry kind (a capture link with the keyboard up and down, a share, an assistant note, and a
+// widget's quick capture), the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
 // task, and Review), the Weekly Review's first step, the Calendar's week and month, the Board, and Settings'
 // General and GTD (their switches drawn as RN's for the props it sets), in light
 // and dark mode.
@@ -162,11 +163,13 @@ const shoot = async (name, ready) => {
     shots.push(name);
     console.log(`shot ${basename(file)}`);
 };
-const openLink = (path) => {
+/** Sends an intent (am start arguments) to the harness package only, from the app itself or the home screen. */
+const openIntent = (args) => {
     const current = front();
     if (!current.includes(`${PKG}/`) && !current.includes(`${home}/`)) throw new Stopped(`another app is in front: ${current.trim()}`);
-    sh(`am start -W -a android.intent.action.VIEW -d 'mindwtr-upgradetest://${path}' ${PKG}`);
+    sh(`am start -W ${args} ${PKG}`);
 };
+const openLink = (path) => openIntent(`-a android.intent.action.VIEW -d 'mindwtr-upgradetest://${path}'`);
 /** The task whose editor is shot: opened from Focus, where it has a project, a context, a priority, and a due date. */
 const EDITOR_TASK = T.outline;
 /** Opens the editor for EDITOR_TASK from the Focus screen on show, shoots it, and closes it with Back (nothing was edited). */
@@ -233,6 +236,41 @@ const shootPopup = async (prefix, suffix) => {
         requireAppFront();
         sh('input keyevent KEYCODE_BACK');
         await sleep(800);
+    }
+};
+/**
+ * RN's capture screen (capture-modal.tsx) for each entry kind, in both apps by the same intents: a capture link (a title with
+ * tokens, so core's preview shows, a note, tags and a project), a share (a subject, and a body with a URL), an assistant note,
+ * and a widget's quick capture. The link is shot with the keyboard up (RN focuses the field) and every kind with it down;
+ * Cancel then writes nothing. Quick capture's Cancel puts the app behind the previous screen (#1169), so the app is launched
+ * again. RN's capture links are read only on the mindwtr scheme (core's parser), which the harness RN app does not register,
+ * so RN gets them by its component; RN's MainActivity turns the note into such a link itself.
+ */
+const MODAL = { title: 'Call Sam @phone #home', note: 'Ask about Saturday', subject: 'Quarterly numbers', body: 'The numbers are in https://example.com/q3', named: 'Water the plants' };
+const shootModal = async (prefix, suffix, activity) => {
+    const capture = (path) => (prefix === 'rn' ? openIntent(`-a android.intent.action.VIEW -d 'mindwtr://${path}' -n ${RN_ACTIVITY}`) : openLink(path));
+    const kinds = [
+        ['link', () => capture(`capture?title=${encodeURIComponent(MODAL.title)}&note=${encodeURIComponent(MODAL.note)}&tags=home,errands&project=${encodeURIComponent('Kitchen renovation')}`), MODAL.title],
+        ['share', () => openIntent(`-a android.intent.action.SEND -t text/plain --es android.intent.extra.SUBJECT '${MODAL.subject}' --es android.intent.extra.TEXT '${MODAL.body}'`), MODAL.subject],
+        ['note', () => openIntent(`-a com.google.android.gms.actions.CREATE_NOTE -t text/plain --es com.google.android.gms.actions.extra.NAME '${MODAL.named}'`), MODAL.named],
+        ['quick', () => capture('capture-quick'), ''],
+    ];
+    for (const [kind, open, title] of kinds) {
+        open();
+        const shown = (current) => hasText(current, 'Add Task') && current.some((node) => node.class === 'android.widget.EditText' && (title === '' || node.text === title));
+        if (kind === 'link') await shoot(`${prefix}-modal-link-keyboard-${suffix}`, shown);
+        try { await waitFor(`the ${kind} capture screen`, shown, 30_000); } catch { console.log(`warn - ${prefix} ${kind}: the capture screen did not show`); }
+        await sleep(1500);
+        await hideKeyboard();
+        await shoot(`${prefix}-modal-${kind}-${suffix}`, shown);
+        const nodes = await waitFor('Cancel on the capture screen', (current) => Boolean(button(current, 'Cancel')), 15_000);
+        await tap(button(nodes, 'Cancel'));
+        await sleep(1500);
+        if (kind === 'quick') {
+            await waitFor('the app to go behind', () => !front().includes(`${PKG}/`), 15_000);
+            device.launch(activity);
+            await sleep(2000);
+        }
     }
 };
 /**
@@ -373,6 +411,8 @@ try {
         openLink('inbox');
         await shootPopup('rn', mode === 'yes' ? 'dark' : 'light');
         openLink('inbox');
+        await shootModal('rn', mode === 'yes' ? 'dark' : 'light', RN_ACTIVITY);
+        openLink('inbox');
         await shootMenu('rn', mode === 'yes' ? 'dark' : 'light', true);
         openLink('inbox');
         await shootSettings('rn', mode === 'yes' ? 'dark' : 'light', true);
@@ -417,6 +457,7 @@ try {
         if (!tabSelected(inboxTab, 'Inbox')) await tap(tab(inboxTab, 'Inbox'));
         await shootProcess(`native-process-${mode === 'yes' ? 'dark' : 'light'}`);
         await shootPopup('native', mode === 'yes' ? 'dark' : 'light');
+        await shootModal('native', mode === 'yes' ? 'dark' : 'light', NATIVE_ACTIVITY);
         await shootMenu('native', mode === 'yes' ? 'dark' : 'light', false);
         await shootSettings('native', mode === 'yes' ? 'dark' : 'light', false);
     }

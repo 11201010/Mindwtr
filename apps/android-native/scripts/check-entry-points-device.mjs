@@ -5,14 +5,14 @@
 // Installs the debug APK with `install -r` (existing development data stays) and checks RN's system entry points on the
 // development scheme mindwtr-native-dev (the phone's RN app keeps mindwtr://, so no link here can reach it):
 // (a) `cmd shortcut get-shortcuts` lists RN's launcher shortcuts (Add task, Focus, Calendar) on RN's component name;
-// (b) a text share (ACTION_SEND text/plain) opens the capture popup with the shared text, and Save stores it once (core,
+// (b) a text share (ACTION_SEND text/plain) opens RN's capture screen with the shared text, and Save stores it once (core,
 // on a copy of the app's database); (c) links land on core's screen: the Inbox, Focus (open-feature today), Waiting,
 // Someday (open-feature), the Calendar, the global search with its query, a task (the editor over Focus), a project, the
-// capture popup (open-feature capture), a capture link's title, an assistant note's name (CREATE_NOTE), and a capture link
-// without a title (core's toast); (d) a widget's quick capture link (capture-quick) opens the popup, and its Close puts the
-// app behind the previous screen (RN's #1169); (e) two shares sent together open one after the other; (f) a share arriving
-// over a typed capture draft waits until the draft closes; (g) the closed popups stored nothing; (h) a share waiting behind the
-// editor survives a force-stop and opens after the relaunch. Nothing but (b)'s share is saved; its title is 77 + a 12-digit run id + 1
+// capture popup (open-feature capture), the capture screen with a capture link's title or an assistant note's name
+// (CREATE_NOTE), and a capture link without a title (core's toast); (d) a widget's quick capture link (capture-quick) opens
+// the capture screen, and its Cancel puts the app behind the previous screen (RN's #1169); (e) two shares sent together open
+// one after the other; (f) a share arriving over a typed capture draft waits until the draft closes; (g) the closed screens
+// stored nothing; (h) a share waiting behind the editor survives a force-stop and opens after the relaunch. Nothing but (b)'s share is saved; its title is 77 + a 12-digit run id + 1
 // (check-projects-device.mjs --prune-old removes earlier runs'). It types only digits, never launches over another app, and
 // leaves the app on its Inbox. Leave the device on its home screen before running. It needs host `bun`.
 // Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
@@ -21,7 +21,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, connect, draftText, evidenced, fail, field, hasText, inEditor, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
+import { button, check, connect, draftText, evidenced, fail, field, hasText, inEditor, Stopped, tab, tabSelected, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -57,7 +57,7 @@ const { sh, home, front, requireAppFront, pid, screen, waitFor, tapExpecting } =
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 const lines = (...needles) => device.logs(pid(), TAG).replace(/\\/g, '').split('\n').filter((line) => needles.every((needle) => line.includes(needle))).length;
 const entries = (outcome) => lines('native-android-entry-point', `"outcome":"${outcome}"`);
-const captures = () => lines('native-android-dev-task-command', '"operation":"quickCapture"', '"outcome":"saved"');
+const captures = () => lines('native-android-dev-task-command', '"operation":"captureModal"', '"outcome":"saved"');
 
 // ---- core on a copy of the app's database ----
 const pullDatabase = () => {
@@ -97,6 +97,8 @@ const core = () => JSON.parse(execFileSync('bun', ['-e', `
 const onTabs = (name) => (nodes) => tabSelected(nodes, name) && !inEditor(nodes) && !tagged(nodes, 'global-search') && !tagged(nodes, 'menu-screen');
 const inScreen = (title) => (nodes) => Boolean(tagged(nodes, 'menu-screen')) && hasText(nodes, title);
 const popup = (text) => (nodes) => Boolean(tagged(nodes, 'quick-capture')) && draftText(nodes) === text;
+/** RN's capture screen with [text] in its title field. */
+const modal = (text) => (nodes) => Boolean(tagged(nodes, 'capture-modal')) && tagged(nodes, 'capture-modal-title')?.text === text;
 /**
  * Sends [intent] (am start arguments) to this app only, waits until core has answered it (its entry-point log line: a
  * later intent would replace one not yet opened), then waits for [expected].
@@ -123,7 +125,8 @@ const holds = async (still, ms, description) => {
     }
 };
 const link = (path, expected, description, timeoutMs) => send(`-a android.intent.action.VIEW -d '${SCHEME}://${path}'`, expected, description, timeoutMs);
-const atTabs = (nodes) => Boolean(tab(nodes, en['tab.inbox'])) && !tagged(nodes, 'menu-screen') && !tagged(nodes, 'global-search') && !inEditor(nodes);
+const atTabs = (nodes) => Boolean(tab(nodes, en['tab.inbox'])) && !tagged(nodes, 'menu-screen') && !tagged(nodes, 'global-search') && !inEditor(nodes)
+    && !tagged(nodes, 'capture-modal');
 /**
  * Leaves a screen the check opened with the system Back, back to the tabs. A project open on RN's Projects screen takes
  * two Backs (the project, then the screen); Back is pressed again only while the tabs are not showing.
@@ -142,6 +145,23 @@ const back = async (description) => {
 };
 const closePopup = (nodes) => tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close on the capture popup'),
     (current) => !tagged(current, 'quick-capture'), 'the popup to close');
+/**
+ * RN's hide-keyboard button: the screen focuses its title field when it opens, and the keyboard then covers the card's buttons,
+ * as in RN. Waits up to 2.5 s for the keyboard, then taps the button until the keyboard is down.
+ */
+const keyboardDown = async () => {
+    const shown = () => /mInputShown=true/.test(sh('dumpsys input_method'));
+    for (let wait = 0; wait < 12 && !shown(); wait += 1) await sleep(200);
+    if (!shown()) return;
+    await device.tap(tagged(await screen(), 'capture-modal-hide-keyboard') ?? fail('no hide-keyboard button while the keyboard is up'));
+    for (let wait = 0; wait < 15 && shown(); wait += 1) await sleep(200);
+    if (shown()) fail('the hide-keyboard button left the keyboard up');
+};
+/** RN's capture screen's Cancel (the keyboard down first): nothing is written. */
+const cancelModal = async (nodes, expected = (current) => !tagged(current, 'capture-modal'), description = 'the capture screen to close') => {
+    await keyboardDown();
+    return tapExpecting(tagged(await screen(), 'capture-modal-cancel') ?? fail('no Cancel on the capture screen'), expected, description);
+};
 
 const originalAccelerometer = sh('settings get system accelerometer_rotation');
 const originalRotation = sh('settings get system user_rotation');
@@ -152,6 +172,8 @@ const restore = async () => {
         if (front().includes(`${PKG}/`)) {
             let nodes = await screen();
             if (tagged(nodes, 'quick-capture')) { sh('input keyevent KEYCODE_BACK'); await sleep(800); nodes = await screen(); }
+            // A capture screen: Back cancels it (the first Back may only close the keyboard).
+            for (let step = 0; step < 2 && tagged(nodes, 'capture-modal'); step += 1) { sh('input keyevent KEYCODE_BACK'); await sleep(800); nodes = await screen(); }
             for (let step = 0; step < 3 && (inEditor(nodes) || tagged(nodes, 'menu-screen') || tagged(nodes, 'global-search')); step += 1) {
                 sh('input keyevent KEYCODE_BACK');
                 await sleep(800);
@@ -200,14 +222,12 @@ try {
         check(JSON.stringify(rn) === JSON.stringify(labels), `(a) the same shortcuts as the phone's RN development app: ${JSON.stringify(rn)}`);
     }
 
-    // (b) A text share opens the popup with the text; Save stores it once.
+    // (b) A text share opens RN's capture screen with the text; Save stores it once, and the screen closes to the Inbox.
     const capturesBefore = captures();
-    let nodes = await send(`-a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '${titles.shared}'`, popup(titles.shared), 'the popup with the shared text');
-    // Add another is a remembered preference (as in RN); with it on, Save keeps the popup open for the next capture.
-    if (switchOn(nodes, en['quickAdd.addAnother'])) {
-        nodes = await tapExpecting(withDescription(nodes, en['quickAdd.addAnother']), (current) => !switchOn(current, en['quickAdd.addAnother']), 'Add another off');
-    }
-    await tapExpecting(button(nodes, en['common.save']) ?? fail('no Save on the popup'), (current) => !tagged(current, 'quick-capture'), 'the share to save');
+    let nodes = await send(`-a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '${titles.shared}'`, modal(titles.shared), 'the capture screen with the shared text');
+    await keyboardDown();
+    nodes = await screen();
+    await tapExpecting(tagged(nodes, 'capture-modal-save') ?? fail('no Save on the capture screen'), onTabs(en['tab.inbox']), 'the share to save');
     await waitFor('the capture command', () => captures() === capturesBefore + 1, 15_000);
     let stored = core();
     check(stored.tasks.shared.length === 1 && stored.tasks.shared[0].status === 'inbox', `(b) the shared text is stored once, in the Inbox (${JSON.stringify(stored.tasks.shared)})`);
@@ -241,61 +261,60 @@ try {
     nodes = await link('/open-feature?feature=capture', popup(''), 'the empty capture popup');
     await closePopup(nodes);
     check(true, '(c) open-feature capture opens the capture popup');
-    nodes = await link(`/capture?title=${titles.link}&note=77`, popup(titles.link), 'the popup with the link\'s title');
-    await closePopup(nodes);
-    check(true, '(c) a capture link opens the popup with its title');
+    nodes = await link(`/capture?title=${titles.link}&note=77`, modal(titles.link), 'the capture screen with the link\'s title');
+    check(tagged(nodes, 'capture-modal-description')?.text === '77', '(c) a capture link opens the capture screen with its title and note');
+    await cancelModal(nodes, onTabs(en['tab.inbox']), 'the Inbox under the capture screen');
     nodes = await send(`-a com.google.android.gms.actions.CREATE_NOTE -t text/plain --es com.google.android.gms.actions.extra.NAME '${titles.note}'`,
-        popup(titles.note), 'the popup with the note\'s name');
-    await closePopup(nodes);
-    check(true, '(c) an assistant note opens the popup with its name');
+        modal(titles.note), 'the capture screen with the note\'s name');
+    await cancelModal(nodes);
+    check(true, '(c) an assistant note opens the capture screen with its name');
     await link('/capture?note=77', (current) => hasText(current, en['shortcuts.captureUnavailable']), 'core\'s toast for a capture link without a title', 5_000);
     check(true, '(c) a capture link without a title shows core\'s toast');
 
-    // (d) A widget's quick capture: the popup, and its Close puts the app behind the previous screen.
-    nodes = await link('/capture-quick', popup(''), 'the quick capture popup');
-    await tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close on the capture popup'), () => !front().includes(`${PKG}/`), 'the app to go behind');
-    check(true, '(d) capture-quick\'s Close returns to the previous screen');
+    // (d) A widget's quick capture: RN's capture screen (origin=system), and its Cancel puts the app behind the previous screen.
+    nodes = await link('/capture-quick', modal(''), 'the quick capture screen');
+    await cancelModal(nodes, () => !front().includes(`${PKG}/`), 'the app to go behind');
+    check(true, '(d) capture-quick opens the capture screen, and its Cancel returns to the previous screen');
     device.launch(ACTIVITY);
     await waitFor('the tabs again', (current) => Boolean(tab(current, en['tab.inbox'])), 30_000);
 
-    // (e) Two shares sent together open one after the other: the second waits in the queue while the first's popup is open.
+    // (e) Two shares sent together open one after the other: the second waits in the queue while the first's screen is open.
     nodes = await waitFor('the tabs', atTabs, 20_000);
     share(titles.first);
     share(titles.second);
-    nodes = await waitFor('the first share\'s popup', popup(titles.first), 20_000);
-    await holds(popup(titles.first), 3_000, 'the first share\'s popup');
-    // Closing the first popup opens the second share's at once: it waited in the queue.
-    nodes = await tapExpecting(withDescription(await screen(), en['common.close']) ?? fail('no Close on the capture popup'), popup(titles.second),
-        'the second share\'s popup');
-    await closePopup(nodes);
-    check(true, '(e) two shares open in the order they came, the second after the first\'s popup closed');
+    nodes = await waitFor('the first share\'s capture screen', modal(titles.first), 20_000);
+    await holds(modal(titles.first), 3_000, 'the first share\'s capture screen');
+    // Cancelling the first screen opens the second share's at once: it waited in the queue.
+    nodes = await cancelModal(await screen(), modal(titles.second), 'the second share\'s capture screen');
+    await cancelModal(nodes, atTabs, 'the tabs');
+    check(true, '(e) two shares open in the order they came, the second after the first\'s screen closed');
 
     // (f) A share arriving over a capture draft waits: the typed draft stays until the user closes it, then the share opens.
     await device.type(titles.typed);
     share(titles.overDraft);
     await holds(popup(titles.typed), 4_000, 'the typed capture draft');
     nodes = await screen();
-    await tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close on the capture popup'), popup(titles.overDraft), 'the waiting share\'s popup');
-    await closePopup(await screen());
+    await tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close on the capture popup'), modal(titles.overDraft), 'the waiting share\'s capture screen');
+    await cancelModal(await screen());
     check(true, '(f) a share never replaces an open capture draft; it opens after the draft closes');
 
     stored = core();
     check(stored.tasks.shared.length === 1 && ['link', 'note', 'typed', 'first', 'second', 'overDraft'].every((name) => stored.tasks[name].length === 0),
-        '(g) only the shared text was stored; the closed popups stored nothing');
-    check(entries('capture') >= 8 && entries('notice') >= 1 && entries('task') >= 1 && entries('screen') >= 5,
-        `(g) the entry-point log lines: capture ${entries('capture')}, notice ${entries('notice')}, task ${entries('task')}, screen ${entries('screen')}`);
+        '(g) only the shared text was stored; the closed screens stored nothing');
+    check(entries('captureModal') >= 7 && entries('capture') >= 1 && entries('notice') >= 1 && entries('task') >= 1 && entries('screen') >= 5,
+        `(g) the entry-point log lines: captureModal ${entries('captureModal')}, capture ${entries('capture')}, notice ${entries('notice')}, task ${entries('task')}, screen ${entries('screen')}`);
 
     // (h) A share that waits behind the editor survives a force-stop before it opened: the relaunch opens it.
     await link(`/open?task=${stored.tasks.shared[0].id}`, (current) => inEditor(current) && hasText(current, titles.shared), 'the shared task in the editor');
     share(titles.killed);
-    await holds((current) => inEditor(current) && !tagged(current, 'quick-capture'), 3_000, 'the editor');
+    await holds((current) => inEditor(current) && !tagged(current, 'capture-modal'), 3_000, 'the editor');
     sh(`am force-stop ${PKG}`);
     await sleep(1_000);
     device.launch(ACTIVITY);
-    nodes = await waitFor('the waiting share\'s popup after the relaunch', popup(titles.killed), 60_000);
-    await closePopup(nodes);
+    nodes = await waitFor('the waiting share\'s capture screen after the relaunch', modal(titles.killed), 60_000);
+    await cancelModal(nodes);
     stored = core();
-    check(stored.tasks.killed.length === 0 && entries('capture') >= 1, '(h) a share queued before a force-stop opens after the relaunch, once');
+    check(stored.tasks.killed.length === 0 && entries('captureModal') >= 1, '(h) a share queued before a force-stop opens after the relaunch, once');
     console.log('Entry points device check passed');
 } catch (error) {
     evidenced(error);
