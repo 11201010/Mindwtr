@@ -738,7 +738,11 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         assert.deepEqual(menuNames, [...table('MENU_COMMANDS').matchAll(/\n    (\w+): /g)].map((m) => m[1]).sort(), 'WriteJournal.MENU is host-entry\'s MENU_COMMANDS');
     }
     assert.match(journalKt, /if \(!fits\(method, args\) \|\| key\(method, args\) in UNJOURNALED\) return null/);
-    assert.match(journalKt, /log\(if \(file\.renameTo\(target\)\) "Native Android journal entry set aside \$\{file\.name\}" else "Native Android journal entry not moved aside \$\{file\.name\}"\)/);
+    assert.match(journalKt, /val moved = file\.renameTo\(target\)\s+log\(if \(moved\) "Native Android journal entry set aside \$\{file\.name\}" else "Native Android journal entry not moved aside \$\{file\.name\}"\)/);
+    // SHAPES is only the first filter: a replay core refuses as malformed (INVALID_INPUT, an unknown Menu command too) moves
+    // aside intact; a first send's refusal is dropped like any other.
+    assert.match(journalKt, /fun malformed\(error: String\?\): Boolean = error\?\.startsWith\("INVALID_INPUT"\) == true/);
+    assert.match(journalKt, /if \(replay && malformed\(error\)\) \{\s+if \(!moveAside\(entry\.file\)\) return false\s+\} else if \(!entry\.file\.delete\(\) && entry\.file\.exists\(\)\) \{/);
     // Never journaled: a write whose core command is in core's NATIVE_UNJOURNALED_COMMANDS (a payload that can carry a secret; the
     // names are receipt payloads' first elements). Each name leads, through the core write that builds that payload, to its journal
     // key (the host method, or a Menu command's name); WriteJournal.UNJOURNALED holds exactly those keys, and append skips them.
@@ -773,7 +777,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // callAsync journals before the engine call and settles after the reply; answer() is the only engine call, used by callAsync
     // and the replay; nothing else calls a host method.
     const callAsyncFn = coreHost.slice(coreHost.indexOf('private fun callAsync('), coreHost.indexOf('private fun answer('));
-    assert.match(callAsyncFn, /val entry = if \(method in WriteJournal\.WRITES\) checkNotNull\(journal\)\.append\(method, args\.toList\(\)\) else null[\s\S]*?val result = answer\(method, args, deadlineMs\)\s+if \(entry != null\) \{\s+debugDelay\("delay_after_ms"\)\s+journalStop\(stop, "after", entry\)\s+\}\s+if \(method in WriteJournal\.WRITES\) settle\(entry, result\)/);
+    assert.match(callAsyncFn, /val entry = if \(method in WriteJournal\.WRITES\) checkNotNull\(journal\)\.append\(method, args\.toList\(\)\) else null[\s\S]*?val result = answer\(method, args, deadlineMs\)\s+if \(entry != null\) \{\s+debugDelay\("delay_after_ms"\)\s+journalStop\(stop, "after", entry\)\s+\}\s+if \(method in WriteJournal\.WRITES\) settle\(entry, result, replay = false\)/);
     assert.match(callAsyncFn, /if \(entry != null\) \{\s+checkNotNull\(sqlite\)\.failCommits = debugFault\("fail_commit"\) == "1"\s+debugDelay\("delay_before_ms"\)\s+journalStop\(stop, "before", entry\)\s+\}/);
     assert.equal(coreHost.match(/\banswer\(/g).length, 3, 'answer(): its definition, callAsync and replayJournal');
     assert.equal(coreHost.match(/\bcall\(method, \*args\)/g).length, 1);
@@ -783,13 +787,13 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // Drop and keep: SAVE_FAILED keeps an entry, every other reply drops it; no reply (a throw) leaves it.
     assert.match(journalKt, /fun keeps\(error: String\?\): Boolean = error\?\.startsWith\("SAVE_FAILED"\) == true/);
     // An entry leaves (in memory too) only after its delete and the folder sync; a failed one stays for the next boot.
-    assert.match(journalKt, /fun settle\(entry: Entry, error: String\?\): Boolean \{\s+if \(keeps\(error\)\) return false\s+if \(!entry\.file\.delete\(\) && entry\.file\.exists\(\)\) \{\s+log\([^\n]*\)\s+return false\s+\}\s+try \{\s+syncDirectory\(dir\)\s+\} catch \(failure: Exception\) \{\s+log\([^\n]*\)\s+return false\s+\}\s+entries\.remove\(entry\)\s+return true/);
+    assert.match(journalKt, /fun settle\(entry: Entry, error: String\?, replay: Boolean = false\): Boolean \{\s+if \(keeps\(error\)\) return false\s+if \(replay && malformed\(error\)\) \{[\s\S]*?\} else if \(!entry\.file\.delete\(\) && entry\.file\.exists\(\)\) \{\s+log\([^\n]*\)\s+return false\s+\}\s+try \{\s+syncDirectory\(dir\)\s+\} catch \(failure: Exception\) \{\s+log\([^\n]*\)\s+return false\s+\}\s+entries\.remove\(entry\)\s+return true/);
     assert.match(journalKt, /entries\.firstOrNull \{ it\.text == text \}\?\.let \{ return it \}/, 'an owed retry reuses its entry');
     assert.match(journalKt, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(text\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)[\s\S]*?syncDirectory\(dir\)\s+return Entry/);
     // Replay: in journal order, one at a time, stopped by a kept entry or no reply; at boot after the validated load and the
     // language, before this boot hands the host to any screen (get() waits on the boot); a stop is the screens' owed retry.
     const replayFn = coreHost.slice(coreHost.indexOf('fun replayJournal()'), coreHost.indexOf('private fun journalStop('));
-    assert.match(replayFn, /for \(entry in journal\.pending\(\)\) \{[\s\S]*?answer\(entry\.method, entry\.args\.toTypedArray\(\), OPERATION_DEADLINE_MS\)\.also \{ if \(settle\(entry, it\)\) dropped \+= 1 \}\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
+    assert.match(replayFn, /for \(entry in journal\.pending\(\)\) \{[\s\S]*?answer\(entry\.method, entry\.args\.toTypedArray\(\), OPERATION_DEADLINE_MS\)\.also \{ if \(settle\(entry, it, replay = true\)\) dropped \+= 1 \}\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
     assert.match(replayFn, /Log\.i\(TAG, "Native Android journal replay sent=/);
     assert(coreHost.indexOf('journal = WriteJournal(journalDir') < coreHost.indexOf('engine.evaluate(bundle'));
     assert.match(owner, /private fun replay\(runtime: CoreHost\) \{\s+val replay = runtime\.replayJournal\(\)\s+replay\.owed\?\.let \{ return recordFailure\(PendingFailure\(FailedAction\("journal", ""\), it, null\)\) \}\s+\/\/[^\n]*\s+if \(replay\.left > 0\) return\s+runCatching \{ runtime\.pruneReceipts\(\) \}/);
@@ -805,7 +809,8 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     for (const name of ['entriesKeepTheirOrderAcrossAReopen', 'anEntryIsDurableBeforeAppendReturns', 'aWriteCutShortIsNeverAnEntry', 'anyFinalReplyDropsTheEntry',
         'saveFailedKeepsTheEntryAndItsRetryReusesIt', 'damagedOrUnknownEntriesMoveAsideAndAreNeverReplayed', 'onlyWriteMethodsAreJournaled', 'onlySaveFailedKeeps',
         'aJournalThatCannotBeListedRefusesToOpen', 'anAppendNeverReplacesAnEntryOnDisk', 'theSequenceResumesAfterTheHighestNameSeen',
-        'aDropIsDurableBeforeTheEntryLeaves', 'aDeleteThatFailsKeepsTheEntry', 'aDropWhoseFolderSyncFailsKeepsTheEntry', 'entriesThatNoLongerFitAWriteMoveAsideIntact']) {
+        'aDropIsDurableBeforeTheEntryLeaves', 'aDeleteThatFailsKeepsTheEntry', 'aDropWhoseFolderSyncFailsKeepsTheEntry', 'entriesThatNoLongerFitAWriteMoveAsideIntact',
+        'aReplayCoreRefusesAsMalformedMovesAsideIntact']) {
         assert.match(journalTest, new RegExp(`@Test fun ${name}\\(\\)`));
     }
 }
@@ -1831,7 +1836,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(settingsModel, /fun storeDeviceWrites\(prefs: SharedPreferences, writes: JSONArray\) \{[\s\S]*?check\(edit\.commit\(\)\) \{ "Cannot store the device settings" \}/);
     assert.match(settingsModel, /fun deviceWriter\(app: Context\): \(JSONArray\) -> Unit = \{ storeDeviceWrites\(app\.getSharedPreferences\(DEVICE_PREFS, Context\.MODE_PRIVATE\), it\) \}/);
     assert.match(model, /app\.getSharedPreferences\(DEVICE_PREFS, /);
-    assert.match(coreHost, /private fun settle\(entry: WriteJournal\.Entry\?, result: JSONObject\): Boolean \{\s+result\.optJSONObject\("value"\)\?\.optJSONArray\("deviceWrites"\)\?\.let\(deviceWrites\)\s+return entry != null && checkNotNull\(journal\)\.settle\(entry, result\.error\(\)\)/);
+    assert.match(coreHost, /private fun settle\(entry: WriteJournal\.Entry\?, result: JSONObject, replay: Boolean\): Boolean \{\s+result\.optJSONObject\("value"\)\?\.optJSONArray\("deviceWrites"\)\?\.let\(deviceWrites\)\s+return entry != null && checkNotNull\(journal\)\.settle\(entry, result\.error\(\), replay\)/);
     assert.equal(coreHost.match(/(?<!\.)\bsettle\(entry, /g).length, 2, 'settle(): the first send and the replay');
     assert.match(settingsModel, /runtime\.language\(prefs\.getString\(LANGUAGE_KEY, null\)\.orEmpty\(\), Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
     assert.match(model, /val runtime = ProcessCoreHost\.get\(getApplication\(\), prefs\.getString\(LANGUAGE_KEY, null\)\)\s+\/\/[^\n]*\s+applyDeviceChoices\(runtime, prefs\)/, 'the device\'s own language and theme apply at boot, before any screen');

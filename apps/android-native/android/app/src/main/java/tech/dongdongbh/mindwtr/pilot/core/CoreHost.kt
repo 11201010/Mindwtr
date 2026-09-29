@@ -360,7 +360,7 @@ class CoreHost(
             debugDelay("delay_after_ms")
             journalStop(stop, "after", entry)
         }
-        if (method in WriteJournal.WRITES) settle(entry, result)
+        if (method in WriteJournal.WRITES) settle(entry, result, replay = false)
         if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
         result.getJSONObject("value")
     }
@@ -388,13 +388,14 @@ class CoreHost(
     private fun JSONObject.error(): String? = if (getBoolean("ok")) null else getString("error")
 
     /**
-     * Core's reply to a write, on the first send and on the journal's replay alike: a success's deviceWrites (a setting's
-     * device-local part) are on disk first, then [entry] settles; true once it left the journal. A device write that fails
-     * throws before the entry settles, so the entry stays for a retry or the next boot.
+     * Core's reply to a write, on the first send and on the journal's [replay] alike: a success's deviceWrites (a setting's
+     * device-local part) are on disk first, then [entry] settles (a replay core refuses as malformed is set aside); true once
+     * it left the journal. A device write that fails throws before the entry settles, so the entry stays for a retry or the
+     * next boot.
      */
-    private fun settle(entry: WriteJournal.Entry?, result: JSONObject): Boolean {
+    private fun settle(entry: WriteJournal.Entry?, result: JSONObject, replay: Boolean): Boolean {
         result.optJSONObject("value")?.optJSONArray("deviceWrites")?.let(deviceWrites)
-        return entry != null && checkNotNull(journal).settle(entry, result.error())
+        return entry != null && checkNotNull(journal).settle(entry, result.error(), replay)
     }
 
     /** What one replay did: requests [sent], [dropped] after a final reply, entries [left], and the failure that stopped it. */
@@ -415,7 +416,7 @@ class CoreHost(
             sent += 1
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             val error = try {
-                answer(entry.method, entry.args.toTypedArray(), OPERATION_DEADLINE_MS).also { if (settle(entry, it)) dropped += 1 }.error()
+                answer(entry.method, entry.args.toTypedArray(), OPERATION_DEADLINE_MS).also { if (settle(entry, it, replay = true)) dropped += 1 }.error()
             } catch (failure: Throwable) {
                 owed = failure.message ?: failure.javaClass.simpleName
                 break

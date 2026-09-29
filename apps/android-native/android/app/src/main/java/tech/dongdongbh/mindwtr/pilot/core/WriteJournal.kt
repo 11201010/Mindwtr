@@ -62,6 +62,13 @@ class WriteJournal(
          * other reply is final (a success, changed or not, STALE_REVISION, INVALID_INPUT, NOT_FOUND and other refusals).
          */
         fun keeps(error: String?): Boolean = error?.startsWith("SAVE_FAILED") == true
+
+        /**
+         * A replay's reply that says the entry is not a request core takes (INVALID_INPUT, host-entry's unknown Menu command
+         * too): the entry is set aside intact, never deleted. [SHAPES] is only the first filter; this makes the check complete
+         * without copying core's schema. A first send's INVALID_INPUT is a refusal like any other.
+         */
+        fun malformed(error: String?): Boolean = error?.startsWith("INVALID_INPUT") == true
     }
 
     /** One journaled request: [text] is the file's exact contents, and two equal requests have equal texts. */
@@ -123,13 +130,16 @@ class WriteJournal(
     }
 
     /**
-     * Core's final reply for [entry] ([error] null for a success): the entry goes, unless the reply [keeps] it. True once it is
-     * gone. It leaves (in memory too) only after its delete and the folder sync: a delete or a sync that fails keeps it for the
-     * next boot's replay (core's crash-safe commands allow that), and no receipt it may need is pruned while it stays.
+     * Core's final reply for [entry] ([error] null for a success): the entry goes, unless the reply [keeps] it; a [replay] core
+     * refused as [malformed] goes to [ASIDE] instead. True once it is gone. It leaves (in memory too) only after its delete or
+     * move and the folder sync: one that fails keeps it for the next boot's replay (core's crash-safe commands allow that), and
+     * no receipt it may need is pruned while it stays.
      */
-    fun settle(entry: Entry, error: String?): Boolean {
+    fun settle(entry: Entry, error: String?, replay: Boolean = false): Boolean {
         if (keeps(error)) return false
-        if (!entry.file.delete() && entry.file.exists()) {
+        if (replay && malformed(error)) {
+            if (!moveAside(entry.file)) return false
+        } else if (!entry.file.delete() && entry.file.exists()) {
             log("Native Android journal entry not deleted ${entry.file.name}")
             return false
         }
@@ -179,12 +189,15 @@ class WriteJournal(
 
     private fun key(method: String, args: List<Any?>): Any? = if (method == "menuCommand") args.firstOrNull() else method
 
-    private fun moveAside(file: File) {
+    /** [file] moved into [ASIDE] as it is (never over a file there); true once it moved. */
+    private fun moveAside(file: File): Boolean {
         val aside = File(dir, ASIDE).apply { mkdirs() }
         var target = File(aside, file.name)
         var copy = 1
         while (target.exists()) target = File(aside, "${file.name}.${copy++}")
         // The file's name only: its request (a task's words) never reaches the log.
-        log(if (file.renameTo(target)) "Native Android journal entry set aside ${file.name}" else "Native Android journal entry not moved aside ${file.name}")
+        val moved = file.renameTo(target)
+        log(if (moved) "Native Android journal entry set aside ${file.name}" else "Native Android journal entry not moved aside ${file.name}")
+        return moved
     }
 }

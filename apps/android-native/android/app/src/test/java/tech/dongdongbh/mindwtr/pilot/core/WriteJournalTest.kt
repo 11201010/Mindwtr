@@ -199,6 +199,32 @@ class WriteJournalTest {
         assertFalse(logged.any { it.contains("secret-title") || it.contains("task-1") })
     }
 
+    // Verification 4: Kotlin's shapes are only a first filter. A replay core refuses as malformed (INVALID_INPUT, an unknown
+    // Menu command too) is not a request core takes: it moves aside intact, never deleted. A first send's refusal still drops.
+    @Test fun aReplayCoreRefusesAsMalformedMovesAsideIntact() {
+        val dir = File(folder.root, "journal")
+        // Fits the Kotlin shape (a request UUID and task ids) but lacks the taskRevisions core requires.
+        val move = """{"taskIds":["a"],"requestId":"r-5","sectionId":null}"""
+        val text = open(dir).append("menuCommand", listOf("somedayMove", move))!!.text
+        val journal = open(dir)
+        val entry = journal.pending().single()
+        assertTrue(journal.settle(entry, "INVALID_INPUT: taskRevisions are required", replay = true))
+        assertEquals(text, File(dir, "${WriteJournal.ASIDE}/${entry.file.name}").readText())
+        assertEquals(emptyList<String>(), names(dir))
+        assertEquals(emptyList<String>(), syncs.last())
+        assertEquals(emptyList<WriteJournal.Entry>(), journal.pending())
+        assertEquals(emptyList<WriteJournal.Entry>(), open(dir).pending())
+        // An unknown Menu command is host-entry's INVALID_INPUT too.
+        val retired = journal.append("menuCommand", listOf("bulkAction", bulk("r-6")))!!
+        assertTrue(journal.settle(retired, "INVALID_INPUT: no menu command bulkAction", replay = true))
+        assertTrue(File(dir, "${WriteJournal.ASIDE}/${retired.file.name}").exists())
+        // The first send's INVALID_INPUT is a refusal like any other: the entry goes.
+        val sent = journal.append("complete", listOf("task-1", "3:dev:2026"))!!
+        assertTrue(journal.settle(sent, "INVALID_INPUT: no"))
+        assertFalse(sent.file.exists())
+        assertFalse(File(dir, "${WriteJournal.ASIDE}/${sent.file.name}").exists())
+    }
+
     @Test fun onlySaveFailedKeeps() {
         assertTrue(WriteJournal.keeps("SAVE_FAILED: Injected commit failure"))
         for (error in listOf(null, "STALE_REVISION: x", "INVALID_INPUT: x", "ACTION_FAILED: x", "Incomplete tasks load")) assertFalse(WriteJournal.keeps(error))
