@@ -492,8 +492,8 @@ struct InboxScreen: View {
             Button { model.toggleFocusSection(key) } label: {
                 HStack(spacing: 10) {
                     Text(open ? "▾" : "▸").rnFont(12).frame(width: 14)
-                    Text(title.uppercased()).rnFont(12, .bold).tracking(1).lineLimit(2)
-                    Text("(\(count))").rnFont(12, .semibold)
+                    Text(title.uppercased()).rnFont(12, .bold, maxScale: 1.2).tracking(1).lineLimit(2)
+                    Text("(\(count))").rnFont(12, .semibold, maxScale: 1.2)
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(palette.secondary).frame(minHeight: 44).contentShape(Rectangle())
@@ -518,11 +518,12 @@ struct InboxScreen: View {
                         .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                         .frame(width: 24, height: 24).scaleEffect(15.0 / 24).frame(width: 15, height: 15)
                         .accessibilityHidden(true)
-                        Text(reorder.text("label")).rnFont(11, .bold)
+                        Text(reorder.text("label")).rnFont(11, .bold, maxScale: 1.2)
                     }
                     .foregroundStyle(palette.secondary).frame(minHeight: 36).padding(.horizontal, 6)
                 }
                 .buttonStyle(.plain).disabled(true)
+                .accessibilityIdentifier("focus-reorder-toggle")
             }
         }
         .padding(.top, first ? 8 : 18).padding(.bottom, 10)
@@ -770,7 +771,7 @@ struct InboxScreen: View {
                     .background(palette.captureBackground, in: RoundedRectangle(cornerRadius: 10))
                     .shadow(color: .black.opacity(0.10), radius: 4, y: 2)
                     .offset(y: -4)
-                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .frame(maxWidth: .infinity, minHeight: 56).contentShape(Rectangle())
             }
             .buttonStyle(.plain).disabled(!model.ready || model.busy || model.retryNeeded)
             .accessibilityLabel(model.label("nav.addTask"))
@@ -779,7 +780,7 @@ struct InboxScreen: View {
             Button { Task { await model.toggleMore() } } label: {
                 VStack(spacing: 2) {
                     AppIcon(name: "menu", size: model.morePresented ? 26 : 24).opacity(model.morePresented ? 1 : 0.65)
-                    Text(model.label("tab.menu")).rnFont(10, model.morePresented ? .bold : .semibold).lineLimit(1)
+                    Text(model.label("tab.menu")).rnFont(10, model.morePresented ? .bold : .semibold, maxScale: 1.15).lineLimit(1)
                 }
                 .foregroundStyle(model.morePresented ? palette.tint : palette.secondary)
                 .frame(maxWidth: .infinity, minHeight: 56).contentShape(Rectangle())
@@ -800,10 +801,10 @@ struct InboxScreen: View {
         return Button { if let surface { Task { await model.selectSurface(surface) } } } label: {
             VStack(spacing: 2) {
                 AppIcon(name: icon, size: selected ? 26 : 24).opacity(selected ? 1 : 0.65)
-                Text(label).rnFont(10, selected ? .bold : .semibold).lineLimit(1)
+                Text(label).rnFont(10, selected ? .bold : .semibold, maxScale: 1.15).lineLimit(1)
             }
             .foregroundStyle(selected ? palette.tint : palette.secondary)
-            .frame(maxWidth: .infinity, minHeight: 56)
+            .frame(maxWidth: .infinity, minHeight: 56).contentShape(Rectangle())
         }
         .buttonStyle(.plain).disabled(surface == nil || !model.ready || model.busy || model.retryNeeded)
         .accessibilityLabel(label)
@@ -824,7 +825,7 @@ struct InboxScreen: View {
         } } label: {
             VStack(spacing: 2) {
                 quickAccessIcon(selected: selected).opacity(selected ? 1 : 0.65)
-                Text(model.quickAccessLabel).rnFont(10, selected ? .bold : .semibold).lineLimit(1)
+                Text(model.quickAccessLabel).rnFont(10, selected ? .bold : .semibold, maxScale: 1.15).lineLimit(1)
             }
             .foregroundStyle(selected ? palette.tint : palette.secondary)
             .frame(maxWidth: .infinity, minHeight: 56).contentShape(Rectangle())

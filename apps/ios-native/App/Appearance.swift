@@ -60,16 +60,21 @@ extension Color {
 private struct RNFont: ViewModifier {
     @ScaledMetric var size: Double
     let weight: Font.Weight
-    init(size: Double, weight: Font.Weight) {
+    let maximumSize: Double?
+    init(size: Double, weight: Font.Weight, maxScale: Double?) {
         _size = ScaledMetric(wrappedValue: size, relativeTo: .body)
         self.weight = weight
+        maximumSize = maxScale.map { size * $0 }
     }
-    func body(content: Content) -> some View { content.font(.system(size: size, weight: weight)) }
+    func body(content: Content) -> some View {
+        content.font(.system(size: min(size, maximumSize ?? size), weight: weight))
+    }
 }
 
 extension View {
-    func rnFont(_ size: Double, _ weight: Font.Weight = .regular) -> some View {
-        modifier(RNFont(size: size, weight: weight))
+    // RN caps compact controls explicitly; reading content keeps full scaling.
+    func rnFont(_ size: Double, _ weight: Font.Weight = .regular, maxScale: Double? = nil) -> some View {
+        modifier(RNFont(size: size, weight: weight, maxScale: maxScale))
     }
 }
 

@@ -5697,6 +5697,47 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testFocusCompactLabelsNormal() { compactFocusLabels(library: "3f93f362-9eb7-4a5c-87f4-aee622376c17", largest: false) }
+    func testFocusCompactLabelsLargestText() { compactFocusLabels(library: "9248813b-29bc-4015-b2d1-8468b3cd8276", largest: true) }
+
+    private func compactFocusLabels(library: String, largest: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); boardEnabled(app.buttons["tab-focus"], timeout: 30)
+        boardTap(app, "tab-focus"); boardEnabled(app.buttons["focus-view-options"])
+        let heading = app.buttons["focus-section-focus"]
+        boardEnabled(heading)
+        XCTAssertEqual(heading.label, "Today's Focus · 1")
+        XCTAssertGreaterThanOrEqual(heading.frame.height, 44)
+        XCTAssertLessThanOrEqual(heading.frame.height, 60)
+        let reorder = app.buttons["focus-reorder-toggle"]
+        XCTAssertTrue(reorder.exists); XCTAssertFalse(reorder.isEnabled)
+        XCTAssertLessThanOrEqual(heading.frame.maxX, reorder.frame.minX)
+        let title = app.buttons["task-title-acc031d9-9cac-4296-8420-840bcd17a562"]
+        boardEnabled(title)
+        if largest { XCTAssertGreaterThan(title.frame.height, 60) }
+        for (id, label) in [("tab-focus", "Focus"), ("tab-inbox", "Inbox"), ("tab-review", "Review"), ("tab-menu", "Menu")] {
+            let tab = app.buttons[id]; boardEnabled(tab)
+            XCTAssertEqual(tab.label, label)
+            XCTAssertGreaterThanOrEqual(tab.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(tab.frame.height, 44)
+        }
+        let capture = app.buttons["capture-open"]; boardEnabled(capture)
+        XCTAssertGreaterThanOrEqual(capture.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(capture.frame.height, 44)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = largest ? "Compact labels and full-size task text" : "Normal Focus compact labels"
+        shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "tab-inbox"); boardEnabled(app.buttons["tab-review"])
+        boardTap(app, "tab-review"); boardEnabled(app.buttons["review-start"])
+        boardTap(app, "tab-focus"); boardEnabled(heading)
+        XCTAssertEqual(heading.value as? String, "Collapse")
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-focus"], timeout: 30)
+        boardTap(app, "tab-focus"); boardEnabled(heading)
+        XCTAssertEqual(heading.label, "Today's Focus · 1")
+        app.terminate()
+    }
+
     private func openTaskFocusTest(_ app: XCUIApplication) {
         boardEnabled(app.buttons["tab-focus"], timeout: 30); boardTap(app, "tab-focus")
         boardEnabled(app.buttons["focus-view-options"])
