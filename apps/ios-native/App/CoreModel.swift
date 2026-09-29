@@ -260,6 +260,10 @@ final class CoreModel: ObservableObject {
     @Published private(set) var referenceCurrent = false
     @Published private(set) var referenceError: String?
     @Published var referencePanel = ""
+    @Published private(set) var referenceSortOptions: CoreObject = [:]
+    @Published private(set) var referenceSortError: String?
+    private var referenceSortRequest: String?
+    private var referenceSortExpectedResult: CoreObject?
     @Published private(set) var referenceSearchText = ""
     @Published private(set) var referenceLocationText = ""
     @Published private(set) var referencePickerName = ""
@@ -435,6 +439,7 @@ final class CoreModel: ObservableObject {
     private var projectTagTestReadFailure = false
     private var projectViewTestReadFailures = 0
     private var projectFilterTestReadFailures = 0
+    private var referenceSortTestReadFailure = false
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -1210,6 +1215,7 @@ final class CoreModel: ObservableObject {
                     projectTagTestReadFailure = arguments.contains("--native-project-tag-read-failure")
                     projectViewTestReadFailures = arguments.contains("--native-project-view-read-failure") ? 2 : 0
                     projectFilterTestReadFailures = arguments.contains("--native-project-filter-read-failure") ? 2 : 0
+                    referenceSortTestReadFailure = arguments.contains("--native-reference-sort-read-failure")
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1294,6 +1300,8 @@ final class CoreModel: ObservableObject {
                 focusState = recovery.object("result").object("controls")
             } else if ["taskFocusCommit", "focusGroupWrite", "focusOrderCommit"].contains(recovery.text("method")) {
                 selectedSurface = .focus
+            } else if recovery.text("method") == "taskListSortWrite" {
+                selectedSurface = .reference
             } else if recovery.text("method") == "inboxPreparedCommit" {
                 // The durable data recovered, but the in-memory queue did not.
                 selectedSurface = .inbox
@@ -6399,8 +6407,84 @@ final class CoreModel: ObservableObject {
     }
 
     func closeReferencePanel() {
+        guard !busy, !retryNeeded, referenceSortRequest == nil else { return }
+        referenceSortOptions = [:]
+        referenceSortError = nil
         referencePanel = ""
         closeReferencePicker()
+    }
+
+    func openReferenceSort() async {
+        guard referenceActionsEnabled, referenceSortRequest == nil else { return }
+        referencePanel = "sort"
+        await readReferenceSortOptions()
+    }
+
+    private func readReferenceSortOptions() async {
+        guard !busy, !retryNeeded, referencePanel == "sort" else { return }
+        busy = true
+        referenceSortOptions = [:]
+        referenceSortError = nil
+        defer { finishOperation() }
+        do {
+            if !referenceCurrent, !(await readReference()) { throw CocoaError(.fileReadUnknown) }
+            let options = try await query("taskListSortOptions", ["{}"])
+            let expected = options.object("expected")
+            let choices = options.objects("choices")
+            guard Set(options.keys) == Set(["revision", "expected", "choices"]), !options.text("revision").isEmpty,
+                  Set(expected.keys) == Set(["sortBy"]), expected["sortBy"] is String || expected["sortBy"] is NSNull,
+                  !choices.isEmpty, Set(choices.map { $0.text("value") }).count == choices.count,
+                  choices.allSatisfy({ Set($0.keys) == Set(["value", "label", "selected"])
+                      && !$0.text("value").isEmpty && !$0.text("label").isEmpty && $0["selected"] is Bool }) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            referenceSortOptions = options
+        } catch { referenceSortError = label("settings.feedback.actionFailed") }
+    }
+
+    func setReferenceSort(_ sortBy: String) async {
+        guard referenceActionsEnabled, referencePanel == "sort", referenceSortRequest == nil,
+              referenceSortOptions.objects("choices").contains(where: { $0.text("value") == sortBy }) else { return }
+        busy = true
+        referenceSortError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "sortBy": sortBy,
+                                    "expected": referenceSortOptions.object("expected")])
+            referenceSortRequest = request
+            referenceSortExpectedResult = ["sortBy": sortBy]
+            try acknowledgeReferenceSort(await query("taskListSortWrite", [request]))
+            await readReference()
+        } catch { await handleReferenceSortError(error) }
+    }
+
+    private func acknowledgeReferenceSort(_ result: CoreObject) throws {
+        guard referenceSortRequest != nil, let expected = referenceSortExpectedResult,
+              try json(result).utf8.elementsEqual(json(expected).utf8) else { throw CocoaError(.coderReadCorrupt) }
+        referenceSortRequest = nil
+        referenceSortExpectedResult = nil
+        referenceSortOptions = [:]
+        referenceSortError = nil
+        referencePanel = ""
+        referenceLoadedDepth = pageSize
+        retryNeeded = false
+        error = nil
+    }
+
+    private func handleReferenceSortError(_ failure: Error) async {
+        if referenceSortRequest != nil && isDefiniteRejection(failure) {
+            referenceSortRequest = nil
+            referenceSortExpectedResult = nil
+            referenceSortOptions = [:]
+            retryNeeded = false
+            await readReference()
+        } else { retryNeeded = referenceSortRequest != nil }
+        referenceSortError = label(retryNeeded ? "settings.feedback.saveFailed" : "settings.feedback.actionFailed")
+    }
+
+    func retryReferenceSort() async {
+        if retryNeeded { await retry() }
+        else { await readReferenceSortOptions() }
     }
 
     func setReferenceOption(_ key: String, value: Any) async {
@@ -10518,6 +10602,14 @@ final class CoreModel: ObservableObject {
                 await readFocus(ownsOperation: true)
                 return
             }
+            if let request = referenceSortRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("taskListSortRetryOutcome", [request]) }
+                try acknowledgeReferenceSort(result)
+                await readReference()
+                return
+            }
             if let request = focusGroupRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -10727,6 +10819,10 @@ final class CoreModel: ObservableObject {
             }
             if focusOrderRequest != nil {
                 await handleFocusOrderError(error)
+                return
+            }
+            if referenceSortRequest != nil {
+                await handleReferenceSortError(error)
                 return
             }
             if focusGroupRequest != nil {
@@ -11498,6 +11594,10 @@ final class CoreModel: ObservableObject {
     private func query(_ method: String, _ args: [Any] = []) async throws -> CoreObject {
         guard let host else { throw CocoaError(.coderInvalidValue) }
         #if DEBUG && targetEnvironment(simulator)
+        if method == "taskListSortOptions", referenceSortTestReadFailure {
+            referenceSortTestReadFailure = false
+            throw CocoaError(.fileReadUnknown)
+        }
         if method == "menuRead", args.first as? String == "projectDetailFilterView",
            pendingProjectView != nil, projectViewTestReadFailures > 0 {
             projectViewTestReadFailures -= 1

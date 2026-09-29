@@ -2711,7 +2711,7 @@ final class FoundationUITests: XCTestCase {
         tap("menu-reference")
         tap("reference-overflow-button")
         XCTAssertTrue(app.buttons["reference-sort-action"].exists)
-        XCTAssertFalse(app.buttons["reference-sort-action"].isEnabled)
+        XCTAssertTrue(app.buttons["reference-sort-action"].isEnabled)
         tap("reference-filter-action")
         let filter = app.textFields["reference-filter-search"]
         XCTAssertTrue(filter.waitForExistence(timeout: 5))
@@ -5695,6 +5695,93 @@ final class FoundationUITests: XCTestCase {
         revealPagedElement(app, completed, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
         XCTAssertEqual(completed.value as? String, "Expand")
         app.terminate()
+    }
+
+    func testReferenceSortNormal() { referenceSortFlow(library: "92022107-8ca9-4b05-b6b4-b1d10f405b54") }
+    func testReferenceSortLargestText() { referenceSortFlow(library: "c25483f6-39b2-44d3-9e38-cb5af4cc7e78") }
+
+    private func openReferenceSortTest(_ app: XCUIApplication, recovered: Bool = false) {
+        if !recovered {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu")
+            let reference = app.buttons["menu-reference"]
+            if !reference.isHittable {
+                revealPagedElement(app, reference, in: app.scrollViews.containing(.button, identifier: "menu-projects").firstMatch)
+            }
+            boardTap(app, "menu-reference")
+        }
+        boardEnabled(app.buttons["reference-overflow-button"], timeout: 30)
+    }
+
+    private func referenceSortTap(_ app: XCUIApplication, _ id: String) {
+        let button = app.buttons[id]
+        if !button.isHittable, app.scrollViews["reference-panel-scroll"].exists {
+            revealPagedElement(app, button, in: app.scrollViews["reference-panel-scroll"])
+        }
+        boardEnabled(button); XCTAssertTrue(button.isHittable)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001); button.tap()
+    }
+
+    private func openReferenceSortChoices(_ app: XCUIApplication) {
+        boardTap(app, "reference-overflow-button"); boardTap(app, "reference-sort-action")
+        boardEnabled(app.buttons["reference-sort-default"])
+        XCTAssertFalse(app.buttons["reference-back"].isHittable)
+    }
+
+    private func referenceSortFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library, "--native-reference-sort-read-failure"]
+        app.launch(); openReferenceSortTest(app)
+        boardTap(app, "reference-overflow-button"); boardTap(app, "reference-sort-action")
+        XCTAssertTrue(app.staticTexts["reference-sort-error"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["reference-sort-default"].exists)
+        boardTap(app, "reference-sort-retry"); boardEnabled(app.buttons["reference-sort-default"])
+        XCTAssertTrue(app.buttons["reference-sort-default"].isSelected)
+        referenceSortTap(app, "reference-menu-close")
+        for choice in ["title", "title", "due", "start", "review", "timeEstimate", "created", "created-desc", "default", "title"] {
+            openReferenceSortChoices(app)
+            referenceSortTap(app, "reference-sort-" + choice)
+            boardEnabled(app.buttons["reference-overflow-button"])
+            XCTAssertFalse(app.staticTexts["reference-sort-error"].exists)
+        }
+        openReferenceSortChoices(app)
+        let title = app.buttons["reference-sort-title"]
+        if !title.isHittable { revealPagedElement(app, title, in: app.scrollViews["reference-panel-scroll"]) }
+        XCTAssertTrue(title.isSelected)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Reference saved Sort"
+        shot.lifetime = .keepAlways; add(shot)
+        referenceSortTap(app, "reference-menu-close")
+        boardTap(app, "reference-back"); openReferenceSortTest(app)
+        openReferenceSortChoices(app); XCTAssertTrue(title.isSelected)
+        referenceSortTap(app, "reference-menu-close")
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); openReferenceSortTest(app)
+        openReferenceSortChoices(app); XCTAssertTrue(title.isSelected)
+        referenceSortTap(app, "reference-menu-close"); app.terminate()
+    }
+
+    func testReferenceSortFailureKeepsExactRequest() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "09491429-1569-4dd0-9926-53c7e26f44d8"]
+        app.launch(); openReferenceSortTest(app); openReferenceSortChoices(app)
+        referenceSortTap(app, "reference-sort-title")
+        XCTAssertTrue(app.staticTexts["reference-sort-error"].waitForExistence(timeout: 15))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["reference-menu-close"].isEnabled)
+            XCTAssertFalse(app.buttons["reference-panel-back"].isEnabled)
+            XCTAssertFalse(app.buttons["reference-sort-default"].isEnabled)
+            referenceSortTap(app, "reference-sort-retry"); boardEnabled(app.buttons["reference-sort-retry"])
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Reference sort exact retry"
+        shot.lifetime = .keepAlways; add(shot); app.terminate()
+    }
+
+    func testReferenceSortColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "09491429-1569-4dd0-9926-53c7e26f44d8"]
+        app.launch(); openReferenceSortTest(app, recovered: true); openReferenceSortChoices(app)
+        XCTAssertTrue(app.buttons["reference-sort-title"].isSelected)
+        referenceSortTap(app, "reference-menu-close"); app.terminate()
+        app.launch(); openReferenceSortTest(app); openReferenceSortChoices(app)
+        XCTAssertTrue(app.buttons["reference-sort-title"].isSelected)
+        referenceSortTap(app, "reference-menu-close"); app.terminate()
     }
 
     func testFocusSavedFiltersNormal() { focusSavedFilterFlow(library: "0d96fc3d-f11b-4d95-b97d-ba470755e7f6") }

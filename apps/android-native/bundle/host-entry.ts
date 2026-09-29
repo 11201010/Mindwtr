@@ -870,6 +870,18 @@ globalThis.MindwtrHost = {
     areaDeleteCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedAreaDelete(JSON.parse(json))));
     },
+    taskListSortOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.getTaskListSortOptions(JSON.parse(json))); });
+    },
+    taskListSortValidate(json: string): string {
+        return submit(async () => unwrap(contract.validateTaskListSortWrite(JSON.parse(json))));
+    },
+    taskListSortWrite(json: string): string {
+        return submit(async () => unwrap(await contract.setTaskListSortChecked(JSON.parse(json))));
+    },
+    taskListSortRetryOutcome(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.probeTaskListSortOutcome(JSON.parse(json))); });
+    },
     focusGroupOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getFocusGroupOptions(JSON.parse(json))); });
     },

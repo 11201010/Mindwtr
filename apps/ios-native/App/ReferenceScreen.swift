@@ -191,32 +191,33 @@ struct ReferencePanel: View {
     let palette: AppPalette
     @FocusState private var focusedField: String?
     private var isFilter: Bool { model.referencePanel == "filters" }
+    private var isSort: Bool { model.referencePanel == "sort" }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: isFilter ? .bottom : .center) {
                 Button { close() } label: { Color.black.opacity(isFilter ? 0.35 : 0.28).contentShape(Rectangle()) }
                     .buttonStyle(.plain).ignoresSafeArea().accessibilityLabel(model.label("common.close"))
-                    .accessibilityIdentifier("reference-panel-dismiss")
+                    .accessibilityIdentifier("reference-panel-dismiss").disabled(model.busy || model.retryNeeded)
                 VStack(alignment: .leading, spacing: 0) {
                     if isFilter { filterControls }
                     else {
                         HStack(spacing: 8) {
-                            if model.referencePanel == "group" {
+                            if model.referencePanel == "group" || isSort {
                                 Button { model.referencePanel = "menu" } label: {
-                                    Text(model.label("common.back")).rnFont(13, .semibold).padding(.horizontal, 8).frame(minHeight: 44)
+                                    Text(model.label("common.back")).rnFont(13, .semibold).padding(.horizontal, 8).frame(minHeight: 44).contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain).foregroundStyle(palette.tint).accessibilityIdentifier("reference-panel-back")
+                                .buttonStyle(.plain).foregroundStyle(palette.tint).accessibilityIdentifier("reference-panel-back").disabled(model.busy || model.retryNeeded)
                             }
-                            Text(model.referencePanel == "group" ? model.reference.object("group").text("title") : model.label("taskEdit.moreOptions"))
+                            Text(isSort ? model.label("sort.label") : model.referencePanel == "group" ? model.reference.object("group").text("title") : model.label("taskEdit.moreOptions"))
                                 .rnFont(17, .bold).frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
-                            Button { close() } label: { AppIcon(name: "x", size: 20).frame(width: 44, height: 44) }
-                                .buttonStyle(.plain).accessibilityLabel(model.label("common.close")).accessibilityIdentifier("reference-menu-close")
+                            Button { close() } label: { AppIcon(name: "x", size: 20).frame(width: 44, height: 44).contentShape(Rectangle()) }
+                                .buttonStyle(.plain).accessibilityLabel(model.label("common.close")).accessibilityIdentifier("reference-menu-close").disabled(model.busy || model.retryNeeded)
                         }
                         .frame(minHeight: 44).padding(.bottom, 12)
                         ViewThatFits(in: .vertical) {
                             overflowContent.fixedSize(horizontal: false, vertical: true)
-                            ScrollView { overflowContent }
+                            ScrollView { overflowContent }.accessibilityIdentifier("reference-panel-scroll")
                         }
                     }
                 }
@@ -230,9 +231,10 @@ struct ReferencePanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
             .accessibilityAction(.escape) {
+                guard !model.busy, !model.retryNeeded else { return }
                 focusedField = nil
                 if !model.referencePickerName.isEmpty { model.closeReferencePicker() }
-                else if model.referencePanel == "group" { model.referencePanel = "menu" }
+                else if model.referencePanel == "group" || isSort { model.referencePanel = "menu" }
                 else { close() }
             }
         }
@@ -244,9 +246,26 @@ struct ReferencePanel: View {
                 overflowRow(title: model.label("filters.label"), selected: model.reference.flag("hasActiveFilters"),
                             icon: "sliders", id: "reference-filter-action") { model.referencePanel = "filters" }
                 overflowRow(title: model.label("sort.label"), value: model.reference.object("sort").text("label"),
-                            icon: "sort", id: "reference-sort-action", enabled: false) {}
+                            icon: "sort", id: "reference-sort-action") { Task { await model.openReferenceSort() } }
                 overflowRow(title: model.label("list.groupBy"), value: model.reference.object("group").text("label"),
                             icon: "folder", id: "reference-group-action") { model.referencePanel = "group" }
+            } else if isSort {
+                if let error = model.referenceSortError {
+                    Text(error).rnFont(13).foregroundStyle(palette.danger)
+                        .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("reference-sort-error")
+                    Button(model.label("common.retry")) { Task { await model.retryReferenceSort() } }
+                        .rnFont(15, .semibold).foregroundStyle(palette.tint).frame(minHeight: 44)
+                        .disabled(model.busy).accessibilityIdentifier("reference-sort-retry")
+                }
+                let choices = model.referenceSortOptions.objects("choices")
+                ForEach(choices.indices, id: \.self) { index in
+                    let option = choices[index]
+                    overflowRow(title: option.text("label"), selected: option.flag("selected"),
+                                id: "reference-sort-" + option.text("value")) {
+                        Task { await model.setReferenceSort(option.text("value")) }
+                    }
+                }
+                if model.busy { ProgressView().frame(maxWidth: .infinity).padding(12) }
             } else {
                 let options = model.reference.object("group").objects("options")
                 ForEach(options.indices, id: \.self) { index in

@@ -4903,6 +4903,233 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: journal), Data(encoded.utf8))
     }
 
+    private func taskListSortOptions(_ core: CoreHost) async throws -> [String: Any] {
+        try object(await core.call("taskListSortOptions", argumentsJSON: json(["{}"])))
+    }
+
+    private func taskListSortPayload(_ options: [String: Any], sortBy: String, id: String = UUID().uuidString.lowercased()) throws -> String {
+        try json([" \n" + json(["requestId": id, "sortBy": sortBy, "expected": try XCTUnwrap(options["expected"])]) + "\n "])
+    }
+
+    func testTaskListSortStoresOnlyGlobalPreferenceAndPreservesLegacyDefault() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        settings["taskSortBy"] = "completed"
+        settings["features"] = ["timeEstimates": false]
+        try writeCalendarPreferenceSettings(settings)
+        let tasks = try calendarPreferenceTasks()
+        let core = host()
+        _ = try await core.start()
+        let options = try await taskListSortOptions(core)
+        XCTAssertNotNil(options["revision"] as? String)
+        XCTAssertEqual((options["expected"] as? [String: Any])?["sortBy"] as? String, "completed")
+        let choices = try XCTUnwrap(options["choices"] as? [[String: Any]])
+        XCTAssertEqual(choices.filter { $0["selected"] as? Bool == true }.compactMap { $0["value"] as? String }, ["default"])
+        XCTAssertFalse(choices.contains { $0["value"] as? String == "timeEstimate" })
+        XCTAssertFalse(choices.contains { $0["value"] as? String == "completed" })
+        let payload = try taskListSortPayload(options, sortBy: "default")
+        let result = try object(await core.call("taskListSortWrite", argumentsJSON: payload))
+        XCTAssertEqual(try json(result), try json(["sortBy": "default"]))
+        settings["taskSortBy"] = "default"
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let same = try taskListSortPayload(try await taskListSortOptions(core), sortBy: "default")
+        let probed = try object(await core.call("taskListSortRetryOutcome", argumentsJSON: same))
+        XCTAssertEqual(try json(probed), try json(result))
+        let currentOptions = try await taskListSortOptions(core)
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("taskListSortWrite", argumentsJSON: try taskListSortPayload(currentOptions, sortBy: "timeEstimate")) }
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+        await core.close()
+        var absent = settings; absent.removeValue(forKey: "taskSortBy")
+        try writeCalendarPreferenceSettings(absent)
+        let reopened = host()
+        _ = try await reopened.start()
+        let missing = try await taskListSortOptions(reopened)
+        XCTAssertTrue((missing["expected"] as? [String: Any])?["sortBy"] is NSNull)
+        _ = try await reopened.call("taskListSortWrite", argumentsJSON: taskListSortPayload(missing, sortBy: "default"))
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+    }
+
+    func testTaskListSortFailedSaveColdReplayUsesExactRequestAndPreservesSiblings() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let payload = try taskListSortPayload(try await taskListSortOptions(core), sortBy: "due")
+        let before = try calendarPreferenceSettings()
+        let tasks = try calendarPreferenceTasks()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected sort COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("taskListSortWrite", argumentsJSON: payload) }
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "taskListSortWrite")
+        XCTAssertEqual(saved["argumentsJSON"] as? String, payload)
+        XCTAssertNil(saved["terminal"])
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(before))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        await core.close()
+
+        let recoveryFaults = HostIOFaults()
+        var diagnostics: [String] = []
+        recoveryFaults.commandDiagnostic = { diagnostics.append($0) }
+        let recovered = host(recoveryFaults)
+        let window = try object(await recovered.start())
+        let recovery = try XCTUnwrap(window["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "taskListSortWrite")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["sortBy": "due"]))
+        XCTAssertEqual(diagnostics, ["taskListSortSaved"])
+        var expected = before; expected["taskSortBy"] = "due"
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(expected))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        var writes = 0
+        recoveryFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+        let probed = try object(await recovered.call("taskListSortRetryOutcome", argumentsJSON: payload))
+        XCTAssertEqual(try json(probed), try json(["sortBy": "due"]))
+        XCTAssertEqual(writes, 0)
+    }
+
+    func testTaskListSortLostAcknowledgmentAfterSiblingEditDoesNotRewriteSettings() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let payload = try taskListSortPayload(try await taskListSortOptions(core), sortBy: "due")
+        var journalWrites = 0
+        faults.journalWrite = {
+            journalWrites += 1
+            if journalWrites == 2 { throw HostFailure("Injected sort lost acknowledgment") }
+        }
+        await expectFailure("lost acknowledgment") { _ = try await core.call("taskListSortWrite", argumentsJSON: payload) }
+        XCTAssertNil((try object(String(contentsOf: journal)))["terminal"])
+        await core.close()
+        var changed = try calendarPreferenceSettings()
+        changed["timeFormat"] = "24h"
+        try writeCalendarPreferenceSettings(changed)
+        let tasks = try calendarPreferenceTasks()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+        let replay = host(replayFaults)
+        let window = try object(await replay.start())
+        XCTAssertEqual((window["recovery"] as? [String: Any])?["method"] as? String, "taskListSortWrite")
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(changed))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTaskListSortTerminalCleanupRestartDoesNotRepeatSave() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let payload = try taskListSortPayload(try await taskListSortOptions(core), sortBy: "title")
+        faults.journalRemove = { throw HostFailure("Injected sort cleanup failure") }
+        await expectFailure("cleanup failure") { _ = try await core.call("taskListSortWrite", argumentsJSON: payload) }
+        XCTAssertNotNil((try object(String(contentsOf: journal)))["terminal"])
+        await core.close()
+        var changed = try calendarPreferenceSettings()
+        XCTAssertEqual(changed["taskSortBy"] as? String, "title")
+        changed["timeFormat"] = "24h"
+        try writeCalendarPreferenceSettings(changed)
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+        let replay = host(replayFaults)
+        let window = try object(await replay.start())
+        XCTAssertEqual((window["recovery"] as? [String: Any])?["method"] as? String, "taskListSortWrite")
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(changed))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTaskListSortColdReplayRefusesNewerRawValueWithoutWrite() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let payload = try taskListSortPayload(try await taskListSortOptions(core), sortBy: "due")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected sort COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("taskListSortWrite", argumentsJSON: payload) }
+        let frozen = try Data(contentsOf: journal)
+        await core.close()
+        var changed = try calendarPreferenceSettings()
+        changed["taskSortBy"] = "title"
+        try writeCalendarPreferenceSettings(changed)
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+        let replay = host(replayFaults)
+        await expectFailure("STALE_REVISION") { _ = try await replay.start() }
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try Data(contentsOf: journal), frozen)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(changed))
+    }
+
+    func testTaskListSortReplayRecognizesAppliedTargetAfterFeatureDisabled() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let payload = try taskListSortPayload(try await taskListSortOptions(core), sortBy: "timeEstimate")
+        var journalWrites = 0
+        faults.journalWrite = {
+            journalWrites += 1
+            if journalWrites == 2 { throw HostFailure("Injected sort lost acknowledgment") }
+        }
+        await expectFailure("lost acknowledgment") { _ = try await core.call("taskListSortWrite", argumentsJSON: payload) }
+        await core.close()
+        var changed = try calendarPreferenceSettings()
+        XCTAssertEqual(changed["taskSortBy"] as? String, "timeEstimate")
+        changed["features"] = ["timeEstimates": false]
+        try writeCalendarPreferenceSettings(changed)
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+        let replay = host(replayFaults)
+        let window = try object(await replay.start())
+        XCTAssertEqual((window["recovery"] as? [String: Any])?["method"] as? String, "taskListSortWrite")
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(changed))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTaskListSortMalformedTransportAndForgedJournalRejectBeforeSQLite() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try await taskListSortOptions(core)
+        let payload = try taskListSortPayload(options, sortBy: "due")
+        var sql = 0, journalWrites = 0
+        faults.beforeSQL = { _ in sql += 1 }
+        faults.journalWrite = { journalWrites += 1 }
+        let malformed = try ["{", json(["unexpected": true]), json(["sortBy": "default"]),
+                             json(["requestId": UUID().uuidString, "sortBy": "completed", "expected": options["expected"] ?? NSNull()])]
+            + [String(repeating: "x", count: 4097)]
+        for input in malformed {
+            await expectFailure() { _ = try await core.call("taskListSortWrite", argumentsJSON: try json([input])) }
+        }
+        XCTAssertEqual(sql, 0); XCTAssertEqual(journalWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String])
+        var request = try object(XCTUnwrap(args.first))
+        request["settings"] = ["taskSortBy": "title"]
+        let forged = try json(["version": 2, "method": "taskListSortWrite", "argumentsJSON": json([json(request)])] as [String: Any])
+        try Data(forged.utf8).write(to: journal)
+        let replayFaults = HostIOFaults()
+        var replaySQL = 0
+        replayFaults.beforeSQL = { _ in replaySQL += 1 }
+        let replay = host(replayFaults)
+        await expectFailure("INVALID_INPUT") { _ = try await replay.start() }
+        XCTAssertEqual(replaySQL, 0)
+        XCTAssertEqual(try Data(contentsOf: journal), Data(forged.utf8))
+    }
+
     func testCalendarPreferencesDefaultsAndThreeFieldRoundTripPreserveTasksAndSettings() async throws {
         try await seedCalendarPreferenceTask()
         let faults = HostIOFaults()
