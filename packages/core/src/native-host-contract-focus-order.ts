@@ -4,6 +4,7 @@ import { readNativeFocusControls, type NativeFocusReorderRow } from './native-ho
 import { NATIVE_HOST_MAX_WINDOW, type NativeHostResult } from './native-host-contract';
 import { detach, exact, iso, record } from './native-host-contract-project-shared';
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
+import { taskRevisionOf } from './native-request-receipts';
 import { ensureDeviceId } from './store-helpers';
 import { focusOrderEffect, focusOrderToken } from './store-tasks';
 import { useTaskStore } from './store';
@@ -128,7 +129,7 @@ export function createFocusOrderMethods(deps: {
                 return fail('INVALID_INPUT', 'Focus order exceeds the bounded native list');
             const available = model.canReorder;
             const rows = available ? tasks.map((task, index) => ({
-                id: task.id, title: task.title,
+                id: task.id, taskRevision: taskRevisionOf(task), title: task.title,
                 secondaryLabel: getFocusReorderSecondaryLabel(task, model.projectById, deps.formatDate),
                 positionLabel: getFocusReorderPositionLabel(deps.t(), task.title, index, tasks.length),
                 moveUp: moveFocusReorderTask(tasks, task.id, -1)?.map(({ id }) => id) ?? null,

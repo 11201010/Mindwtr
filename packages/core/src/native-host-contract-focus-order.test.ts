@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_FOCUS_CONTROL_STATE } from './focus-controls';
 import { createFocusOrderMethods, type NativeFocusOrderRequest } from './native-host-contract-focus-order';
+import { taskRevisionOf } from './native-request-receipts';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppData, Project, Task } from './types';
 
@@ -61,6 +62,7 @@ describe('prepared Focus order', () => {
         expect(options.value).toMatchObject({ revision: 'revision', canReorder: true,
             rows: [{ id: 'a', moveUp: null, moveDown: ['b', 'a', 'c'] },
                 { id: 'b', moveUp: ['b', 'a', 'c'] }, { id: 'c', moveDown: null }] });
+        expect(options.value.rows[0].taskRevision).toBe(taskRevisionOf(useTaskStore.getState()._allTasks[0]));
         const request = host.request(['b', 'a', 'c']);
         const planned = host.methods.prepareFocusOrder(request);
         if (!planned.ok || planned.value.kind !== 'prepared') throw new Error(JSON.stringify(planned));
