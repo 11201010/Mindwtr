@@ -5205,6 +5205,330 @@ final class CoreHostTests: XCTestCase {
         try json([json(["requestId": id, "title": title, "expected": XCTUnwrap(options["expected"])])])
     }
 
+    private func somedaySectionTaskPayload(_ core: CoreHost, title: String, sectionId: String? = nil,
+                                           id: String = UUID().uuidString.lowercased()) async throws -> String {
+        let request: [String: Any] = ["requestId": id, "title": title, "sectionId": (sectionId as Any?) ?? NSNull()]
+        let response = try object(await core.call("somedaySectionTaskPrepare", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(response["kind"] as? String, "prepared")
+        let prepared = try XCTUnwrap(response["prepared"] as? [String: Any])
+        return try json([json(["request": request, "prepared": prepared])])
+    }
+
+    func testSomedaySectionTaskCreatesLiteralTaskInNamedAndNoSection() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var views = gtd["viewSections"] as? [String: Any] ?? [:]
+        views["someday"] = [["id": "later-zone", "title": "Later zone", "order": 0]]
+        gtd["viewSections"] = views
+        gtd["defaultAreaMode"] = "fixed"
+        gtd["defaultAreaId"] = "someday-default-area"
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("INSERT INTO areas (id, name, orderNum, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["someday-default-area", "Home", 0, "2026-01-01T12:00:00.000Z", "2026-01-01T12:00:00.000Z", 1]))
+        sqlite.close()
+        let before = try calendarPreferenceTasks()
+        let faults = HostIOFaults()
+        var saved: [String] = []
+        faults.commandDiagnostic = { saved.append($0) }
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try object(await core.call("somedaySectionTaskOptions", argumentsJSON: json([json(["sectionId": "later-zone"])])))
+        XCTAssertEqual(options["sectionId"] as? String, "later-zone")
+        XCTAssertEqual(options["groupTitle"] as? String, "Later zone")
+        let namedID = UUID().uuidString.lowercased()
+        let named = try await somedaySectionTaskPayload(core, title: "  Call @home #soon tomorrow  ", sectionId: "later-zone", id: namedID)
+        let namedResult = try object(await core.call("somedaySectionTaskCommit", argumentsJSON: named))
+        XCTAssertEqual(namedResult["id"] as? String, namedID)
+        let task = try storedTask(namedID)
+        XCTAssertEqual(task["title"] as? String, "Call @home #soon tomorrow")
+        XCTAssertEqual(task["status"] as? String, "someday")
+        XCTAssertEqual(task["projectId"] as? String, nil)
+        XCTAssertEqual(task["areaId"] as? String, "someday-default-area")
+        let sectionIds = try object(XCTUnwrap(task["viewSectionIds"] as? String))
+        XCTAssertEqual(sectionIds["someday"] as? String, "later-zone")
+        let plainID = UUID().uuidString.lowercased()
+        let plain = try await somedaySectionTaskPayload(core, title: "  Plain task  ", id: plainID)
+        let plainResult = try object(await core.call("somedaySectionTaskCommit", argumentsJSON: plain))
+        XCTAssertEqual(plainResult["id"] as? String, plainID)
+        let plainTask = try storedTask(plainID)
+        XCTAssertEqual(plainTask["title"] as? String, "Plain task")
+        XCTAssertEqual(plainTask["status"] as? String, "someday")
+        XCTAssertEqual(plainTask["areaId"] as? String, "someday-default-area")
+        XCTAssertFalse((plainTask["viewSectionIds"] as? String ?? "").contains("later-zone"))
+        XCTAssertEqual(saved.filter { $0 == "somedaySectionTaskSaved" }.count, 2)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+        XCTAssertTrue(try calendarPreferenceTasks().contains("Preserved preference task"))
+        XCTAssertTrue(before.contains("Preserved preference task"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testSomedaySectionTaskFailedSaveColdReplayUsesExactFrozenEnvelope() async throws {
+        try await seedCalendarPreferenceTask()
+        var initial = try calendarPreferenceSettings()
+        var initialGtd = initial["gtd"] as? [String: Any] ?? [:]
+        initialGtd["defaultAreaMode"] = "fixed"
+        initialGtd["defaultAreaId"] = "frozen-area"
+        initial["gtd"] = initialGtd
+        try writeCalendarPreferenceSettings(initial)
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("INSERT INTO areas (id, name, orderNum, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["frozen-area", "Before", 0, "2026-01-01T12:00:00.000Z", "2026-01-01T12:00:00.000Z", 1]))
+        sqlite.close()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let id = UUID().uuidString.lowercased()
+        let payload = try await somedaySectionTaskPayload(writer, title: "  Frozen task  ", id: id)
+        let requestEnvelope = try object(XCTUnwrap((JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String])?.first))
+        let frozenTime = try XCTUnwrap((requestEnvelope["prepared"] as? [String: Any])?["preparedAt"] as? String)
+        let before = try calendarPreferenceTasks()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Someday task COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("somedaySectionTaskCommit", argumentsJSON: payload) }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        let frozen = try Data(contentsOf: journal)
+        XCTAssertEqual((try object(String(decoding: frozen, as: UTF8.self)))["argumentsJSON"] as? String, payload)
+        XCTAssertEqual(try calendarPreferenceTasks(), before)
+        await writer.close()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        gtd["defaultAreaMode"] = "none"
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let recovery = host()
+        let window = try object(await recovery.start())
+        XCTAssertEqual((window["recovery"] as? [String: Any])?["method"] as? String, "somedaySectionTaskCommit")
+        XCTAssertEqual((window["recovery"] as? [String: Any]).flatMap { ($0["result"] as? [String: Any])?["id"] as? String }, id)
+        XCTAssertEqual(try storedTask(id)["title"] as? String, "Frozen task")
+        XCTAssertEqual(try storedTask(id)["areaId"] as? String, "frozen-area")
+        XCTAssertEqual(try storedTask(id)["createdAt"] as? String, frozenTime)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let probed = try object(await recovery.call("somedaySectionTaskRetryOutcome", argumentsJSON: payload))
+        XCTAssertEqual(probed["id"] as? String, id)
+        let absent = try await recovery.retryPending()
+        XCTAssertNil(absent)
+    }
+
+    func testSomedaySectionTaskLostAckAndChangedTargetRefuseReplay() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let id = UUID().uuidString.lowercased()
+        let payload = try await somedaySectionTaskPayload(writer, title: "Original", id: id)
+        var journalWrites = 0
+        faults.journalWrite = {
+            journalWrites += 1
+            if journalWrites == 2 { throw HostFailure("Injected Someday task lost acknowledgment") }
+        }
+        await expectFailure("lost acknowledgment") { _ = try await writer.call("somedaySectionTaskCommit", argumentsJSON: payload) }
+        XCTAssertEqual(try storedTask(id)["title"] as? String, "Original")
+        await writer.close()
+        let replayFaults = HostIOFaults()
+        var taskWrites = 0
+        replayFaults.beforeSQL = { if $0.hasPrefix("INSERT INTO tasks") || $0.hasPrefix("UPDATE tasks") { taskWrites += 1 } }
+        let replay = host(replayFaults)
+        let window = try object(await replay.start())
+        XCTAssertEqual((window["recovery"] as? [String: Any])?["method"] as? String, "somedaySectionTaskCommit")
+        XCTAssertEqual(taskWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await replay.close()
+
+        let terminalFaults = HostIOFaults()
+        let second = host(terminalFaults)
+        _ = try await second.start()
+        let changedID = UUID().uuidString.lowercased()
+        let changed = try await somedaySectionTaskPayload(second, title: "Change me", id: changedID)
+        terminalFaults.journalRemove = { throw HostFailure("Injected Someday task cleanup failure") }
+        await expectFailure("cleanup failure") { _ = try await second.call("somedaySectionTaskCommit", argumentsJSON: changed) }
+        let frozen = try Data(contentsOf: journal)
+        XCTAssertNotNil((try object(String(decoding: frozen, as: UTF8.self)))["terminal"])
+        await second.close()
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE tasks SET title = ? WHERE id = ?", parametersJSON: json(["Changed later", changedID]))
+        sqlite.close()
+        let blockedFaults = HostIOFaults()
+        var blockedWrites = 0
+        blockedFaults.beforeSQL = { if $0.hasPrefix("INSERT INTO tasks") || $0.hasPrefix("UPDATE tasks") { blockedWrites += 1 } }
+        let blocked = host(blockedFaults)
+        await expectFailure("STALE_REVISION") { _ = try await blocked.start() }
+        XCTAssertEqual(blockedWrites, 0)
+        XCTAssertEqual(try storedTask(changedID)["title"] as? String, "Changed later")
+        try assertJournalContentUnchanged(frozen)
+    }
+
+    func testSomedaySectionTaskColdJournalRefusesMalformedBeforeSQLite() async throws {
+        try await seedCalendarPreferenceTask()
+        let writer = host()
+        _ = try await writer.start()
+        let payload = try await somedaySectionTaskPayload(writer, title: "Original")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String])
+        var envelope = try object(XCTUnwrap(args.first))
+        var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        var task = try XCTUnwrap(prepared["task"] as? [String: Any])
+        task["title"] = "forged"
+        prepared["task"] = task
+        envelope["prepared"] = prepared
+        await writer.close()
+        let malformed = try json(["version": 2, "method": "somedaySectionTaskCommit",
+                                  "argumentsJSON": json([json(envelope)])] as [String: Any])
+        try Data(malformed.utf8).write(to: journal)
+        let faults = HostIOFaults()
+        var sql = 0
+        faults.beforeSQL = { _ in sql += 1 }
+        let blocked = host(faults)
+        await expectFailure("INVALID_INPUT") { _ = try await blocked.start() }
+        XCTAssertEqual(sql, 0)
+        XCTAssertEqual(try Data(contentsOf: journal), Data(malformed.utf8))
+        await blocked.close()
+        let forged = try json(["version": 2, "method": "somedaySectionTaskCommit",
+                               "argumentsJSON": payload,
+                               "terminal": ["success": ["_0": json(["id": UUID().uuidString.lowercased()])]]] as [String: Any])
+        try Data(forged.utf8).write(to: journal)
+        let ackFaults = HostIOFaults()
+        var ackSQL = 0
+        ackFaults.beforeSQL = { _ in ackSQL += 1 }
+        let ackHost = host(ackFaults)
+        await expectFailure("acknowledgment") { _ = try await ackHost.start() }
+        XCTAssertEqual(ackSQL, 0)
+        XCTAssertEqual(try Data(contentsOf: journal), Data(forged.utf8))
+        await ackHost.close()
+        let oversized = try json(["version": 2, "method": "somedaySectionTaskCommit",
+                                  "argumentsJSON": json([String(repeating: "x", count: 1_000_001)])] as [String: Any])
+        try Data(oversized.utf8).write(to: journal)
+        let sizeFaults = HostIOFaults()
+        var sizeSQL = 0
+        sizeFaults.beforeSQL = { _ in sizeSQL += 1 }
+        let sizeHost = host(sizeFaults)
+        await expectFailure("INVALID_INPUT") { _ = try await sizeHost.start() }
+        XCTAssertEqual(sizeSQL, 0)
+        XCTAssertEqual(try Data(contentsOf: journal), Data(oversized.utf8))
+    }
+
+    func testSomedaySectionTaskColdFirstApplyRefusesChangedSection() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var views = gtd["viewSections"] as? [String: Any] ?? [:]
+        views["someday"] = [["id": "chosen", "title": "Original", "order": 0]]
+        gtd["viewSections"] = views
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let writer = host()
+        _ = try await writer.start()
+        let id = UUID().uuidString.lowercased()
+        let payload = try await somedaySectionTaskPayload(writer, title: "Deferred", sectionId: "chosen", id: id)
+        await writer.close()
+        let pending = try json(["version": 2, "method": "somedaySectionTaskCommit", "argumentsJSON": payload] as [String: Any])
+        try Data(pending.utf8).write(to: journal)
+        views["someday"] = [["id": "chosen", "title": "Renamed", "order": 0]]
+        gtd["viewSections"] = views
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let before = try calendarPreferenceTasks()
+        let faults = HostIOFaults()
+        var taskWrites = 0
+        faults.beforeSQL = { if $0.hasPrefix("INSERT INTO tasks") || $0.hasPrefix("UPDATE tasks") { taskWrites += 1 } }
+        let blocked = host(faults)
+        await expectFailure("STALE_REVISION") { _ = try await blocked.start() }
+        XCTAssertEqual(taskWrites, 0)
+        XCTAssertEqual(try calendarPreferenceTasks(), before)
+        try assertJournalContentUnchanged(Data(pending.utf8))
+    }
+
+    func testSomedaySectionTaskRetryOutcomeRejectsForgedID() async throws {
+        try await seedCalendarPreferenceTask()
+        let writer = host()
+        _ = try await writer.start()
+        let payload = try await somedaySectionTaskPayload(writer, title: "Saved")
+        _ = try await writer.call("somedaySectionTaskCommit", argumentsJSON: payload)
+        await writer.close()
+        let forgedValue = try json(["id": UUID().uuidString.lowercased()])
+        let source = try dateBundle(at: "2026-09-29T12:00:00.000Z", suffix: """
+        (() => {
+            const original = MindwtrHost.somedaySectionTaskRetryOutcome, poll = MindwtrHost.poll;
+            const tickets = new Set();
+            MindwtrHost.somedaySectionTaskRetryOutcome = function (json) {
+                const ticket = original(json); tickets.add(ticket); return ticket;
+            };
+            MindwtrHost.poll = function (id) {
+                const raw = poll(id);
+                if (!raw || !tickets.has(id)) return raw;
+                const result = JSON.parse(raw);
+                if (result.ok) result.value = \(forgedValue);
+                return JSON.stringify(result);
+            };
+        })();
+        """)
+        let faults = HostIOFaults()
+        let reader = host(faults, bundleURL: source)
+        _ = try await reader.start()
+        var taskWrites = 0
+        faults.beforeSQL = { if $0.hasPrefix("INSERT INTO tasks") || $0.hasPrefix("UPDATE tasks") { taskWrites += 1 } }
+        await expectFailure("acknowledgment") {
+            _ = try await reader.call("somedaySectionTaskRetryOutcome", argumentsJSON: payload)
+        }
+        XCTAssertEqual(taskWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testSomedaySectionTaskCommitRequiresThisHostPreparedEnvelope() async throws {
+        try await seedCalendarPreferenceTask()
+        let baseline = try calendarPreferenceSettings()
+        let actualDevice = try XCTUnwrap(baseline["deviceId"] as? String)
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("INSERT INTO areas (id, name, orderNum, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["forged-default-area", "Old default", 0,
+                                                     "2026-01-01T12:00:00.000Z", "2026-01-01T12:00:00.000Z", 1]))
+        sqlite.close()
+        var oldSettings = baseline
+        var oldGtd = oldSettings["gtd"] as? [String: Any] ?? [:]
+        oldGtd["defaultAreaMode"] = "fixed"
+        oldGtd["defaultAreaId"] = "forged-default-area"
+        oldSettings["gtd"] = oldGtd
+        oldSettings["deviceId"] = "forged-device"
+        try writeCalendarPreferenceSettings(oldSettings)
+        let oldBundle = try dateBundle(at: "2001-01-01T00:00:00.000Z")
+        let oldHost = host(bundleURL: oldBundle)
+        _ = try await oldHost.start()
+        let id = UUID().uuidString.lowercased()
+        let oldEnvelope = try await somedaySectionTaskPayload(oldHost, title: "Pinned metadata", id: id)
+        await oldHost.close()
+        try writeCalendarPreferenceSettings(baseline)
+
+        let faults = HostIOFaults()
+        var taskWrites = 0, journalWrites = 0
+        faults.beforeSQL = { if $0.hasPrefix("INSERT INTO tasks") || $0.hasPrefix("UPDATE tasks") { taskWrites += 1 } }
+        faults.journalWrite = { journalWrites += 1 }
+        let current = host(faults)
+        _ = try await current.start()
+        taskWrites = 0; journalWrites = 0
+        await expectFailure("INVALID_INPUT") { _ = try await current.call("somedaySectionTaskCommit", argumentsJSON: oldEnvelope) }
+        XCTAssertEqual(taskWrites, 0); XCTAssertEqual(journalWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let actualEnvelope = try await somedaySectionTaskPayload(current, title: "Pinned metadata", id: id)
+        let oldInput = try object(XCTUnwrap((JSONSerialization.jsonObject(with: Data(oldEnvelope.utf8)) as? [String])?.first))
+        let actualInput = try object(XCTUnwrap((JSONSerialization.jsonObject(with: Data(actualEnvelope.utf8)) as? [String])?.first))
+        let oldPrepared = try XCTUnwrap(oldInput["prepared"] as? [String: Any])
+        let actualPrepared = try XCTUnwrap(actualInput["prepared"] as? [String: Any])
+        XCTAssertEqual(oldPrepared["deviceId"] as? String, "forged-device")
+        XCTAssertEqual(actualPrepared["deviceId"] as? String, actualDevice)
+        XCTAssertEqual((oldPrepared["selectedArea"] as? [String: Any])?["id"] as? String, "forged-default-area")
+        XCTAssertTrue(actualPrepared["selectedArea"] is NSNull)
+        XCTAssertNotEqual(oldPrepared["preparedAt"] as? String, actualPrepared["preparedAt"] as? String)
+        await expectFailure("INVALID_INPUT") { _ = try await current.call("somedaySectionTaskCommit", argumentsJSON: oldEnvelope) }
+        XCTAssertEqual(taskWrites, 0); XCTAssertEqual(journalWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let accepted = try object(await current.call("somedaySectionTaskCommit", argumentsJSON: actualEnvelope))
+        XCTAssertEqual(accepted["id"] as? String, id)
+        XCTAssertEqual(try storedTask(id)["revBy"] as? String, actualDevice)
+        XCTAssertNil(try storedTask(id)["areaId"] as? String)
+        XCTAssertEqual(try storedTask(id)["createdAt"] as? String, actualPrepared["preparedAt"] as? String)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
     func testSomedaySectionCreatePreservesRawSettingsAndExistingTitleDoesNotWrite() async throws {
         try await seedCalendarPreferenceTask()
         var before = try calendarPreferenceSettings()

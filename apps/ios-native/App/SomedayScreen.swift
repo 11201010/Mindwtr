@@ -27,10 +27,26 @@ struct SomedayScreen: View {
                                          showDetails: model.someday.flag("showDetails"))
                                     .id(item.object("row").text("id"))
                             } else if item.text("type") == "heading" {
-                                Text(item.text("title")).rnFont(13, .bold)
-                                    .foregroundStyle(item.flag("muted") ? palette.secondary : palette.text)
-                                    .padding(.top, 14).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
-                                    .accessibilityIdentifier("someday-heading-" + item.text("id"))
+                                HStack(spacing: 8) {
+                                    Text(item.text("title")).rnFont(13, .bold)
+                                        .foregroundStyle(item.flag("muted") ? palette.secondary : palette.text)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .accessibilityAddTraits(.isHeader)
+                                        .accessibilityIdentifier("someday-heading-" + item.text("id"))
+                                    let addTask = item.object("addTask")
+                                    if !addTask.isEmpty {
+                                        Button {
+                                            Task { await model.openSomedaySectionTask(addTask) }
+                                        } label: {
+                                            AppIcon(name: "plus", size: 18).frame(width: 44, height: 44)
+                                                .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain).disabled(!model.somedayActionsEnabled)
+                                        .accessibilityLabel(addTask.text("accessibilityLabel"))
+                                        .accessibilityIdentifier("someday-section-add-task-" + item.text("id"))
+                                    }
+                                }
+                                .padding(.top, 14).padding(.bottom, 4)
                             }
                         }
                         if items.count < model.someday.number("total") {
@@ -179,11 +195,13 @@ struct SomedayScreen: View {
 struct SomedayPanel: View {
     @FocusState private var focusedField: String?
     @State private var createFocusedOnce = false
+    @State private var taskFocusedOnce = false
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     private var menu: CoreObject { model.someday.object("menu") }
     private var isFilter: Bool { model.somedayPanel == "filters" }
     private var isCreate: Bool { model.somedayPanel == "newSection" }
+    private var isTaskCreate: Bool { model.somedayPanel == "newSectionTask" }
     private var isPicker: Bool { !model.somedayPickerName.isEmpty }
 
     var body: some View {
@@ -192,12 +210,17 @@ struct SomedayPanel: View {
                 Button { close() } label: { Color.black.opacity(isFilter ? 0.35 : 0.28).contentShape(Rectangle()) }
                     .buttonStyle(.plain).ignoresSafeArea().accessibilityLabel(model.label("common.close"))
                     .accessibilityIdentifier("someday-panel-dismiss")
-                    .disabled(model.somedaySectionCreatePending || model.busy || model.retryNeeded)
+                    .disabled(model.somedaySectionCreatePending || model.somedaySectionTaskPending || model.busy || model.retryNeeded)
                 VStack(alignment: .leading, spacing: 0) {
                     if isCreate {
                         ViewThatFits(in: .vertical) {
                             createContent.fixedSize(horizontal: false, vertical: true)
                             ScrollView { createContent }.scrollDismissesKeyboard(.interactively)
+                        }
+                    } else if isTaskCreate {
+                        ViewThatFits(in: .vertical) {
+                            taskCreateContent.fixedSize(horizontal: false, vertical: true)
+                            ScrollView { taskCreateContent }.scrollDismissesKeyboard(.interactively)
                         }
                     } else if isFilter { filterControls } else {
                         panelHeader
@@ -210,7 +233,12 @@ struct SomedayPanel: View {
                 .padding(isFilter ? 16 : 12)
                 .frame(maxWidth: isFilter ? 860 : 440, maxHeight: geometry.size.height * 0.82, alignment: .top)
                 .fixedSize(horizontal: false, vertical: !isFilter)
-                .background(palette.card, in: RoundedRectangle(cornerRadius: isFilter ? 24 : 16))
+                .background {
+                    RoundedRectangle(cornerRadius: isFilter ? 24 : 16)
+                        .fill(palette.card)
+                        .contentShape(RoundedRectangle(cornerRadius: isFilter ? 24 : 16))
+                        .onTapGesture { }
+                }
                 .overlay(RoundedRectangle(cornerRadius: isFilter ? 24 : 16).stroke(palette.border, lineWidth: 1))
                 .padding(.horizontal, isFilter ? 0 : 12)
             }
@@ -219,11 +247,17 @@ struct SomedayPanel: View {
             .accessibilityAction(.escape) { backOrClose() }
         }
         .onChange(of: isCreate) { if !$0 { createFocusedOnce = false } }
+        .onChange(of: isTaskCreate) { if !$0 { taskFocusedOnce = false } }
         .onChange(of: model.busy) { value in
             if !value && isCreate && !createFocusedOnce && !model.somedaySectionCreatePending
                 && !model.somedaySectionCreateAwaitingRefresh {
                 focusedField = "someday-section-create"
                 createFocusedOnce = true
+            }
+            if !value && isTaskCreate && !taskFocusedOnce && !model.somedaySectionTaskPending
+                && !model.somedaySectionTaskAwaitingRefresh {
+                focusedField = "someday-section-task"
+                taskFocusedOnce = true
             }
         }
     }
@@ -333,28 +367,40 @@ struct SomedayPanel: View {
             if model.somedaySectionCreateError != nil || model.somedaySectionCreateReadError != nil {
                 Text(model.label("viewSections.updateFailed")).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
                     .accessibilityAddTraits(.updatesFrequently).accessibilityIdentifier("someday-section-create-error")
-                Button(model.label("common.retry")) { Task { await model.retrySomedaySectionCreate() } }
-                    .rnFont(14, .semibold).frame(minHeight: 44).disabled(model.busy)
+                Button { Task { await model.retrySomedaySectionCreate() } } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                    .buttonStyle(.plain).disabled(model.busy)
                     .accessibilityIdentifier("someday-section-create-retry")
             } else if model.busy {
                 ProgressView().frame(maxWidth: .infinity)
             }
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
-                Button(model.label("common.cancel")) { close() }
-                    .rnFont(14, .semibold).padding(.horizontal, 14).frame(minWidth: 88, minHeight: 44)
-                    .background(palette.bg, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                Button { close() } label: {
+                    Text(model.label("common.cancel")).rnFont(14, .semibold)
+                        .padding(.horizontal, 14).frame(minWidth: 88, minHeight: 44)
+                        .background(palette.bg, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                        .contentShape(Rectangle())
+                }
+                    .buttonStyle(.plain)
                     .disabled(model.somedaySectionCreatePending || model.busy || model.retryNeeded)
                     .opacity(model.somedaySectionCreatePending || model.busy || model.retryNeeded ? 0.5 : 1)
                     .accessibilityIdentifier("someday-section-create-cancel")
-                Button(model.somedaySectionCreateOptions.object("text").text("saveLabel").isEmpty
-                    ? model.label("common.save") : model.somedaySectionCreateOptions.object("text").text("saveLabel")) {
+                Button {
                     focusedField = nil
                     Task { await model.saveSomedaySectionCreate() }
+                } label: {
+                    Text(model.somedaySectionCreateOptions.object("text").text("saveLabel").isEmpty
+                        ? model.label("common.save") : model.somedaySectionCreateOptions.object("text").text("saveLabel"))
+                        .rnFont(14, .semibold).padding(.horizontal, 14).frame(minWidth: 88, minHeight: 44)
+                        .foregroundStyle(palette.onTint).background(palette.tint, in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(Rectangle())
                 }
-                .rnFont(14, .semibold).padding(.horizontal, 14).frame(minWidth: 88, minHeight: 44)
-                .foregroundStyle(palette.onTint).background(palette.tint, in: RoundedRectangle(cornerRadius: 8))
+                .buttonStyle(.plain)
                 .disabled(!model.somedaySectionCreateCanSave)
                 .opacity(model.somedaySectionCreateCanSave ? 1 : 0.5)
                 .accessibilityIdentifier("someday-section-create-save")
@@ -364,10 +410,76 @@ struct SomedayPanel: View {
         .padding(.vertical, 8)
     }
 
+    private var taskCreateContent: some View {
+        let copy = model.somedaySectionTaskOptions.object("text")
+        return VStack(alignment: .leading, spacing: 14) {
+            Text(copy.text("title").isEmpty ? model.label("nav.addTask") : copy.text("title")).rnFont(17, .bold)
+                .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("someday-section-task-title")
+            TextField(copy.text("placeholder").isEmpty ? model.label("taskEdit.titleLabel") : copy.text("placeholder"), text: Binding(
+                get: { model.somedaySectionTaskDraft }, set: { model.setSomedaySectionTaskDraft($0) }))
+                .rnFont(16).focused($focusedField, equals: "someday-section-task")
+                .submitLabel(.done).onSubmit {
+                    focusedField = nil
+                    Task { await model.saveSomedaySectionTask() }
+                }
+                .padding(.horizontal, 12).frame(minHeight: 44)
+                .background(palette.bg, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                .disabled(model.busy || model.somedaySectionTaskPending || model.somedaySectionTaskAwaitingRefresh || model.retryNeeded)
+                .accessibilityLabel(copy.text("inputLabel").isEmpty ? model.label("taskEdit.titleLabel") : copy.text("inputLabel"))
+                .accessibilityIdentifier("someday-section-task-input")
+            if model.somedaySectionTaskError != nil || model.somedaySectionTaskReadError != nil {
+                Text(copy.text("failed").isEmpty ? model.label("settings.feedback.actionFailed") : copy.text("failed"))
+                    .rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                    .accessibilityAddTraits(.updatesFrequently).accessibilityIdentifier("someday-section-task-error")
+                Button { Task { await model.retrySomedaySectionTask() } } label: {
+                    Text(copy.text("retryLabel").isEmpty ? model.label("common.retry") : copy.text("retryLabel"))
+                        .rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                    .buttonStyle(.plain).disabled(model.busy)
+                    .accessibilityIdentifier("someday-section-task-retry")
+            } else if model.busy {
+                ProgressView().frame(maxWidth: .infinity)
+            }
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button { close() } label: {
+                    Text(copy.text("cancelLabel").isEmpty ? model.label("common.cancel") : copy.text("cancelLabel"))
+                        .rnFont(14, .semibold).padding(.horizontal, 14).frame(minWidth: 88, minHeight: 44)
+                        .background(palette.bg, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                        .contentShape(Rectangle())
+                }
+                    .buttonStyle(.plain)
+                    .disabled(model.somedaySectionTaskPending || model.busy || model.retryNeeded)
+                    .opacity(model.somedaySectionTaskPending || model.busy || model.retryNeeded ? 0.5 : 1)
+                    .accessibilityIdentifier("someday-section-task-cancel")
+                Button {
+                    focusedField = nil
+                    Task { await model.saveSomedaySectionTask() }
+                } label: {
+                    Text(copy.text("saveLabel").isEmpty ? model.label("common.save") : copy.text("saveLabel"))
+                        .rnFont(14, .semibold).padding(.horizontal, 14).frame(minWidth: 88, minHeight: 44)
+                        .foregroundStyle(palette.onTint).background(palette.tint, in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!model.somedaySectionTaskCanSave)
+                .opacity(model.somedaySectionTaskCanSave ? 1 : 0.5)
+                .accessibilityIdentifier("someday-section-task-save")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+    }
+
     private func close() { focusedField = nil; model.closeSomedayPanel() }
     private func backOrClose() {
         focusedField = nil
-        if isCreate { close() }
+        if isCreate || isTaskCreate { close() }
         else if isPicker { model.closeSomedayPicker() }
         else if !isFilter && model.somedayPanel != "menu" { model.somedayPanel = "menu" }
         else { close() }

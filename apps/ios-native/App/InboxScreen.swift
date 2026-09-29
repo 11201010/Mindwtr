@@ -82,7 +82,8 @@ struct InboxScreen: View {
                             TaskFocusNotice(model: model, palette: palette)
                         }
                         if model.error != nil && !model.capturePresented && !model.areaPickerPresented && !model.morePresented && !model.mindSweepPresented && !model.processInboxPresented
-                            && !(model.somedayPanel == "newSection" && model.somedaySectionCreateError != nil) {
+                            && !(model.somedayPanel == "newSection" && model.somedaySectionCreateError != nil)
+                            && !(model.somedayPanel == "newSectionTask" && model.somedaySectionTaskError != nil) {
                             FailureBanner(model: model, palette: palette)
                         }
                     }

@@ -268,6 +268,11 @@ final class CoreModel: ObservableObject {
     @Published private(set) var somedaySectionCreateError: String?
     @Published private(set) var somedaySectionCreateReadError: String?
     @Published private(set) var somedaySectionCreateAwaitingRefresh = false
+    @Published private(set) var somedaySectionTaskOptions: CoreObject = [:]
+    @Published private(set) var somedaySectionTaskDraft = ""
+    @Published private(set) var somedaySectionTaskError: String?
+    @Published private(set) var somedaySectionTaskReadError: String?
+    @Published private(set) var somedaySectionTaskAwaitingRefresh = false
     @Published private(set) var reference: CoreObject = [:]
     @Published private(set) var referenceCurrent = false
     @Published private(set) var referenceError: String?
@@ -584,6 +589,9 @@ final class CoreModel: ObservableObject {
     private var somedayPickerNeedsRead = false
     private var somedaySectionCreateRequest: String?
     private var somedaySectionCreateRequestID: String?
+    private var somedaySectionTaskSectionID: String?
+    private var somedaySectionTaskEnvelope: String?
+    private var somedaySectionTaskRequestID: String?
     private var referenceCaller: Surface = .inbox
     private var referenceParams: CoreObject = [:]
     private var referenceCollapsedGroups: [String: [String]] = [:]
@@ -1124,6 +1132,13 @@ final class CoreModel: ObservableObject {
             && !somedaySectionCreatePending
             && !somedaySectionCreateDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+    var somedaySectionTaskPending: Bool { somedaySectionTaskEnvelope != nil }
+    var somedaySectionTaskCanSave: Bool {
+        somedayActionsEnabled && somedayPanel == "newSectionTask" && !somedaySectionTaskOptions.isEmpty
+            && somedaySectionTaskReadError == nil && !somedaySectionTaskAwaitingRefresh
+            && !somedaySectionTaskPending
+            && !somedaySectionTaskDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     var referenceActionsEnabled: Bool {
         ready && selectedSurface == .reference && referenceCurrent && !busy && !retryNeeded && !taskPresented
     }
@@ -1385,7 +1400,7 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .focus
             } else if recovery.text("method") == "taskListSortWrite" {
                 selectedSurface = .reference
-            } else if recovery.text("method") == "somedaySectionCreateWrite" {
+            } else if ["somedaySectionCreateWrite", "somedaySectionTaskCommit"].contains(recovery.text("method")) {
                 selectedSurface = .someday
             } else if recovery.text("method") == "inboxPreparedCommit" {
                 // The durable data recovered, but the in-memory queue did not.
@@ -6300,14 +6315,14 @@ final class CoreModel: ObservableObject {
 
     func closeSomeday() async {
         guard selectedSurface == .someday, !busy, !retryNeeded, !taskPresented,
-              !somedaySectionCreatePending else { return }
+              !somedaySectionCreatePending, !somedaySectionTaskPending else { return }
         closeSomedayPicker()
         selectedSurface = somedayCaller
         await refresh()
     }
 
     func closeSomedayPanel() {
-        guard !busy, !retryNeeded, !somedaySectionCreatePending else { return }
+        guard !busy, !retryNeeded, !somedaySectionCreatePending, !somedaySectionTaskPending else { return }
         somedayPanel = ""
         closeSomedayPicker()
         somedaySectionCreateDraft = ""
@@ -6315,6 +6330,12 @@ final class CoreModel: ObservableObject {
         somedaySectionCreateError = nil
         somedaySectionCreateReadError = nil
         somedaySectionCreateAwaitingRefresh = false
+        somedaySectionTaskSectionID = nil
+        somedaySectionTaskDraft = ""
+        somedaySectionTaskOptions = [:]
+        somedaySectionTaskError = nil
+        somedaySectionTaskReadError = nil
+        somedaySectionTaskAwaitingRefresh = false
     }
 
     func openSomedaySectionCreate() async {
@@ -6441,6 +6462,147 @@ final class CoreModel: ObservableObject {
         } else {
             somedaySectionCreateError = nil
             await readSomedaySectionCreateOptions()
+        }
+    }
+
+    func openSomedaySectionTask(_ addTask: CoreObject) async {
+        guard somedayActionsEnabled, somedayPanel.isEmpty, !addTask.isEmpty,
+              !capturePresented, !areaPickerPresented,
+              let rawSectionID = addTask["sectionId"],
+              rawSectionID is NSNull || rawSectionID is String else { return }
+        somedaySectionTaskSectionID = rawSectionID as? String
+        somedayPanel = "newSectionTask"
+        somedaySectionTaskDraft = ""
+        somedaySectionTaskOptions = [:]
+        somedaySectionTaskError = nil
+        somedaySectionTaskReadError = nil
+        somedaySectionTaskAwaitingRefresh = false
+        await readSomedaySectionTaskOptions()
+    }
+
+    func setSomedaySectionTaskDraft(_ title: String) {
+        guard selectedSurface == .someday, somedayPanel == "newSectionTask", !busy,
+              !somedaySectionTaskPending, !somedaySectionTaskAwaitingRefresh, !retryNeeded else { return }
+        somedaySectionTaskDraft = title
+        somedaySectionTaskError = nil
+    }
+
+    private func fetchSomedaySectionTaskOptions() async throws {
+        let sectionID: Any = (somedaySectionTaskSectionID as Any?) ?? NSNull()
+        let options = try await query("somedaySectionTaskOptions", [try json(["sectionId": sectionID])])
+        let labels = options.object("text")
+        let returnedSection = try json(["sectionId": options["sectionId"] ?? "missing"])
+        let requestedSection = try json(["sectionId": sectionID])
+        guard Set(options.keys) == Set(["revision", "sectionId", "groupTitle", "text"]),
+              !options.text("revision").isEmpty,
+              returnedSection == requestedSection,
+              !options.text("groupTitle").isEmpty,
+              Set(labels.keys) == Set(["title", "inputLabel", "placeholder", "failed", "created",
+                                       "saveLabel", "retryLabel", "cancelLabel"]),
+              labels.values.allSatisfy({ ($0 as? String)?.isEmpty == false }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        somedaySectionTaskOptions = options
+        somedaySectionTaskReadError = nil
+    }
+
+    private func readSomedaySectionTaskOptions() async {
+        guard selectedSurface == .someday, somedayPanel == "newSectionTask", !busy, !retryNeeded,
+              !somedaySectionTaskPending else { return }
+        busy = true
+        somedaySectionTaskOptions = [:]
+        somedaySectionTaskReadError = nil
+        defer { finishOperation() }
+        do { try await fetchSomedaySectionTaskOptions() }
+        catch { somedaySectionTaskReadError = error.localizedDescription }
+    }
+
+    func saveSomedaySectionTask() async {
+        guard somedaySectionTaskCanSave else { return }
+        busy = true
+        somedaySectionTaskError = nil
+        defer { finishOperation() }
+        do {
+            let requestID = UUID().uuidString.lowercased()
+            let sectionID: Any = (somedaySectionTaskSectionID as Any?) ?? NSNull()
+            let request: CoreObject = ["requestId": requestID, "title": somedaySectionTaskDraft,
+                                       "sectionId": sectionID]
+            let preparedReply = try await query("somedaySectionTaskPrepare", [try json(request)])
+            let prepared = preparedReply.object("prepared")
+            let returnedRequest = try json(prepared.object("request"))
+            let originalRequest = try json(request)
+            guard Set(preparedReply.keys) == Set(["kind", "prepared"]),
+                  preparedReply.text("kind") == "prepared", !prepared.isEmpty,
+                  returnedRequest == originalRequest,
+                  prepared.object("result").text("id") == requestID else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let envelope = try json(["request": request, "prepared": prepared])
+            somedaySectionTaskEnvelope = envelope
+            somedaySectionTaskRequestID = requestID
+            let result = try await query("somedaySectionTaskCommit", [envelope])
+            try acknowledgeSomedaySectionTask(result)
+            await refreshSomedayAfterSectionTask()
+        } catch { await handleSomedaySectionTaskError(error) }
+    }
+
+    private func acknowledgeSomedaySectionTask(_ result: CoreObject) throws {
+        guard somedaySectionTaskEnvelope != nil, let requestID = somedaySectionTaskRequestID,
+              Set(result.keys) == Set(["id"]), result.text("id") == requestID else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        somedaySectionTaskEnvelope = nil
+        somedaySectionTaskRequestID = nil
+        somedaySectionTaskError = nil
+        somedaySectionTaskReadError = nil
+        somedaySectionTaskAwaitingRefresh = true
+        retryNeeded = false
+        error = nil
+    }
+
+    private func refreshSomedayAfterSectionTask() async {
+        guard selectedSurface == .someday, somedaySectionTaskAwaitingRefresh else { return }
+        if await readSomeday() {
+            somedaySectionTaskAwaitingRefresh = false
+            somedayPanel = ""
+            somedaySectionTaskSectionID = nil
+            somedaySectionTaskDraft = ""
+            somedaySectionTaskOptions = [:]
+            somedaySectionTaskError = nil
+            somedaySectionTaskReadError = nil
+        } else {
+            somedaySectionTaskReadError = somedayError ?? label("settings.feedback.actionFailed")
+        }
+    }
+
+    private func handleSomedaySectionTaskError(_ failure: Error) async {
+        if somedaySectionTaskPending && isDefiniteRejection(failure) {
+            somedaySectionTaskEnvelope = nil
+            somedaySectionTaskRequestID = nil
+            somedaySectionTaskOptions = [:]
+            retryNeeded = false
+            error = nil
+            somedaySectionTaskError = failure.localizedDescription
+            do { try await fetchSomedaySectionTaskOptions() }
+            catch { somedaySectionTaskReadError = error.localizedDescription }
+        } else {
+            retryNeeded = somedaySectionTaskPending
+            somedaySectionTaskError = failure.localizedDescription
+            if retryNeeded { error = failure.localizedDescription }
+        }
+    }
+
+    func retrySomedaySectionTask() async {
+        if retryNeeded { await retry(); return }
+        guard selectedSurface == .someday, somedayPanel == "newSectionTask", !busy,
+              !somedaySectionTaskPending else { return }
+        if somedaySectionTaskAwaitingRefresh {
+            busy = true
+            defer { finishOperation() }
+            await refreshSomedayAfterSectionTask()
+        } else {
+            somedaySectionTaskError = nil
+            await readSomedaySectionTaskOptions()
         }
     }
 
@@ -11026,6 +11188,14 @@ final class CoreModel: ObservableObject {
                 await refreshSomedayAfterSectionCreate()
                 return
             }
+            if let envelope = somedaySectionTaskEnvelope {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("somedaySectionTaskRetryOutcome", [envelope]) }
+                try acknowledgeSomedaySectionTask(result)
+                await refreshSomedayAfterSectionTask()
+                return
+            }
             if let request = focusGroupRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -11247,6 +11417,10 @@ final class CoreModel: ObservableObject {
             }
             if somedaySectionCreateRequest != nil {
                 await handleSomedaySectionCreateError(error)
+                return
+            }
+            if somedaySectionTaskEnvelope != nil {
+                await handleSomedaySectionTaskError(error)
                 return
             }
             if focusGroupRequest != nil {

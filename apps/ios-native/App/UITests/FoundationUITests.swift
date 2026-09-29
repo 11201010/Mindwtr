@@ -2948,6 +2948,134 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testSomedaySectionTaskNormal() {
+        somedaySectionTaskFlow(library: "87b236a7-57ca-44bd-8335-169d577e5af5", saveWithReturn: false)
+    }
+
+    func testSomedaySectionTaskLargestText() {
+        somedaySectionTaskFlow(library: "2a751e43-04c2-4507-ac8d-61880bcfc292", saveWithReturn: true)
+    }
+
+    private func task80OpenTaskPrompt(_ app: XCUIApplication, headingID: String) -> XCUIElement {
+        let action = app.buttons["someday-section-add-task-" + headingID]
+        revealPagedElement(app, action, in: app.scrollViews["someday-scroll"])
+        XCTAssertGreaterThanOrEqual(action.frame.height, 44 - 0.001)
+        action.tap()
+        let input = app.textFields["someday-section-task-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["someday-section-task-title"].exists)
+        boardEnabled(app.buttons["someday-section-task-cancel"])
+        XCTAssertGreaterThanOrEqual(input.frame.height, 44 - 0.001)
+        for id in ["someday-section-task-cancel", "someday-section-task-save"] {
+            XCTAssertGreaterThanOrEqual(app.buttons[id].frame.height, 44 - 0.001)
+        }
+        return input
+    }
+
+    private func task80Task(_ app: XCUIApplication, title: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+    }
+
+    private func task80AssertTask(_ app: XCUIApplication, title: String) {
+        let task = task80Task(app, title: title)
+        guard task.waitForExistence(timeout: 10) else { XCTFail("Created Someday task is missing: " + title); return }
+        revealPagedElement(app, task, in: app.scrollViews["someday-scroll"], more: "someday-more",
+                           ready: app.buttons["someday-overflow-button"])
+        XCTAssertTrue(task.exists, title)
+    }
+
+    private func somedaySectionTaskFlow(library: String, saveWithReturn: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        task79OpenSomeday(app)
+        let books = "view-section:someday:task80-books"
+        let imported = "view-section:someday:no-section"
+        let unsectioned = "view-section:someday:none"
+        let cancelled = task80OpenTaskPrompt(app, headingID: books)
+        XCTAssertFalse(app.buttons["someday-section-task-save"].isEnabled)
+        cancelled.tap(); cancelled.typeText("   ")
+        XCTAssertFalse(app.buttons["someday-section-task-save"].isEnabled)
+        cancelled.typeText("Task80 Cancelled")
+        app.buttons["someday-section-task-cancel"].coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).tap()
+        XCTAssertFalse(task80Task(app, title: "Task80 Cancelled").exists)
+
+        let bookInput = task80OpenTaskPrompt(app, headingID: books)
+        XCTAssertEqual(bookInput.value as? String, bookInput.placeholderValue)
+        bookInput.tap(); bookInput.typeText("  Task80 /due:tomorrow @Home  ")
+        boardEnabled(app.buttons["someday-section-task-save"])
+        if saveWithReturn { bookInput.typeText("\n") }
+        else { app.buttons["someday-section-task-save"].coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).tap() }
+        task80AssertTask(app, title: "Task80 /due:tomorrow @Home")
+        XCTAssertFalse(app.staticTexts["someday-section-task-error"].exists)
+
+        let noSectionInput = task80OpenTaskPrompt(app, headingID: unsectioned)
+        noSectionInput.tap(); noSectionInput.typeText("Task80 Unsectioned")
+        boardTap(app, "someday-section-task-save")
+        task80AssertTask(app, title: "Task80 Unsectioned")
+
+        let importedInput = task80OpenTaskPrompt(app, headingID: imported)
+        importedInput.tap(); importedInput.typeText("Task80 Imported")
+        boardTap(app, "someday-section-task-save")
+        task80AssertTask(app, title: "Task80 Imported")
+
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = saveWithReturn ? "Largest Someday section task" : "Someday section task"
+        shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task79OpenSomeday(app)
+        for heading in [books, imported, unsectioned] {
+            let action = app.buttons["someday-section-add-task-" + heading]
+            revealPagedElement(app, action, in: app.scrollViews["someday-scroll"])
+            XCTAssertTrue(action.exists, "Section grouping should survive restart: " + heading)
+        }
+        for title in ["Task80 /due:tomorrow @Home", "Task80 Unsectioned", "Task80 Imported"] {
+            task80AssertTask(app, title: title)
+        }
+        XCTAssertFalse(task80Task(app, title: "Task80 Cancelled").exists)
+        app.terminate()
+    }
+
+    /// Run before cold recovery; root disarms the SQLite trigger but retains the exact pending journal.
+    func testSomedaySectionTaskSaveFailureKeepsExactRequest() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8db707bb-ee0b-4e46-92d0-f74f3fe90e83"]
+        app.launch(); task79OpenSomeday(app)
+        let input = task80OpenTaskPrompt(app, headingID: "view-section:someday:task80-books")
+        input.tap(); input.typeText("Task80 Retry")
+        boardTap(app, "someday-section-task-save")
+        let failure = app.staticTexts["someday-section-task-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        for _ in 0..<2 {
+            XCTAssertEqual(input.value as? String, "Task80 Retry")
+            XCTAssertFalse(input.isEnabled)
+            XCTAssertFalse(app.buttons["someday-section-task-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["someday-section-task-save"].isEnabled)
+            XCTAssertFalse(app.buttons["someday-panel-dismiss"].isEnabled)
+            XCTAssertFalse(task80Task(app, title: "Task80 Retry").exists)
+            boardTap(app, "someday-section-task-retry")
+            boardEnabled(app.buttons["someday-section-task-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+            XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Someday section task exact retry"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testSomedaySectionTaskColdRecovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8db707bb-ee0b-4e46-92d0-f74f3fe90e83"]
+        app.launch(); task79OpenSomeday(app, recovered: true)
+        task80AssertTask(app, title: "Task80 Retry")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Task80 Retry")).count, 1)
+        XCTAssertFalse(app.staticTexts["someday-section-task-error"].exists)
+        XCTAssertFalse(app.textFields["someday-section-task-input"].exists)
+        app.terminate(); app.launch(); task79OpenSomeday(app)
+        task80AssertTask(app, title: "Task80 Retry")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Task80 Retry")).count, 1)
+        app.terminate()
+    }
+
     func testWaitingPersonSearchEditCompleteAndRestart() {
         let app = XCUIApplication()
         app.launch()

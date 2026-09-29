@@ -264,6 +264,7 @@ import { createProjectFlowMethods } from './native-host-contract-project-flow';
 import { createProjectTaskSortMethods } from './native-host-contract-project-sort';
 import { createTaskListSortMethods } from './native-host-contract-task-list-sort';
 import { createSomedaySectionCreateMethods } from './native-host-contract-someday-section-create';
+import { createSomedaySectionTaskMethods } from './native-host-contract-someday-section-task';
 import { createProjectNotesWriteMethods } from './native-host-contract-project-notes';
 import { createProjectTagsWriteMethods } from './native-host-contract-project-tags';
 import { createProjectStatusMethods } from './native-host-contract-project-status';
@@ -1590,6 +1591,11 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             t: (key) => translate(key),
         }),
         ...createSomedaySectionCreateMethods({
+            readiness, save,
+            revision: () => `${revision()}:${settingsRevision()}:${language}`,
+            t: (key) => translate(key),
+        }),
+        ...createSomedaySectionTaskMethods({
             readiness, save,
             revision: () => `${revision()}:${settingsRevision()}:${language}`,
             t: (key) => translate(key),
