@@ -6,10 +6,9 @@
  * capture-deeplink.ts), and the capture popup's import (quick-capture-model.ts).
  *
  * Where React Native opens its capture confirmation screen (capture-modal.tsx: a capture link, a share, an assistant
- * note, a widget's quick capture), the native app opens its capture popup: the title is the popup's text and the
- * description its note. The popup has no tag or project-name option, so a capture link's tags, and a project name no
- * project carries, go at the end of the text as quick-add tokens, which the popup's own parser saves as React Native
- * saves them (a new project for an unknown name).
+ * note, a widget's quick capture), this answers the route params React Native pushes to it, which openCaptureModal
+ * takes (native-host-contract-capture-modal.ts): a capture link's tags and project stay the screen's props, never
+ * title text. The capture feature (React Native's capture-quick tab route) opens the capture popup, as there.
  *
  * Only functions read this module's imports from native-host-contract.ts, so the import cycle between the two files
  * is safe.
@@ -28,10 +27,10 @@ import {
     resolveSystemPath,
 } from './entry-points';
 import { DEFAULT_GLOBAL_SEARCH_FILTERS, type GlobalSearchFilterState } from './global-search-model';
+import type { CaptureModalParams } from './capture-modal-model';
 import { tFallback, type TranslateFn } from './i18n';
 import { NATIVE_HOST_CONTRACT_VERSION, type NativeHostResult } from './native-host-contract';
 import { fail, isObjectRecord, isText } from './native-host-contract-menu-views';
-import { isSelectableProjectForTaskAssignment } from './project-utils';
 import { splitQuickAddBulkLines } from './quick-add';
 import {
     createQuickCaptureOptions,
@@ -73,6 +72,8 @@ export type NativeEntryPoint = {
      * tile's, or a shortcut's) puts the app behind the previous one once the popup closes (#1169).
      */
     capture: { text: string; options: QuickCaptureOptions; returnToPreviousApp: boolean } | null;
+    /** React Native's capture confirmation screen, with the route params React Native pushes to it (openCaptureModal's `params`). */
+    captureModal: { params: CaptureModalParams } | null;
     /** React Native's toast. */
     notice: QuickCaptureNotice | null;
 };
@@ -86,24 +87,28 @@ export type NativeQuickCaptureImport =
     | { kind: 'refused'; notice: QuickCaptureNotice };
 
 const URL_LIMIT = 16_000;
-/** The capture popup's text limit (native-host-contract-quick-capture.ts). */
+/** The capture popup's text limit (native-host-contract-quick-capture.ts), and the capture screen's for each route param. */
 const TEXT_LIMIT = 100_000;
 const SCHEME_PATTERN = /^[a-z][a-z0-9+.-]{0,31}$/;
 const isOptionalString = (value: unknown): value is string | null => value === null || typeof value === 'string';
 const longerThan = (value: string | null, max: number) => (value?.length ?? 0) > max;
 
 /**
- * A quick-add token for [value] with [marker]: bare, or in straight double quotes with backslash escapes (the parser's
- * canonical quoted form) when it holds a space, a quote or a backslash.
+ * The capture screen's route params for a title and its preset props, as React Native's root layout pushes them
+ * (openCaptureConfirmation, buildShareIntentCaptureParams): each value URI-encoded, the props as JSON.
  */
-const token = (marker: '#' | '+', value: string) => (
-    /[\s"\\]/.test(value) ? `${marker}"${value.replace(/["\\]/g, (char) => `\\${char}`)}"` : `${marker}${value}`
-);
+const captureModalParams = (title: string, props: { description?: string; tags?: string[] }, project?: string): CaptureModalParams => ({
+    initialValue: encodeURIComponent(title),
+    ...(Object.keys(props).length > 0 ? { initialProps: encodeURIComponent(JSON.stringify(props)) } : {}),
+    ...(project ? { project: encodeURIComponent(project) } : {}),
+});
+/** Whether the capture screen takes these params: each at most its text limit, encoded. */
+const fitsCaptureModal = (params: CaptureModalParams) => Object.values(params).every((param) => typeof param === 'string' && param.length <= TEXT_LIMIT);
 
 export function createEntryPointMethods(deps: EntryPointDeps) {
     const opened = (value: Partial<Omit<NativeEntryPoint, 'version'>>): NativeHostResult<NativeEntryPoint> => ({
         ok: true,
-        value: { version: NATIVE_HOST_CONTRACT_VERSION, route: null, taskId: null, projectId: null, search: null, capture: null, notice: null, ...value },
+        value: { version: NATIVE_HOST_CONTRACT_VERSION, route: null, taskId: null, projectId: null, search: null, capture: null, captureModal: null, notice: null, ...value },
     });
     const notice = (titleKey: string, title: string, messageKey: string, message: string): QuickCaptureNotice => ({
         tone: 'warning', title: tFallback(deps.t(), titleKey, title), message: tFallback(deps.t(), messageKey, message),
@@ -113,35 +118,27 @@ export function createEntryPointMethods(deps: EntryPointDeps) {
     const shareUnreadable = () => notice('share.unavailable', 'Share unavailable',
         'share.readFailed', 'Mindwtr could not read text, a URL, or a file from the shared item.');
 
-    /** The capture popup's fresh options with the entry's note and project, as React Native's popup starts from a preset. */
-    const captureOf = (text: string, preset: { description?: string; projectId?: string }, returnToPreviousApp: boolean) => {
+    /** The capture popup's fresh options, as React Native's capture-quick tab route opens it. */
+    const emptyPopup = () => {
         const state = useTaskStore.getState();
         const options = createQuickCaptureOptions({
-            initialProps: preset,
+            initialProps: {},
             projects: state.projects,
             defaultAreaId: resolveQuickCaptureDefaultAreaId(state.settings, state.areas),
         });
-        return { text, options, returnToPreviousApp };
+        return { text: '', options, returnToPreviousApp: false };
     };
 
     /**
-     * A capture link's payload in the popup: the title, then its tags and a project name no project carries as tokens.
-     * The project matches by id or by title (any case), as React Native's capture screen matches it; a matched project
-     * that takes no tasks (archived, completed) is skipped, as it skips it.
+     * A capture link's payload (an assistant note's too) on the capture screen, as React Native's
+     * openCaptureConfirmation pushes it: the title, the note and tags as preset props, and the project as the screen's
+     * fallback project (matched there by id or title, created there when none matches). Null: longer than the screen takes.
      */
-    const payloadCapture = (payload: ShortcutCapturePayload) => {
-        const tags = normalizeShortcutTags(payload.tags).map((tag) => tag.slice(1)).filter(Boolean).map((tag) => token('#', tag));
-        let projectId: string | undefined;
-        let projectToken: string | null = null;
-        const reference = payload.project;
-        if (reference) {
-            const lower = reference.toLowerCase();
-            const match = useTaskStore.getState().projects.find((project) => project.id === reference || project.title.toLowerCase() === lower);
-            if (!match) projectToken = token('+', reference);
-            else if (isSelectableProjectForTaskAssignment(match)) projectId = match.id;
-        }
-        const text = [payload.title, ...tags, projectToken].filter(Boolean).join(' ');
-        return captureOf(text, { ...(payload.note ? { description: payload.note } : {}), ...(projectId ? { projectId } : {}) }, false);
+    const payloadCapture = (payload: ShortcutCapturePayload): Pick<NativeEntryPoint, 'captureModal'> | null => {
+        const tags = normalizeShortcutTags(payload.tags);
+        const props = { ...(payload.note ? { description: payload.note } : {}), ...(tags.length > 0 ? { tags } : {}) };
+        const params = captureModalParams(payload.title, props, payload.project);
+        return fitsCaptureModal(params) ? { captureModal: { params } } : null;
     };
 
     /**
@@ -163,7 +160,7 @@ export function createEntryPointMethods(deps: EntryPointDeps) {
             case 'openFeature':
                 // The capture feature opens the quick capture popup over the Inbox (the capture-quick route).
                 return route.path.startsWith('/capture-quick')
-                    ? opened({ route: '/inbox', capture: captureOf('', {}, false) })
+                    ? opened({ route: '/inbox', capture: emptyPopup() })
                     : opened({ route: route.path });
             case 'entityOpen': {
                 const entity = parseEntityOpenUrl(path);
@@ -176,17 +173,19 @@ export function createEntryPointMethods(deps: EntryPointDeps) {
             case 'capture': {
                 if (sandbox) return opened({ route: '/inbox' });
                 const payload = parseShortcutCaptureUrl(path);
-                if (!payload) {
+                const capture = payload && payloadCapture(payload);
+                if (!capture) {
                     return opened({
                         route: '/inbox',
                         notice: notice('shortcuts.captureUnavailable', 'Capture shortcut unavailable',
                             'shortcuts.missingTitle', 'Mindwtr could not read a task title from that shortcut link.'),
                     });
                 }
-                return opened({ route: '/inbox', capture: payloadCapture(payload) });
+                return opened({ route: '/inbox', ...capture });
             }
+            // The capture screen from a widget, the tile or a control: it puts the app behind the previous one when it closes (#1169).
             case 'quickCapture':
-                return opened({ capture: captureOf('', {}, true) });
+                return opened({ captureModal: { params: { origin: 'system' } } });
             case 'path':
                 break;
         }
@@ -213,7 +212,8 @@ export function createEntryPointMethods(deps: EntryPointDeps) {
     return {
         /**
          * What an entry point opens: a link (VIEW with the app's scheme), a text share (SEND text/plain), or an assistant
-         * note (CREATE_NOTE). Nothing is written: a capture opens the popup, and its Save is the popup's own command.
+         * note (CREATE_NOTE). Nothing is written: a capture opens the capture screen (or the popup), and its Save is that
+         * screen's own command.
          */
         resolveNativeEntryPoint(input: NativeEntryPointInput): NativeHostResult<NativeEntryPoint> {
             const ready = deps.readiness();
@@ -233,13 +233,15 @@ export function createEntryPointMethods(deps: EntryPointDeps) {
                 const share = isSandboxMode() ? null : readAndroidTextShare(input);
                 if (!share) return opened({});
                 const draft = buildShareCaptureDraft({ shareSubject: share.subject, shareText: share.text, shareWebUrl: share.webUrl });
-                // The popup takes at most its text limit (its note five times that); a longer share is one the app cannot
+                const params = draft && captureModalParams(draft.title, draft.description !== undefined ? { description: draft.description } : {});
+                // The capture screen takes each param at most at its text limit, encoded; a longer share is one the app cannot
                 // read, and says so as React Native does for a share it cannot read.
-                if (!draft || draft.title.length > TEXT_LIMIT || longerThan(input.text, TEXT_LIMIT * 5)
+                if (!params || !fitsCaptureModal(params) || longerThan(input.text, TEXT_LIMIT * 5)
                     || longerThan(input.title, TEXT_LIMIT) || longerThan(input.subject, TEXT_LIMIT)) {
                     return opened({ notice: shareUnreadable() });
                 }
-                return opened({ capture: captureOf(draft.title, draft.description !== undefined ? { description: draft.description } : {}, false) });
+                // React Native replaces the screen it was on with the capture screen, so it closes to the Inbox.
+                return opened({ route: '/inbox', captureModal: { params } });
             }
             if (input.kind === 'createNote') {
                 if (!isOptionalString(input.name) || !isOptionalString(input.text) || !isOptionalString(input.extraText)) {
@@ -249,11 +251,12 @@ export function createEntryPointMethods(deps: EntryPointDeps) {
                 // React Native's root layout handles no capture link and shows no share failure in sandbox mode.
                 if (isSandboxMode()) return opened(payload ? { route: '/inbox' } : {});
                 // React Native leaves an empty note as it came, and its share reader then refuses the unknown action; a note
-                // longer than the popup takes is one this app cannot read either.
-                if (!payload || [input.name, input.text, input.extraText].some((value) => longerThan(value, TEXT_LIMIT))) {
+                // longer than the capture screen takes is one this app cannot read either.
+                const capture = payload && payloadCapture(payload);
+                if (!capture || [input.name, input.text, input.extraText].some((value) => longerThan(value, TEXT_LIMIT))) {
                     return opened({ notice: shareUnreadable() });
                 }
-                return opened({ route: '/inbox', capture: payloadCapture(payload) });
+                return opened({ route: '/inbox', ...capture });
             }
             return fail('INVALID_INPUT', 'An entry point is a link, a share or a note');
         },

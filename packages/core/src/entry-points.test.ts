@@ -49,13 +49,10 @@ const lookup = {
     _areasById: new Map(fixture.store.areas.map((area) => [area.id, area])),
 };
 
-/** React Native's capture screen route params, decoded: the title, the preset props, and the project reference. */
+/** The route params React Native pushed to its capture screen, exactly as it pushed them. */
 const captureParams = (delivered: Delivered) => {
     const call = delivered.router.find(([, route]) => typeof route === 'object' && route.pathname === '/capture-modal');
-    if (!call) return null;
-    const params = (call[1] as { params: Record<string, string> }).params;
-    const props = params.initialProps ? JSON.parse(decodeURIComponent(params.initialProps)) as { description?: string; tags?: string[] } : {};
-    return { title: decodeURIComponent(params.initialValue), props, project: params.project ? decodeURIComponent(params.project) : undefined };
+    return call ? (call[1] as { params: Record<string, string> }).params : null;
 };
 
 describe('entry points: React Native parity', () => {
@@ -107,7 +104,8 @@ describe('entry points: React Native parity', () => {
             if (!shared) continue;
             const draft = buildShareCaptureDraft({ shareSubject: shared.subject, shareText: shared.text, shareWebUrl: shared.webUrl });
             const params = captureParams(delivered);
-            expect([share, draft]).toEqual([share, params && { title: params.title, ...params.props }]);
+            const props = params?.initialProps ? JSON.parse(decodeURIComponent(params.initialProps)) as { description?: string } : {};
+            expect([share, draft]).toEqual([share, params && { title: decodeURIComponent(params.initialValue), ...props }]);
             if (!draft) expect(delivered.toasts).toHaveLength(1);
         }
     });
@@ -150,11 +148,12 @@ describe('native host contract: resolveNativeEntryPoint', () => {
     afterAll(async () => { await flushPendingSave(); resetForTests(); });
 
     const link = (url: string) => value(host.resolveNativeEntryPoint({ kind: 'link', url: url.replace(/^mindwtr:/i, `${SCHEME}:`), scheme: SCHEME }));
-    const fresh = (preset: { note?: string; projectId?: string | null } = {}) => ({
-        note: preset.note ?? '', dueDate: null, dueDateHasTime: false, startTime: null, contexts: [],
-        projectId: preset.projectId ?? null, areaId: null, priority: null, focus: false, addAnother: false,
+    /** The capture popup's fresh options (open-feature capture opens the popup, as React Native's tab route does). */
+    const fresh = () => ({
+        note: '', dueDate: null, dueDateHasTime: false, startTime: null, contexts: [],
+        projectId: null, areaId: null, priority: null, focus: false, addAnother: false,
     });
-    const none = { version: 1, route: null, taskId: null, projectId: null, search: null, capture: null, notice: null };
+    const none = { version: 1, route: null, taskId: null, projectId: null, search: null, capture: null, captureModal: null, notice: null };
 
     it('opens what React Native opened for every link of the fixture', () => {
         for (const { url, redirectCold, delivered } of fixture.urls) {
@@ -165,13 +164,8 @@ describe('native host contract: resolveNativeEntryPoint', () => {
             const [call] = delivered.router;
             let expected: unknown;
             if (!/^mindwtr:/i.test(url)) expected = none;
-            else if (params) {
-                // The capture screen's title, note and tags, and the project: an id or title no project carries becomes a token.
-                const tags = (params.props.tags ?? []).map((tag) => tag);
-                const known = params.project && projects.find((entry) => entry.id === params.project || entry.title.toLowerCase() === params.project!.toLowerCase());
-                const text = [params.title, ...tags, params.project && !known ? `+${params.project}` : null].filter(Boolean).join(' ');
-                expected = { ...none, route: '/inbox', capture: { text, options: fresh({ note: params.props.description, projectId: known && !known.deletedAt ? known.id : null }), returnToPreviousApp: false } };
-            } else if (delivered.toasts.length > 0) expected = { ...none, route: '/inbox', notice: { ...delivered.toasts[0] } };
+            // The capture screen, with React Native's own route params.
+            else if (params) expected = { ...none, route: '/inbox', captureModal: { params } }; else if (delivered.toasts.length > 0) expected = { ...none, route: '/inbox', notice: { ...delivered.toasts[0] } };
             else if (call && typeof call[1] === 'object') {
                 const route = call[1];
                 expected = route.pathname === '/focus'
@@ -181,7 +175,7 @@ describe('native host contract: resolveNativeEntryPoint', () => {
                 const route = call[1] as string;
                 expected = route.startsWith('/capture-quick') ? { ...none, route: '/inbox', capture: { text: '', options: fresh(), returnToPreviousApp: false } } : { ...none, route };
             } else if (redirectCold === '/capture-modal?origin=system') {
-                expected = { ...none, capture: { text: '', options: fresh(), returnToPreviousApp: true } };
+                expected = { ...none, captureModal: { params: { origin: 'system' } } };
             } else if (redirectCold.startsWith('/settings')) expected = { ...none, route: '/settings' };
             else if (redirectCold === '/inbox') expected = none; // iOS's share handoff
             else {
@@ -196,25 +190,36 @@ describe('native host contract: resolveNativeEntryPoint', () => {
         }
     });
 
-    it('opens every text share React Native opened, in the capture popup', () => {
+    it('opens every text share React Native opened, in its capture screen, which closes to the Inbox', () => {
         for (const { share, delivered } of fixture.shares) {
             const native = value(host.resolveNativeEntryPoint({ kind: 'share', ...share }));
             const params = captureParams(delivered);
-            const expected = params
-                ? { ...none, capture: { text: params.title, options: fresh({ note: params.props.description }), returnToPreviousApp: false } }
+            // React Native replaces the screen it was on, so the capture screen closes to the Inbox (getCaptureModalCloseTarget).
+            const expected = params ? { ...none, route: '/inbox', captureModal: { params } }
                 : delivered.toasts.length > 0 ? { ...none, notice: { ...delivered.toasts[0] } } : none;
             expect([share, native]).toEqual([share, expected]);
         }
     });
 
-    it('matches a capture link\'s project and tags as React Native\'s capture screen saves them', () => {
-        const capture = (query: string) => link(`mindwtr://capture?title=Buy%20milk&${query}`).capture!;
-        expect(capture('project=groceries')).toMatchObject({ text: 'Buy milk', options: { projectId: 'p-shop' } });
-        expect(capture('project=p-shop')).toMatchObject({ text: 'Buy milk', options: { projectId: 'p-shop' } });
-        // An archived project takes no task: skipped, as React Native skips it; a name no project carries is created by the token.
-        expect(capture('project=old%20plans')).toMatchObject({ text: 'Buy milk', options: { projectId: null } });
-        expect(capture('project=New%20%22big%22%20plan')).toMatchObject({ text: 'Buy milk +"New \\"big\\" plan"', options: { projectId: null } });
-        expect(capture('tags=errand,two%20words,%23x')).toMatchObject({ text: 'Buy milk #errand #"two words" #x' });
+    it('keeps a capture link\'s tags and project as the capture screen\'s props, and saves them as React Native does', async () => {
+        const save = async (query: string, captureId: string) => {
+            const { params } = link(`mindwtr://capture?title=Buy%20milk&${query}`).captureModal!;
+            const { draft } = value(host.openCaptureModal({ params }));
+            expect(draft.text).toBe('Buy milk');
+            const saved = value(await host.submitCaptureModal({ params, draft, captureId }));
+            if (saved.kind !== 'saved') throw new Error(`expected a save, got ${saved.kind}`);
+            const task = useTaskStore.getState()._tasksById.get(saved.taskId)!;
+            const project = useTaskStore.getState().projects.find((entry) => entry.id === task.projectId);
+            return { title: task.title, tags: task.tags, project: project?.title ?? null };
+        };
+        expect(await save('project=groceries', '00000000-0000-4000-8000-000000000201')).toEqual({ title: 'Buy milk', tags: [], project: 'Groceries' });
+        expect(await save('project=p-shop', '00000000-0000-4000-8000-000000000202')).toEqual({ title: 'Buy milk', tags: [], project: 'Groceries' });
+        // An archived project takes no task: skipped, as React Native skips it; a name no project carries is created.
+        expect(await save('project=old%20plans', '00000000-0000-4000-8000-000000000203')).toEqual({ title: 'Buy milk', tags: [], project: null });
+        expect(await save('project=New%20%22big%22%20plan', '00000000-0000-4000-8000-000000000204')).toEqual({ title: 'Buy milk', tags: [], project: 'New "big" plan' });
+        // Tags stay tags, never title text.
+        expect(await save('tags=errand,two%20words,%23x', '00000000-0000-4000-8000-000000000205'))
+            .toEqual({ title: 'Buy milk', tags: ['#errand', '#two words', '#x'], project: null });
     });
 
     it('opens the global search with its query and Include completed', () => {
@@ -222,9 +227,9 @@ describe('native host contract: resolveNativeEntryPoint', () => {
         expect(link('mindwtr://global-search').search).toEqual({ query: '', filters: null });
     });
 
-    it('opens an assistant note in the capture popup, and refuses an empty one with the share notice', () => {
+    it('opens an assistant note in the capture screen, and refuses an empty one with the share notice', () => {
         expect(value(host.resolveNativeEntryPoint({ kind: 'createNote', name: 'Voice note', text: 'Longer spoken text', extraText: null })))
-            .toEqual({ ...none, route: '/inbox', capture: { text: 'Voice note', options: fresh({ note: 'Longer spoken text' }), returnToPreviousApp: false } });
+            .toEqual({ ...none, route: '/inbox', captureModal: { params: { initialValue: 'Voice%20note', initialProps: encodeURIComponent('{"description":"Longer spoken text"}') } } });
         expect(value(host.resolveNativeEntryPoint({ kind: 'createNote', name: null, text: null, extraText: '  ' })).notice)
             .toEqual({ tone: 'warning', title: 'Share unavailable', message: 'Mindwtr could not read text or a URL from the shared item.' });
     });
@@ -234,6 +239,8 @@ describe('native host contract: resolveNativeEntryPoint', () => {
         expect(value(host.resolveNativeEntryPoint({ kind: 'share', text: 'x'.repeat(500_001), title: null, subject: null }))).toEqual({ ...none, notice });
         expect(value(host.resolveNativeEntryPoint({ kind: 'share', text: 'Body', title: 't'.repeat(100_001), subject: null }))).toEqual({ ...none, notice });
         expect(value(host.resolveNativeEntryPoint({ kind: 'createNote', name: 'n'.repeat(100_001), text: null, extraText: null }))).toEqual({ ...none, notice });
+        // A share whose route params (URI-encoded) are longer than the capture screen takes: é is six characters encoded.
+        expect(value(host.resolveNativeEntryPoint({ kind: 'share', text: 'é'.repeat(20_000), title: null, subject: null }))).toEqual({ ...none, notice });
     });
 
     it('opens nothing for another scheme, and refuses malformed input', () => {
