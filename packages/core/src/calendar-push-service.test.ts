@@ -202,6 +202,17 @@ describe('calendar push behind the host ports', () => {
         );
     });
 
+    it('iOS (no marker field) never adopts or deletes a calendar by its title', async () => {
+        // A death between the create and saving the ID left this calendar: an accepted platform limit.
+        const phone = device({ os: 'ios', calendars: [PRIMARY, { id: 'left-over', title: 'Mindwtr', accessLevel: 'owner', allowsModifications: true, source: google }] });
+        const service = createCalendarPushService(phone.host);
+        const made = await service.ensureMindwtrCalendar();
+        expect(made).not.toBe('left-over');
+        await service.deleteMindwtrCalendar();
+        expect(phone.calendars.map((calendar) => calendar.id)).toEqual(['primary', 'left-over']);
+        expect(phone.storage.has(CALENDAR_PUSH_PENDING_KEY)).toBe(false);
+    });
+
     it('deletes a calendar a cut-short creation made, and no other install\'s', async () => {
         const token = '11111111-1111-4111-8111-111111111111';
         const phone = device({

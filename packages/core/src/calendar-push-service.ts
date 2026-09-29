@@ -542,7 +542,11 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
 
             // Android: the marker goes on disk before the create and into the calendar's
             // internal name, so a death before the ID is saved leaves a calendar the next
-            // run adopts. EventKit (iOS) has no such field: there only the saved ID counts.
+            // run adopts. EventKit (iOS) has no hidden field for it, so there only the saved
+            // ID counts: a death between the create and saving the ID leaves one empty
+            // calendar that the app never adopts or deletes by its title (another install's
+            // calendar could carry the same title), and the next run makes another. An
+            // accepted platform limit: no event or task is lost.
             const marked = host.os() === 'android';
             if (marked) {
                 const marker = await storage.getItem(CALENDAR_PUSH_PENDING_KEY) ?? generateUUID();
