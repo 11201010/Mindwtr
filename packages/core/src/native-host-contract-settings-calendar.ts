@@ -747,7 +747,14 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                 if (!planCalendarPushColor(stored, edit.color)) return result(false);
                 if (normalizeCalendarPushColor(edit.before) !== stored) return fail('STALE_REVISION', 'The Mindwtr calendar color changed since the view showed it; read the view again');
                 if (!pushAvailable) return fail('ACTION_FAILED', 'Calendar push is not available on this host yet');
-                const updated = await push.updateMindwtrCalendarColor(edit.color);
+                let updated: boolean;
+                try {
+                    updated = await push.updateMindwtrCalendarColor(edit.color);
+                } catch (error) {
+                    // The device refused: nothing was stored, and the same request retries it.
+                    logError(current, error);
+                    return fail('ACTION_FAILED', 'The Mindwtr calendar color could not be changed; try again');
+                }
                 current.push.color = normalizeCalendarPushColor(edit.color);
                 await loadPushTargets(current);
                 showToast(toastsOf.pushColorUpdated(updated));

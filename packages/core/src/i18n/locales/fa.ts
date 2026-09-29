@@ -2158,6 +2158,7 @@ export const faOverrides: Record<string, string> = {
         'settings.calendarMobile.calendarColorUpdated': 'رنگ تقویم به‌روزرسانی شد',
         'settings.calendarMobile.calendarColorUpdatedMessage': 'رنگ تقویم Mindwtr به‌روزرسانی شد.',
         'settings.calendarMobile.calendarColorSavedMessage': 'Mindwtr هنگام ایجاد تقویم از این رنگ استفاده خواهد کرد.',
+        'settings.calendarMobile.calendarColorUpdateFailed': 'رنگ تقویم Mindwtr تغییر نکرد. لطفاً دوباره امتحان کنید.',
         'settings.calendarMobile.mindwtrCalendar': 'تقویم Mindwtr',
         'settings.calendarMobile.optional': 'اختیاری',
         'settings.calendarMobile.permissionRequired': 'مجوز لازم است',

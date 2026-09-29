@@ -119,6 +119,7 @@ export const koOverrides: Record<string, string> = {
         'settings.calendarMobile.calendarColorUpdated': '캘린더 색상이 업데이트되었습니다',
         'settings.calendarMobile.calendarColorUpdatedMessage': 'Mindwtr 캘린더 색상이 업데이트되었습니다.',
         'settings.calendarMobile.calendarColorSavedMessage': '캘린더를 만들 때 Mindwtr가 이 색상을 사용합니다.',
+        'settings.calendarMobile.calendarColorUpdateFailed': 'Mindwtr 캘린더 색상을 변경하지 못했습니다. 다시 시도하세요.',
         'common.error': '오류',
         'common.start': '시작',
         'common.reset': '재설정',

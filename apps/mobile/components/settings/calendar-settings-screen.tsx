@@ -215,10 +215,17 @@ export function CalendarSettingsScreen() {
 
     const handleSelectCalendarPushColor = async (color: string) => {
         if (!planCalendarPushColor(calendarPushColor, color)) return;
-        const updated = await updateMindwtrCalendarColor(color);
-        setCalendarPushColorState(color);
-        await loadCalendarPushTargetState();
-        showToast(calendarSettingsToasts(tr, t).pushColorUpdated(updated));
+        try {
+            const updated = await updateMindwtrCalendarColor(color);
+            setCalendarPushColorState(color);
+            await loadCalendarPushTargetState();
+            showToast(calendarSettingsToasts(tr, t).pushColorUpdated(updated));
+        } catch (error) {
+            // The device refused: nothing was stored, so picking the color again retries it.
+            console.error(error);
+            await loadCalendarPushTargetState();
+            showToast(calendarSettingsToasts(tr, t).pushColorFailed());
+        }
     };
 
     const performDeleteMindwtrCalendar = useCallback(async () => {

@@ -2157,6 +2157,7 @@ export const svOverrides: Record<string, string> = {
         'settings.calendarMobile.calendarColorUpdated': 'Kalenderfärgen uppdaterades',
         'settings.calendarMobile.calendarColorUpdatedMessage': 'Mindwtr-kalenderns färg uppdaterades.',
         'settings.calendarMobile.calendarColorSavedMessage': 'Mindwtr använder den här färgen när kalendern skapas.',
+        'settings.calendarMobile.calendarColorUpdateFailed': 'Det gick inte att ändra färgen på Mindwtr-kalendern. Försök igen.',
         'settings.calendarMobile.mindwtrCalendar': 'Mindwtr-kalendern',
         'settings.calendarMobile.optional': 'Valfritt',
         'settings.calendarMobile.permissionRequired': 'Behörighet krävs',

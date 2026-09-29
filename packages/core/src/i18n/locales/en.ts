@@ -2192,6 +2192,7 @@ export const en: Record<string, string> = {
         'settings.calendarMobile.calendarColorUpdated': 'Calendar color updated',
         'settings.calendarMobile.calendarColorUpdatedMessage': 'Mindwtr calendar color was updated.',
         'settings.calendarMobile.calendarColorSavedMessage': 'Mindwtr will use this color when it creates the calendar.',
+        'settings.calendarMobile.calendarColorUpdateFailed': 'The Mindwtr calendar color could not be changed. Try again.',
         'settings.calendarMobile.mindwtrCalendar': 'Mindwtr calendar',
         'settings.calendarMobile.optional': 'Optional',
         'settings.calendarMobile.permissionRequired': 'Permission Required',

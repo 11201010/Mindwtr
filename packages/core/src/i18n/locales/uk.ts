@@ -2122,6 +2122,7 @@ export const ukOverrides: Record<string, string> = {
     "settings.calendarMobile.calendarColorUpdated": "Оновлено колір календаря",
     "settings.calendarMobile.calendarColorUpdatedMessage": "Колір календаря Mindwtr оновлено.",
     "settings.calendarMobile.calendarColorSavedMessage": "Mindwtr використовуватиме цей колір під час створення календаря.",
+    "settings.calendarMobile.calendarColorUpdateFailed": "Не вдалося змінити колір календаря Mindwtr. Спробуйте ще раз.",
     "settings.calendarMobile.mindwtrCalendar": "Календар Mindwtr",
     "settings.calendarMobile.optional": "Додатково",
     "settings.calendarMobile.permissionRequired": "Потрібен дозвіл",

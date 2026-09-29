@@ -2126,6 +2126,7 @@ export const huOverrides: Record<string, string> = {
     'settings.calendarMobile.calendarColorUpdated': 'Naptár színe frissítve',
     'settings.calendarMobile.calendarColorUpdatedMessage': 'A Mindwtr naptár színe frissítve lett.',
     'settings.calendarMobile.calendarColorSavedMessage': 'A Mindwtr ezt a színt fogja használni a naptár létrehozásakor.',
+    'settings.calendarMobile.calendarColorUpdateFailed': 'A Mindwtr naptár színét nem sikerült módosítani. Próbálja meg újra.',
     'settings.calendarMobile.mindwtrCalendar': 'Mindwtr naptár',
     'settings.calendarMobile.optional': 'Nem kötelező',
     'settings.calendarMobile.permissionRequired': 'Engedély szükséges',

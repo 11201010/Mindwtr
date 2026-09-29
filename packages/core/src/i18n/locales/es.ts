@@ -2126,6 +2126,7 @@ export const esOverrides: Record<string, string> = {
 'settings.calendarMobile.calendarColorUpdated': "Color del calendario actualizado",
 'settings.calendarMobile.calendarColorUpdatedMessage': "Se actualizó el color del calendario de Mindwtr.",
 'settings.calendarMobile.calendarColorSavedMessage': "Mindwtr usará este color cuando cree el calendario.",
+'settings.calendarMobile.calendarColorUpdateFailed': "No se pudo cambiar el color del calendario de Mindwtr. Inténtalo de nuevo.",
 'settings.calendarMobile.mindwtrCalendar': "Calendario de Mindwtr",
 'settings.calendarMobile.optional': "Opcional",
 'settings.calendarMobile.permissionRequired': "Permiso requerido",

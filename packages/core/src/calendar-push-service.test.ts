@@ -30,7 +30,7 @@ class Death extends Error {}
 
 function device(options: { os?: string; calendars?: DeviceCalendar[]; storage?: Record<string, string>; entries?: CalendarSyncEntry[]; tasks?: Task[] } = {}) {
     // Every device write first ticks: at `dieAt` the process dies, and every later write fails too.
-    const life = { step: 0, dieAt: Infinity, died: false, failDelete: false };
+    const life = { step: 0, dieAt: Infinity, died: false, failDelete: false, failUpdate: false, failList: false };
     const tick = () => {
         life.step += 1;
         if (life.died || life.step === life.dieAt) {
@@ -76,6 +76,7 @@ function device(options: { os?: string; calendars?: DeviceCalendar[]; storage?: 
             },
             updateCalendar: async (id, details) => {
                 tick();
+                if (life.failUpdate) throw new Error('Calendar provider refused the change');
                 writes.push(['updateCalendar', id, details.color]);
                 const calendar = calendars.find((entry) => entry.id === id);
                 if (calendar) calendar.color = details.color;
@@ -236,6 +237,30 @@ describe('calendar push behind the host ports', () => {
                 if (planCalendarPushColor(await service.getCalendarPushColor(), '#059669')) await service.updateMindwtrCalendarColor('#059669');
             },
         );
+    });
+
+    it.each(['android', 'ios'])('a color change the device refuses on %s stores nothing and rejects, so a retry changes it', async (os) => {
+        const phone = device({
+            os,
+            calendars: [PRIMARY, { id: 'saved', title: 'Mindwtr', name: 'mindwtr', color: '#3B82F6', accessLevel: 'owner', allowsModifications: true, source: google }],
+            storage: { [CALENDAR_PUSH_CALENDAR_ID_KEY]: 'saved', [CALENDAR_PUSH_COLOR_KEY]: '#3B82F6' },
+        });
+        phone.life.failDelete = true;
+        phone.life.failUpdate = true;
+        await expect(createCalendarPushService(phone.host).updateMindwtrCalendarColor('#059669')).rejects.toThrow('refused');
+        expect(phone.storage.get(CALENDAR_PUSH_COLOR_KEY)).toBe('#3B82F6');
+        expect(phone.calendars.find((calendar) => calendar.id === 'saved')?.color).toBe('#3B82F6');
+        phone.life.failDelete = false;
+        phone.life.failUpdate = false;
+        expect(await createCalendarPushService(phone.host).updateMindwtrCalendarColor('#059669')).toBe(true);
+        expect(phone.storage.get(CALENDAR_PUSH_COLOR_KEY)).toBe('#059669');
+    });
+
+    it('stores the color for the next calendar only when there is no calendar yet', async () => {
+        const phone = device({ storage: { [CALENDAR_PUSH_COLOR_KEY]: '#3B82F6' } });
+        expect(await createCalendarPushService(phone.host).updateMindwtrCalendarColor('#059669')).toBe(false);
+        expect(phone.storage.get(CALENDAR_PUSH_COLOR_KEY)).toBe('#059669');
+        expect(phone.writes).toEqual([]);
     });
 
     it('a death after the device calendar changed color stores it on the retry without changing the calendar again', async () => {

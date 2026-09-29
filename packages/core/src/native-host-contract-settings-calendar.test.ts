@@ -100,7 +100,7 @@ async function seed(settings: AppSettings) {
 class Death extends Error {}
 
 function phone(device: Device) {
-    const life = { step: 0, dieAt: Infinity, died: false };
+    const life = { step: 0, dieAt: Infinity, died: false, refuse: new Set<string>() };
     const tick = () => {
         life.step += 1;
         if (life.died || life.step === life.dieAt) {
@@ -159,11 +159,13 @@ function phone(device: Device) {
             },
             updateCalendar: async (id, details) => {
                 tick();
+                if (life.refuse.has('updateCalendar')) throw new Error('Calendar provider refused');
                 state.calendarWrites.push(['updateCalendar', id, details]);
                 return id;
             },
             deleteCalendar: async (id) => {
                 tick();
+                if (life.refuse.has('deleteCalendar')) throw new Error('Calendar provider refused');
                 state.calendarWrites.push(['deleteCalendar', id]);
                 const index = state.calendars.findIndex((calendar) => calendar.id === id);
                 if (index >= 0) state.calendars.splice(index, 1);
@@ -547,6 +549,19 @@ describe('native host contract: Settings › Calendar', () => {
             const again = await replay(handset, requestId, green);
             expect(again.answer).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
             expect(again.after).toEqual(again.before);
+        });
+
+        it('a color change the device refuses answers ACTION_FAILED and stores nothing; the same request retries it', async () => {
+            const { handset, contract, view } = await boot({ calendars: ['primary', 'managed'], storage: { [KEYS.pushEnabled]: '1', [KEYS.pushCalendar]: 'g-mindwtr' } });
+            const change = view().push.target!.colors!.options.find((option) => option.color === '#059669')!.edit;
+            const requestId = generateUUID();
+            handset.life.refuse.add('deleteCalendar');
+            expect(await edit(contract, change, requestId)).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+            expect(handset.snapshot()[KEYS.pushColor]).toBeUndefined();
+            expect(handset.state.calendars.map((calendar) => calendar.id)).toEqual(['g-primary', 'g-mindwtr']);
+            handset.life.refuse.clear();
+            expect(value(await edit(contract, change, requestId)).changed).toBe(true);
+            expect(handset.snapshot()[KEYS.pushColor]).toBe('#059669');
         });
 
         it('Delete Mindwtr calendar: the replay deletes nothing, not even a Mindwtr calendar made since', async () => {

@@ -64,5 +64,6 @@ describe('Settings › Calendar rules', () => {
         expect(keptPushTargetEvents('work', 'work')).toBe(true);
         expect(toasts.mindwtrCalendarDeleted(false).message).toBe('The Mindwtr calendar and all its events have been removed.');
         expect(toasts.mindwtrCalendarDeleted(true).message).toBe('The Mindwtr calendar was removed. Events already pushed to the calendar you chose stay there.');
+        expect(toasts.pushColorFailed()).toEqual({ title: 'Error', message: 'The Mindwtr calendar color could not be changed. Try again.', tone: 'warning', durationMs: 4200 });
     });
 });

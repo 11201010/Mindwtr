@@ -2197,6 +2197,7 @@ export const jaOverrides: Record<string, string> = {
         'settings.calendarMobile.calendarColorUpdated': 'カレンダーの色を変更しました',
         'settings.calendarMobile.calendarColorUpdatedMessage': 'Mindwtr カレンダーの色を変更しました。',
         'settings.calendarMobile.calendarColorSavedMessage': 'カレンダーを作成するときに、この色が使われます。',
+        'settings.calendarMobile.calendarColorUpdateFailed': 'Mindwtr のカレンダーの色を変更できませんでした。もう一度お試しください。',
         'settings.calendarMobile.mindwtrCalendar': 'Mindwtr カレンダー',
         'settings.calendarMobile.optional': '任意',
         'settings.calendarMobile.permissionRequired': '許可が必要です',

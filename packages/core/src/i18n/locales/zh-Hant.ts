@@ -112,6 +112,7 @@ export const zhHant: Record<string, string> = {
         'settings.calendarMobile.calendarColorUpdated': '日曆顏色已更新',
         'settings.calendarMobile.calendarColorUpdatedMessage': 'Mindwtr 日曆顏色已更新。',
         'settings.calendarMobile.calendarColorSavedMessage': 'Mindwtr 創建日曆時將使用此顏色。',
+        'settings.calendarMobile.calendarColorUpdateFailed': '無法變更 Mindwtr 日曆顏色。請再試一次。',
         'common.error': '錯誤',
         'common.start': '開始',
         'common.reset': '重置',

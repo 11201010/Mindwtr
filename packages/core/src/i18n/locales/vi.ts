@@ -118,6 +118,7 @@ export const viOverrides: Record<string, string> = {
         'settings.calendarMobile.calendarColorUpdated': 'Đã cập nhật màu lịch',
         'settings.calendarMobile.calendarColorUpdatedMessage': 'Màu lịch Mindwtr đã được cập nhật.',
         'settings.calendarMobile.calendarColorSavedMessage': 'Mindwtr sẽ dùng màu này khi tạo lịch.',
+        'settings.calendarMobile.calendarColorUpdateFailed': 'Không thể đổi màu lịch Mindwtr. Hãy thử lại.',
         'common.error': 'Lỗi',
         'common.start': 'Bắt đầu',
         'common.reset': 'Đặt lại',

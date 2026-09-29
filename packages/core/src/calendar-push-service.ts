@@ -873,13 +873,13 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
      * Gives the Mindwtr calendar a new color. The device calendar changes first and
      * the color is stored after it, so a change cut short at any step is finished by
      * a retry: one whose device calendar already has the color only stores it.
-     * Without a calendar (or when the device refuses) the color is stored for the
-     * calendar the app makes next, and the answer is false.
+     * Without a calendar yet the color is stored for the calendar the app makes next
+     * (false). When the device refuses, nothing is stored and it rejects, so the same
+     * pick retries it.
      */
     const updateMindwtrCalendarColor = async (color: string): Promise<boolean> => {
         if (isSandboxMode()) return false;
         const normalized = normalizeCalendarPushColor(color);
-        /** Stores the color and proves in the log which path ran (v1.3.4: the device calendar first). */
         const stored = async (outcome: 'updated' | 'recreated' | 'already' | 'stored'): Promise<boolean> => {
             await setCalendarPushColor(normalized);
             void log.info('Mindwtr calendar color changed', {
@@ -889,14 +889,14 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             return outcome !== 'stored';
         };
         try {
-            if (typeof device.updateCalendar !== 'function') return await stored('stored');
             const storedCalendarId = await getStoredCalendarId();
             const calendars = await device.getCalendars();
             // Only the calendar the app saved (or one it made with its marker) is its own, never one found by its title.
             const ownId = storedCalendarId ?? await adoptPendingCalendar(calendars);
             const target = calendars.find((calendar) => ownId && calendar.id === ownId);
-            if (!target || !isWritableCalendar(target)) return await stored('stored');
+            if (!target) return await stored('stored');
             if ((target.color ?? '').trim().toUpperCase() === normalized) return await stored('already');
+            if (!isWritableCalendar(target)) throw new Error('The Mindwtr calendar cannot be changed on this device');
 
             // Android's CalendarProvider only stores a calendar's color at creation
             // time, and expo-calendar's update path never writes CALENDAR_COLOR, so
@@ -904,9 +904,11 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             // Recreate the managed calendar with the new color instead.
             if (host.os() === 'android') {
                 if (await recreateManagedMindwtrCalendar(normalized)) return true;
+                // Deleted, but the new one could not be made: the next calendar takes the color.
                 return await stored('stored');
             }
 
+            if (typeof device.updateCalendar !== 'function') throw new Error('This device cannot change a calendar color');
             await device.updateCalendar(target.id, { color: normalized });
             return await stored('updated');
         } catch (error) {
@@ -914,9 +916,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
                 scope: 'calendar-push',
                 extra: { error: getCalendarErrorMessage(error) },
             });
-            // The calendar the app makes next takes it.
-            await setCalendarPushColor(normalized).catch(() => undefined);
-            return false;
+            throw error;
         }
     };
 

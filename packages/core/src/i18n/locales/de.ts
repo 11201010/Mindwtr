@@ -2069,6 +2069,7 @@ export const deOverrides: Record<string, string> = {
         'settings.calendarMobile.calendarAccessIsRequiredToPushTasksToYourCalendar': 'Für das Übertragen von Aufgaben in Deinen Kalender ist Kalenderzugriff erforderlich.',
         'settings.calendarMobile.calendarAccessWasDeniedPleaseGrantAccessInSettings': 'Der Kalenderzugriff wurde verweigert. Bitte erteile den Zugriff in den Einstellungen.',
         'settings.calendarMobile.calendarColorSavedMessage': 'Mindwtr verwendet diese Farbe, wenn es den Kalender erstellt.',
+        'settings.calendarMobile.calendarColorUpdateFailed': 'Die Farbe des Mindwtr-Kalenders konnte nicht geändert werden. Versuche es erneut.',
         'settings.calendarMobile.calendarColorUpdated': 'Kalenderfarbe aktualisiert',
         'settings.calendarMobile.calendarColorUpdatedMessage': 'Die Farbe des Mindwtr-Kalenders wurde aktualisiert.',
         'settings.calendarMobile.calendarDeleted': 'Kalender gelöscht',

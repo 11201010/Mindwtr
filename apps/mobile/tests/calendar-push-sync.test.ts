@@ -500,6 +500,20 @@ describe('calendar push color', () => {
         expect(mockDeleteCalendarAsync).not.toHaveBeenCalled();
         expect(mockCreateCalendarAsync).not.toHaveBeenCalled();
     });
+
+    it('stores nothing when the device refuses the color change, so the same pick retries it', async () => {
+        mockGetItem.mockImplementation(async (key: string) => {
+            if (key === 'mindwtr:calendar-push-sync:calendar-id') return 'cal-1';
+            if (key === 'mindwtr:calendar-push-sync:color') return '#3B82F6';
+            return null;
+        });
+        mockGetCalendarsAsync.mockResolvedValue([{ id: 'cal-1', title: 'Mindwtr', allowsModifications: true }]);
+        mockUpdateCalendarAsync.mockRejectedValueOnce(new Error('Calendar provider refused'));
+
+        await expect(updateMindwtrCalendarColor('#059669')).rejects.toThrow('refused');
+
+        expect(mockSetItem).not.toHaveBeenCalledWith('mindwtr:calendar-push-sync:color', '#059669');
+    });
 });
 
 describe('getCalendarPushTargetCalendars', () => {

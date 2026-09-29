@@ -118,6 +118,7 @@ export const csOverrides: Record<string, string> = {
         'settings.calendarMobile.calendarColorUpdated': 'Barva kalendáře aktualizována',
         'settings.calendarMobile.calendarColorUpdatedMessage': 'Barva kalendáře Mindwtr byla aktualizována.',
         'settings.calendarMobile.calendarColorSavedMessage': 'Mindwtr použije tuto barvu při vytvoření kalendáře.',
+        'settings.calendarMobile.calendarColorUpdateFailed': 'Barvu kalendáře Mindwtr se nepodařilo změnit. Zkuste to znovu.',
         'common.error': 'Chyba',
         'common.start': 'Spustit',
         'common.reset': 'Obnovit',

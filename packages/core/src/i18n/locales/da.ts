@@ -2313,6 +2313,7 @@ export const daOverrides: Record<string, string> = {
     'settings.calendarMobile.calendarColorUpdated': 'Kalenderfarve opdateret',
     'settings.calendarMobile.calendarColorUpdatedMessage': 'Mindwtr kalenderfarve blev opdateret.',
     'settings.calendarMobile.calendarColorSavedMessage': 'Mindwtr vil bruge denne farve, når den opretter kalenderen.',
+    'settings.calendarMobile.calendarColorUpdateFailed': 'Farven på Mindwtr-kalenderen kunne ikke ændres. Prøv igen.',
     'settings.calendarMobile.mindwtrCalendar': 'Mindwtr kalender',
     'settings.calendarMobile.optional': 'Valgfrit',
     'settings.calendarMobile.permissionRequired': 'Tilladelse påkrævet',

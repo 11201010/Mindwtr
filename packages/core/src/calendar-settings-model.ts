@@ -348,6 +348,13 @@ export const calendarSettingsToasts = (tr: TranslateText, t: Translate) => ({
         durationMs: 3000,
     }),
     /** After Delete Mindwtr calendar; `keptTargetEvents` (keptPushTargetEvents): the chosen calendar, not the app's, kept its pushed events. */
+    /** The device refused the new color: nothing was stored. */
+    pushColorFailed: (): CalendarSettingsToast => ({
+        title: tr('settings.syncMobile.error'),
+        message: tr('settings.calendarMobile.calendarColorUpdateFailed'),
+        tone: 'warning',
+        durationMs: 4200,
+    }),
     mindwtrCalendarDeleted: (keptTargetEvents: boolean): CalendarSettingsToast => ({
         title: tr('settings.calendarMobile.calendarDeleted'),
         message: keptTargetEvents
