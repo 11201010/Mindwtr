@@ -511,7 +511,7 @@ export interface TaskStore {
     /** Reorder projects within a specific area by id list */
     reorderProjects: (orderedIds: string[], areaId?: string) => Promise<void>;
     /** Reorder tasks within a project or section */
-    reorderProjectTasks: (projectId: string, orderedIds: string[], sectionId?: string | null) => Promise<void>;
+    reorderProjectTasks: (projectId: string, orderedIds: string[], sectionId?: string | null, movedTaskId?: string) => Promise<void>;
     /** Reorder tasks within a Board status column by id list */
     reorderBoardTasks: (status: TaskStatus, orderedIds: string[], movedTaskId?: string) => Promise<void>;
 

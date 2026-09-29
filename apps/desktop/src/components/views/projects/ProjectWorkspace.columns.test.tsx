@@ -257,6 +257,7 @@ describe('ProjectWorkspace sections-as-columns (#1019)', () => {
             project.id,
             ['task-2', 'task-1'],
             planning.id,
+            'task-2',
         );
     });
 
@@ -274,6 +275,7 @@ describe('ProjectWorkspace sections-as-columns (#1019)', () => {
             project.id,
             ['task-1', 'task-3'],
             shipping.id,
+            'task-1',
         );
     });
 

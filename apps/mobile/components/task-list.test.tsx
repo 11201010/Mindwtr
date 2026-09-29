@@ -1460,6 +1460,8 @@ describe('TaskList', () => {
       draggableList.props.onDragEnd({ data: droppedData, from: 0, to: 20 });
       draggableList.props.onScrollOffsetChange(800);
     });
+    expect(storeState.reorderProjectTasks).toHaveBeenCalledWith(project.id,
+      expect.arrayContaining(['task-0']), null, 'task-0');
 
     flatListScrollToIndexMock.mockClear();
     await act(async () => {

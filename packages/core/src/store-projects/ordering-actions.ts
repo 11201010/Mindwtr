@@ -5,6 +5,7 @@ import { sameProjectSqliteRow } from './project-actions';
 import type { PreparedProjectSectionOrder, PreparedTaskEditResult } from '../store-types';
 import { compareTasksByProjectOrder, sortTasksByBoardOrder } from '../task-utils';
 import { mutateTasks } from '../store-tasks';
+import { logInfo } from '../logger';
 import type { OrderingActions, Project, ProjectActionContext, Section, Task, TaskStatus } from './shared';
 import { mutateEntities } from './shared';
 
@@ -110,10 +111,13 @@ const createSparseOrderPlan = (
     currentIds: string[],
     nextIds: string[],
     orderById: Map<string, number | undefined>,
+    movedTaskId?: string,
 ): SparseOrderPlan | null => {
     if (sameOrder(currentIds, nextIds)) return null;
 
-    const movedId = findSingleMovedId(currentIds, nextIds);
+    const movedId = movedTaskId && currentIds.includes(movedTaskId) && nextIds.includes(movedTaskId)
+        && sameOrder(currentIds.filter((id) => id !== movedTaskId), nextIds.filter((id) => id !== movedTaskId))
+        ? movedTaskId : findSingleMovedId(currentIds, nextIds);
     if (movedId) {
         const order = sparseOrderForMove(nextIds, movedId, orderById);
         if (order !== null && Number.isFinite(order)) {
@@ -267,9 +271,10 @@ export const createOrderingActions = ({
         });
     },
 
-    reorderProjectTasks: async (projectId: string, orderedIds: string[], sectionId?: string | null) => {
+    reorderProjectTasks: async (projectId: string, orderedIds: string[], sectionId?: string | null, movedTaskId?: string) => {
         if (!projectId || orderedIds.length === 0) return;
         let orderPlan: SparseOrderPlan | null = null;
+        let changedCount = 0;
         await mutateTasks({ set, debouncedSave }, {
             selectTasks: (state) => {
                 const hasSectionFilter = sectionId !== undefined;
@@ -289,15 +294,17 @@ export const createOrderingActions = ({
                 const currentIds = projectTasks
                     .sort(compareTasksByProjectOrder)
                     .map((task) => task.id);
-                const nextIds = finalOrderedIds(currentIds, validOrderedIds);
+                const nextIds = boardOrderedIds(currentIds, validOrderedIds, movedTaskId);
                 const orderById = new Map(projectTasks.map((task) => [task.id, getTaskOrder(task)]));
-                orderPlan = createSparseOrderPlan(currentIds, nextIds, orderById);
+                orderPlan = createSparseOrderPlan(currentIds, nextIds, orderById, movedTaskId);
                 if (!orderPlan) return [];
-                return projectTasks.filter((task) => {
+                const changed = projectTasks.filter((task) => {
                     const nextOrder = orderFromPlan(orderPlan!, task.id);
                     return Number.isFinite(nextOrder)
                         && !(getTaskOrder(task) === nextOrder && task.order === nextOrder && task.orderNum === nextOrder);
                 });
+                changedCount = changed.length;
+                return changed;
             },
             buildUpdates: (task) => {
                 const nextOrder = orderFromPlan(orderPlan!, task.id);
@@ -306,6 +313,10 @@ export const createOrderingActions = ({
                     orderNum: nextOrder as number,
                 };
             },
+        });
+        if (changedCount > 0) logInfo('Project task order applied', {
+            scope: 'store', category: 'storage',
+            context: { releaseCheck: 'v1.3.3/project-filtered-task-order', count: changedCount },
         });
     },
 

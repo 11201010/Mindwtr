@@ -122,6 +122,63 @@ describe('reorderProjectTasks', () => {
         expect(saved?.tasks.filter((task) => task.rev === 2).map((task) => task.id)).toEqual([movedId]);
     });
 
+    it.each([
+        { shown: ['task-2', 'task-0'], moved: 'task-0', expected: ['task-1', 'task-2', 'task-0'] },
+        { shown: ['task-2', 'task-0'], moved: 'task-2', expected: ['task-2', 'task-0', 'task-1'] },
+    ])('preserves hidden rows and writes only the actual dragged task ($moved)', async ({ shown, moved, expected }) => {
+        const original = seedProjectTasks(3);
+        await useTaskStore.getState().reorderProjectTasks(project.id, shown, null, moved);
+
+        const current = useTaskStore.getState()._allTasks;
+        expect([...current].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map((task) => task.id)).toEqual(expected);
+        expect(current.filter((task) => task.rev !== 1).map((task) => task.id)).toEqual([moved]);
+        for (const task of original.filter((task) => task.id !== moved)) {
+            expect(current.find((row) => row.id === task.id)).toEqual(task);
+        }
+        await flushPendingSave();
+        const saved = saveData.mock.calls.at(-1)?.[0] as AppData;
+        expect(saved.tasks.filter((task) => task.rev !== 1).map((task) => task.id)).toEqual([moved]);
+        for (const task of original.filter((task) => task.id !== moved)) {
+            expect(saved.tasks.find((row) => row.id === task.id)).toEqual(task);
+        }
+        await useTaskStore.getState().reorderProjectTasks(project.id, shown, null, moved);
+        expect(useTaskStore.getState()._allTasks).toEqual(current);
+    });
+
+    it('inserts beside the visible neighbor without rewriting hidden or out-of-scope rows', async () => {
+        const [a, hidden, c, moved] = seedProjectTasks(4);
+        const other = { ...makeTask(4), id: 'other-project', projectId: 'other-project' };
+        const tasks = [...useTaskStore.getState()._allTasks, other];
+        useTaskStore.setState({ tasks, _allTasks: tasks, _tasksById: new Map(tasks.map((task) => [task.id, task])) });
+
+        await useTaskStore.getState().reorderProjectTasks(project.id, [a.id, moved.id, c.id], null, moved.id);
+
+        const current = useTaskStore.getState()._allTasks;
+        expect([...current.filter((task) => task.projectId === project.id)]
+            .sort((x, y) => (x.order ?? 0) - (y.order ?? 0)).map((task) => task.id))
+            .toEqual([a.id, moved.id, hidden.id, c.id]);
+        expect(current.filter((task) => task.rev !== 1).map((task) => task.id)).toEqual([moved.id]);
+        expect(current.find((task) => task.id === other.id)).toEqual(other);
+    });
+
+    it('ignores duplicate, deleted, and foreign IDs within a section-scoped filtered drop', async () => {
+        const [a, hidden, c] = seedProjectTasks(3);
+        const sectionTasks = [a, hidden, c].map((task) => ({ ...task, sectionId: 'section-1' }));
+        const deleted = { ...makeTask(3), id: 'deleted', sectionId: 'section-1', deletedAt: BASE_NOW };
+        const foreign = { ...makeTask(4), id: 'foreign', sectionId: 'section-2' };
+        const tasks = [...sectionTasks, deleted, foreign];
+        useTaskStore.setState({ tasks, _allTasks: tasks, _tasksById: new Map(tasks.map((task) => [task.id, task])) });
+
+        await useTaskStore.getState().reorderProjectTasks(project.id,
+            [c.id, deleted.id, foreign.id, c.id, a.id], 'section-1', c.id);
+
+        const current = useTaskStore.getState()._allTasks;
+        expect(current.filter((task) => task.rev !== 1).map((task) => task.id)).toEqual([c.id]);
+        for (const task of [hidden, deleted, foreign]) {
+            expect(current.find((row) => row.id === task.id)).toEqual(tasks.find((row) => row.id === task.id));
+        }
+    });
+
     it('writes integer orders for sparse moves so integer-typed storage keeps them (#784)', async () => {
         const tasks = seedProjectTasks(3).map((task, index) => ({
             ...task,
@@ -135,7 +192,7 @@ describe('reorderProjectTasks', () => {
         });
 
         // task-2 dropped between orders 0 and 5: midpoint 2.5 must round to an integer.
-        await useTaskStore.getState().reorderProjectTasks(project.id, ['task-0', 'task-2', 'task-1']);
+        await useTaskStore.getState().reorderProjectTasks(project.id, ['task-0', 'task-2', 'task-1'], undefined, 'task-2');
 
         const moved = useTaskStore.getState()._allTasks.find((task) => task.id === 'task-2');
         expect(moved?.order).toBe(2);
@@ -156,7 +213,7 @@ describe('reorderProjectTasks', () => {
 
         // task-2 dropped between orders 3 and 4: no integer fits, so every task
         // is renumbered instead of writing a fractional midpoint.
-        await useTaskStore.getState().reorderProjectTasks(project.id, ['task-0', 'task-2', 'task-1']);
+        await useTaskStore.getState().reorderProjectTasks(project.id, ['task-0', 'task-2', 'task-1'], undefined, 'task-2');
 
         const state = useTaskStore.getState()._allTasks;
         for (const task of state) {

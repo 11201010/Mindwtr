@@ -1021,7 +1021,7 @@ export function ProjectWorkspace({
             if (newIndex === -1 || oldIndex === newIndex) return;
             const reordered = arrayMove(sourceItems, oldIndex, newIndex);
             void Promise.resolve(
-                reorderProjectTasks(current.id, reordered, getSectionIdFromContainer(sourceContainer)),
+                reorderProjectTasks(current.id, reordered, getSectionIdFromContainer(sourceContainer), activeId),
             ).catch(failTaskMove);
             return;
         }
@@ -1050,7 +1050,7 @@ export function ProjectWorkspace({
             }
             if (getMutableSelectedProject()?.id !== current.id) return;
             await Promise.resolve(
-                reorderProjectTasks(current.id, nextDestinationItems, getSectionIdFromContainer(destinationContainer)),
+                reorderProjectTasks(current.id, nextDestinationItems, getSectionIdFromContainer(destinationContainer), activeId),
             );
         })().catch(failTaskMove);
     }, [canReorderProjectTasks, getMutableSelectedProject, isArchivedProject, reorderProjectTasks, selectedProject, showToast, taskIdToContainer, taskIdsByContainer, updateTask]);
