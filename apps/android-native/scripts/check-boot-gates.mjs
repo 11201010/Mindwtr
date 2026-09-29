@@ -591,7 +591,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\), HostFiles\(app\.filesDir, app\.cacheDir\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 // The Kotlin host journals every write, and says so at boot: core then requires each write's replay tokens. Only this
 // flag sets 'required'; iOS boots and recovers with none.
 assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)/);
@@ -700,7 +700,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 22, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls and hostEvent: each guarded');
+assert.equal(bridgeCallbacks.length, 25, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent and the queue\'s file calls: each guarded');
 // The JS host's events (sync's badge and cycles, an automatic sync's warning): handed on as text, a listener's failure swallowed.
 assert(bridgeCallbacks.includes('bridge.setProperty("hostEvent", guarded { args -> runCatching { onEvent?.invoke(args[0] as String) }; null })'));
 for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\w+", guarded \{/);
@@ -722,6 +722,14 @@ for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\
         assert(bridgeCallbacks.some((line) => line.startsWith(`bridge.setProperty("${name}", guarded { args -> `)), `${name} is guarded`);
     }
 }
+// The pending-captures queue's ports: app-private files only (HostFiles), RN's RKStorage for the last-applied record (RnKeyValue);
+// only a debug build's stop runs before a delete.
+for (const [name, call] of [['fileList', 'args -> files.list(args[0] as String)'], ['fileRead', 'args -> files.readText(args[0] as String)'],
+    ['fileDelete', 'args -> queueStop(); files.delete(args[0] as String); null'], ['kvGet', 'args -> JSONArray().put(keyValue.get(args[0] as String) ?: JSONObject.NULL).toString()'],
+    ['kvSet', 'args -> keyValue.set(args[0] as String, args[1] as String); null']]) {
+    assert(bridgeCallbacks.includes(`bridge.setProperty("${name}", guarded { ${call} })`), `${name} reaches the queue's port and nothing else`);
+}
+assert.match(coreHost, /private fun queueStop\(\) \{\s+if \(debugFault\("queue_stop"\) != "delete"\) return/, 'the queue stop is debug-only');
 // fetch and the secrets (HostIo.kt, SecretStore.kt): started on the engine thread, run off it, answered only through the pump.
 {
     const core = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core', name), 'utf8');
@@ -864,7 +872,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         'setSyncPreference', 'openSyncSettings', 'closeSyncSettings', 'selectSyncBackend', 'saveSyncBackend', 'syncNow', 'testSyncConnection',
         'pickSyncFolder', 'connectDropbox', 'disconnectDropbox', 'runSyncEncryptionAction',
         // Settings › AI (pass C1): a control's change and the screen's open (receipts of their own), a key and a base URL (never journaled).
-        'setAISetting', 'openAISettings', 'setAIKey', 'setAIEndpoint'];
+        'setAISetting', 'openAISettings', 'setAIKey', 'setAIEndpoint', 'ingestPendingCaptures'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -1023,17 +1031,18 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(replayFn, /Log\.i\(TAG, "Native Android journal replay sent=/);
     assert(coreHost.indexOf('journal = WriteJournal(journalDir') < coreHost.indexOf('engine.evaluate(bundle'));
     assert.match(owner, /private fun replay\(runtime: CoreHost\): Boolean \{\s+val replay = runtime\.replayJournal\(\)\s+replay\.owed\?\.let \{ recordFailure\(PendingFailure\(FailedAction\("journal", ""\), it, null\)\); return false \}\s+(?:\/\/[^\n]*\s+)+if \(replay\.left > 0\) return true\s+runCatching \{ runtime\.pruneReceipts\(\) \}[\s\S]*?return true\s+\}/);
-    // Sync (plan block 1): its triggers start only after the validated load and a replay that finished (no entry owed), or once the owed
-    // journal retry went through; nothing else starts them.
-    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) startSync\(app, runtime\)\s+return runtime/);
+    // Sync (plan block 1): its triggers start only after the validated load, a replay that finished (no entry owed) and the queue
+    // drain (ProcessCoreHost.recovered), or once the owed journal retry went through; nothing else starts them.
+    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) recovered\(app, runtime\)\s+return runtime/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/syncStart\(/g).length, 1, 'one start of the triggers, in startSync');
-    assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)|journalReplayed\(/g).length, 4, 'startSync after the boot replay and after the owed retry');
+    assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 1, 'startSync only in recovered, after the drain');
+    assert.equal([activity, model, owner, menuModel].join('\n').match(/recovered\(app, runtime\)|ProcessCoreHost\.recovered\(getApplication\(\), runtime\)/g).length, 2, 'recovered after the boot replay and after the owed retry');
     // Core's receipts are pruned once per boot, and only after a replay that left nothing: never before the replay, never while an
     // entry that may need its receipt is left.
     assert.match(coreHost, /fun pruneReceipts\(\): JSONObject = callAsync\("pruneReceipts"\)/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/pruneReceipts\(\)/g).length, 1, 'one prune call, after the boot replay');
     assert.equal(owner.match(/replay\(runtime\)|replayJournal\(\)/g).length, 2);
-    assert.match(model, /"journal" -> perform\(action\) \{ runtime ->\s+runtime\.replayJournal\(\)\.owed\?\.let \{ throw IllegalStateException\(it\) \}\s+acknowledged\(action\)\s+\/\/[^\n]*\s+ProcessCoreHost\.journalReplayed\(getApplication\(\), runtime\)\s+\}/);
+    assert.match(model, /"journal" -> perform\(action\) \{ runtime ->\s+runtime\.replayJournal\(\)\.owed\?\.let \{ throw IllegalStateException\(it\) \}\s+acknowledged\(action\)\s+\/\/[^\n]*\s+if \(!ProcessCoreHost\.recovered\(getApplication\(\), runtime\)\) throw IllegalStateException\(ProcessCoreHost\.failure\?\.error \?: "SAVE_FAILED"\)\s+\}/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/replayJournal\(\)/g).length, 2, 'the boot and the owed retry replay; nothing else');
     // The JVM tests keep the file rules (order, the atomic write, drop and keep, move-aside, writes only).
     const journalTest = readFileSync(resolve(app, 'android/app/src/test/java/tech/dongdongbh/mindwtr/pilot/core/WriteJournalTest.kt'), 'utf8');
@@ -1250,7 +1259,20 @@ assert.match(labelsKt, /strings = LABEL_KEYS\.filter\(values::has\)\.associateWi
 assert.match(labelsKt, /if \(logged\.add\(name\)\) Log\.w\(/, 'a missing key is logged once');
 assert.equal(kotlinFiles.join('\n').match(/Labels\.load\(/g).length, 1);
 assert.match(owner, /runtime\.language\(stored \?: "", Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
-assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) startSync\(app, runtime\)\s+return runtime/);
+assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) recovered\(app, runtime\)\s+return runtime/);
+// After a finished replay (the boot's, the owed retry's, CoreWork's recovery): the queue drain, then sync; an owed drain holds sync back.
+assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost\): Boolean \{\s+if \(!drain\(runtime, queue\(app\)\) && failure != null\) return false\s+startSync\(app, runtime\)\s+return true\s+\}/);
+// The queue drain (RN's startup drain; CoreWork's ingest job too): after the journal replay, before any screen, entry point or
+// sync gets the host; never while a save is owed; a failed save becomes the journal's owed retry, which drains again.
+assert.match(owner, /fun queue\(app: Application\) = File\(app\.filesDir, PendingCaptureWriter\.DIRECTORY\)/, 'the queue is RN\'s writer\'s folder');
+assert.match(owner, /fun drain\(runtime: CoreHost, queue: File\): Boolean \{\s+if \(failure != null\) return false\s+if \(queue\.list\(\)\.isNullOrEmpty\(\)\) return true\s+return try \{\s+val ingested = runtime\.ingestPendingCaptures\(UUID\.randomUUID\(\)\.toString\(\)\)/);
+assert.match(owner, /if \(message\.startsWith\("SAVE_FAILED"\)\) recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\)\s+false/);
+// The runner's lines go through core's logger (logcat, and RN's diagnostics log file), their fields in context; a failure's code only.
+assert.match(owner, /runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "drained"\)\.put\("ingested", ingested\)\)/);
+assert.match(owner, /runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "failed"\)\.put\("error", message\.substringBefore\(':'\)\)\)/);
+assert.match(coreHost, /fun logLine\(message: String, context: JSONObject\) \{\s+runCatching \{ callAsync\("logLine", message, context\.toString\(\)\) \}\.onFailure \{ Log\.i\(TAG, "\$message \$context"\) \}/);
+assert.match(hostEntry, /logLine\(message: string, contextJson: string\): string \{\s+return submit\(async \(\) => \{\s+try \{\s+logInfo\(message, \{ scope: 'native-android', context: JSON\.parse\(contextJson\) as Record<string, unknown> \}\);/);
+assert.match(coreHost, /fun ingestPendingCaptures\(requestId: String\): JSONObject = callAsync\("ingest", requestId\)/);
 assert.equal(kotlinFiles.join('\n').match(/runtime\.language\(|runtime\.strings\(/g).length, 2);
 // Core's editor statuses and priorities each have their label key.
 const contractSource = readFileSync(resolve(app, '../../packages/core/src/native-host-contract.ts'), 'utf8');
@@ -2409,7 +2431,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(gradle, /buildConfigField\("String", "URL_SCHEME", "\\"\$scheme\\""\)\s+manifestPlaceholders\["urlScheme"\] = scheme/);
     for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
     assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
-    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts\) \}/);
+    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, rnCaptureIntent\) \}/);
     // RN's shortcuts from RN's own builder: the same ids, capabilities, labels and links, on the build's scheme; Add task opens
     // the capture popup through RN's system capture link until the widget pass brings QuickCaptureActivity.
     const { createRequire } = await import('node:module');
@@ -2753,6 +2775,78 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(captureModalUi, /background\(theme\.captureSave\)/);
 }
 
+// Pass B2 (E2 native): CoreWork, the queue's ports, RN's capture intent and context automation receivers under RN's class names,
+// RN's capture intent Kotlin compiled as it is, and GTD › Capture's automation card.
+{
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+    const gradle = readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8');
+    const rnWidget = (name) => readFileSync(resolve(app, '../mobile/modules/android-widget/android/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
+    const nativeKt = (path) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr', path), 'utf8');
+    // Exported: RN's activity alias and RN's two automation receivers (plugins/android-widget.js, android-manifest-fixes.js), nothing else.
+    const exported = [...manifest.matchAll(/<(?:activity-alias|activity|receiver|service|provider)\s[^>]*?android:name="([^"]+)"[^>]*?android:exported="true"/g)].map((m) => m[1]).sort();
+    assert.deepEqual(exported, ['${applicationId}.MainActivity', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
+        'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver'], 'only RN\'s exported components');
+    const receiver = (name) => manifest.match(new RegExp(`<receiver\\s+android:name="${name.replace(/\./g, '\\.')}"[\\s\\S]*?</receiver>`))?.[0] ?? assert.fail(`no ${name}`);
+    const rnPlugin = readFileSync(resolve(app, '../mobile/plugins/android-widget.js'), 'utf8');
+    const rnFixes = readFileSync(resolve(app, '../mobile/plugins/android-manifest-fixes.js'), 'utf8');
+    assert.match(rnPlugin, /const CAPTURE_RECEIVER_NAME = `\$\{MODULE_PACKAGE\}\.CaptureIntentReceiver`;/);
+    const captureAction = /const CAPTURE_ACTION = '([^']+)'/.exec(rnPlugin)[1];
+    assert.deepEqual([...receiver('tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver').matchAll(/<action android:name="([^"]+)"/g)].map((m) => m[1]), [captureAction]);
+    assert.match(rnFixes, /const CONTEXT_AUTOMATION_RECEIVER = 'tech\.dongdongbh\.mindwtr\.contextautomation\.ContextAutomationReceiver';/);
+    const contextActions = [.../const CONTEXT_INTENT_ACTIONS = \[([^\]]*)\]/.exec(rnFixes)[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    const contextFilters = receiver('tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver').match(/<intent-filter>[\s\S]*?<\/intent-filter>/g);
+    assert.equal(contextFilters.length, 2, 'RN\'s two context filters: without data, and with the mindwtr scheme');
+    for (const filter of contextFilters) {
+        assert.deepEqual([...filter.matchAll(/<action android:name="([^"]+)"/g)].map((m) => m[1]), contextActions);
+        assert.match(filter, /<category android:name="android\.intent\.category\.DEFAULT" \/>/);
+    }
+    assert.doesNotMatch(contextFilters[0], /<data /);
+    assert.match(contextFilters[1], /<data android:scheme="mindwtr" \/>/);
+    assert.match(manifest, /<uses-permission android:name="android\.permission\.POST_NOTIFICATIONS" \/>/);
+    // RN's capture intent Kotlin compiled as it is, with RN's tests; the receiver is RN's but for its lines marked `native`.
+    for (const name of ['CaptureIntentProcessor', 'CaptureIntentConfigStore', 'PendingCaptureWriter', 'QuickCaptureAudioRecorder']) assert(gradle.includes(`"${name}"`), `RN's ${name}.kt is compiled in`);
+    for (const name of ['CaptureIntentProcessorTest', 'CaptureIntentConfigStoreTest']) assert(gradle.includes(`"${name}"`), `RN's ${name}.kt runs`);
+    assert.doesNotMatch(gradle.slice(gradle.indexOf('val rnCaptureIntent')), /"CaptureIntentReceiver"/, 'RN\'s receiver is replaced, not compiled in');
+    const nativeReceiver = nativeKt('androidwidget/CaptureIntentReceiver.kt');
+    assert.equal(nativeReceiver.split('\n').filter((line) => !line.endsWith('// native')).join('\n').replace(/\n \*\n \* Native:[\s\S]*?(?=\n \*\/)/, ''),
+        rnWidget('CaptureIntentReceiver.kt'), 'the capture intent receiver is RN\'s but for its native lines');
+    assert.match(nativeReceiver, /if \(queued && ordered\) pendingResult\.resultCode = Activity\.RESULT_OK\n[^\n]*\/\/ native\n\s+if \(queued\) runCatching \{ CoreWork\.enqueue\(appContext, CoreJob\.INGEST\) \} \/\/ native\n/, 'a queued capture starts CoreWork after the sender is told');
+    const undo = (text) => /const val UNDO_WINDOW_MS = ([^\n]+)/.exec(text)[1];
+    assert.equal(undo(nativeKt('androidwidget/CheckoffStore.kt')), undo(rnWidget('CheckoffStore.kt')), 'the writer\'s undo window is RN\'s');
+    // The context receiver reads the intent as RN's does; where RN starts its headless task, CoreWork asks core.
+    const rnContext = readFileSync(resolve(app, '../mobile/modules/context-automation/android/src/main/java/tech/dongdongbh/mindwtr/contextautomation/ContextAutomationReceiver.kt'), 'utf8');
+    const nativeContext = nativeKt('contextautomation/ContextAutomationReceiver.kt');
+    const payload = (text) => text.slice(text.indexOf('private data class ContextAutomationPayload('));
+    assert.equal(payload(nativeContext), payload(rnContext), 'the context receiver reads the intent as RN\'s');
+    for (const name of ['ACTIVATE_CONTEXT_ACTION', 'DEACTIVATE_CONTEXT_ACTION']) {
+        const value = (text) => new RegExp(`private const val ${name} = "([^"]+)"`).exec(text)[1];
+        assert.equal(value(nativeContext), value(rnContext));
+    }
+    assert.match(nativeContext, /val payload = runCatching \{ ContextAutomationPayload\.fromIntent\(intent\) \}\.getOrNull\(\) \?: return\s+CoreWork\.enqueue\(context\.applicationContext, CoreJob\.CONTEXT, mapOf\("action" to payload\.action, "context" to payload\.context\)\)/);
+    // CoreWork: WorkManager at RN's version, in the app's process; expedited on Android 12+; a debug build's delay only.
+    const rnWork = /androidx\.work:work-runtime(?:-ktx)?:([\d.]+)/.exec(readFileSync(resolve(app, '../../node_modules/expo-background-task/android/build.gradle'), 'utf8'))[1];
+    assert.match(gradle, new RegExp(`implementation\\("androidx\\.work:work-runtime:${rnWork.replace(/\./g, '\\.')}"\\)`), 'WorkManager at RN\'s version');
+    const coreWork = source('CoreWork.kt');
+    assert.match(coreWork, /val delayMs = debugProperty\("core_work_delay_ms"\)\.toLongOrNull\(\) \?: 0L/);
+    assert.match(coreWork, /else if \(Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S\) setExpedited\(OutOfQuotaPolicy\.RUN_AS_NON_EXPEDITED_WORK_REQUEST\)/);
+    assert.match(coreWork, /work\.enqueueUniqueWork\(INGEST_WORK, ExistingWorkPolicy\.REPLACE, request\)/, 'a new drain request never waits behind a back-off');
+    assert.match(coreWork, /val host = ProcessCoreHost\.get\(app, language\)/, 'the job runs on this process\'s one host');
+    // The queue's paths: RN's writer's folder is core's.
+    const pendingTs = readFileSync(resolve(app, '../../packages/core/src/pending-captures.ts'), 'utf8');
+    assert.equal(/const val DIRECTORY = "([^"]+)"/.exec(rnWidget('PendingCaptureWriter.kt'))[1], /export const PENDING_CAPTURES_DIRECTORY = '([^']+)'/.exec(pendingTs)[1]);
+    assert.match(hostEntry, /const QUEUE = `files\/\$\{PENDING_CAPTURES_DIRECTORY\}`;/);
+    assert.match(hostEntry, /ingest\(requestId: string\): string \{\s+return submit\(async \(\) => taskResult\('ingest', await contract\.ingestPendingCaptures\(\{ requestId, queue: pendingCaptureQueue, lastApplied: lastAppliedRecord \}\)\)\);/);
+    // GTD › Capture: core gets only whether the stored config is on; the token stays in Kotlin.
+    const settingsModel = source('SettingsModel.kt');
+    assert.match(settingsModel, /input\.put\("captureIntent", JSONObject\(\)\.put\("enabled", it\.getOrNull\(\)\?\.enabled \?: JSONObject\.NULL\)\)/);
+    assert.doesNotMatch(settingsModel + hostEntry, /put\("token"|captureToken[^\n]*menuRead|menuCommand[^\n]*token/, 'the token never goes to core');
+    assert.match(settingsModel, /CaptureIntentConfigStore\.setEnabled\(shell\.getApplication<Application>\(\), enabled\)/);
+    // No Kotlin policy in the runner's files.
+    for (const [name, text] of [['CoreJob.kt', source('CoreJob.kt')], ['CoreWork.kt', coreWork], ['HostFiles.kt', nativeKt('pilot/core/HostFiles.kt')]]) {
+        assert.doesNotMatch(code(text), /\.(sort\w*|sorted\w*|groupBy|reversed|distinct\w*|partition)\b/, `${name}: no Kotlin ordering`);
+    }
+}
+
 const fakeCore = `
 export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLoggingEnabled } from ${JSON.stringify(resolve(app, '../../packages/core/src/diagnostics-log.ts'))};
 export function setLogger(logger) { globalThis.coreLogger = logger; }
@@ -2794,6 +2888,12 @@ export function getGeneralSettingsDeviceWrites(edit) { return edit.type === 'lan
   { key: '@mindwtr_theme', value: edit.value },
   { key: '@mindwtr_theme_style', value: edit.value === 'material3-light' || edit.value === 'material3-dark' ? 'material3' : 'default' },
 ]; }
+// The queue drain's and the context notification's names (pending-captures.ts, mobile-reminder-alarms.ts, sandbox.ts).
+export const PENDING_CAPTURES_DIRECTORY = 'pending-captures';
+export const PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY = 'mindwtr:pending-captures:last-applied:v1';
+export const REMINDER_NOTIFICATION_CHANNEL_NAME = 'Mindwtr reminders';
+export function buildImmediateNotificationDetails(title, message, data) { return { title, message, channel: 'mindwtr_reminders_v2', data: { kind: 'pomodoro', ...data } }; }
+export function isSandboxMode() { return globalThis.sandbox === true; }
 // The debug net check's WebDAV calls: bundled, never run here.
 export const [cloudHeadJson, webdavDeleteFile, webdavGetFile, webdavGetJson, webdavGetSyncDocument, webdavHeadFile, webdavMakeDirectory, webdavPutFile, webdavPutJson] = Array(9).fill(async () => null);
 export function createNativeHostContract() {
@@ -2913,6 +3013,20 @@ export function createNativeHostContract() {
     getDailyReview(input) { globalThis.menuInputs.push(JSON.stringify(['daily', input])); return { ok: true, value: { version: 1, revision: 'd', total: 0, items: [] } }; },
     async runContextsAction(input) { globalThis.menuInputs.push(JSON.stringify(['contextsAction', input])); return { ok: true, value: { changed: true, toast: null } }; },
     async runTrashAction(input) { globalThis.menuInputs.push(JSON.stringify(['trashAction', input])); return { ok: true, value: { changed: true, toast: null } }; },
+    async ingestPendingCaptures(input) {
+      const names = await input.queue.list();
+      const texts = [];
+      for (const name of names ?? []) texts.push(await input.queue.read(name));
+      const record = await input.lastApplied.read();
+      if (names?.length) await input.lastApplied.write('{"t":{"tapMs":1,"id":"c","at":2}}');
+      for (const name of names ?? []) await input.queue.delete(name);
+      globalThis.ingestInputs.push(JSON.stringify([input.requestId, names, texts, record]));
+      return { ok: true, value: { ingested: names?.length ?? 0 } };
+    },
+    runContextAutomation(input) {
+      globalThis.ingestInputs.push(JSON.stringify(['context', input]));
+      return { ok: true, value: { notification: input.action === 'activate' ? { title: '@home next action', message: 'Call', data: { kind: 'context-automation', context: '@home' } } : null } };
+    },
     async runReviewAction(input) {
       globalThis.menuInputs.push(JSON.stringify(['reviewAction', input]));
       return input.action.type === 'markReviewedTasks' ? { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } } : { ok: true, value: { changed: true, toast: null, createdId: null } };
@@ -2964,6 +3078,7 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         AbortController, setTimeout,
         languageInputs: [], projectInputs: [], settings: undefined, persistenceStatus: null, aiInputs: [],
         settingsReadFailure: false, afterLanguage: null, newInputs: [], menuInputs: [],
+        fileCalls: [], ingestInputs: [], queueFiles: null, kv: {}, deleteResult: null, sandbox: false,
         menuReadResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Someday changed; restart paging from offset zero' } },
         menuCommandResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
         taskFocusResult: { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } },
@@ -3006,6 +3121,12 @@ const makeState = (taskCount, fakeDataSequence = []) => {
                     default: throw new Error(`unknown log operation ${operation}`);
                 }
             },
+            // Kotlin's HostFiles and RnKeyValue: a marked string is a Kotlin failure.
+            fileList(path) { state.fileCalls.push(`list ${path}`); return state.queueFiles ? JSON.stringify(Object.keys(state.queueFiles)) : 'null'; },
+            fileRead(path) { state.fileCalls.push(`read ${path}`); return state.queueFiles[path.split('/').pop()]; },
+            fileDelete(path) { state.fileCalls.push(`delete ${path}`); return state.deleteResult; },
+            kvGet(key) { state.fileCalls.push(`kvGet ${key}`); return JSON.stringify([state.kv[key] ?? null]); },
+            kvSet(key, value) { state.fileCalls.push(`kvSet ${key} ${value}`); state.kv[key] = value; return null; },
         },
     };
     vm.runInNewContext(built.outputFiles[0].text, state);
@@ -3095,6 +3216,36 @@ assert.deepEqual(await poll(ready, ready.MindwtrHost.pruneReceipts()), { ok: tru
         JSON.stringify(['modalDiscard', reads[3][1]]),
         JSON.stringify(['modalSubmit', submitInput]), JSON.stringify(['modalLines', linesInput])]);
     ready.captureInputs.length = 0;
+}
+// The queue drain: core's ingestPendingCaptures lists, reads and deletes the app's files/pending-captures through Kotlin's file
+// calls, and keeps its last-applied record under RN's RKStorage key; the request UUID is the journal's. A Kotlin failure (a
+// marked string) reaches core as a thrown error, so core keeps that file; a missing folder lists as null.
+{
+    const key = 'mindwtr:pending-captures:last-applied:v1';
+    ready.queueFiles = { 'a.json': '{"id":"1","title":"Grüße ✓ 😀"}' };
+    ready.kv = { [key]: '{}' };
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.ingest('r-1')), { ok: true, value: { ingested: 1 } });
+    assert.deepEqual(ready.fileCalls, ['list files/pending-captures', 'read files/pending-captures/a.json', `kvGet ${key}`,
+        `kvSet ${key} {"t":{"tapMs":1,"id":"c","at":2}}`, 'delete files/pending-captures/a.json']);
+    assert.deepEqual(JSON.parse(ready.ingestInputs.pop()), ['r-1', ['a.json'], ['{"id":"1","title":"Grüße ✓ 😀"}'], '{}']);
+    ready.deleteResult = '!MindwtrNativeError:Cannot delete files/pending-captures/a.json';
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.ingest('r-2')), { ok: false, error: 'Cannot delete files/pending-captures/a.json' });
+    ready.deleteResult = null;
+    ready.queueFiles = null;
+    ready.kv = {};
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.ingest('r-3')), { ok: true, value: { ingested: 0 } });
+    assert.deepEqual(JSON.parse(ready.ingestInputs.pop()), ['r-3', null, [], null]);
+    // A trigger: core's notification as RN's alarm library's details with the channel's name; none for a deactivation or in sandbox mode.
+    const trigger = { action: 'activate', context: '@home' };
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.contextAutomation(JSON.stringify(trigger))), { ok: true, value: { notification: {
+        title: '@home next action', message: 'Call', channel: 'mindwtr_reminders_v2', data: { kind: 'context-automation', context: '@home' }, channelName: 'Mindwtr reminders' } } });
+    assert.deepEqual(JSON.parse(ready.ingestInputs.pop()), ['context', trigger]);
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.contextAutomation(JSON.stringify({ ...trigger, action: 'deactivate' }))), { ok: true, value: { notification: null } });
+    ready.sandbox = true;
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.contextAutomation(JSON.stringify(trigger))), { ok: true, value: { notification: null } });
+    ready.sandbox = false;
+    ready.ingestInputs.length = 0;
+    ready.fileCalls.length = 0;
 }
 // update passes Kotlin's { id, base, patch } to core unchanged, and a refusal keeps its code prefix.
 const updateInput = JSON.stringify({ id: 't', base: { title: 'a', dueDate: null }, patch: { title: 'b', dueDate: '2026-09-15' } });
@@ -3584,4 +3735,5 @@ for (const file of ['device.mjs', 'check-net-device.mjs']) {
     assert.match(readFileSync(resolve(app, `scripts/${file}`), 'utf8'), /^import '\.\/device-lock\.mjs';$/m, `${file} waits for the phone's lock first`);
 }
 console.log('Entry points: RN\'s alias, links on the build\'s scheme, text shares and Assistant notes read as strings into core\'s resolveNativeEntryPoint, RN\'s shortcuts from RN\'s builder, Import .txt through core');
+console.log('Runner: CoreWork on the one host after the app\'s boot order, the queue drain after the journal replay, the queue\'s file and RKStorage ports, RN\'s capture intent and context receivers under RN\'s names, RN\'s capture intent Kotlin compiled in, the token only in Kotlin');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

@@ -74,8 +74,39 @@
                 android:name="android.app.shortcuts"
                 android:resource="@xml/mindwtr_shortcuts" />
         </activity-alias>
+
+        <!-- RN's capture intent (plugins/android-widget.js), under RN's class name so an automation that names it keeps working.
+             Exported on purpose: it checks the exact action, the string extras, the device-local token and the text bounds
+             before it queues anything, and then starts CoreWork. -->
+        <receiver
+            android:name="tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="tech.dongdongbh.mindwtr.action.CAPTURE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- RN's context automation receiver and its two filters (plugins/android-manifest-fixes.js), under RN's class name.
+             Exported as in RN: core reads the trigger (runContextAutomation), and nothing is written. -->
+        <receiver
+            android:name="tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="tech.dongdongbh.mindwtr.action.ACTIVATE_CONTEXT" />
+                <action android:name="tech.dongdongbh.mindwtr.action.DEACTIVATE_CONTEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="tech.dongdongbh.mindwtr.action.ACTIVATE_CONTEXT" />
+                <action android:name="tech.dongdongbh.mindwtr.action.DEACTIVATE_CONTEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="mindwtr" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <!-- RN's app lock asks BiometricPrompt (AppLock.kt), as expo-local-authentication's manifest allows. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- RN's notifications (app.json's permissions): the context automation notification (CoreNotifications.kt). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

@@ -3,14 +3,17 @@ package tech.dongdongbh.mindwtr.pilot
 import android.app.Application
 import android.util.Log
 import org.json.JSONObject
+import tech.dongdongbh.mindwtr.androidwidget.PendingCaptureWriter
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.DiagnosticsLogFile
+import tech.dongdongbh.mindwtr.pilot.core.HostFiles
 import tech.dongdongbh.mindwtr.pilot.core.HostIo
 import tech.dongdongbh.mindwtr.pilot.core.HostNetwork
 import tech.dongdongbh.mindwtr.pilot.core.LegacyRnStoreGuard
 import tech.dongdongbh.mindwtr.pilot.core.RnKeyValue
 import java.io.File
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
@@ -100,12 +103,12 @@ internal object ProcessCoreHost {
         }
         val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir }, HostIo(app),
             File(app.filesDir, "journal"), deviceStore(app), File(app.filesDir, DiagnosticsLogFile.RELATIVE_PATH),
-            RnKeyValue(app.getDatabasePath("RKStorage")))
+            RnKeyValue(app.getDatabasePath("RKStorage")), HostFiles(app.filesDir, app.cacheDir))
         try {
             runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() }, legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)
             loadTheme(runtime, legacy?.theme)
-            if (replay(runtime)) startSync(app, runtime)
+            if (replay(runtime)) recovered(app, runtime)
             return runtime
         } catch (failure: Throwable) {
             runCatching { runtime.close() }
@@ -156,7 +159,7 @@ internal object ProcessCoreHost {
     /**
      * Sync starts only after the boot's validated load and a journal replay that finished with no entry owed (plan block 1: a
      * sync never runs before the replay finished); a replay that stopped starts it once its owed retry went through
-     * ([journalReplayed]). The network state goes first, then core's triggers start and ask for the app's first sync. A failure
+     * ([recovered]). The network state goes first, then core's triggers start and ask for the app's first sync. A failure
      * here never fails the boot: the app runs without automatic sync, and Settings › Sync still opens.
      */
     private fun startSync(app: Application, runtime: CoreHost) {
@@ -176,8 +179,15 @@ internal object ProcessCoreHost {
         }.onFailure { Log.w(CoreHost.TAG, "Native Android sync start failed", it) }
     }
 
-    /** The owed journal retry went through: sync may start now, as after a clean boot replay. */
-    fun journalReplayed(app: Application, runtime: CoreHost) = startSync(app, runtime)
+    /**
+     * After a replay that left nothing owed (the boot's, or the owed journal retry's): the queue drain, then sync, in the boot's
+     * order. False while the drain left a save owed: sync waits for that retry too.
+     */
+    fun recovered(app: Application, runtime: CoreHost): Boolean {
+        if (!drain(runtime, queue(app)) && failure != null) return false
+        startSync(app, runtime)
+        return true
+    }
 
     /** MainActivity resumed ("active") or paused ("background"): core's triggers sync on resume and on leaving. */
     fun appState(state: String) {
@@ -186,6 +196,31 @@ internal object ProcessCoreHost {
         val runtime = syncHost ?: return
         syncThread.execute { runCatching { runtime.syncAppState(state) }.onFailure { Log.w(CoreHost.TAG, "Native Android sync app state failed", it) } }
     }
+
+    /**
+     * One drain of the pending-captures queue (core's ingestPendingCaptures, a journaled write): at every boot, after the journal
+     * replay and before this boot hands the host to any screen, entry point or sync; and as CoreWork's ingest job. False when the
+     * queue must wait: while a save is owed (its retry comes first), or when the drain failed. A failed save is the screens' owed
+     * retry, kind "journal": the journal keeps the drain's request, and its replay drains again. An empty [queue] folder needs
+     * no drain, so a start with nothing queued journals nothing.
+     */
+    fun drain(runtime: CoreHost, queue: File): Boolean {
+        if (failure != null) return false
+        if (queue.list().isNullOrEmpty()) return true
+        return try {
+            val ingested = runtime.ingestPendingCaptures(UUID.randomUUID().toString()).optInt("ingested")
+            runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "drained").put("ingested", ingested))
+            true
+        } catch (error: Throwable) {
+            val message = error.message ?: error.javaClass.simpleName
+            runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "failed").put("error", message.substringBefore(':')))
+            if (message.startsWith("SAVE_FAILED")) recordFailure(PendingFailure(FailedAction("journal", ""), message, null))
+            false
+        }
+    }
+
+    /** The pending-captures queue's folder, where RN's writer puts it. */
+    fun queue(app: Application) = File(app.filesDir, PendingCaptureWriter.DIRECTORY)
 
     /** Core's setLanguage, then the label map read again in that language. Screens render only after this. */
     private fun setLanguage(runtime: CoreHost, stored: String?) {
