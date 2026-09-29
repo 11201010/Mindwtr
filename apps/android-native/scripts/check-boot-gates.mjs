@@ -1920,7 +1920,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(model, /val automatic = routeTab \?: if \(menu\.screen == null && screen == Screen\.Inbox && search == null\) "task" else "view"/);
     assert.match(model, /val tab = if \(opened\.readOnly\) "view" else if \(routeTab == "task"\) "task" else if \(mode == "preview"\) "view" else if \(mode == "edit"\) "task" else automatic/);
     // RN's explicit edits (openTaskScreen(…, 'task'), the review's Add task and edit): Save & edit, the Board's Duplicate, the Weekly Review's Add task.
-    assert.match(model, /main\.post \{ openEditor\(id, "task"\) \}/);
+    assert.match(model, /menu\.whenIdle \{ openEditor\(taskId, "task"\) \}/);
     assert.match(source('BoardModel.kt'), /shell\.openEditor\(open\.getString\("taskId"\), "task"\)/);
     assert.match(menuModel, /shell\.openEditor\(id, "task"\)/);
     assert.match(editorUi, /if \(editor\.readOnly \|\| editor\.tab == "view"\) TaskViewTab\(/);
@@ -2499,6 +2499,12 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // KeyboardAvoidingView ('height' on Android) does.
     assert.match(captureModalUi, /Box\(Modifier\.fillMaxSize\(\)\.background\(c\.bg\)\.imePadding\(\)\.semantics \{ testTagsAsResourceId = true \}\.testTag\("capture-modal"\)\)/);
     assert.match(readFileSync(resolve(app, '../mobile/app/capture-modal.tsx'), 'utf8'), /behavior=\{Platform\.OS === 'ios' \? 'padding' : 'height'\}/);
+    // Save & edit, on the capture screen and the popup, goes where RN's openTaskScreen goes: the task's project on RN's Projects
+    // screen, else Focus (outlined), and the task's editor opens there on its Task tab.
+    assert.match(model, /internal fun openSavedTask\(taskId: String, projectId: String\?\) = menu\.whenIdle \{\s+closeSearch\(\)\s+menu\.closeSheet\(\)\s+if \(projectId != null\) openFromSearch\(Screen\.Projects, projectId\) else \{ menu\.toTabs\(\); show\(Screen\.Focus\); highlight\(taskId\) \}\s+menu\.whenIdle \{ openEditor\(taskId, "task"\) \}/);
+    assert.match(model, /"open" -> \{\s+keepCapture\(null\)\s+openSavedTask\(reply\.getString\("taskId"\), reply\.menuText\("projectId"\)\)/);
+    assert.match(modalKt, /shell\.openSavedTask\(reply\.getString\("taskId"\), reply\.menuText\("projectId"\)\)/);
+    assert.doesNotMatch(code(model + modalKt), /openEditor\(id, "task"\)/, 'Save & edit never opens the editor over the screen it was on');
     // RN's Save is its fixed blue (capture-modal.tsx styles.save), in every theme.
     assert.match(themeKt, /val captureSave = rgb\("#3B82F6"\)/);
     assert.match(captureModalUi, /background\(theme\.captureSave\)/);

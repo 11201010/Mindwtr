@@ -424,6 +424,18 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         }
     }
 
+    /**
+     * RN's openTaskScreen after Save & edit (the popup's and the capture screen's): the task's project on RN's Projects screen,
+     * else Focus with the task outlined, and the task's editor over it on its Task tab. It waits for the save's action to end:
+     * a project's read refuses to start while one runs.
+     */
+    internal fun openSavedTask(taskId: String, projectId: String?) = menu.whenIdle {
+        closeSearch()
+        menu.closeSheet()
+        if (projectId != null) openFromSearch(Screen.Projects, projectId) else { menu.toTabs(); show(Screen.Focus); highlight(taskId) }
+        menu.whenIdle { openEditor(taskId, "task") }
+    }
+
     /** The editor [current] with core's model for its whole draft (editTaskDraft without an edit) and its checklist field. */
     private fun withView(runtime: CoreHost, current: TaskEditor): TaskEditor {
         val sent = current.fullDraft()
@@ -1072,8 +1084,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             "saved" -> when (reply.getString("next")) {
                 "open" -> {
                     keepCapture(null)
-                    val id = reply.getString("taskId")
-                    main.post { openEditor(id, "task") }
+                    openSavedTask(reply.getString("taskId"), reply.menuText("projectId"))
                 }
                 "addAnother" -> {
                     val reset = reply.getJSONObject("reset")

@@ -223,11 +223,11 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
         val current = open ?: return
         val fresh = current.copy(pending = null, captureId = UUID.randomUUID().toString(), confirm = null, lineIds = emptyList())
         when (reply.getString("kind")) {
-            // Save & edit: RN replaces the screen with the task's editor on its Task tab, so backing out never reopens the saved text (#1029).
+            // Save & edit: RN replaces the screen with the task's project (else Focus) and its editor on the Task tab, so backing out
+            // never reopens the saved text (#1029).
             "saved" -> if (reply.optString("next") == "open" || reply.optString("next") == "openInProject") {
                 keep(null)
-                val id = reply.getString("taskId")
-                shell.menu.whenIdle { shell.openEditor(id, "task") }
+                shell.openSavedTask(reply.getString("taskId"), reply.menuText("projectId"))
             } else end(reply.getJSONObject("close"))
             "refused" -> {
                 reply.getJSONObject("notice").let { shell.showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }

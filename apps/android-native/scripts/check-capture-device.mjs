@@ -10,7 +10,8 @@
 // through the picker's own Create row on the first run) is stored; (d) two lines ask core's question, write core's
 // recovery snapshot (it parses and holds the tasks the data had before the batch), and store one task per line in one
 // write; (e) an unreadable date command shows core's notice and stores nothing; (f) a failed commit keeps its
-// exact retry, and Try again stores it once. It touches only the development package (it refuses any other
+// exact retry, and Try again stores it once; (g) Save & edit on a task with no project opens its editor over Focus, as RN's
+// openTaskScreen does. It touches only the development package (it refuses any other
 // APK), never launches over another app, clears its debug properties and leaves "Add another" off on exit.
 // Leave the device on its home screen before running. It needs host `bun`.
 // Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
@@ -19,7 +20,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { box, button, check, connect, draftText, evidenced, fail, inboxCount, owedRetry, Stopped, switchOn, tagged, withDescription } from './device.mjs';
+import { box, button, check, connect, draftText, evidenced, fail, inboxCount, inEditor, owedRetry, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -48,7 +49,7 @@ const { en } = await import(resolve(coreSrc, 'i18n/locales/en.ts'));
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
 // The picker's project: one fixed name, created once through the picker, then picked, so runs add no projects.
 const PROJECT = '5600';
-const titles = { a: `53${run}`, b1: `54${run}`, b2: `55${run}`, c: `56${run}`, d1: `57${run}1`, d2: `57${run}2`, e: `58${run}`, f: `59${run}` };
+const titles = { a: `53${run}`, b1: `54${run}`, b2: `55${run}`, c: `56${run}`, d1: `57${run}1`, d2: `57${run}2`, e: `58${run}`, f: `59${run}`, g: `56${run}1` };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
 const { adbRaw, sh, home, front, requireAppFront, pid, screen, waitFor, tapExpecting } = device;
@@ -277,6 +278,14 @@ try {
     setProp('fail_commit', '');
     await tapExpecting(owedRetry(await screen()), (current) => !hasError(current) && onInbox(current), 'the retry from Try again');
     check(core('', titles.f).stored[titles.f].length === 1 && commands('quickCapture', 'failed') >= 1, '(f) Try again stored the capture once');
+
+    // (g) Save & edit goes where RN's openTaskScreen goes: a task with no project to Focus, with its editor open there.
+    await typeCapture(titles.g, titles.g);
+    nodes = await tapExpecting(button(await screen(), en['quickAdd.saveAndEdit']) ?? fail('no Save & edit'), (current) => inEditor(current), 'the saved task\'s editor');
+    nodes = await tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close in the editor'),
+        (current) => !inEditor(current) && tabSelected(current, en['tab.next']), 'Focus under the editor');
+    check(core('', titles.g).stored[titles.g].length === 1, '(g) Save & edit stored the capture once and opened its editor over Focus');
+    await tapExpecting(tab(nodes, en['tab.inbox']) ?? fail('no Inbox tab'), onInbox, 'the Inbox again');
     console.log('Capture device check passed');
 } catch (error) {
     evidenced(error);

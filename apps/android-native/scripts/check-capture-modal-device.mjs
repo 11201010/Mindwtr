@@ -6,7 +6,7 @@
 // (capture-modal.tsx), which links, text shares and assistant notes open, on the development scheme mindwtr-native-dev:
 // (a) a capture link with a tag and a project opens the screen with the link's title (the tag and project are not title
 // text), and Save & edit, tapped while the keyboard is up, stores one task with that tag in that project (created from the
-// link's name) and opens its editor;
+// link's name) and opens its editor over that project, as RN's openTaskScreen does;
 // (b) a share with a subject and a body with a URL opens the screen with the subject as the title and the body as the
 // description, and Save stores it once with that description; (c) the hide-keyboard button puts the keyboard down, and Cancel
 // writes nothing; (d) a typed draft survives a
@@ -184,8 +184,14 @@ try {
     nodes = await keyboardUp();
     await tapExpecting(control(nodes, 'capture-modal-save-edit'), (current) => inEditor(current) && !tagged(current, 'capture-modal'), 'the saved task\'s editor');
     check(saves('captureModal') === before + 1, '(a) Save & edit ran one capture screen save');
+    // RN's openTaskScreen: the task's project, with its editor over it; Back leaves the project for the tabs.
     nodes = await screen();
-    await tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close in the editor'), atTabs, 'the tabs under the editor');
+    nodes = await tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close in the editor'),
+        (current) => !inEditor(current) && hasText(current, PROJECT) && Boolean(button(current, 'Back')), 'the task\'s project under the editor');
+    check(true, '(a) Save & edit opened the editor over the task\'s project');
+    requireAppFront();
+    sh('input keyevent KEYCODE_BACK');
+    await waitFor('the tabs after the project', atTabs, 15_000);
     let stored = core();
     check(stored.link.length === 1 && JSON.stringify(stored.link[0].tags) === JSON.stringify([`#${TAG_NAME}`]) && stored.link[0].project === PROJECT,
         `(a) the link's task is stored once, with its tag and in its project (${JSON.stringify(stored.link)})`);
