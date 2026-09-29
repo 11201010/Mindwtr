@@ -18,6 +18,7 @@
 // `audio` items need the host's audio port and `pomodoro` items its Pomodoro
 // controller; without them they stay in the queue untouched.
 import { prepareCaptureTask, type CaptureAssemblyInput } from './capture';
+import { normalizeShortcutTags } from './capture-deeplink';
 import { safeParseDate } from './date';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
 import { buildQuickAddParseOptions, parseQuickAdd } from './quick-add';
@@ -209,23 +210,6 @@ export function parsePendingCapture(raw: string): PendingQueueItem | null {
     };
 }
 
-// React Native's capture link rule (capture-deeplink.ts normalizeShortcutTags):
-// each tag gets one leading '#', duplicates dropped case-insensitively.
-function normalizeQueuedTags(tags: string[]): string[] {
-    const normalized: string[] = [];
-    const seen = new Set<string>();
-    for (const rawTag of tags) {
-        const trimmed = String(rawTag || '').trim();
-        if (!trimmed) continue;
-        const prefixed = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
-        const key = prefixed.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        normalized.push(prefixed);
-    }
-    return normalized;
-}
-
 // The structured `project` field (an id or a title) is the Shortcut's own
 // project picker, distinct from a parsed `+Project` token in the title. It
 // never creates projects and silently drops unknown ones — the task still
@@ -245,7 +229,7 @@ export function buildPendingCaptureTaskProps(capture: PendingCapture, projects: 
     const props: Partial<Task> = { status: 'inbox' };
     if (capture.note) props.description = capture.note;
 
-    const tags = normalizeQueuedTags(capture.tags);
+    const tags = normalizeShortcutTags(capture.tags);
     if (tags.length > 0) props.tags = tags;
 
     const projectId = resolveStructuredProjectId(capture, projects);
@@ -396,7 +380,7 @@ async function assembleCaptureTask(
                 const structuredProjectId = resolveStructuredProjectId(capture, projects);
                 if (structuredProjectId) taskProps.projectId = structuredProjectId;
 
-                const structuredTags = normalizeQueuedTags(capture.tags);
+                const structuredTags = normalizeShortcutTags(capture.tags);
                 if (structuredTags.length > 0) {
                     taskProps.tags = Array.from(new Set([...(taskProps.tags ?? []), ...structuredTags]));
                 }
