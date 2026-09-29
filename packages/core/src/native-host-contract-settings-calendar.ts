@@ -42,8 +42,11 @@
  * stamp) and answers STALE_REVISION once the list changed since; the push switch
  * carries the value it showed (`before`), and the push calendar and color compare
  * the stored value, the device calendar choices compare the whole stored choice,
- * and Delete Mindwtr calendar carries the push options' `revision` (a later
- * Mindwtr calendar is never deleted by a replay). No log line carries a URL or an
+ * and Delete Mindwtr calendar is resumable: its target is push off and no Mindwtr
+ * calendar of the app's own, so a replay finishes a delete cut short; it carries
+ * the saved calendar ID the view showed, and a Mindwtr calendar made since is never
+ * deleted (STALE_REVISION). A delete the device refuses answers ACTION_FAILED and
+ * keeps the calendar and its saved ID for a retry. No log line carries a URL or an
  * event title.
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
@@ -51,8 +54,7 @@
  */
 import {
     CALENDAR_PUSH_CALENDAR_ID_KEY,
-    CALENDAR_PUSH_ENABLED_KEY,
-    CALENDAR_PUSH_TARGET_ID_KEY,
+    CALENDAR_PUSH_PENDING_KEY,
     createCalendarPushService,
     DEFAULT_CALENDAR_PUSH_COLOR,
     normalizeCalendarPushColor,
@@ -141,7 +143,7 @@ export type NativeCalendarSettingsEdit =
     | { type: 'push'; before: boolean; enabled: boolean }
     | { type: 'pushTarget'; before: string | null; calendarId: string | null }
     | { type: 'pushColor'; before: string; color: string }
-    | { type: 'deleteMindwtrCalendar'; revision: string }
+    | { type: 'deleteMindwtrCalendar'; calendarId: string | null }
     | { type: 'deviceCalendars'; before: SystemCalendarSettings; value: SystemCalendarSettings }
     | { type: 'feed'; feedId: string; field: 'enabled'; value: boolean; revision: string }
     | { type: 'feed'; feedId: string; field: 'color'; value: string | null; revision: string }
@@ -292,7 +294,7 @@ function isEdit(edit: unknown): edit is NativeCalendarSettingsEdit {
         case 'pushTarget': return keys === 'before,calendarId,type'
             && (edit.before === null || isText(edit.before, 500)) && (edit.calendarId === null || isText(edit.calendarId, 500));
         case 'pushColor': return keys === 'before,color,type' && isText(edit.before, 20) && isText(edit.color, 20);
-        case 'deleteMindwtrCalendar': return keys === 'revision,type' && isText(edit.revision, 2000);
+        case 'deleteMindwtrCalendar': return keys === 'calendarId,type' && (edit.calendarId === null || isText(edit.calendarId, 500));
         case 'deviceCalendars': return keys === 'before,type,value' && isSystemCalendarSettings(edit.before) && isSystemCalendarSettings(edit.value);
         case 'removeFeed': return keys === 'feedId,revision,type' && isText(edit.revision, 200) && isText(edit.feedId, 500);
         case 'feed': {
@@ -488,16 +490,8 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
         }
     };
 
-    /** The push options a delete compares: on or off, the Mindwtr calendar, the chosen calendar. */
-    const pushRevision = async (host: NativeCalendarHost): Promise<string> => {
-        const [enabled, managedId, targetId] = await Promise.all([
-            host.storage.getItem(CALENDAR_PUSH_ENABLED_KEY),
-            host.storage.getItem(CALENDAR_PUSH_CALENDAR_ID_KEY),
-            host.storage.getItem(CALENDAR_PUSH_TARGET_ID_KEY),
-        ]);
-        return JSON.stringify([enabled === '1', managedId, targetId?.trim() || null]);
-    };
-    let shownPushRevision = JSON.stringify([false, null, null]);
+    /** The saved ID of the app's Mindwtr calendar as the view shows it: what Delete compares. */
+    let shownCalendarId: string | null = null;
 
     const buildView = (current: Session, draft: Draft): NativeCalendarSettings => {
         const { t, tr } = translators();
@@ -566,7 +560,7 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                             cancel: t('common.cancel'),
                             confirm: t('common.delete'),
                         },
-                        edit: { type: 'deleteMindwtrCalendar', revision: shownPushRevision },
+                        edit: { type: 'deleteMindwtrCalendar', calendarId: shownCalendarId },
                     },
                 } : null,
             },
@@ -669,7 +663,7 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
     });
     const staleFeeds = () => fail('STALE_REVISION', 'The subscriptions changed since the view showed them; read the view again');
     const refreshShownRevision = async (host: NativeCalendarHost) => {
-        shownPushRevision = await pushRevision(host);
+        shownCalendarId = await host.storage.getItem(CALENDAR_PUSH_CALENDAR_ID_KEY);
     };
 
     // ---------------------------------------------------------------------------
@@ -763,16 +757,17 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
             case 'deleteMindwtrCalendar': {
                 if (!pushAvailable) return fail('ACTION_FAILED', 'Calendar push is not available on this host yet');
                 if (current.push.deleting) return fail('ACTION_FAILED', 'The Mindwtr calendar is being deleted');
-                const now = await pushRevision(current.host);
-                if (now !== edit.revision) {
-                    // Done already (a replay after a restart): push is off, no Mindwtr calendar is saved,
-                    // and the one the view showed is gone. Anything else changed since: refused.
-                    const [isEnabled, isManaged] = JSON.parse(now) as [boolean, string | null];
-                    const wasManaged = (JSON.parse(edit.revision) as [boolean, string | null])[1];
-                    const gone = !wasManaged || !(await current.host.calendars.getCalendars()).some((calendar) => calendar.id === wasManaged);
-                    if (!isEnabled && isManaged === null && gone) return result(false);
-                    return fail('STALE_REVISION', 'The push options changed since the view showed them; read the view again');
+                // Resumable: its target is push off and no Mindwtr calendar of the app's own, so a
+                // replay finishes a delete cut short at any step. A Mindwtr calendar made since the
+                // view (another saved ID) is never deleted.
+                const [savedId, marker] = await Promise.all([
+                    current.host.storage.getItem(CALENDAR_PUSH_CALENDAR_ID_KEY),
+                    current.host.storage.getItem(CALENDAR_PUSH_PENDING_KEY),
+                ]);
+                if (savedId !== null && savedId !== edit.calendarId) {
+                    return fail('STALE_REVISION', 'A Mindwtr calendar was made since the view showed it; read the view again');
                 }
+                if (savedId === null && marker === null && !await push.getCalendarPushEnabled()) return result(false);
                 current.push.deleting = true;
                 try {
                     // Disable push sync first so the calendar is not recreated on the next
@@ -787,12 +782,13 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                     await loadPushTargets(current);
                     showToast(toastsOf.mindwtrCalendarDeleted(keptTargetEvents));
                 } catch (error) {
+                    // The calendar stays with its saved ID: the same request (or a new one) finishes it.
                     logError(current, error);
-                    showToast(toastsOf.loadWritableCalendarsFailed());
+                    return fail('ACTION_FAILED', 'The Mindwtr calendar could not be deleted; try again');
                 } finally {
                     current.push.deleting = false;
+                    await refreshShownRevision(current.host).catch(() => undefined);
                 }
-                await refreshShownRevision(current.host);
                 return result(true);
             }
             case 'deviceCalendars': {

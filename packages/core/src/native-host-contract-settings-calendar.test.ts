@@ -96,7 +96,18 @@ async function seed(settings: AppSettings) {
 // ---------------------------------------------------------------------------
 // The device: the harness's expo-calendar, AsyncStorage, fetch and picker.
 
+/** The process died before a device write: the write did not happen, and every later one fails too. */
+class Death extends Error {}
+
 function phone(device: Device) {
+    const life = { step: 0, dieAt: Infinity, died: false };
+    const tick = () => {
+        life.step += 1;
+        if (life.died || life.step === life.dieAt) {
+            life.died = true;
+            throw new Death(`died before device write ${life.step}`);
+        }
+    };
     const state = {
         storage: new Map(Object.entries(device.storage ?? {})),
         permission: device.permission ?? 'granted',
@@ -115,8 +126,8 @@ function phone(device: Device) {
         platform: { os: 'android' },
         storage: {
             getItem: async (key) => state.storage.get(key) ?? null,
-            setItem: async (key, entry) => { state.storage.set(key, entry); },
-            removeItem: async (key) => { state.storage.delete(key); },
+            setItem: async (key, entry) => { tick(); state.storage.set(key, entry); },
+            removeItem: async (key) => { tick(); state.storage.delete(key); },
         },
         fetch: (async (url: string) => {
             const entry = fixture.feeds[String(url)];
@@ -138,6 +149,7 @@ function phone(device: Device) {
             },
             getSources: async () => [],
             createCalendar: async (details) => {
+                tick();
                 state.nextCalendar += 1;
                 const id = `created-${state.nextCalendar}`;
                 // The harness records the random install marker in the internal name as <marker>.
@@ -146,32 +158,35 @@ function phone(device: Device) {
                 return id;
             },
             updateCalendar: async (id, details) => {
+                tick();
                 state.calendarWrites.push(['updateCalendar', id, details]);
                 return id;
             },
             deleteCalendar: async (id) => {
+                tick();
                 state.calendarWrites.push(['deleteCalendar', id]);
                 const index = state.calendars.findIndex((calendar) => calendar.id === id);
                 if (index >= 0) state.calendars.splice(index, 1);
             },
             createEvent: async (calendarId, details) => {
+                tick();
                 state.calendarWrites.push(['createEvent', calendarId, details.title]);
                 return 'event-1';
             },
-            updateEvent: async (id) => { state.calendarWrites.push(['updateEvent', id]); },
-            deleteEvent: async (id) => { state.calendarWrites.push(['deleteEvent', id]); },
+            updateEvent: async (id) => { tick(); state.calendarWrites.push(['updateEvent', id]); },
+            deleteEvent: async (id) => { tick(); state.calendarWrites.push(['deleteEvent', id]); },
         },
         syncEntries: {
             ensureReady: async () => undefined,
             get: async () => null,
-            upsert: async () => undefined,
-            delete: async () => undefined,
+            upsert: async () => { tick(); },
+            delete: async () => { tick(); },
             getAll: async () => [],
         },
         log: { info: () => undefined, warn: () => undefined, error: () => undefined },
     };
     const snapshot = () => Object.fromEntries(Object.values(fixture.keys).filter((key) => state.storage.has(key)).map((key) => [key, state.storage.get(key)]));
-    return { host, state, snapshot };
+    return { host, state, snapshot, life };
 }
 
 async function openHost(host: NativeCalendarHost, language = 'en'): Promise<Host> {
@@ -550,6 +565,29 @@ describe('native host contract: Settings › Calendar', () => {
             const later = await replay(handset, requestId, change);
             expect(later.answer).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
             expect(later.after).toEqual(later.before);
+        });
+
+        it('Delete Mindwtr calendar finishes on a replay after a death between any two of its steps', async () => {
+            for (let dieAt = 1; ; dieAt += 1) {
+                const { handset, contract, view } = await boot({
+                    calendars: ['primary', 'managed'],
+                    storage: { [KEYS.pushEnabled]: '1', [KEYS.pushCalendar]: 'g-mindwtr', [KEYS.pushTarget]: 'g-mindwtr' },
+                });
+                const requestId = generateUUID();
+                const change = view().push.target!.delete.edit;
+                handset.life.dieAt = dieAt;
+                await edit(contract, change, requestId).catch(() => undefined);
+                const died = handset.life.died;
+                handset.life.dieAt = Infinity;
+                handset.life.died = false;
+                if (died) {
+                    const replayed = await replay(handset, requestId, change);
+                    expect({ dieAt, ok: replayed.answer.ok }).toEqual({ dieAt, ok: true });
+                }
+                expect({ dieAt, calendars: handset.state.calendars.map((calendar) => calendar.id), device: handset.snapshot() })
+                    .toEqual({ dieAt, calendars: ['g-primary'], device: { [KEYS.pushEnabled]: '0' } });
+                if (!died) break;
+            }
         });
 
         it('the device calendar choices: a replay after a later change keeps it', async () => {
