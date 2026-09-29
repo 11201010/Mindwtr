@@ -44,6 +44,7 @@ struct SomedayScreen: View {
                 }
                 .padding(16)
             }
+            .accessibilityIdentifier("someday-scroll")
             .refreshable { await model.refresh() }
         }
         .task(id: scenePhase == .active) {
@@ -132,8 +133,14 @@ struct SomedayScreen: View {
                     let entries = collection.objects("items")
                     ForEach(entries.indices, id: \.self) { index in
                         let project = entries[index]
-                        Button { Task { await model.openProject(project) } } label: {
-                            HStack(spacing: 10) {
+                        SwipeActionCard(
+                            palette: palette, enabled: model.somedayActionsEnabled,
+                            id: "someday-project-" + project.text("id"),
+                            leftLabel: deferred.text("activateLabel"), rightLabel: "",
+                            leftSystemImage: "arrow.uturn.backward",
+                            open: { Task { await model.openProject(project) } },
+                            swipe: { _ in Task { await model.activateDeferredProject(project.text("id")) } },
+                            content: HStack(spacing: 10) {
                                 AppIcon(name: "folder", size: 18)
                                     .foregroundStyle(project.text("color").isEmpty ? palette.secondary : Color(hex: project.text("color")))
                                 VStack(alignment: .leading, spacing: 2) {
@@ -147,9 +154,7 @@ struct SomedayScreen: View {
                             .padding(.vertical, 10).padding(.horizontal, 12).frame(minHeight: 44)
                             .background(palette.card, in: RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1)).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain).disabled(!model.somedayActionsEnabled)
-                        .accessibilityIdentifier("someday-project-" + project.text("id"))
+                        )
                     }
                     if entries.count < collection.number("total") {
                         moreButton("someday-more-deferredProjects") { await model.loadMoreSomeday(deferred: true) }

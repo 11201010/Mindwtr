@@ -2455,26 +2455,14 @@ final class CoreModel: ObservableObject {
               !id.isEmpty else { throw CocoaError(.coderReadCorrupt) }
         for attempt in 0..<2 {
             let options = try await query("projectStatusOptions", [try json(["projectId": id])])
-            let project = options.object("project")
-            guard options.count == 3, !options.text("revision").isEmpty,
-                  let canChange = options["canChange"] as? NSNumber,
-                  CFGetTypeID(canChange) == CFBooleanGetTypeID(),
-                  project.count == 8, project.text("id") == id,
-                  project["title"] is String,
-                  ["active", "waiting", "someday", "archived"].contains(project.text("status")),
-                  project["isFocused"] is NSNull ||
-                    (project["isFocused"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true,
-                  project["cancelledAt"] is String || project["cancelledAt"] is NSNull,
-                  project["rev"] is Int || project["rev"] is NSNull,
-                  project["revBy"] is String || project["revBy"] is NSNull,
-                  !project.text("updatedAt").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            let canChange = try validatedProjectStatusOptions(options, id: id)
             if options.text("revision") == projectDetail.text("mutationRevision"), projectCurrent,
                projectDetail.text("projectId") == id, projectHeader.text("id") == id {
                 projectStatusOptions = options
                 projectStatusOptionsCurrent = true
                 projectStatusReadError = nil
                 projectStatusError = nil
-                projectStatusOpen = canChange.boolValue
+                projectStatusOpen = canChange
                 return
             }
             if attempt == 0 {
@@ -2485,6 +2473,71 @@ final class CoreModel: ObservableObject {
             }
         }
         throw CocoaError(.coderReadCorrupt)
+    }
+
+    private func validatedProjectStatusOptions(_ options: CoreObject, id: String) throws -> Bool {
+        let project = options.object("project")
+        guard options.count == 3, !options.text("revision").isEmpty,
+              let canChange = options["canChange"] as? NSNumber,
+              CFGetTypeID(canChange) == CFBooleanGetTypeID(),
+              project.count == 8, Data(project.text("id").utf8) == Data(id.utf8),
+              project["title"] is String,
+              ["active", "waiting", "someday", "archived"].contains(project.text("status")),
+              project["isFocused"] is NSNull ||
+                (project["isFocused"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true,
+              project["cancelledAt"] is String || project["cancelledAt"] is NSNull,
+              project["rev"] is Int || project["rev"] is NSNull,
+              project["revBy"] is String || project["revBy"] is NSNull,
+              !project.text("updatedAt").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        return canChange.boolValue
+    }
+
+    func activateDeferredProject(_ id: String) async {
+        let origin = selectedSurface
+        guard (origin == .waiting && waitingActionsEnabled) || (origin == .someday && somedayActionsEnabled),
+              projectStatusRequest == nil,
+              let row = (origin == .waiting ? waiting : someday).object("deferred").object("rows")
+                .objects("items").first(where: { Data($0.text("id").utf8) == Data(id.utf8) }),
+              !id.isEmpty, let title = row["title"] as? String else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let options = try await query("projectStatusOptions", [try json(["projectId": id])])
+            let canChange = try validatedProjectStatusOptions(options, id: id)
+            let project = options.object("project")
+            let current = (origin == .waiting ? waiting : someday).object("deferred").object("rows")
+                .objects("items").first(where: { Data($0.text("id").utf8) == Data(id.utf8) })
+            guard canChange, selectedSurface == origin,
+                  (origin == .waiting ? waitingCurrent : somedayCurrent),
+                  let current, let currentTitle = current["title"] as? String,
+                  Data(currentTitle.utf8) == Data(title.utf8),
+                  Data(project.text("title").utf8) == Data(title.utf8),
+                  project.text("status") == (origin == .waiting ? "waiting" : "someday") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let expected: CoreObject = [
+                "title": project.text("title"), "status": project.text("status"),
+                "isFocused": project["isFocused"]!, "cancelledAt": project["cancelledAt"]!,
+                "rev": project["rev"]!, "revBy": project["revBy"]!,
+                "updatedAt": project.text("updatedAt")
+            ]
+            projectStatusRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                                             "projectId": id, "status": "active", "expected": expected])
+            projectStatusExpectedID = id
+            projectStatusExpectedStatus = "active"
+        } catch let failure {
+            do { try await refreshProjectStatusAfterWrite() }
+            catch { /* Preserve the original read or stale-target failure in the global banner. */ }
+            self.error = failure.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectStatusWrite", [projectStatusRequest!]) }
+        catch { await handleProjectStatusWriteError(error); return }
+        do { try acknowledgeProjectStatus(result) }
+        catch { await handleProjectStatusWriteError(error); return }
+        do { try await refreshProjectStatusAfterWrite() }
+        catch { self.error = error.localizedDescription }
     }
 
     func changeProjectStatus(_ status: String) async {
@@ -2557,6 +2610,10 @@ final class CoreModel: ObservableObject {
         projectStatusError = nil
         projectStatusReadError = nil
         error = nil
+        if selectedSurface == .waiting || selectedSurface == .someday {
+            if blocked { error = label("settings.feedback.actionFailed") }
+            else { NSLog("Native iOS deferred Project reactivated releaseCheck=v1.3.4/ios-deferred-reactivate outcome=confirmed") }
+        }
     }
 
     private func handleProjectStatusWriteError(_ failure: Error) async {
@@ -2567,7 +2624,7 @@ final class CoreModel: ObservableObject {
             projectStatusOptionsCurrent = false
             retryNeeded = false
             projectStatusError = failure.localizedDescription
-            error = nil
+            error = selectedSurface == .waiting || selectedSurface == .someday ? failure.localizedDescription : nil
             do { try await refreshProjectStatusAfterWrite() }
             catch { projectStatusReadError = error.localizedDescription }
         } else {
@@ -2579,8 +2636,10 @@ final class CoreModel: ObservableObject {
 
     private func refreshProjectStatusAfterWrite() async throws {
         try await readSelectedSurface()
-        guard selectedSurface == .project, projectCurrent,
-              projectDetail.text("projectId") == projectHeader.text("id") else {
+        guard (selectedSurface == .project && projectCurrent &&
+                projectDetail.text("projectId") == projectHeader.text("id")) ||
+              (selectedSurface == .waiting && waitingCurrent) ||
+              (selectedSurface == .someday && somedayCurrent) else {
             throw CocoaError(.coderReadCorrupt)
         }
     }
@@ -10907,6 +10966,10 @@ final class CoreModel: ObservableObject {
             retryNeeded = false
             error = nil
             try await readSelectedSurface()
+            if (selectedSurface == .waiting && !waitingCurrent) ||
+                (selectedSurface == .someday && !somedayCurrent) {
+                throw CocoaError(.coderReadCorrupt)
+            }
             if !calendarPreferencePending { calendarComposerNavigation = nil }
         } catch {
             if projectRenameRequest != nil {

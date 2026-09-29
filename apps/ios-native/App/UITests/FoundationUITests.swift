@@ -567,8 +567,12 @@ final class FoundationUITests: XCTestCase {
         boardTap(app, "search-close")
     }
 
-    func testBoardSwipeDuplicateTrashAndReturn() {
+    func testBoardSwipeDuplicateTrashAndReturn() { boardSwipeDuplicateTrashAndReturn() }
+    func testDeferredActivationBoardSwipeRegression() { boardSwipeDuplicateTrashAndReturn(library: "9221ff3b-2fd3-4bb7-af02-1fa55c28efc8") }
+
+    private func boardSwipeDuplicateTrashAndReturn(library: String? = nil) {
         let app = XCUIApplication()
+        if let library { app.launchArguments = ["--native-ui-test-library", library] }
         app.launch()
         boardEnabled(app.buttons["capture-open"], timeout: 30)
         boardSelectAllAreas(app)
@@ -5695,6 +5699,85 @@ final class FoundationUITests: XCTestCase {
         revealPagedElement(app, completed, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
         XCTAssertEqual(completed.value as? String, "Expand")
         app.terminate()
+    }
+
+    func testDeferredProjectActivationNormal() { deferredProjectActivation(library: "a54438a9-d7f7-4931-b30b-7b8c61a4be93") }
+    func testDeferredProjectActivationLargestText() { deferredProjectActivation(library: "2381a180-a4ed-4e48-8d73-4fbb22e2995f") }
+
+    private func deferredProjectOpen(_ app: XCUIApplication, _ view: String) {
+        for surface in ["waiting", "someday"] where app.buttons[surface + "-back"].exists {
+            boardTap(app, surface + "-back")
+        }
+        boardEnabled(app.buttons["tab-menu"], timeout: 30); boardTap(app, "tab-menu")
+        let item = app.buttons["menu-" + view]
+        if !item.isHittable { revealPagedElement(app, item, in: app.scrollViews.containing(.button, identifier: "menu-projects").firstMatch) }
+        boardTap(app, "menu-" + view); boardEnabled(app.buttons[view + "-projects-toggle"])
+    }
+
+    private func deferredProjectRow(_ app: XCUIApplication, _ view: String, _ suffix: String) -> XCUIElement {
+        let row = app.buttons[view + "-project-task77-" + view + "-" + suffix]
+        revealPagedElement(app, row, in: app.scrollViews[view + "-scroll"])
+        boardEnabled(row); XCTAssertGreaterThanOrEqual(row.frame.height, 44 - 0.001)
+        return row
+    }
+
+    private func deferredProjectSwipe(_ row: XCUIElement) {
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).press(forDuration: 0.05,
+            thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+    }
+
+    private func deferredProjectActivation(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        for view in ["waiting", "someday"] {
+            deferredProjectOpen(app, view)
+            let row = deferredProjectRow(app, view, "a")
+            row.tap(); boardEnabled(app.buttons["project-back"]); boardTap(app, "project-back")
+            _ = deferredProjectRow(app, view, "a")
+            let short = row.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
+            short.press(forDuration: 0.05, thenDragTo: short.withOffset(CGVector(dx: 45, dy: 0)))
+            XCTAssertFalse(app.buttons["project-back"].exists); XCTAssertTrue(row.exists)
+            let start = row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -80)))
+            XCTAssertFalse(app.buttons["project-back"].exists); XCTAssertTrue(row.exists)
+            _ = deferredProjectRow(app, view, "a"); deferredProjectSwipe(row)
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: row); waitForExpectations(timeout: 15)
+            _ = deferredProjectRow(app, view, "b")
+            boardTap(app, "search-open"); boardEnabled(app.buttons["search-close"]); boardTap(app, "search-close")
+            _ = deferredProjectRow(app, view, "b"); XCTAssertFalse(row.exists)
+        }
+        app.terminate(); app.launch()
+        for view in ["waiting", "someday"] {
+            deferredProjectOpen(app, view); _ = deferredProjectRow(app, view, "b")
+            XCTAssertFalse(app.buttons[view + "-project-task77-" + view + "-a"].exists)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Deferred Projects after Reactivate and restart"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testDeferredProjectActivationSaveFailure() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "c1b10fcd-6750-4a9b-9b60-41471ce9d5c4"]; app.launch()
+        deferredProjectOpen(app, "waiting"); deferredProjectSwipe(deferredProjectRow(app, "waiting", "a"))
+        let failure = app.staticTexts["persistence-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 15)); boardEnabled(app.buttons["persistence-retry"])
+        XCTAssertFalse(app.buttons["waiting-back"].isEnabled)
+        for _ in 0..<2 {
+            boardTap(app, "persistence-retry"); boardEnabled(app.buttons["persistence-retry"])
+            XCTAssertTrue(failure.exists); XCTAssertFalse(app.buttons["waiting-project-task77-waiting-a"].isEnabled)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Deferred Reactivate keeps exact retry"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testDeferredProjectActivationColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "c1b10fcd-6750-4a9b-9b60-41471ce9d5c4"]; app.launch()
+        deferredProjectOpen(app, "waiting"); _ = deferredProjectRow(app, "waiting", "b")
+        XCTAssertFalse(app.buttons["waiting-project-task77-waiting-a"].exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        deferredProjectOpen(app, "someday"); let row = deferredProjectRow(app, "someday", "a"); deferredProjectSwipe(row)
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: row); waitForExpectations(timeout: 15)
+        _ = deferredProjectRow(app, "someday", "b")
+        app.terminate(); app.launch(); deferredProjectOpen(app, "someday")
+        _ = deferredProjectRow(app, "someday", "b"); XCTAssertFalse(row.exists); app.terminate()
     }
 
     func testHistoryViewRestorationNormal() { historyViewRestoration(library: "a575dfe8-784f-48df-87a9-73428aa65776", largest: false) }

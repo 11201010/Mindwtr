@@ -131,10 +131,11 @@ struct BoardScreen: View {
         let card = item.object("card")
         let id = row.text("id")
         let swipes = model.boardView.object("cardActions").object("swipes")
-        return BoardSwipeCard(
+        return SwipeActionCard(
             palette: palette, enabled: model.boardActionsEnabled, id: "board-task-" + id,
             leftLabel: model.boardSwipeAction("left") == nil ? "" : swipes.object("left").text("label"),
             rightLabel: model.boardSwipeAction("right") == nil ? "" : swipes.object("right").text("label"),
+            leftSystemImage: "doc.on.doc",
             open: { endInput(); Task { await model.openTask(id) } },
             swipe: { side in endInput(); Task { await model.performBoardSwipe(side, taskID: id) } },
             content: VStack(alignment: .leading, spacing: 8) {
@@ -193,12 +194,13 @@ struct BoardScreen: View {
 
 /// Observe horizontal drags alongside the Board's vertical ScrollView.
 /// Like RN Swipeable, crossing the action threshold closes the panel and acts once.
-private struct BoardSwipeCard<Content: View>: View {
+struct SwipeActionCard<Content: View>: View {
     let palette: AppPalette
     let enabled: Bool
     let id: String
     let leftLabel: String
     let rightLabel: String
+    let leftSystemImage: String
     let open: () -> Void
     let swipe: (String) -> Void
     let content: Content
@@ -220,7 +222,7 @@ private struct BoardSwipeCard<Content: View>: View {
                 if !rightLabel.isEmpty { Button(rightLabel) { swipe("right") }.disabled(!enabled) }
             }
             .contextMenu {
-                if !leftLabel.isEmpty { Button(leftLabel, systemImage: "doc.on.doc") { swipe("left") }.disabled(!enabled) }
+                if !leftLabel.isEmpty { Button(leftLabel, systemImage: leftSystemImage) { swipe("left") }.disabled(!enabled) }
                 if !rightLabel.isEmpty {
                     Button(rightLabel, systemImage: "trash", role: .destructive) { swipe("right") }.disabled(!enabled)
                 }
