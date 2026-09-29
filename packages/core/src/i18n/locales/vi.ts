@@ -8,6 +8,7 @@ export const viOverrides: Record<string, string> = {
     'nav.history': 'Lịch sử',
     'task.dates': 'Ngày…',
     'task.moveTo': 'Chuyển đến…',
+    'task.moveToProjectOrArea': 'Chuyển đến dự án hoặc lĩnh vực…',
     'task.destination': 'Nơi lưu',
     'common.viewOptions': 'Tùy chọn hiển thị',
     'settings.regionalFormats': 'Định dạng khu vực',

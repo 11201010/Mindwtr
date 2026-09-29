@@ -9,6 +9,7 @@ export const hiOverrides: Record<string, string> = {
     'nav.history': 'इतिहास',
     'task.dates': 'तारीखें…',
     'task.moveTo': 'यहाँ ले जाएँ…',
+    'task.moveToProjectOrArea': 'प्रोजेक्ट या क्षेत्र में ले जाएँ…',
     'task.destination': 'गंतव्य',
     'common.viewOptions': 'दृश्य विकल्प',
     'settings.regionalFormats': 'क्षेत्रीय प्रारूप',

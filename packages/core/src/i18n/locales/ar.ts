@@ -9,6 +9,7 @@ export const arOverrides: Record<string, string> = {
     'nav.history': 'السجل',
     'task.dates': 'التواريخ…',
     'task.moveTo': 'نقل إلى…',
+    'task.moveToProjectOrArea': 'نقل إلى مشروع أو مجال…',
     'task.destination': 'الوجهة',
     'common.viewOptions': 'خيارات العرض',
     'settings.regionalFormats': 'التنسيقات الإقليمية',

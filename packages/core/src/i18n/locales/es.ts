@@ -11,6 +11,7 @@ export const esOverrides: Record<string, string> = {
     'nav.history': 'Historial',
     'task.dates': 'Fechas…',
     'task.moveTo': 'Mover a…',
+    'task.moveToProjectOrArea': 'Mover a proyecto o área…',
     'task.destination': 'Destino',
     'common.viewOptions': 'Opciones de vista',
     'settings.regionalFormats': 'Formatos regionales',

@@ -9,6 +9,7 @@ export const deOverrides: Record<string, string> = {
     'nav.history': 'Verlauf',
     'task.dates': 'Termine…',
     'task.moveTo': 'Verschieben nach…',
+    'task.moveToProjectOrArea': 'In Projekt oder Bereich verschieben…',
     'task.destination': 'Ziel',
     'common.viewOptions': 'Ansichtsoptionen',
     'settings.regionalFormats': 'Regionale Formate',

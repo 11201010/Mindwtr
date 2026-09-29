@@ -9,6 +9,7 @@ export const zhHant: Record<string, string> = {
     'nav.history': '歷史記錄',
     'task.dates': '日期…',
     'task.moveTo': '移至…',
+    'task.moveToProjectOrArea': '移至專案或領域…',
     'task.destination': '歸屬',
     'common.viewOptions': '檢視選項',
     'settings.regionalFormats': '地區格式',

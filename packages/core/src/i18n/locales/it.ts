@@ -9,6 +9,7 @@ export const itOverrides: Record<string, string> = {
     'nav.history': 'Cronologia',
     'task.dates': 'Date…',
     'task.moveTo': 'Sposta in…',
+    'task.moveToProjectOrArea': 'Sposta in progetto o area…',
     'task.destination': 'Destinazione',
     'common.viewOptions': 'Opzioni di visualizzazione',
     'settings.regionalFormats': 'Formati regionali',

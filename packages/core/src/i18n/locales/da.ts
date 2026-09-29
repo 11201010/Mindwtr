@@ -9,6 +9,7 @@ export const daOverrides: Record<string, string> = {
     'nav.history': 'Historik',
     'task.dates': 'Datoer…',
     'task.moveTo': 'Flyt til...',
+    'task.moveToProjectOrArea': 'Flyt til projekt eller område…',
     'task.destination': 'Mål',
     'common.viewOptions': 'Se muligheder',
     'settings.regionalFormats': 'Regionale formater',

@@ -9,6 +9,7 @@ export const frOverrides: Record<string, string> = {
     'nav.history': 'Historique',
     'task.dates': 'Dates…',
     'task.moveTo': 'Déplacer vers…',
+    'task.moveToProjectOrArea': 'Déplacer vers un projet ou un domaine…',
     'task.destination': 'Emplacement',
     'common.viewOptions': 'Options d’affichage',
     'settings.regionalFormats': 'Formats régionaux',

@@ -9,6 +9,7 @@ export const csOverrides: Record<string, string> = {
     'nav.history': 'Historie',
     'task.dates': 'Data…',
     'task.moveTo': 'Přesunout do…',
+    'task.moveToProjectOrArea': 'Přesunout do projektu nebo oblasti…',
     'task.destination': 'Umístění',
     'common.viewOptions': 'Možnosti zobrazení',
     'settings.regionalFormats': 'Místní formáty',

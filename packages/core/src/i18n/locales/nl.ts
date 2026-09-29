@@ -13,6 +13,7 @@ export const nlOverrides: Record<string, string> = {
     'nav.history': 'Geschiedenis',
     'task.dates': 'Datums…',
     'task.moveTo': 'Verplaatsen naar…',
+    'task.moveToProjectOrArea': 'Verplaatsen naar project of gebied…',
     'task.destination': 'Bestemming',
     'common.viewOptions': 'Weergaveopties',
     'settings.regionalFormats': 'Regionale notaties',

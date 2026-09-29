@@ -9,6 +9,7 @@ export const koOverrides: Record<string, string> = {
     'nav.history': '기록',
     'task.dates': '날짜…',
     'task.moveTo': '이동…',
+    'task.moveToProjectOrArea': '프로젝트 또는 영역으로 이동…',
     'task.destination': '이동 위치',
     'common.viewOptions': '보기 옵션',
     'settings.regionalFormats': '지역별 형식',

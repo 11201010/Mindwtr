@@ -11,6 +11,7 @@ export const ukOverrides: Record<string, string> = {
     'nav.history': 'Історія',
     'task.dates': 'Дати…',
     'task.moveTo': 'Перемістити до…',
+    'task.moveToProjectOrArea': 'Перемістити в проєкт або область…',
     'task.destination': 'Розташування',
     'common.viewOptions': 'Параметри вигляду',
     'settings.regionalFormats': 'Регіональні формати',

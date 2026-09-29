@@ -343,6 +343,23 @@ export const styles = StyleSheet.create({
         borderWidth: 1,
         minWidth: '40%',
     },
+    menuMoveActions: {
+        marginTop: 16,
+        gap: 8,
+    },
+    menuMoveItem: {
+        minHeight: 44,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 20,
+        borderWidth: 1,
+    },
+    menuMoveText: {
+        fontSize: 14,
+        fontWeight: '500',
+    },
     menuDot: {
         width: 8,
         height: 8,

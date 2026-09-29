@@ -9,6 +9,7 @@ export const trOverrides: Record<string, string> = {
     'nav.history': 'Geçmiş',
     'task.dates': 'Tarihler…',
     'task.moveTo': 'Şuraya taşı…',
+    'task.moveToProjectOrArea': 'Projeye veya alana taşı…',
     'task.destination': 'Hedef',
     'common.viewOptions': 'Görünüm seçenekleri',
     'settings.regionalFormats': 'Bölgesel biçimler',

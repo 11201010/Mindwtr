@@ -9,6 +9,7 @@ export const ruOverrides: Record<string, string> = {
     'nav.history': 'История',
     'task.dates': 'Даты…',
     'task.moveTo': 'Переместить в…',
+    'task.moveToProjectOrArea': 'Переместить в проект или область…',
     'task.destination': 'Расположение',
     'common.viewOptions': 'Параметры вида',
     'settings.regionalFormats': 'Региональные форматы',
