@@ -707,9 +707,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     const host = hostEntry.slice(hostEntry.indexOf('globalThis.MindwtrHost = {'));
     const methods = [...host.matchAll(/\n    (\w+)\([^)]*\): [^{\n]+\{([\s\S]*?)\n    \},/g)].map(([, name, body]) => ({ name, body }));
     assert(methods.length > 40 && methods.some((m) => m.name === 'menuCommand'), 'host-entry\'s methods parsed');
-    // The iOS host's prepared commits and its Calendar preference write: its own journal holds them, and Kotlin never calls them.
+    // The iOS host's prepared commits and its Calendar preference, Focus grouping and Someday section task writes: its own journal
+    // holds them, and Kotlin never calls them.
     const iosPreparedCommits = ['captureCommit', 'draftCommit'];
-    const iosOnlyWrites = ['setCalendarPreference'];
+    const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask'];
     // Core writes no host method calls yet (the capture confirmation screen, reminder actions, Settings › Sync's option,
     // Settings › Calendar's edits, Settings › AI): wiring one into host-entry fails the write-list checks above until the journal takes it.
     const unwiredWrites = ['submitCaptureModal', 'submitCaptureModalLines', 'completeReminderTask', 'snoozeReminder', 'setSyncPreference', 'setCalendarSetting',
