@@ -356,6 +356,10 @@ type Screen = {
 };
 
 const MONTH_FIRST_LOCALE = /^en(?:[-_]US)?$/i;
+/** Date.prototype.toLocaleString's options (ECMA-402 ToDateTimeOptions "any", "all"). */
+const TO_LOCALE_STRING_OPTIONS: Intl.DateTimeFormatOptions = {
+    year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',
+};
 const PASSWORD_DOTS = '••••••••';
 const PASSPHRASE_FIELDS = new Set<string>(['current', 'next', 'confirm']);
 const FLOWS = new Set<string>(['enable', 'change', 'disable', 'unlock']);
@@ -633,9 +637,19 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
     }
 
     const formatDateTime = (iso: string): string => {
-        // React Native draws these with the device locale's toLocaleString; the engine
-        // has no Intl, so a month-first device gets en-US's text and others day-first.
+        // React Native draws these with the device locale's toLocaleString (Hermes: its
+        // Intl on the platform's ICU). An engine with Intl (the Android host backs it with
+        // ICU) gives the same text; without it a month-first device gets en-US's text and
+        // others day-first.
         const locale = deps.systemLocale();
+        const date = new Date(iso);
+        if (typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function' && !Number.isNaN(date.getTime())) {
+            try {
+                return new Intl.DateTimeFormat(locale ?? undefined, TO_LOCALE_STRING_OPTIONS).format(date);
+            } catch {
+                // A locale tag Intl refuses falls back below.
+            }
+        }
         const monthFirst = !locale || MONTH_FIRST_LOCALE.test(locale);
         return createDateFormatter({ language: 'en', dateFormat: 'system' })(iso, monthFirst ? 'M/d/yyyy, h:mm:ss a' : 'd/M/yyyy, HH:mm:ss');
     };

@@ -437,3 +437,31 @@ export const getSyncFolderLabel = (syncPath: string | null, t: Translate): strin
     const name = decodeUriSafe(leaf).split('/').pop() ?? leaf;
     return (syncPath.startsWith('content://') ? name.slice(name.lastIndexOf(':') + 1) : name) || leaf;
 };
+
+/** The sync badge's state: the Menu tab's dot and the Settings menu's Sync row (moved from React Native's lib/sync-badge.ts). */
+export type SyncBadgeState = 'hidden' | 'syncing' | 'healthy' | 'attention';
+
+export function resolveSyncBadgeState(params: {
+    configured: boolean;
+    activityState: 'idle' | 'syncing';
+    pendingRemoteWriteAt?: AppSettings['pendingRemoteWriteAt'];
+    lastSyncStatus?: AppSettings['lastSyncStatus'];
+    lastSyncAt?: AppSettings['lastSyncAt'];
+}): SyncBadgeState {
+    const {
+        configured,
+        activityState,
+        pendingRemoteWriteAt,
+        lastSyncStatus,
+        lastSyncAt,
+    } = params;
+
+    if (!configured) return 'hidden';
+    if (activityState === 'syncing') return 'syncing';
+    if (lastSyncStatus === 'error') return 'attention';
+    if (Boolean(pendingRemoteWriteAt)) return 'syncing';
+    if (lastSyncStatus === 'success' || lastSyncStatus === 'conflict') return 'healthy';
+    if (lastSyncAt) return 'healthy';
+
+    return 'attention';
+}

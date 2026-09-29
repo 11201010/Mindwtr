@@ -1,7 +1,7 @@
-import type { AppSettings } from '@mindwtr/core';
+import { resolveSyncBadgeState, type SyncBadgeState } from '@mindwtr/core/sync-settings-model';
 
 export type MobileSyncActivityState = 'idle' | 'syncing';
-export type MobileSyncBadgeState = 'hidden' | 'syncing' | 'healthy' | 'attention';
+export type MobileSyncBadgeState = SyncBadgeState;
 
 export const MOBILE_SYNC_BADGE_COLORS: Record<Exclude<MobileSyncBadgeState, 'hidden'>, string> = {
     syncing: '#F59E0B',
@@ -9,27 +9,5 @@ export const MOBILE_SYNC_BADGE_COLORS: Record<Exclude<MobileSyncBadgeState, 'hid
     attention: '#EF4444',
 };
 
-export function resolveMobileSyncBadgeState(params: {
-    configured: boolean;
-    activityState: MobileSyncActivityState;
-    pendingRemoteWriteAt?: AppSettings['pendingRemoteWriteAt'];
-    lastSyncStatus?: AppSettings['lastSyncStatus'];
-    lastSyncAt?: AppSettings['lastSyncAt'];
-}): MobileSyncBadgeState {
-    const {
-        configured,
-        activityState,
-        pendingRemoteWriteAt,
-        lastSyncStatus,
-        lastSyncAt,
-    } = params;
-
-    if (!configured) return 'hidden';
-    if (activityState === 'syncing') return 'syncing';
-    if (lastSyncStatus === 'error') return 'attention';
-    if (Boolean(pendingRemoteWriteAt)) return 'syncing';
-    if (lastSyncStatus === 'success' || lastSyncStatus === 'conflict') return 'healthy';
-    if (lastSyncAt) return 'healthy';
-
-    return 'attention';
-}
+// The rule lives in core (sync-settings-model.ts) so the native app draws the same badge.
+export const resolveMobileSyncBadgeState = resolveSyncBadgeState;

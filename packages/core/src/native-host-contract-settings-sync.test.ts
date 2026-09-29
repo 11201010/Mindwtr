@@ -2,11 +2,13 @@ import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
-import type {
-    NativeSyncEncryptionAction,
-    NativeSyncSettings,
-    NativeSyncSettingsHost,
-    NativeSyncWebDavFields,
+import { NATIVE_UNJOURNALED_COMMANDS } from './native-request-receipts';
+import {
+    NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS,
+    type NativeSyncEncryptionAction,
+    type NativeSyncSettings,
+    type NativeSyncSettingsHost,
+    type NativeSyncWebDavFields,
 } from './native-host-contract-settings-sync';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { SyncEncryptionCleanupDeferredError } from './sync-encryption-service';
@@ -1265,5 +1267,47 @@ describe('native host contract: Settings › Sync redaction set', () => {
         });
         const tested = value(await contract.testSyncConnection({ webdav: { ...webdavFields, url: 'https://alice:draft-pw@dav.example.com' } }));
         expect(tested.toasts.map((toast) => toast.message)).toEqual(['login alice/[redacted] refused']);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The native Android pass (S3): the Sync row opens, the screen's commands never reach the
+// journal or durable receipts, and dates follow the device locale as React Native's do.
+
+describe('native host contract: Settings › Sync on the native host (S3)', () => {
+    const originalTz = process.env.TZ;
+    beforeAll(() => {
+        process.env.TZ = 'UTC';
+    });
+    afterAll(() => {
+        resetForTests();
+        if (originalTz === undefined) delete process.env.TZ;
+        else process.env.TZ = originalTz;
+    });
+
+    it('enables the Settings menu\'s Sync row', async () => {
+        const { contract } = await start({});
+        const menu = value(contract.getSettingsMenu());
+        expect(menu.groups.flat().find((row) => row.id === 'sync')?.enabled).toBe(true);
+    });
+
+    it('keeps every screen command out of the journal and durable receipts', () => {
+        for (const name of NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS) expect(NATIVE_UNJOURNALED_COMMANDS.has(name)).toBe(true);
+    });
+
+    it.each(['en-US', 'de-DE', 'ja-JP', 'zh-CN', 'en-GB'])('draws the history dates as React Native\'s toLocaleString does on a %s device', async (locale) => {
+        await seed({
+            lastSyncStatus: 'success', lastSyncAt: '2026-09-24T14:05:09.000Z',
+            lastSyncHistory: [{ at: '2026-09-24T14:05:09.000Z', status: 'success', conflicts: 0, conflictIds: [], maxClockSkewMs: 0, timestampAdjustments: 0 }],
+        }, false);
+        const dev = createDevice(WEBDAV_STORED);
+        const contract = createNativeHostContract({ syncSettings: dev.host });
+        value(await contract.setLanguage({ storedLanguage: 'en', systemLocale: locale }));
+        expect(await contract.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        value(await contract.openSyncSettings());
+        const shown = new Date('2026-09-24T14:05:09.000Z').toLocaleString(locale);
+        const card = value(contract.getSyncSettings()).panel?.lastSync;
+        expect(card?.history?.entries.some((entry) => entry.includes(shown))).toBe(true);
+        expect(card?.status).toContain(shown);
     });
 });

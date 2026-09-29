@@ -222,14 +222,16 @@ export const withRequestProject = (projects: readonly Project[], id: string, tit
 };
 
 /**
- * Commands (a receipt payload's command name, its first element) the native journal never keeps,
- * such as one that carries a secret: their receipts stay in memory and never reach the disk.
+ * Commands the native journal never keeps, such as one that carries a secret: a receipt payload's
+ * command name (its first element), whose receipts stay in memory and never reach the disk, or a
+ * contract command that keeps no request payload at all.
  * calendarFeedAdd: a new calendar subscription, whose URL may carry a password
  * (native-host-contract-settings-calendar.ts addCalendarFeed).
- * setAIKey carries an AI key and setAIEndpoint a URL that may hold a password (NATIVE_AI_UNJOURNALED_COMMANDS);
- * the Sync settings pass adds its own.
+ * setAIKey carries an AI key and setAIEndpoint a URL that may hold a password (NATIVE_AI_UNJOURNALED_COMMANDS).
+ * Settings › Sync's screen commands (NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS in native-host-contract-settings-sync.ts,
+ * the same names).
  */
-export const NATIVE_UNJOURNALED_COMMANDS: ReadonlySet<string> = new Set<string>(['calendarFeedAdd', 'setAIKey', 'setAIEndpoint']);
+export const NATIVE_UNJOURNALED_COMMANDS: ReadonlySet<string> = new Set<string>(['calendarFeedAdd', 'setAIKey', 'setAIEndpoint', 'openSyncSettings', 'closeSyncSettings', 'selectSyncBackend', 'saveSyncBackend', 'syncNow', 'testSyncConnection', 'pickSyncFolder', 'connectDropbox', 'disconnectDropbox', 'runSyncEncryptionAction']);
 
 const commandOf = (payload: string): string => /^\["([^"\\]{1,64})"/.exec(payload)?.[1] ?? '';
 /** What the disk keeps of a request: its command name and a 128-bit hash of its payload, never the payload's text. */

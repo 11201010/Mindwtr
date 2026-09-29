@@ -162,7 +162,7 @@ export type SettingsDeps = {
 };
 
 /** Settings screens the native host draws so far; draw the other rows disabled. */
-export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'gtd', 'manage', 'data'];
+export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'gtd', 'manage', 'sync', 'data'];
 
 type NativeMenuRow<Id extends string = string> = SettingsMenuRow<Id> & { enabled: boolean };
 

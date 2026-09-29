@@ -17,6 +17,7 @@ import {
     isSyncBackendOptionSelected,
     isValidSyncHttpUrl,
     resolveSyncBackendSelection,
+    resolveSyncBadgeState,
 } from './sync-settings-model';
 import type { MergeStats } from './sync-types';
 
@@ -113,5 +114,21 @@ describe('sync settings model', () => {
     it('finds a short secret\'s word boundaries in any script', () => {
         expect(redactSyncText('ça va, garçon: a on façade', ['a', 'on'])).toBe('ça va, garçon: [redacted] [redacted] façade');
         expect(redactSyncText('naïve a ü a', ['a'])).toBe('naïve [redacted] ü [redacted]');
+    });
+});
+
+describe('resolveSyncBadgeState (React Native\'s sync badge, moved)', () => {
+    const at = '2026-03-04T00:00:00.000Z';
+    it.each([
+        ['hidden when sync is not configured', { configured: false, activityState: 'idle' }, 'hidden'],
+        ['syncing while a cycle runs', { configured: true, activityState: 'syncing', lastSyncStatus: 'success', lastSyncAt: at }, 'syncing'],
+        ['syncing with a pending remote write', { configured: true, activityState: 'idle', pendingRemoteWriteAt: at, lastSyncStatus: 'success' }, 'syncing'],
+        ['attention when a pending remote write failed', { configured: true, activityState: 'idle', pendingRemoteWriteAt: at, lastSyncStatus: 'error' }, 'attention'],
+        ['healthy after a sync', { configured: true, activityState: 'idle', lastSyncStatus: 'success', lastSyncAt: at }, 'healthy'],
+        ['healthy after a resolved conflict', { configured: true, activityState: 'idle', lastSyncStatus: 'conflict', lastSyncAt: at }, 'healthy'],
+        ['attention after an error', { configured: true, activityState: 'idle', lastSyncStatus: 'error', lastSyncAt: at }, 'attention'],
+        ['attention when configured and never synced', { configured: true, activityState: 'idle', lastSyncStatus: 'idle' }, 'attention'],
+    ] as const)('%s', (_name, input, expected) => {
+        expect(resolveSyncBadgeState(input)).toBe(expected);
     });
 });
