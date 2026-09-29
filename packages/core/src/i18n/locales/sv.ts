@@ -9,6 +9,7 @@ export const svOverrides: Record<string, string> = {
     'nav.history': 'Historik',
     'task.dates': 'Datum…',
     'task.moveTo': 'Flytta till…',
+    'task.moveToProjectOrArea': 'Flytta till projekt eller område…',
     'task.destination': 'Placering',
     'common.viewOptions': 'Visningsalternativ',
     'settings.regionalFormats': 'Regionala format',

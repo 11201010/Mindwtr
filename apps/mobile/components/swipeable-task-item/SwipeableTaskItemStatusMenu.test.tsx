@@ -49,7 +49,7 @@ describe('Someday task menu', () => {
       );
     });
     const button = tree!.root.findAllByType('Pressable' as never)
-      .find((node) => node.props.accessibilityLabel === 'Move to…');
+      .find((node) => node.props.accessibilityLabel === 'Move to project or area…');
     expect(button).toBeDefined();
     act(() => { button?.props.onPress(); });
     expect(onMoveToDestination).toHaveBeenCalledOnce();

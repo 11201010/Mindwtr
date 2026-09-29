@@ -9,6 +9,7 @@ export const zhHans: Record<string, string> = {
     'nav.history': '历史记录',
     'task.dates': '日期…',
     'task.moveTo': '移至…',
+    'task.moveToProjectOrArea': '移至项目或领域…',
     'task.destination': '归属',
     'common.viewOptions': '视图选项',
     'settings.regionalFormats': '地区格式',

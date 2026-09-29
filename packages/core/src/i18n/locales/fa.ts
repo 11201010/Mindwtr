@@ -9,6 +9,7 @@ export const faOverrides: Record<string, string> = {
     'nav.history': 'تاریخچه',
     'task.dates': 'تاریخ‌ها…',
     'task.moveTo': 'انتقال به…',
+    'task.moveToProjectOrArea': 'انتقال به پروژه یا حوزه…',
     'task.destination': 'مقصد',
     'common.viewOptions': 'گزینه‌های نمایش',
     'settings.regionalFormats': 'قالب‌های منطقه‌ای',

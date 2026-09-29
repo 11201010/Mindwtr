@@ -9,6 +9,7 @@ export const plOverrides: Record<string, string> = {
     'nav.history': 'Historia',
     'task.dates': 'Daty…',
     'task.moveTo': 'Przenieś do…',
+    'task.moveToProjectOrArea': 'Przenieś do projektu lub obszaru…',
     'task.destination': 'Miejsce docelowe',
     'common.viewOptions': 'Opcje widoku',
     'settings.regionalFormats': 'Formaty regionalne',

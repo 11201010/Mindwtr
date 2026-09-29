@@ -9,6 +9,7 @@ export const en: Record<string, string> = {
     'nav.history': 'History',
     'task.dates': 'Dates…',
     'task.moveTo': 'Move to…',
+    'task.moveToProjectOrArea': 'Move to project or area…',
     'task.destination': 'Destination',
     'common.viewOptions': 'View options',
     'settings.regionalFormats': 'Regional formats',

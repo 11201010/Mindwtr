@@ -19,6 +19,7 @@ export const jaOverrides: Record<string, string> = {
     'nav.history': '履歴',
     'task.dates': '日付…',
     'task.moveTo': '移動先…',
+    'task.moveToProjectOrArea': 'プロジェクトまたはエリアへ移動…',
     'task.destination': '移動先',
     'common.viewOptions': '表示オプション',
     'settings.regionalFormats': '地域の表示形式',

@@ -32,6 +32,8 @@ export function SwipeableTaskItemStatusMenu({
     visible,
 }: SwipeableTaskItemStatusMenuProps) {
     const statusColors = useStatusColors();
+    const moveToDestinationLabel = tFallback(t, 'task.moveToProjectOrArea', 'Move to project or area…');
+    const moveToSectionLabel = tFallback(t, 'viewSections.moveToSection', 'Move to section…');
     return (
         <Modal
             visible={visible}
@@ -77,35 +79,35 @@ export function SwipeableTaskItemStatusMenu({
                             );
                         })}
                     </View>
-                    {onMoveToDestination ? (
-                        <Pressable
-                            style={[styles.menuItem, { borderColor: tc.border }]}
-                            onPress={() => {
-                                onMoveToDestination();
-                                onClose();
-                            }}
-                            accessibilityRole="button"
-                            accessibilityLabel={tFallback(t, 'task.moveTo', 'Move to…')}
-                        >
-                            <Text style={[styles.menuText, { color: tc.text }]}>
-                                {tFallback(t, 'task.moveTo', 'Move to…')}
-                            </Text>
-                        </Pressable>
-                    ) : null}
-                    {onMoveToSection ? (
-                        <Pressable
-                            style={[styles.menuItem, { borderColor: tc.border }]}
-                            onPress={() => {
-                                onMoveToSection();
-                                onClose();
-                            }}
-                            accessibilityRole="button"
-                            accessibilityLabel={tFallback(t, 'viewSections.moveToSection', 'Move to section…')}
-                        >
-                            <Text style={[styles.menuText, { color: tc.text }]}>
-                                {tFallback(t, 'viewSections.moveToSection', 'Move to section…')}
-                            </Text>
-                        </Pressable>
+                    {onMoveToDestination || onMoveToSection ? (
+                        <View style={styles.menuMoveActions}>
+                            {onMoveToDestination ? (
+                                <Pressable
+                                    style={[styles.menuMoveItem, { borderColor: tc.border }]}
+                                    onPress={() => {
+                                        onMoveToDestination();
+                                        onClose();
+                                    }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={moveToDestinationLabel}
+                                >
+                                    <Text style={[styles.menuMoveText, { color: tc.text }]}>{moveToDestinationLabel}</Text>
+                                </Pressable>
+                            ) : null}
+                            {onMoveToSection ? (
+                                <Pressable
+                                    style={[styles.menuMoveItem, { borderColor: tc.border }]}
+                                    onPress={() => {
+                                        onMoveToSection();
+                                        onClose();
+                                    }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={moveToSectionLabel}
+                                >
+                                    <Text style={[styles.menuMoveText, { color: tc.text }]}>{moveToSectionLabel}</Text>
+                                </Pressable>
+                            ) : null}
+                        </View>
                     ) : null}
                 </View>
             </Pressable>

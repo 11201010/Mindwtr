@@ -11,6 +11,7 @@ export const huOverrides: Record<string, string> = {
     'nav.history': 'Előzmények',
     'task.dates': 'Dátumok…',
     'task.moveTo': 'Áthelyezés…',
+    'task.moveToProjectOrArea': 'Áthelyezés projektbe vagy területre…',
     'task.destination': 'Célhely',
     'common.viewOptions': 'Nézetbeállítások',
     'settings.regionalFormats': 'Területi formátumok',
