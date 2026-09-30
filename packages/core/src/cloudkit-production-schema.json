@@ -74,11 +74,10 @@
     "deletedAt",
     "purgedAt",
     "startDateText",
-    "cancelledAt"
-   ],
-   "pendingProduction": [
+    "cancelledAt",
     "viewSectionIds"
-   ]
+   ],
+   "pendingProduction": []
   },
   "MindwtrSection": {
    "deployed": [
