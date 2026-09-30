@@ -97,7 +97,7 @@ if (command === 'fixture') {
     const fullyDrawn = async (since) => {
         for (let i = 0; i < 100; i += 1) {
             const line = adb('logcat', '-d', '-v', 'epoch', '-T', since, '-s', 'ActivityTaskManager:I')
-                .split('\n').find((l) => l.includes(`Fully drawn ${activity}`));
+                .split('\n').find((l) => l.includes(`Fully drawn ${pkg}/`));
             const match = line && /\+(?:(\d+)s)?(\d+)ms/.exec(line);
             if (match) return Number(match[1] ?? 0) * 1000 + Number(match[2]);
             await sleep(200);
