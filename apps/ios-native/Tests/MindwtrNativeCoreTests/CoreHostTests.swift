@@ -12676,6 +12676,352 @@ final class CoreHostTests: XCTestCase {
                                parametersJSON: json(["linked-person-task", "Retained delegated task", "next", "Old Person", "[]", json(["@Old Person"]), 0, 0, 0, 0, at, at, at, 4]))
     }
 
+    private func seedPersonDeleteRows() async throws {
+        try await seedPersonCreateRows()
+        let sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        let name = String(repeating: "P", count: 600)
+        _ = try sqlite.execute("UPDATE people SET name = ?, note = ?, referenceLink = ?, createdAt = ?, updatedAt = ?, deletedAt = NULL, rev = 7, revBy = ? WHERE id = 'legacy-person'",
+                               parametersJSON: json([name, String(repeating: "N", count: 10_100), "obsidian://" + String(repeating: "r", count: 2_100), "legacy-created", "legacy-updated", "legacy-writer"]))
+        for (id, status, deleted) in [("person-delete-live-task", "next", false), ("person-delete-done-task", "done", false), ("person-delete-deleted-task", "next", true)] {
+            let at = recentAreaTestTime()
+            _ = try sqlite.execute("INSERT INTO tasks (id, title, status, assignedTo, tags, contexts, isFocusedToday, showFutureRecurrence, suppressMindwtrReminders, pushCount, createdAt, updatedAt, completedAt, deletedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   parametersJSON: json([id, "Retained Person task", status, name, json(["#keep", "#café", "#cafe\u{0301}"]), json(["@" + name, "@keep"]), 0, 0, 0, 0, at, at, status == "done" ? at as Any : NSNull(), deleted ? at as Any : NSNull(), 5]))
+        }
+    }
+
+    private func personDeleteRequest(_ core: CoreHost, personID: String = "legacy-person",
+                                     requestID: String = UUID().uuidString.lowercased()) async throws -> [String: Any] {
+        let options = try object(await core.call("managePersonDeleteOptions", argumentsJSON: json([json(["personId": personID])])))
+        return ["requestId": requestID, "personId": personID, "expected": try XCTUnwrap(options["expected"])]
+    }
+
+    func testManagePersonDeleteRichLegacyRowPreservesAllTaskAssignmentsAndOtherTables() async throws {
+        try await seedPersonDeleteRows()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        let before = try nineTableSnapshot(sqlite)
+        let original = try XCTUnwrap(personRows("legacy-person").first)
+        var libraryWrites = 0, diagnostics = 0, journals = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { libraryWrites += 1 }
+        }
+        faults.journalWrite = { journals += 1 }
+        faults.commandDiagnostic = { event in
+            if event == "managePersonDeleteApplied" {
+                diagnostics += 1
+                XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path))
+            }
+        }
+        let options = try object(await core.call("managePersonDeleteOptions", argumentsJSON: json([json(["personId": "legacy-person"])])))
+        XCTAssertEqual(options["personId"] as? String, "legacy-person")
+        let expected = try XCTUnwrap(options["expected"] as? [String: Any])
+        XCTAssertEqual(expected["createdAt"] as? String, "legacy-created")
+        XCTAssertEqual(expected["updatedAt"] as? String, "legacy-updated")
+        XCTAssertEqual((expected["name"] as? String)?.count, 600)
+        XCTAssertEqual((expected["note"] as? String)?.count, 10_100)
+        XCTAssertEqual((expected["referenceLink"] as? String)?.count, 2_111)
+        let message = try XCTUnwrap((options["confirm"] as? [String: Any])?["message"] as? String)
+        XCTAssertTrue(message.contains(try XCTUnwrap(expected["name"] as? String)))
+        XCTAssertEqual(try nineTableSnapshot(sqlite), before)
+        XCTAssertEqual(libraryWrites, 0); XCTAssertEqual(journals, 0)
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "personId": "legacy-person", "expected": expected]
+        let result = try object(await core.call("managePersonDelete", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(result), try json(["personId": "legacy-person"]))
+        let deleted = try XCTUnwrap(personRows("legacy-person").first)
+        let changed: Set<String> = ["deletedAt", "updatedAt", "rev", "revBy"]
+        XCTAssertEqual(try json(deleted.filter { !changed.contains($0.key) }), try json(original.filter { !changed.contains($0.key) }))
+        XCTAssertEqual(deleted["rev"] as? Int, 8)
+        XCTAssertEqual(deleted["deletedAt"] as? String, deleted["updatedAt"] as? String)
+        let after = try nineTableSnapshot(sqlite)
+        for index in before.indices where index != 3 { XCTAssertEqual(after[index], before[index]) }
+        let priorWrites = libraryWrites, priorJournals = journals
+        let probe = try object(await core.call("managePersonDeleteRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(probe), try json(result))
+        await expectFailure { _ = try await core.call("managePersonDeleteOptions", argumentsJSON: json([json(["personId": "legacy-person"])])) }
+        await expectFailure { _ = try await core.call("managePersonDelete", argumentsJSON: json([json(request)])) }
+        XCTAssertEqual(try nineTableSnapshot(sqlite), after)
+        XCTAssertEqual(libraryWrites, priorWrites); XCTAssertEqual(journals, priorJournals); XCTAssertEqual(diagnostics, 1)
+    }
+
+    func testManagePersonDeleteMalformedPrivateMissingAndStaleConfirmationNeverWrite() async throws {
+        try await seedPersonDeleteRows()
+        let first = host()
+        _ = try await first.start()
+        let valid = try await personDeleteRequest(first)
+        await first.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE people SET name = 'Later Person', rev = rev + 1 WHERE id = 'legacy-person'")
+        edit.close()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        let before = try nineTableSnapshot(sqlite)
+        var libraryWrites = 0, journals = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { libraryWrites += 1 }
+        }
+        faults.journalWrite = { journals += 1 }
+        await expectFailure("STALE_REVISION") { _ = try await core.call("managePersonDelete", argumentsJSON: json([json(valid)])) }
+        await expectFailure { _ = try await core.call("managePersonDeleteOptions", argumentsJSON: json([json(["personId": "missing-person"])])) }
+        for (field, value) in [("requestId", "ABCDEFAB-CDEF-ABCD-EFAB-CDEFABCDEFAB"), ("personId", ""), ("personId", String(repeating: "i", count: 501)), ("expected", NSNull()), ("extra", true)] as [(String, Any)] {
+            var request = valid; request[field] = value
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("managePersonDelete", argumentsJSON: json([json(request)])) }
+        }
+        for (field, value) in [("id", "wrong-person"), ("deletedAt", recentAreaTestTime()), ("note", NSNull()), ("rev", true), ("extra", true)] as [(String, Any)] {
+            var request = valid
+            var expected = try XCTUnwrap(valid["expected"] as? [String: Any]); expected[field] = value
+            request["expected"] = expected
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("managePersonDelete", argumentsJSON: json([json(request)])) }
+        }
+        for field in valid.keys {
+            var request = valid; request.removeValue(forKey: field)
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("managePersonDelete", argumentsJSON: json([json(request)])) }
+        }
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("managePersonDelete", argumentsJSON: json([String(repeating: " ", count: 2_000_001) + json(valid)])) }
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("managePersonDelete", argumentsJSON: String(repeating: " ", count: 12_000_001) + json([json(valid)])) }
+        for method in ["managePersonDeletePrepare", "managePersonDeleteValidate", "managePersonDeleteCommit", "preparePersonDelete", "commitPreparedPersonDelete"] {
+            await expectFailure("unavailable") { _ = try await core.call(method, argumentsJSON: json([json(valid)])) }
+        }
+        XCTAssertEqual(try nineTableSnapshot(sqlite), before)
+        XCTAssertEqual(libraryWrites, 0); XCTAssertEqual(journals, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testManagePersonDeleteTwoFailedAttemptsColdExactRecoveryPreservesOtherTables() async throws {
+        try await seedPersonDeleteRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await personDeleteRequest(writer)
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Person Delete COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("managePersonDelete", argumentsJSON: json([json(request)])) }
+        let frozen = try Data(contentsOf: journal)
+        let saved = try object(String(decoding: frozen, as: UTF8.self))
+        XCTAssertEqual(saved["method"] as? String, "managePersonDeleteCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        let prepared = try XCTUnwrap(object(XCTUnwrap(args.first))["prepared"] as? [String: Any])
+        let stamp = try XCTUnwrap(prepared["updateAt"] as? String)
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        try assertJournalContentUnchanged(frozen)
+        let failed = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failed), before)
+        failed.close()
+        await writer.close()
+        let recoveryFaults = HostIOFaults()
+        var diagnostics = 0
+        recoveryFaults.commandDiagnostic = { if $0 == "managePersonDeleteApplied" { diagnostics += 1 } }
+        let recovered = host(recoveryFaults)
+        let startup = try object(await recovered.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "managePersonDeleteCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["personId": "legacy-person"]))
+        let row = try XCTUnwrap(personRows("legacy-person").first)
+        XCTAssertEqual(row["deletedAt"] as? String, stamp)
+        XCTAssertEqual(row["updatedAt"] as? String, stamp)
+        XCTAssertEqual(row["rev"] as? Int, 8)
+        let check = try SQLiteBridge(url: database)
+        let after = try nineTableSnapshot(check)
+        check.close()
+        for index in before.indices where index != 3 { XCTAssertEqual(after[index], before[index]) }
+        XCTAssertEqual(diagnostics, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testManagePersonDeleteColdInterveningRenameRestoreAndDeletionRefuse() async throws {
+        try await seedPersonDeleteRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await personDeleteRequest(writer)
+        var journals = 0
+        faults.journalWrite = { journals += 1; if journals == 2 { throw HostFailure("Injected Person Delete lost reply") } }
+        await expectFailure("lost reply") { _ = try await writer.call("managePersonDelete", argumentsJSON: json([json(request)])) }
+        let frozen = try Data(contentsOf: journal)
+        let applied = try XCTUnwrap(personRows("legacy-person").first)
+        await writer.close()
+        for change in ["rename", "restore", "deletion"] {
+            let edit = try SQLiteBridge(url: database)
+            _ = try edit.execute("DELETE FROM people WHERE id = 'legacy-person'")
+            _ = try edit.execute("INSERT INTO people (id, name, note, referenceLink, createdAt, updatedAt, deletedAt, rev, revBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                 parametersJSON: json(["legacy-person", applied["name"]!, applied["note"]!, applied["referenceLink"]!, applied["createdAt"]!, applied["updatedAt"]!, applied["deletedAt"]!, applied["rev"]!, applied["revBy"]!]))
+            if change == "rename" {
+                _ = try edit.execute("UPDATE people SET name = 'Later Person', rev = rev + 1 WHERE id = 'legacy-person'")
+            } else if change == "restore" {
+                _ = try edit.execute("UPDATE people SET deletedAt = NULL, rev = rev + 1 WHERE id = 'legacy-person'")
+            } else {
+                _ = try edit.execute("DELETE FROM people WHERE id = 'legacy-person'")
+            }
+            let before = try nineTableSnapshot(edit)
+            edit.close()
+            try frozen.write(to: journal)
+            let replayFaults = HostIOFaults()
+            var libraryWrites = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { libraryWrites += 1 }
+            }
+            let reopened = host(replayFaults)
+            await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+            XCTAssertEqual(libraryWrites, 0, change)
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), before, change)
+            check.close()
+            try assertJournalContentUnchanged(frozen)
+            await reopened.close()
+        }
+    }
+
+    func testManagePersonDeleteForgedColdJournalsRefuseBeforeSQLite() async throws {
+        try await seedPersonDeleteRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await personDeleteRequest(writer)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Person Delete COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("managePersonDelete", argumentsJSON: json([json(request)])) }
+        let saved = try object(String(contentsOf: journal))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        let original = try object(XCTUnwrap(args.first))
+        await writer.close()
+        let databaseBytes = try Data(contentsOf: database)
+        for corruption in ["request", "effect", "terminal", "oversized", "raw"] {
+            var envelope = original
+            var forged = saved
+            if corruption == "request" {
+                var changed = try XCTUnwrap(envelope["request"] as? [String: Any])
+                changed["requestId"] = UUID().uuidString.lowercased()
+                envelope["request"] = changed
+            } else if corruption == "effect" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                var person = try XCTUnwrap(effect["person"] as? [String: Any])
+                var after = try XCTUnwrap(person["after"] as? [String: Any])
+                after["note"] = "Forged note"
+                person["after"] = after; effect["person"] = person; prepared["effect"] = effect
+                envelope["prepared"] = prepared
+            } else if corruption == "terminal" {
+                forged["terminal"] = ["success": ["_0": try json(["personId": "wrong-person"])]]
+            }
+            if corruption == "raw" {
+                forged["method"] = "managePersonDelete"
+                forged["argumentsJSON"] = try json([json(request)])
+            } else if corruption == "oversized" {
+                forged["argumentsJSON"] = try json([String(repeating: "x", count: 2_000_001)])
+            } else if corruption != "terminal" {
+                forged["argumentsJSON"] = try json([json(envelope)])
+            }
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var sql = 0, cleanup = 0
+            blockedFaults.beforeSQL = { _ in sql += 1 }
+            blockedFaults.journalRemove = { cleanup += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(sql, 0, corruption); XCTAssertEqual(cleanup, 0, corruption)
+            XCTAssertEqual(try Data(contentsOf: database), databaseBytes, corruption)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, corruption)
+            await blocked.close()
+        }
+    }
+
+    func testManagePersonDeleteUnknownAcknowledgmentColdExactAfterWritesNothing() async throws {
+        try await seedPersonDeleteRows()
+        let source = try dateBundle(at: "2026-10-01T12:00:00.000Z", suffix: """
+        (() => {
+            const commit = MindwtrHost.managePersonDeleteCommit, poll = MindwtrHost.poll;
+            const tickets = new Set();
+            MindwtrHost.managePersonDeleteCommit = function (json) { const id = commit(json); tickets.add(id); return id; };
+            MindwtrHost.poll = function (id) {
+                const raw = poll(id);
+                if (!raw || !tickets.has(id)) return raw;
+                const result = JSON.parse(raw);
+                if (result.ok) result.value = {personId: 'wrong-person'};
+                return JSON.stringify(result);
+            };
+        })();
+        """)
+        let faults = HostIOFaults()
+        let writer = host(faults, bundleURL: source)
+        _ = try await writer.start()
+        var diagnostics = 0
+        faults.commandDiagnostic = { if $0 == "managePersonDeleteApplied" { diagnostics += 1 } }
+        let request = try await personDeleteRequest(writer)
+        await expectFailure("acknowledgment") { _ = try await writer.call("managePersonDelete", argumentsJSON: json([json(request)])) }
+        XCTAssertEqual(diagnostics, 0)
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertNil(saved["terminal"])
+        let committed = try XCTUnwrap(personRows("legacy-person").first)
+        XCTAssertEqual(committed["deletedAt"] as? String, "2026-10-01T12:00:00.000Z")
+        await writer.close()
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        let replayFaults = HostIOFaults()
+        var libraryWrites = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { libraryWrites += 1 }
+        }
+        replayFaults.commandDiagnostic = { if $0 == "managePersonDeleteApplied" { diagnostics += 1 } }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "managePersonDeleteCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["personId": "legacy-person"]))
+        XCTAssertEqual(try json(XCTUnwrap(personRows("legacy-person").first)), try json(committed))
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertEqual(libraryWrites, 0); XCTAssertEqual(diagnostics, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testManagePersonDeleteTerminalCleanupPreservesInterveningRestoreAndProbeRefuses() async throws {
+        try await seedPersonDeleteRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await personDeleteRequest(writer)
+        faults.journalRemove = { throw HostFailure("Injected Person Delete cleanup failure") }
+        await expectFailure("cleanup") { _ = try await writer.call("managePersonDelete", argumentsJSON: json([json(request)])) }
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertNotNil((saved["terminal"] as? [String: Any])?["success"])
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE people SET deletedAt = NULL, rev = rev + 1 WHERE id = 'legacy-person'")
+        let before = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var libraryWrites = 0, diagnostics = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { libraryWrites += 1 }
+        }
+        replayFaults.commandDiagnostic = { event in
+            if event == "managePersonDeleteApplied" {
+                diagnostics += 1
+                XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path))
+            }
+        }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "managePersonDeleteCommit")
+        XCTAssertTrue(try personRows("legacy-person").first?["deletedAt"] is NSNull)
+        await expectFailure("STALE_REVISION") { _ = try await reopened.call("managePersonDeleteRetryOutcome", argumentsJSON: json([json(request)])) }
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertEqual(libraryWrites, 0); XCTAssertEqual(diagnostics, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
     func testManagePersonCreateNewDuplicateCheckAndReadOnlyProbe() async throws {
         try await seedCalendarPreferenceTask()
         let faults = HostIOFaults()

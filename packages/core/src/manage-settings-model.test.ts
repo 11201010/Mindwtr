@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildManagePersonRow, getManageEditorText, isManageAreaNameTaken, isManageEditorSaveDisabled, type ManageUntranslatedText } from './manage-settings-model';
+import { buildManagePersonRow, getManageDeleteConfirm, getManageEditorText, isManageAreaNameTaken, isManageEditorSaveDisabled, type ManageUntranslatedText } from './manage-settings-model';
 import type { Area, Person } from './types';
 
 const t = (key: string) => ({ 'common.tasks': 'tasks', 'list.countTaskSingular': 'task' }[key] ?? key);
@@ -36,5 +36,24 @@ describe('a new area with a name an area already has', () => {
         const text = (type: 'newArea' | 'area') => getManageEditorText((key) => key, type, {} as ManageUntranslatedText).nameTaken;
         expect(text('newArea')).toBe('An area with this name already exists.');
         expect(text('area')).toBeNull();
+    });
+});
+
+
+describe('Manage deletion confirmation', () => {
+    it('uses localized named confirmation for People without changing Area copy', () => {
+        const calls: string[] = [];
+        const translate = (key: string) => {
+            calls.push(key);
+            return { 'settings.deleteNamed': 'Remove "{{name}}"?', 'areas.deleteConfirm': 'Original Area confirmation',
+                'common.delete': 'Delete', 'common.cancel': 'Cancel' }[key] ?? key;
+        };
+        expect(getManageDeleteConfirm(translate, 'Alex 世界', 'people.deleteConfirm')).toEqual({
+            title: 'Delete', message: 'Remove "Alex 世界"?', cancelLabel: 'Cancel', confirmLabel: 'Delete',
+        });
+        expect(calls).toContain('settings.deleteNamed');
+        expect(calls).not.toContain('people.deleteConfirm');
+        expect(getManageDeleteConfirm(translate, 'Work', 'areas.deleteConfirm').message).toBe('Original Area confirmation');
+        expect(getManageDeleteConfirm((key) => key, 'Alex', 'people.deleteConfirm').message).toBe('Delete "Alex"?');
     });
 });

@@ -869,6 +869,31 @@ globalThis.MindwtrHost = {
     managePersonCreateCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedPersonCreate(JSON.parse(json))));
     },
+    managePersonDeleteOptions(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getPersonDeleteOptions(JSON.parse(json)));
+        });
+    },
+    managePersonDeleteRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probePersonDeleteOutcome(JSON.parse(json)));
+        });
+    },
+    /** Private prepared Person deletion; Swift owns the durable journal. */
+    managePersonDeletePrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.preparePersonDelete(JSON.parse(json)));
+        });
+    },
+    managePersonDeleteValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedPersonDelete(JSON.parse(json))));
+    },
+    managePersonDeleteCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedPersonDelete(JSON.parse(json))));
+    },
     areaColorOptions(): string {
         return submit(async () => {
             requireSaved();

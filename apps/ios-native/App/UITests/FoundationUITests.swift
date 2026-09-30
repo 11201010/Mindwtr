@@ -4234,6 +4234,226 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    private func task93Person(_ app: XCUIApplication, index: Int, title: String) -> XCUIElement {
+        let trash = app.buttons["manage-person-delete-\(index)"]
+        revealPagedElement(app, trash, in: app.scrollViews["manage-someday-scroll"],
+            more: "manage-people-more", ready: app.buttons["manage-back"])
+        let name = app.staticTexts["manage-person-name-\(index)"]
+        XCTAssertTrue(name.exists)
+        XCTAssertEqual(name.label, title)
+        XCTAssertEqual(trash.label, "Delete")
+        XCTAssertGreaterThanOrEqual(trash.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(trash.frame.height, 44 - 0.001)
+        return trash
+    }
+
+    private func task93Alert(_ app: XCUIApplication, index: Int, title: String) -> XCUIElement {
+        task93Person(app, index: index, title: title).tap()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        XCTAssertTrue(alert.staticTexts["Delete \"\(title)\"?"].exists)
+        boardEnabled(task84AlertButton(alert, id: "manage-person-delete-cancel", label: "Cancel"))
+        boardEnabled(task84AlertButton(alert, id: "manage-person-delete-confirm", label: "Delete"))
+        return alert
+    }
+
+    private func task93Cancel(_ alert: XCUIElement) {
+        task84AlertButton(alert, id: "manage-person-delete-cancel", label: "Cancel").tap()
+    }
+
+    private func task93Confirm(_ alert: XCUIElement) {
+        task84AlertButton(alert, id: "manage-person-delete-confirm", label: "Delete").tap()
+    }
+
+    func testManagePersonDeleteCancelAndCommit() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "cb39e0a0-185a-43c8-8e64-d993ea5ef824"]
+        app.launch(); task92OpenPeople(app, search: true)
+        task93Cancel(task93Alert(app, index: 0, title: "Task93 Delete normal"))
+        task93Person(app, index: 0, title: "Task93 Delete normal")
+        task93Confirm(task93Alert(app, index: 0, title: "Task93 Delete normal"))
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        XCTAssertFalse(app.staticTexts["manage-person-name-0"].exists && app.staticTexts["manage-person-name-0"].label == "Task93 Delete normal")
+        app.terminate(); app.launch(); task92OpenPeople(app)
+        XCTAssertFalse(app.staticTexts["manage-person-name-0"].exists && app.staticTexts["manage-person-name-0"].label == "Task93 Delete normal")
+        app.terminate()
+    }
+
+    func testManagePersonDeleteLargestText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "ade7e4ad-ea5c-41cc-8328-e29af88447e7"]
+        app.launch(); task92OpenPeople(app)
+        let alert = task93Alert(app, index: 0, title: "Task93 Delete largest")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Largest Manage Person Delete confirmation"; shot.lifetime = .keepAlways; add(shot)
+        let messageScroll = alert.scrollViews.firstMatch
+        if messageScroll.exists { messageScroll.swipeUp() }
+        let end = XCTAttachment(screenshot: app.screenshot())
+        end.name = "Largest Manage Person Delete message end"; end.lifetime = .keepAlways; add(end)
+        for button in [task84AlertButton(alert, id: "manage-person-delete-cancel", label: "Cancel"),
+                       task84AlertButton(alert, id: "manage-person-delete-confirm", label: "Delete")] {
+            XCTAssertTrue(button.isHittable)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        }
+        task93Confirm(alert)
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        app.terminate()
+    }
+
+    func testManagePersonDeleteLastPagedPerson() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "e2aec463-196a-4e28-88de-03cb463f796f"]
+        app.launch(); task92OpenPeople(app)
+        task93Confirm(task93Alert(app, index: 105, title: "Task93 Delete paging"))
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        XCTAssertFalse(app.buttons["manage-person-delete-105"].exists)
+        app.terminate(); app.launch(); task92OpenPeople(app)
+        XCTAssertFalse(app.buttons["manage-person-delete-105"].exists)
+        app.terminate()
+    }
+
+    func testManagePersonDeletePostAckReadRetryOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8ec704f8-8d0c-4dff-9977-64069bcc541d",
+                               "--native-manage-person-delete-read-failure"]
+        app.launch(); task92OpenPeople(app)
+        task93Confirm(task93Alert(app, index: 0, title: "Task93 Delete readfailure"))
+        let failure = app.staticTexts["manage-person-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+        XCTAssertFalse(app.staticTexts["persistence-error"].isHittable)
+        for attempt in 0..<2 {
+            boardTap(app, "manage-person-delete-retry")
+            if attempt == 0 {
+                XCTAssertTrue(failure.waitForExistence(timeout: 20))
+                boardEnabled(app.buttons["manage-person-delete-retry"], timeout: 20)
+            }
+        }
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        XCTAssertFalse(failure.exists)
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", "8ec704f8-8d0c-4dff-9977-64069bcc541d"]
+        app.launch(); task92OpenPeople(app)
+        XCTAssertFalse(app.staticTexts["manage-person-name-0"].exists && app.staticTexts["manage-person-name-0"].label == "Task93 Delete readfailure")
+        app.terminate()
+    }
+
+    func testManagePersonDeletePostAckRestorationSettlesReadRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "e34a62f7-7779-4227-9045-05eaf070d61e",
+                               "--native-manage-person-delete-read-failure", "--native-manage-person-delete-restore-after-ack"]
+        app.launch(); task92OpenPeople(app)
+        task93Confirm(task93Alert(app, index: 0, title: "Task93 Delete restored-after-ack"))
+        let failure = app.staticTexts["manage-person-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+        XCTAssertFalse(app.staticTexts["persistence-error"].isHittable)
+        for attempt in 0..<2 {
+            boardTap(app, "manage-person-delete-retry")
+            if attempt == 0 {
+                XCTAssertTrue(failure.waitForExistence(timeout: 20))
+                boardEnabled(app.buttons["manage-person-delete-retry"], timeout: 20)
+            }
+        }
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        XCTAssertFalse(failure.exists)
+        task93Person(app, index: 0, title: "Task93 Delete restored-after-ack")
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", "e34a62f7-7779-4227-9045-05eaf070d61e"]
+        app.launch(); task92OpenPeople(app)
+        task93Person(app, index: 0, title: "Task93 Delete restored-after-ack")
+        app.terminate()
+    }
+
+    /// Run before the paired cold test while the isolated SQLite trigger rejects Person deletion.
+    func testManagePersonDeleteFailedSaveKeepsExactRequest() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8192d1e1-bf65-4d58-b500-ed0e3134fb11"]
+        app.launch(); task92OpenPeople(app)
+        task93Confirm(task93Alert(app, index: 0, title: "Task93 Delete savefailure"))
+        let failure = app.staticTexts["manage-person-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-person-delete-0"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-section-toggle-people"].isEnabled)
+            boardTap(app, "manage-person-delete-retry")
+            boardEnabled(app.buttons["manage-person-delete-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    /// Root disarms only the failure trigger, preserving this library's pending journal.
+    func testManagePersonDeleteColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8192d1e1-bf65-4d58-b500-ed0e3134fb11"]
+        app.launch()
+        XCTAssertTrue(app.buttons["manage-back"].waitForExistence(timeout: 30))
+        task92OpenPeople(app)
+        XCTAssertFalse(app.staticTexts["manage-person-name-0"].exists && app.staticTexts["manage-person-name-0"].label == "Task93 Delete savefailure")
+        XCTAssertFalse(app.staticTexts["manage-person-delete-error"].exists)
+        app.terminate(); app.launch(); task92OpenPeople(app)
+        XCTAssertFalse(app.staticTexts["manage-person-name-0"].exists && app.staticTexts["manage-person-name-0"].label == "Task93 Delete savefailure")
+        app.terminate()
+    }
+
+    func testManagePersonDeleteOptionsReadRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "ad572103-9e61-492b-9e28-78edcde21719",
+                               "--native-manage-person-delete-options-read-failure"]
+        app.launch(); task92OpenPeople(app)
+        boardTap(app, "manage-person-delete-0")
+        let failure = app.staticTexts["manage-person-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        XCTAssertFalse(app.buttons["manage-person-delete-0"].isEnabled)
+        boardTap(app, "manage-person-delete-cancel")
+        boardEnabled(app.buttons["manage-back"])
+        task93Person(app, index: 0, title: "Task93 Delete optionsfailure")
+        app.terminate(); app.launch(); task92OpenPeople(app)
+        boardTap(app, "manage-person-delete-0")
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        boardTap(app, "manage-person-delete-retry")
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        task93Cancel(alert)
+        task93Person(app, index: 0, title: "Task93 Delete optionsfailure")
+        task93Confirm(task93Alert(app, index: 0, title: "Task93 Delete optionsfailure"))
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        app.terminate()
+    }
+
+    func testManagePersonDeleteDefiniteRefusalFreshConfirmation() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "85f665a4-081f-4e28-81d9-95d907b7d854",
+                               "--native-manage-person-delete-refusal"]
+        app.launch(); task92OpenPeople(app)
+        task93Confirm(task93Alert(app, index: 0, title: "Task93 Delete refusal"))
+        let failure = app.staticTexts["manage-person-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].isHittable)
+        boardTap(app, "manage-person-delete-retry")
+        let fresh = app.alerts.firstMatch
+        XCTAssertTrue(fresh.waitForExistence(timeout: 10))
+        task93Cancel(fresh)
+        task93Person(app, index: 0, title: "Task93 Delete refusal")
+        task93Confirm(task93Alert(app, index: 0, title: "Task93 Delete refusal"))
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        app.terminate()
+    }
+
+
     private func task91Section(_ app: XCUIApplication, _ name: String, open: Bool) {
         let toggle = app.buttons["manage-section-toggle-" + name]
         revealPagedElement(app, toggle, in: app.scrollViews["manage-someday-scroll"])

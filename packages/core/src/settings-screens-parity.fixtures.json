@@ -20731,7 +20731,7 @@
     "alerts": [
      [
       "Delete",
-      "Delete this person? Tasks assigned to them will be kept and moved to unassigned.",
+      "Delete \"Cy\"?",
       [
        [
         "Cancel",

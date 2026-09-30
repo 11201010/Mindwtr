@@ -146,14 +146,13 @@ export function getManageDeleteConfirm(
     name: string,
     messageKey: 'settings.deleteNamed' | 'areas.deleteConfirm' | 'people.deleteConfirm' = 'settings.deleteNamed',
 ): ManageConfirm {
-    const fallback = messageKey === 'areas.deleteConfirm'
+    const localizedKey = messageKey === 'people.deleteConfirm' ? 'settings.deleteNamed' : messageKey;
+    const fallback = localizedKey === 'areas.deleteConfirm'
         ? 'Delete this area? Projects and tasks in this area will be kept and moved to unassigned.'
-        : messageKey === 'people.deleteConfirm'
-            ? 'Delete this person? Tasks assigned to them will be kept and moved to unassigned.'
-            : 'Delete "{{name}}"?';
+        : 'Delete "{{name}}"?';
     return {
         title: t('common.delete'),
-        message: formatI18nTemplate(tFallback(t, messageKey, fallback), { name }),
+        message: formatI18nTemplate(tFallback(t, localizedKey, fallback), { name }),
         cancelLabel: t('common.cancel'),
         confirmLabel: t('common.delete'),
     };

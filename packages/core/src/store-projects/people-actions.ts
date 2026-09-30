@@ -9,9 +9,9 @@ import { logWarn } from '../logger';
 import { clearDerivedCache } from '../store-settings';
 import { getPersonNameKey, normalizePersonName, normalizePersonNote, normalizePersonReferenceLink } from '../people';
 import { taskEditValuesEqual } from '../json-value-equality';
-import { personToSqliteRow } from '../person-sync-schema';
+import { PERSON_SQLITE_COLUMNS, personFromSqliteRow, personToSqliteRow } from '../person-sync-schema';
 import { planManageEditorSave } from '../manage-settings-model';
-import type { PreparedTaskEditResult } from '../store-types';
+import type { PreparedPersonDelete, PreparedTaskEditResult } from '../store-types';
 import { generateUUID as uuidv4 } from '../uuid';
 import type { PeopleActions, Person, ProjectActionContext } from './shared';
 import { actionFail, actionOk, mutateEntities } from './shared';
@@ -53,6 +53,21 @@ export function personCreateProps(request: { name: string; note: string; referen
 
 export const samePersonAdditionRow = (left: Person, right: Person): boolean =>
     taskEditValuesEqual(personToSqliteRow(left, left.updatedAt), personToSqliteRow(right, right.updatedAt));
+
+/** Canonical persisted fields only; SQLite NULL optional values become omitted JSON keys. */
+export function personPersistedSnapshot(person: Person): Person {
+    const values = personToSqliteRow(person, person.updatedAt);
+    return JSON.parse(JSON.stringify(personFromSqliteRow(Object.fromEntries(
+        PERSON_SQLITE_COLUMNS.map((column, index) => [column, values[index]])), person.updatedAt))) as Person;
+}
+
+/** Deleting a managed Person retains every Task's raw assignment and contexts. */
+export const personDeleteUpdates = (now: string): Pick<Person, 'deletedAt'> => ({ deletedAt: now });
+
+export function personDeleteEffect(person: Person, deviceId: string, now: string): PreparedPersonDelete['effect'] {
+    return { person: { before: person, after: { ...person, ...personDeleteUpdates(now),
+        updatedAt: now, rev: nextRevision(person.rev), revBy: deviceId } } };
+}
 
 export const createPeopleActions = ({
     set,
@@ -105,6 +120,30 @@ export const createPeopleActions = ({
             const settings = input.deviceIdToInitialize ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
             persist(set, debouncedSave, state, { people, ...(settings !== state.settings ? { settings } : {}) });
             result = { success: true, id: planned.person.id, outcome: 'applied' };
+            return { _allPeople: people, settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedPersonDelete: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Person deletion conflicts with current data' };
+        set((state) => {
+            const current = state._allPeople.find((person) => person.id === input.request.personId);
+            if (current && (!input.deviceIdToInitialize || state.settings.deviceId === input.deviceIdToInitialize)
+                && samePersonAdditionRow(current, input.effect.person.after)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            if (!current || current.deletedAt || !samePersonAdditionRow(current, input.scope.person)
+                || !samePersonAdditionRow(current, input.request.expected)
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)) return state;
+            const effect = personDeleteEffect(current, input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!samePersonAdditionRow(effect.person.after, input.effect.person.after)) return state;
+            const people = replaceEntitiesInArray(state._allPeople, [effect.person.after]);
+            const settings = input.deviceIdToInitialize ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { people, ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
             return { _allPeople: people, settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
         });
         return result;
@@ -247,7 +286,7 @@ export const createPeopleActions = ({
         const result = await mutateEntities({ set, debouncedSave }, {
             collection: 'people',
             select: (state) => state._allPeople.filter((person) => person.id === id && !person.deletedAt),
-            buildUpdates: (_person, { now }) => ({ deletedAt: now }),
+            buildUpdates: (_person, { now }) => personDeleteUpdates(now),
             missingMessage: 'Person not found',
         });
         if (!result.success) {

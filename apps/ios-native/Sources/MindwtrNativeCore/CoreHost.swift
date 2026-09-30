@@ -110,6 +110,7 @@ private final class Engine: @unchecked Sendable {
     private var startupProjectSectionRenameResult: String?
     private var startupProjectSectionDeleteResult: String?
     private var startupProjectSectionOrderResult: String?
+    private var startupPersonDeleteResult: String?
     private var startupPersonCreateResult: String?
     private var startupAreaCreateResult: String?
     private var startupAreaColorResult: String?
@@ -154,6 +155,7 @@ private final class Engine: @unchecked Sendable {
         "projectSectionRenameOptions": 1, "projectSectionRename": 1, "projectSectionRenameRetryOutcome": 1,
         "projectSectionDeleteOptions": 1, "projectSectionDelete": 1, "projectSectionDeleteRetryOutcome": 1,
         "projectSectionOrderOptions": 1, "projectSectionOrder": 1, "projectSectionOrderRetryOutcome": 1,
+        "managePersonDeleteOptions": 1, "managePersonDelete": 1, "managePersonDeleteRetryOutcome": 1,
         "managePersonCreateResolve": 1, "managePersonCreate": 1, "managePersonCreateRetryOutcome": 1,
         "areaCreateOptions": 0, "areaCreateResolve": 1, "areaCreate": 1, "manageAreaCreate": 1, "areaCreateRetryOutcome": 1,
         "areaColorOptions": 0, "areaColor": 1, "areaColorRetryOutcome": 1,
@@ -191,7 +193,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -279,6 +281,10 @@ private final class Engine: @unchecked Sendable {
             if let command = pending, command.method == "projectSectionOrderCommit" {
                 _ = try invoke("projectSectionOrderValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validateProjectSectionOrderAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "managePersonDeleteCommit" {
+                _ = try invoke("managePersonDeleteValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validatePersonDeleteAcknowledgment(command, value: value) }
             }
             if let command = pending, command.method == "managePersonCreateCommit" {
                 _ = try invoke("managePersonCreateValidate", arguments: journalArguments(command))
@@ -434,6 +440,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringProjectSectionRename = pending?.method == "projectSectionRenameCommit"
         let recoveringProjectSectionDelete = pending?.method == "projectSectionDeleteCommit"
         let recoveringProjectSectionOrder = pending?.method == "projectSectionOrderCommit"
+        let recoveringPersonDelete = pending?.method == "managePersonDeleteCommit"
         let recoveringPersonCreate = pending?.method == "managePersonCreateCommit"
         let recoveringAreaCreateMethod = ["areaCreateCommit", "manageAreaCreateCommit"].first { $0 == pending?.method }
         let recoveringAreaColor = pending?.method == "areaColorCommit"
@@ -474,6 +481,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringProjectSectionRename, let terminal, case .success(let value) = terminal { startupProjectSectionRenameResult = value }
         if recoveringProjectSectionDelete, let terminal, case .success(let value) = terminal { startupProjectSectionDeleteResult = value }
         if recoveringProjectSectionOrder, let terminal, case .success(let value) = terminal { startupProjectSectionOrderResult = value }
+        if recoveringPersonDelete, let terminal, case .success(let value) = terminal { startupPersonDeleteResult = value }
         if recoveringPersonCreate, let terminal, case .success(let value) = terminal { startupPersonCreateResult = value }
         if recoveringAreaCreateMethod != nil, let terminal, case .success(let value) = terminal { startupAreaCreateResult = value }
         if recoveringAreaColor, let terminal, case .success(let value) = terminal { startupAreaColorResult = value }
@@ -521,7 +529,7 @@ private final class Engine: @unchecked Sendable {
             ?? startupSomedaySectionDeleteResult ?? startupSomedaySectionOrderResult
             ?? startupSomedaySectionTaskResult
         let recoveredLists = startupInboxResult ?? startupChecklistResult ?? startupTaskListSortResult
-            ?? startupUnassignedAreaColorResult ?? startupPersonCreateResult ?? recoveredSomedaySections
+            ?? startupUnassignedAreaColorResult ?? startupPersonCreateResult ?? startupPersonDeleteResult ?? recoveredSomedaySections
             ?? startupSomedaySectionMoveResult ?? startupSomedaySectionUndoResult
         guard let recovered = startupBoardResult ?? startupCalendarResult ?? startupMindSweepResult
             ?? recoveredProjects ?? recoveredFocus ?? recoveredLists else { return value }
@@ -559,6 +567,7 @@ private final class Engine: @unchecked Sendable {
                 : startupInboxResult != nil ? "inboxPreparedCommit" : startupChecklistResult != nil ? "checklistPreparedCommit"
                 : startupTaskListSortResult != nil ? "taskListSortWrite"
                 : startupPersonCreateResult != nil ? "managePersonCreateCommit"
+                : startupPersonDeleteResult != nil ? "managePersonDeleteCommit"
                 : startupUnassignedAreaColorResult != nil ? "unassignedAreaColorWrite"
                 : startupSomedaySectionCreateResult != nil ? "somedaySectionCreateWrite"
                 : startupSomedaySectionRenameResult != nil ? "somedaySectionRenameWrite"
@@ -577,6 +586,7 @@ private final class Engine: @unchecked Sendable {
         startupProjectSectionRenameResult = nil
         startupProjectSectionDeleteResult = nil
         startupProjectSectionOrderResult = nil
+        startupPersonDeleteResult = nil
         startupPersonCreateResult = nil
         startupAreaCreateResult = nil
         startupAreaColorResult = nil
@@ -629,7 +639,7 @@ private final class Engine: @unchecked Sendable {
             // Mind Sweep has no journal or write before argument validation.
             // Its UI may release an oversized draft only on a definite refusal.
             // With an older command still owed, keep every error uncertain.
-            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "focusSavedFilterWrite", "focusSavedFilterRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
+            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "focusSavedFilterWrite", "focusSavedFilterRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
             throw error
         }
         guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
@@ -645,9 +655,17 @@ private final class Engine: @unchecked Sendable {
                     throw CoreHostRejection(message: failure.message)
                 }
             }
-            if ["focusGroupRetryOutcome", "taskListSortRetryOutcome", "unassignedAreaColorRetryOutcome", "somedaySectionCreateRetryOutcome", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteRetryOutcome", "somedaySectionOrderRetryOutcome", "somedaySectionTaskRetryOutcome", "projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "projectSectionOrderRetryOutcome", "managePersonCreateRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaRenameRetryOutcome", "manageAreaEditRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "manageAreaDeleteRetryOutcome", "projectFocusRetryOutcome", "taskFocusRetryOutcome", "focusOrderRetryOutcome", "focusSavedFilterRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectTaskSortRetryOutcome", "projectTaskOrderRetryOutcome", "projectNotesWriteRetryOutcome", "projectTagsWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome", "projectAreaRetryOutcome"].contains(method) {
+            if ["focusGroupRetryOutcome", "taskListSortRetryOutcome", "unassignedAreaColorRetryOutcome", "somedaySectionCreateRetryOutcome", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteRetryOutcome", "somedaySectionOrderRetryOutcome", "somedaySectionTaskRetryOutcome", "projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "projectSectionOrderRetryOutcome", "managePersonDeleteRetryOutcome", "managePersonCreateRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaRenameRetryOutcome", "manageAreaEditRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "manageAreaDeleteRetryOutcome", "projectFocusRetryOutcome", "taskFocusRetryOutcome", "focusOrderRetryOutcome", "focusSavedFilterRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectTaskSortRetryOutcome", "projectTaskOrderRetryOutcome", "projectNotesWriteRetryOutcome", "projectTagsWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome", "projectAreaRetryOutcome"].contains(method) {
                 do {
                     let value = try invoke(method, arguments: args)
+                    if method == "managePersonDeleteRetryOutcome" {
+                        guard let encoded = args.first as? String,
+                              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                              let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any] else {
+                            throw HostFailure("Malformed Person deletion probe")
+                        }
+                        try validatePersonDeleteResult(result, request: request)
+                    }
                     if method == "managePersonCreateRetryOutcome" {
                         guard let encoded = args.first as? String,
                               let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
@@ -693,6 +711,20 @@ private final class Engine: @unchecked Sendable {
                 value = try invoke("menuRead", arguments: ["manageList", encoded])
             } else {
                 value = try invoke(method, arguments: args)
+            }
+            if method == "managePersonDeleteOptions" {
+                guard value.utf8.count <= 2_000_000, let encoded = args.first as? String,
+                      let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                      let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(options.keys) == Set(["personId", "name", "expected", "confirm"]),
+                      let id = options["personId"] as? String, Self.equalJSON(id, request["personId"]),
+                      Self.isPersonDeleteExpected(options["expected"], personID: id),
+                      let expected = options["expected"] as? [String: Any], Self.equalJSON(options["name"], expected["name"]),
+                      let confirm = options["confirm"] as? [String: Any],
+                      Set(confirm.keys) == Set(["title", "message", "cancelLabel", "confirmLabel"]),
+                      confirm.values.allSatisfy({ $0 is String }) else {
+                    throw HostFailure("Malformed Person deletion options")
+                }
             }
             if method == "focusOrderOptions" {
                 try validateFocusOrderOptions(value)
@@ -1351,6 +1383,25 @@ private final class Engine: @unchecked Sendable {
                 _ = try journalArguments(command)
                 _ = try invoke("projectAreaValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "managePersonDelete" {
+            do {
+                let value = try invoke("managePersonDeletePrepare", arguments: args)
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(response.keys) == Set(["prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      let original = args.first as? String,
+                      let submitted = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      Self.equalJSON(request, submitted) else {
+                    throw HostFailure("Malformed prepared Person deletion")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Person deletion is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Person deletion journal is too large") }
+                command = PendingCommand(version: 2, method: "managePersonDeleteCommit", argumentsJSON: encoded)
+                _ = try invoke("managePersonDeleteValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "areaDelete" || method == "manageAreaDelete" {
             do {
                 let value = try invoke("areaDeletePrepare", arguments: args)
@@ -1951,6 +2002,10 @@ private final class Engine: @unchecked Sendable {
             _ = try invoke("projectSectionOrderValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validateProjectSectionOrderAcknowledgment(command, value: value) }
         }
+        if command.method == "managePersonDeleteCommit" {
+            _ = try invoke("managePersonDeleteValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validatePersonDeleteAcknowledgment(command, value: value) }
+        }
         if command.method == "managePersonCreateCommit" {
             _ = try invoke("managePersonCreateValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validatePersonCreateAcknowledgment(command, value: value) }
@@ -2140,6 +2195,12 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("areaCreateApplied")
 #endif
             NSLog("Native iOS Area saved releaseCheck=v1.3.3/native-ios-area-create outcome=applied")
+        }
+        if command.method == "managePersonDeleteCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("managePersonDeleteApplied")
+#endif
+            NSLog("Native iOS Manage Person deleted releaseCheck=v1.3.4/ios-manage-person-delete outcome=confirmed")
         }
         if command.method == "managePersonCreateCommit", case .success = terminal {
 #if DEBUG
@@ -2338,7 +2399,7 @@ private final class Engine: @unchecked Sendable {
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
-            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
             || (method == "somedaySectionOrderWrite" && message.hasPrefix("STALE_REVISION:"))
@@ -2523,6 +2584,27 @@ private final class Engine: @unchecked Sendable {
             throw HostFailure("Malformed project creation acknowledgment")
         }
         try validateProjectCreateResult(result, request: request, created: true)
+    }
+
+    private func validatePersonDeleteResult(_ result: [String: Any], request: [String: Any]) throws {
+        guard Set(result.keys) == Set(["personId"]), let id = result["personId"] as? String,
+              Self.equalJSON(id, request["personId"]) else {
+            throw HostFailure("Malformed Person deletion result")
+        }
+    }
+
+    private func validatePersonDeleteAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Self.equalJSON(result, expected) else {
+            throw HostFailure("Malformed Person deletion acknowledgment")
+        }
+        try validatePersonDeleteResult(result, request: request)
     }
 
     private func validatePersonCreateResult(_ result: [String: Any], request: [String: Any], created: Bool) throws {
@@ -3453,6 +3535,22 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func journalArguments(_ command: PendingCommand) throws -> [Any] {
+        if command.method == "managePersonDeleteCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any], Self.equalJSON(request, original) else {
+                throw HostFailure("Malformed prepared Person deletion journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("managePersonDelete", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
         if command.method == "managePersonCreateCommit" {
             guard command.argumentsJSON.utf8.count <= 12_000_000,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
@@ -4020,6 +4118,23 @@ private final class Engine: @unchecked Sendable {
         return args
     }
 
+    private static func isPersonDeleteExpected(_ value: Any?, personID: String) -> Bool {
+        guard let person = value as? [String: Any],
+              Set(["id", "name", "createdAt", "updatedAt"]).isSubset(of: Set(person.keys)),
+              Set(person.keys).isSubset(of: ["id", "name", "note", "referenceLink", "rev", "revBy", "createdAt", "updatedAt"]),
+              Self.equalJSON(person["id"], personID),
+              let name = person["name"] as? String, name.utf16.count <= 2_000_000,
+              ["createdAt", "updatedAt"].allSatisfy({ field in
+                  (person[field] as? String).map({ $0.utf16.count <= 500 && !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) == true
+              }),
+              ["note", "referenceLink"].allSatisfy({ field in
+                  person[field] == nil || (person[field] as? String).map({ $0.utf16.count <= 2_000_000 }) == true
+              }),
+              (person["rev"] == nil || Self.isInteger(person["rev"]) && (person["rev"] as? NSNumber).map({ (0...9_007_199_254_740_991).contains($0.doubleValue) }) == true),
+              (person["revBy"] == nil || (person["revBy"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true) else { return false }
+        return true
+    }
+
     private static func isInteger(_ value: Any?, equalTo expected: Int? = nil) -> Bool {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
               number.doubleValue.isFinite, number.doubleValue.rounded() == number.doubleValue else { return false }
@@ -4066,6 +4181,9 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func arguments(_ method: String, _ json: String, allowPreparedDates: Bool = true) throws -> [Any] {
+        if ["managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome"].contains(method), json.utf8.count > 12_000_000 {
+            throw HostFailure("INVALID_INPUT: Person deletion transport is too large")
+        }
         if ["managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome"].contains(method), json.utf8.count > 12_000_000 {
             throw HostFailure("INVALID_INPUT: Person creation transport is too large")
         }
@@ -4425,7 +4543,7 @@ private final class Engine: @unchecked Sendable {
         }
         if ["inboxView", "captureView", "captureEdit", "captureSubmit", "setAreaFilter", "taskView", "editDraft", "destinationPicker", "search", "mindSweepGuide", "mindSweepAdd",
             "calendarComposerOpen", "calendarComposerEdit", "calendarComposerSave", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome",
-            "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
+            "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
             guard let json = args.first as? String,
                   (try NativeJSON.jsonObject(with: Data(json.utf8))) is [String: Any] else {
                 throw HostFailure("Core input must be a JSON object")
@@ -4910,6 +5028,21 @@ private final class Engine: @unchecked Sendable {
                             && !$0.utf8.elementsEqual(taskID.utf8) }) == true
                   }) == true) else {
                 throw HostFailure("INVALID_INPUT: Project task order needs a bounded token, typed anchor, and lowercase UUID")
+            }
+        }
+        if ["managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String,
+                  encoded.utf8.count <= (method == "managePersonDeleteOptions" ? 4_096 : 2_000_000),
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == (method == "managePersonDeleteOptions" ? Set(["personId"]) : Set(["requestId", "personId", "expected"])),
+                  let personID = input["personId"] as? String, !personID.isEmpty, personID.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Person deletion needs a bounded person ID")
+            }
+            if method != "managePersonDeleteOptions" {
+                guard let requestID = input["requestId"] as? String, UUID(uuidString: requestID)?.uuidString.lowercased() == requestID,
+                      Self.isPersonDeleteExpected(input["expected"], personID: personID) else {
+                    throw HostFailure("INVALID_INPUT: Person deletion needs a live row and lowercase UUID")
+                }
             }
         }
         if ["managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome"].contains(method) {

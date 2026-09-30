@@ -658,7 +658,7 @@ export function SettingsManagePage({ t: _t, translate, requestConfirmation }: Se
                         onRename={(id, name) => void renamePerson(id, name, { updateTasks: true })}
                         onUpdate={(id, updates) => void updatePerson(id, updates)}
                         onReview={reviewPerson}
-                        onDelete={(id) => void confirmDelete('people.deleteConfirm', 'Delete this person? Tasks assigned to them will be kept and moved to unassigned.', () => void deletePerson(id))}
+                        onDelete={(id) => void confirmDelete('settings.deleteNamed', 'Delete "{{name}}"?', () => void deletePerson(id), { name: person.name })}
                         resolveText={resolveText}
                         translate={translate}
                     />

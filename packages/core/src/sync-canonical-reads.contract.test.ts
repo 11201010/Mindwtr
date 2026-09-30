@@ -1031,6 +1031,43 @@ describe('canonical local reads contract', () => {
                 expect(nativeValue(await host.commitPreparedAreaDelete({ request, prepared: planned.prepared })))
                     .toEqual(planned.prepared.result);
             },
+            commitPreparedPersonCreate: async (control) => {
+                const host = await nativeHost(control);
+                const request = { requestId: 'd97f91ae-d02d-48a5-90ef-fc26a14343b9',
+                    expectedPersonId: 'd97f91ae-d02d-48a5-90ef-fc26a14343b9',
+                    name: 'Contract prepared person', note: 'Contract person note',
+                    referenceLink: 'https://example.com/contract-person' };
+                const planned = nativeValue(host.preparePersonCreate(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.people).toHaveLength((settled.people ?? []).length + 1);
+                    expect(written.people?.find((entry) => entry.id === request.expectedPersonId))
+                        .toEqual(planned.prepared.effect.person.after);
+                });
+                expect(nativeValue(await host.commitPreparedPersonCreate({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._peopleById.get(request.expectedPersonId))
+                    .toEqual(planned.prepared.effect.person.after);
+            },
+            commitPreparedPersonDelete: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getPersonDeleteOptions({ personId }));
+                const tasksBefore = structuredClone(useTaskStore.getState()._allTasks);
+                const request = { requestId: '4fe981c0-9ed3-4d62-ad4b-466a32ae7af1',
+                    personId, expected: options.expected };
+                const planned = nativeValue(host.preparePersonDelete(request));
+                control.expectPersisted((written) => {
+                    expect(written.people).toHaveLength((settled.people ?? []).length);
+                    expect(written.people?.find((entry) => entry.id === personId))
+                        .toEqual(planned.prepared.effect.person.after);
+                    expect(written.tasks).toEqual(tasksBefore);
+                });
+                expect(nativeValue(await host.commitPreparedPersonDelete({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._peopleById.get(personId))
+                    .toEqual(planned.prepared.effect.person.after);
+            },
             commitPreparedBoardTask: async (control) => {
                 const host = await nativeHost(control);
                 const planned = nativeValue(host.prepareBoardAction({ requestId: 'b4bc3331-c119-421c-965a-1fca51e5484e',

@@ -235,6 +235,15 @@ export type PreparedPersonCreate = {
     updateAt: string;
 };
 
+/** Frozen single-Person deletion; assignments and all other rows remain untouched. */
+export type PreparedPersonDelete = {
+    scope: { person: Person };
+    effect: { person: { before: Person; after: Person } };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    updateAt: string;
+};
+
 /** Frozen final rows for a native Area create or legacy tombstone restoration. */
 export type PreparedAreaCreate = {
     kind: 'fresh' | 'restored';
@@ -599,6 +608,7 @@ export interface TaskStore {
     /** Add a new managed person for delegated tasks */
     addPerson: (name: string, initialProps?: Partial<Person>) => Promise<Person | null>;
     commitPreparedPersonCreate: (input: PreparedPersonCreate & { request: { requestId: string; name: string; note: string; referenceLink: string; expectedPersonId: string } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedPersonDelete: (input: PreparedPersonDelete & { request: { requestId: string; personId: string; expected: Person } }) => Promise<PreparedTaskEditResult>;
     /** Update managed person metadata */
     updatePerson: (id: string, updates: Partial<Person>) => Promise<StoreActionResult>;
     /** Rename a person and optionally update exact task assignments */
