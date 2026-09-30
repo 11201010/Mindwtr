@@ -34,7 +34,7 @@ describe('calendar locale helpers', () => {
     });
 
     it('resolves the calendar locale from app language preferences', () => {
-        expect(resolveCalendarLocale({ language: 'zh-Hant', dateFormat: 'system' })).toBe('zh-TW');
+        expect(resolveCalendarLocale({ language: 'zh-Hant', dateFormat: 'system' })).toBe('zh-Hant-TW');
         expect(resolveCalendarLocale({ language: 'en', dateFormat: 'dmy', systemLocale: 'en-US' })).toBe('en-GB');
     });
 });
