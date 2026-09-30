@@ -84,6 +84,28 @@ describe('native host contract: More sheet and list views', () => {
         };
     };
 
+
+    it('keeps native Someday unchanged when parked projects have a section (#1319)', async () => {
+        const { host } = await openHost(scenario('someday', 'sections'));
+        const read = () => value(host.getSomedayView({ groupBy: 'viewSection', offset: 0, limit: 100 }));
+        const ids = (view: ReturnType<typeof read>) => view.items.map((item) => (item.type === 'heading' ? item.id : item.row.id));
+        // Every Someday task in a section, and the parked projects in a deleted one: core's
+        // model then has a No section group that holds only projects.
+        const place = <T extends { status: string; viewSectionIds?: unknown }>(rows: T[], status: string, id: string) => rows.map((row) => (
+            row.status === status ? { ...row, viewSectionIds: { someday: id } } : row));
+        useTaskStore.setState((state) => ({
+            _allTasks: place(state._allTasks, 'someday', 's-later'),
+            tasks: place(state.tasks, 'someday', 's-later'),
+            _allProjects: place(state._allProjects, 'someday', 'deleted-section'),
+            projects: place(state.projects, 'someday', 'deleted-section'),
+        }));
+        const parked = useTaskStore.getState()._allProjects.filter((project) => project.status === 'someday').map((project) => project.id);
+        expect(parked.length).toBeGreaterThan(0);
+        const view = read();
+        expect(view.deferred?.rows.items.map((row) => row.id)).toEqual(parked);
+        expect(ids(view)).not.toContain('view-section:someday:');
+        expect(ids(view).slice(0, 1)).toEqual(['view-section:someday:s-later']);
+    });
     it('returns what core\'s models return when called directly', async () => {
         freezeClock();
         const { host } = await openHost(scenario('someday', 'sections'));

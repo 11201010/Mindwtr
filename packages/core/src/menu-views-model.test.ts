@@ -62,8 +62,15 @@ describe('list views parity with the frozen React Native fixture', () => {
         });
     }
 
+    // #1319: React Native draws parked Someday projects inside their section group.
+    // The native host contract keeps its top Projects block until native parity lands;
+    // it.fails turns green-to-red the day native matches, so this list gets removed then.
+    const nativeSomedayProjectSectionsPending = new Set<string>(
+        (fixture.provenance.somedayProjectSections1319 as { changedScenarios: string[] }).changedScenarios,
+    );
     for (const scenario of fixture.scenarios) {
-        it(`the native host contract reproduces "${scenario.name}"`, async () => {
+        const nativeIt = nativeSomedayProjectSectionsPending.has(scenario.name) ? it.fails : it;
+        nativeIt(`the native host contract reproduces "${scenario.name}"`, async () => {
             const recorder = createWriteRecorder();
             await seedMenuViewsStore(fixture, scenario, recorder);
             const contract = createNativeHostContract();

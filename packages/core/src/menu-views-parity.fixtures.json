@@ -27,7 +27,7 @@
    "baseSha": "1efd948b43c7f2d5b47b243dfbf3133f1db5b1ba",
    "sourceState": "fix commit on branch fix/rn-review-inbox-bugs (uncommitted working tree; no commit created)",
    "cases": {
-   "waiting": [
+    "waiting": [
      "waiting: selected person disappears"
     ]
    }
@@ -44,6 +44,17 @@
   "referenceGroupByRecapture": {
    "sourceCommit": "0f599140b121cfaa1db4d2c29d13700a5f5fc6d7",
    "note": "Captured current React Native Reference grouping preference; only its stored values changed."
+  },
+  "somedayProjectSections1319": {
+   "capturedAt": "6c89c33d0ce53985025d7e573b26bf23c68378f5",
+   "command": "cd apps/mobile && MINDWTR_CAPTURE_MENU_VIEWS=1 MINDWTR_CAPTURE_MENU_VIEWS_COMMIT=$(git rev-parse HEAD) bunx vitest run components/views/menu-views-parity.test.tsx",
+   "changedScenarios": [
+    "someday: sections, moves, undo, add task and new section",
+    "someday: grouping, sort and details",
+    "someday: filters",
+    "someday: a move to a section removed elsewhere fails"
+   ],
+   "why": "Grouped by section, React Native now draws each parked Someday project inside its section group (rows gain [\"project\", id] after the heading) and drops the top Projects block. The native host contract keeps the old shape until native parity lands, so menu-views-model.test.ts expects its replay of these scenarios to differ."
   }
  },
  "timeZone": "America/New_York",
@@ -2868,6 +2879,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -2928,24 +2947,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -3135,6 +3137,14 @@
        true
       ],
       [
+       "project",
+       "p-spanish"
+      ],
+      [
+       "project",
+       "p-shed"
+      ],
+      [
        "task",
        "s-c"
       ],
@@ -3216,24 +3226,7 @@
       "selectionMixed": false
      },
      "addDialog": null,
-     "deferred": {
-      "header": "Projects (2)",
-      "headerLabel": "Projects (2)",
-      "rows": [
-       {
-        "action": "Reactivate",
-        "title": "Learn Spanish",
-        "area": "Home",
-        "color": "#94a3b8"
-       },
-       {
-        "action": "Reactivate",
-        "title": "Build shed",
-        "area": null,
-        "color": "#94a3b8"
-       }
-      ]
-     },
+     "deferred": null,
      "empty": null,
      "writes": [],
      "toasts": []
@@ -3427,6 +3420,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ]
@@ -3483,24 +3484,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [
      [
@@ -3710,6 +3694,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -3770,24 +3762,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [
      [
@@ -3988,6 +3963,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -4048,24 +4031,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -4255,6 +4221,14 @@
        true
       ],
       [
+       "project",
+       "p-spanish"
+      ],
+      [
+       "project",
+       "p-shed"
+      ],
+      [
        "task",
        "s-c"
       ],
@@ -4336,24 +4310,7 @@
       "selectionMixed": true
      },
      "addDialog": null,
-     "deferred": {
-      "header": "Projects (2)",
-      "headerLabel": "Projects (2)",
-      "rows": [
-       {
-        "action": "Reactivate",
-        "title": "Learn Spanish",
-        "area": "Home",
-        "color": "#94a3b8"
-       },
-       {
-        "action": "Reactivate",
-        "title": "Build shed",
-        "area": null,
-        "color": "#94a3b8"
-       }
-      ]
-     },
+     "deferred": null,
      "empty": null,
      "writes": [],
      "toasts": []
@@ -4535,6 +4492,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -4603,24 +4568,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [
      [
@@ -4827,6 +4775,14 @@
        true
       ],
       [
+       "project",
+       "p-spanish"
+      ],
+      [
+       "project",
+       "p-shed"
+      ],
+      [
        "task",
        "s-c"
       ],
@@ -4916,24 +4872,7 @@
       "selectionMixed": true
      },
      "addDialog": null,
-     "deferred": {
-      "header": "Projects (2)",
-      "headerLabel": "Projects (2)",
-      "rows": [
-       {
-        "action": "Reactivate",
-        "title": "Learn Spanish",
-        "area": "Home",
-        "color": "#94a3b8"
-       },
-       {
-        "action": "Reactivate",
-        "title": "Build shed",
-        "area": null,
-        "color": "#94a3b8"
-       }
-      ]
-     },
+     "deferred": null,
      "empty": null,
      "writes": [],
      "toasts": []
@@ -5119,6 +5058,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-b"
      ],
@@ -5183,24 +5130,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [
      [
@@ -5407,6 +5337,14 @@
        true
       ],
       [
+       "project",
+       "p-spanish"
+      ],
+      [
+       "project",
+       "p-shed"
+      ],
+      [
        "task",
        "s-b"
       ],
@@ -5475,24 +5413,7 @@
       "Cancel",
       "Save"
      ],
-     "deferred": {
-      "header": "Projects (2)",
-      "headerLabel": "Projects (2)",
-      "rows": [
-       {
-        "action": "Reactivate",
-        "title": "Learn Spanish",
-        "area": "Home",
-        "color": "#94a3b8"
-       },
-       {
-        "action": "Reactivate",
-        "title": "Build shed",
-        "area": null,
-        "color": "#94a3b8"
-       }
-      ]
-     },
+     "deferred": null,
      "empty": null,
      "writes": [],
      "toasts": []
@@ -5682,6 +5603,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-b"
      ],
@@ -5747,24 +5676,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [
      [
@@ -5972,6 +5884,14 @@
        true
       ],
       [
+       "project",
+       "p-spanish"
+      ],
+      [
+       "project",
+       "p-shed"
+      ],
+      [
        "task",
        "s-b"
       ],
@@ -6041,24 +5961,7 @@
       "Cancel",
       "Save"
      ],
-     "deferred": {
-      "header": "Projects (2)",
-      "headerLabel": "Projects (2)",
-      "rows": [
-       {
-        "action": "Reactivate",
-        "title": "Learn Spanish",
-        "area": "Home",
-        "color": "#94a3b8"
-       },
-       {
-        "action": "Reactivate",
-        "title": "Build shed",
-        "area": null,
-        "color": "#94a3b8"
-       }
-      ]
-     },
+     "deferred": null,
      "empty": null,
      "writes": [],
      "toasts": []
@@ -6248,6 +6151,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "<created:Loose idea>"
      ],
@@ -6318,24 +6229,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [
      [
@@ -6548,6 +6442,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "<created:Loose idea>"
      ],
@@ -6618,24 +6520,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [
      [
@@ -6877,6 +6762,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "<created:Loose idea>"
      ],
@@ -6947,24 +6840,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -7159,6 +7035,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "<created:Loose idea>"
      ],
@@ -7223,24 +7107,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [
      [
@@ -7439,6 +7306,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "<created:Loose idea>"
      ],
@@ -7502,24 +7377,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [
      [
@@ -7715,6 +7573,10 @@
       true
      ],
      [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "<created:Loose idea>"
      ],
@@ -7778,18 +7640,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (1)",
-     "headerLabel": "Projects (1)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [
      [
@@ -7988,6 +7839,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -8048,24 +7907,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -9984,6 +9826,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-d"
      ],
@@ -10044,24 +9894,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -10252,6 +10085,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -10312,24 +10153,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -10513,6 +10337,20 @@
       "view-section:someday:s-empty",
       "Travel",
       false
+     ],
+     [
+      "heading",
+      "view-section:someday:",
+      "No section",
+      true
+     ],
+     [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
      ]
     ],
     "tasks": [
@@ -10571,24 +10409,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -10772,6 +10593,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -10836,24 +10665,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -11042,6 +10854,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -11102,24 +10922,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -11299,6 +11102,20 @@
       "view-section:someday:s-empty",
       "Travel",
       false
+     ],
+     [
+      "heading",
+      "view-section:someday:",
+      "No section",
+      true
+     ],
+     [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
      ]
     ],
     "tasks": [
@@ -11356,24 +11173,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -11565,6 +11365,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ]
@@ -11631,24 +11439,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -11828,6 +11619,20 @@
       "view-section:someday:s-empty",
       "Travel",
       false
+     ],
+     [
+      "heading",
+      "view-section:someday:",
+      "No section",
+      true
+     ],
+     [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
      ]
     ],
     "tasks": [
@@ -11885,24 +11690,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -13073,6 +12861,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -13133,24 +12929,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -13334,6 +13113,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-d"
      ]
@@ -13393,24 +13180,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -13601,6 +13371,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -13661,24 +13439,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -13861,6 +13622,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -13921,24 +13690,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": []
@@ -14122,6 +13874,14 @@
        true
       ],
       [
+       "project",
+       "p-spanish"
+      ],
+      [
+       "project",
+       "p-shed"
+      ],
+      [
        "task",
        "s-c"
       ],
@@ -14198,24 +13958,7 @@
       "selectionMixed": false
      },
      "addDialog": null,
-     "deferred": {
-      "header": "Projects (2)",
-      "headerLabel": "Projects (2)",
-      "rows": [
-       {
-        "action": "Reactivate",
-        "title": "Learn Spanish",
-        "area": "Home",
-        "color": "#94a3b8"
-       },
-       {
-        "action": "Reactivate",
-        "title": "Build shed",
-        "area": null,
-        "color": "#94a3b8"
-       }
-      ]
-     },
+     "deferred": null,
      "empty": null,
      "writes": [],
      "toasts": []
@@ -14399,6 +14142,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -14475,24 +14226,7 @@
      "selectionMixed": false
     },
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [],
     "toasts": [
@@ -14683,6 +14417,14 @@
        true
       ],
       [
+       "project",
+       "p-spanish"
+      ],
+      [
+       "project",
+       "p-shed"
+      ],
+      [
        "task",
        "s-c"
       ],
@@ -14759,24 +14501,7 @@
       "selectionMixed": false
      },
      "addDialog": null,
-     "deferred": {
-      "header": "Projects (2)",
-      "headerLabel": "Projects (2)",
-      "rows": [
-       {
-        "action": "Reactivate",
-        "title": "Learn Spanish",
-        "area": "Home",
-        "color": "#94a3b8"
-       },
-       {
-        "action": "Reactivate",
-        "title": "Build shed",
-        "area": null,
-        "color": "#94a3b8"
-       }
-      ]
-     },
+     "deferred": null,
      "empty": null,
      "writes": [],
      "toasts": []
@@ -14960,6 +14685,14 @@
       true
      ],
      [
+      "project",
+      "p-spanish"
+     ],
+     [
+      "project",
+      "p-shed"
+     ],
+     [
       "task",
       "s-c"
      ],
@@ -15020,24 +14753,7 @@
     },
     "moveDialog": null,
     "addDialog": null,
-    "deferred": {
-     "header": "Projects (2)",
-     "headerLabel": "Projects (2)",
-     "rows": [
-      {
-       "action": "Reactivate",
-       "title": "Learn Spanish",
-       "area": "Home",
-       "color": "#94a3b8"
-      },
-      {
-       "action": "Reactivate",
-       "title": "Build shed",
-       "area": null,
-       "color": "#94a3b8"
-      }
-     ]
-    },
+    "deferred": null,
     "empty": null,
     "writes": [
      [
