@@ -1,0 +1,8600 @@
+{
+ "source": "RN 0.81.5 Hermes DateTimeFormat (hermes-android AAR) on the S23 through app_process, replayed through host-polyfills.js",
+ "device": {
+  "locale": "en-US",
+  "zone": "America/New_York",
+  "icu": "76.1.0.0"
+ },
+ "cases": [
+  {
+   "locale": "en-US",
+   "options": {
+    "year": "numeric",
+    "month": "long"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "long"
+   },
+   "format": "September 2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "September 2026",
+   "toLocaleDateString": "September 2026",
+   "toLocaleTimeString": "September 2026 at 4:05:09 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "year": "numeric",
+    "month": "long"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "long"
+   },
+   "format": "December 2025",
+   "parts": [
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "December 2025",
+   "toLocaleDateString": "December 2025",
+   "toLocaleTimeString": "December 2025 at 7:30:00 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Sep 6",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Sep"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sep 6",
+   "toLocaleDateString": "Sep 6",
+   "toLocaleTimeString": "Sep 6, 4:05:09 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Dec 31",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Dec"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Dec 31",
+   "toLocaleDateString": "Dec 31",
+   "toLocaleTimeString": "Dec 31, 7:30:00 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Sun, September 6",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sun"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sun, September 6",
+   "toLocaleDateString": "Sun, September 6",
+   "toLocaleTimeString": "Sun, September 6 at 4:05:09 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Wed, December 31",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wed"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Wed, December 31",
+   "toLocaleDateString": "Wed, December 31",
+   "toLocaleTimeString": "Wed, December 31 at 7:30:00 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Sunday, September 6, 2026",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "Sunday, September 6, 2026",
+   "toLocaleDateString": "Sunday, September 6, 2026",
+   "toLocaleTimeString": "Sunday, September 6, 2026 at 4:05:09 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Wednesday, December 31, 2025",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "Wednesday, December 31, 2025",
+   "toLocaleDateString": "Wednesday, December 31, 2025",
+   "toLocaleTimeString": "Wednesday, December 31, 2025 at 7:30:00 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Sun, Sep 6",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sun"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "Sep"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sun, Sep 6",
+   "toLocaleDateString": "Sun, Sep 6",
+   "toLocaleTimeString": "Sun, Sep 6, 4:05:09 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Wed, Dec 31",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wed"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "Dec"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Wed, Dec 31",
+   "toLocaleDateString": "Wed, Dec 31",
+   "toLocaleTimeString": "Wed, Dec 31, 7:30:00 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Sunday, September 6",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sunday, September 6",
+   "toLocaleDateString": "Sunday, September 6",
+   "toLocaleTimeString": "Sunday, September 6 at 4:05:09 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Wednesday, December 31",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Wednesday, December 31",
+   "toLocaleDateString": "Wednesday, December 31",
+   "toLocaleTimeString": "Wednesday, December 31 at 7:30:00 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "long"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long"
+   },
+   "format": "Sunday",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    }
+   ],
+   "toLocaleString": "Sunday",
+   "toLocaleDateString": "Sunday",
+   "toLocaleTimeString": "Sunday 4:05:09 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "long"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long"
+   },
+   "format": "Wednesday",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    }
+   ],
+   "toLocaleString": "Wednesday",
+   "toLocaleDateString": "Wednesday",
+   "toLocaleTimeString": "Wednesday 7:30:00 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short"
+   },
+   "format": "Sun",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sun"
+    }
+   ],
+   "toLocaleString": "Sun",
+   "toLocaleDateString": "Sun",
+   "toLocaleTimeString": "Sun 4:05:09 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short"
+   },
+   "format": "Wed",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wed"
+    }
+   ],
+   "toLocaleString": "Wed",
+   "toLocaleDateString": "Wed",
+   "toLocaleTimeString": "Wed 7:30:00 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "narrow"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "narrow"
+   },
+   "format": "S",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "S"
+    }
+   ],
+   "toLocaleString": "S",
+   "toLocaleDateString": "S",
+   "toLocaleTimeString": "S 4:05:09 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "weekday": "narrow"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "narrow"
+   },
+   "format": "W",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "W"
+    }
+   ],
+   "toLocaleString": "W",
+   "toLocaleDateString": "W",
+   "toLocaleTimeString": "W 7:30:00 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "timeZone": "America/New_York",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h24",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "format": "09/06/2026, 04:05:09",
+   "parts": [
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "06"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "04"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "09"
+    }
+   ],
+   "toLocaleString": "09/06/2026, 04:05:09",
+   "toLocaleDateString": "09/06/2026, 04:05:09",
+   "toLocaleTimeString": "09/06/2026, 04:05:09"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "timeZone": "America/New_York",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h24",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "format": "12/31/2025, 19:30:00",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "00"
+    }
+   ],
+   "toLocaleString": "12/31/2025, 19:30:00",
+   "toLocaleDateString": "12/31/2025, 19:30:00",
+   "toLocaleTimeString": "12/31/2025, 19:30:00"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "timeZone": "asia/tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "Asia/Tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "format": "09/06/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "06"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "09/06/2026",
+   "toLocaleDateString": "09/06/2026",
+   "toLocaleTimeString": "09/06/2026, 5:05:09 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "timeZone": "asia/tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "Asia/Tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "format": "01/01/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "01"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "01"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "01/01/2026",
+   "toLocaleDateString": "01/01/2026",
+   "toLocaleTimeString": "01/01/2026, 9:30:00 AM"
+  },
+  {
+   "locale": "en-US",
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "9/6/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "9/6/2026, 4:05:09 AM",
+   "toLocaleDateString": "9/6/2026",
+   "toLocaleTimeString": "4:05:09 AM"
+  },
+  {
+   "locale": "en-US",
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "12/31/2025",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "12/31/2025, 7:30:00 PM",
+   "toLocaleDateString": "12/31/2025",
+   "toLocaleTimeString": "7:30:00 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {},
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "9/6/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "9/6/2026, 4:05:09 AM",
+   "toLocaleDateString": "9/6/2026",
+   "toLocaleTimeString": "4:05:09 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {},
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "12/31/2025",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "12/31/2025, 7:30:00 PM",
+   "toLocaleDateString": "12/31/2025",
+   "toLocaleTimeString": "7:30:00 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "format": "4:05 AM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    }
+   ],
+   "toLocaleString": "4:05 AM",
+   "toLocaleDateString": "9/6/2026, 4:05 AM",
+   "toLocaleTimeString": "4:05 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "format": "7:30 PM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "7"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "PM"
+    }
+   ],
+   "toLocaleString": "7:30 PM",
+   "toLocaleDateString": "12/31/2025, 7:30 PM",
+   "toLocaleTimeString": "7:30 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "hour": "numeric",
+    "hour12": true
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric"
+   },
+   "format": "4 AM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    }
+   ],
+   "toLocaleString": "4 AM",
+   "toLocaleDateString": "9/6/2026, 4 AM",
+   "toLocaleTimeString": "4 AM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "hour": "numeric",
+    "hour12": true
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric"
+   },
+   "format": "7 PM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "7"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "PM"
+    }
+   ],
+   "toLocaleString": "7 PM",
+   "toLocaleDateString": "12/31/2025, 7 PM",
+   "toLocaleTimeString": "7 PM"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "hourCycle": "h23",
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "format": "04:05",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "04"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    }
+   ],
+   "toLocaleString": "04:05",
+   "toLocaleDateString": "9/6/2026, 04:05",
+   "toLocaleTimeString": "04:05"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "hourCycle": "h23",
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "format": "19:30",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    }
+   ],
+   "toLocaleString": "19:30",
+   "toLocaleDateString": "12/31/2025, 19:30",
+   "toLocaleTimeString": "19:30"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "format": "Sep 6, 2026, 4:05 AM",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Sep"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    }
+   ],
+   "toLocaleString": "Sep 6, 2026, 4:05 AM",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "format": "Dec 31, 2025, 7:30 PM",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Dec"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "7"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "PM"
+    }
+   ],
+   "toLocaleString": "Dec 31, 2025, 7:30 PM",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "dateStyle": "full"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "dateStyle": "full"
+   },
+   "format": "Sunday, September 6, 2026",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "Sunday, September 6, 2026",
+   "toLocaleDateString": "Sunday, September 6, 2026",
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "dateStyle": "full"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "dateStyle": "full"
+   },
+   "format": "Wednesday, December 31, 2025",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "Wednesday, December 31, 2025",
+   "toLocaleDateString": "Wednesday, December 31, 2025",
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "timeStyle": "long",
+    "timeZone": "UTC"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "UTC",
+    "hourCycle": "h12",
+    "hour12": true,
+    "timeStyle": "long"
+   },
+   "format": "8:05:09 AM UTC",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "8"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "UTC"
+    }
+   ],
+   "toLocaleString": "8:05:09 AM UTC",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": "8:05:09 AM UTC"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "timeStyle": "long",
+    "timeZone": "UTC"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "UTC",
+    "hourCycle": "h12",
+    "hour12": true,
+    "timeStyle": "long"
+   },
+   "format": "12:30:00 AM UTC",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "00"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "UTC"
+    }
+   ],
+   "toLocaleString": "12:30:00 AM UTC",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": "12:30:00 AM UTC"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "format": "2026 AD, EDT",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "era",
+     "value": "AD"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "EDT"
+    }
+   ],
+   "toLocaleString": "2026 AD, EDT",
+   "toLocaleDateString": "2026 AD, EDT",
+   "toLocaleTimeString": "2026 AD, 4:05:09 AM EDT"
+  },
+  {
+   "locale": "en-US",
+   "options": {
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "format": "2025 AD, EST",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "era",
+     "value": "AD"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "EST"
+    }
+   ],
+   "toLocaleString": "2025 AD, EST",
+   "toLocaleDateString": "2025 AD, EST",
+   "toLocaleTimeString": "2025 AD, 7:30:00 PM EST"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "year": "numeric",
+    "month": "long"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "long"
+   },
+   "format": "September 2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "September 2026",
+   "toLocaleDateString": "September 2026",
+   "toLocaleTimeString": "September 2026 um 04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "year": "numeric",
+    "month": "long"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "long"
+   },
+   "format": "Dezember 2025",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Dezember"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "Dezember 2025",
+   "toLocaleDateString": "Dezember 2025",
+   "toLocaleTimeString": "Dezember 2025 um 19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "6. Sept.",
+   "parts": [
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "Sept."
+    }
+   ],
+   "toLocaleString": "6. Sept.",
+   "toLocaleDateString": "6. Sept.",
+   "toLocaleTimeString": "6. Sept., 04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "31. Dez.",
+   "parts": [
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "Dez."
+    }
+   ],
+   "toLocaleString": "31. Dez.",
+   "toLocaleDateString": "31. Dez.",
+   "toLocaleTimeString": "31. Dez., 19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "So., 6. September",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "So."
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    }
+   ],
+   "toLocaleString": "So., 6. September",
+   "toLocaleDateString": "So., 6. September",
+   "toLocaleTimeString": "So., 6. September um 04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Mi., 31. Dezember",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Mi."
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "Dezember"
+    }
+   ],
+   "toLocaleString": "Mi., 31. Dezember",
+   "toLocaleDateString": "Mi., 31. Dezember",
+   "toLocaleTimeString": "Mi., 31. Dezember um 19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Sonntag, 6. September 2026",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sonntag"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "Sonntag, 6. September 2026",
+   "toLocaleDateString": "Sonntag, 6. September 2026",
+   "toLocaleTimeString": "Sonntag, 6. September 2026 um 04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Mittwoch, 31. Dezember 2025",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Mittwoch"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "Dezember"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "Mittwoch, 31. Dezember 2025",
+   "toLocaleDateString": "Mittwoch, 31. Dezember 2025",
+   "toLocaleTimeString": "Mittwoch, 31. Dezember 2025 um 19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "So., 6. Sept.",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "So."
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "Sept."
+    }
+   ],
+   "toLocaleString": "So., 6. Sept.",
+   "toLocaleDateString": "So., 6. Sept.",
+   "toLocaleTimeString": "So., 6. Sept., 04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Mi., 31. Dez.",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Mi."
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "Dez."
+    }
+   ],
+   "toLocaleString": "Mi., 31. Dez.",
+   "toLocaleDateString": "Mi., 31. Dez.",
+   "toLocaleTimeString": "Mi., 31. Dez., 19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Sonntag, 6. September",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sonntag"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    }
+   ],
+   "toLocaleString": "Sonntag, 6. September",
+   "toLocaleDateString": "Sonntag, 6. September",
+   "toLocaleTimeString": "Sonntag, 6. September um 04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Mittwoch, 31. Dezember",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Mittwoch"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "Dezember"
+    }
+   ],
+   "toLocaleString": "Mittwoch, 31. Dezember",
+   "toLocaleDateString": "Mittwoch, 31. Dezember",
+   "toLocaleTimeString": "Mittwoch, 31. Dezember um 19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "long"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long"
+   },
+   "format": "Sonntag",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sonntag"
+    }
+   ],
+   "toLocaleString": "Sonntag",
+   "toLocaleDateString": "Sonntag",
+   "toLocaleTimeString": "Sonntag, 04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "long"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long"
+   },
+   "format": "Mittwoch",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Mittwoch"
+    }
+   ],
+   "toLocaleString": "Mittwoch",
+   "toLocaleDateString": "Mittwoch",
+   "toLocaleTimeString": "Mittwoch, 19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short"
+   },
+   "format": "So",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "So"
+    }
+   ],
+   "toLocaleString": "So",
+   "toLocaleDateString": "So",
+   "toLocaleTimeString": "So., 04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short"
+   },
+   "format": "Mi",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Mi"
+    }
+   ],
+   "toLocaleString": "Mi",
+   "toLocaleDateString": "Mi",
+   "toLocaleTimeString": "Mi., 19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "narrow"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "narrow"
+   },
+   "format": "S",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "S"
+    }
+   ],
+   "toLocaleString": "S",
+   "toLocaleDateString": "S",
+   "toLocaleTimeString": "S, 04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "weekday": "narrow"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "narrow"
+   },
+   "format": "M",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "M"
+    }
+   ],
+   "toLocaleString": "M",
+   "toLocaleDateString": "M",
+   "toLocaleTimeString": "M, 19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "timeZone": "America/New_York",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "format": "06.09.2026, 04:05:09",
+   "parts": [
+    {
+     "type": "day",
+     "value": "06"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "04"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "09"
+    }
+   ],
+   "toLocaleString": "06.09.2026, 04:05:09",
+   "toLocaleDateString": "06.09.2026, 04:05:09",
+   "toLocaleTimeString": "06.09.2026, 04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "timeZone": "America/New_York",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "format": "31.12.2025, 19:30:00",
+   "parts": [
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "00"
+    }
+   ],
+   "toLocaleString": "31.12.2025, 19:30:00",
+   "toLocaleDateString": "31.12.2025, 19:30:00",
+   "toLocaleTimeString": "31.12.2025, 19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "timeZone": "asia/tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "Asia/Tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "format": "06.09.2026",
+   "parts": [
+    {
+     "type": "day",
+     "value": "06"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "06.09.2026",
+   "toLocaleDateString": "06.09.2026",
+   "toLocaleTimeString": "06.09.2026, 17:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "timeZone": "asia/tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "Asia/Tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "format": "01.01.2026",
+   "parts": [
+    {
+     "type": "day",
+     "value": "01"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "month",
+     "value": "01"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "01.01.2026",
+   "toLocaleDateString": "01.01.2026",
+   "toLocaleTimeString": "01.01.2026, 09:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "6.9.2026",
+   "parts": [
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "6.9.2026, 04:05:09",
+   "toLocaleDateString": "6.9.2026",
+   "toLocaleTimeString": "04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "31.12.2025",
+   "parts": [
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "31.12.2025, 19:30:00",
+   "toLocaleDateString": "31.12.2025",
+   "toLocaleTimeString": "19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {},
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "6.9.2026",
+   "parts": [
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "6.9.2026, 04:05:09",
+   "toLocaleDateString": "6.9.2026",
+   "toLocaleTimeString": "04:05:09"
+  },
+  {
+   "locale": "de-DE",
+   "options": {},
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "31.12.2025",
+   "parts": [
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "31.12.2025, 19:30:00",
+   "toLocaleDateString": "31.12.2025",
+   "toLocaleTimeString": "19:30:00"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "format": "04:05",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "04"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    }
+   ],
+   "toLocaleString": "04:05",
+   "toLocaleDateString": "6.9.2026, 04:05",
+   "toLocaleTimeString": "04:05"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "format": "19:30",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    }
+   ],
+   "toLocaleString": "19:30",
+   "toLocaleDateString": "31.12.2025, 19:30",
+   "toLocaleTimeString": "19:30"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "hour": "numeric",
+    "hour12": true
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h11",
+    "hour12": true,
+    "hour": "numeric"
+   },
+   "format": "4 Uhr AM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": " Uhr "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    }
+   ],
+   "toLocaleString": "4 Uhr AM",
+   "toLocaleDateString": "6.9.2026, 4 Uhr AM",
+   "toLocaleTimeString": "4 Uhr AM"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "hour": "numeric",
+    "hour12": true
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h11",
+    "hour12": true,
+    "hour": "numeric"
+   },
+   "format": "7 Uhr PM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "7"
+    },
+    {
+     "type": "literal",
+     "value": " Uhr "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "PM"
+    }
+   ],
+   "toLocaleString": "7 Uhr PM",
+   "toLocaleDateString": "31.12.2025, 7 Uhr PM",
+   "toLocaleTimeString": "7 Uhr PM"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "hourCycle": "h23",
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "format": "04:05",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "04"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    }
+   ],
+   "toLocaleString": "04:05",
+   "toLocaleDateString": "6.9.2026, 04:05",
+   "toLocaleTimeString": "04:05"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "hourCycle": "h23",
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "format": "19:30",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    }
+   ],
+   "toLocaleString": "19:30",
+   "toLocaleDateString": "31.12.2025, 19:30",
+   "toLocaleTimeString": "19:30"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "format": "06.09.2026, 04:05",
+   "parts": [
+    {
+     "type": "day",
+     "value": "06"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "04"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    }
+   ],
+   "toLocaleString": "06.09.2026, 04:05",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "format": "31.12.2025, 19:30",
+   "parts": [
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "."
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    }
+   ],
+   "toLocaleString": "31.12.2025, 19:30",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "dateStyle": "full"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "dateStyle": "full"
+   },
+   "format": "Sonntag, 6. September 2026",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sonntag"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "Sonntag, 6. September 2026",
+   "toLocaleDateString": "Sonntag, 6. September 2026",
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "dateStyle": "full"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "dateStyle": "full"
+   },
+   "format": "Mittwoch, 31. Dezember 2025",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Mittwoch"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ". "
+    },
+    {
+     "type": "month",
+     "value": "Dezember"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "Mittwoch, 31. Dezember 2025",
+   "toLocaleDateString": "Mittwoch, 31. Dezember 2025",
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "timeStyle": "long",
+    "timeZone": "UTC"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "UTC",
+    "hourCycle": "h23",
+    "hour12": false,
+    "timeStyle": "long"
+   },
+   "format": "08:05:09 UTC",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "08"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "UTC"
+    }
+   ],
+   "toLocaleString": "08:05:09 UTC",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": "08:05:09 UTC"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "timeStyle": "long",
+    "timeZone": "UTC"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "UTC",
+    "hourCycle": "h23",
+    "hour12": false,
+    "timeStyle": "long"
+   },
+   "format": "00:30:00 UTC",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "00"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "00"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "UTC"
+    }
+   ],
+   "toLocaleString": "00:30:00 UTC",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": "00:30:00 UTC"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "format": "2026 n. Chr., GMT-4",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "era",
+     "value": "n. Chr."
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "GMT-4"
+    }
+   ],
+   "toLocaleString": "2026 n. Chr., GMT-4",
+   "toLocaleDateString": "2026 n. Chr., GMT-4",
+   "toLocaleTimeString": "2026 n. Chr., 04:05:09 GMT-4"
+  },
+  {
+   "locale": "de-DE",
+   "options": {
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "de-DE",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "format": "2025 n. Chr., GMT-5",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "era",
+     "value": "n. Chr."
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "GMT-5"
+    }
+   ],
+   "toLocaleString": "2025 n. Chr., GMT-5",
+   "toLocaleDateString": "2025 n. Chr., GMT-5",
+   "toLocaleTimeString": "2025 n. Chr., 19:30:00 GMT-5"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "year": "numeric",
+    "month": "long"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "long"
+   },
+   "format": "September 2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "September 2026",
+   "toLocaleDateString": "September 2026",
+   "toLocaleTimeString": "September 2026 at 4:05:09 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "year": "numeric",
+    "month": "long"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "long"
+   },
+   "format": "December 2025",
+   "parts": [
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "December 2025",
+   "toLocaleDateString": "December 2025",
+   "toLocaleTimeString": "December 2025 at 7:30:00 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Sep 6",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Sep"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sep 6",
+   "toLocaleDateString": "Sep 6",
+   "toLocaleTimeString": "Sep 6, 4:05:09 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Dec 31",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Dec"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Dec 31",
+   "toLocaleDateString": "Dec 31",
+   "toLocaleTimeString": "Dec 31, 7:30:00 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Sun, September 6",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sun"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sun, September 6",
+   "toLocaleDateString": "Sun, September 6",
+   "toLocaleTimeString": "Sun, September 6 at 4:05:09 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Wed, December 31",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wed"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Wed, December 31",
+   "toLocaleDateString": "Wed, December 31",
+   "toLocaleTimeString": "Wed, December 31 at 7:30:00 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Sunday, September 6, 2026",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "Sunday, September 6, 2026",
+   "toLocaleDateString": "Sunday, September 6, 2026",
+   "toLocaleTimeString": "Sunday, September 6, 2026 at 4:05:09 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Wednesday, December 31, 2025",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "Wednesday, December 31, 2025",
+   "toLocaleDateString": "Wednesday, December 31, 2025",
+   "toLocaleTimeString": "Wednesday, December 31, 2025 at 7:30:00 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Sun, Sep 6",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sun"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "Sep"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sun, Sep 6",
+   "toLocaleDateString": "Sun, Sep 6",
+   "toLocaleTimeString": "Sun, Sep 6, 4:05:09 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Wed, Dec 31",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wed"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "Dec"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Wed, Dec 31",
+   "toLocaleDateString": "Wed, Dec 31",
+   "toLocaleTimeString": "Wed, Dec 31, 7:30:00 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Sunday, September 6",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sunday, September 6",
+   "toLocaleDateString": "Sunday, September 6",
+   "toLocaleTimeString": "Sunday, September 6 at 4:05:09 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Wednesday, December 31",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Wednesday, December 31",
+   "toLocaleDateString": "Wednesday, December 31",
+   "toLocaleTimeString": "Wednesday, December 31 at 7:30:00 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "long"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long"
+   },
+   "format": "Sunday",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    }
+   ],
+   "toLocaleString": "Sunday",
+   "toLocaleDateString": "Sunday",
+   "toLocaleTimeString": "Sunday 4:05:09 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "long"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long"
+   },
+   "format": "Wednesday",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    }
+   ],
+   "toLocaleString": "Wednesday",
+   "toLocaleDateString": "Wednesday",
+   "toLocaleTimeString": "Wednesday 7:30:00 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short"
+   },
+   "format": "Sun",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sun"
+    }
+   ],
+   "toLocaleString": "Sun",
+   "toLocaleDateString": "Sun",
+   "toLocaleTimeString": "Sun 4:05:09 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short"
+   },
+   "format": "Wed",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wed"
+    }
+   ],
+   "toLocaleString": "Wed",
+   "toLocaleDateString": "Wed",
+   "toLocaleTimeString": "Wed 7:30:00 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "narrow"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "narrow"
+   },
+   "format": "S",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "S"
+    }
+   ],
+   "toLocaleString": "S",
+   "toLocaleDateString": "S",
+   "toLocaleTimeString": "S 4:05:09 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "weekday": "narrow"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "narrow"
+   },
+   "format": "W",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "W"
+    }
+   ],
+   "toLocaleString": "W",
+   "toLocaleDateString": "W",
+   "toLocaleTimeString": "W 7:30:00 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "timeZone": "America/New_York",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h24",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "format": "09/06/2026, 04:05:09",
+   "parts": [
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "06"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "04"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "09"
+    }
+   ],
+   "toLocaleString": "09/06/2026, 04:05:09",
+   "toLocaleDateString": "09/06/2026, 04:05:09",
+   "toLocaleTimeString": "09/06/2026, 04:05:09"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "timeZone": "America/New_York",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h24",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "format": "12/31/2025, 19:30:00",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "00"
+    }
+   ],
+   "toLocaleString": "12/31/2025, 19:30:00",
+   "toLocaleDateString": "12/31/2025, 19:30:00",
+   "toLocaleTimeString": "12/31/2025, 19:30:00"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "timeZone": "asia/tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "Asia/Tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "format": "09/06/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "06"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "09/06/2026",
+   "toLocaleDateString": "09/06/2026",
+   "toLocaleTimeString": "09/06/2026, 5:05:09 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "timeZone": "asia/tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "Asia/Tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "format": "01/01/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "01"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "01"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "01/01/2026",
+   "toLocaleDateString": "01/01/2026",
+   "toLocaleTimeString": "01/01/2026, 9:30:00 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "9/6/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "9/6/2026, 4:05:09 AM",
+   "toLocaleDateString": "9/6/2026",
+   "toLocaleTimeString": "4:05:09 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "12/31/2025",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "12/31/2025, 7:30:00 PM",
+   "toLocaleDateString": "12/31/2025",
+   "toLocaleTimeString": "7:30:00 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {},
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "9/6/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "9/6/2026, 4:05:09 AM",
+   "toLocaleDateString": "9/6/2026",
+   "toLocaleTimeString": "4:05:09 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {},
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "12/31/2025",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "12/31/2025, 7:30:00 PM",
+   "toLocaleDateString": "12/31/2025",
+   "toLocaleTimeString": "7:30:00 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "format": "4:05 AM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    }
+   ],
+   "toLocaleString": "4:05 AM",
+   "toLocaleDateString": "9/6/2026, 4:05 AM",
+   "toLocaleTimeString": "4:05 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "format": "7:30 PM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "7"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "PM"
+    }
+   ],
+   "toLocaleString": "7:30 PM",
+   "toLocaleDateString": "12/31/2025, 7:30 PM",
+   "toLocaleTimeString": "7:30 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "hour": "numeric",
+    "hour12": true
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric"
+   },
+   "format": "4 AM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    }
+   ],
+   "toLocaleString": "4 AM",
+   "toLocaleDateString": "9/6/2026, 4 AM",
+   "toLocaleTimeString": "4 AM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "hour": "numeric",
+    "hour12": true
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric"
+   },
+   "format": "7 PM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "7"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "PM"
+    }
+   ],
+   "toLocaleString": "7 PM",
+   "toLocaleDateString": "12/31/2025, 7 PM",
+   "toLocaleTimeString": "7 PM"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "hourCycle": "h23",
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "format": "04:05",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "04"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    }
+   ],
+   "toLocaleString": "04:05",
+   "toLocaleDateString": "9/6/2026, 04:05",
+   "toLocaleTimeString": "04:05"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "hourCycle": "h23",
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "format": "19:30",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    }
+   ],
+   "toLocaleString": "19:30",
+   "toLocaleDateString": "12/31/2025, 19:30",
+   "toLocaleTimeString": "19:30"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "format": "Sep 6, 2026, 4:05 AM",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Sep"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    }
+   ],
+   "toLocaleString": "Sep 6, 2026, 4:05 AM",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "format": "Dec 31, 2025, 7:30 PM",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Dec"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "7"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "PM"
+    }
+   ],
+   "toLocaleString": "Dec 31, 2025, 7:30 PM",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "dateStyle": "full"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "dateStyle": "full"
+   },
+   "format": "Sunday, September 6, 2026",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "Sunday, September 6, 2026",
+   "toLocaleDateString": "Sunday, September 6, 2026",
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "dateStyle": "full"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "dateStyle": "full"
+   },
+   "format": "Wednesday, December 31, 2025",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "Wednesday, December 31, 2025",
+   "toLocaleDateString": "Wednesday, December 31, 2025",
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "timeStyle": "long",
+    "timeZone": "UTC"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "UTC",
+    "hourCycle": "h12",
+    "hour12": true,
+    "timeStyle": "long"
+   },
+   "format": "8:05:09 AM UTC",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "8"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "UTC"
+    }
+   ],
+   "toLocaleString": "8:05:09 AM UTC",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": "8:05:09 AM UTC"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "timeStyle": "long",
+    "timeZone": "UTC"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "UTC",
+    "hourCycle": "h12",
+    "hour12": true,
+    "timeStyle": "long"
+   },
+   "format": "12:30:00 AM UTC",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "00"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "UTC"
+    }
+   ],
+   "toLocaleString": "12:30:00 AM UTC",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": "12:30:00 AM UTC"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "format": "2026 AD, EDT",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "era",
+     "value": "AD"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "EDT"
+    }
+   ],
+   "toLocaleString": "2026 AD, EDT",
+   "toLocaleDateString": "2026 AD, EDT",
+   "toLocaleTimeString": "2026 AD, 4:05:09 AM EDT"
+  },
+  {
+   "locale": "zh-CN",
+   "options": {
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "format": "2025 AD, EST",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "era",
+     "value": "AD"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "EST"
+    }
+   ],
+   "toLocaleString": "2025 AD, EST",
+   "toLocaleDateString": "2025 AD, EST",
+   "toLocaleTimeString": "2025 AD, 7:30:00 PM EST"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "year": "numeric",
+    "month": "long"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "long"
+   },
+   "format": "2026年9月",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": "年"
+    },
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    }
+   ],
+   "toLocaleString": "2026年9月",
+   "toLocaleDateString": "2026年9月",
+   "toLocaleTimeString": "2026年9月 4:05:09"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "year": "numeric",
+    "month": "long"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "long"
+   },
+   "format": "2025年12月",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": "年"
+    },
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    }
+   ],
+   "toLocaleString": "2025年12月",
+   "toLocaleDateString": "2025年12月",
+   "toLocaleTimeString": "2025年12月 19:30:00"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "9月6日",
+   "parts": [
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "日"
+    }
+   ],
+   "toLocaleString": "9月6日",
+   "toLocaleDateString": "9月6日",
+   "toLocaleTimeString": "9月6日 4:05:09"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "12月31日",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "日"
+    }
+   ],
+   "toLocaleString": "12月31日",
+   "toLocaleDateString": "12月31日",
+   "toLocaleTimeString": "12月31日 19:30:00"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "9月6日(日)",
+   "parts": [
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "日("
+    },
+    {
+     "type": "weekday",
+     "value": "日"
+    },
+    {
+     "type": "literal",
+     "value": ")"
+    }
+   ],
+   "toLocaleString": "9月6日(日)",
+   "toLocaleDateString": "9月6日(日)",
+   "toLocaleTimeString": "9月6日(日) 4:05:09"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "12月31日(水)",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "日("
+    },
+    {
+     "type": "weekday",
+     "value": "水"
+    },
+    {
+     "type": "literal",
+     "value": ")"
+    }
+   ],
+   "toLocaleString": "12月31日(水)",
+   "toLocaleDateString": "12月31日(水)",
+   "toLocaleTimeString": "12月31日(水) 19:30:00"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "2026年9月6日日曜日",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": "年"
+    },
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "日"
+    },
+    {
+     "type": "weekday",
+     "value": "日曜日"
+    }
+   ],
+   "toLocaleString": "2026年9月6日日曜日",
+   "toLocaleDateString": "2026年9月6日日曜日",
+   "toLocaleTimeString": "2026年9月6日日曜日 4:05:09"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "2025年12月31日水曜日",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": "年"
+    },
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "日"
+    },
+    {
+     "type": "weekday",
+     "value": "水曜日"
+    }
+   ],
+   "toLocaleString": "2025年12月31日水曜日",
+   "toLocaleDateString": "2025年12月31日水曜日",
+   "toLocaleTimeString": "2025年12月31日水曜日 19:30:00"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "9月6日(日)",
+   "parts": [
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "日("
+    },
+    {
+     "type": "weekday",
+     "value": "日"
+    },
+    {
+     "type": "literal",
+     "value": ")"
+    }
+   ],
+   "toLocaleString": "9月6日(日)",
+   "toLocaleDateString": "9月6日(日)",
+   "toLocaleTimeString": "9月6日(日) 4:05:09"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "12月31日(水)",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "日("
+    },
+    {
+     "type": "weekday",
+     "value": "水"
+    },
+    {
+     "type": "literal",
+     "value": ")"
+    }
+   ],
+   "toLocaleString": "12月31日(水)",
+   "toLocaleDateString": "12月31日(水)",
+   "toLocaleTimeString": "12月31日(水) 19:30:00"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "9月6日日曜日",
+   "parts": [
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "日"
+    },
+    {
+     "type": "weekday",
+     "value": "日曜日"
+    }
+   ],
+   "toLocaleString": "9月6日日曜日",
+   "toLocaleDateString": "9月6日日曜日",
+   "toLocaleTimeString": "9月6日日曜日 4:05:09"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "12月31日水曜日",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "月"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "日"
+    },
+    {
+     "type": "weekday",
+     "value": "水曜日"
+    }
+   ],
+   "toLocaleString": "12月31日水曜日",
+   "toLocaleDateString": "12月31日水曜日",
+   "toLocaleTimeString": "12月31日水曜日 19:30:00"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "long"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long"
+   },
+   "format": "日曜日",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "日曜日"
+    }
+   ],
+   "toLocaleString": "日曜日",
+   "toLocaleDateString": "日曜日",
+   "toLocaleTimeString": "4:05:09 (日曜日)"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "long"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long"
+   },
+   "format": "水曜日",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "水曜日"
+    }
+   ],
+   "toLocaleString": "水曜日",
+   "toLocaleDateString": "水曜日",
+   "toLocaleTimeString": "19:30:00 (水曜日)"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short"
+   },
+   "format": "日",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "日"
+    }
+   ],
+   "toLocaleString": "日",
+   "toLocaleDateString": "日",
+   "toLocaleTimeString": "4:05:09 (日)"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short"
+   },
+   "format": "水",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "水"
+    }
+   ],
+   "toLocaleString": "水",
+   "toLocaleDateString": "水",
+   "toLocaleTimeString": "19:30:00 (水)"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "narrow"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "narrow"
+   },
+   "format": "日",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "日"
+    }
+   ],
+   "toLocaleString": "日",
+   "toLocaleDateString": "日",
+   "toLocaleTimeString": "4:05:09 (日)"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "weekday": "narrow"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "narrow"
+   },
+   "format": "水",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "水"
+    }
+   ],
+   "toLocaleString": "水",
+   "toLocaleDateString": "水",
+   "toLocaleTimeString": "19:30:00 (水)"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "timeZone": "America/New_York",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "format": "2026/09/06 4:05:09",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "06"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "09"
+    }
+   ],
+   "toLocaleString": "2026/09/06 4:05:09",
+   "toLocaleDateString": "2026/09/06 4:05:09",
+   "toLocaleTimeString": "2026/09/06 4:05:09"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "timeZone": "America/New_York",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "format": "2025/12/31 19:30:00",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "00"
+    }
+   ],
+   "toLocaleString": "2025/12/31 19:30:00",
+   "toLocaleDateString": "2025/12/31 19:30:00",
+   "toLocaleTimeString": "2025/12/31 19:30:00"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "timeZone": "asia/tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "Asia/Tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "format": "2026/09/06",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "06"
+    }
+   ],
+   "toLocaleString": "2026/09/06",
+   "toLocaleDateString": "2026/09/06",
+   "toLocaleTimeString": "2026/09/06 17:05:09"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "timeZone": "asia/tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "Asia/Tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "format": "2026/01/01",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "01"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "01"
+    }
+   ],
+   "toLocaleString": "2026/01/01",
+   "toLocaleDateString": "2026/01/01",
+   "toLocaleTimeString": "2026/01/01 9:30:00"
+  },
+  {
+   "locale": "ja-JP",
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "2026/9/6",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "2026/9/6 4:05:09",
+   "toLocaleDateString": "2026/9/6",
+   "toLocaleTimeString": "4:05:09"
+  },
+  {
+   "locale": "ja-JP",
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "2025/12/31",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "2025/12/31 19:30:00",
+   "toLocaleDateString": "2025/12/31",
+   "toLocaleTimeString": "19:30:00"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {},
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "2026/9/6",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "2026/9/6 4:05:09",
+   "toLocaleDateString": "2026/9/6",
+   "toLocaleTimeString": "4:05:09"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {},
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "2025/12/31",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "2025/12/31 19:30:00",
+   "toLocaleDateString": "2025/12/31",
+   "toLocaleTimeString": "19:30:00"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "format": "4:05",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    }
+   ],
+   "toLocaleString": "4:05",
+   "toLocaleDateString": "2026/9/6 4:05",
+   "toLocaleTimeString": "4:05"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "format": "19:30",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    }
+   ],
+   "toLocaleString": "19:30",
+   "toLocaleDateString": "2025/12/31 19:30",
+   "toLocaleTimeString": "19:30"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "hour": "numeric",
+    "hour12": true
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h11",
+    "hour12": true,
+    "hour": "numeric"
+   },
+   "format": "午前4時",
+   "parts": [
+    {
+     "type": "dayPeriod",
+     "value": "午前"
+    },
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": "時"
+    }
+   ],
+   "toLocaleString": "午前4時",
+   "toLocaleDateString": "2026/9/6 午前4時",
+   "toLocaleTimeString": "午前4時"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "hour": "numeric",
+    "hour12": true
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h11",
+    "hour12": true,
+    "hour": "numeric"
+   },
+   "format": "午後7時",
+   "parts": [
+    {
+     "type": "dayPeriod",
+     "value": "午後"
+    },
+    {
+     "type": "hour",
+     "value": "7"
+    },
+    {
+     "type": "literal",
+     "value": "時"
+    }
+   ],
+   "toLocaleString": "午後7時",
+   "toLocaleDateString": "2025/12/31 午後7時",
+   "toLocaleTimeString": "午後7時"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "hourCycle": "h23",
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "format": "4:05",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    }
+   ],
+   "toLocaleString": "4:05",
+   "toLocaleDateString": "2026/9/6 4:05",
+   "toLocaleTimeString": "4:05"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "hourCycle": "h23",
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "format": "19:30",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    }
+   ],
+   "toLocaleString": "19:30",
+   "toLocaleDateString": "2025/12/31 19:30",
+   "toLocaleTimeString": "19:30"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "format": "2026/09/06 4:05",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "06"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    }
+   ],
+   "toLocaleString": "2026/09/06 4:05",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "format": "2025/12/31 19:30",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    }
+   ],
+   "toLocaleString": "2025/12/31 19:30",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "dateStyle": "full"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "dateStyle": "full"
+   },
+   "format": "2026/9/6日曜日",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "weekday",
+     "value": "日曜日"
+    }
+   ],
+   "toLocaleString": "2026/9/6日曜日",
+   "toLocaleDateString": "2026/9/6日曜日",
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "dateStyle": "full"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "dateStyle": "full"
+   },
+   "format": "2025/12/31水曜日",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "weekday",
+     "value": "水曜日"
+    }
+   ],
+   "toLocaleString": "2025/12/31水曜日",
+   "toLocaleDateString": "2025/12/31水曜日",
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "timeStyle": "long",
+    "timeZone": "UTC"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "UTC",
+    "hourCycle": "h23",
+    "hour12": false,
+    "timeStyle": "long"
+   },
+   "format": "8時05分09秒 UTC",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "8"
+    },
+    {
+     "type": "literal",
+     "value": "時"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": "分"
+    },
+    {
+     "type": "second",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "秒 "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "UTC"
+    }
+   ],
+   "toLocaleString": "8時05分09秒 UTC",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": "8時05分09秒 UTC"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "timeStyle": "long",
+    "timeZone": "UTC"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "UTC",
+    "hourCycle": "h23",
+    "hour12": false,
+    "timeStyle": "long"
+   },
+   "format": "0時30分00秒 UTC",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "0"
+    },
+    {
+     "type": "literal",
+     "value": "時"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": "分"
+    },
+    {
+     "type": "second",
+     "value": "00"
+    },
+    {
+     "type": "literal",
+     "value": "秒 "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "UTC"
+    }
+   ],
+   "toLocaleString": "0時30分00秒 UTC",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": "0時30分00秒 UTC"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "format": "西暦2026年 GMT-4",
+   "parts": [
+    {
+     "type": "era",
+     "value": "西暦"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": "年 "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "GMT-4"
+    }
+   ],
+   "toLocaleString": "西暦2026年 GMT-4",
+   "toLocaleDateString": "西暦2026年 GMT-4",
+   "toLocaleTimeString": "西暦2026年 4時05分09秒 GMT-4"
+  },
+  {
+   "locale": "ja-JP",
+   "options": {
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "ja-JP",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "format": "西暦2025年 GMT-5",
+   "parts": [
+    {
+     "type": "era",
+     "value": "西暦"
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": "年 "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "GMT-5"
+    }
+   ],
+   "toLocaleString": "西暦2025年 GMT-5",
+   "toLocaleDateString": "西暦2025年 GMT-5",
+   "toLocaleTimeString": "西暦2025年 19時30分00秒 GMT-5"
+  },
+  {
+   "options": {
+    "year": "numeric",
+    "month": "long"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "long"
+   },
+   "format": "September 2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "September 2026",
+   "toLocaleDateString": "September 2026",
+   "toLocaleTimeString": "September 2026 at 4:05:09 AM"
+  },
+  {
+   "options": {
+    "year": "numeric",
+    "month": "long"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "long"
+   },
+   "format": "December 2025",
+   "parts": [
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "December 2025",
+   "toLocaleDateString": "December 2025",
+   "toLocaleTimeString": "December 2025 at 7:30:00 PM"
+  },
+  {
+   "options": {
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Sep 6",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Sep"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sep 6",
+   "toLocaleDateString": "Sep 6",
+   "toLocaleTimeString": "Sep 6, 4:05:09 AM"
+  },
+  {
+   "options": {
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Dec 31",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Dec"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Dec 31",
+   "toLocaleDateString": "Dec 31",
+   "toLocaleTimeString": "Dec 31, 7:30:00 PM"
+  },
+  {
+   "options": {
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Sun, September 6",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sun"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sun, September 6",
+   "toLocaleDateString": "Sun, September 6",
+   "toLocaleTimeString": "Sun, September 6 at 4:05:09 AM"
+  },
+  {
+   "options": {
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Wed, December 31",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wed"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Wed, December 31",
+   "toLocaleDateString": "Wed, December 31",
+   "toLocaleTimeString": "Wed, December 31 at 7:30:00 PM"
+  },
+  {
+   "options": {
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Sunday, September 6, 2026",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "Sunday, September 6, 2026",
+   "toLocaleDateString": "Sunday, September 6, 2026",
+   "toLocaleTimeString": "Sunday, September 6, 2026 at 4:05:09 AM"
+  },
+  {
+   "options": {
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Wednesday, December 31, 2025",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "Wednesday, December 31, 2025",
+   "toLocaleDateString": "Wednesday, December 31, 2025",
+   "toLocaleTimeString": "Wednesday, December 31, 2025 at 7:30:00 PM"
+  },
+  {
+   "options": {
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Sun, Sep 6",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sun"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "Sep"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sun, Sep 6",
+   "toLocaleDateString": "Sun, Sep 6",
+   "toLocaleTimeString": "Sun, Sep 6, 4:05:09 AM"
+  },
+  {
+   "options": {
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short",
+    "month": "short",
+    "day": "numeric"
+   },
+   "format": "Wed, Dec 31",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wed"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "Dec"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Wed, Dec 31",
+   "toLocaleDateString": "Wed, Dec 31",
+   "toLocaleTimeString": "Wed, Dec 31, 7:30:00 PM"
+  },
+  {
+   "options": {
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Sunday, September 6",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    }
+   ],
+   "toLocaleString": "Sunday, September 6",
+   "toLocaleDateString": "Sunday, September 6",
+   "toLocaleTimeString": "Sunday, September 6 at 4:05:09 AM"
+  },
+  {
+   "options": {
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long",
+    "month": "long",
+    "day": "numeric"
+   },
+   "format": "Wednesday, December 31",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    }
+   ],
+   "toLocaleString": "Wednesday, December 31",
+   "toLocaleDateString": "Wednesday, December 31",
+   "toLocaleTimeString": "Wednesday, December 31 at 7:30:00 PM"
+  },
+  {
+   "options": {
+    "weekday": "long"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long"
+   },
+   "format": "Sunday",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    }
+   ],
+   "toLocaleString": "Sunday",
+   "toLocaleDateString": "Sunday",
+   "toLocaleTimeString": "Sunday 4:05:09 AM"
+  },
+  {
+   "options": {
+    "weekday": "long"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "long"
+   },
+   "format": "Wednesday",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    }
+   ],
+   "toLocaleString": "Wednesday",
+   "toLocaleDateString": "Wednesday",
+   "toLocaleTimeString": "Wednesday 7:30:00 PM"
+  },
+  {
+   "options": {
+    "weekday": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short"
+   },
+   "format": "Sun",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sun"
+    }
+   ],
+   "toLocaleString": "Sun",
+   "toLocaleDateString": "Sun",
+   "toLocaleTimeString": "Sun 4:05:09 AM"
+  },
+  {
+   "options": {
+    "weekday": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "short"
+   },
+   "format": "Wed",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wed"
+    }
+   ],
+   "toLocaleString": "Wed",
+   "toLocaleDateString": "Wed",
+   "toLocaleTimeString": "Wed 7:30:00 PM"
+  },
+  {
+   "options": {
+    "weekday": "narrow"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "narrow"
+   },
+   "format": "S",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "S"
+    }
+   ],
+   "toLocaleString": "S",
+   "toLocaleDateString": "S",
+   "toLocaleTimeString": "S 4:05:09 AM"
+  },
+  {
+   "options": {
+    "weekday": "narrow"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "weekday": "narrow"
+   },
+   "format": "W",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "W"
+    }
+   ],
+   "toLocaleString": "W",
+   "toLocaleDateString": "W",
+   "toLocaleTimeString": "W 7:30:00 PM"
+  },
+  {
+   "options": {
+    "timeZone": "America/New_York",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h24",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "format": "09/06/2026, 04:05:09",
+   "parts": [
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "06"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "04"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "09"
+    }
+   ],
+   "toLocaleString": "09/06/2026, 04:05:09",
+   "toLocaleDateString": "09/06/2026, 04:05:09",
+   "toLocaleTimeString": "09/06/2026, 04:05:09"
+  },
+  {
+   "options": {
+    "timeZone": "America/New_York",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h24",
+    "hour12": false,
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit",
+    "hour": "2-digit",
+    "minute": "2-digit",
+    "second": "2-digit"
+   },
+   "format": "12/31/2025, 19:30:00",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "00"
+    }
+   ],
+   "toLocaleString": "12/31/2025, 19:30:00",
+   "toLocaleDateString": "12/31/2025, 19:30:00",
+   "toLocaleTimeString": "12/31/2025, 19:30:00"
+  },
+  {
+   "options": {
+    "timeZone": "asia/tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "Asia/Tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "format": "09/06/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "06"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "09/06/2026",
+   "toLocaleDateString": "09/06/2026",
+   "toLocaleTimeString": "09/06/2026, 5:05:09 PM"
+  },
+  {
+   "options": {
+    "timeZone": "asia/tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "Asia/Tokyo",
+    "year": "numeric",
+    "month": "2-digit",
+    "day": "2-digit"
+   },
+   "format": "01/01/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "01"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "01"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "01/01/2026",
+   "toLocaleDateString": "01/01/2026",
+   "toLocaleTimeString": "01/01/2026, 9:30:00 AM"
+  },
+  {
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "9/6/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "9/6/2026, 4:05:09 AM",
+   "toLocaleDateString": "9/6/2026",
+   "toLocaleTimeString": "4:05:09 AM"
+  },
+  {
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "12/31/2025",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "12/31/2025, 7:30:00 PM",
+   "toLocaleDateString": "12/31/2025",
+   "toLocaleTimeString": "7:30:00 PM"
+  },
+  {
+   "options": {},
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "9/6/2026",
+   "parts": [
+    {
+     "type": "month",
+     "value": "9"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "9/6/2026, 4:05:09 AM",
+   "toLocaleDateString": "9/6/2026",
+   "toLocaleTimeString": "4:05:09 AM"
+  },
+  {
+   "options": {},
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "year": "numeric",
+    "month": "numeric",
+    "day": "numeric"
+   },
+   "format": "12/31/2025",
+   "parts": [
+    {
+     "type": "month",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": "/"
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "12/31/2025, 7:30:00 PM",
+   "toLocaleDateString": "12/31/2025",
+   "toLocaleTimeString": "7:30:00 PM"
+  },
+  {
+   "options": {
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "format": "4:05 AM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    }
+   ],
+   "toLocaleString": "4:05 AM",
+   "toLocaleDateString": "9/6/2026, 4:05 AM",
+   "toLocaleTimeString": "4:05 AM"
+  },
+  {
+   "options": {
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric",
+    "minute": "2-digit"
+   },
+   "format": "7:30 PM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "7"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "PM"
+    }
+   ],
+   "toLocaleString": "7:30 PM",
+   "toLocaleDateString": "12/31/2025, 7:30 PM",
+   "toLocaleTimeString": "7:30 PM"
+  },
+  {
+   "options": {
+    "hour": "numeric",
+    "hour12": true
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric"
+   },
+   "format": "4 AM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    }
+   ],
+   "toLocaleString": "4 AM",
+   "toLocaleDateString": "9/6/2026, 4 AM",
+   "toLocaleTimeString": "4 AM"
+  },
+  {
+   "options": {
+    "hour": "numeric",
+    "hour12": true
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "hour": "numeric"
+   },
+   "format": "7 PM",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "7"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "PM"
+    }
+   ],
+   "toLocaleString": "7 PM",
+   "toLocaleDateString": "12/31/2025, 7 PM",
+   "toLocaleTimeString": "7 PM"
+  },
+  {
+   "options": {
+    "hourCycle": "h23",
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "format": "04:05",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "04"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    }
+   ],
+   "toLocaleString": "04:05",
+   "toLocaleDateString": "9/6/2026, 04:05",
+   "toLocaleTimeString": "04:05"
+  },
+  {
+   "options": {
+    "hourCycle": "h23",
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h23",
+    "hour12": false,
+    "hour": "2-digit",
+    "minute": "2-digit"
+   },
+   "format": "19:30",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "19"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    }
+   ],
+   "toLocaleString": "19:30",
+   "toLocaleDateString": "12/31/2025, 19:30",
+   "toLocaleTimeString": "19:30"
+  },
+  {
+   "options": {
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "format": "Sep 6, 2026, 4:05 AM",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Sep"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "4"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    }
+   ],
+   "toLocaleString": "Sep 6, 2026, 4:05 AM",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "options": {
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "hourCycle": "h12",
+    "hour12": true,
+    "dateStyle": "medium",
+    "timeStyle": "short"
+   },
+   "format": "Dec 31, 2025, 7:30 PM",
+   "parts": [
+    {
+     "type": "month",
+     "value": "Dec"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "hour",
+     "value": "7"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "PM"
+    }
+   ],
+   "toLocaleString": "Dec 31, 2025, 7:30 PM",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "options": {
+    "dateStyle": "full"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "dateStyle": "full"
+   },
+   "format": "Sunday, September 6, 2026",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Sunday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "September"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "6"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2026"
+    }
+   ],
+   "toLocaleString": "Sunday, September 6, 2026",
+   "toLocaleDateString": "Sunday, September 6, 2026",
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "options": {
+    "dateStyle": "full"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "dateStyle": "full"
+   },
+   "format": "Wednesday, December 31, 2025",
+   "parts": [
+    {
+     "type": "weekday",
+     "value": "Wednesday"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "month",
+     "value": "December"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "day",
+     "value": "31"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "year",
+     "value": "2025"
+    }
+   ],
+   "toLocaleString": "Wednesday, December 31, 2025",
+   "toLocaleDateString": "Wednesday, December 31, 2025",
+   "toLocaleTimeString": {
+    "error": "TypeError"
+   }
+  },
+  {
+   "options": {
+    "timeStyle": "long",
+    "timeZone": "UTC"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "UTC",
+    "hourCycle": "h12",
+    "hour12": true,
+    "timeStyle": "long"
+   },
+   "format": "8:05:09 AM UTC",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "8"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "05"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "09"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "UTC"
+    }
+   ],
+   "toLocaleString": "8:05:09 AM UTC",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": "8:05:09 AM UTC"
+  },
+  {
+   "options": {
+    "timeStyle": "long",
+    "timeZone": "UTC"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "UTC",
+    "hourCycle": "h12",
+    "hour12": true,
+    "timeStyle": "long"
+   },
+   "format": "12:30:00 AM UTC",
+   "parts": [
+    {
+     "type": "hour",
+     "value": "12"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "minute",
+     "value": "30"
+    },
+    {
+     "type": "literal",
+     "value": ":"
+    },
+    {
+     "type": "second",
+     "value": "00"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "dayPeriod",
+     "value": "AM"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "UTC"
+    }
+   ],
+   "toLocaleString": "12:30:00 AM UTC",
+   "toLocaleDateString": {
+    "error": "TypeError"
+   },
+   "toLocaleTimeString": "12:30:00 AM UTC"
+  },
+  {
+   "options": {
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "time": 1788681909000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "format": "2026 AD, EDT",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2026"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "era",
+     "value": "AD"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "EDT"
+    }
+   ],
+   "toLocaleString": "2026 AD, EDT",
+   "toLocaleDateString": "2026 AD, EDT",
+   "toLocaleTimeString": "2026 AD, 4:05:09 AM EDT"
+  },
+  {
+   "options": {
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "time": 1767227400000,
+   "resolved": {
+    "locale": "en-US",
+    "numberingSystem": "latn",
+    "calendar": "gregory",
+    "timeZone": "America/New_York",
+    "era": "short",
+    "year": "numeric",
+    "timeZoneName": "short"
+   },
+   "format": "2025 AD, EST",
+   "parts": [
+    {
+     "type": "year",
+     "value": "2025"
+    },
+    {
+     "type": "literal",
+     "value": " "
+    },
+    {
+     "type": "era",
+     "value": "AD"
+    },
+    {
+     "type": "literal",
+     "value": ", "
+    },
+    {
+     "type": "timeZoneName",
+     "value": "EST"
+    }
+   ],
+   "toLocaleString": "2025 AD, EST",
+   "toLocaleDateString": "2025 AD, EST",
+   "toLocaleTimeString": "2025 AD, 7:30:00 PM EST"
+  }
+ ]
+}
