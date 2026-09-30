@@ -29,6 +29,7 @@ import {
     needsFossAIProviderReset,
     normalizeSpeechLanguageInput,
     readAIProviderConsent,
+    canDiscoverAIModels,
     recordAIProviderConsent,
     resolveAISettingsScreenState,
 } from '@mindwtr/core/ai-settings-model';
@@ -97,6 +98,8 @@ export function AISettingsScreen() {
     const [fetchedSpeechModels, setFetchedSpeechModels] = useState<string[] | null>(null);
     const [appleClarificationBackend, setAppleClarificationBackend] = useState<AppleClarificationBackend>('configured');
     const [appleClarificationAvailability, setAppleClarificationAvailability] = useState('');
+    // This device's consent record (null until read): a model list asks only a provider it covers (canDiscoverAIModels).
+    const [consentMap, setConsentMap] = useState<Record<string, boolean> | null>(null);
 
     const {
         aiProvider,
@@ -133,6 +136,16 @@ export function AISettingsScreen() {
         const stored = useTaskStore.getState().settings.ai;
         updateSettings({ ai: { ...(stored ?? {}), ...next } }).catch(logSettingsError);
     }, [updateSettings]);
+
+    useEffect(() => {
+        let active = true;
+        void readAIProviderConsent(AsyncStorage, logSettingsWarn).then((consent) => {
+            if (active) setConsentMap(consent);
+        });
+        return () => {
+            active = false;
+        };
+    }, []);
 
     useEffect(() => {
         if (!appleClarificationPrototypeEnabled) return;
@@ -190,6 +203,7 @@ export function AISettingsScreen() {
                         text: prompt.agree,
                         onPress: () => {
                             void recordAIProviderConsent(AsyncStorage, provider, logSettingsWarn);
+                            setConsentMap((current) => ({ ...(current ?? {}), [provider]: true }));
                             finish(true);
                         },
                     },
@@ -254,6 +268,7 @@ export function AISettingsScreen() {
         // server needs no key either (#930), while the official endpoints list
         // nothing without one.
         if (!canFetchAIChatModels({ isFossBuild, provider: aiProvider, apiKey, baseUrl })) return;
+        if (!consentMap || !canDiscoverAIModels({ provider: aiProvider, consent: consentMap, aiEnabled, aiProvider })) return;
         let cancelled = false;
         const timer = setTimeout(() => {
             fetchProviderModelsCached(aiProvider, { apiKey, baseUrl, kind: 'chat' })
@@ -268,7 +283,7 @@ export function AISettingsScreen() {
             cancelled = true;
             clearTimeout(timer);
         };
-    }, [aiApiKey, aiBaseUrl, aiProvider, isFossBuild]);
+    }, [aiApiKey, aiBaseUrl, aiEnabled, aiProvider, consentMap, isFossBuild]);
 
     // Live speech model list (#986). Whisper is a local sha256-pinned catalog —
     // never fetched, which also covers FOSS builds (Whisper is their only STT).
@@ -278,6 +293,7 @@ export function AISettingsScreen() {
         const baseUrl = speechBaseUrl.trim();
         const kind = getSpeechModelListKind({ provider: speechProvider, apiKey, baseUrl });
         if (!kind || speechProvider === 'whisper') return;
+        if (!consentMap || !canDiscoverAIModels({ provider: speechProvider, consent: consentMap, aiEnabled, aiProvider })) return;
         let cancelled = false;
         const timer = setTimeout(() => {
             fetchProviderModelsCached(speechProvider, { apiKey, baseUrl, kind })
@@ -292,7 +308,7 @@ export function AISettingsScreen() {
             cancelled = true;
             clearTimeout(timer);
         };
-    }, [speechApiKey, speechBaseUrl, speechProvider]);
+    }, [aiEnabled, aiProvider, consentMap, speechApiKey, speechBaseUrl, speechProvider]);
 
     const handleAIProviderChange = (provider: AIProviderId) => {
         if (provider === aiProvider) return;

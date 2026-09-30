@@ -30,10 +30,11 @@ vi.mock('expo-constants', () => ({
     },
 }));
 
+const storage = vi.hoisted(() => ({ values: {} as Record<string, string> }));
 vi.mock('@react-native-async-storage/async-storage', () => ({
     default: {
-        getItem: vi.fn(async () => null),
-        setItem: vi.fn(async () => undefined),
+        getItem: vi.fn(async (key: string) => storage.values[key] ?? null),
+        setItem: vi.fn(async (key: string, value: string) => { storage.values[key] = value; }),
     },
 }));
 
@@ -127,6 +128,8 @@ describe('AISettingsScreen live model lists', () => {
         aiConfigMocks.loadAIKey.mockResolvedValue('sk-test');
         aiConfigMocks.saveAIKey.mockResolvedValue(undefined);
         coreMocks.fetchProviderModelsCached.mockResolvedValue([]);
+        // This device agreed to every provider (the consent question's own tests are the parity harness's).
+        storage.values = { 'mindwtr-ai-provider-consent-v1': JSON.stringify({ openai: true, gemini: true, anthropic: true }) };
     });
 
     afterEach(() => {
@@ -228,6 +231,21 @@ describe('AISettingsScreen live model lists', () => {
             kind: 'chat',
         });
         expect(latest().aiModelOptions).toEqual(['qwen3:8b']);
+    });
+
+    // Review C1 3: a key or an endpoint saved while AI is off must not reach the provider before this device agreed.
+    it('never lists a provider\'s models before this device agreed to it, unless AI is on with that provider', async () => {
+        storage.values = {};
+        await renderScreen({
+            ai: { provider: 'openai', baseUrl: 'http://10.0.0.5:11434/v1', speechToText: { provider: 'gemini', model: 'gemini-3.5-flash' } },
+        });
+        expect(coreMocks.fetchProviderModelsCached).not.toHaveBeenCalled();
+
+        // The synced AI switch carries the consent given where it was turned on (maintainer ruling, 09-29).
+        await renderScreen({
+            ai: { enabled: true, provider: 'openai', baseUrl: 'http://10.0.0.5:11434/v1', speechToText: localWhisperSpeech },
+        });
+        expect(coreMocks.fetchProviderModelsCached).toHaveBeenCalledWith('openai', expect.objectContaining({ kind: 'chat' }));
     });
 
     it('lists Gemini speech models from its chat models', async () => {
