@@ -2474,7 +2474,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         } finally {
             rmSync(scratch, { recursive: true, force: true });
         }
-        assert.match(gradle, /val verifyBundle = [^\n]*verify-bundle\.mjs[\s\S]{0,300}?tasks\.withType<com\.android\.build\.gradle\.tasks\.MergeSourceSetFolders>\(\)\.configureEach \{\s+if \(name\.startsWith\("merge"\) && name\.endsWith\("Assets"\) && !name\.contains\("Test"\)\) \{[\s\S]{0,300}?commandLine\("node", verifyBundle, outputDir\.get\(\)\.asFile\.resolve\("core-host\.js"\)\.path\)\s*\}\.result\.get\(\)\.assertNormalExitValue\(\)/, 'every variant\'s merged assets are verified and a mismatch fails the build');
+        assert.match(gradle, /val verifyBundle = [^\n]*verify-bundle\.mjs[\s\S]{0,300}?tasks\.withType<com\.android\.build\.gradle\.tasks\.MergeSourceSetFolders>\(\)\.configureEach \{\s+if \(name\.startsWith\("merge"\) && name\.endsWith\("Assets"\) && !name\.contains\("Test"\)\) \{[\s\S]{0,300}?commandLine\(listOfNotNull\("node", verifyBundle, outputDir\.get\(\)\.asFile\.resolve\("core-host\.js"\)\.path, traced\)\)\s*\}\.result\.get\(\)\.assertNormalExitValue\(\)/, 'every variant\'s merged assets are verified and a mismatch fails the build');
         assert.match(buildBundle, /renameSync\(/, 'the bundle is written under a temporary name and renamed into place');
     }
     // Module instrumentation (build-bundle.mjs --trace-modules) is a measurement build's only: its own output, merged only
@@ -2489,6 +2489,26 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         assert.match(gradle, /val buildTracedCoreBundle by tasks\.registering\(Exec::class\) \{[\s\S]{0,300}?"--trace-modules", "--out", tracedBundle\.get\(\)\.asFile\.path/);
         assert.equal(gradle.match(/tracedBundleAssets/g)?.length, 3, 'the traced bundle is declared once, written once, and merged once');
         assert.match(gradle, /getByName\("benchmarkTrace"\)\.assets\.srcDir\(tracedBundleAssets\)/, 'only benchmarkTrace merges it');
+        // Both ends refuse a traced bundle anywhere else: build-bundle.mjs will not write one into the shared main assets,
+        // and verify-bundle.mjs fails any variant's bundle with module hooks unless Gradle says it is benchmarkTrace's.
+        const mainBundle = resolve(app, 'android/app/src/main/assets/core-host.js');
+        const before = readFileSync(mainBundle);
+        const run = (script, args) => spawnSync(process.execPath, [resolve(app, 'scripts', script), ...args], { encoding: 'utf8' }).status;
+        assert.notEqual(run('build-bundle.mjs', ['--trace-modules']), 0, 'no traced bundle without --out');
+        assert.notEqual(run('build-bundle.mjs', ['--trace-modules', '--out', mainBundle]), 0, 'no traced bundle into the main assets');
+        assert(readFileSync(mainBundle).equals(before), 'the main bundle is untouched by a refused traced build');
+        const scratch = mkdtempSync(resolve(tmpdir(), 'traced-bundle-'));
+        try {
+            const traced = resolve(scratch, 'core-host.js');
+            assert.equal(run('build-bundle.mjs', ['--trace-modules', '--out', traced]), 0, 'a traced bundle builds to its own output');
+            assert.notEqual(run('verify-bundle.mjs', [traced]), 0, 'a bundle with module hooks fails an ordinary variant');
+            assert.equal(run('verify-bundle.mjs', [traced, '--allow-module-trace']), 0, 'benchmarkTrace accepts it');
+            assert.equal(run('verify-bundle.mjs', [mainBundle]), 0, 'the ordinary bundle passes');
+        } finally {
+            rmSync(scratch, { recursive: true, force: true });
+        }
+        assert.equal(gradle.match(/--allow-module-trace/g)?.length, 1, 'one place allows module hooks');
+        assert.match(gradle, /if \(name == "mergeBenchmarkTraceAssets"\) "--allow-module-trace"/, 'only benchmarkTrace\'s merged assets may carry them');
     }
     // RN's shortcuts from RN's own builder: the same ids, capabilities, labels and links, on the build's scheme; Add task opens
     // the capture popup through RN's system capture link until the widget pass brings QuickCaptureActivity.

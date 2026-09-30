@@ -134,14 +134,16 @@ val buildCoreBundle by tasks.registering(Exec::class) {
     )
     outputs.file("src/main/assets/core-host.js")
 }
-// Every variant's merged assets: the bundle's hash line must be the SHA-256 of its body (verify-bundle.mjs), or the build
-// fails, so the bytecode cache's key always belongs to the bundle that ships.
+// Every variant's merged assets: the bundle's hash line must be the SHA-256 of its body, and only benchmarkTrace's may carry
+// module hooks (verify-bundle.mjs), or the build fails, so the cache's key belongs to the bundle that ships and no traced
+// bundle ships.
 val verifyBundle = rootProject.projectDir.resolve("../scripts/verify-bundle.mjs").path
 tasks.withType<com.android.build.gradle.tasks.MergeSourceSetFolders>().configureEach {
     if (name.startsWith("merge") && name.endsWith("Assets") && !name.contains("Test")) {
         val execs = providers
         doLast {
-            execs.exec { commandLine("node", verifyBundle, outputDir.get().asFile.resolve("core-host.js").path) }.result.get().assertNormalExitValue()
+            val traced = if (name == "mergeBenchmarkTraceAssets") "--allow-module-trace" else null
+            execs.exec { commandLine(listOfNotNull("node", verifyBundle, outputDir.get().asFile.resolve("core-host.js").path, traced)) }.result.get().assertNormalExitValue()
         }
     }
 }

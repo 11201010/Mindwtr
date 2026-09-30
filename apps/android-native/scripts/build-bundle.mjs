@@ -12,7 +12,13 @@ const app = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // turns it off, so a module loaded later (a locale) traces nothing.
 const option = (name) => { const at = process.argv.indexOf(name); return at < 0 ? undefined : process.argv[at + 1]; };
 const traceModules = process.argv.includes('--trace-modules');
-const outfile = resolve(option('--out') ?? resolve(app, 'android/app/src/main/assets/core-host.js'));
+const mainAssets = resolve(app, 'android/app/src/main/assets');
+const outfile = resolve(option('--out') ?? resolve(mainAssets, 'core-host.js'));
+// Every variant merges the main assets, so a traced bundle there could ship: refuse it (verify-bundle.mjs refuses it too).
+if (traceModules && (!option('--out') || !relative(mainAssets, outfile).startsWith('..'))) {
+    console.error(`build-bundle: --trace-modules needs --out outside ${mainAssets}`);
+    process.exit(1);
+}
 const repo = resolve(app, '../..');
 const moduleTrace = {
     name: 'module-trace',
