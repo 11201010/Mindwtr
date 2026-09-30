@@ -1033,6 +1033,27 @@ describe('canonical local reads contract', () => {
                 expect(nativeValue(await host.commitPreparedAreaDelete({ request, prepared: planned.prepared })))
                     .toEqual(planned.prepared.result);
             },
+            commitPreparedTaxonomy: async (control) => {
+                const host = await nativeHost(control);
+                const name = settled.tasks.find((entry) => entry.tags.length > 0)!.tags[0];
+                const options = nativeValue(await host.getTaxonomyOptions({ kind: 'tag', name }));
+                const request = { requestId: '6b4399fc-ae38-4a7d-904f-c7413652a096',
+                    kind: 'tag' as const, action: 'rename' as const, name,
+                    to: '#ContractTaxonomy', expected: options.expected };
+                const planned = nativeValue(await host.prepareTaxonomy(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    for (const { after } of planned.prepared.effect.tasks) {
+                        expect(written.tasks.find((entry) => entry.id === after.id)).toEqual(after);
+                    }
+                    for (const { after } of planned.prepared.effect.projects) {
+                        expect(written.projects.find((entry) => entry.id === after.id)).toEqual(after);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedTaxonomy({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+            },
             commitPreparedPersonCreate: async (control) => {
                 const host = await nativeHost(control);
                 const request = { requestId: 'd97f91ae-d02d-48a5-90ef-fc26a14343b9',

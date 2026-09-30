@@ -4594,6 +4594,144 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task96Open(_ app: XCUIApplication, kind: String, deleting: Bool = false) {
+        task91Section(app, kind == "context" ? "contexts" : "tags", open: true)
+        let action = deleting ? "delete" : "edit"
+        let button = app.buttons["manage-\(kind)-\(action)-0"]
+        revealPagedElement(app, button, in: app.scrollViews["manage-someday-scroll"])
+        boardEnabled(button)
+        XCTAssertGreaterThanOrEqual(button.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        button.tap()
+        if !deleting { XCTAssertTrue(app.textFields["manage-taxonomy-name"].waitForExistence(timeout: 10)) }
+    }
+
+    private func task96Name(_ app: XCUIApplication, _ name: String) {
+        let input = app.textFields["manage-taxonomy-name"]
+        revealPagedElement(app, input, in: app.scrollViews["manage-taxonomy-scroll"])
+        boardEnabled(input); input.tap()
+        replaceTextView(input, with: name, tapOffset: CGVector(dx: 0.9, dy: 0.5))
+        XCTAssertEqual(input.value as? String, name)
+        let done = app.buttons["manage-taxonomy-keyboard-done"]
+        if done.exists { done.tap() } else { input.typeText("\n") }
+    }
+
+    private func task96Save(_ app: XCUIApplication) {
+        revealPagedElement(app, app.buttons["manage-taxonomy-save"], in: app.scrollViews["manage-taxonomy-scroll"])
+        boardTap(app, "manage-taxonomy-save")
+    }
+
+    private func task96Closed(_ app: XCUIApplication) {
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.textFields["manage-taxonomy-name"])
+        waitForExpectations(timeout: 20)
+        boardEnabled(app.buttons["manage-back"])
+    }
+
+    private func task96Normal(library: String, kind: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        let original = kind == "context" ? "@A96" : "#A96"
+        let edited = kind == "context" ? "@B96" : "#B96"
+        task96Open(app, kind: kind)
+        XCTAssertEqual(app.textFields["manage-taxonomy-name"].value as? String, original)
+        boardTap(app, "manage-taxonomy-cancel"); task96Closed(app)
+        task96Open(app, kind: kind); task96Save(app); task96Closed(app)
+        task96Open(app, kind: kind); task96Name(app, edited)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Manage taxonomy editor"; shot.lifetime = .keepAlways; add(shot)
+        task96Save(app); task96Closed(app)
+        app.terminate(); app.launch(); task83OpenManage(app, ensureOpen: false)
+        task96Open(app, kind: kind)
+        XCTAssertEqual(app.textFields["manage-taxonomy-name"].value as? String, edited)
+        boardTap(app, "manage-taxonomy-cancel"); task96Closed(app)
+        task96Open(app, kind: kind, deleting: true)
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        let cancel = task84AlertButton(alert, id: "manage-taxonomy-delete-cancel", label: "Cancel")
+        boardEnabled(cancel); cancel.tap(); boardEnabled(app.buttons["manage-back"])
+        task96Open(app, kind: kind, deleting: true)
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        let confirm = task84AlertButton(alert, id: "manage-taxonomy-delete-confirm", label: "Delete")
+        boardEnabled(confirm); confirm.tap()
+        boardEnabled(app.buttons["manage-back"])
+        XCTAssertFalse(app.buttons["manage-\(kind)-edit-0"].exists)
+        app.terminate()
+    }
+
+    func testManageTaxonomyContextFinal() { task96Normal(library: "9a5126f0-9e99-4428-a759-cba0c238b1f5", kind: "context") }
+    func testManageTaxonomyContextNormal() { task96Normal(library: "76d85c9d-85fb-44c9-859a-5c6b690deb09", kind: "context") }
+    func testManageTaxonomyTagNormal() { task96Normal(library: "c4b0d6d9-af9f-426e-91e9-2d525bf7b4bb", kind: "tag") }
+    func testManageTaxonomyLargestNormal() { task96Normal(library: "7deb0da9-3494-4b60-8d30-c1899d73077d", kind: "tag") }
+
+    func testManageTaxonomyOptions() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "ce8fc4ba-9fc2-498e-90f7-ac6fbdb645bb", "--native-manage-taxonomy-options-read-failure"]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        task96Open(app, kind: "context")
+        XCTAssertTrue(app.staticTexts["manage-taxonomy-error"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["manage-taxonomy-save"].isEnabled)
+        boardTap(app, "manage-taxonomy-retry")
+        task96Name(app, "@B96"); task96Save(app)
+        task96Closed(app)
+        app.terminate()
+    }
+
+    func testManageTaxonomyRefusal() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "3c4ddb5e-aa05-42a9-b176-21854fbbc7f8", "--native-manage-taxonomy-refusal"]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        task96Open(app, kind: "tag")
+        task96Name(app, "#B96"); task96Save(app)
+        XCTAssertTrue(app.staticTexts["manage-taxonomy-error"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.textFields["manage-taxonomy-name"].value as? String, "#B96")
+        boardEnabled(app.buttons["manage-taxonomy-save"])
+        task96Save(app)
+        task96Closed(app)
+        app.terminate()
+    }
+
+    func testManageTaxonomyRead() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "d88fec11-45d7-488d-af8b-436b61cebe4f", "--native-manage-taxonomy-read-failure"]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        task96Open(app, kind: "context")
+        task96Name(app, "@B96"); task96Save(app)
+        XCTAssertTrue(app.staticTexts["manage-taxonomy-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["manage-taxonomy-cancel"].isEnabled)
+            XCTAssertFalse(app.textFields["manage-taxonomy-name"].isEnabled)
+            boardTap(app, "manage-taxonomy-retry")
+        }
+        task96Closed(app)
+        app.terminate()
+    }
+
+    func testManageTaxonomyFailed() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "41ec0644-dca9-418c-8757-aa7f9a69d13c"]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        task96Open(app, kind: "tag")
+        task96Name(app, "#B96"); task96Save(app)
+        XCTAssertTrue(app.staticTexts["manage-taxonomy-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["manage-taxonomy-cancel"].isEnabled)
+            XCTAssertFalse(app.textFields["manage-taxonomy-name"].isEnabled)
+            boardTap(app, "manage-taxonomy-retry")
+            boardEnabled(app.buttons["manage-taxonomy-retry"], timeout: 20)
+        }
+        app.terminate()
+    }
+
+    func testManageTaxonomyColdRecovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "41ec0644-dca9-418c-8757-aa7f9a69d13c"]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        task96Open(app, kind: "tag")
+        XCTAssertEqual(app.textFields["manage-taxonomy-name"].value as? String, "#B96")
+        boardTap(app, "manage-taxonomy-cancel"); task96Closed(app)
+        app.terminate()
+    }
+
     private func task90OpenEdit(_ app: XCUIApplication, index: Int, name: String) -> XCUIElement {
         task89Area(app, index: index, title: name)
         let button = app.buttons["manage-area-edit-\(index)"]

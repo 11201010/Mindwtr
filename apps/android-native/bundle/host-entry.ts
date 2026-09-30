@@ -414,6 +414,7 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     manageList: (input) => contract.getManageSettingsList(input),
     manageCheck: (input) => contract.checkManageEditor(input),
     managePersonEditCheck: (input) => contract.checkPersonEdit(input),
+    manageTaxonomyCheck: (input) => contract.checkTaxonomyName(input),
     managePersonCreateCheck: (input) => {
         const value = input as unknown as Record<string, unknown>;
         return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1
@@ -884,6 +885,21 @@ globalThis.MindwtrHost = {
     },
     managePersonEditCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedPersonEdit(JSON.parse(json))));
+    },
+    manageTaxonomyOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.getTaxonomyOptions(JSON.parse(json))); });
+    },
+    manageTaxonomyRetryOutcome(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.probeTaxonomyOutcome(JSON.parse(json))); });
+    },
+    manageTaxonomyPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareTaxonomy(JSON.parse(json))); });
+    },
+    manageTaxonomyValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTaxonomy(JSON.parse(json))));
+    },
+    manageTaxonomyCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedTaxonomy(JSON.parse(json))));
     },
     managePersonDeleteOptions(json: string): string {
         return submit(async () => {

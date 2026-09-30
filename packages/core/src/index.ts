@@ -317,3 +317,5 @@ export { afterPaint } from './after-paint';
 export { isGettingStartedProject } from './getting-started-seed';
 
 export * from './native-host-contract-person-edit';
+export * from './native-host-contract-taxonomy';
+export * from './taxonomy-policy';

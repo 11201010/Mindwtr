@@ -13019,6 +13019,130 @@ final class CoreHostTests: XCTestCase {
         }
     }
 
+    private func exerciseTaxonomyRecovery(kind: String, action: String) async throws {
+        let at = "2026-10-01T12:00:00.000Z", clock = try dateBundle(at: "2026-10-01T12:00:00.000Z")
+        let bootstrap = host(bundleURL: clock)
+        _ = try await bootstrap.start(); await bootstrap.close()
+        let setup = try SQLiteBridge(url: database)
+        let taskIDs = ["taxonomy-live", "taxonomy-done", "taxonomy-archived", "taxonomy-deleted", "taxonomy-purged"]
+        let oldContexts = ["@Old96", "@OLD96", "@New96", "@Keep96"]
+        let oldTags = ["#Old96", "#OLD96", "#New96", "#Keep96"]
+        for id in taskIDs + ["taxonomy-unrelated"] {
+            let status = id == "taxonomy-done" ? "done" : id == "taxonomy-archived" ? "archived" : "next"
+            _ = try setup.execute("INSERT INTO tasks (id, title, status, description, tags, contexts, createdAt, updatedAt, completedAt, deletedAt, purgedAt, focusOrder, rev, revBy, isFocusedToday, pushCount, showFutureRecurrence, suppressMindwtrReminders) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", parametersJSON: json([
+                id, id, status, "Retained metadata", json(id == "taxonomy-unrelated" ? ["#Keep96"] : oldTags),
+                json(id == "taxonomy-unrelated" ? ["@Keep96"] : oldContexts), at, at,
+                status == "next" ? NSNull() : at as Any, id == "taxonomy-deleted" ? at as Any : NSNull(),
+                id == "taxonomy-purged" ? at as Any : NSNull(), 9, 4, "legacy-writer", 0, 0, 0, 0]))
+        }
+        for (id, status, deleted) in [("taxonomy-project", "active", false), ("taxonomy-project-archive", "archived", false), ("taxonomy-project-deleted", "active", true)] {
+            _ = try setup.execute("INSERT INTO projects (id, title, status, tagIds, createdAt, updatedAt, deletedAt, rev, revBy, isFocused, color, orderNum, isSequential) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", parametersJSON: json([id, id, status, json(oldTags), at, at, deleted ? at as Any : NSNull(), 3, "legacy-writer", 1, "#3b82f6", 0, 0]))
+        }
+        let original = try nineTableSnapshot(setup); setup.close()
+        let faults = HostIOFaults(), writer = host(faults, bundleURL: clock)
+        _ = try await writer.start()
+        let loaded = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(loaded), original); loaded.close()
+        let name = kind == "context" ? "@Old96" : "#Old96"
+        let destination = kind == "context" ? "@New96" : "#New96"
+        let options = try object(await writer.call("manageTaxonomyOptions", argumentsJSON: json([json(["kind": kind, "name": name])])))
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "kind": kind, "action": action, "name": name,
+                                      "to": action == "delete" ? NSNull() : destination as Any, "expected": try XCTUnwrap(options["expected"])]
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected taxonomy COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("manageTaxonomy", argumentsJSON: json([json(request)])) }
+        let frozen = try Data(contentsOf: journal), saved = try object(String(decoding: frozen, as: UTF8.self))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        let prepared = try XCTUnwrap(object(XCTUnwrap(args.first))["prepared"] as? [String: Any])
+        XCTAssertEqual(saved["method"] as? String, "manageTaxonomyCommit")
+        XCTAssertEqual(try json(XCTUnwrap(prepared["request"])), try json(request))
+        XCTAssertEqual(prepared["updateAt"] as? String, at)
+        let scope = try XCTUnwrap(prepared["scope"] as? [String: Any])
+        let scopedTasks = try XCTUnwrap(scope["tasks"] as? [[String: Any]])
+        XCTAssertEqual(Set(scopedTasks.compactMap { $0["id"] as? String }), Set(taskIDs))
+        for row in scopedTasks { XCTAssertEqual(row["focusOrder"] as? Int, 9) }
+        XCTAssertEqual((scope["projects"] as? [Any])?.count, kind == "tag" ? 3 : 0)
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        try assertJournalContentUnchanged(frozen)
+        let snapshot = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(snapshot), original)
+        let backup = directory.appendingPathComponent("taxonomy-baseline.sqlite")
+        try snapshot.prepareRecovery(at: backup); snapshot.close()
+        let baseline = try Data(contentsOf: backup)
+        let device = try XCTUnwrap(prepared["deviceIdBefore"] as? String ?? prepared["deviceIdToInitialize"] as? String)
+        func assertEffect(_ before: [String], _ after: [String]) throws {
+            var expected = before
+            let values = action == "delete" ? [destination, kind == "context" ? "@Keep96" : "#Keep96"]
+                : kind == "context" ? ["@New96", "@OLD96", "@Keep96"] : ["#OLD96", "#New96", "#Keep96"]
+            for table in kind == "tag" ? [0, 1] : [0] {
+                var rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[table].utf8)) as? [[String: Any]])
+                for index in rows.indices where table == 1 || taskIDs.contains(rows[index]["id"] as? String ?? "") {
+                    rows[index][table == 1 ? "tagIds" : kind == "tag" ? "tags" : "contexts"] = try json(values)
+                    rows[index]["updatedAt"] = at; rows[index]["revBy"] = device
+                    rows[index]["rev"] = try XCTUnwrap(rows[index]["rev"] as? Int) + 1
+                }
+                expected[table] = try json(rows)
+            }
+            XCTAssertEqual(try personEditSemanticTables(after, changedTaskIDs: Set(taskIDs)),
+                           try personEditSemanticTables(expected, changedTaskIDs: Set(taskIDs)))
+        }
+        faults.beforeSQL = nil
+        let pendingResult = try await writer.retryPending()
+        let result = try object(XCTUnwrap(pendingResult))
+        XCTAssertEqual(try json(result), try json(XCTUnwrap(prepared["result"])))
+        let successful = try SQLiteBridge(url: database)
+        try assertEffect(original, nineTableSnapshot(successful)); successful.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await writer.close()
+        for change in ["forged", "changed", "unrelated"] {
+            let changed = change == "changed"
+            for suffix in ["-wal", "-shm"] {
+                let sidecar = URL(fileURLWithPath: database.path + suffix)
+                if FileManager.default.fileExists(atPath: sidecar.path) { try FileManager.default.removeItem(at: sidecar) }
+            }
+            try baseline.write(to: database)
+            var replayJournal = frozen
+            if change == "forged" {
+                var forgedPrepared = prepared
+                forgedPrepared["updateAt"] = "2026-10-01T12:00:01.000Z"
+                var forgedJournal = saved
+                forgedJournal["argumentsJSON"] = try json([json(["request": request, "prepared": forgedPrepared])])
+                replayJournal = Data(try json(forgedJournal).utf8)
+            }
+            try replayJournal.write(to: journal)
+            let edit = try SQLiteBridge(url: database)
+            if changed { _ = try edit.execute("UPDATE tasks SET focusOrder = 10 WHERE id = 'taxonomy-done'") }
+            else if change == "unrelated" { _ = try edit.execute("UPDATE tasks SET description = 'Unrelated intervening edit' WHERE id = 'taxonomy-unrelated'") }
+            let before = try nineTableSnapshot(edit); edit.close()
+            let replayFaults = HostIOFaults(); var writes = 0, diagnostics = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
+            }
+            replayFaults.commandDiagnostic = { if $0 == "manageTaxonomyApplied" { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
+            let recovered = host(replayFaults, bundleURL: clock)
+            if change != "unrelated" {
+                await expectFailure(change == "forged" ? "INVALID_INPUT" : "STALE_REVISION") { _ = try await recovered.start() }
+                let check = try SQLiteBridge(url: database)
+                XCTAssertEqual(try nineTableSnapshot(check), before); check.close()
+                XCTAssertEqual(writes, 0); XCTAssertEqual(diagnostics, 0)
+                try assertJournalContentUnchanged(replayJournal)
+            } else {
+                let startup = try object(await recovered.start()), recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+                XCTAssertEqual(recovery["method"] as? String, "manageTaxonomyCommit")
+                XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(result))
+                let check = try SQLiteBridge(url: database)
+                try assertEffect(before, nineTableSnapshot(check)); check.close()
+                XCTAssertEqual(diagnostics, 1)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            }
+            await recovered.close()
+        }
+    }
+
+    func testManageTaxonomyContextRenameRecoveryPreservesRawRows() async throws { try await exerciseTaxonomyRecovery(kind: "context", action: "rename") }
+    func testManageTaxonomyContextDeleteRecoveryPreservesRawRows() async throws { try await exerciseTaxonomyRecovery(kind: "context", action: "delete") }
+    func testManageTaxonomyTagRenameRecoveryPreservesRawRows() async throws { try await exerciseTaxonomyRecovery(kind: "tag", action: "rename") }
+    func testManageTaxonomyTagDeleteRecoveryPreservesRawRows() async throws { try await exerciseTaxonomyRecovery(kind: "tag", action: "delete") }
+
     private enum AreaDurableCase: String {
         case rename, merge, delete, restore, fresh
         var method: String { self == .delete ? "manageAreaDelete" : [.restore, .fresh].contains(self) ? "manageAreaCreate" : "manageAreaEdit" }

@@ -32,6 +32,7 @@ export type ProjectActions = Pick<
     | 'commitPreparedAreaRename'
     | 'commitPreparedAreaOrder'
     | 'commitPreparedAreaDelete'
+    | 'commitPreparedTaxonomy'
     | 'updateProject'
     | 'cancelProject'
     | 'deleteProject'
@@ -104,7 +105,7 @@ export type OrderingActions = Pick<ProjectActions, 'reorderProjects' | 'reorderP
 
 export type PeopleActions = Pick<ProjectActions, 'addPerson' | 'commitPreparedPersonCreate' | 'commitPreparedPersonDelete' | 'commitPreparedPersonEdit' | 'updatePerson' | 'renamePerson' | 'deletePerson' | 'restorePerson'>;
 
-export type TaxonomyActions = Pick<ProjectActions, 'deleteTag' | 'renameTag' | 'deleteContext' | 'renameContext'>;
+export type TaxonomyActions = Pick<ProjectActions, 'deleteTag' | 'renameTag' | 'deleteContext' | 'renameContext' | 'commitPreparedTaxonomy'>;
 
 export type { AppData, Area, Person, Project, Section, Task, TaskStatus };
 

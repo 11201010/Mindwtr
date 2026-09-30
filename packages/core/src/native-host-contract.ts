@@ -283,6 +283,7 @@ import { createProjectTaskOrderMethods } from './native-host-contract-project-ta
 import { createAreaCreateMethods } from './native-host-contract-area-create';
 import { createPersonCreateMethods } from './native-host-contract-person-create';
 import { createPersonEditMethods } from './native-host-contract-person-edit';
+import { createTaxonomyMethods } from './native-host-contract-taxonomy';
 import { createPersonDeleteMethods } from './native-host-contract-person-delete';
 import { createAreaColorMethods } from './native-host-contract-area-color';
 import { createAreaRenameMethods } from './native-host-contract-area-rename';
@@ -1786,6 +1787,7 @@ export function createNativeHostContract(options: {
 
         ...createPersonCreateMethods({ readiness, save }),
         ...createPersonEditMethods({ readiness, save }),
+        ...createTaxonomyMethods({ readiness, save, t: () => translate }),
         ...createPersonDeleteMethods({ readiness, save, t: () => translate }),
 
         ...createAreaCreateMethods({ readiness, save,

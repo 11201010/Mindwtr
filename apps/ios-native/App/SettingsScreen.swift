@@ -5,6 +5,9 @@ struct SettingsScreen: View {
     let palette: AppPalette
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var renameFocused: Bool
+    @FocusState private var taxonomyNameFocused: Bool
+    @State private var taxonomyDeleteConfirmPresented = false
+    @State private var taxonomyDeleteConfirmAnswered = false
     @FocusState private var areaNameFocused: Bool
     private enum PersonEditorField: Hashable { case name, note, reference }
     @FocusState private var personEditorFocused: PersonEditorField?
@@ -32,7 +35,7 @@ struct SettingsScreen: View {
                           || model.somedaySectionRenameAwaitingRefresh
                           || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
                           || model.somedaySectionOrderActive || model.unassignedAreaColorActive
-                          || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
+                          || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
                           || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
                 .accessibilityLabel(model.label("common.back"))
                 .accessibilityIdentifier(model.settingsManagePresented ? "manage-back" : "settings-back")
@@ -91,6 +94,27 @@ struct SettingsScreen: View {
                 if !areaDeleteConfirmAnswered && !areaDeleteConfirmPresented { model.cancelSettingsAreaDelete() }
             }
         }
+        .alert(model.settingsTaxonomyOptions.object("confirmation").text("title"),
+               isPresented: $taxonomyDeleteConfirmPresented) {
+            Button(model.settingsTaxonomyOptions.object("confirmation").text("cancelLabel"), role: .cancel) {
+                taxonomyDeleteConfirmAnswered = true
+                model.cancelSettingsTaxonomy()
+            }
+            .accessibilityIdentifier("manage-taxonomy-delete-cancel")
+            Button(model.settingsTaxonomyOptions.object("confirmation").text("confirmLabel"), role: .destructive) {
+                taxonomyDeleteConfirmAnswered = true
+                Task { await model.saveSettingsTaxonomy() }
+            }
+            .accessibilityIdentifier("manage-taxonomy-delete-confirm")
+        } message: {
+            Text(model.settingsTaxonomyOptions.object("confirmation").text("message"))
+        }
+        .onChange(of: taxonomyDeleteConfirmPresented) { presented in
+            guard !presented else { return }
+            DispatchQueue.main.async {
+                if !taxonomyDeleteConfirmAnswered && !taxonomyDeleteConfirmPresented { model.cancelSettingsTaxonomy() }
+            }
+        }
         .alert(model.settingsPersonDeleteOptions.object("confirm").text("title"),
                isPresented: $personDeleteConfirmPresented) {
             Button(model.settingsPersonDeleteOptions.object("confirm").text("cancelLabel"), role: .cancel) {
@@ -128,6 +152,10 @@ struct SettingsScreen: View {
             get: { model.settingsPersonEditPresented },
             set: { if !$0 { model.cancelSettingsPersonEdit() } }
         )) { personEditorSheet(editing: true) }
+        .sheet(isPresented: Binding(
+            get: { model.settingsTaxonomyPresented },
+            set: { if !$0 { model.cancelSettingsTaxonomy() } }
+        )) { taxonomyEditorSheet }
         .sheet(isPresented: Binding(
             get: { model.settingsAreaEditActive },
             set: { if !$0 { model.cancelSettingsAreaEdit() } }
@@ -220,6 +248,20 @@ struct SettingsScreen: View {
                                    retryID: "manage-unassigned-color-retry") {
                             Task { await model.retryUnassignedAreaColor() }
                         }
+                    } else if model.settingsTaxonomyActive && model.settingsTaxonomyAction == "delete",
+                              let failure = model.settingsTaxonomyError ?? model.settingsTaxonomyReadError {
+                        VStack(alignment: .leading, spacing: 4) {
+                            errorBlock(failure, id: "manage-taxonomy-delete-error", retryID: "manage-taxonomy-delete-retry") {
+                                Task {
+                                    await model.retrySettingsTaxonomy()
+                                    presentTaxonomyDeleteConfirmationIfReady()
+                                }
+                            }
+                            if model.settingsTaxonomyCanCancel {
+                                Button(model.label("common.cancel")) { model.cancelSettingsTaxonomy() }
+                                    .frame(minHeight: 44).accessibilityIdentifier("manage-taxonomy-delete-cancel")
+                            }
+                        }
                     } else if let failure = model.settingsPersonDeleteError {
                         VStack(alignment: .leading, spacing: 4) {
                             errorBlock(failure, id: "manage-person-delete-error", retryID: "manage-person-delete-retry") {
@@ -294,7 +336,7 @@ struct SettingsScreen: View {
                                                           || model.somedaySectionDeleteActive
                                                           || model.somedaySectionOrderActive
                                                           || model.unassignedAreaColorActive
-                                                          || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                                                          || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                             .opacity((someday || areas || inventory) ? 1 : 0.55)
                             .accessibilityValue(section.flag("open") ? "expanded" : "collapsed")
                             .accessibilityIdentifier("manage-section-toggle-" + (someday ? "someday-sections" : section.text("key")))
@@ -320,7 +362,7 @@ struct SettingsScreen: View {
                                               || model.unassignedAreaColorActive
                                               || model.somedaySectionRenameIndex != nil
                                               || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
-                                              || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                                              || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                                     .accessibilityIdentifier("manage-areas-more")
                                 }
                                 newAreaRow
@@ -344,7 +386,7 @@ struct SettingsScreen: View {
                                                   || model.somedaySectionDeleteActive
                                                   || model.somedaySectionOrderActive
                                                   || model.unassignedAreaColorActive
-                                                  || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                                                  || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                                         .accessibilityIdentifier("manage-someday-more")
                                     }
                                 }
@@ -363,7 +405,7 @@ struct SettingsScreen: View {
             }
             .accessibilityIdentifier("manage-someday-scroll")
         }
-        .disabled(model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
+        .disabled(model.settingsTaxonomyActive || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
     }
 
     private func inventoryContent(_ key: String) -> some View {
@@ -486,8 +528,27 @@ struct SettingsScreen: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
             HStack(spacing: 4) {
-                disabledInventoryAction("pencil", label: model.label("common.edit"))
-                disabledInventoryAction("trash", label: model.label("common.delete"))
+                Button {
+                    Task { await model.openSettingsTaxonomy(kind: key == "contexts" ? "context" : "tag", index: index, deleting: false) }
+                } label: {
+                    Image(systemName: "pencil").font(.system(size: 18)).foregroundStyle(palette.secondary)
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.manageInventoryActionsEnabled)
+                .accessibilityLabel("\(model.label("common.edit")): \(row.text("value"))")
+                .accessibilityIdentifier("manage-\(key == "contexts" ? "context" : "tag")-edit-\(index)")
+                Button {
+                    Task {
+                        await model.openSettingsTaxonomy(kind: key == "contexts" ? "context" : "tag", index: index, deleting: true)
+                        presentTaxonomyDeleteConfirmationIfReady()
+                    }
+                } label: {
+                    Image(systemName: "trash").font(.system(size: 18)).foregroundStyle(palette.danger)
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.manageInventoryActionsEnabled)
+                .accessibilityLabel("\(model.label("common.delete")): \(row.text("value"))")
+                .accessibilityIdentifier("manage-\(key == "contexts" ? "context" : "tag")-delete-\(index)")
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 52)
@@ -496,14 +557,6 @@ struct SettingsScreen: View {
         .accessibilityIdentifier("manage-\(key == "contexts" ? "context" : "tag")-row-\(index)")
     }
 
-    private func disabledInventoryAction(_ symbol: String, label: String) -> some View {
-        Button {} label: {
-            Image(systemName: symbol).font(.system(size: 18))
-                .foregroundStyle(symbol == "trash" ? palette.danger : palette.secondary)
-                .frame(width: 44, height: 44).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain).disabled(true).opacity(0.45).accessibilityLabel(label)
-    }
 
     private var unassignedAreaRow: some View {
         let row = model.manageSettings.object("areas").object("unassigned")
@@ -525,7 +578,7 @@ struct SettingsScreen: View {
             .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
                       || model.unassignedAreaColorActive || model.somedaySectionRenameIndex != nil
                       || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
-                      || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                      || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
             .accessibilityLabel(model.label("common.edit") + ": " + row.text("label"))
             .accessibilityIdentifier("manage-unassigned-color")
         }
@@ -546,7 +599,7 @@ struct SettingsScreen: View {
             }
             .buttonStyle(.plain)
             .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
-                      || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaCreatePresented
+                      || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaCreatePresented
                       || model.settingsAreaEditActive || model.unassignedAreaColorActive
                       || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
                       || model.somedaySectionRenameIndex != nil)
@@ -563,7 +616,7 @@ struct SettingsScreen: View {
             }
             .buttonStyle(.plain)
             .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
-                      || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive || model.settingsAreaCreatePresented
+                      || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive || model.settingsAreaCreatePresented
                       || model.unassignedAreaColorActive || model.somedaySectionDeleteActive
                       || model.somedaySectionOrderActive || model.somedaySectionRenameIndex != nil)
             .accessibilityLabel(model.label("common.delete") + ": " + row.text("name"))
@@ -589,7 +642,7 @@ struct SettingsScreen: View {
                 .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
                           || model.settingsAreaCreatePresented || model.unassignedAreaColorActive
                           || model.somedaySectionRenameIndex != nil || model.somedaySectionDeleteActive
-                          || model.somedaySectionOrderActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                          || model.somedaySectionOrderActive || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                 .frame(minWidth: 86, minHeight: 44)
                 .accessibilityLabel(row.text("label"))
                 .accessibilityIdentifier("manage-area-add")
@@ -600,6 +653,74 @@ struct SettingsScreen: View {
     private func endPersonEditing() {
         personEditorFocused = nil
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private var taxonomyEditorSheet: some View {
+        let copy = model.settingsTaxonomyOptions.object("text").isEmpty
+            ? model.manageSettings.object("editor").object("text").object(model.settingsTaxonomyKind ?? "context")
+            : model.settingsTaxonomyOptions.object("text")
+        return NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    TextField(copy.text("namePlaceholder"), text: Binding(
+                        get: { model.settingsTaxonomyName }, set: { model.setSettingsTaxonomyName($0) }))
+                        .focused($taxonomyNameFocused).submitLabel(.done)
+                        .onSubmit { taxonomyNameFocused = false }
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .rnFont(16).padding(.horizontal, 12).frame(minHeight: 48)
+                        .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                        .disabled(!model.settingsTaxonomyInputEnabled)
+                        .accessibilityLabel(copy.text("namePlaceholder"))
+                        .accessibilityIdentifier("manage-taxonomy-name")
+                    if let failure = model.settingsTaxonomyError ?? model.settingsTaxonomyReadError {
+                        errorBlock(failure, id: "manage-taxonomy-error", retryID: "manage-taxonomy-retry") {
+                            taxonomyNameFocused = false
+                            Task { await model.retrySettingsTaxonomy() }
+                        }
+                    }
+                    HStack(spacing: 12) {
+                        Button {
+                            taxonomyNameFocused = false
+                            model.cancelSettingsTaxonomy()
+                        } label: {
+                            Text(copy.text("cancelLabel")).frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .disabled(!model.settingsTaxonomyCanCancel)
+                        .accessibilityIdentifier("manage-taxonomy-cancel")
+                        Button {
+                            taxonomyNameFocused = false
+                            Task { await model.saveSettingsTaxonomy() }
+                        } label: {
+                            Text(copy.text("saveLabel")).foregroundStyle(palette.onTint)
+                                .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderedProminent).tint(palette.tint)
+                        .disabled(!model.settingsTaxonomyCanSave)
+                        .accessibilityIdentifier("manage-taxonomy-save")
+                    }
+                }.padding(20)
+            }
+            .accessibilityIdentifier("manage-taxonomy-scroll")
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle(copy.text("title"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button(model.label("common.done")) { taxonomyNameFocused = false }
+                        .frame(minHeight: 44).accessibilityIdentifier("manage-taxonomy-keyboard-done")
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(!model.settingsTaxonomyCanCancel)
+    }
+
+    private func presentTaxonomyDeleteConfirmationIfReady() {
+        guard model.settingsTaxonomyCanConfirm else { return }
+        taxonomyDeleteConfirmAnswered = false
+        taxonomyDeleteConfirmPresented = true
     }
 
     private func personEditorSheet(editing: Bool) -> some View {

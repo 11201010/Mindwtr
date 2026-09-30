@@ -244,6 +244,37 @@ final class CoreModel: ObservableObject {
             && settingsPersonDeleteError == nil && manageReadError == nil
     }
 
+    @Published private(set) var settingsTaxonomyKind: String?
+    @Published private(set) var settingsTaxonomyAction = "rename"
+    @Published private(set) var settingsTaxonomyName = ""
+    @Published private(set) var settingsTaxonomyOptions: CoreObject = [:]
+    @Published private(set) var settingsTaxonomyError: String?
+    @Published private(set) var settingsTaxonomyReadError: String?
+    @Published private(set) var settingsTaxonomyAwaitingRefresh = false
+    @Published private(set) var settingsTaxonomyChecking = false
+    private var settingsTaxonomyOriginalName = ""
+    private var settingsTaxonomyRequest: String?
+    private var settingsTaxonomyAcknowledged = false
+    private var settingsTaxonomyCheckCurrent = false
+    private var settingsTaxonomySaveDisabled = true
+    private var settingsTaxonomyNameGeneration = 0
+    var settingsTaxonomyActive: Bool { settingsTaxonomyKind != nil }
+    var settingsTaxonomyPresented: Bool { settingsTaxonomyActive && settingsTaxonomyAction == "rename" }
+    var settingsTaxonomyCanCancel: Bool {
+        settingsTaxonomyActive && !busy && !retryNeeded && settingsTaxonomyRequest == nil && !settingsTaxonomyAcknowledged
+    }
+    var settingsTaxonomyInputEnabled: Bool {
+        ready && selectedSurface == .settings && settingsManagePresented && settingsTaxonomyCanCancel
+            && !settingsTaxonomyAwaitingRefresh && !settingsTaxonomyOptions.isEmpty && manageReadError == nil
+    }
+    var settingsTaxonomyCanSave: Bool {
+        settingsTaxonomyInputEnabled && settingsTaxonomyPresented && settingsTaxonomyReadError == nil
+            && settingsTaxonomyCheckCurrent && !settingsTaxonomyChecking && !settingsTaxonomySaveDisabled
+    }
+    var settingsTaxonomyCanConfirm: Bool {
+        settingsTaxonomyInputEnabled && settingsTaxonomyAction == "delete" && settingsTaxonomyReadError == nil
+    }
+
     @Published private(set) var settingsPersonEditPresented = false
     @Published private(set) var settingsPersonEditAwaitingRefresh = false
     @Published private(set) var settingsPersonEditName = ""
@@ -476,7 +507,7 @@ final class CoreModel: ObservableObject {
     var unassignedAreaColorCanSave: Bool {
         selectedSurface == .settings && settingsManagePresented && !busy && !retryNeeded
             && !unassignedAreaColorOptions.isEmpty && unassignedAreaColorRequest == nil
-            && !unassignedAreaColorAwaitingRefresh && manageReadError == nil && !settingsPersonCreatePresented && !settingsPersonEditPresented && !settingsPersonDeleteActive && !settingsAreaCreatePresented && !settingsAreaEditActive
+            && !unassignedAreaColorAwaitingRefresh && manageReadError == nil && !settingsPersonCreatePresented && !settingsPersonEditPresented && !settingsTaxonomyActive && !settingsPersonDeleteActive && !settingsAreaCreatePresented && !settingsAreaEditActive
     }
     private var somedaySectionRenameRequest: String?
     private var somedaySectionRenameID: String?
@@ -618,6 +649,9 @@ final class CoreModel: ObservableObject {
     private var managePersonDeleteTestReadFailures = 0
     private var managePersonDeleteOptionsTestReadFailures = 0
     private var managePersonDeleteTestRefusals = 0
+    private var manageTaxonomyTestReadFailures = 0
+    private var manageTaxonomyOptionsTestReadFailures = 0
+    private var manageTaxonomyTestRefusals = 0
     private var managePersonEditTestReadFailures = 0
     private var managePersonEditOptionsTestReadFailures = 0
     private var managePersonEditTestRefusals = 0
@@ -1405,13 +1439,13 @@ final class CoreModel: ObservableObject {
         ready && selectedSurface == .settings && settingsManagePresented && somedaySectionDeleteID != nil
             && !busy && !retryNeeded && !somedaySectionDeletePending && !somedaySectionDeleteAwaitingRefresh
             && somedaySectionDeleteOptions.text("id") == somedaySectionDeleteID && manageReadError == nil
-            && !unassignedAreaColorActive && !settingsPersonCreatePresented && !settingsPersonEditPresented && !settingsPersonDeleteActive && !settingsAreaCreatePresented && !settingsAreaEditActive
+            && !unassignedAreaColorActive && !settingsPersonCreatePresented && !settingsPersonEditPresented && !settingsTaxonomyActive && !settingsPersonDeleteActive && !settingsAreaCreatePresented && !settingsAreaEditActive
     }
     var somedaySectionRenameInputEnabled: Bool {
         ready && selectedSurface == .settings && settingsManagePresented && somedaySectionRenameIndex != nil
             && !busy && !retryNeeded && !somedaySectionRenamePending && !somedaySectionRenameAwaitingRefresh
             && !somedaySectionRenameOptions.isEmpty && manageReadError == nil
-            && !unassignedAreaColorActive && !settingsPersonCreatePresented && !settingsPersonEditPresented && !settingsPersonDeleteActive && !settingsAreaCreatePresented && !settingsAreaEditActive
+            && !unassignedAreaColorActive && !settingsPersonCreatePresented && !settingsPersonEditPresented && !settingsTaxonomyActive && !settingsPersonDeleteActive && !settingsAreaCreatePresented && !settingsAreaEditActive
     }
     var somedaySectionRenameCanSave: Bool {
         somedaySectionRenameInputEnabled && !somedaySectionRenameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1585,6 +1619,9 @@ final class CoreModel: ObservableObject {
                     managePersonDeleteTestReadFailures = arguments.contains("--native-manage-person-delete-read-failure") ? 2 : 0
                     managePersonDeleteOptionsTestReadFailures = arguments.contains("--native-manage-person-delete-options-read-failure") ? 1 : 0
                     managePersonDeleteTestRefusals = arguments.contains("--native-manage-person-delete-refusal") ? 1 : 0
+                    manageTaxonomyTestReadFailures = arguments.contains("--native-manage-taxonomy-read-failure") ? 2 : 0
+                    manageTaxonomyOptionsTestReadFailures = arguments.contains("--native-manage-taxonomy-options-read-failure") ? 1 : 0
+                    manageTaxonomyTestRefusals = arguments.contains("--native-manage-taxonomy-refusal") ? 1 : 0
                     managePersonEditTestReadFailures = arguments.contains("--native-manage-person-edit-read-failure") ? 2 : 0
                     managePersonEditOptionsTestReadFailures = arguments.contains("--native-manage-person-edit-options-read-failure") ? 1 : 0
                     managePersonEditTestRefusals = arguments.contains("--native-manage-person-edit-refusal") ? 1 : 0
@@ -1744,7 +1781,7 @@ final class CoreModel: ObservableObject {
             } else if recovery.text("method") == "taskListSortWrite" {
                 selectedSurface = .reference
             } else if ["somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite",
-                       "unassignedAreaColorWrite", "managePersonCreateCommit", "managePersonDeleteCommit", "managePersonEditCommit", "manageAreaCreateCommit", "manageAreaDeleteCommit",
+                       "unassignedAreaColorWrite", "managePersonCreateCommit", "managePersonDeleteCommit", "managePersonEditCommit", "manageTaxonomyCommit", "manageAreaCreateCommit", "manageAreaDeleteCommit",
                        "manageAreaEditCommit"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsManagePresented = true
@@ -1825,7 +1862,7 @@ final class CoreModel: ObservableObject {
               somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil, managePendingInventoryDepths == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         guard !busy else { refreshRequested = true; return }
         busy = true
         defer { finishOperation() }
@@ -1845,7 +1882,7 @@ final class CoreModel: ObservableObject {
               managePendingCandidate == nil, managePendingInventoryDepths == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
-              !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedayMovePending, !somedayMoveAwaitingRefresh, !somedayMoveUndoAwaitingRefresh,
               somedayMoveCreatedSectionID == nil else { return }
         morePresented = false
@@ -1865,7 +1902,7 @@ final class CoreModel: ObservableObject {
               somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil, managePendingInventoryDepths == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         if morePresented { morePresented = false; return }
         busy = true
         defer { finishOperation() }
@@ -1885,7 +1922,7 @@ final class CoreModel: ObservableObject {
         guard ready, !busy, !retryNeeded, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, !somedaySectionDeleteActive,
               !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
-              !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
+              !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         settingsCaller = selectedSurface
         morePresented = false
         settingsManagePresented = false
@@ -1903,7 +1940,7 @@ final class CoreModel: ObservableObject {
         guard selectedSurface == .settings, !busy, !retryNeeded,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         settingsSearchTask?.cancel()
         settingsSearchGeneration += 1
         settingsManagePresented = false
@@ -1960,7 +1997,7 @@ final class CoreModel: ObservableObject {
         guard settingsManagePresented, !busy, !retryNeeded, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, !somedaySectionDeletePending,
               !somedaySectionDeleteAwaitingRefresh, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         cancelSomedaySectionRename()
         cancelSomedaySectionDelete()
         settingsManagePresented = false
@@ -2075,7 +2112,7 @@ final class CoreModel: ObservableObject {
             && !capturePresented && !areaPickerPresented && !taskPresented && !morePresented
             && !taskStatusMenuPresented && !calendarItemPresented && !calendarComposerPresented
             && !mindSweepPresented && !processInboxPresented && !projectRenameEditing
-            && !settingsPersonCreatePresented && !settingsPersonEditPresented && !settingsPersonDeleteActive && !settingsAreaCreatePresented && !settingsAreaEditActive && !settingsAreaDeleteActive
+            && !settingsPersonCreatePresented && !settingsPersonEditPresented && !settingsTaxonomyActive && !settingsPersonDeleteActive && !settingsAreaCreatePresented && !settingsAreaEditActive && !settingsAreaDeleteActive
             && !unassignedAreaColorActive && !somedaySectionRenameReadPending && somedaySectionRenameIndex == nil
             && !somedaySectionRenamePending && !somedaySectionRenameAwaitingRefresh
             && !somedaySectionDeleteActive && !somedaySectionOrderActive
@@ -2134,14 +2171,14 @@ final class CoreModel: ObservableObject {
     }
 
     func dismissManagedPersonReferenceError() {
-        guard selectedSurface == .settings, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded else { return }
+        guard selectedSurface == .settings, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded else { return }
         managePersonReferenceError = nil
     }
 
     func toggleManageSection(_ key: String) async {
         if ["people", "contexts", "tags"].contains(key) { guard manageInventoryActionsEnabled else { return } }
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              manageReadError == nil, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
@@ -2158,7 +2195,7 @@ final class CoreModel: ObservableObject {
 
     func loadMoreManagedSomedaySections() async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              manageReadError == nil, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               somedaySectionRenameIndex == nil, !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
               managedSomedaySections.count < managedSomedayTotal else { return }
@@ -2176,7 +2213,7 @@ final class CoreModel: ObservableObject {
 
     func loadMoreManagedAreas() async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              manageReadError == nil, !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
               managedAreas.count < managedAreasTotal else { return }
@@ -2194,7 +2231,7 @@ final class CoreModel: ObservableObject {
 
     func retryManageSettingsRead() async {
         guard selectedSurface == .settings, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive else { return }
@@ -2216,7 +2253,7 @@ final class CoreModel: ObservableObject {
 
     func openUnassignedAreaColor() async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              manageReadError == nil, !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
               somedaySectionRenameIndex == nil, !somedaySectionRenameReadPending else { return }
@@ -2341,7 +2378,7 @@ final class CoreModel: ObservableObject {
 
     func openSomedaySectionRename(index: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               manageReadError == nil, somedaySectionRenameOpeningIndex == nil,
               somedaySectionRenameIndex == nil, !somedaySectionDeleteActive, !somedaySectionOrderActive,
@@ -2478,7 +2515,7 @@ final class CoreModel: ObservableObject {
 
     func openSomedaySectionDelete(index: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionDeleteActive, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, somedaySectionRenameIndex == nil,
               somedaySectionRenameOpeningIndex == nil, manageReadError == nil,
@@ -2596,7 +2633,7 @@ final class CoreModel: ObservableObject {
 
     func moveManagedSomedaySection(index: Int, offset: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionOrderActive, !somedaySectionDeleteActive, !settingsAreaDeleteActive,
               somedaySectionRenameIndex == nil, !somedaySectionRenameReadPending,
               manageReadError == nil, managedSomedaySections.indices.contains(index),
@@ -2682,7 +2719,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openProjects() async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !projectRenameEditing else { return }
         morePresented = false
         selectedSurface = .projects
@@ -5436,6 +5473,184 @@ final class CoreModel: ObservableObject {
         if fromProject { dismissProjectAreaPresentation() }
     }
 
+    func openSettingsTaxonomy(kind: String, index: Int, deleting: Bool) async {
+        guard manageInventoryActionsEnabled, ["context", "tag"].contains(kind),
+              let rows = managedInventoryRows[kind == "context" ? "contexts" : "tags"],
+              rows.indices.contains(index), !rows[index].text("value").isEmpty else { return }
+        settingsTaxonomyKind = kind
+        settingsTaxonomyAction = deleting ? "delete" : "rename"
+        settingsTaxonomyOriginalName = rows[index].text("value")
+        settingsTaxonomyName = settingsTaxonomyOriginalName
+        settingsTaxonomyOptions = [:]
+        settingsTaxonomyAcknowledged = false
+        settingsTaxonomyAwaitingRefresh = false
+        settingsTaxonomyCheckCurrent = false
+        settingsTaxonomySaveDisabled = true
+        settingsTaxonomyError = nil
+        settingsTaxonomyReadError = nil
+        settingsTaxonomyNameGeneration += 1
+        busy = true
+        defer { finishOperation() }
+        do { try await readSettingsTaxonomyOptions(preserveDraft: false) }
+        catch { settingsTaxonomyReadError = error.localizedDescription }
+    }
+
+    private func readSettingsTaxonomyOptions(preserveDraft: Bool) async throws {
+        guard let kind = settingsTaxonomyKind else { throw CocoaError(.coderReadCorrupt) }
+        let options = try await query("manageTaxonomyOptions", [try json(["kind": kind, "name": settingsTaxonomyOriginalName])])
+        guard options.count == 6, options.text("kind") == kind,
+              options.text("name").utf8.elementsEqual(settingsTaxonomyOriginalName.utf8),
+              !options.object("expected").isEmpty, options.object("draft")["name"] is String else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        settingsTaxonomyOptions = options
+        if !preserveDraft { settingsTaxonomyName = options.object("draft").text("name") }
+        settingsTaxonomyNameGeneration += 1
+        if settingsTaxonomyPresented { try await readSettingsTaxonomyCheck(generation: settingsTaxonomyNameGeneration) }
+        settingsTaxonomyReadError = nil
+    }
+
+    func cancelSettingsTaxonomy() {
+        guard settingsTaxonomyCanCancel else { return }
+        dismissSettingsTaxonomy()
+    }
+
+    private func dismissSettingsTaxonomy() {
+        settingsTaxonomyKind = nil
+        settingsTaxonomyOptions = [:]
+        settingsTaxonomyName = ""
+        settingsTaxonomyOriginalName = ""
+        settingsTaxonomyAwaitingRefresh = false
+        settingsTaxonomyAcknowledged = false
+        settingsTaxonomyNameGeneration += 1
+        settingsTaxonomyChecking = false
+        settingsTaxonomyCheckCurrent = false
+        settingsTaxonomySaveDisabled = true
+        settingsTaxonomyError = nil
+        settingsTaxonomyReadError = nil
+    }
+
+    func setSettingsTaxonomyName(_ value: String) {
+        guard settingsTaxonomyInputEnabled, !value.utf8.elementsEqual(settingsTaxonomyName.utf8) else { return }
+        settingsTaxonomyName = value
+        settingsTaxonomyError = nil
+        settingsTaxonomyReadError = nil
+        settingsTaxonomyNameGeneration += 1
+        let generation = settingsTaxonomyNameGeneration
+        settingsTaxonomyCheckCurrent = false
+        settingsTaxonomySaveDisabled = true
+        settingsTaxonomyChecking = true
+        Task {
+            do { try await Task.sleep(nanoseconds: 120_000_000) } catch { return }
+            guard generation == settingsTaxonomyNameGeneration, settingsTaxonomyPresented,
+                  settingsTaxonomyRequest == nil, !busy, !retryNeeded else { return }
+            do { try await readSettingsTaxonomyCheck(generation: generation) }
+            catch {
+                guard generation == settingsTaxonomyNameGeneration, settingsTaxonomyPresented,
+                      settingsTaxonomyRequest == nil else { return }
+                settingsTaxonomyChecking = false
+                settingsTaxonomyReadError = error.localizedDescription
+            }
+        }
+    }
+
+    private func readSettingsTaxonomyCheck(generation: Int) async throws {
+        guard let kind = settingsTaxonomyKind else { throw CocoaError(.coderReadCorrupt) }
+        let check = try await query("menuRead", ["manageTaxonomyCheck", try json(["kind": kind, "name": settingsTaxonomyName])])
+        guard generation == settingsTaxonomyNameGeneration, settingsTaxonomyPresented, settingsTaxonomyRequest == nil else { return }
+        guard check.count == 1, let disabled = check["saveDisabled"] as? Bool else { throw CocoaError(.coderReadCorrupt) }
+        settingsTaxonomySaveDisabled = disabled
+        settingsTaxonomyCheckCurrent = true
+        settingsTaxonomyChecking = false
+        settingsTaxonomyReadError = nil
+    }
+
+    func saveSettingsTaxonomy() async {
+        guard settingsTaxonomyCanSave || settingsTaxonomyCanConfirm, let kind = settingsTaxonomyKind else { return }
+        settingsTaxonomyNameGeneration += 1
+        settingsTaxonomyChecking = false
+        busy = true
+        defer { finishOperation() }
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString.lowercased(), "kind": kind,
+                "action": settingsTaxonomyAction, "name": settingsTaxonomyOriginalName,
+                "to": settingsTaxonomyAction == "delete" ? NSNull() : settingsTaxonomyName as Any,
+                "expected": settingsTaxonomyOptions.object("expected")])
+            settingsTaxonomyRequest = request
+        } catch { settingsTaxonomyReadError = error.localizedDescription; return }
+        do { try acknowledgeSettingsTaxonomy(await query("manageTaxonomy", [request])) }
+        catch { await handleSettingsTaxonomyWriteError(error); return }
+        await refreshSettingsTaxonomy()
+    }
+
+    private func acknowledgeSettingsTaxonomy(_ result: CoreObject) throws {
+        guard settingsTaxonomyRequest != nil, let kind = settingsTaxonomyKind,
+              result.count == 4, result.text("kind") == kind, result.text("action") == settingsTaxonomyAction,
+              result.text("name").utf8.elementsEqual(settingsTaxonomyOriginalName.utf8),
+              settingsTaxonomyAction == "delete" ? result["to"] is NSNull : result["to"] is String else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        settingsTaxonomyRequest = nil
+        settingsTaxonomyAcknowledged = true
+        settingsTaxonomyAwaitingRefresh = true
+        settingsTaxonomyError = nil
+        settingsTaxonomyReadError = nil
+        retryNeeded = false
+        error = nil
+    }
+
+    private func handleSettingsTaxonomyWriteError(_ failure: Error) async {
+        settingsTaxonomyError = failure.localizedDescription
+        if settingsTaxonomyRequest != nil && isDefiniteRejection(failure) {
+            settingsTaxonomyRequest = nil
+            settingsTaxonomyCheckCurrent = false
+            settingsTaxonomyAwaitingRefresh = true
+            retryNeeded = false
+            error = nil
+            await refreshSettingsTaxonomy()
+        } else {
+            retryNeeded = settingsTaxonomyRequest != nil
+            error = failure.localizedDescription
+        }
+    }
+
+    private func refreshSettingsTaxonomy() async {
+        guard settingsTaxonomyActive, selectedSurface == .settings, settingsManagePresented, settingsTaxonomyRequest == nil else { return }
+        do {
+            try await readManageSettings()
+            if settingsTaxonomyAcknowledged { dismissSettingsTaxonomy() }
+            else {
+                try await readSettingsTaxonomyOptions(preserveDraft: true)
+                settingsTaxonomyAwaitingRefresh = false
+            }
+            settingsTaxonomyReadError = nil
+            error = nil
+        } catch {
+            settingsTaxonomyReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    func retrySettingsTaxonomy() async {
+        if retryNeeded { await retry(); return }
+        guard settingsTaxonomyActive, !busy, settingsTaxonomyRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        if settingsTaxonomyAwaitingRefresh { await refreshSettingsTaxonomy() }
+        else {
+            do {
+                if settingsTaxonomyOptions.isEmpty { try await readSettingsTaxonomyOptions(preserveDraft: false) }
+                else if settingsTaxonomyPresented {
+                    settingsTaxonomyNameGeneration += 1
+                    try await readSettingsTaxonomyCheck(generation: settingsTaxonomyNameGeneration)
+                }
+                settingsTaxonomyReadError = nil
+                error = nil
+            } catch { settingsTaxonomyReadError = error.localizedDescription }
+        }
+    }
+
     func openSettingsPersonEdit(index: Int) async {
         guard manageInventoryActionsEnabled, let rows = managedInventoryRows["people"],
               rows.indices.contains(index), !rows[index].text("id").isEmpty else { return }
@@ -5829,7 +6044,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openSettingsAreaCreate() async {
-        guard ready, selectedSurface == .settings, settingsManagePresented, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+        guard ready, selectedSurface == .settings, settingsManagePresented, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !busy, !retryNeeded, manageReadError == nil, !unassignedAreaColorActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
@@ -6451,7 +6666,7 @@ final class CoreModel: ObservableObject {
     func openSettingsAreaEdit(index: Int) async {
         guard ready, selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
               manageReadError == nil, !settingsAreaEditActive, !settingsAreaDeleteActive,
-              !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !unassignedAreaColorActive,
+              !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !unassignedAreaColorActive,
               !somedaySectionDeleteActive, !somedaySectionOrderActive,
               somedaySectionRenameIndex == nil, managedAreas.indices.contains(index) else { return }
         let row = managedAreas[index]
@@ -6789,7 +7004,7 @@ final class CoreModel: ObservableObject {
 
     func openSettingsAreaDelete(index: Int) async {
         guard ready, selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !settingsAreaDeleteActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              manageReadError == nil, !settingsAreaDeleteActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !unassignedAreaColorActive, !somedaySectionDeleteActive, !somedaySectionOrderActive,
               somedaySectionRenameIndex == nil, managedAreas.indices.contains(index) else { return }
         let id = managedAreas[index].text("id")
@@ -6985,7 +7200,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openBoard() async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
         morePresented = false
         selectedSurface = .board
         await refresh()
@@ -7279,7 +7494,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openCalendar() async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented else { return }
         morePresented = false
         selectedSurface = .calendar
@@ -7851,7 +8066,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openReview() async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !mindSweepPresented, !processInboxPresented else { return }
         morePresented = false
         selectedSurface = .review
@@ -8137,7 +8352,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openContexts() async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
         if selectedSurface != .contexts { contextsCaller = selectedSurface }
         morePresented = false
         selectedSurface = .contexts
@@ -8303,7 +8518,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openWaiting() async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
         if selectedSurface != .waiting { waitingCaller = selectedSurface }
         morePresented = false
         selectedSurface = .waiting
@@ -8317,7 +8532,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openSomeday() async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
         if selectedSurface != .someday { somedayCaller = selectedSurface }
         morePresented = false
         selectedSurface = .someday
@@ -9256,7 +9471,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openReference() async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
         if selectedSurface != .reference { referenceCaller = selectedSurface }
         morePresented = false
         selectedSurface = .reference
@@ -9670,7 +9885,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openTrash() async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !taskPresented, !capturePresented, !areaPickerPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !taskPresented, !capturePresented, !areaPickerPresented else { return }
         if selectedSurface != .trash { trashCaller = selectedSurface }
         morePresented = false
         selectedSurface = .trash
@@ -9745,7 +9960,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openHistory() async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !taskPresented, !capturePresented else { return }
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !taskPresented, !capturePresented else { return }
         if selectedSurface != .history { historyCaller = selectedSurface }
         morePresented = false
         selectedSurface = .history
@@ -10249,7 +10464,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openProject(_ row: CoreObject, descriptionSourceID: String? = nil) async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               selectedSurface != .project, selectedSurface != .trash, !row.text("id").isEmpty else { return }
         if selectedSurface == .review {
             let entries = (reviewGuidePresented ? reviewGuide : reviewOverview).objects("items")
@@ -11253,7 +11468,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openSearch() {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, selectedSurface != .search else { return }
         searchCaller = selectedSurface
         morePresented = false
@@ -11364,7 +11579,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openAreaPicker() async {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !taskPresented,
               !projectRenameEditing,
               !calendarComposerPresented, !mindSweepPresented else { return }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -11446,7 +11661,7 @@ final class CoreModel: ObservableObject {
 
     func openTask(_ id: String, descriptionSourceID: String? = nil) async {
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !projectRenameEditing, selectedSurface != .trash else { return }
         if selectedSurface == .review {
             guard reviewActionsEnabled, reviewTaskIDs.contains(id) else { return }
@@ -12617,7 +12832,7 @@ final class CoreModel: ObservableObject {
 
     func openCapture() async {
         guard ready, !busy, !retryNeeded, !areaPickerPresented, !taskPresented,
-              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive, !settingsPersonDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !projectRenameEditing,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented else { return }
         morePresented = false
@@ -13715,6 +13930,14 @@ final class CoreModel: ObservableObject {
                 await refreshManageAfterPersonDelete()
                 return
             }
+            if let request = settingsTaxonomyRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("manageTaxonomyRetryOutcome", [request]) }
+                try acknowledgeSettingsTaxonomy(result)
+                await refreshSettingsTaxonomy()
+                return
+            }
             if let request = settingsPersonEditRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -13937,6 +14160,10 @@ final class CoreModel: ObservableObject {
             }
             if settingsPersonDeleteRequest != nil {
                 await handleSettingsPersonDeleteWriteError(error)
+                return
+            }
+            if settingsTaxonomyRequest != nil {
+                await handleSettingsTaxonomyWriteError(error)
                 return
             }
             if settingsPersonEditRequest != nil {
@@ -14786,6 +15013,19 @@ final class CoreModel: ObservableObject {
         if method == "managePersonDelete", settingsPersonDeleteRequest != nil,
            managePersonDeleteTestRefusals > 0 {
             managePersonDeleteTestRefusals -= 1
+            throw SimulatedManageAreaRefusal()
+        }
+        if method == "menuRead", args.first as? String == "manageSettings",
+           settingsTaxonomyAcknowledged, manageTaxonomyTestReadFailures > 0 {
+            manageTaxonomyTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "manageTaxonomyOptions", settingsTaxonomyActive, manageTaxonomyOptionsTestReadFailures > 0 {
+            manageTaxonomyOptionsTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "manageTaxonomy", settingsTaxonomyRequest != nil, manageTaxonomyTestRefusals > 0 {
+            manageTaxonomyTestRefusals -= 1
             throw SimulatedManageAreaRefusal()
         }
         if method == "menuRead", args.first as? String == "manageSettings",

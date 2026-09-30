@@ -321,6 +321,20 @@ export type PreparedAreaDelete = {
     updateAt: string;
 };
 
+/** Complete raw carrier scope and effects for one managed Context or Tag write. */
+export type PreparedTaxonomy = {
+    request: { requestId: string; kind: import('./taxonomy-policy').TaxonomyKind;
+        action: import('./taxonomy-policy').TaxonomyAction; name: string; to: string | null;
+        expected: import('./taxonomy-policy').TaxonomyScope };
+    scope: import('./taxonomy-policy').TaxonomyScope;
+    effect: import('./taxonomy-policy').TaxonomyEffect;
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    updateAt: string;
+    result: { kind: import('./taxonomy-policy').TaxonomyKind;
+        action: import('./taxonomy-policy').TaxonomyAction; name: string; to: string | null };
+};
+
 /** Internal native Board journal: before is the source guard, after the sole written row. */
 export type PreparedBoardTask = {
     kind: 'duplicateTask' | 'trashTask';
@@ -578,6 +592,7 @@ export interface TaskStore {
     commitPreparedAreaOrder: (input: PreparedAreaOrder & { request: { requestId: string; intent: AreaOrderIntent; expectedAreas: unknown[] }; result: { orderedIds: string[] } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaDelete: (input: PreparedAreaDelete & { request: { requestId: string; areaId: string;
         detachProjects?: true }; result: { areaId: string } }, authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    commitPreparedTaxonomy: (input: PreparedTaxonomy, authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Update a project */
     updateProject: (id: string, updates: Partial<Project>) => Promise<StoreActionResult>;
     /** Archive a project as cancelled and cancel its unfinished child tasks */
