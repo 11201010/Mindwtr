@@ -13,6 +13,7 @@ import { useTaskStore } from './store';
 import { gtdWorkflowNestedPath, gtdWorkflowWitness, timestampAtLeastAfter,
     gtdWorkflowTargetArea,
     type GtdWorkflowType, type GtdWorkflowDirectType, type GtdWorkflowReviewType, type GtdWorkflowInboxType,
+    type GtdWorkflowCaptureParseType, type GtdWorkflowCaptureParseWitness,
     type GtdWorkflowWitness, type GtdWorkflowDirectWitness,
     type GtdWorkflowReviewWitness, type GtdWorkflowInboxWitness,
     type GtdWorkflowAreaWitness, type GtdWorkflowTargetArea } from './store-settings';
@@ -21,7 +22,8 @@ import type { AppData, AppSettings, Area } from './types';
 
 export type { GtdWorkflowType, GtdWorkflowWitness } from './store-settings';
 export type GtdWorkflowEdit = Extract<GtdSettingsEdit,
-    { type: GtdWorkflowDirectType | 'defaultArea' }> | { type: GtdWorkflowReviewType | GtdWorkflowInboxType; value: boolean };
+    { type: GtdWorkflowDirectType | 'defaultArea' }>
+    | { type: GtdWorkflowReviewType | GtdWorkflowInboxType | GtdWorkflowCaptureParseType; value: boolean };
 export type NativeGtdWorkflowRequest = { requestId: string; edit: GtdWorkflowEdit;
     expected: GtdWorkflowWitness };
 export type NativeGtdWorkflowResult = { type: GtdWorkflowType; value: string | number | boolean; changed: boolean };
@@ -35,6 +37,9 @@ export type NativeGtdReviewOptions = { review: GtdSettingsModel['review'];
     expected: Record<GtdWorkflowReviewType, GtdWorkflowReviewWitness> };
 export type NativeGtdInboxOptions = { inbox: GtdSettingsModel['inbox'];
     expected: Record<GtdWorkflowInboxType, GtdWorkflowInboxWitness> };
+export type NativeGtdCaptureParseOptions = { capture: Pick<GtdSettingsModel['capture'],
+    'title' | 'description' | 'quickAddAutoClean' | 'naturalLanguageDates'>;
+    expected: Record<GtdWorkflowCaptureParseType, GtdWorkflowCaptureParseWitness> };
 export type NativeGtdCaptureAreaOptions = { capture: Pick<GtdSettingsModel['capture'], 'title' | 'description' | 'defaultArea'>;
     expected: GtdWorkflowAreaWitness; offset: number; total: number; revision: string };
 export type NativeGtdWorkflowPreparation = { kind: 'noop'; result: NativeGtdWorkflowResult }
@@ -45,6 +50,7 @@ const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const TYPES: GtdWorkflowDirectType[] = ['defaultScheduleTime', 'focusTaskLimit', 'defaultProjectFlowMode'];
 const REVIEW_TYPES: GtdWorkflowReviewType[] = ['dailyReviewFocusStep', 'weeklyReviewContextStep'];
 const INBOX_TYPES: GtdWorkflowInboxType[] = ['inboxTwoMinute', 'inboxProjectFirst', 'inboxContextStep', 'inboxSchedule'];
+const CAPTURE_PARSE_TYPES: GtdWorkflowCaptureParseType[] = ['quickAddAutoClean', 'naturalLanguageDates'];
 const isReview = (type: GtdWorkflowType): type is GtdWorkflowReviewType =>
     type === 'dailyReviewFocusStep' || type === 'weeklyReviewContextStep';
 const isInbox = (type: GtdWorkflowType): type is GtdWorkflowInboxType =>
@@ -52,6 +58,8 @@ const isInbox = (type: GtdWorkflowType): type is GtdWorkflowInboxType =>
         || type === 'inboxContextStep' || type === 'inboxSchedule';
 const isNested = (type: GtdWorkflowType): type is GtdWorkflowReviewType | GtdWorkflowInboxType =>
     isReview(type) || isInbox(type);
+const isCaptureParse = (type: GtdWorkflowType): type is GtdWorkflowCaptureParseType =>
+    type === 'quickAddAutoClean' || type === 'naturalLanguageDates';
 const same = taskEditValuesEqual;
 const bounded = (value: unknown, max = 500): value is string => typeof value === 'string' && value.length <= max;
 const iso = (value: unknown): value is string => bounded(value, 40)
@@ -76,6 +84,8 @@ const validEdit = (value: unknown): value is GtdWorkflowEdit => {
         case 'inboxProjectFirst':
         case 'inboxContextStep':
         case 'inboxSchedule':
+        case 'quickAddAutoClean':
+        case 'naturalLanguageDates':
             return typeof value.value === 'boolean';
         default: return false;
     }
@@ -94,7 +104,7 @@ const validWitness = (value: unknown, type: GtdWorkflowType): value is GtdWorkfl
         : typeof value.present === 'boolean'
     && (!isNested(type) || typeof value.parentPresent === 'boolean'
         && (value.parentPresent || !value.present))
-    && (value.present ? isNested(type) ? typeof value.value === 'boolean' : type === 'focusTaskLimit'
+    && (value.present ? isNested(type) || isCaptureParse(type) ? typeof value.value === 'boolean' : type === 'focusTaskLimit'
         ? typeof value.value === 'number' && Number.isSafeInteger(value.value) && Math.abs(value.value) <= 1_000_000
         : bounded(value.value) : value.value === null))
     && (value.stampPresent ? iso(value.stamp) : value.stamp === null);
@@ -131,7 +141,11 @@ const settingsByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): 
         return { gtd: { [parent]: nested.parentPresent
             ? (nested.present ? { [field]: nested.value } : {}) : undefined } } as AppSettings;
     }
-    const direct = witness as GtdWorkflowDirectWitness;
+    if (edit.type === 'quickAddAutoClean') {
+        const scalar = witness as GtdWorkflowCaptureParseWitness;
+        return { ...(scalar.present ? { quickAddAutoClean: scalar.value } : {}) } as AppSettings;
+    }
+    const direct = witness as GtdWorkflowDirectWitness | GtdWorkflowCaptureParseWitness;
     return { gtd: direct.present ? { [edit.type]: direct.value } : {} } as AppSettings;
 };
 const storedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): boolean =>
@@ -146,6 +160,12 @@ const nestedOfferedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitne
             : edit.type === 'inboxProjectFirst' ? model.inbox.projectFirst.edit
                 : edit.type === 'inboxContextStep' ? model.inbox.contextStep.edit : model.inbox.schedule.edit;
     return same(offered, edit);
+};
+const captureParseOfferedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): boolean => {
+    if (!isCaptureParse(edit.type)) return true;
+    const model = buildGtdSettingsModel({ settings: settingsByWitness(edit, witness), areas: [],
+        taskOpenMode: 'automatic', t: (key) => key });
+    return same(model.capture[edit.type].edit, edit);
 };
 
 /** Pure validation of the frozen edit and its scalar/group receipt before storage opens. */
@@ -169,6 +189,7 @@ const readPrepared = (input: unknown): NativePreparedGtdWorkflow | null => {
         || !same(prepared.result, { type: request.edit.type, value: request.edit.value, changed: true })
         || storedByWitness(request.edit, request.expected)
         || !nestedOfferedByWitness(request.edit, request.expected)
+        || !captureParseOfferedByWitness(request.edit, request.expected)
         || request.edit.type === 'defaultArea' && (request.edit.value === ''
             || request.edit.value === GTD_DEFAULT_AREA_ACTIVE_OPTION
             ? prepared.targetArea !== null
@@ -211,6 +232,16 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
         return buildGtdSettingsModel({ settings: display, areas: [],
             taskOpenMode: 'automatic', t: deps.t() }).inbox;
     };
+    const captureParseFor = (data: AppData): NativeGtdCaptureParseOptions['capture'] => {
+        const gtd = data.settings.gtd;
+        const display = { quickAddAutoClean: data.settings.quickAddAutoClean,
+            gtd: { naturalLanguageDates: gtd?.naturalLanguageDates } } as AppSettings;
+        const capture = buildGtdSettingsModel({ settings: display, areas: [],
+            taskOpenMode: 'automatic', t: deps.t() }).capture;
+        return { title: capture.title, description: capture.description,
+            quickAddAutoClean: capture.quickAddAutoClean,
+            naturalLanguageDates: capture.naturalLanguageDates };
+    };
     const captureFor = (data: AppData): GtdSettingsModel['capture'] => {
         const gtd = data.settings.gtd;
         const display = { gtd: { defaultAreaMode: gtd?.defaultAreaMode,
@@ -223,6 +254,22 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
     const areaRevision = (areas: readonly Area[]): string => revisionsToken(areas.map((area) =>
         JSON.stringify([area.id, area.name, area.order, area.createdAt, area.updatedAt, area.rev ?? null, area.revBy ?? null])));
     return {
+        async getGtdCaptureParseOptions(input: unknown): Promise<NativeHostResult<NativeGtdCaptureParseOptions>> {
+            const ready = deps.readiness(); if (!ready.ok) return ready;
+            if (!record(input) || !exact(input, []) || !isNativeJsonWithinBytes(input, 8192))
+                return fail('INVALID_INPUT', 'GTD Capture parse options take an empty object');
+            const read = await readAreaDurableData(); if (!read.ok) return read;
+            const snapshot = read.value.authority.snapshot;
+            const expected = {} as Record<GtdWorkflowCaptureParseType, GtdWorkflowCaptureParseWitness>;
+            for (const type of CAPTURE_PARSE_TYPES) {
+                const witness = gtdWorkflowWitness(snapshot.settings, type);
+                if (!witness) return fail('INVALID_INPUT', `Saved ${type} GTD Capture preference has an unsupported value`);
+                expected[type] = witness;
+            }
+            const value = { capture: captureParseFor(snapshot), expected };
+            return isNativeJsonWithinBytes(value, 65_536) ? { ok: true, value }
+                : fail('INVALID_INPUT', 'GTD Capture parse options exceed the bounded response');
+        },
         async getGtdCaptureAreaOptions(input: unknown): Promise<NativeHostResult<NativeGtdCaptureAreaOptions>> {
             const ready = deps.readiness(); if (!ready.ok) return ready;
             if (!record(input) || !exact(input, input.revision === undefined
@@ -349,6 +396,10 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
                         : request.edit.type === 'inboxContextStep' ? inbox.contextStep : inbox.schedule;
                 if (!same(toggle.edit, request.edit))
                     return fail('INVALID_INPUT', 'GTD Inbox choice is unavailable');
+            } else if (isCaptureParse(request.edit.type)) {
+                const capture = captureParseFor(read.value.authority.snapshot);
+                if (!same(capture[request.edit.type].edit, request.edit))
+                    return fail('INVALID_INPUT', 'GTD Capture parse choice is unavailable');
             } else {
                 const hub = hubFor(read.value.authority.snapshot);
                 if (request.edit.type === 'focusTaskLimit'

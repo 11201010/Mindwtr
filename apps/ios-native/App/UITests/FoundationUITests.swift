@@ -13120,4 +13120,132 @@ final class FoundationUITests: XCTestCase {
 
     func testGtdCaptureAreaLargestLayout() { task106Normal("110f8bc2-4ec4-4702-b4aa-431d01bb1074") }
 
+    private func task107Toggle(_ app: XCUIApplication, _ type: String, on: Bool) {
+        let control = app.switches["gtd-" + type]
+        revealPagedElement(app, control, in: app.scrollViews["gtd-capture-scroll"])
+        boardEnabled(control)
+        if control.value as? String != (on ? "1" : "0") { control.tap() }
+        expectation(for: NSPredicate(format: "value == %@ AND enabled == true", on ? "1" : "0"), evaluatedWith: control)
+        waitForExpectations(timeout: 30)
+    }
+
+    private func task107Normal(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task103Open(app)
+        let input = app.textFields["gtd-defaultScheduleTime"]
+        revealPagedElement(app, input, in: app.scrollViews["gtd-scroll"])
+        replaceTextView(input, with: "930", tapOffset: CGVector(dx: 0.5, dy: 0.5))
+        task106Open(app)
+        let fields = [("quickAddAutoClean", false), ("naturalLanguageDates", true)]
+        for (type, initial) in fields {
+            XCTAssertEqual(app.switches["gtd-" + type].value as? String, initial ? "1" : "0")
+            task107Toggle(app, type, on: !initial)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Capture parsing switches"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task106Open(app)
+        for (type, initial) in fields {
+            XCTAssertEqual(app.switches["gtd-" + type].value as? String, initial ? "0" : "1")
+            task107Toggle(app, type, on: initial)
+        }
+        boardTap(app, "gtd-capture-back"); boardEnabled(app.buttons["gtd-back"])
+        XCTAssertEqual(input.value as? String, "09:30")
+        let focus = task103Option(app, "focusTaskLimit", "3"); focus.tap()
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: focus)
+        waitForExpectations(timeout: 20)
+        boardTap(app, "gtd-back"); boardEnabled(app.buttons["settings-back"])
+        app.terminate()
+    }
+
+    func testGtdCaptureParseNormal() { task107Normal("20ecde1d-ddbb-4f72-bdcc-ab8e3839990f") }
+    func testGtdCaptureParseLargest() { task107Normal("518165ab-e666-4fa2-aa0b-65621859f52f") }
+
+    func testGtdCaptureParseAcknowledgedReadRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "a5bf31d4-45f3-442c-a14c-95637652e973", "--native-gtd-workflow-read-failure"]
+        app.launch(); task106Open(app)
+        task107RevealClean(app).tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-capture-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-capture-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-capture-back"], timeout: 30)
+        XCTAssertEqual(app.switches["gtd-quickAddAutoClean"].value as? String, "1")
+        app.terminate()
+    }
+
+    private func task107RevealClean(_ app: XCUIApplication) -> XCUIElement {
+        let control = app.switches["gtd-quickAddAutoClean"]
+        revealPagedElement(app, control, in: app.scrollViews["gtd-capture-scroll"])
+        boardEnabled(control); return control
+    }
+
+    func testGtdCaptureParseRefusalCorrection() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "368f0277-27e8-4285-8837-c212045c3977", "--native-gtd-workflow-refusal"]
+        app.launch(); task106Open(app); task107RevealClean(app).tap()
+        XCTAssertTrue(app.staticTexts["gtd-error"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.switches["gtd-quickAddAutoClean"].value as? String, "0")
+        task107Toggle(app, "quickAddAutoClean", on: true)
+        app.terminate()
+    }
+
+    func testGtdCaptureParseFailedSaveExactRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "5adf2334-ca05-44c4-9519-c93586d66f7c"]
+        app.launch(); task106Open(app); task107RevealClean(app).tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-capture-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-capture-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-retry"], timeout: 30); app.terminate()
+    }
+
+    func testGtdCaptureParseColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "5adf2334-ca05-44c4-9519-c93586d66f7c"]
+        app.launch(); boardEnabled(app.buttons["gtd-capture-back"], timeout: 30)
+        XCTAssertEqual(app.switches["gtd-quickAddAutoClean"].value as? String, "1")
+        XCTAssertFalse(app.buttons["gtd-retry"].exists); app.terminate()
+    }
+
+    func testGtdCaptureParseConsumerAfterRestart() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "79191343-0fe8-42a2-b37c-4519542f088e"]
+        func capture(due: Bool, fill: Bool) {
+            task106Root(app); boardTap(app, "capture-open")
+            let input = app.textViews["capture-input"]; boardEnabled(input)
+            let date = app.scrollViews["capture-preview"].staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Due Date:")).firstMatch
+            if fill {
+                if due { input.typeText("Task107 parser tomorrow") }
+                else {
+                    input.typeText("Task107 parser /due:tomorrow")
+                    XCTAssertTrue(date.waitForExistence(timeout: 20))
+                    input.typeKey("a", modifierFlags: .command)
+                    input.typeText("Task107 parser tomorrow")
+                    XCTAssertEqual(input.value as? String, "Task107 parser tomorrow")
+                }
+            }
+            expectation(for: NSPredicate(format: "exists == %@", NSNumber(value: due)), evaluatedWith: date)
+            waitForExpectations(timeout: 20)
+        }
+        app.launch(); capture(due: true, fill: true)
+        boardTap(app, "capture-close"); task106Open(app)
+        task107Toggle(app, "quickAddAutoClean", on: true)
+        task107Toggle(app, "naturalLanguageDates", on: false)
+        capture(due: true, fill: false) // The retained draft owns its original parse settings.
+        boardTap(app, "capture-close"); app.terminate(); app.launch()
+        capture(due: false, fill: true)
+        boardTap(app, "capture-close"); task106Open(app)
+        task107Toggle(app, "naturalLanguageDates", on: true)
+        app.terminate(); app.launch(); capture(due: true, fill: true)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Capture date parsing preview"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "capture-save")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.textViews["capture-input"])
+        waitForExpectations(timeout: 30); app.terminate()
+    }
+
+
 }

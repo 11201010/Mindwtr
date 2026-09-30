@@ -99,6 +99,16 @@ async function planArea(host: ReturnType<typeof createNativeHostContract>, value
     return { request, prepared: prepared.value.prepared };
 }
 
+async function planCaptureParse(host: ReturnType<typeof createNativeHostContract>,
+    edit: { type: 'quickAddAutoClean' | 'naturalLanguageDates'; value: boolean }) {
+    const options = await host.getGtdCaptureParseOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID, edit, expected: options.value.expected[edit.type] };
+    const prepared = await host.prepareGtdWorkflow(request);
+    if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+    return { request, prepared: prepared.value.prepared };
+}
+
 const tables = ['tasks', 'projects', 'areas', 'people', 'sections', 'settings', 'saved_filters',
     'schema_migrations', 'calendar_sync'] as const;
 const nineTables = (db: Database) => Object.fromEntries(tables.map((table) =>
@@ -243,6 +253,73 @@ describe('GTD Capture Default Area paired SQLite recovery', () => {
         const reopened = await open(path);
         expect(await reopened.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
             error: { code: 'STALE_REVISION' } });
+    }, 20_000);
+});
+
+describe('GTD Capture parser scalar SQLite recovery', () => {
+    it.each([
+        { type: 'naturalLanguageDates', value: false },
+        { type: 'quickAddAutoClean', value: true },
+    ] as const)('retries $type from raw rows and requires exact cold field/group receipt', async (edit) => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-capture-parse-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const first = await open(path, true);
+        // Store migrations normalize this legacy sibling on load. Stage the
+        // saved raw row after bootstrap to prove the writer itself preserves it.
+        const raw = await first.adapter.getData();
+        raw.settings.gtd = { ...raw.settings.gtd, pomodoro: 'malformed-unrelated' as never };
+        await first.adapter.saveData(raw);
+        const before = nineTables(first.db);
+        const beforeSettings = (await first.adapter.getData()).settings;
+        const envelope = await planCaptureParse(first.host, edit);
+        expect(Object.keys(envelope.prepared).sort()).toEqual([
+            'version', 'request', 'preparedAt', 'deviceIdBefore', 'deviceIdToInitialize', 'after', 'result'].sort());
+        expect(JSON.stringify(envelope)).not.toContain('legacySibling');
+        first.fault.commits = 10;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            expect(await first.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'SAVE_FAILED' } });
+            expect(nineTables(first.db)).toEqual(before);
+        }
+        first.fault.commits = 0;
+        expect(await first.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const after = nineTables(first.db);
+        for (const table of tables.filter((table) => table !== 'settings')) expect(after[table]).toEqual(before[table]);
+        const saved = await first.adapter.getData();
+        expect(edit.type === 'naturalLanguageDates'
+            ? saved.settings.gtd?.naturalLanguageDates : saved.settings.quickAddAutoClean).toBe(edit.value);
+        expect(saved.settings.gtd).toMatchObject({ ...beforeSettings.gtd,
+            pomodoro: 'malformed-unrelated' });
+        expect(saved.settings.syncPreferencesUpdatedAt?.gtd).toBe(envelope.prepared.after.stamp);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        expect(nineTables(cold.db)).toEqual(after);
+        expect(cold.host.probeGtdWorkflowOutcome(envelope.request)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+
+        const independent = await cold.adapter.getData();
+        independent.settings.syncPreferencesUpdatedAt = { ...independent.settings.syncPreferencesUpdatedAt,
+            gtd: '2026-10-01T00:00:00.000Z' };
+        await cold.adapter.saveData(independent);
+        cold.db.close(); databases.splice(databases.indexOf(cold.db), 1);
+        const changed = await open(path);
+        const changedRows = nineTables(changed.db);
+        expect(await changed.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(changed.db)).toEqual(changedRows);
+        const aba = await changed.adapter.getData();
+        if (edit.type === 'naturalLanguageDates') delete aba.settings.gtd?.naturalLanguageDates;
+        else delete aba.settings.quickAddAutoClean;
+        await changed.adapter.saveData(aba);
+        changed.db.close(); databases.splice(databases.indexOf(changed.db), 1);
+        const reopened = await open(path);
+        const abaRows = nineTables(reopened.db);
+        expect(await reopened.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(reopened.db)).toEqual(abaRows);
     }, 20_000);
 });
 

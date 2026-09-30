@@ -100,8 +100,12 @@ export const appLockWitness = (settings: AppSettings): AppLockWitness | null => 
 export type GtdWorkflowDirectType = 'defaultScheduleTime' | 'focusTaskLimit' | 'defaultProjectFlowMode';
 export type GtdWorkflowReviewType = 'dailyReviewFocusStep' | 'weeklyReviewContextStep';
 export type GtdWorkflowInboxType = 'inboxTwoMinute' | 'inboxProjectFirst' | 'inboxContextStep' | 'inboxSchedule';
-export type GtdWorkflowType = GtdWorkflowDirectType | GtdWorkflowReviewType | GtdWorkflowInboxType | 'defaultArea';
+export type GtdWorkflowCaptureParseType = 'quickAddAutoClean' | 'naturalLanguageDates';
+export type GtdWorkflowType = GtdWorkflowDirectType | GtdWorkflowReviewType | GtdWorkflowInboxType
+    | GtdWorkflowCaptureParseType | 'defaultArea';
 export type GtdWorkflowDirectWitness = { present: boolean; value: string | number | null;
+    stampPresent: boolean; stamp: string | null };
+export type GtdWorkflowCaptureParseWitness = { present: boolean; value: boolean | null;
     stampPresent: boolean; stamp: string | null };
 export type GtdWorkflowReviewWitness = { parentPresent: boolean; present: boolean; value: boolean | null;
     stampPresent: boolean; stamp: string | null };
@@ -110,7 +114,8 @@ export type GtdWorkflowAreaWitness = { modePresent: boolean; mode: string | null
     idPresent: boolean; id: string | null; stampPresent: boolean; stamp: string | null };
 export type GtdWorkflowTargetArea = { id: string; createdAt: string; updatedAt: string;
     revPresent: boolean; rev: number | null; revByPresent: boolean; revBy: string | null };
-export type GtdWorkflowWitness = GtdWorkflowDirectWitness | GtdWorkflowReviewWitness | GtdWorkflowInboxWitness | GtdWorkflowAreaWitness;
+export type GtdWorkflowWitness = GtdWorkflowDirectWitness | GtdWorkflowCaptureParseWitness
+    | GtdWorkflowReviewWitness | GtdWorkflowInboxWitness | GtdWorkflowAreaWitness;
 /** The selected saved Area's identity and revision, without its name or other fields. */
 export const gtdWorkflowTargetArea = (area: Area | undefined): GtdWorkflowTargetArea | null => {
     if (!area || area.deletedAt || typeof area.id !== 'string' || !area.id || area.id.length > 500
@@ -142,12 +147,13 @@ const boundedRawGtdValue = (type: GtdWorkflowDirectType, value: unknown): value 
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowDirectType): GtdWorkflowDirectWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowReviewType): GtdWorkflowReviewWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowInboxType): GtdWorkflowInboxWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowCaptureParseType): GtdWorkflowCaptureParseWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: 'defaultArea'): GtdWorkflowAreaWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null {
     const group = settings.gtd;
     const stamps = settings.syncPreferencesUpdatedAt;
-    if (group !== undefined && (!group || typeof group !== 'object' || Array.isArray(group))
+    if (type !== 'quickAddAutoClean' && group !== undefined && (!group || typeof group !== 'object' || Array.isArray(group))
         || stamps !== undefined && (!stamps || typeof stamps !== 'object' || Array.isArray(stamps))) return null;
     const stampPresent = stamps !== undefined && owns(stamps, 'gtd') && stamps.gtd !== undefined;
     const stamp = stampPresent ? stamps?.gtd : null;
@@ -162,6 +168,16 @@ export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType)
             || idPresent && !(id === null || typeof id === 'string' && id.length <= 500)) return null;
         return { modePresent, mode: modePresent ? mode as string | null : null,
             idPresent, id: idPresent ? id as string | null : null,
+            stampPresent, stamp: stampPresent ? stamp! : null };
+    }
+    if (type === 'quickAddAutoClean' || type === 'naturalLanguageDates') {
+        const present = type === 'quickAddAutoClean'
+            ? owns(settings, 'quickAddAutoClean') && settings.quickAddAutoClean !== undefined
+            : group !== undefined && owns(group, 'naturalLanguageDates') && group.naturalLanguageDates !== undefined;
+        const value = present ? type === 'quickAddAutoClean'
+            ? settings.quickAddAutoClean : group?.naturalLanguageDates : null;
+        if (present && typeof value !== 'boolean') return null;
+        return { present, value: present ? value as boolean : null,
             stampPresent, stamp: stampPresent ? stamp! : null };
     }
     if (type === 'dailyReviewFocusStep' || type === 'weeklyReviewContextStep'

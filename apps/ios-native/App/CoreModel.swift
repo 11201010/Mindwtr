@@ -1861,7 +1861,7 @@ final class CoreModel: ObservableObject {
                 settingsGtdPresented = true
                 settingsGtdReviewPresented = ["dailyReviewFocusStep", "weeklyReviewContextStep"].contains(recovery.object("result").text("type"))
                 settingsGtdInboxPresented = ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"].contains(recovery.object("result").text("type"))
-                settingsGtdCapturePresented = recovery.object("result").text("type") == "defaultArea"
+                settingsGtdCapturePresented = ["defaultArea", "quickAddAutoClean", "naturalLanguageDates"].contains(recovery.object("result").text("type"))
             } else if ["generalPreferenceCommit", "appLockCommit"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsGeneralPresented = true
@@ -2100,13 +2100,21 @@ final class CoreModel: ObservableObject {
     private func readGtdSettings() async throws {
         if settingsGtdCapturePresented {
             let options = try await query("gtdCaptureAreaOptions", [try json(["offset": 0, "limit": 50])])
-            let capture = options.object("capture")
+            let parsing = try await query("gtdCaptureParseOptions", ["{}"])
+            let expected = parsing.object("expected"), areaExpected = options.object("expected")
+            guard ["quickAddAutoClean", "naturalLanguageDates"].allSatisfy({ field in
+                let witness = expected.object(field)
+                return witness.flag("stampPresent") == areaExpected.flag("stampPresent")
+                    && witness.text("stamp") == areaExpected.text("stamp")
+            }) else { throw CocoaError(.coderReadCorrupt) }
+            var capture = options.object("capture")
             guard !capture.text("title").isEmpty, options.number("offset") == 0 else { throw CocoaError(.coderReadCorrupt) }
+            for field in ["quickAddAutoClean", "naturalLanguageDates"] { capture[field] = parsing.object("capture").object(field) }
             gtdCapture = capture
             gtdCaptureAreaOptions = capture.object("defaultArea").objects("options")
             gtdCaptureAreaTotal = options.number("total")
             gtdCaptureAreaRevision = options.text("revision")
-            gtdWorkflowExpected = ["defaultArea": options.object("expected")]
+            gtdWorkflowExpected = expected.merging(["defaultArea": areaExpected]) { _, new in new }
             gtdWorkflowReadError = nil
             gtdWorkflowAwaitingRefresh = false
             return
@@ -15670,7 +15678,7 @@ final class CoreModel: ObservableObject {
             generalPreferenceThemeTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
-        if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions"].contains(method), gtdWorkflowAwaitingRefresh, gtdWorkflowTestReadFailures > 0 {
+        if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureParseOptions"].contains(method), gtdWorkflowAwaitingRefresh, gtdWorkflowTestReadFailures > 0 {
             gtdWorkflowTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }

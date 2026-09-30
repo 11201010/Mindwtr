@@ -299,8 +299,6 @@ struct SettingsScreen: View {
     private var gtdCaptureContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text(model.gtdCapture.text("description")).rnFont(13).foregroundStyle(palette.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
                 let row = model.gtdCapture.object("defaultArea")
                 VStack(alignment: .leading, spacing: 12) {
                     generalSettingLabel(row, description: "description")
@@ -315,6 +313,12 @@ struct SettingsScreen: View {
                         .accessibilityLabel(row.text("accessibilityLabel"))
                         .accessibilityIdentifier("gtd-default-area")
                 }.padding(14).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                VStack(spacing: 0) {
+                    ForEach(["quickAddAutoClean", "naturalLanguageDates"], id: \.self) { field in
+                        if field != "quickAddAutoClean" { palette.border.frame(height: 0.5) }
+                        gtdToggle(model.gtdCapture.object(field)).padding(14)
+                    }
+                }.background(palette.card, in: RoundedRectangle(cornerRadius: 12))
                 if !model.gtdCaptureAreaPicker { gtdFeedback }
             }.padding(16).padding(.bottom, 24)
         }.accessibilityIdentifier("gtd-capture-scroll")

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createNativeHostContract } from './native-host-contract';
 import { canStarNewCapture } from './focus-star';
 import { normalizeFocusTaskLimit } from './focus-utils';
@@ -92,7 +92,19 @@ async function plannedArea(env: Awaited<ReturnType<typeof open>>, value: string)
         envelope: { request, prepared: plan.value.prepared } };
 }
 
-afterEach(async () => { await flushPendingSave(); resetForTests(); });
+type CaptureParseType = 'quickAddAutoClean' | 'naturalLanguageDates';
+async function plannedCaptureParse(env: Awaited<ReturnType<typeof open>>,
+    edit: { type: CaptureParseType; value: boolean }) {
+    const options = await env.host.getGtdCaptureParseOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID, edit, expected: options.value.expected[edit.type] };
+    const plan = await env.host.prepareGtdWorkflow(request);
+    if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+    return { options: options.value, request, prepared: plan.value.prepared,
+        envelope: { request, prepared: plan.value.prepared } };
+}
+
+afterEach(async () => { vi.useRealTimers(); await flushPendingSave(); resetForTests(); });
 
 describe('prepared GTD workflow defaults', () => {
     it.each([
@@ -730,5 +742,194 @@ describe('GTD Inbox variants in the original v1 workflow journal', () => {
         if (!expanded.ok) throw new Error(JSON.stringify(expanded));
         expect(expanded.value.moreOptions?.scheduling?.rows.map((row) => row.field))
             .toEqual(['startTime', 'dueDate', 'reviewAt']);
+    });
+});
+
+describe('GTD Capture parser toggles in the original v1 workflow journal', () => {
+    it.each([
+        { type: 'naturalLanguageDates', value: false, shown: true },
+        { type: 'quickAddAutoClean', value: true, shown: false },
+    ] as const)('saves $type and preserves unrelated raw siblings', async (edit) => {
+        const start = initial();
+        start.settings.gtd = { ...start.settings.gtd, taskEditor: 'malformed-unrelated' as never };
+        const env = await open(start);
+        const { options, envelope, prepared } = await plannedCaptureParse(env,
+            { type: edit.type, value: edit.value });
+        expect(Object.keys(options.capture).sort()).toEqual([
+            'title', 'description', 'quickAddAutoClean', 'naturalLanguageDates'].sort());
+        expect(Object.keys(options.expected).sort()).toEqual(['naturalLanguageDates', 'quickAddAutoClean']);
+        expect(options.capture[edit.type]).toMatchObject({ value: edit.shown, edit: { type: edit.type, value: edit.value } });
+        expect(options.expected[edit.type]).toEqual({ present: false, value: null, stampPresent: true, stamp: AT });
+        expect(Object.keys(envelope.request.expected).sort()).toEqual(['present', 'stamp', 'stampPresent', 'value']);
+        expect(Object.keys(prepared).sort()).toEqual([
+            'version', 'request', 'preparedAt', 'deviceIdBefore', 'deviceIdToInitialize', 'after', 'result'].sort());
+        expect(JSON.stringify(envelope)).not.toContain('legacySibling');
+        expect(env.host.validatePreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        const saved = env.data();
+        expect(edit.type === 'naturalLanguageDates'
+            ? saved.settings.gtd?.naturalLanguageDates : saved.settings.quickAddAutoClean).toBe(edit.value);
+        expect(saved.settings.gtd).toMatchObject({ legacySibling: { marker: 103 }, taskEditor: 'malformed-unrelated' });
+        expect(saved.settings.syncPreferencesUpdatedAt?.gtd).toBe(prepared.after.stamp);
+        expect(saved.tasks).toEqual(start.tasks);
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+    });
+
+    it('uses shared displayed defaults, refusing absent materialization and present no-ops', async () => {
+        for (const type of ['naturalLanguageDates', 'quickAddAutoClean'] as const) {
+            const absent = await open(initial());
+            const options = await absent.host.getGtdCaptureParseOptions({});
+            if (!options.ok) throw new Error(JSON.stringify(options));
+            const offered = options.value.capture[type].edit as { type: CaptureParseType; value: boolean };
+            expect(await absent.host.prepareGtdWorkflow({ requestId: ID,
+                edit: { type, value: !offered.value }, expected: options.value.expected[type] }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            const { envelope } = await plannedCaptureParse(absent, { type, value: offered.value });
+            const forged = structuredClone(envelope);
+            forged.request.edit.value = !offered.value;
+            forged.prepared.request.edit.value = !offered.value;
+            forged.prepared.after.value = !offered.value;
+            forged.prepared.result.value = !offered.value;
+            expect(absent.host.validatePreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+            expect(absent.saves()).toBe(0);
+            for (const value of [true, false]) {
+                const start = initial();
+                if (type === 'quickAddAutoClean') start.settings.quickAddAutoClean = value;
+                else start.settings.gtd = { ...start.settings.gtd, naturalLanguageDates: value };
+                const present = await open(start);
+                const current = await present.host.getGtdCaptureParseOptions({});
+                if (!current.ok) throw new Error(JSON.stringify(current));
+                expect(await present.host.prepareGtdWorkflow({ requestId: ID,
+                    edit: { type, value }, expected: current.value.expected[type] }))
+                    .toMatchObject({ ok: true, value: { kind: 'noop', result: { changed: false } } });
+                expect(present.saves()).toBe(0);
+            }
+        }
+    });
+
+    it('separates relevant malformed fields from unrelated GTD data and checks field/group CAS', async () => {
+        for (const type of ['naturalLanguageDates', 'quickAddAutoClean'] as const) {
+            for (const bad of [null, 'yes', 1]) {
+                const start = initial();
+                if (type === 'quickAddAutoClean') start.settings.quickAddAutoClean = bad as never;
+                else start.settings.gtd = { ...start.settings.gtd, naturalLanguageDates: bad as never };
+                const env = await open(start);
+                expect(await env.host.getGtdCaptureParseOptions({})).toMatchObject({ ok: false,
+                    error: { code: 'INVALID_INPUT' } });
+            }
+        }
+        const malformed = initial(); malformed.settings.gtd = 'bad-unrelated' as never;
+        const top = await open(malformed);
+        expect(await top.host.getGtdCaptureParseOptions({})).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        const request: NativeGtdWorkflowRequest = { requestId: ID,
+            edit: { type: 'quickAddAutoClean', value: true },
+            expected: { present: false, value: null, stampPresent: true, stamp: AT } };
+        const plan = await top.host.prepareGtdWorkflow(request);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        expect(await top.host.commitPreparedGtdWorkflow({ request, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(top.data().settings.gtd).toBe('bad-unrelated');
+        expect(top.data().settings.quickAddAutoClean).toBe(true);
+
+        for (const type of ['naturalLanguageDates', 'quickAddAutoClean'] as const) {
+            for (const change of [
+                (data: AppData) => ({ ...data, settings: { ...data.settings,
+                    ...(type === 'quickAddAutoClean' ? { quickAddAutoClean: true }
+                        : { gtd: { ...data.settings.gtd, naturalLanguageDates: false } }) } }),
+                (data: AppData) => ({ ...data, settings: { ...data.settings,
+                    syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                        gtd: '2026-09-02T00:00:00.000Z' } } }),
+            ]) {
+                const env = await open(initial());
+                const { envelope } = await plannedCaptureParse(env,
+                    { type, value: type === 'quickAddAutoClean' });
+                env.changeSaved(change);
+                expect(await env.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                    error: { code: 'STALE_REVISION' } });
+                expect(env.saves()).toBe(0);
+            }
+        }
+    });
+
+    it.each([
+        { dates: true, clean: false, bareDue: true, bareTitle: 'Task107 parser tomorrow' },
+        { dates: true, clean: true, bareDue: true, bareTitle: 'Task107 parser' },
+        { dates: false, clean: false, bareDue: false, bareTitle: 'Task107 parser tomorrow' },
+        { dates: false, clean: true, bareDue: false, bareTitle: 'Task107 parser tomorrow' },
+    ])('applies saved parser flags to a fresh Quick Capture ($dates, $clean)', async (row) => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-09-30T12:00:00.000Z'));
+        const env = await open(initial());
+        if (!row.dates) {
+            const { envelope } = await plannedCaptureParse(env, { type: 'naturalLanguageDates', value: false });
+            expect(await env.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: true });
+        }
+        if (row.clean) {
+            const { envelope } = await plannedCaptureParse(env, { type: 'quickAddAutoClean', value: true });
+            expect(await env.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: true });
+        }
+        const cold = await env.reopen();
+        const opened = cold.host.openQuickCapture();
+        if (!opened.ok) throw new Error(JSON.stringify(opened));
+        const text = 'Task107 parser tomorrow';
+        const preview = cold.host.getQuickCaptureView({ text, options: opened.value.options });
+        if (!preview.ok) throw new Error(JSON.stringify(preview));
+        expect(preview.value.preview.some((chip) => chip.kind === 'due')).toBe(row.bareDue);
+        const captureId = generateUUID();
+        expect(await cold.host.submitQuickCapture({ text, options: opened.value.options, captureId }))
+            .toMatchObject({ ok: true, value: { kind: 'saved', taskId: captureId } });
+        const task = cold.data().tasks.find((entry) => entry.id === captureId);
+        expect(task?.title).toBe(row.bareTitle);
+        expect(Boolean(task?.dueDate)).toBe(row.bareDue);
+        if (row.bareDue) expect(task?.dueDate).toContain('2026-10-01');
+
+        const explicit = cold.host.openQuickCapture();
+        if (!explicit.ok) throw new Error(JSON.stringify(explicit));
+        const explicitId = generateUUID();
+        expect(await cold.host.submitQuickCapture({ text: 'Explicit /due:tomorrow',
+            options: explicit.value.options, captureId: explicitId })).toMatchObject({ ok: true,
+            value: { kind: 'saved', taskId: explicitId } });
+        const explicitTask = cold.data().tasks.find((entry) => entry.id === explicitId);
+        expect(explicitTask?.title).toBe('Explicit');
+        expect(explicitTask?.dueDate).toContain('2026-10-01');
+    });
+
+    it('keeps an open draft and prepared capture bound to their original parse options', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-09-30T12:00:00.000Z'));
+        const env = await open(initial());
+        const opened = env.host.openQuickCapture();
+        if (!opened.ok) throw new Error(JSON.stringify(opened));
+        const text = 'Task107 parser tomorrow';
+        const request = { text, options: opened.value.options, captureId: generateUUID() };
+        const prepared = env.host.prepareQuickCapture(request);
+        if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+        const taskCount = env.data().tasks.length;
+        for (const edit of [
+            { type: 'naturalLanguageDates', value: false },
+            { type: 'quickAddAutoClean', value: true },
+        ] as const) {
+            const { envelope } = await plannedCaptureParse(env, edit);
+            expect(await env.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: true });
+        }
+        expect(env.data().tasks).toHaveLength(taskCount);
+        const retained = env.host.getQuickCaptureView({ text, options: opened.value.options });
+        if (!retained.ok) throw new Error(JSON.stringify(retained));
+        expect(retained.value.preview.some((chip) => chip.kind === 'due')).toBe(true);
+        expect(await env.host.commitPreparedQuickCapture({ request, prepared: prepared.value.prepared }))
+            .toMatchObject({ ok: true });
+        const saved = env.data().tasks.find((task) => task.id === request.captureId);
+        expect(saved?.title).toBe(text);
+        expect(saved?.dueDate).toContain('2026-10-01');
+        const cold = await env.reopen();
+        const fresh = cold.host.openQuickCapture();
+        if (!fresh.ok) throw new Error(JSON.stringify(fresh));
+        const after = cold.host.getQuickCaptureView({ text, options: fresh.value.options });
+        if (!after.ok) throw new Error(JSON.stringify(after));
+        expect(after.value.preview.some((chip) => chip.kind === 'due')).toBe(false);
     });
 });
