@@ -22,7 +22,7 @@ import {
     renameSomedaySection,
 } from './someday-sections-model';
 import { resetForTests } from './store';
-import type { AppSettings, Task, ViewSectionDefinition } from './types';
+import type { AppSettings, Project, Task, ViewSectionDefinition } from './types';
 
 const fixture = loadMenuViewsFixture();
 
@@ -158,6 +158,57 @@ describe('list view models', () => {
         ]);
         expect(getSomedayGroupSectionId('view-section:someday:none')).toBe('none');
         expect(getSomedayGroupSectionId('view-section:someday:')).toBeUndefined();
+    });
+
+    describe('Someday projects in sections (#1319)', () => {
+        const settings = { gtd: { viewSections: { someday: [
+            { id: 'travel', title: 'Travel', order: 0 }, { id: 'books', title: 'Books', order: 1 },
+        ] } } } as AppSettings;
+        const project = (id: string, order: number, viewSectionIds?: Project['viewSectionIds']): Project => ({
+            id, title: id, status: 'someday', color: '#6B7280', order, tagIds: [], createdAt: '', updatedAt: '',
+            ...(viewSectionIds ? { viewSectionIds } : {}),
+        });
+        const projects = [
+            project('assigned', 0, { someday: 'travel' }),
+            project('unassigned', 1),
+            project('unknown', 2, { someday: 'deleted-section' }),
+            { ...project('active', 3, { someday: 'travel' }), status: 'active' as const },
+        ];
+        const trip = { id: 'trip-task', title: 'Trip', status: 'someday', contexts: [], tags: [], createdAt: '', updatedAt: '',
+            viewSectionIds: { someday: 'travel' } } as Task;
+        const build = (groupBy: 'viewSection' | 'project' | 'area' | 'none', tasks: Task[] = [trip], withSettings = settings) => buildSomedayViewModel({
+            tasks, projects, areaById: new Map(), resolvedAreaFilter: { included: [], excluded: [] },
+            settings: withSettings, sortBy: 'default', groupBy, showDetails: false,
+            criteria: {}, searchQuery: '', filterChips: [], t,
+        });
+
+        it('puts each parked project in its section, unknown and missing ids in No section, and drops the top block', () => {
+            const model = build('viewSection');
+            expect(model.groups?.map(({ id, tasks, projects: grouped }) => [id, (grouped ?? []).map((p) => p.id), tasks.map((task) => task.id)])).toEqual([
+                ['view-section:someday:travel', ['assigned'], ['trip-task']],
+                ['view-section:someday:books', [], []],
+                ['view-section:someday:', ['unassigned', 'unknown'], []],
+            ]);
+            expect(model.deferred).toBeNull();
+            expect(model.deferredProjects.map((p) => p.id)).toEqual(['assigned', 'unassigned', 'unknown']);
+            expect(model.showEmptyState).toBe(false);
+        });
+
+        it('shows parked projects even when Someday has no tasks', () => {
+            const model = build('viewSection', []);
+            expect(model.groups?.flatMap((group) => group.projects ?? []).map((p) => p.id)).toEqual(['assigned', 'unassigned', 'unknown']);
+        });
+
+        it('keeps the top block and plain groups in every other grouping', () => {
+            for (const groupBy of ['project', 'area', 'none'] as const) {
+                const model = build(groupBy);
+                expect(model.deferred?.rows.map((row) => row.id)).toEqual(['assigned', 'unassigned', 'unknown']);
+                expect(model.groups?.some((group) => group.projects) ?? false).toBe(false);
+            }
+            const noSections = build('viewSection', [trip], {} as AppSettings);
+            expect(noSections.groups).toBeUndefined();
+            expect(noSections.deferred?.rows).toHaveLength(3);
+        });
     });
 
     it('gives filtered Someday the standard chip hint and Clear action', () => {

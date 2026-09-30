@@ -749,7 +749,7 @@ const observeSomeday = (root: ReactTestInstance) => {
   const list = byName(root, 'TaskListView')[0];
   const header = renderElement(list.props.ListHeaderComponent);
   const empty = renderElement(list.props.ListEmptyComponent);
-  const groups = list.props.taskGroups as { id: string; title: string; muted?: boolean; tasks: Task[] }[] | undefined;
+  const groups = list.props.taskGroups as { id: string; title: string; muted?: boolean; projects?: Project[]; tasks: Task[] }[] | undefined;
   const modals = hostOf(root, 'Modal').filter((node) => node.props.visible);
   const moveModal = modals.find((node) => hostOf(node, 'SomedaySectionPicker').length > 0);
   const addModal = modals.find((node) => hostOf(node, 'TextInput').length > 0);
@@ -759,7 +759,12 @@ const observeSomeday = (root: ReactTestInstance) => {
     filterChip: filterChip ? { label: filterChip.props.label, removeLabel: filterChip.props.removeLabel } : null,
     menu: menuOf(root),
     rows: groups
-      ? groups.flatMap((group) => [['heading', group.id, group.title, group.muted === true], ...group.tasks.map((entry) => ['task', entry.id])])
+      ? groups.flatMap((group) => [
+        ['heading', group.id, group.title, group.muted === true],
+        // TaskListView draws a group's projects only through renderProject.
+        ...(list.props.renderProject ? group.projects ?? [] : []).map((entry) => ['project', entry.id]),
+        ...group.tasks.map((entry) => ['task', entry.id]),
+      ])
       : (list.props.tasks as Task[]).map((entry) => ['task', entry.id]),
     tasks: (list.props.tasks as Task[]).map((entry) => entry.id),
     canAddToSection: typeof list.props.onAddTaskToSection === 'function',
@@ -826,14 +831,18 @@ async function runRowAction(action: MenuViewAction, rowActions: { status: (task:
 }
 
 async function runDeferredAction(list: ReactTestInstance, projectId: string) {
+  const title = projects.find((entry) => entry.id === projectId)!.title;
+  const findSwipe = (root: ReactTestInstance) => hostOf(root, 'Swipeable').find((node) => hostOf(node, 'Text').map(textOf)[0] === title);
+  // A parked project sits in the header block, or in its Someday section group (#1319).
   const header = renderElement(list.props.ListHeaderComponent)!;
-  const swipe = hostOf(header.root, 'Swipeable').find((node) => {
-    const texts = hostOf(node, 'Text').map(textOf);
-    return texts[0] === projects.find((entry) => entry.id === projectId)!.title;
-  });
+  const grouped = (list.props.taskGroups as { projects?: Project[] }[] | undefined)
+    ?.flatMap((group) => group.projects ?? []).find((entry) => entry.id === projectId);
+  const row = !findSwipe(header.root) && grouped && list.props.renderProject
+    ? renderElement(list.props.renderProject(grouped)) : null;
+  const swipe = findSwipe(header.root) ?? (row ? findSwipe(row.root) : undefined);
   if (!swipe) throw new Error(`No deferred project ${projectId}`);
   await act(async () => { swipe.props.onSwipeableLeftOpen(); });
-  act(() => { header.unmount(); });
+  act(() => { header.unmount(); row?.unmount(); });
 }
 
 // ------------------------------ Reference/Done ------------------------------

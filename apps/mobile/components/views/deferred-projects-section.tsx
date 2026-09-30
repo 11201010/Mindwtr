@@ -67,38 +67,75 @@ export function DeferredProjectsSection({
           {tFallback(t, 'projects.title', 'Projects')} ({projects.length})
         </Text>
       </TouchableOpacity>
-      {expanded && projects.map((project) => {
-        const projectArea = project.areaId ? areaById.get(project.areaId) : undefined;
-        return (
-          <Swipeable
-            key={project.id}
-            renderLeftActions={() => (
-              <View style={[styles.activateAction, { backgroundColor: tc.tint, borderColor: tc.border }]}>
-                <Text style={[styles.activateActionText, { color: tc.onTint }]}>{t('projects.reactivate')}</Text>
-              </View>
-            )}
-            onSwipeableLeftOpen={() => onActivateProject(project.id)}
-          >
-            <TouchableOpacity
-              style={[styles.projectRow, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
-              onPress={() => onOpenProject(project.id)}
-            >
-              <Folder size={18} color={project.color || tc.secondaryText} />
-              <View style={styles.projectText}>
-                <Text style={[styles.projectTitle, { color: tc.text }]} numberOfLines={1}>
-                  {project.title}
-                </Text>
-                {projectArea && (
-                  <Text style={[styles.projectMeta, { color: tc.secondaryText }]} numberOfLines={1}>
-                    {projectArea.name}
-                  </Text>
-                )}
-              </View>
-            </TouchableOpacity>
-          </Swipeable>
-        );
-      })}
+      {expanded && projects.map((project) => (
+        <DeferredProjectRow
+          key={project.id}
+          project={project}
+          areaById={areaById}
+          themeColors={tc}
+          t={t}
+          onActivateProject={onActivateProject}
+          onOpenProject={onOpenProject}
+        />
+      ))}
     </View>
+  );
+}
+
+export interface DeferredProjectRowProps {
+  project: Project;
+  areaById: Map<string, Area>;
+  themeColors: ThemeColors;
+  t: (key: string) => string;
+  onActivateProject: (projectId: string) => void;
+  onOpenProject: (projectId: string) => void;
+  /** Long press (and the accessibility action) offers "Move to section…" when given. */
+  onMoveToSection?: (project: Project) => void;
+}
+
+/** One parked project: tap opens it, swipe right reactivates it. */
+export function DeferredProjectRow({
+  project,
+  areaById,
+  themeColors: tc,
+  t,
+  onActivateProject,
+  onOpenProject,
+  onMoveToSection,
+}: DeferredProjectRowProps) {
+  const projectArea = project.areaId ? areaById.get(project.areaId) : undefined;
+  const moveLabel = tFallback(t, 'viewSections.moveToSection', 'Move to section…');
+  return (
+    <Swipeable
+      renderLeftActions={() => (
+        <View style={[styles.activateAction, { backgroundColor: tc.tint, borderColor: tc.border }]}>
+          <Text style={[styles.activateActionText, { color: tc.onTint }]}>{t('projects.reactivate')}</Text>
+        </View>
+      )}
+      onSwipeableLeftOpen={() => onActivateProject(project.id)}
+    >
+      <TouchableOpacity
+        style={[styles.projectRow, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
+        onPress={() => onOpenProject(project.id)}
+        onLongPress={onMoveToSection ? () => onMoveToSection(project) : undefined}
+        accessibilityActions={onMoveToSection ? [{ name: 'moveToSection', label: moveLabel }] : undefined}
+        onAccessibilityAction={onMoveToSection
+          ? (event) => { if (event.nativeEvent.actionName === 'moveToSection') onMoveToSection(project); }
+          : undefined}
+      >
+        <Folder size={18} color={project.color || tc.secondaryText} />
+        <View style={styles.projectText}>
+          <Text style={[styles.projectTitle, { color: tc.text }]} numberOfLines={1}>
+            {project.title}
+          </Text>
+          {projectArea && (
+            <Text style={[styles.projectMeta, { color: tc.secondaryText }]} numberOfLines={1}>
+              {projectArea.name}
+            </Text>
+          )}
+        </View>
+      </TouchableOpacity>
+    </Swipeable>
   );
 }
 

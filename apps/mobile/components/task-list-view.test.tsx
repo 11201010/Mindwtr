@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { groupTasksByViewSection, type Task } from '@mindwtr/core';
+import { groupTasksByViewSection, type Project, type Task } from '@mindwtr/core';
 
 import { TaskListView, type TaskListViewProps } from './task-list-view';
 
@@ -146,6 +146,34 @@ describe('TaskListView', () => {
     expect(renderer.root.findAllByType('SwipeableTaskItem' as never)).toHaveLength(2);
     expect(JSON.stringify(orphan)).toBe(beforeRender);
     expect(orphan.viewSectionIds?.someday).toBe('heading-from-another-device');
+  });
+
+  it('draws a group\'s projects after its heading and before its tasks (#1319)', () => {
+    const project = { id: 'trip', title: 'Trip', status: 'someday', color: '#000', order: 0, tagIds: [], createdAt: '', updatedAt: '' } as Project;
+    const task = makeTask('pack', { status: 'someday' });
+    const renderer = renderView({
+      tasks: [task],
+      taskGroups: [{ id: 'view-section:someday:travel', title: 'Travel', projects: [project], tasks: [task] }],
+      renderProject: (entry) => React.createElement('ProjectRow', { projectId: entry.id }),
+    });
+    const list = renderer.root.findByType('FlatList' as never);
+    const rowTypes = list.children.filter((child) => typeof child !== 'string').map((child) => {
+      const type = (child as { type: unknown }).type;
+      return typeof type === 'function' ? type.name : type;
+    });
+    expect(rowTypes).toEqual(['View', 'ProjectRow', 'SwipeableTaskItem']);
+    expect(renderer.root.findByType('ProjectRow' as never).props.projectId).toBe('trip');
+    expect(list.props.keyExtractor({ kind: 'project', project })).toBe('project:trip');
+  });
+
+  it('draws no project rows when the screen gives no project renderer', () => {
+    const project = { id: 'trip', title: 'Trip', status: 'someday', color: '#000', order: 0, tagIds: [], createdAt: '', updatedAt: '' } as Project;
+    const renderer = renderView({
+      tasks: [],
+      taskGroups: [{ id: 'g', title: 'Travel', projects: [project], tasks: [] }],
+    });
+    expect(renderer.root.findAllByProps({ accessibilityRole: 'header' }).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByType('ProjectRow' as never)).toHaveLength(0);
   });
 
   it('returns the delete action result through the row wrapper', () => {

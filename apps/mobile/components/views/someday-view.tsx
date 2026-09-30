@@ -1,5 +1,6 @@
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import {
+  buildProjectViewSectionUpdate,
   buildSomedayFilterOptions,
   buildSomedayViewModel,
   flushPendingSave,
@@ -13,7 +14,7 @@ import {
   useTaskStore,
 } from '@mindwtr/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SomedayGroupBy, Task, TaskSortBy, TaskStatus } from '@mindwtr/core';
+import type { Project, SomedayGroupBy, Task, TaskSortBy, TaskStatus } from '@mindwtr/core';
 import { useTheme } from '../../contexts/theme-context';
 import { useLanguage } from '../../contexts/language-context';
 import { ArrowUpDown, Eye, Folder, Lightbulb, Plus, SlidersHorizontal } from 'lucide-react-native';
@@ -29,7 +30,7 @@ import { assertBulkActionSucceeded, usePruneSelectionToVisible, useTaskListSelec
 import { TaskListView } from '../task-list-view';
 import { ListEmptyState } from '../list-empty-state';
 import { FilterChip, TaskFilterSheet } from '../task-filter-sheet';
-import { DeferredProjectsSection } from './deferred-projects-section';
+import { DeferredProjectRow, DeferredProjectsSection } from './deferred-projects-section';
 import { SomedaySectionPicker } from '../someday-section-picker';
 import { createSomedaySection } from '@/lib/someday-section-actions';
 import { useToast } from '@/contexts/toast-context';
@@ -66,6 +67,7 @@ export function SomedayView() {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [addingTask, setAddingTask] = useState(false);
   const [addTaskError, setAddTaskError] = useState(false);
+  const [movingProject, setMovingProject] = useState<Project | null>(null);
   const pendingAddedTaskRef = useRef<{ id: string; title: string } | null>(null);
   const router = useRouter();
   const { showToast } = useToast();
@@ -210,6 +212,34 @@ export function SomedayView() {
   const handleOpenProject = (projectId: string) => {
     router.push({ pathname: '/projects-screen', params: { projectId } });
   };
+  const moveProjectToSection = (project: Project, sectionId: string | undefined) => {
+    setMovingProject(null);
+    const latest = useTaskStore.getState().projects.find((candidate) => candidate.id === project.id) ?? project;
+    const update = buildProjectViewSectionUpdate(latest, 'someday', sectionId);
+    if (!update) return;
+    void settleStoreAction(() => updateProject(project.id, update)).then((outcome) => {
+      if (outcome.ok) return;
+      showToast({
+        title: tFallback(t, 'common.error', 'Error'),
+        message: outcome.message || tFallback(t, 'viewSections.updateFailed', 'Could not update Someday sections.'),
+        tone: 'error',
+        durationMs: 4200,
+      });
+    });
+  };
+  const renderSectionProject = (project: Project) => (
+    <View style={styles.sectionProjectRow}>
+      <DeferredProjectRow
+        project={project}
+        areaById={areaById}
+        themeColors={tc}
+        t={t}
+        onActivateProject={handleActivateProject}
+        onOpenProject={handleOpenProject}
+        onMoveToSection={setMovingProject}
+      />
+    </View>
+  );
 
   const handleSaveTask = (taskId: string, updates: Partial<Task>) => {
     return updateTask(taskId, updates);
@@ -331,6 +361,7 @@ export function SomedayView() {
       <TaskListView
         tasks={somedayTasks}
         taskGroups={somedayTaskGroups}
+        renderProject={renderSectionProject}
         showDetails={showDetails}
         isDark={isDark}
         themeColors={tc}
@@ -347,7 +378,7 @@ export function SomedayView() {
         contentContainerStyle={taskListContentStyle}
         ListHeaderComponent={(
           <DeferredProjectsSection
-            projects={deferredProjects}
+            projects={model.deferred ? deferredProjects : []}
             areaById={areaById}
             themeColors={tc}
             t={t}
@@ -430,6 +461,42 @@ export function SomedayView() {
             </ScrollView>
             <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('common.cancel')}
               disabled={sectionMove.saving} onPress={sectionMove.close} style={styles.pickerCancel}>
+              <Text style={{ color: tc.secondaryText }}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={movingProject !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMovingProject(null)}
+        accessibilityViewIsModal
+      >
+        <Pressable style={styles.pickerOverlay} onPress={() => setMovingProject(null)}>
+          <View style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
+            onStartShouldSetResponder={() => true}>
+            <Text accessibilityRole="header" style={[styles.pickerTitle, { color: tc.text }]}>
+              {labels.moveToSection}
+            </Text>
+            <ScrollView keyboardShouldPersistTaps="handled">
+              {movingProject ? (
+                <SomedaySectionPicker
+                  sections={somedaySections}
+                  selectedId={movingProject.viewSectionIds?.someday}
+                  onCreate={createSomedaySection}
+                  onSelect={(sectionId) => moveProjectToSection(movingProject, sectionId)}
+                  t={t}
+                  themeColors={tc}
+                  optionsStyle={styles.pickerOptions}
+                  optionStyle={styles.pickerOption}
+                  optionTextStyle={styles.pickerOptionText}
+                />
+              ) : null}
+            </ScrollView>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('common.cancel')}
+              onPress={() => setMovingProject(null)} style={styles.pickerCancel}>
               <Text style={{ color: tc.secondaryText }}>{t('common.cancel')}</Text>
             </TouchableOpacity>
           </View>
@@ -523,6 +590,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   summaryOverflow: { marginLeft: 'auto' },
+  sectionProjectRow: { marginBottom: 8 },
   pickerOverlay: { alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.45)', flex: 1, justifyContent: 'center' },
   pickerCard: { borderRadius: 14, borderWidth: 1, gap: 12, maxHeight: '80%', padding: 16, width: '88%' },
   pickerTitle: { fontSize: 17, fontWeight: '700' },

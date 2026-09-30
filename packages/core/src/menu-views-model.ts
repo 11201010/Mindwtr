@@ -31,7 +31,12 @@ import { getTaskMetadataFilterVisibility, type TaskMetadataFilterVisibility } fr
 import { getUsedTaskTokens } from './task-token-usage';
 import { baseTextCollator, getWaitingPerson, sortDoneTasksForListView, sortTasksBy } from './task-utils';
 import type { AppSettings, Area, FilterCriteria, Project, Task, TaskSortBy, TimeEstimate, ViewSectionDefinition } from './types';
-import { groupTasksByViewSection, sortViewSectionDefinitions, type ViewSectionTaskGroup } from './view-sections';
+import {
+    groupProjectsByViewSection,
+    groupTasksByViewSection,
+    sortViewSectionDefinitions,
+    type ViewSectionTaskGroup,
+} from './view-sections';
 
 type Translate = (key: string) => string;
 
@@ -93,7 +98,7 @@ export type DeferredProjectsSection = {
 };
 
 /** The collapsible header both screens show above their tasks; null when nothing is parked. */
-function buildDeferredProjectsSection(
+export function buildDeferredProjectsSection(
     projects: readonly Project[],
     areaById: Map<string, Area>,
     t: Translate,
@@ -312,6 +317,7 @@ export type SomedayViewModel = {
     ideasCount: number;
     inProjectsCount: number;
     deferredProjects: Project[];
+    /** The block above the list; null when parked projects are drawn inside section groups instead. */
     deferred: DeferredProjectsSection | null;
     /** Headings let a row be added to a section only in section grouping. */
     canAddTaskToGroup: boolean;
@@ -385,18 +391,32 @@ export function buildSomedayViewModel(input: {
             projectById,
             t,
         }));
-    } else if (input.groupBy === 'viewSection' && sections.length > 0 && !filteredEmpty) {
-        const grouped = groupTasksByViewSection(tasks, 'someday', sections, tFallback(t, 'viewSections.noSection', 'No section'));
+    }
+    const deferredProjects = selectDeferredProjects(input.projects, 'someday', input.resolvedAreaFilter, input.areaById);
+    let projectsInGroups = false;
+    if (input.groupBy === 'viewSection' && sections.length > 0 && !filteredEmpty) {
+        const noSectionTitle = tFallback(t, 'viewSections.noSection', 'No section');
+        const grouped = groupTasksByViewSection(tasks, 'someday', sections, noSectionTitle);
         const byId = new Map(grouped.map((group) => [group.id, group]));
+        // Parked projects sit in their section, before its tasks (#1319).
+        const projectsById = groupProjectsByViewSection(deferredProjects, 'someday', sections);
+        const withProjects = (group: ViewSectionTaskGroup): ViewSectionTaskGroup => {
+            const projects = projectsById.get(group.id);
+            return projects ? { ...group, projects } : group;
+        };
+        const noSectionGroup = byId.get(SOMEDAY_NO_SECTION_GROUP_ID)
+            ?? (projectsById.has(SOMEDAY_NO_SECTION_GROUP_ID)
+                ? { id: SOMEDAY_NO_SECTION_GROUP_ID, title: noSectionTitle, tasks: [], muted: true }
+                : undefined);
         // This grouping is actionable: empty definitions still offer Add task.
         groups = [
-            ...sections.map((section) => byId.get(`${SOMEDAY_SECTION_GROUP_PREFIX}${section.id}`)
-                ?? { id: `${SOMEDAY_SECTION_GROUP_PREFIX}${section.id}`, title: section.title, tasks: [] }),
-            ...(byId.get(SOMEDAY_NO_SECTION_GROUP_ID) ? [byId.get(SOMEDAY_NO_SECTION_GROUP_ID)!] : []),
+            ...sections.map((section) => withProjects(byId.get(`${SOMEDAY_SECTION_GROUP_PREFIX}${section.id}`)
+                ?? { id: `${SOMEDAY_SECTION_GROUP_PREFIX}${section.id}`, title: section.title, tasks: [] })),
+            ...(noSectionGroup ? [withProjects(noSectionGroup)] : []),
         ];
+        projectsInGroups = true;
     }
     const rowCount = groups ? groups.reduce((sum, group) => sum + 1 + group.tasks.length, 0) : tasks.length;
-    const deferredProjects = selectDeferredProjects(input.projects, 'someday', input.resolvedAreaFilter, input.areaById);
     const sortOptions = getSomedaySortOptions(settings);
     return {
         tasks,
@@ -407,7 +427,7 @@ export function buildSomedayViewModel(input: {
         ideasCount: input.tasks.length,
         inProjectsCount: input.tasks.filter((task) => task.projectId).length,
         deferredProjects,
-        deferred: buildDeferredProjectsSection(deferredProjects, input.areaById, t),
+        deferred: projectsInGroups ? null : buildDeferredProjectsSection(deferredProjects, input.areaById, t),
         canAddTaskToGroup: input.groupBy === 'viewSection',
         showEmptyState: filteredEmpty || (rowCount === 0 && deferredProjects.length === 0),
         empty: filterSummary.empty,

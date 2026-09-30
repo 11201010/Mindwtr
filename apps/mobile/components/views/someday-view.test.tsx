@@ -149,6 +149,7 @@ vi.mock('../use-task-list-selection', () => ({
 
 vi.mock('./deferred-projects-section', () => ({
   DeferredProjectsSection: () => null,
+  DeferredProjectRow: (props: any) => React.createElement('DeferredProjectRow', props),
   selectDeferredProjects: () => [],
 }));
 
@@ -166,7 +167,7 @@ const makeTask = (id: string, overrides: Partial<Task> = {}): Task => ({
 const setState = (
   tasks: Task[],
   somedaySections: { id: string; title: string; order: number }[],
-  projects: { id: string; title: string; status: string; order: number }[] = [],
+  projects: { id: string; title: string; status: string; order: number; viewSectionIds?: Task['viewSectionIds'] }[] = [],
 ) => {
   mocked.state = {
     tasks,
@@ -232,6 +233,48 @@ describe('SomedayView section grouping', () => {
     expect(mocked.taskListProps.taskGroups.map((group: { title: string }) => group.title))
       .toEqual(['Books to read', 'No section']);
     expect(mocked.taskListProps.taskGroups[0].tasks[0].id).toBe('book');
+  });
+
+  it('draws parked projects inside their Someday section and moves one to another section (#1319)', async () => {
+    setState([
+      makeTask('book', { viewSectionIds: { someday: 'books' } }),
+    ], [{ id: 'books', title: 'Books to read', order: 0 }, { id: 'travel', title: 'Travel', order: 1 }], [
+      { id: 'trip', title: 'Trip', status: 'someday', order: 0, viewSectionIds: { someday: 'books' } },
+      { id: 'loose', title: 'Loose', status: 'someday', order: 1 },
+    ]);
+    mocked.state.updateProject = vi.fn(async () => ({ success: true }));
+    renderSomedayView();
+
+    const groups = mocked.taskListProps.taskGroups as { title: string; projects?: { id: string }[]; tasks: Task[] }[];
+    expect(groups.map((group) => [group.title, (group.projects ?? []).map((project) => project.id), group.tasks.map((task) => task.id)]))
+      .toEqual([['Books to read', ['trip'], ['book']], ['Travel', [], []], ['No section', ['loose'], []]]);
+    // The top block does not list them again.
+    const header = mocked.taskListProps.ListHeaderComponent as React.ReactElement<{ projects: unknown[] }>;
+    expect(header.props.projects).toEqual([]);
+
+    let row: ReactTestRenderer | null = null;
+    act(() => { row = create(mocked.taskListProps.renderProject(groups[0].projects![0])); });
+    const projectRow = row!.root.findByType('DeferredProjectRow' as never);
+    await act(async () => { projectRow.props.onMoveToSection(projectRow.props.project); });
+    const picker = renderer!.root.findAllByType('SomedaySectionPicker' as never)
+      .find((node) => node.props.selectedId === 'books');
+    expect(picker).toBeTruthy();
+    await act(async () => { picker!.props.onSelect('travel'); });
+    expect(mocked.state.updateProject).toHaveBeenCalledWith('trip', { viewSectionIds: { someday: 'travel' } });
+    act(() => row?.unmount());
+  });
+
+  it('keeps parked projects in the top block when grouped by project', async () => {
+    setState([makeTask('book')], [{ id: 'books', title: 'Books to read', order: 0 }], [
+      { id: 'trip', title: 'Trip', status: 'someday', order: 0, viewSectionIds: { someday: 'books' } },
+    ]);
+    renderSomedayView();
+    await act(async () => { renderer!.root.findByProps({ testID: 'someday-overflow-button' }).props.onPress(); });
+    await act(async () => { renderer!.root.findByProps({ testID: 'someday-group-action' }).props.onPress(); });
+    await act(async () => { renderer!.root.findByProps({ testID: 'someday-group-project' }).props.onPress(); });
+    const header = mocked.taskListProps.ListHeaderComponent as React.ReactElement<{ projects: { id: string }[] }>;
+    expect(header.props.projects.map((project) => project.id)).toEqual(['trip']);
+    expect((mocked.taskListProps.taskGroups ?? []).some((group: { projects?: unknown[] }) => group.projects)).toBe(false);
   });
 
   it('filters with normalized legacy bare tags and contexts, shows an active count, and clears back to all rows', async () => {

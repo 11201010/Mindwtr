@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useRef } from 'react';
 import { FlatList, StyleSheet, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
-import { formatI18nTemplate, tFallback, type Task, type TaskStatus, type ViewSectionTaskGroup } from '@mindwtr/core';
+import { formatI18nTemplate, tFallback, type Project, type Task, type TaskStatus, type ViewSectionTaskGroup } from '@mindwtr/core';
 
 import { openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigation';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
@@ -18,6 +18,7 @@ import type { useTaskListSelection } from './use-task-list-selection';
 export type TaskListViewSelection = ReturnType<typeof useTaskListSelection>;
 type TaskListViewRow =
   | { kind: 'heading'; id: string; title: string; muted?: boolean }
+  | { kind: 'project'; project: Project }
   | { kind: 'task'; task: Task };
 
 export interface TaskListViewProps {
@@ -25,6 +26,8 @@ export interface TaskListViewProps {
   tasks: Task[];
   /** Optional headings for views whose grouping is part of their presentation. */
   taskGroups?: readonly ViewSectionTaskGroup[];
+  /** Draws a group's projects (ViewSectionTaskGroup.projects) above its tasks. */
+  renderProject?: (project: Project) => React.ReactElement;
   isDark: boolean;
   themeColors: ThemeColors;
   t: (key: string) => string;
@@ -70,6 +73,7 @@ export interface TaskListViewProps {
 export function TaskListView({
   tasks,
   taskGroups,
+  renderProject,
   isDark,
   themeColors,
   t,
@@ -115,9 +119,10 @@ export function TaskListView({
     if (!taskGroups) return tasks.map((task) => ({ kind: 'task' as const, task }));
     return taskGroups.flatMap((group) => [
       { kind: 'heading' as const, id: group.id, title: group.title, muted: group.muted },
+      ...(renderProject ? group.projects ?? [] : []).map((project) => ({ kind: 'project' as const, project })),
       ...group.tasks.map((task) => ({ kind: 'task' as const, task })),
     ]);
-  }, [taskGroups, tasks]);
+  }, [renderProject, taskGroups, tasks]);
 
   // The handlers arrive as props and the visible ids change with the data, so
   // rows reach them through one object that never changes identity and reads
@@ -179,6 +184,7 @@ export function TaskListView({
         </View>
       );
     }
+    if (item.kind === 'project') return renderProject?.(item.project) ?? null;
     const task = item.task;
     return (
       <SwipeableTaskItem
@@ -203,6 +209,7 @@ export function TaskListView({
     multiSelectedIds,
     rowActions,
     onAddTaskToSection,
+    renderProject,
     t,
     rowContext,
     selectionMode,
@@ -234,7 +241,7 @@ export function TaskListView({
       <FlatList
         data={rows}
         renderItem={renderTask}
-        keyExtractor={(item) => item.kind === 'heading' ? item.id : item.task.id}
+        keyExtractor={(item) => item.kind === 'heading' ? item.id : item.kind === 'project' ? `project:${item.project.id}` : item.task.id}
         style={listStyle ?? styles.list}
         contentContainerStyle={contentContainerStyle}
         {...TASK_LIST_WINDOWING_PROPS}

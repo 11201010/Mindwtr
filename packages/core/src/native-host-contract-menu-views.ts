@@ -25,6 +25,7 @@ import {
     type ResolvedListFilter,
 } from './list-filter-state';
 import {
+    buildDeferredProjectsSection,
     buildSomedayFilterOptions,
     buildSomedayViewModel,
     buildStatusListFilterOptions,
@@ -578,15 +579,18 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                 sortBy: params.sortBy, groupBy: params.groupBy, showDetails: params.showDetails,
                 criteria: resolved.criteria, searchQuery: resolved.searchQuery, filterChips: resolved.chips, t,
             });
+            // Native Someday keeps the parked-projects block above the list and draws no
+            // project rows inside groups (#1319 native parity is a follow-up). So it skips
+            // a "No section" group that holds only projects, as before #1319.
             const items: ({ type: 'heading'; id: string; title: string; muted: boolean } | { type: 'task'; task: Task; groupId: string | null })[] = model.groups
-                ? model.groups.flatMap((group) => [
+                ? model.groups.filter((group) => group.tasks.length > 0 || getSomedayGroupSectionId(group.id) !== undefined).flatMap((group) => [
                     { type: 'heading' as const, id: group.id, title: group.title, muted: group.muted === true },
                     ...group.tasks.map((task) => ({ type: 'task' as const, task, groupId: group.id })),
                 ])
                 : model.tasks.map((task) => ({ type: 'task' as const, task, groupId: null }));
             return {
                 model, resolved, options, items,
-                deferred: withProjectRevisions(model.deferred),
+                deferred: withProjectRevisions(buildDeferredProjectsSection(model.deferredProjects, areaById, t)),
                 tokens: tokenOptions(options, resolved.state),
                 projects: projectOptions(options, resolved.state),
             };

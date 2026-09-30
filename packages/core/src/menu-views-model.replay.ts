@@ -529,7 +529,11 @@ export async function replayMenuViewsScenario(options: {
                     labels: [labels.back, labels.close, labels.more],
                 },
                 rows: model.groups
-                    ? model.groups.flatMap((group) => [['heading', group.id, group.title, group.muted === true], ...group.tasks.map((task) => ['task', task.id])])
+                    ? model.groups.flatMap((group) => [
+                        ['heading', group.id, group.title, group.muted === true],
+                        ...(group.projects ?? []).map((project) => ['project', project.id]),
+                        ...group.tasks.map((task) => ['task', task.id]),
+                    ])
                     : model.tasks.map((task) => ['task', task.id]),
                 tasks: model.tasks.map((task) => task.id),
                 canAddToSection: model.canAddTaskToGroup,
