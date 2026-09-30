@@ -57,6 +57,7 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -195,6 +196,55 @@ private fun StepRail(view: JSONObject) {
     Rule()
 }
 
+/**
+ * RN's AI analysis on the stale step (review-modal.tsx): Run analysis ("Analyzing..." while it runs), core's error line or RN's
+ * empty line, each suggestion with RN's checkbox (an actionable one toggles), and Apply selected (n) through runReviewAction.
+ */
+@Composable
+private fun ReviewAnalysisCard(model: InboxViewModel, labels: JSONObject) {
+    val c = LocalTheme.current.colors
+    val ai = model.ai
+    val analysis = ai.review
+    val running = ai.working == "review"
+    Column(Modifier.padding(top = 16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Lucide.Sparkles, null, tint = c.text, modifier = Modifier.size(18.dp))
+            Text(labels.getString("aiDesc"), style = rnText(14, 400), color = c.secondaryText, modifier = Modifier.weight(1f))
+        }
+        // RN's button keeps its look while it runs; a second tap does nothing.
+        PrimaryButton(labels.getString(if (running) "aiRunning" else "aiRun"), Modifier.padding(top = 12.dp).fillMaxWidth().testTag("review-ai-run"), true) { ai.runAnalysis() }
+        analysis.error?.let { Text(it, style = rnText(14, 400), color = c.danger, modifier = Modifier.padding(top = 12.dp, bottom = 16.dp).testTag("review-ai-error")) }
+        if (analysis.ran && !running && analysis.suggestions.isEmpty() && analysis.error == null) {
+            Text(labels.getString("aiEmpty"), style = rnText(14, 400), color = c.secondaryText, modifier = Modifier.padding(top = 12.dp, bottom = 16.dp))
+        }
+        for (suggestion in analysis.suggestions) {
+            val id = suggestion.getString("id")
+            val actionable = suggestion.getBoolean("actionable")
+            val selected = id in analysis.selected
+            val title = suggestion.getString("title")
+            val shape = RoundedCornerShape(10.dp)
+            Row(Modifier.padding(bottom = 10.dp).fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
+                .clickable(enabled = actionable, role = Role.Checkbox) { ai.toggleSuggestion(id) }
+                .semantics { contentDescription = title; this.selected = selected }.testTag("review-ai-suggestion").padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                val box = RoundedCornerShape(4.dp)
+                Box(Modifier.padding(top = 2.dp).size(18.dp).clip(box).then(if (selected) Modifier.background(c.tint) else Modifier).border(1.dp, c.border, box),
+                    contentAlignment = Alignment.Center) {
+                    if (selected) Icon(Lucide.CheckBold, null, tint = c.onTint, modifier = Modifier.size(12.dp))
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = rnText(15, 600), color = c.text)
+                    Text(suggestion.getString("meta"), style = rnText(12, 400), color = c.secondaryText, modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+        }
+        if (analysis.suggestions.isNotEmpty()) {
+            PrimaryButton("${labels.getString("aiApply")} (${analysis.selected.size})", Modifier.padding(top = 12.dp).fillMaxWidth().testTag("review-ai-apply"),
+                model.menu.idle) { ai.applySuggestions() }
+        }
+    }
+}
+
 /** RN's step heading: the step's icon at 22 and core's heading at 24 bold, then core's hint. */
 private fun LazyListScope.stepHeading(icon: ImageVector, title: String, hint: String?) = item(key = "heading") {
     val c = LocalTheme.current.colors
@@ -261,17 +311,7 @@ private fun LazyListScope.weeklyContent(model: InboxViewModel, shown: MenuPage, 
             val projects = shown.collection("staleProjects")
             items(projects, key = { "stale:${it.getString("id")}" }) { project -> InfoCard(project.getString("title"), project.getString("daysLabel")) }
             if (projects.size < shown.collectionTotal("staleProjects")) item(key = "stale-more") { MoreChip(menu.idle) { menu.loadCollection("staleProjects") } }
-            if (content.getJSONObject("ai").getBoolean("enabled")) item(key = "ai") {
-                val c = LocalTheme.current.colors
-                Column(Modifier.padding(top = 16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Lucide.Sparkles, null, tint = c.text, modifier = Modifier.size(18.dp))
-                        Text(labels.getString("aiDesc"), style = rnText(14, 400), color = c.secondaryText, modifier = Modifier.weight(1f))
-                    }
-                    // The AI analysis runs a provider this app has no contract for: RN's button, drawn disabled.
-                    PrimaryButton(labels.getString("aiRun"), Modifier.padding(top = 12.dp).fillMaxWidth(), false) { }
-                }
-            }
+            if (content.getJSONObject("ai").getBoolean("enabled")) item(key = "ai") { ReviewAnalysisCard(model, labels) }
         }
         "calendar" -> {
             stepHeading(Lucide.Calendar, labels.getString("calendar"), null)

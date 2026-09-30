@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -49,6 +50,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -193,6 +195,7 @@ fun ProcessInboxScreen(model: InboxViewModel, flow: InboxProcessing) = with(mode
         }
     }
 
+    AIOverlays(model)
     pickDate?.let { field ->
         val row = dateRows(view).firstOrNull { it.getString("field") == field }
         // The row's own picked-day edit (core's setPickedDate) with the picker's day; RN offers no time here.
@@ -254,7 +257,9 @@ private fun DraftInput(key: String, coreValue: String, pending: Boolean, placeho
     // While the field has focus the typing wins: `pending` is read from an older frame, so a reply to an earlier keystroke could
     // reset the text mid-typing (the checklist field lost letters that way, S23 run 54).
     var typing by remember(key) { mutableStateOf(false) }
-    LaunchedEffect(key, coreValue, typing) { if (!typing && !pending && field.text != coreValue) field = TextFieldValue(coreValue, TextRange(coreValue.length)) }
+    // Keyed on `pending` too: a value core set while a later edit still waited (AI Clarify's title, then its context) shows once
+    // that edit is answered, though the value itself did not change again.
+    LaunchedEffect(key, coreValue, typing, pending) { if (!typing && !pending && field.text != coreValue) field = TextFieldValue(coreValue, TextRange(coreValue.length)) }
     BasicTextField(field, { typed -> val changed = typed.text != field.text; field = typed; if (changed) send(typed.text) },
         enabled = enabled, singleLine = singleLine, minLines = minLines, textStyle = style.copy(color = if (enabled) c.text else c.secondaryText),
         cursorBrush = SolidColor(c.tint),
@@ -306,10 +311,26 @@ private fun InboxViewModel.CaptureCard(flow: InboxProcessing, locked: Boolean, s
         // Core's Markdown-free preview, as RN shows it.
         if (!notesOpen && preview.isNotEmpty()) Text(preview, style = rnText(13, 400, 18), color = c.secondaryText, maxLines = 2)
         val noteLabel = capture.getString("descriptionLabel")
-        Row(Modifier.padding(top = 8.dp).heightIn(min = 32.dp).clickable(role = Role.Button) { notesOpen = !notesOpen }
-            .semantics { contentDescription = noteLabel }, verticalAlignment = Alignment.CenterVertically) {
-            Text(noteLabel, style = rnText(12, 600), color = c.tint)
-            Icon(if (notesOpen) Lucide.ChevronUp else Lucide.ChevronDown, null, tint = c.tint, modifier = Modifier.padding(start = 4.dp).size(14.dp))
+        // RN's anchorActionsRow: the notes toggle, and AI Clarify while AI is on (its spinner and "Working..." while it runs).
+        val focus = LocalFocusManager.current
+        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.heightIn(min = 32.dp).clickable(role = Role.Button) { notesOpen = !notesOpen }
+                .semantics { contentDescription = noteLabel }, verticalAlignment = Alignment.CenterVertically) {
+                Text(noteLabel, style = rnText(12, 600), color = c.tint)
+                Icon(if (notesOpen) Lucide.ChevronUp else Lucide.ChevronDown, null, tint = c.tint, modifier = Modifier.padding(start = 4.dp).size(14.dp))
+            }
+            flow.view.child("aiClarify")?.let { clarify ->
+                val running = ai.working == "inbox"
+                val label = if (running) clarify.getString("working") else clarify.getString("label")
+                val enabled = !locked && ai.working == null
+                Row(Modifier.heightIn(min = 32.dp).clickable(enabled = enabled, role = Role.Button) { focus.clearFocus(); ai.inboxClarify(flow) }
+                    .semantics { contentDescription = label }.testTag("process-ai-clarify"),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (running) CircularProgressIndicator(Modifier.size(20.dp), color = c.tint, strokeWidth = 2.dp)
+                    else Icon(Lucide.Sparkles, null, tint = c.tint, modifier = Modifier.size(14.dp))
+                    Text(label, style = rnText(12, 600), color = c.tint)
+                }
+            }
         }
         if (notesOpen) {
             DraftInput("${flow.taskId}:description", note, pending, capture.getString("descriptionPlaceholder"), noteLabel, !locked,

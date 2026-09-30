@@ -31,7 +31,8 @@ import java.util.UUID
  */
 
 /** Settings' commands (host-entry.ts MENU_COMMANDS). */
-val SETTINGS_KINDS = setOf("generalSetting", "gtdSetting", "manageEditor", "manageDelete", "somedayRename", "somedayReorder", "somedayDelete", "dataSetting", "syncPreference")
+val SETTINGS_KINDS = setOf("generalSetting", "gtdSetting", "manageEditor", "manageDelete", "somedayRename", "somedayReorder", "somedayDelete", "dataSetting", "syncPreference",
+    "setAISetting")
 
 /** RN's device keys (core's LANGUAGE_STORAGE_KEY, MOBILE_THEME_STORAGE_KEY, MANAGE_OPEN_SECTIONS_STORAGE_KEY, MOBILE_TASK_OPEN_MODE_STORAGE_KEY). */
 const val LANGUAGE_KEY = "mindwtr-language"
@@ -86,6 +87,8 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     private val main = Handler(Looper.getMainLooper())
     /** Settings › Sync's screen state and commands (SyncSettings.kt). */
     val sync = SyncSettingsModel(menu)
+    /** Settings › AI's screen state and commands (AISettings.kt). */
+    val ai = AISettingsModel(menu)
 
     /** RN's settings stack: "main", then "general", "manage", "data", "advanced", or a GTD screen ("gtd", "gtd-pomodoro", ...). */
     var stack by mutableStateOf(saved.get<String>("settingsStack")?.split(',') ?: listOf("main")); private set
@@ -111,7 +114,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         return when (screen) {
             "main" -> view.getString("title")
             "advanced" -> view.getJSONObject("advanced").getString("title")
-            "general", "manage", "data", "sync" -> view.getString("title")
+            "general", "manage", "data", "sync", "ai" -> view.getString("title")
             "gtd" -> view.getJSONObject("hub").getString("title")
             else -> gtdScreen(view)?.getString("title") ?: t("settings.title")
         }
@@ -120,6 +123,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     /** RN pushes a new Settings: its menu, no search. */
     fun reset() {
         sync.leave()
+        ai.leave()
         keepStack(listOf("main"))
         logToShare = null
         query = ""
@@ -142,6 +146,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     fun back(): Boolean {
         if (stack.size < 2) return false
         if (screen == "sync") sync.leave()
+        if (screen == "ai") ai.leave()
         keepStack(stack.dropLast(1))
         logToShare = null
         keepLocal(JSONObject())
@@ -193,6 +198,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
      */
     private fun read(runtime: CoreHost, screen: String, depth: Map<String, Int>): SettingsPage {
         if (screen == "sync") return SettingsPage(screen, sync.read(runtime), emptyMap(), null)
+        if (screen == "ai") return SettingsPage(screen, ai.read(runtime), emptyMap(), null)
         val (name, input) = request(screen)
         val view = runtime.menuRead(name, input.toString())
         check(view.optInt("version", 1) == 1) { "Unsupported core contract" }
@@ -234,6 +240,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     private fun show(next: SettingsPage) {
         if (menu.list != "settings" || next.screen != screen) return
         if (screen == "sync") sync.follow(next.view)
+        if (screen == "ai") ai.follow(next.view)
         page = next
         next.view.optJSONObject("openSectionsRestore")?.takeIf { prefs.getString(it.getString("key"), null) != it.getString("value") }?.let { store(JSONArray().put(it)) }
     }
@@ -430,6 +437,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         val input = JSONObject(action.title)
         when (action.kind) {
             "manageEditor" -> menu.closeDialog("manageEditor")
+            "setAISetting" -> ai.done(action, reply)
             "somedayRename" -> editLocal { remove("renaming") }
             "generalSetting" -> when (input.getJSONObject("edit").getString("type")) {
                 "quickAccessView" -> menu.readMore()
