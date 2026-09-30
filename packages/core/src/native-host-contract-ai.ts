@@ -806,7 +806,7 @@ export function createAIMethods(deps: AIDeps) {
                 },
             };
         };
-        return { gate: 'ready' as const, apiKey, build };
+        return { gate: 'ready' as const, apiKey, build, sent: stored };
     };
 
     const editorTask = (input: { id: unknown; draft: unknown }): NativeHostResult<{ task: Task; draft: TaskDraft }> => {
@@ -827,9 +827,15 @@ export function createAIMethods(deps: AIDeps) {
             ? { kind: 'alert', title: t('ai.disabledTitle'), message: t('ai.disabledBody') }
             : { kind: 'alert', title: t('ai.missingKeyTitle'), message: t('ai.missingKeyBody') };
     };
-    const errorAlert = (error: unknown, apiKey: string, host: NativeAIHost, what: string): NativeAIActionAnswer<never> => {
-        host.log?.warn(`${what}: ${redactAIError(error, apiKey, settings()).message}`);
-        return { kind: 'alert', ...getAIErrorAlert(error, deps.t(), apiKey, settings()) };
+    /**
+     * A failed request's error without its secrets: the key and endpoint password it was sent with (`sent`, the settings its
+     * config was built from), then the current ones (the endpoint may have changed while it waited).
+     */
+    const sentRedacted = (error: unknown, apiKey: string, sent: AppSettings | null): unknown => (sent ? redactAIError(error, apiKey, sent) : error);
+    const errorAlert = (error: unknown, apiKey: string, host: NativeAIHost, what: string, sent: AppSettings | null): NativeAIActionAnswer<never> => {
+        const redacted = sentRedacted(error, apiKey, sent);
+        host.log?.warn(`${what}: ${redactAIError(redacted, apiKey, settings()).message}`);
+        return { kind: 'alert', ...getAIErrorAlert(redacted, deps.t(), apiKey, settings()) };
     };
     const choice = <Apply,>(label: string, variant: 'primary' | 'secondary' | undefined, apply: Apply | null): NativeAIDialogChoice<Apply> => (
         { label, variant: variant ?? null, apply }
@@ -1135,10 +1141,12 @@ export function createAIMethods(deps: AIDeps) {
             const title = draft.title.trim();
             if (!title || deps.isReadOnly(task)) return { ok: true, value: { kind: 'none' } };
             let apiKey = '';
+            let sent: AppSettings | null = null;
             try {
                 const ai = await providerFor(host, false);
                 if (ai.gate !== 'ready') return { ok: true, value: gateAlert(ai.gate) };
                 apiKey = ai.apiKey;
+                sent = ai.sent;
                 const response = await createAIProvider(ai.build()).clarifyTask(buildTaskClarifyInput({
                     title, tasks: useTaskStore.getState().tasks, task, merged: mergedTask(task, draft), projectContext: projectContext(task, draft),
                 }));
@@ -1162,7 +1170,7 @@ export function createAIMethods(deps: AIDeps) {
                     },
                 };
             } catch (error) {
-                return { ok: true, value: errorAlert(error, apiKey, host, 'AI clarify failed') };
+                return { ok: true, value: errorAlert(error, apiKey, host, 'AI clarify failed', sent) };
             }
         },
 
@@ -1181,10 +1189,12 @@ export function createAIMethods(deps: AIDeps) {
             const title = draft.title.trim();
             if (!title || deps.isReadOnly(task)) return { ok: true, value: { kind: 'none' } };
             let apiKey = '';
+            let sent: AppSettings | null = null;
             try {
                 const ai = await providerFor(host, false);
                 if (ai.gate !== 'ready') return { ok: true, value: gateAlert(ai.gate) };
                 apiKey = ai.apiKey;
+                sent = ai.sent;
                 const response = await createAIProvider(ai.build()).breakDownTask(buildTaskBreakdownInput({
                     title, description: draft.description, projectContext: projectContext(task, draft),
                 }));
@@ -1209,7 +1219,7 @@ export function createAIMethods(deps: AIDeps) {
                     },
                 };
             } catch (error) {
-                return { ok: true, value: errorAlert(error, apiKey, host, 'AI breakdown failed') };
+                return { ok: true, value: errorAlert(error, apiKey, host, 'AI breakdown failed', sent) };
             }
         },
 
@@ -1232,6 +1242,7 @@ export function createAIMethods(deps: AIDeps) {
             if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
             const t = deps.t();
             let apiKey = '';
+            let sent: AppSettings | null = null;
             try {
                 const ai = await providerFor(host, false);
                 if (ai.gate !== 'ready') {
@@ -1245,6 +1256,7 @@ export function createAIMethods(deps: AIDeps) {
                     return { ok: true, value: { kind: 'toast', toast } };
                 }
                 apiKey = ai.apiKey;
+                sent = ai.sent;
                 const response = await createAIProvider(ai.build()).clarifyTask(buildInboxClarifyInput({
                     title: draft.title,
                     task,
@@ -1270,7 +1282,7 @@ export function createAIMethods(deps: AIDeps) {
                     },
                 };
             } catch (error) {
-                return { ok: true, value: errorAlert(error, apiKey, host, 'Inbox processing failed') };
+                return { ok: true, value: errorAlert(error, apiKey, host, 'Inbox processing failed', sent) };
             }
         },
 
@@ -1286,12 +1298,14 @@ export function createAIMethods(deps: AIDeps) {
             const t = deps.t();
             const state = useTaskStore.getState();
             let apiKey = '';
+            let sent: AppSettings | null = null;
             try {
                 const ai = await providerFor(host, false);
                 if (ai.gate !== 'ready') {
                     return { ok: true, value: { error: t(ai.gate === 'disabled' ? 'ai.disabledBody' : 'ai.missingKeyBody'), suggestions: null, selectedIds: null } };
                 }
                 apiKey = ai.apiKey;
+                sent = ai.sent;
                 const { weekStart } = getWeeklyReviewSettings(state.settings);
                 const { staleItems } = getWeeklyReviewBuckets(state.tasks, state.projects, { weekStart });
                 if (staleItems.length === 0) return { ok: true, value: { error: null, suggestions: [], selectedIds: [] } };
@@ -1316,7 +1330,7 @@ export function createAIMethods(deps: AIDeps) {
                     },
                 };
             } catch (error) {
-                return { ok: true, value: { error: getWeeklyReviewAnalysisError(error, t, apiKey, settings()), suggestions: null, selectedIds: null } };
+                return { ok: true, value: { error: getWeeklyReviewAnalysisError(sentRedacted(error, apiKey, sent), t, apiKey, settings()), suggestions: null, selectedIds: null } };
             }
         },
     };

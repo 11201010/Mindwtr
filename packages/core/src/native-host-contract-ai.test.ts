@@ -26,10 +26,14 @@ const device = vi.hoisted(() => ({
     calls: [] as unknown[][],
 }));
 
-/** The next queued answer for `name`: `{ value }` answers it, `{ error }` rejects; none queued rejects with `fallback`. */
+/**
+ * The next queued answer for `name`: `{ value }` answers it, `{ error }` rejects, a function is awaited for its entry (it can
+ * change the store while the request waits); none queued rejects with `fallback`.
+ */
 const answer = async (name: string, fallback: string): Promise<any> => {
     const queue = device.queues[name];
-    const entry = queue && queue.length > 0 ? queue.shift() : { error: fallback };
+    const next = queue && queue.length > 0 ? queue.shift() : { error: fallback };
+    const entry = typeof next === 'function' ? await (next as () => Promise<unknown>)() : next;
     if (entry && typeof entry === 'object' && 'error' in entry) throw new Error(String((entry as { error: string }).error));
     return (entry as { value: unknown }).value;
 };
@@ -96,7 +100,8 @@ function createDevice(input: Device, warnings: unknown[][] = []) {
             locate: async (modelId) => ({ exists: false, uri: `file:///whisper/${modelId}.bin`, size: 0 }),
         },
     };
-    device.queues = JSON.parse(JSON.stringify(input.queues ?? {}));
+    device.queues = Object.fromEntries(Object.entries(input.queues ?? {}).map(([name, entries]) => [name,
+        entries.map((entry) => (typeof entry === 'function' ? entry : JSON.parse(JSON.stringify(entry))))]));
     device.calls.length = 0;
     return { host, log, storage, secrets };
 }
@@ -845,6 +850,31 @@ describe('native host contract: AI keys stay out of views, errors and logs', () 
         expect(text).toContain('Upstream 401');
         expect(text).not.toContain('home-key-77');
         expect(text).not.toContain('pw-9x7');
+    });
+
+    // Review C1 1: the endpoint changed while the request waited; its error echoes the password the request was sent with.
+    it('drops the password the request was sent with, though the endpoint changed while it waited', async () => {
+        const settings: AppSettings = { ai: { enabled: true, provider: 'openai', baseUrl: 'http://ann:pw-old-1@10.0.0.5:11434/v1' } };
+        const tasks = [{ id: 't1', title: 'Plan the trip', status: 'next', contexts: [], tags: [], createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }] as Task[];
+        await seed({ tasks, settings });
+        const warned: unknown[][] = [];
+        const changed = async () => {
+            await useTaskStore.getState().updateSettings({ ai: { ...useTaskStore.getState().settings.ai, baseUrl: 'http://ann:pw-new-2@10.0.0.6:11434/v1' } });
+            return { error: 'Upstream 401: the password pw-old-1 is wrong' };
+        };
+        const dev = createDevice({ queues: { clarifyTask: [changed], analyzeReview: [changed] } }, warned);
+        const contract = await openHost(dev.host);
+        const draft = createTaskDraft(useTaskStore.getState()._tasksById.get('t1')!);
+        const result = value(await contract.requestTaskEditorClarify({ id: 't1', draft }));
+        expect(result.kind).toBe('alert');
+        expect(JSON.stringify([result, warned])).toContain('Upstream 401');
+        expect(JSON.stringify([result, warned])).not.toContain('pw-old-1');
+        await useTaskStore.getState().updateSettings({ ai: { ...useTaskStore.getState().settings.ai, baseUrl: 'http://ann:pw-old-1@10.0.0.5:11434/v1' } });
+        const tasksStale = [{ ...tasks[0], updatedAt: '2026-01-01T00:00:00.000Z' }] as Task[];
+        await seed({ tasks: tasksStale, settings });
+        const analysis = value(await (await openHost(createDevice({ queues: { analyzeReview: [changed] } }, warned).host)).requestWeeklyReviewAnalysis());
+        expect(analysis.error).toContain('Upstream 401');
+        expect(JSON.stringify([analysis, warned])).not.toContain('pw-old-1');
     });
 
     it('answers an unreadable keystore with an alert, and the screen shows no key', async () => {
