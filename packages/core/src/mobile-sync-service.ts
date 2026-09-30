@@ -492,6 +492,36 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
     Object.defineProperty(copy, 'stack', { value: error.stack === undefined ? undefined : redact(error.stack), writable: true, configurable: true });
     return copy;
   };
+  // A secret can be the very word a failure is classified by (a password "403"): classify the raw text, and when the
+  // redacted text no longer reads as that kind, name the kind in words classifySyncFailure reads the same way.
+  const FAILURE_KIND_WORDS: Partial<Record<string, string>> = {
+    auth: 'unauthorized',
+    rateLimited: 'rate limit',
+    permission: 'permission denied',
+    misconfigured: 'not configured',
+    conflict: 'conflict',
+  };
+  const redactFailure = (text: string): string => {
+    const redacted = redact(text);
+    if (redacted === text) return text;
+    const kind = classifySyncFailure(text);
+    const words = FAILURE_KIND_WORDS[kind];
+    return classifySyncFailure(redacted) === kind || !words ? redacted : `${redacted} (${words})`;
+  };
+  /** A cycle's data as it is stored or shown: its error line and history's errors redacted. */
+  const redactSyncStatus = <T extends Partial<Pick<AppData['settings'], 'lastSyncError' | 'lastSyncHistory'>>>(settings: T): T => {
+    if (cycleSecrets.size === 0) return settings;
+    const next = { ...settings };
+    if (typeof next.lastSyncError === 'string') next.lastSyncError = redactFailure(next.lastSyncError);
+    if (Array.isArray(next.lastSyncHistory)) {
+      next.lastSyncHistory = next.lastSyncHistory.map((entry) => (typeof entry?.error === 'string' ? { ...entry, error: redactFailure(entry.error) } : entry));
+    }
+    return next;
+  };
+  const redactSyncData = (data: AppData): AppData => {
+    const settings = data?.settings ? redactSyncStatus(data.settings) : data?.settings;
+    return settings === data?.settings ? data : { ...data, settings };
+  };
   const log: MobileSyncLogPort = {
     info: (message, context) => host.log.info(redact(message), context && { ...context, extra: redactExtra(context.extra) }),
     warn: (message, context) => host.log.warn(redact(message), context && { ...context, extra: redactExtra(context.extra) }),
@@ -584,7 +614,8 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
     }
   };
 
-  const applyLocalSyncStatus = async (updates: Partial<LocalSyncStatus>): Promise<void> => {
+  const applyLocalSyncStatus = async (raw: Partial<LocalSyncStatus>): Promise<void> => {
+    const updates = redactSyncStatus(raw);
     await writeLocalSyncStatus(updates);
     core.useTaskStore.setState((state) => ({
       settings: {
@@ -952,7 +983,12 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
             postMergeAttachmentErrorPolicy: 'fail',
             attachmentPhasesEnabled: true,
           },
-          performSyncCycle: (io) => core.performSyncCycle(io),
+          // The cycle stores its error line in the library's settings (a failed remote write after the local save):
+          // what it writes and returns is redacted like every other status.
+          performSyncCycle: async (io) => {
+            const result = await core.performSyncCycle({ ...io, writeLocal: (data) => io.writeLocal(redactSyncData(data)) });
+            return { ...result, data: redactSyncData(result.data) };
+          },
         });
         result = this.activationProof ? { ...cycleResult, activationProof: this.activationProof } : cycleResult;
         await this.logActivationOutcome();
@@ -1229,10 +1265,14 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
     private async resolveDropboxAccessToken(forceRefresh: boolean): Promise<string> {
       const stagedCredentials = this.configOverride?.dropbox;
       if (!stagedCredentials) {
-        return forceRefresh
-          ? host.dropboxAuth.forceRefreshAccessToken(this.dropboxClientId, this.fetchWithAbort)
-          : host.dropboxAuth.getValidAccessToken(this.dropboxClientId, this.fetchWithAbort);
+        const accessToken = forceRefresh
+          ? await host.dropboxAuth.forceRefreshAccessToken(this.dropboxClientId, this.fetchWithAbort)
+          : await host.dropboxAuth.getValidAccessToken(this.dropboxClientId, this.fetchWithAbort);
+        rememberSecret(accessToken);
+        return accessToken;
       }
+      rememberSecret(stagedCredentials.tokens.accessToken);
+      rememberSecret(stagedCredentials.tokens.refreshToken);
 
       const resolution = forceRefresh
         ? await host.dropboxAuth.forceRefreshAccessTokenForTokens(
@@ -1249,6 +1289,9 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       // candidate bundle. The settings transaction promotes this exact bundle
       // only after the proof succeeds.
       stagedCredentials.tokens = resolution.tokens;
+      rememberSecret(resolution.accessToken);
+      rememberSecret(resolution.tokens.accessToken);
+      rememberSecret(resolution.tokens.refreshToken);
       return resolution.accessToken;
     }
 
@@ -1716,7 +1759,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
             invalidateFastSyncState: cleanupResult.shouldInvalidateFastSyncState,
           };
         },
-        formatErrorMessage: (error, backend) => redact(formatSyncErrorMessage(error, backend)),
+        formatErrorMessage: (error, backend) => redactFailure(formatSyncErrorMessage(error, backend)),
         handleRunErrorBeforeRequeue: async (_error, context) => {
           if (this.requestAbortController.signal.aborted && activeMobileSyncAbortReason === 'lifecycle') {
             logSyncInfo('Sync aborted by app lifecycle transition', { backend: this.backend, step: context.step });

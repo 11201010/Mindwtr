@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createMobileSyncService, type MobileSyncServiceHost } from './mobile-sync-service';
+import { classifySyncFailure } from './mobile-sync-utils';
+import { performSyncCycle } from './sync';
 import { createSyncEncryptionStateStore } from './sync-encryption-local-state';
 import { createWebdavCapabilityProofStore } from './webdav-capability-proof';
 import { SYNC_BACKEND_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY, CLOUD_PROVIDER_KEY } from './sync-storage-keys';
@@ -238,6 +240,53 @@ describe('mobile sync service behind fake ports', () => {
     expect(fake.values.get('@mindwtr_local_sync_status_v1')).toContain('"lastSyncStatus":"error"');
     expect(text).toContain('Authentication rejected');
     expect(text).not.toContain(password);
+  });
+
+  it('stores no echoed password when the remote write fails after the local save (the library\'s lastSyncError too)', async () => {
+    const password = 'p@ss';
+    const fake = createFakeHost({ values: WEBDAV_VALUES, secrets: { [WEBDAV_PASSWORD_KEY]: password } });
+    fake.host.core!.performSyncCycle = performSyncCycle;
+    vi.mocked(fake.host.core!.webdavPutSyncDocument!).mockRejectedValue(new Error(`403: Authentication rejected: ${password}`));
+    const service = createMobileSyncService(fake.host);
+
+    const result = await service.performMobileSync(undefined, { manual: true });
+
+    const stored = fake.saved.map((data) => data.settings);
+    expect(stored.some((settings) => settings.lastSyncError?.includes('Authentication rejected'))).toBe(true);
+    const storeUpdates = vi.mocked(fake.host.core!.useTaskStore!.setState).mock.calls.map(([update]) => (typeof update === 'function' ? update({ settings: {} } as never) : update));
+    const text = JSON.stringify({ result, stored, storeUpdates, logs: fake.logs, syncErrors: fake.syncErrors, status: fake.values.get('@mindwtr_local_sync_status_v1') });
+    expect(text).not.toContain(password);
+  });
+
+  it('keeps an echoed Dropbox access token out of the logs, the result and the status', async () => {
+    const accessToken = 'sl.dropbox-access-echo';
+    const fake = createFakeHost({ values: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' }, dropboxAppKey: 'key' });
+    fake.host.dropboxAuth.getValidAccessToken = async () => accessToken;
+    fake.host.core!.downloadDropboxAppData = vi.fn(async () => { throw new Error(`Dropbox rejected token ${accessToken}`); }) as never;
+    fake.host.core!.getDropboxAppDataMetadata = vi.fn(async () => { throw new Error(`Dropbox rejected token ${accessToken}`); }) as never;
+    const service = createMobileSyncService(fake.host);
+
+    const result = await service.performMobileSync(undefined, { manual: true });
+
+    expect(result).toMatchObject({ success: false });
+    const text = JSON.stringify({ result, logs: fake.logs, syncErrors: fake.syncErrors, status: fake.values.get('@mindwtr_local_sync_status_v1') });
+    expect(text).toContain('Dropbox rejected token');
+    expect(text).not.toContain(accessToken);
+  });
+
+  it('classifies a failure on its raw text: a password "403" leaves a 403 an auth failure', async () => {
+    const fake = createFakeHost({ values: WEBDAV_VALUES, secrets: { [WEBDAV_PASSWORD_KEY]: '403' } });
+    vi.mocked(fake.host.core!.webdavGetSyncDocument!).mockRejectedValue(new Error('WebDAV GET failed (403)'));
+    const service = createMobileSyncService(fake.host);
+
+    const result = await service.performMobileSync(undefined, { manual: true });
+
+    expect(result).toMatchObject({ success: false });
+    const error = (result as { error?: string }).error ?? '';
+    expect(error).not.toMatch(/\b403\b/);
+    expect(classifySyncFailure(error)).toBe('auth');
+    const status = JSON.parse(fake.values.get('@mindwtr_local_sync_status_v1') ?? '{}') as { lastSyncError?: string };
+    expect(classifySyncFailure(status.lastSyncError)).toBe('auth');
   });
 
   it('skips a remote backend while the device is offline, without starting a cycle', async () => {
