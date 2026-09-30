@@ -124,7 +124,7 @@ class CoreHost(
     }
 
     /** [legacyState] and [legacyBackup] come from LegacyRnStoreGuard; both are "" for the dev database. */
-    fun start(bundle: String, legacyState: String = "", legacyBackup: String = ""): JSONObject = onEngine {
+    fun start(bundle: CoreBundle, legacyState: String = "", legacyBackup: String = ""): JSONObject = onEngine {
         try {
             Trace.beginSection("core:journalOpen")
             journal = WriteJournal(journalDir, log = { Log.i(TAG, it) }, floor = devices.highestSequence())
@@ -140,95 +140,156 @@ class CoreHost(
             Trace.beginSection("core:recoveryCheckpoint")
             database.ensureRecoveryCheckpoint()
             Trace.endSection()
-            val bridge = engine.createNewJSObject()
-            bridge.setProperty("sqlRun", guarded { args -> traced("sql:run") { database.run(args[0] as String, args[1] as String) }; null })
-            bridge.setProperty("sqlAll", guarded { args -> traced("sql:all") { database.all(args[0] as String, args[1] as String) } })
-            bridge.setProperty("sqlExec", guarded { args -> traced("sql:exec") { database.exec(args[0] as String) }; null })
-            // The bundle's boot steps as trace sections (Perfetto): a name opens one, "" closes the open one.
-            bridge.setProperty("trace", guarded { args ->
-                (args[0] as String).let { if (it.isEmpty()) Trace.endSection() else Trace.beginSection(it.take(127)) }
-                null
-            })
-            bridge.setProperty("nowMs", guarded { _ -> (System.nanoTime() - startedAt) / 1e6 })
-            bridge.setProperty("randomBytes", guarded { args ->
-                val length = (args[0] as Number).toInt()
-                require(length in 0..65_536) { "Invalid random byte count" }
-                JSONArray().also { out ->
-                    ByteArray(length).also(random::nextBytes).forEach { out.put(it.toInt() and 0xff) }
-                }.toString()
-            })
-            // `{ clearJsonAhead, setReconciled }`, decided by core's planLegacyJsonImport after the saved import is read back.
-            bridge.setProperty("rnStateCommit", guarded { args ->
-                val change = JSONObject(args[0] as String)
-                LegacyRnStoreGuard.commitRnState(checkNotNull(rnDataDir) { "No React Native state in this build" },
-                    change.getBoolean("clearJsonAhead"), change.getBoolean("setReconciled"))
-                null
-            })
-            // QuickJS has no Intl: the host's Intl.Collator and localeCompare sort by these ICU collation keys, from the device
-            // locale's collator as Hermes uses on Android, so titles order as in RN ("éclair" before "Zoo"). The key's bytes
-            // become chars 1-255 (the trailing 0 dropped), so comparing two keys as strings compares them as ICU does.
-            bridge.setProperty("collationKey", guarded { args ->
-                val options = args[1] as String
-                val collator = collators.getOrPut(options) {
-                    val (sensitivity, numeric) = options.split(':')
-                    Collator.getInstance(ULocale.getDefault()).apply {
-                        strength = when (sensitivity) { "base", "case" -> Collator.PRIMARY; "accent" -> Collator.SECONDARY; else -> Collator.TERTIARY }
-                        (this as? RuleBasedCollator)?.let { rules ->
-                            rules.isCaseLevel = sensitivity == "case"
-                            rules.numericCollation = numeric == "1"
-                        }
-                        freeze()
-                    }
-                }
-                val bytes = collator.getCollationKey(args[0] as String).toByteArray()
-                String(CharArray(bytes.size - 1) { (bytes[it].toInt() and 0xff).toChar() })
-            })
-            // The host's Intl.DateTimeFormat and Date's toLocale*String: Android's ICU, resolved and formatted as Hermes does.
-            val dates = IcuDateTimeFormat()
-            bridge.setProperty("dateTimeFormat", guarded { args -> dates.reply(args[0] as String, args[1] as String, (args[2] as Number).toDouble()) })
-            // Debug builds only: check-intl-device.mjs's cases, logged once the bundle (and so the polyfill) is loaded.
-            if (debugFault("intl_check") == "1") engine.globalObject.setProperty("__mindwtrIntlCheck", true)
-            // A diagnostic line must never fail the caller: coerce and swallow.
-            bridge.setProperty("log", guarded { args -> runCatching { Log.i(TAG, args.getOrNull(0).toString()) }; null })
-            // fetch and the secret calls (host-polyfills.js): each only starts here; HostIo runs it off this thread and
-            // queues its answer, and the polyfill settles it when the pump loop below takes that answer with ioNext.
-            bridge.setProperty("netFetch", guarded { args -> io.fetch(args[0] as String) })
-            bridge.setProperty("netAbort", guarded { args -> io.abort(args[0] as String); null })
-            bridge.setProperty("secretCall", guarded { args -> io.secret(args[0] as String) })
-            bridge.setProperty("ioNext", guarded { _ -> io.next() })
-            bridge.setProperty("ioBody", guarded { _ -> io.body() })
-            // RN's diagnostics log file: core's diagnostics-log.ts decides every write; this is its file IO.
-            val logs = DiagnosticsLogFile(logFile)
-            bridge.setProperty("logFile", guarded { args -> logs.run(args[0] as String, args.getOrNull(1)?.toString().orEmpty()) })
-            // RN's AsyncStorage (RnKeyValue): reads answer JSON (a value, or AsyncStorage's [[key, value]] pairs); a write is on disk
-            // when it returns.
-            bridge.setProperty("kvGet", guarded { args -> JSONArray().put(keyValue.get(args[0] as String) ?: JSONObject.NULL).toString() })
-            bridge.setProperty("kvSet", guarded { args -> kvFault(); keyValue.set(args[0] as String, args[1] as String); null })
-            bridge.setProperty("kvRemove", guarded { args -> keyValue.remove(args[0] as String); null })
-            bridge.setProperty("kvMultiGet", guarded { args -> keyValuePairs(keyValue.multiGet(stringList(args[0] as String))) })
-            bridge.setProperty("kvMultiSet", guarded { args -> keyValue.multiSet(JSONArray(args[0] as String).let { pairs ->
-                List(pairs.length()) { pairs.getJSONArray(it).let { pair -> pair.getString(0) to pair.getString(1) } } }); null })
-            bridge.setProperty("kvMultiRemove", guarded { args -> keyValue.multiRemove(stringList(args[0] as String)); null })
-            // Debug builds only (check-ai-device.mjs): RN's AI consent record goes before boot, so the check sees RN's question again.
-            if (debugFault("ai_consent_reset") == "1") keyValue.remove("mindwtr-ai-provider-consent-v1")
-            // An event for the screens: handed on as text; a listener that throws never reaches JS.
-            bridge.setProperty("hostEvent", guarded { args -> runCatching { onEvent?.invoke(args[0] as String) }; null })
-            // The pending-captures queue (core's ingestPendingCaptures): app-private files only.
-            bridge.setProperty("fileList", guarded { args -> files.list(args[0] as String) })
-            bridge.setProperty("fileRead", guarded { args -> files.readText(args[0] as String) })
-            bridge.setProperty("fileDelete", guarded { args -> queueStop(); files.delete(args[0] as String); null })
-            engine.globalObject.setProperty("__mindwtrNative", bridge)
+            install(engine, database)
             // A fetch or secret answer queued while no call runs wakes the idle pump, which settles it at once.
             io.wake = { runCatching { executor.execute { idlePump() } } }
-            Trace.beginSection("core:evaluate")
-            engine.evaluate(bundle, "core-host.js")
-            Trace.endSection()
+            load(engine, database, bundle)
             // This host journals every write (WriteJournal), so core requires each write's replay tokens.
             callAsync("boot", legacyState, legacyBackup, "journaled").also { netCheck() }
         } catch (error: Throwable) {
             closeOnEngine()
             throw error
         }
+    }
+
+    /** Where the bundle came from at start: "hit" (its cached bytecode), or why the source ran (BytecodeCache.Read). */
+    @Volatile private var bundleOutcome = ""
+    @Volatile private var bundleSource: CoreBundle? = null
+    private var cacheWriter: Thread? = null
+
+    /**
+     * The bundle into [engine]: its cached bytecode when the cache's key matches, without reading the source; else the
+     * source. Bytecode that fails to run is dropped with its engine, and a new engine runs the source.
+     */
+    private fun load(first: QuickJSContext, database: SqliteBridge, bundle: CoreBundle) {
+        var engine = first
+        val cached = bundle.cache?.let { cache -> bundle.hash.takeIf { it.isNotEmpty() }?.let(cache::read) }
+        bundleOutcome = cached?.outcome ?: "off"
+        Trace.beginSection("core:evaluate")
+        try {
+            cached?.bytecode?.let { compiled ->
+                val ran = runCatching { engine.execute(compiled) }
+                if (ran.isSuccess) return
+                bundleOutcome = "failed:${ran.exceptionOrNull()?.javaClass?.simpleName}"
+                engine.destroy()
+                engine = QuickJSContext.create().also { context = it }
+                functions.clear()
+                hostObject = null
+                install(engine, database)
+            }
+            engine.evaluate(bundle.source(), "core-host.js")
+        } finally {
+            Trace.endSection()
+            bundleSource = bundle
+            Log.i(TAG, "Native Android bundle load releaseCheck=v1.3.4/native-android-bytecode-cache outcome=$bundleOutcome")
+        }
+    }
+
+    /**
+     * After first content (ProcessCoreHost.contentShown): a start that ran the source compiles the bundle on a thread of its
+     * own, on an engine of its own, and writes the cache for the next start. It writes only bytecode compiled from bytes whose
+     * SHA-256 it has just checked against the bundle's key. Once per host; a failure only logs (the next start runs the source).
+     */
+    fun cacheBytecode() {
+        val writer = synchronized(lifecycleLock) {
+            if (bundleOutcome == "hit" || cacheWriter != null || shutdown != null) return
+            val bundle = bundleSource ?: return
+            val cache = bundle.cache ?: return
+            Thread({
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                val outcome = runCatching {
+                    val bytes = bundle.bytes()
+                    check(BytecodeCache.sha256(bytes).contentEquals(BytecodeCache.hex(bundle.hash))) { "the bundle does not match its key" }
+                    val compiler = QuickJSContext.create()
+                    val compiled = try { compiler.compile(String(bytes, Charsets.UTF_8), "core-host.js") } finally { compiler.destroy() }
+                    if (cache.write(bundle.hash, compiled)) "written bytes=${compiled.size}" else "write-failed"
+                }.getOrElse { "failed:${it.javaClass.simpleName}" }
+                Log.i(TAG, "Native Android bytecode cache releaseCheck=v1.3.4/native-android-bytecode-cache outcome=$outcome")
+            }, "mindwtr-bytecode").also { cacheWriter = it }
+        }
+        writer.start()
+    }
+
+    /** The native bridge, `globalThis.__mindwtrNative`, on a new [engine]. */
+    private fun install(engine: QuickJSContext, database: SqliteBridge) {
+        val bridge = engine.createNewJSObject()
+        bridge.setProperty("sqlRun", guarded { args -> traced("sql:run") { database.run(args[0] as String, args[1] as String) }; null })
+        bridge.setProperty("sqlAll", guarded { args -> traced("sql:all") { database.all(args[0] as String, args[1] as String) } })
+        bridge.setProperty("sqlExec", guarded { args -> traced("sql:exec") { database.exec(args[0] as String) }; null })
+        // The bundle's boot steps as trace sections (Perfetto): a name opens one, "" closes the open one.
+        bridge.setProperty("trace", guarded { args ->
+            (args[0] as String).let { if (it.isEmpty()) Trace.endSection() else Trace.beginSection(it.take(127)) }
+            null
+        })
+        bridge.setProperty("nowMs", guarded { _ -> (System.nanoTime() - startedAt) / 1e6 })
+        bridge.setProperty("randomBytes", guarded { args ->
+            val length = (args[0] as Number).toInt()
+            require(length in 0..65_536) { "Invalid random byte count" }
+            JSONArray().also { out ->
+                ByteArray(length).also(random::nextBytes).forEach { out.put(it.toInt() and 0xff) }
+            }.toString()
+        })
+        // `{ clearJsonAhead, setReconciled }`, decided by core's planLegacyJsonImport after the saved import is read back.
+        bridge.setProperty("rnStateCommit", guarded { args ->
+            val change = JSONObject(args[0] as String)
+            LegacyRnStoreGuard.commitRnState(checkNotNull(rnDataDir) { "No React Native state in this build" },
+                change.getBoolean("clearJsonAhead"), change.getBoolean("setReconciled"))
+            null
+        })
+        // QuickJS has no Intl: the host's Intl.Collator and localeCompare sort by these ICU collation keys, from the device
+        // locale's collator as Hermes uses on Android, so titles order as in RN ("éclair" before "Zoo"). The key's bytes
+        // become chars 1-255 (the trailing 0 dropped), so comparing two keys as strings compares them as ICU does.
+        bridge.setProperty("collationKey", guarded { args ->
+            val options = args[1] as String
+            val collator = collators.getOrPut(options) {
+                val (sensitivity, numeric) = options.split(':')
+                Collator.getInstance(ULocale.getDefault()).apply {
+                    strength = when (sensitivity) { "base", "case" -> Collator.PRIMARY; "accent" -> Collator.SECONDARY; else -> Collator.TERTIARY }
+                    (this as? RuleBasedCollator)?.let { rules ->
+                        rules.isCaseLevel = sensitivity == "case"
+                        rules.numericCollation = numeric == "1"
+                    }
+                    freeze()
+                }
+            }
+            val bytes = collator.getCollationKey(args[0] as String).toByteArray()
+            String(CharArray(bytes.size - 1) { (bytes[it].toInt() and 0xff).toChar() })
+        })
+        // The host's Intl.DateTimeFormat and Date's toLocale*String: Android's ICU, resolved and formatted as Hermes does.
+        val dates = IcuDateTimeFormat()
+        bridge.setProperty("dateTimeFormat", guarded { args -> dates.reply(args[0] as String, args[1] as String, (args[2] as Number).toDouble()) })
+        // Debug builds only: check-intl-device.mjs's cases, logged once the bundle (and so the polyfill) is loaded.
+        if (debugFault("intl_check") == "1") engine.globalObject.setProperty("__mindwtrIntlCheck", true)
+        // A diagnostic line must never fail the caller: coerce and swallow.
+        bridge.setProperty("log", guarded { args -> runCatching { Log.i(TAG, args.getOrNull(0).toString()) }; null })
+        // fetch and the secret calls (host-polyfills.js): each only starts here; HostIo runs it off this thread and
+        // queues its answer, and the polyfill settles it when the pump loop below takes that answer with ioNext.
+        bridge.setProperty("netFetch", guarded { args -> io.fetch(args[0] as String) })
+        bridge.setProperty("netAbort", guarded { args -> io.abort(args[0] as String); null })
+        bridge.setProperty("secretCall", guarded { args -> io.secret(args[0] as String) })
+        bridge.setProperty("ioNext", guarded { _ -> io.next() })
+        bridge.setProperty("ioBody", guarded { _ -> io.body() })
+        // RN's diagnostics log file: core's diagnostics-log.ts decides every write; this is its file IO.
+        val logs = DiagnosticsLogFile(logFile)
+        bridge.setProperty("logFile", guarded { args -> logs.run(args[0] as String, args.getOrNull(1)?.toString().orEmpty()) })
+        // RN's AsyncStorage (RnKeyValue): reads answer JSON (a value, or AsyncStorage's [[key, value]] pairs); a write is on disk
+        // when it returns.
+        bridge.setProperty("kvGet", guarded { args -> JSONArray().put(keyValue.get(args[0] as String) ?: JSONObject.NULL).toString() })
+        bridge.setProperty("kvSet", guarded { args -> kvFault(); keyValue.set(args[0] as String, args[1] as String); null })
+        bridge.setProperty("kvRemove", guarded { args -> keyValue.remove(args[0] as String); null })
+        bridge.setProperty("kvMultiGet", guarded { args -> keyValuePairs(keyValue.multiGet(stringList(args[0] as String))) })
+        bridge.setProperty("kvMultiSet", guarded { args -> keyValue.multiSet(JSONArray(args[0] as String).let { pairs ->
+            List(pairs.length()) { pairs.getJSONArray(it).let { pair -> pair.getString(0) to pair.getString(1) } } }); null })
+        bridge.setProperty("kvMultiRemove", guarded { args -> keyValue.multiRemove(stringList(args[0] as String)); null })
+        // Debug builds only (check-ai-device.mjs): RN's AI consent record goes before boot, so the check sees RN's question again.
+        if (debugFault("ai_consent_reset") == "1") keyValue.remove("mindwtr-ai-provider-consent-v1")
+        // An event for the screens: handed on as text; a listener that throws never reaches JS.
+        bridge.setProperty("hostEvent", guarded { args -> runCatching { onEvent?.invoke(args[0] as String) }; null })
+        // The pending-captures queue (core's ingestPendingCaptures): app-private files only.
+        bridge.setProperty("fileList", guarded { args -> files.list(args[0] as String) })
+        bridge.setProperty("fileRead", guarded { args -> files.readText(args[0] as String) })
+        bridge.setProperty("fileDelete", guarded { args -> queueStop(); files.delete(args[0] as String); null })
+        engine.globalObject.setProperty("__mindwtrNative", bridge)
     }
 
     /**
@@ -757,4 +818,13 @@ fun debugProperty(name: String): String {
 internal inline fun <T> traced(name: String, work: () -> T): T {
     Trace.beginSection(name)
     try { return work() } finally { Trace.endSection() }
+}
+
+/**
+ * The JS host's bundle: [hash] is the SHA-256 of its exact bytes, written beside it at build time (build-bundle.mjs; "" when
+ * missing, which turns the cache off), [cache] its compiled form (null: the source runs every start), and [bytes] reads it.
+ * The source is read only when it runs or is compiled.
+ */
+class CoreBundle(val hash: String, val cache: BytecodeCache?, val bytes: () -> ByteArray) {
+    fun source(): String = String(bytes(), Charsets.UTF_8)
 }

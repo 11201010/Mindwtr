@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import vm from 'node:vm';
@@ -2446,6 +2447,15 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
     assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
     assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, rnCaptureIntent\) \}/);
+    // The bytecode cache's keys (BytecodeCache.kt): the engine version is the QuickJS dependency's, and the bundle's hash
+    // asset is the SHA-256 of the bundle's exact bytes, both written by build-bundle.mjs.
+    assert.equal(/buildConfigField\("String", "QUICKJS_WRAPPER", "\\"([^"\\]+)\\""\)/.exec(gradle)?.[1],
+        /implementation\("wang\.harlon\.quickjs:wrapper-android:([^"]+)"\)/.exec(gradle)?.[1], 'the cache key names the QuickJS wrapper in use');
+    {
+        const assets = resolve(app, 'android/app/src/main/assets');
+        const bundleHash = createHash('sha256').update(readFileSync(resolve(assets, 'core-host.js'))).digest('hex');
+        assert.equal(readFileSync(resolve(assets, 'core-host.js.sha256'), 'utf8').trim(), bundleHash, 'the bundle hash asset is the bundle\'s SHA-256');
+    }
     // RN's shortcuts from RN's own builder: the same ids, capabilities, labels and links, on the build's scheme; Add task opens
     // the capture popup through RN's system capture link until the widget pass brings QuickCaptureActivity.
     const { createRequire } = await import('node:module');

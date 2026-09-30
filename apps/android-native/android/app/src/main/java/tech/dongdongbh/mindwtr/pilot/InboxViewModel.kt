@@ -350,6 +350,9 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         if (attaches > 1) ProcessCoreHost.logHostReuse("activity-recreate", attaches, busy)
     }
 
+    /** First content is on screen: the host may do the boot's deferred work (its bytecode cache). */
+    fun contentShown() = ProcessCoreHost.contentShown()
+
     /** The editor opens over this list, so Save and Cancel return to it. */
     fun show(target: Screen) {
         screen = target

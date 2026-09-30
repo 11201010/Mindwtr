@@ -4,6 +4,8 @@ import android.app.Application
 import android.util.Log
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.androidwidget.PendingCaptureWriter
+import tech.dongdongbh.mindwtr.pilot.core.BytecodeCache
+import tech.dongdongbh.mindwtr.pilot.core.CoreBundle
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.DiagnosticsLogFile
 import tech.dongdongbh.mindwtr.pilot.core.HostFiles
@@ -106,7 +108,7 @@ internal object ProcessCoreHost {
             File(app.filesDir, "journal"), deviceStore(app), File(app.filesDir, DiagnosticsLogFile.RELATIVE_PATH),
             RnKeyValue(app.getDatabasePath("RKStorage")), HostFiles(app.filesDir, app.cacheDir))
         try {
-            runtime.start(traced("boot:bundleRead") { app.assets.open("core-host.js").bufferedReader().use { it.readText() } }, legacy?.bootState ?: "", legacy?.backup ?: "")
+            runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)
             loadTheme(runtime, legacy?.theme)
             if (replay(runtime)) recovered(app, runtime)
@@ -115,6 +117,22 @@ internal object ProcessCoreHost {
             runCatching { runtime.close() }
             throw failure
         }
+    }
+
+    /**
+     * The bundle and its bytecode cache in the code cache directory (Android empties it on an app update; the key guards
+     * every other case). Its build-time hash comes from the asset beside it; a missing one turns the cache off.
+     */
+    private fun coreBundle(app: Application): CoreBundle {
+        val hash = runCatching { app.assets.open("core-host.js.sha256").bufferedReader().use { it.readText().trim() } }.getOrDefault("")
+        val cache = BytecodeCache(File(app.codeCacheDir, "core-host.qjsc"), BuildConfig.QUICKJS_WRAPPER)
+        return CoreBundle(hash, cache) { traced("boot:bundleRead") { app.assets.open("core-host.js").use { it.readBytes() } } }
+    }
+
+    /** After first content (MainActivity's report): a start that ran the source caches its bytecode now, off the critical path. */
+    fun contentShown() {
+        val task = synchronized(this) { boot } ?: return
+        if (task.isDone) runCatching { task.get() }.getOrNull()?.cacheBytecode()
     }
 
     /**

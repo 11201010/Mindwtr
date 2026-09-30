@@ -27,6 +27,8 @@ android {
         versionName = "native-dev"
         // false: the isolated dev database. Only the upgradetest build type opens the RN app's storage.
         buildConfigField("boolean", "RN_STORAGE", "false")
+        // The QuickJS wrapper's version (the dependency below): a key of the bundle's bytecode cache (BytecodeCache.kt).
+        buildConfigField("String", "QUICKJS_WRAPPER", "\"3.2.0\"")
     }
 
     buildTypes {
@@ -120,7 +122,7 @@ val buildCoreBundle by tasks.registering(Exec::class) {
         workingDir.resolve("package.json"),
         workingDir.resolve("packages/core/package.json"),
     )
-    outputs.file("src/main/assets/core-host.js")
+    outputs.files("src/main/assets/core-host.js", "src/main/assets/core-host.js.sha256")
 }
 val buildShortcuts by tasks.registering(Exec::class) {
     workingDir = rootProject.projectDir.resolve("../../..")
