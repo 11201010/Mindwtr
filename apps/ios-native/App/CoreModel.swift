@@ -246,6 +246,15 @@ final class CoreModel: ObservableObject {
 
     @Published private(set) var settingsGeneralPresented = false
     @Published private(set) var generalSettings: CoreObject = [:]
+    let appLock = AppLockController()
+    @Published private(set) var appLockRow: CoreObject = [:]
+    @Published private(set) var appLockRecoveryPending = false
+    @Published private(set) var appLockError: String?
+    @Published private(set) var appLockAwaitingRefresh = false
+    private var appLockExpected: CoreObject = [:]
+    private var appLockRequest: String?
+    var appLockActive: Bool { appLockRequest != nil || appLockAwaitingRefresh || appLock.authenticating }
+    var appLockCanChange: Bool { generalPreferenceEnabled && !appLockActive && !appLockRow.isEmpty }
     @Published private(set) var generalPreferenceError: String?
     @Published private(set) var generalPreferenceReadError: String?
     @Published private(set) var generalPreferenceAwaitingRefresh = false
@@ -255,7 +264,7 @@ final class CoreModel: ObservableObject {
     private var generalPreferenceRequest: String?
     private var generalPreferenceEdit: CoreObject = [:]
     private var generalPreferenceAcknowledged = false
-    var generalPreferenceActive: Bool { generalPreferenceRequest != nil || generalPreferenceAwaitingRefresh }
+    var generalPreferenceActive: Bool { generalPreferenceRequest != nil || generalPreferenceAwaitingRefresh || appLockActive }
     var generalPreferenceEnabled: Bool {
         ready && selectedSurface == .settings && settingsGeneralPresented && !busy && !retryNeeded
             && !generalPreferenceActive && generalPreferenceReadError == nil && !generalSettings.isEmpty
@@ -461,7 +470,7 @@ final class CoreModel: ObservableObject {
     @Published var capturePresented = false
     @Published private(set) var areaPickerPresented = false
     @Published private(set) var taskPresented = false
-    private(set) var taskInitialTab = "view"
+    var taskInitialTab = "view"
     @Published private(set) var taskView: CoreObject = [:]
     @Published private(set) var taskError: String?
     @Published private(set) var taskEditor: CoreObject = [:]
@@ -666,6 +675,7 @@ final class CoreModel: ObservableObject {
     private var managePersonDeleteTestReadFailures = 0
     private var managePersonDeleteOptionsTestReadFailures = 0
     private var managePersonDeleteTestRefusals = 0
+    private var appLockTestReadFailures = 0
     private var generalPreferenceTestReadFailures = 0
     private var generalPreferenceMenuTestReadFailures = 0
     private var generalPreferenceThemeTestReadFailures = 0
@@ -1613,6 +1623,9 @@ final class CoreModel: ObservableObject {
                     guard let isolatedDefaults = UserDefaults(suiteName: "nativeUITests.\(identifier.uuidString.lowercased())") else {
                         throw CocoaError(.fileReadCorruptFile)
                     }
+                    if let position = arguments.firstIndex(of: "--native-app-lock-auth"), position + 1 < arguments.count {
+                        appLock.testOutcomes = arguments[position + 1].split(separator: ",").map(String.init)
+                    }
                     preferenceDefaults = isolatedDefaults
                     projectAreaTestReadFailure = arguments.contains("--native-project-area-read-failure")
                     projectAreaTestBlockedWrite = arguments.contains("--native-project-area-blocked-write")
@@ -1643,6 +1656,7 @@ final class CoreModel: ObservableObject {
                     managePersonDeleteTestReadFailures = arguments.contains("--native-manage-person-delete-read-failure") ? 2 : 0
                     managePersonDeleteOptionsTestReadFailures = arguments.contains("--native-manage-person-delete-options-read-failure") ? 1 : 0
                     managePersonDeleteTestRefusals = arguments.contains("--native-manage-person-delete-refusal") ? 1 : 0
+                    appLockTestReadFailures = arguments.contains("--native-app-lock-read-failure") ? 2 : 0
                     generalPreferenceTestReadFailures = arguments.contains("--native-general-preference-read-failure") ? 2 : 0
                     generalPreferenceMenuTestReadFailures = arguments.contains("--native-general-preference-menu-read-failure") ? 2 : 0
                     generalPreferenceThemeTestReadFailures = arguments.contains("--native-general-preference-theme-read-failure") ? 2 : 0
@@ -1813,7 +1827,7 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .focus
             } else if recovery.text("method") == "taskListSortWrite" {
                 selectedSurface = .reference
-            } else if recovery.text("method") == "generalPreferenceCommit" {
+            } else if ["generalPreferenceCommit", "appLockCommit"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsGeneralPresented = true
             } else if ["somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite",
@@ -1830,6 +1844,7 @@ final class CoreModel: ObservableObject {
             }
             try await readLanguage()
             try await readTheme()
+            try await readAppLock()
             if boardRecoveredResult != nil { selectedSurface = .board }
             if calendarComposerRecoveredResult != nil { selectedSurface = .calendar }
             if mindSweepRecoveredResult != nil { selectedSurface = .inbox }
@@ -1845,7 +1860,9 @@ final class CoreModel: ObservableObject {
                 calendarComposerRecoveredResult = nil
             }
             mindSweepRecoveredResult = nil
+            appLockRecoveryPending = false
         } catch {
+            appLockRecoveryPending = error is CoreHostAppLockRecovery
             self.error = error.localizedDescription
         }
         #else
@@ -1854,6 +1871,7 @@ final class CoreModel: ObservableObject {
     }
 
     func refresh() async {
+        guard !appLock.concealed else { return }
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
         guard ready, !retryNeeded, !capturePresented, !taskPresented, !taskStatusMenuPresented, !calendarItemPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
@@ -1868,6 +1886,8 @@ final class CoreModel: ObservableObject {
         do {
             try await readLanguage()
             try await readTheme()
+            try await readAppLock()
+            guard !appLock.concealed else { return }
             try await readSelectedSurface()
             error = nil
         } catch { self.error = error.localizedDescription }
@@ -2027,6 +2047,100 @@ final class CoreModel: ObservableObject {
         generalSettings = model
         generalPreferenceExpected = expected
         generalPreferenceReadError = nil
+        do { try await readAppLock() }
+        catch { appLockError = error.localizedDescription }
+    }
+
+    private func readAppLock(justEnabled: Bool = false) async throws {
+        do {
+            let options = try await query("appLockOptions", ["{}"])
+            guard Set(options.keys) == Set(["row", "value", "expected"]),
+                  let value = options["value"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID(),
+                  !options.object("row").isEmpty, !options.object("expected").isEmpty else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            appLockRow = options.object("row")
+            appLockExpected = options.object("expected")
+            appLock.saved(value.boolValue, justEnabled: justEnabled)
+            appLockError = nil
+            appLockAwaitingRefresh = false
+        } catch {
+            appLock.readFailed()
+            appLockError = error.localizedDescription
+            throw error
+        }
+    }
+
+    func cancelAppLockRecovery() async {
+        guard appLockRecoveryPending, !busy, let host else { return }
+        busy = true
+        do {
+            try await host.cancelAppLockRecovery()
+            appLockRecoveryPending = false
+            finishOperation()
+            await start()
+        } catch {
+            self.error = error.localizedDescription
+            finishOperation()
+        }
+    }
+
+    func retryAppLockRead() async {
+        guard !busy else { return }
+        if !ready { await start(); return }
+        if retryNeeded { await retry(); return }
+        busy = true
+        defer { finishOperation() }
+        do { try await readAppLock() }
+        catch { appLockError = error.localizedDescription }
+    }
+
+    func saveAppLock(_ value: Bool) async {
+        guard appLockCanChange, !appLock.concealed else { return }
+        let expected = appLockExpected
+        busy = true
+        appLockError = nil
+        defer { finishOperation() }
+        if value && !(expected.flag("present") && expected.flag("value")) {
+            guard await appLock.authenticate(reason: appLockRow.object("enablePrompt").text("promptMessage"), label: label) else {
+                appLockError = label(appLock.errorKey ?? "appLock.failed")
+                return
+            }
+        }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "value": value, "expected": expected])
+            appLockRequest = request
+            try await acknowledgeAppLock(await query("appLock", [request]))
+        } catch { await handleAppLockError(error) }
+    }
+
+    private func acknowledgeAppLock(_ result: CoreObject) async throws {
+        guard let request = appLockRequest,
+              let input = try JSONSerialization.jsonObject(with: Data(request.utf8)) as? CoreObject,
+              Set(result.keys) == Set(["changed", "value"]),
+              let changed = result["changed"] as? NSNumber, CFGetTypeID(changed) == CFBooleanGetTypeID(),
+              let value = result["value"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID(),
+              input["value"] as? Bool == value.boolValue else { throw CocoaError(.coderReadCorrupt) }
+        appLockRequest = nil
+        appLockAwaitingRefresh = true
+        retryNeeded = false
+        error = nil
+        // Acknowledgment is durable. Retry only this read if it fails, never authentication or the write.
+        try await readAppLock(justEnabled: value.boolValue)
+    }
+
+    private func handleAppLockError(_ failure: Error) async {
+        appLockError = failure.localizedDescription
+        if appLockRequest != nil && isDefiniteRejection(failure) {
+            appLockRequest = nil
+            retryNeeded = false
+            error = nil
+            do { try await readAppLock() }
+            catch { appLockError = error.localizedDescription }
+        } else {
+            retryNeeded = appLockRequest != nil
+            if retryNeeded { error = failure.localizedDescription }
+        }
     }
 
     private func readLanguage() async throws {
@@ -2053,6 +2167,8 @@ final class CoreModel: ObservableObject {
 
     private func readStrings() async throws {
         let keys = ["tab.next", "tab.inbox", "tab.review", "tab.menu", "nav.addTask", "search.title",
+                    "appLock.title", "appLock.description", "appLock.prompt", "appLock.enablePrompt", "appLock.unlock",
+                    "appLock.authenticating", "appLock.useDevicePasscode", "appLock.unavailable", "appLock.cancelled", "appLock.failed",
                     "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading",
                     "task.aria.changeStatus", "task.aria.changeStatusHint", "quickAdd.audioRecord",
                     "common.more", "agenda.reviewDueProjects", "agenda.laterToday",
@@ -14152,6 +14268,13 @@ final class CoreModel: ObservableObject {
                 await refreshManageAfterPersonDelete()
                 return
             }
+            if let request = appLockRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("appLockRetryOutcome", [request]) }
+                try await acknowledgeAppLock(result)
+                return
+            }
             if let request = generalPreferenceRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -14390,6 +14513,10 @@ final class CoreModel: ObservableObject {
             }
             if settingsPersonDeleteRequest != nil {
                 await handleSettingsPersonDeleteWriteError(error)
+                return
+            }
+            if appLockRequest != nil {
+                await handleAppLockError(error)
                 return
             }
             if generalPreferenceRequest != nil {
@@ -15260,6 +15387,10 @@ final class CoreModel: ObservableObject {
         }
         if method == "menuRead", args.first as? String == "more", generalPreferenceAcknowledged, generalPreferenceMenuTestReadFailures > 0 {
             generalPreferenceMenuTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "appLockOptions", appLockAwaitingRefresh, appLockTestReadFailures > 0 {
+            appLockTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
         if method == "strings", generalPreferenceAcknowledged, generalPreferenceLanguageTestReadFailures > 0 {

@@ -12484,4 +12484,129 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task102LockToggle(_ app: XCUIApplication) -> XCUIElement {
+        let toggle = app.switches["general-app-lock"]
+        revealPagedElement(app, toggle, in: app.scrollViews["general-scroll"])
+        boardEnabled(toggle)
+        return toggle
+    }
+
+    private func task102Gate(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["app-lock-unlock"], timeout: 30)
+        revealPagedElement(app, app.buttons["app-lock-unlock"], in: app.scrollViews.containing(.button, identifier: "app-lock-unlock").firstMatch)
+        XCTAssertFalse(app.buttons["tab-menu"].exists)
+        XCTAssertFalse(app.buttons["general-back"].exists)
+        XCTAssertFalse(app.buttons["capture-open"].exists)
+        XCTAssertFalse(app.buttons["task-view-close"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "App lock concealed"; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func task102Lifecycle(_ library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "--native-app-lock-auth", "cancel,unavailable,failed,success,cancel,success", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch(); task97Open(app)
+        for message in ["Mindwtr is still locked.", "Set up a device passcode or biometrics to use app lock.", "Authentication failed. Try again."] {
+            task102LockToggle(app).tap()
+            let error = app.staticTexts["general-app-lock-error"]
+            XCTAssertTrue(error.waitForExistence(timeout: 15)); XCTAssertEqual(error.label, message)
+            XCTAssertEqual(task102LockToggle(app).value as? String, "0")
+        }
+        task102LockToggle(app).tap()
+        expectation(for: NSPredicate(format: "value == %@ AND enabled == true", "1"), evaluatedWith: app.switches["general-app-lock"])
+        waitForExpectations(timeout: 20)
+        XCTAssertEqual(task102LockToggle(app).value as? String, "1")
+        XCTAssertFalse(app.buttons["app-lock-unlock"].exists, "Successful enable keeps this session unlocked")
+        XCUIDevice.shared.press(.home); app.activate()
+        task102Gate(app)
+        // Once the automatic attempt was cancelled, it stays concealed until explicit retry.
+        XCTAssertTrue(app.staticTexts["Mindwtr is still locked."].exists)
+        boardTap(app, "app-lock-unlock")
+        boardEnabled(app.buttons["general-back"], timeout: 20)
+        XCTAssertEqual(task102LockToggle(app).value as? String, "1")
+        app.terminate()
+        app.launchArguments = ["--native-ui-test-library", library, "--native-app-lock-auth", "cancel,success"]
+        app.launch(); task102Gate(app)
+        boardTap(app, "app-lock-unlock"); task97Open(app)
+        task102LockToggle(app).tap()
+        XCTAssertEqual(task102LockToggle(app).value as? String, "0", "Disabling requires no authentication")
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task97Open(app)
+        XCTAssertEqual(task102LockToggle(app).value as? String, "0")
+        app.terminate()
+    }
+
+    func testAppLockLifecycle() { task102Lifecycle("9e2a8112-1766-40ca-bde6-6fda8817663c") }
+    func testAppLockLargest() { task102Lifecycle("b55fb2f2-da0d-4fd6-a528-6ad6a7da682f") }
+
+    func testAppLockMalformedSavedFlagConcealsContent() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "18f1c2d3-516c-4b42-b132-ee7b021c3d5f"]
+        app.launch(); boardEnabled(app.buttons["app-lock-read-retry"], timeout: 30)
+        XCTAssertFalse(app.buttons["tab-menu"].exists); XCTAssertFalse(app.buttons["capture-open"].exists)
+        XCTAssertFalse(app.buttons["app-lock-unlock"].exists)
+        boardTap(app, "app-lock-read-retry"); boardEnabled(app.buttons["app-lock-read-retry"], timeout: 30)
+        XCTAssertFalse(app.buttons["tab-menu"].exists); app.terminate()
+    }
+
+    func testAppLockAcknowledgedReadRetryDoesNotWriteAgain() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "ceb49c5e-43e5-446b-98dd-2ee658dd39ab", "--native-app-lock-auth", "success,cancel,success", "--native-app-lock-read-failure"]
+        app.launch(); task97Open(app); task102LockToggle(app).tap()
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["app-lock-read-retry"], timeout: 20)
+            XCTAssertFalse(app.buttons["general-back"].exists)
+            boardTap(app, "app-lock-read-retry")
+        }
+        task102Gate(app); boardTap(app, "app-lock-unlock"); task97Open(app)
+        XCTAssertEqual(task102LockToggle(app).value as? String, "1")
+        app.terminate()
+    }
+
+    func testAppLockConcealsSheetAndPreservesUnsavedDraft() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "39dfc853-54b8-4e7d-a0dd-2101c548621e", "--native-app-lock-auth", "success,cancel,success"]
+        app.launch(); task97Open(app); task102LockToggle(app).tap()
+        XCTAssertEqual(task102LockToggle(app).value as? String, "1")
+        boardTap(app, "general-back"); boardTap(app, "settings-back")
+        boardEnabled(app.buttons["App lock sheet fixture"], timeout: 20); app.buttons["App lock sheet fixture"].tap()
+        boardTap(app, "task-mode-edit")
+        let title = app.descendants(matching: .any).matching(identifier: "task-editor-title").firstMatch
+        boardEnabled(title); title.tap(); title.typeText(" unsaved")
+        let draft = title.value as? String
+        XCUIDevice.shared.press(.home); app.activate(); task102Gate(app)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-editor-title").firstMatch.exists)
+        boardTap(app, "app-lock-unlock")
+        boardEnabled(title, timeout: 20); XCTAssertEqual(title.value as? String, draft)
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard")
+        task97Open(app); task102LockToggle(app).tap()
+        XCTAssertEqual(task102LockToggle(app).value as? String, "0"); app.terminate()
+    }
+
+    func testAppLockFailedSaveKeepsExactRequest() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "6c9b20e6-7de4-4b2b-aab8-e6b2f4b098b4", "--native-app-lock-auth", "success"]
+        app.launch(); task97Open(app); task102LockToggle(app).tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["general-app-lock-retry"]
+            boardEnabled(retry, timeout: 30)
+            XCTAssertTrue(app.staticTexts["general-app-lock-error"].exists)
+            XCTAssertEqual(app.switches["general-app-lock"].value as? String, "0")
+            XCTAssertFalse(app.switches["general-app-lock"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["general-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["general-app-lock-retry"], timeout: 30)
+        XCUIDevice.shared.press(.home); app.activate()
+        boardEnabled(app.buttons["app-lock-read-retry"], timeout: 30)
+        XCTAssertFalse(app.buttons["general-back"].exists)
+        XCTAssertFalse(app.buttons["tab-menu"].exists)
+        app.terminate()
+    }
+
+    func testAppLockColdUnknownCancellationKeepsSavedFlag() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "6c9b20e6-7de4-4b2b-aab8-e6b2f4b098b4"]
+        app.launch(); boardEnabled(app.buttons["app-lock-recovery-cancel"], timeout: 30)
+        XCTAssertFalse(app.buttons["tab-menu"].exists); XCTAssertFalse(app.buttons["app-lock-unlock"].exists)
+        boardTap(app, "app-lock-recovery-cancel"); task97Open(app)
+        XCTAssertEqual(task102LockToggle(app).value as? String, "0"); app.terminate()
+    }
+
 }

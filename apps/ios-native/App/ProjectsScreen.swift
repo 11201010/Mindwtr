@@ -27,7 +27,7 @@ struct ProjectsScreen: View {
         .refreshable { await model.refresh() }
         .sheet(isPresented: Binding(
             get: { model.areaManagerPresented && model.areaManagerProjectID == nil },
-            set: { if !$0 { model.closeAreaManager() } }
+            set: { if !$0 && !model.appLock.concealed { model.closeAreaManager() } }
         )) {
             AreaManagerSheet(model: model, palette: palette)
                 .presentationDetents([.medium, .large])
@@ -1103,14 +1103,14 @@ struct ProjectDetailScreen: View {
             Button(model.label("common.cancel"), role: .cancel) {}
         } message: { Text(model.label("taskEdit.discardChangesDesc")) }
         .sheet(isPresented: Binding(get: { model.projectDateField != nil },
-                                    set: { if !$0 { model.cancelProjectDate() } })) {
+                                    set: { if !$0 && !model.appLock.concealed { model.cancelProjectDate() } })) {
             projectDateSheet
                 .presentationDetents(model.retryNeeded ? [.large] : [.medium, .large])
                 .interactiveDismissDisabled(model.projectDatePending || model.retryNeeded || model.busy)
         }
         .sheet(isPresented: Binding(get: {
             model.projectViewOptionsPresented || model.projectTaskSortPresented || model.projectFiltersPresented
-        }, set: { if !$0 {
+        }, set: { if !$0 && !model.appLock.concealed {
             filterFocusedField = nil
             model.closeProjectFilters()
             model.closeProjectViewOptions()
@@ -1125,19 +1125,19 @@ struct ProjectDetailScreen: View {
                 || (!model.projectFiltersPresented && model.busy))
         }
         .sheet(isPresented: Binding(get: { model.projectAreaPresented },
-                                    set: { if !$0 { model.closeProjectArea() } })) {
+                                    set: { if !$0 && !model.appLock.concealed { model.closeProjectArea() } })) {
             ProjectAreaSelectionSheet(model: model, palette: palette)
                 .presentationDetents([.large])
                 .interactiveDismissDisabled(!model.projectAreaCloseEnabled)
         }
         .sheet(isPresented: Binding(get: { model.projectTagsPresented },
-                                    set: { if !$0 { model.closeProjectTags() } })) {
+                                    set: { if !$0 && !model.appLock.concealed { model.closeProjectTags() } })) {
             ProjectTagsSelectionSheet(model: model, palette: palette)
                 .presentationDetents([.large])
                 .interactiveDismissDisabled(!model.projectTagsCloseEnabled)
         }
         .sheet(isPresented: Binding(get: { model.projectSectionsPresented },
-                                    set: { if !$0 { model.closeProjectSections() } })) {
+                                    set: { if !$0 && !model.appLock.concealed { model.closeProjectSections() } })) {
             projectSectionsSheet
                 .presentationDetents([.large])
                 .interactiveDismissDisabled(!model.projectSectionCloseEnabled)

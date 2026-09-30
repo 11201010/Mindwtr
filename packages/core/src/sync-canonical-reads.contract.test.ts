@@ -805,6 +805,9 @@ describe('canonical local reads contract', () => {
         // content the pass has not already seen through the action that made it.
         'retryPersistence',
         'persistSnapshot',
+        // Requeues the raw saved snapshot owned by commitPreparedAppLock after
+        // a failed save; the SQLite recovery test checks its exact contents.
+        'retryPreparedAppLockSnapshot',
     ]);
 
     it('leaves a canonical document after every store write action', async () => {
@@ -1072,6 +1075,22 @@ describe('canonical local reads contract', () => {
                 });
                 expect(nativeValue(await host.commitPreparedGeneralPreference({ request, prepared: planned.prepared })))
                     .toEqual(planned.prepared.result);
+            },
+            commitPreparedAppLock: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(await host.getAppLockOptions({}));
+                const request = { requestId: 'cf81c9fb-8e56-4e8b-ab33-538ca8c31b7e',
+                    value: !options.value, expected: options.expected };
+                const planned = nativeValue(await host.prepareAppLock(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.settings.security?.mobileAppLockEnabled).toBe(request.value);
+                    expect(written.tasks).toHaveLength(settled.tasks.length);
+                    expect(written.projects).toHaveLength(settled.projects.length);
+                });
+                expect(nativeValue(await host.commitPreparedAppLock({ request, prepared: planned.prepared })))
+                    .toEqual({ changed: true, value: request.value });
             },
             commitPreparedPersonCreate: async (control) => {
                 const host = await nativeHost(control);

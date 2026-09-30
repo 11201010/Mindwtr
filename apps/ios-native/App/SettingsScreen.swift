@@ -140,31 +140,31 @@ struct SettingsScreen: View {
         }
         .sheet(isPresented: Binding(
             get: { !model.unassignedAreaColorOptions.isEmpty },
-            set: { if !$0 { model.cancelUnassignedAreaColor() } }
+            set: { if !$0 && !model.appLock.concealed { model.cancelUnassignedAreaColor() } }
         )) { unassignedAreaColorSheet }
         .sheet(isPresented: Binding(
             get: { model.settingsAreaCreatePresented },
-            set: { if !$0 { model.cancelSettingsAreaCreate() } }
+            set: { if !$0 && !model.appLock.concealed { model.cancelSettingsAreaCreate() } }
         )) { newAreaSheet }
         .sheet(isPresented: Binding(
             get: { model.settingsPersonCreatePresented },
-            set: { if !$0 { model.cancelSettingsPersonCreate() } }
+            set: { if !$0 && !model.appLock.concealed { model.cancelSettingsPersonCreate() } }
         )) { personEditorSheet(editing: false) }
         .sheet(isPresented: Binding(
             get: { model.settingsPersonEditPresented },
-            set: { if !$0 { model.cancelSettingsPersonEdit() } }
+            set: { if !$0 && !model.appLock.concealed { model.cancelSettingsPersonEdit() } }
         )) { personEditorSheet(editing: true) }
         .sheet(isPresented: Binding(
             get: { model.settingsTaxonomyPresented },
-            set: { if !$0 { model.cancelSettingsTaxonomy() } }
+            set: { if !$0 && !model.appLock.concealed { model.cancelSettingsTaxonomy() } }
         )) { taxonomyEditorSheet }
         .sheet(isPresented: Binding(
             get: { model.settingsAreaEditActive },
-            set: { if !$0 { model.cancelSettingsAreaEdit() } }
+            set: { if !$0 && !model.appLock.concealed { model.cancelSettingsAreaEdit() } }
         )) { areaEditSheet }
         .sheet(isPresented: Binding(
             get: { model.generalPreferencePicker != nil },
-            set: { if !$0 { model.closeGeneralPreferencePicker() } }
+            set: { if !$0 && !model.appLock.concealed { model.closeGeneralPreferencePicker() } }
         )) { generalPreferenceSheet }
         .accessibilityAction(.escape) {
             if model.settingsGeneralPresented { model.closeGeneralSettings() }
@@ -199,10 +199,21 @@ struct SettingsScreen: View {
                 .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
                 Text(privacy.text("title")).rnFont(13, .semibold).foregroundStyle(palette.secondary)
                     .accessibilityAddTraits(.isHeader)
-                Toggle(isOn: .constant(privacy.object("appLock")["value"] as? Bool ?? false)) {
-                    generalSettingLabel(privacy.object("appLock"), description: "description")
+                Toggle(isOn: Binding(get: { model.appLockRow.flag("value") },
+                                     set: { value in Task { await model.saveAppLock(value) } })) {
+                    generalSettingLabel(model.appLockRow.isEmpty ? privacy.object("appLock") : model.appLockRow, description: "description")
                 }
-                .padding(14).disabled(true).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .tint(palette.tint).padding(14).disabled(!model.appLockCanChange)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityIdentifier("general-app-lock")
+                if let failure = model.appLockError {
+                    Text(failure).rnFont(13).foregroundStyle(palette.danger)
+                        .accessibilityIdentifier("general-app-lock-error")
+                    if model.retryNeeded || model.appLockAwaitingRefresh {
+                        Button(model.label("common.retry")) { Task { await model.retryAppLockRead() } }
+                            .disabled(model.busy).accessibilityIdentifier("general-app-lock-retry")
+                    }
+                }
                 generalSettingRow(model.generalSettings.object("language"), type: "language", enabled: true)
                     .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
                 VStack(spacing: 0) {

@@ -1,11 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NativeHostResult } from './native-host-contract';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
+import { createNativeRequestReceipts, loadNativeRequestReceipts, pruneNativeRequestReceipts, resetNativeRequestReceipts,
+    runStoreWrite, settleWrite } from './native-request-receipts';
+import type { SqliteClient } from './sqlite-adapter';
 import { resetForTests, useTaskStore } from './store';
-import { generateUUID } from './uuid';
+import { deterministicHash128, generateUUID } from './uuid';
 
 const ok = <T,>(value: T): NativeHostResult<T> => ({ ok: true, value });
 const saveFailed: NativeHostResult<never> = { ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } };
+afterEach(() => resetNativeRequestReceipts());
 
 /** A save that fails while `failing` is set, and can be held open. */
 function createSave() {
@@ -19,6 +22,56 @@ function createSave() {
 }
 
 describe('native request receipts', () => {
+    it('scopes iOS disk replies to App lock, keeps other IDs reserved and preserves unknown rows', async () => {
+        const appId = generateUUID();
+        const otherId = generateUUID();
+        const payload = JSON.stringify(['appLock', true, false, false, null]);
+        const otherPayload = JSON.stringify(['other', 'opaque']);
+        const otherFingerprint = `other:${deterministicHash128(otherPayload).map((part) => part.toString(16).padStart(8, '0')).join('')}`;
+        const rows = [
+            { request_id: appId, method: payload, reply: JSON.stringify({ changed: true, value: true }), saved_at: '2026-09-30T00:00:00.000Z' },
+            { request_id: otherId, method: otherFingerprint, reply: JSON.stringify({ legacy: true }), saved_at: '2026-09-30T00:00:00.000Z' },
+        ];
+        const writes: Array<{ sql: string; params?: unknown[] }> = [];
+        const client = { run: async (sql: string, params?: unknown[]) => { writes.push({ sql, params }); },
+            all: async () => rows, get: async () => undefined, exec: async () => {} } as SqliteClient;
+        expect(await loadNativeRequestReceipts(client, { durableCommands: ['appLock'] })).toBe(2);
+        const { save } = createSave();
+        const receipts = createNativeRequestReceipts({ save });
+        expect(receipts.saved(appId, payload)).toEqual(ok({ changed: true, value: true }));
+        expect(receipts.saved(appId, JSON.stringify(['appLock', false, false, false, null])))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(receipts.saved(otherId, otherPayload)).toBeNull();
+        expect(receipts.checkIdentity(otherId, payload)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(writes).toHaveLength(1); // schema creation only; loader never rewrites unknown rows
+        expect(await pruneNativeRequestReceipts(client, new Date('2026-12-01T00:00:00.000Z'))).toBe(1);
+        expect(writes).toHaveLength(2);
+        expect(writes[1].sql).toBe('DELETE FROM native_request_receipts WHERE request_id = ? AND saved_at < ?');
+        expect(writes[1].params?.[0]).toBe(appId); // unknown other row remains on disk
+        resetNativeRequestReceipts();
+        expect(await loadNativeRequestReceipts(client)).toBe(2); // Android default still reads all
+        expect(createNativeRequestReceipts({ save }).saved(otherId, otherPayload)).toEqual(ok({ legacy: true }));
+    });
+
+    it('fails scoped boot closed on malformed App lock receipt rows', async () => {
+        const id = generateUUID();
+        const valid = { request_id: id, method: JSON.stringify(['appLock', true, false, false, null]),
+            reply: JSON.stringify({ changed: true, value: true }), saved_at: '2026-09-30T00:00:00.000Z' };
+        for (const row of [
+            { ...valid, method: JSON.stringify(['appLock', 'true', false, false, null]) },
+            { ...valid, method: JSON.stringify(['appLock', true, false, true, true]) },
+            { ...valid, reply: JSON.stringify({ changed: true, value: false }) },
+            { ...valid, reply: JSON.stringify({ changed: true, value: true, secret: 'bad' }) },
+            { ...valid, saved_at: 'not-a-date' },
+            { ...valid, request_id: id.toUpperCase() },
+        ]) {
+            const client = { run: async () => {}, all: async () => [row],
+                get: async () => undefined, exec: async () => {} } as SqliteClient;
+            await expect(loadNativeRequestReceipts(client, { durableCommands: ['appLock'] }))
+                .rejects.toThrow('Invalid saved App lock receipt');
+            resetNativeRequestReceipts();
+        }
+    });
     it('checks UUID ownership without reserving, writing or saving', async () => {
         const { save } = createSave();
         const receipts = createNativeRequestReceipts({ save });

@@ -168,11 +168,10 @@ struct InboxScreen: View {
         .foregroundStyle(palette.text)
         .tint(palette.tint)
         .preferredColorScheme(model.theme.text("scheme").isEmpty ? nil : palette.dark ? .dark : .light)
-        .sheet(isPresented: Binding(get: { model.taskPresented }, set: { if !$0 { model.closeTask() } })) {
+        .sheet(isPresented: Binding(get: { model.taskPresented }, set: { if !$0 && !model.appLock.concealed { model.closeTask() } })) {
             TaskViewSheet(model: model, palette: palette)
                 .presentationDetents([.large])
         }
-        .onChange(of: scenePhase) { phase in if phase == .active { Task { await model.refresh() } } }
         .task(id: (model.selectedSurface == .focus || model.selectedSurface == .review || model.selectedSurface == .calendar || model.selectedSurface == .board) && scenePhase == .active) {
             guard model.selectedSurface == .focus || model.selectedSurface == .review || model.selectedSurface == .calendar || model.selectedSurface == .board, scenePhase == .active else { return }
             while !Task.isCancelled {

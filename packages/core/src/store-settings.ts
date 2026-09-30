@@ -4,7 +4,7 @@ import { markCoreStartupPhase, measureCoreStartupPhase } from './startup-profile
 import { normalizeTaskForLoad } from './task-status';
 import { normalizeProjectLifecycleFields } from './project-status';
 import type { StorageAdapter } from './storage';
-import type { AppData, SavedFilter } from './types';
+import type { AppData, AppSettings, SavedFilter } from './types';
 import type { DerivedCache, TaskStore } from './store-types';
 import type { FocusControlState } from './focus-controls';
 import { buildFocusControlsModel } from './focus-controls';
@@ -81,6 +81,19 @@ export const timestampAtLeastAfter = (floor: string, ...knownValues: Array<strin
     const floorMs = Date.parse(floor);
     const beforeFloor = Number.isFinite(floorMs) ? new Date(floorMs - 1).toISOString() : undefined;
     return advanceLatestSyncTimestamp(beforeFloor, ...knownValues) ?? floor;
+};
+
+export type AppLockWitness = { groupPresent: boolean; present: boolean; value: boolean | null };
+const owns = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
+/** The raw saved local flag, distinct from a displayed false default. */
+export const appLockWitness = (settings: AppSettings): AppLockWitness | null => {
+    const groupPresent = owns(settings, 'security');
+    if (!groupPresent) return { groupPresent: false, present: false, value: null };
+    const group = settings.security;
+    if (!group || typeof group !== 'object' || Array.isArray(group)) return null;
+    const present = owns(group, 'mobileAppLockEnabled');
+    const value = present ? group.mobileAppLockEnabled : null;
+    return present && typeof value !== 'boolean' ? null : { groupPresent: true, present, value: value ?? null };
 };
 
 export const prepareLocalSavedFilterUpdates = (
@@ -163,7 +176,7 @@ type SettingsActionContext = {
     getStorage: () => StorageAdapter;
 };
 
-type SettingsActions = Pick<TaskStore, 'fetchData' | 'seedGettingStarted' | 'updateSettings' | 'commitPreparedGeneralPreference' | 'commitPreparedFocusSavedFilter' | 'persistSnapshot' | 'getDerivedState' | 'getFocusedCount' | 'setHighlightTask'>;
+type SettingsActions = Pick<TaskStore, 'fetchData' | 'seedGettingStarted' | 'updateSettings' | 'commitPreparedGeneralPreference' | 'commitPreparedAppLock' | 'retryPreparedAppLockSnapshot' | 'commitPreparedFocusSavedFilter' | 'persistSnapshot' | 'getDerivedState' | 'getFocusedCount' | 'setHighlightTask'>;
 
 export const createSettingsActions = ({
     set,
@@ -746,6 +759,63 @@ export const createSettingsActions = ({
             return { _allTasks: freshTasks, _allProjects: freshProjects,
                 _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [],
                 _allPeople: durable.people ?? [], settings, lastDataChangeAt };
+        });
+        return result;
+    },
+
+    commitPreparedAppLock: async (request, authority) => {
+        let result: import('./store-types').PreparedTaskEditResult = { success: false,
+            reason: 'conflict', error: 'App lock changed; refresh General' };
+        set((memory) => {
+            const before = authority.state;
+            if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                || memory._allAreas !== before._allAreas || memory._allSections !== before._allSections
+                || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
+            const durable = authority.snapshot;
+            const current = appLockWitness(durable.settings);
+            if (!current || !taskEditValuesEqual(current, request.expected)
+                || current.present && current.value === request.value) return memory;
+            const update = buildGeneralSettingsUpdate(durable.settings, { type: 'appLock', value: request.value });
+            if (!update) return memory;
+            const settings = { ...durable.settings, ...update };
+            const rawSnapshot = { ...durable, settings };
+            const freshTasks = durable.tasks.map((row) => normalizeTaskForLoad(row));
+            const freshProjects = durable.projects.map(normalizeProjectLifecycleFields);
+            clearDerivedCache();
+            persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks,
+                _allProjects: durable.projects, _allSections: durable.sections ?? [],
+                _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [], settings: durable.settings },
+            rawSnapshot);
+            const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+            authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
+                generation: getSaveGeneration(), failure: memory.persistenceFailure };
+            authority.rawSavedSnapshot = rawSnapshot;
+            result = { success: true, outcome: 'applied' };
+            return { _allTasks: freshTasks, _allProjects: freshProjects,
+                _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [],
+                _allPeople: durable.people ?? [], settings, lastDataChangeAt };
+        });
+        return result;
+    },
+
+    retryPreparedAppLockSnapshot: async (authority) => {
+        let result: import('./store-types').PreparedTaskEditResult = { success: false,
+            reason: 'conflict', error: 'App lock save ownership changed' };
+        set((memory) => {
+            const boundary = authority.saveBoundary;
+            const raw = authority.rawSavedSnapshot;
+            if (!boundary || !raw || memory._allTasks !== boundary.taskReference
+                || memory.lastDataChangeAt !== boundary.lastDataChangeAt
+                || memory.settings !== raw.settings || memory.persistenceFailure === null
+                || boundary.generation !== getSaveGeneration()) return memory;
+            persist(set, debouncedSave, { ...memory, _allTasks: raw.tasks,
+                _allProjects: raw.projects, _allSections: raw.sections ?? [],
+                _allAreas: raw.areas ?? [], _allPeople: raw.people ?? [] }, raw);
+            authority.saveBoundary = { ...boundary, generation: getSaveGeneration(),
+                failure: memory.persistenceFailure };
+            result = { success: true, outcome: 'applied' };
+            return { ...memory };
         });
         return result;
     },

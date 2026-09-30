@@ -21305,4 +21305,115 @@ final class CoreHostTests: XCTestCase {
             await blocked.close()
         }
     }
+    private func appLockRequest(_ core: CoreHost, value: Bool) async throws -> [String: Any] {
+        let options = try object(await core.call("appLockOptions", argumentsJSON: json(["{}"])))
+        return ["requestId": UUID().uuidString.lowercased(), "value": value, "expected": try XCTUnwrap(options["expected"])]
+    }
+
+    func testAppLockCanonicalWriteNoopAndBoundary() async throws {
+        let bootstrap = host(); _ = try await bootstrap.start(); await bootstrap.close()
+        var baseline = try calendarPreferenceSettings()
+        baseline["security"] = ["retained": ["fixture": true]]
+        try writeCalendarPreferenceSettings(baseline)
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let request = try await appLockRequest(core, value: false)
+        XCTAssertEqual((request["expected"] as? [String: Any])?["present"] as? Bool, false)
+        let changed = try object(await core.call("appLock", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(changed["changed"] as? Bool, true)
+        var security = try XCTUnwrap(baseline["security"] as? [String: Any]); security["mobileAppLockEnabled"] = false
+        baseline["security"] = security
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(baseline))
+        let noop = try await appLockRequest(core, value: false)
+        var journalWrites = 0, statements = 0
+        faults.journalWrite = { journalWrites += 1 }
+        let result = try object(await core.call("appLock", argumentsJSON: json([json(noop)])))
+        XCTAssertEqual(result["changed"] as? Bool, false); XCTAssertEqual(journalWrites, 0)
+        var invalid = noop; invalid["value"] = 1
+        var extra = noop; extra["authentication"] = "must-not-be-journaled"
+        var witness = noop; witness["expected"] = ["groupPresent": false, "present": true, "value": false]
+        faults.beforeSQL = { _ in statements += 1 }
+        for input in [invalid, extra, witness] {
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("appLock", argumentsJSON: json([json(input)])) }
+        }
+        await expectFailure("unavailable") { _ = try await core.call("appLockCommit", argumentsJSON: json([json(noop)])) }
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journalWrites, 0)
+        await core.close()
+        for malformed in [NSNull(), "enabled", 1, ["mobileAppLockEnabled": "true"]] as [Any] {
+            var settings = baseline; settings["security"] = malformed; try writeCalendarPreferenceSettings(settings)
+            let reader = host(); _ = try await reader.start()
+            await expectFailure("INVALID_INPUT") { _ = try await reader.call("appLockOptions", argumentsJSON: json(["{}"])) }
+            _ = try await reader.call("generalPreferenceOptions", argumentsJSON: json(["{}"]))
+            await reader.close()
+        }
+    }
+
+    func testAppLockFailedSaveExactRetryAndColdReceipt() async throws {
+        let bootstrap = host(); _ = try await bootstrap.start(); await bootstrap.close()
+        var settings = try calendarPreferenceSettings()
+        settings["security"] = ["mobileAppLockEnabled": false, "other": "retained"]
+        try writeCalendarPreferenceSettings(settings)
+        let seed = try SQLiteBridge(url: database)
+        let at = ISO8601DateFormatter().string(from: Date())
+        _ = try seed.execute("INSERT INTO tasks (id,title,status,contexts,tags,createdAt,updatedAt,completedAt,focusOrder,rev,revBy,isFocusedToday,pushCount,showFutureRecurrence,suppressMindwtrReminders) VALUES ('app-lock-raw','Retained','done','[]','[]',?,?,?,9,4,'legacy',0,0,0,0)", parametersJSON: json([at,at,at]))
+        let before = try nineTableSnapshot(seed); seed.close()
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let request = try await appLockRequest(core, value: true)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected App lock COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("appLock", argumentsJSON: json([json(request)])) }
+        let frozen = try Data(contentsOf: journal)
+        XCTAssertFalse(String(decoding: frozen, as: UTF8.self).contains("retained"))
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        try assertJournalContentUnchanged(frozen)
+        let failed = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(failed), before); failed.close()
+        faults.beforeSQL = nil
+        let retried = try await core.retryPending()
+        let result = try object(XCTUnwrap(retried))
+        XCTAssertEqual(try json(result), try json(["changed": true, "value": true]))
+        var security = try XCTUnwrap(settings["security"] as? [String: Any]); security["mobileAppLockEnabled"] = true
+        settings["security"] = security
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+        let success = try SQLiteBridge(url: database)
+        let after = try nineTableSnapshot(success)
+        for index in before.indices where index != 5 { XCTAssertEqual(after[index], before[index]) }
+        let receipts = try success.execute("SELECT request_id, method, reply FROM native_request_receipts")
+        XCTAssertTrue(receipts.contains(try XCTUnwrap(request["requestId"] as? String)))
+        success.close(); await core.close()
+        // Intervening enabled -> disabled -> enabled -> disabled, same original UUID must never enable again.
+        for value in [false, true, false] {
+            let writer = host(); _ = try await writer.start()
+            let later = try await appLockRequest(writer, value: value)
+            _ = try await writer.call("appLock", argumentsJSON: json([json(later)])); await writer.close()
+        }
+        try frozen.write(to: journal)
+        let reader = try SQLiteBridge(url: database); let intervened = try nineTableSnapshot(reader); reader.close()
+        let replayFaults = HostIOFaults(); var settingsWrites = 0
+        replayFaults.beforeSQL = { if $0.contains("INTO settings") || $0.hasPrefix("UPDATE settings") { settingsWrites += 1 } }
+        let recovered = host(replayFaults)
+        let startup = try object(await recovered.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "appLockCommit")
+        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), intervened); check.close()
+        XCTAssertEqual(settingsWrites, 0); XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await recovered.close()
+    }
+
+    func testAppLockColdUnknownRequiresExplicitCancel() async throws {
+        let bootstrap = host(); _ = try await bootstrap.start(); await bootstrap.close()
+        let faults = HostIOFaults(), writer = host(faults); _ = try await writer.start()
+        let request = try await appLockRequest(writer, value: true)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected App lock COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("appLock", argumentsJSON: json([json(request)])) }
+        let frozen = try Data(contentsOf: journal); await writer.close()
+        let beforeDB = try SQLiteBridge(url: database); let before = try nineTableSnapshot(beforeDB); beforeDB.close()
+        let cold = host()
+        do { _ = try await cold.start(); XCTFail("Cold unknown must not reapply") }
+        catch { XCTAssertTrue(error is CoreHostAppLockRecovery) }
+        try assertJournalContentUnchanged(frozen)
+        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), before); check.close()
+        try await cold.cancelAppLockRecovery()
+        _ = try await cold.start()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let cancelled = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(cancelled), before); cancelled.close()
+        await cold.close()
+    }
+
 }

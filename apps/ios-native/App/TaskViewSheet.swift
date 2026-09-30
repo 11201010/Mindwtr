@@ -158,6 +158,7 @@ struct TaskViewSheet: View {
         Button {
             endEditingBeforeAction()
             editing = edit
+            model.taskInitialTab = edit ? "task" : "view"
             if !edit { datePickerID = "" }
             if !edit { Task { await model.readTaskView() } }
         } label: {

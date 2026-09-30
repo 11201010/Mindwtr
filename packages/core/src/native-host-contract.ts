@@ -285,6 +285,7 @@ import { createPersonCreateMethods } from './native-host-contract-person-create'
 import { createPersonEditMethods } from './native-host-contract-person-edit';
 import { createTaxonomyMethods } from './native-host-contract-taxonomy';
 import { createGeneralPreferenceMethods } from './native-host-contract-general-preference';
+import { createAppLockMethods } from './native-host-contract-app-lock';
 import { buildNativeGeneralSettingsModel } from './native-host-contract-settings';
 import { createPersonDeleteMethods } from './native-host-contract-person-delete';
 import { createAreaColorMethods } from './native-host-contract-area-color';
@@ -1795,6 +1796,11 @@ export function createNativeHostContract(options: {
                 t: () => translate, language: () => language,
                 systemLocale: () => systemLocale, dateFormatting,
             }, deviceTheme) }),
+        ...createAppLockMethods({ readiness, save,
+            model: (settings) => buildNativeGeneralSettingsModel(settings, {
+                t: () => translate, language: () => language,
+                systemLocale: () => systemLocale, dateFormatting,
+            }) }),
         ...createPersonDeleteMethods({ readiness, save, t: () => translate }),
 
         ...createAreaCreateMethods({ readiness, save,

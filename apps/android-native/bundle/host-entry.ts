@@ -641,6 +641,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // Before the journal's replay (Kotlin, after boot): a landed request answers from its receipt. A host without
     // a journal keeps its receipts in memory, as before.
     if (journaled) await loadNativeRequestReceipts(sqlite);
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock'] });
     await adapter.getData();
     if (legacyState) await importLegacyJson(adapter, JSON.parse(legacyState) as LegacyState, legacyBackup);
     const result = await activateAndVerify(adapter, recoveryLoad);
@@ -1089,6 +1090,21 @@ globalThis.MindwtrHost = {
     },
     generalPreferenceCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedGeneralPreference(JSON.parse(json))));
+    },
+    appLockOptions(json: string): string {
+        return submit(async () => unwrap(await contract.getAppLockOptions(JSON.parse(json))));
+    },
+    appLockRetryOutcome(json: string): string {
+        return submit(async () => unwrap(contract.probeAppLockOutcome(JSON.parse(json))));
+    },
+    appLockPrepare(json: string): string {
+        return submit(async () => unwrap(await contract.prepareAppLock(JSON.parse(json))));
+    },
+    appLockValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedAppLock(JSON.parse(json))));
+    },
+    appLockCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedAppLock(JSON.parse(json))));
     },
     managePersonDeleteOptions(json: string): string {
         return submit(async () => {

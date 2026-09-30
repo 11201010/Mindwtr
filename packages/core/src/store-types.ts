@@ -14,7 +14,7 @@ export type PreparedNativeSaveBoundary = { taskReference: Task[]; lastDataChange
     generation: number; failure: TaskStore['persistenceFailure'] };
 export type PreparedAreaAuthority = { snapshot: AppData; state: Pick<TaskStore,
     '_allTasks' | '_allProjects' | '_allSections' | '_allAreas' | '_allPeople' | 'settings' | 'lastDataChangeAt'>;
-    saveBoundary?: PreparedNativeSaveBoundary };
+    saveBoundary?: PreparedNativeSaveBoundary; rawSavedSnapshot?: AppData };
 
 export type StoreActionResult = {
     success: boolean;
@@ -596,6 +596,10 @@ export interface TaskStore {
     /** Four synced General preference fields, prepared against a saved scalar and sync-group stamp. */
     commitPreparedGeneralPreference: (input: import('./native-host-contract-general-preference').NativePreparedGeneralPreference,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** One raw device-local security field, compared and queued against fresh durable authority. */
+    commitPreparedAppLock: (request: import('./native-host-contract-app-lock').AppLockRequest,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    retryPreparedAppLockSnapshot: (authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Update a project */
     updateProject: (id: string, updates: Partial<Project>) => Promise<StoreActionResult>;
     /** Archive a project as cancelled and cancel its unfinished child tasks */

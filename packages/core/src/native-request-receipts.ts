@@ -50,6 +50,8 @@ import { deterministicHash128, generateDeterministicUUID } from './uuid';
 export type NativeRequestReceipts = {
     /** Check ownership without reserving an ID, writing, or saving. */
     checkIdentity(requestId: unknown, payload: string): NativeHostResult<null>;
+    /** Read a settled reply without reserving an ID, retrying a save or invoking a writer. */
+    saved<T>(requestId: unknown, payload: string): NativeHostResult<T> | null;
     run<T>(requestId: unknown, payload: string, write: () => Promise<NativeHostResult<T> | NativeUnsavedWrite<T>>): Promise<NativeHostResult<T>>;
 };
 
@@ -234,13 +236,38 @@ export const withRequestProject = (projects: readonly Project[], id: string, tit
 export const NATIVE_UNJOURNALED_COMMANDS: ReadonlySet<string> = new Set<string>(['calendarFeedAdd', 'setAIKey', 'setAIEndpoint', 'openSyncSettings', 'closeSyncSettings', 'selectSyncBackend', 'saveSyncBackend', 'syncNow', 'testSyncConnection', 'pickSyncFolder', 'connectDropbox', 'disconnectDropbox', 'runSyncEncryptionAction']);
 
 const commandOf = (payload: string): string => /^\["([^"\\]{1,64})"/.exec(payload)?.[1] ?? '';
-/** What the disk keeps of a request: its command name and a 128-bit hash of its payload, never the payload's text. */
-const fingerprintOf = (payload: string): string => `${commandOf(payload)}:${hash128Hex(payload)}`;
+/** App lock's bounded non-sensitive tuple is exact; established commands keep their compact hash. */
+const fingerprintOf = (payload: string): string => commandOf(payload) === 'appLock'
+    ? payload : `${commandOf(payload)}:${hash128Hex(payload)}`;
+const fingerprintCommand = (value: string): string => value.startsWith('[')
+    ? commandOf(value) : value.split(':', 1)[0] ?? '';
+const validAppLockStoredReceipt = (row: { request_id: string; method: string; reply: string; saved_at: string },
+    reply: unknown): boolean => {
+    if (!REQUEST_ID_PATTERN.test(row.request_id) || row.request_id !== row.request_id.toLowerCase()
+        || row.method.length > 8192 || row.saved_at.length > 40
+        || !Number.isFinite(Date.parse(row.saved_at))
+        || new Date(row.saved_at).toISOString() !== row.saved_at) return false;
+    let tuple: unknown;
+    try { tuple = JSON.parse(row.method); } catch { return false; }
+    if (!Array.isArray(tuple) || tuple.length !== 5 || tuple[0] !== 'appLock'
+        || typeof tuple[1] !== 'boolean' || typeof tuple[2] !== 'boolean'
+        || typeof tuple[3] !== 'boolean' || !tuple[2] && tuple[3]
+        || (tuple[3] ? typeof tuple[4] !== 'boolean' : tuple[4] !== null)
+        || JSON.stringify(tuple) !== row.method) return false;
+    return !!reply && typeof reply === 'object' && !Array.isArray(reply)
+        && Object.keys(reply).length === 2
+        && Object.prototype.hasOwnProperty.call(reply, 'changed')
+        && Object.prototype.hasOwnProperty.call(reply, 'value')
+        && (reply as { changed?: unknown }).changed === true
+        && (reply as { value?: unknown }).value === tuple[1];
+};
 
 // Durable receipts: the native host only (loadNativeRequestReceipts turns them on).
 type StoredReceipt = { fingerprint: string; reply: unknown; savedAt: string };
 type PendingReceipt = { fingerprint: string; reply: unknown; generation: number };
 let durableReceipts: Map<string, StoredReceipt> | null = null;
+/** null selects Android's existing all-command mode; a set scopes iOS durable replies and writes. */
+let durableCommands: Set<string> | null = null;
 /** Every request ID a receipts instance holds, and its payload: one ID belongs to one action across the contract's modules. */
 const requestPayloads = new Map<string, string>();
 /** Landed, not committed yet; `generation` is the store's when it landed (every change it made is saved at or before it). */
@@ -265,12 +292,19 @@ const recordPendingReceipt = (requestId: string, payload: string, reply: unknown
  * reply as JSON) and loads it. From then on every landed request's receipt is kept on disk,
  * except for NATIVE_UNJOURNALED_COMMANDS.
  */
-export async function loadNativeRequestReceipts(client: SqliteClient): Promise<number> {
+export async function loadNativeRequestReceipts(client: SqliteClient,
+    options?: { durableCommands?: readonly string[] }): Promise<number> {
     await client.run(RECEIPTS_TABLE);
     const rows = await client.all<{ request_id: string; method: string; reply: string; saved_at: string }>(
         'SELECT request_id, method, reply, saved_at FROM native_request_receipts',
     );
-    durableReceipts = new Map(rows.map((row) => [row.request_id, { fingerprint: row.method, reply: JSON.parse(row.reply), savedAt: row.saved_at }]));
+    durableReceipts = new Map(rows.map((row) => {
+        const reply: unknown = JSON.parse(row.reply);
+        if (options?.durableCommands?.includes('appLock') && fingerprintCommand(row.method) === 'appLock'
+            && !validAppLockStoredReceipt(row, reply)) throw new Error('Invalid saved App lock receipt');
+        return [row.request_id, { fingerprint: row.method, reply, savedAt: row.saved_at }];
+    }));
+    durableCommands = options?.durableCommands ? new Set(options.durableCommands) : null;
     pendingReceipts.clear();
     requestPayloads.clear();
     receiptedWritesRunning = 0;
@@ -282,10 +316,15 @@ export async function loadNativeRequestReceipts(client: SqliteClient): Promise<n
 export async function pruneNativeRequestReceipts(client: SqliteClient, now = new Date()): Promise<number> {
     // ponytail: a fixed 30-day window; a journal entry older than that replays without its receipt (the write rules above still hold).
     const cutoff = new Date(now.getTime() - RECEIPT_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    await client.run('DELETE FROM native_request_receipts WHERE saved_at < ?', [cutoff]);
+    if (durableCommands === null) await client.run('DELETE FROM native_request_receipts WHERE saved_at < ?', [cutoff]);
+    else for (const [id, receipt] of durableReceipts ?? []) {
+        if (receipt.savedAt < cutoff && durableCommands.has(fingerprintCommand(receipt.fingerprint)))
+            await client.run('DELETE FROM native_request_receipts WHERE request_id = ? AND saved_at < ?', [id, cutoff]);
+    }
     let pruned = 0;
     for (const [id, receipt] of durableReceipts ?? []) {
-        if (receipt.savedAt >= cutoff) continue;
+        if (receipt.savedAt >= cutoff || durableCommands !== null
+            && !durableCommands.has(fingerprintCommand(receipt.fingerprint))) continue;
         durableReceipts!.delete(id);
         pruned += 1;
     }
@@ -298,6 +337,7 @@ export const startNativeRequestSession = () => { requestPayloads.clear(); };
 /** Tests only: back to receipts in memory. */
 export const resetNativeRequestReceipts = () => {
     durableReceipts = null;
+    durableCommands = null;
     pendingReceipts.clear();
     requestPayloads.clear();
     receiptedWritesRunning = 0;
@@ -354,6 +394,27 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             durableReceipts?.set(id, { fingerprint: receipt.fingerprint, reply: receipt.reply, savedAt: carried!.savedAt });
         }
     }
+
+    /** Complete a receipt after its data was already proven saved, without rewriting projected memory. */
+    async commitReceiptOnly(requestId: string, payload: string): Promise<boolean> {
+        const pending = pendingReceipts.get(requestId);
+        if (!pending || pending.fingerprint !== fingerprintOf(payload)) return false;
+        const savedAt = new Date().toISOString();
+        await this.receiptClient.run('BEGIN IMMEDIATE');
+        try {
+            await this.receiptClient.run(
+                'INSERT INTO native_request_receipts (request_id, method, reply, saved_at) VALUES (?, ?, ?, ?) ON CONFLICT(request_id) DO NOTHING',
+                [requestId, pending.fingerprint, JSON.stringify(pending.reply ?? null), savedAt],
+            );
+            await this.receiptClient.run('COMMIT');
+        } catch (error) {
+            await this.receiptClient.run('ROLLBACK');
+            throw error;
+        }
+        pendingReceipts.delete(requestId);
+        durableReceipts?.set(requestId, { fingerprint: pending.fingerprint, reply: pending.reply, savedAt });
+        return true;
+    }
 }
 
 const REQUEST_ID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
@@ -369,12 +430,17 @@ type Receipt = {
 
 export function createNativeRequestReceipts(options: {
     /** Makes every write so far durable: retries a failed save, then flushes. */
-    save: () => Promise<NativeHostResult<null>>;
+    save: (requestId: string) => Promise<NativeHostResult<null>>;
+    /** Scoped commands may prove their data saved and commit a receipt without resaving projected memory. */
+    receiptOnly?: (requestId: string, payload: string) => Promise<boolean>;
     /** How many requests to remember; default 50. */
     limit?: number;
 }): NativeRequestReceipts {
     const limit = options.limit ?? 50;
     const receipts = new Map<string, Receipt>();
+    const durableFor = (payload: string) => durableReceipts !== null
+        && (durableCommands === null || durableCommands.has(commandOf(payload)))
+        && !NATIVE_UNJOURNALED_COMMANDS.has(commandOf(payload));
 
     const checkIdentity = (requestId: unknown, payload: string): NativeHostResult<null> => {
         if (typeof requestId !== 'string' || !REQUEST_ID_PATTERN.test(requestId)) {
@@ -395,15 +461,24 @@ export function createNativeRequestReceipts(options: {
         // A successful save stores the whole snapshot, so every write that landed before it
         // began is durable too. A write that lands while it runs waits for its own save.
         const covered = Array.from(receipts.values()).filter((entry) => entry.written);
-        const saved = await options.save();
+        const saved = await options.save(requestId);
         if (!saved.ok) return saved;
         // With durable receipts, the reply waits for a commit that carries its receipt. A write
         // whose data a save inside it already committed (a store action that flushes by itself),
         // or that changed nothing, left no snapshot queued: a receipt-only commit follows.
         if (pendingReceipts.has(requestId)) {
-            await useTaskStore.getState().persistSnapshot();
-            const again = await options.save();
-            if (!again.ok) return again;
+            if (options.receiptOnly && durableFor(receipt.payload)) {
+                try {
+                    if (!await options.receiptOnly(requestId, receipt.payload))
+                        return { ok: false, error: { code: 'SAVE_FAILED', message: 'The request receipt is not proven' } };
+                } catch {
+                    return { ok: false, error: { code: 'SAVE_FAILED', message: 'The request receipt was not saved' } };
+                }
+            } else {
+                await useTaskStore.getState().persistSnapshot();
+                const again = await options.save(requestId);
+                if (!again.ok) return again;
+            }
             if (pendingReceipts.has(requestId)) return { ok: false, error: { code: 'SAVE_FAILED', message: 'The request\'s receipt was not saved' } };
         }
         for (const entry of covered) entry.saved = true;
@@ -424,6 +499,14 @@ export function createNativeRequestReceipts(options: {
 
     return {
         checkIdentity,
+        saved<T>(requestId: unknown, payload: string): NativeHostResult<T> | null {
+            const identity = checkIdentity(requestId, payload);
+            if (!identity.ok) return identity;
+            const local = receipts.get(requestId as string);
+            if (local?.saved) return { ok: true, value: local.value as T };
+            const stored = durableFor(payload) ? durableReceipts?.get(requestId as string) : undefined;
+            return stored ? { ok: true, value: stored.reply as T } : null;
+        },
         run<T>(requestId: unknown, payload: string, write: () => Promise<NativeHostResult<T> | NativeUnsavedWrite<T>>): Promise<NativeHostResult<T>> {
             const identity = checkIdentity(requestId, payload);
             if (!identity.ok) return Promise.resolve(identity);
@@ -438,7 +521,7 @@ export function createNativeRequestReceipts(options: {
                 return finishing as Promise<NativeHostResult<T>>;
             }
             // Landed and saved before a restart (or evicted since): its first reply, and nothing runs.
-            const stored = durableReceipts?.get(id);
+            const stored = durableFor(payload) ? durableReceipts?.get(id) : undefined;
             if (stored) {
                 return Promise.resolve({ ok: true, value: stored.reply as T });
             }
@@ -453,7 +536,7 @@ export function createNativeRequestReceipts(options: {
             requestPayloads.set(id, payload);
             receipt.running = (async (): Promise<NativeHostResult<unknown>> => {
                 let outcome: NativeHostResult<T> | NativeUnsavedWrite<T>;
-                const durable = durableReceipts !== null && !NATIVE_UNJOURNALED_COMMANDS.has(commandOf(payload));
+                const durable = durableFor(payload);
                 if (durable) receiptedWritesRunning += 1;
                 try {
                     try {

@@ -375,7 +375,7 @@ assert.equal(/createNativeSync\(\{[\s\S]*?localData:/.exec(hostEntry)[0].match(/
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -911,6 +911,13 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         for (const file of contractFiles) {
             const defs = [...file.matchAll(new RegExp(`\\n {8}(?:async )?(${[...coreWrites, ...iosOnlyWrites, ...unwiredWrites].join('|')})\\(input`, 'g'))];
             for (const site of file.matchAll(/JSON\.stringify\(\['(\w+)'/g)) {
+                // App lock's tiny, non-sensitive payload is canonicalized in a shared helper
+                // before both authorization and receipt lookup, outside the write body.
+                if (site[1] === 'appLock' && file.includes('const payload = (request: AppLockRequest)')) {
+                    assert.match(file, /const payload = \(request: AppLockRequest\): string => JSON\.stringify\(\['appLock', request\.value,/);
+                    assert.match(file, /receipts\.run<AppLockResult>\(request\.requestId, key,/);
+                    continue;
+                }
                 const owner = defs.filter((def) => def.index < site.index).at(-1);
                 assert(owner, `core's receipt payload '${site[1]}' sits inside a core write`);
                 receiptNames.get(owner[1]).push(site[1]);
@@ -2738,7 +2745,8 @@ export function assertNativeLegacyBackupSafe() { globalThis.events.push('legacyC
 export function legacyImportMismatch(merged, saved) { return JSON.stringify(merged) === JSON.stringify(saved) ? null : 'tasks'; }
 export function splitSqlStatements(sql) { return [sql]; }
 export class NativeReceiptSqliteAdapter extends SqliteAdapter {}
-export async function loadNativeRequestReceipts() { globalThis.receiptsLoadedAt = globalThis.events.length; return 0; }
+export async function loadNativeRequestReceipts(_client, options) { globalThis.receiptsLoadedAt = globalThis.events.length;
+  globalThis.receiptScope = options?.durableCommands ?? null; return 0; }
 export function setNativeReplayTokens(mode) { globalThis.replayTokens = mode; }
 export async function pruneNativeRequestReceipts() { return 3; }
 export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
@@ -2992,16 +3000,17 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
 assert.equal(ready.activationCount, 1);
 // Activation may write (core backfills a person per assignee): the store is checked against a load taken after its save.
 assert.deepEqual(ready.events.slice(ready.events.lastIndexOf('activate')), ['activate', 'load', 'flush', 'load']);
-// Replay tokens and durable receipts: a boot without the journal flag (iOS) keeps tokens optional and receipts in
-// memory; the Kotlin host's "journaled" requires tokens and loads the receipts before the validated load, so before
-// activation and any replay (pruning is Kotlin's call after its replay).
+// Replay tokens and durable receipts: iOS keeps tokens optional but loads only App lock's exact receipts; Android's
+// journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
-assert.equal(ready.receiptsLoadedAt, undefined);
+assert.equal(ready.receiptsLoadedAt, 0);
+assert.deepEqual(ready.receiptScope, ['appLock']);
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);
     assert.equal(journaled.replayTokens, 'required');
     assert.equal(journaled.receiptsLoadedAt, 0);
+    assert.equal(journaled.receiptScope, null);
 }
 // A revision a host leaves out ("") is none: core requires one only from a journaling host.
 for (const [method, call] of [['complete', 'completeTask({ id, taskRevision: taskRevision || undefined })'],

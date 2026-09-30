@@ -10,6 +10,11 @@ public struct CoreHostRejection: LocalizedError, Sendable {
     public var errorDescription: String? { message }
 }
 
+/// Recovery could not prove this authenticated request landed; no replay write was attempted.
+public struct CoreHostAppLockRecovery: LocalizedError, Sendable {
+    public var errorDescription: String? { "App lock outcome is unknown. Cancel the pending change to use the saved setting." }
+}
+
 /// One off-main owner for the core runtime, database and pending command journal.
 /// Every result is the JSON-encoded core value, with host/core failures thrown.
 public final class CoreHost: @unchecked Sendable {
@@ -39,6 +44,8 @@ public final class CoreHost: @unchecked Sendable {
 
     @discardableResult
     public func retryPending() async throws -> String? { try await perform { try $0.retryPending() } }
+
+    public func cancelAppLockRecovery() async throws { try await perform { try $0.cancelAppLockRecovery() } }
 
     public func close() async {
         await withCheckedContinuation { continuation in
@@ -94,6 +101,7 @@ private final class Engine: @unchecked Sendable {
     private var lockFD: Int32 = -1
     private var started = false
     private var recoveryActivationPending = false
+    private var unresolvedAppLockRecovery = false
     private var closed = false
     private var pending: PendingCommand?
     // Authorizes one interactive Commit; after journaling, the journal owns exact replay.
@@ -110,6 +118,7 @@ private final class Engine: @unchecked Sendable {
     private var startupProjectSectionRenameResult: String?
     private var startupProjectSectionDeleteResult: String?
     private var startupProjectSectionOrderResult: String?
+    private var startupAppLockResult: String?
     private var startupGeneralPreferenceResult: String?
     private var startupTaxonomyResult: String?
     private var startupPersonEditResult: String?
@@ -158,6 +167,7 @@ private final class Engine: @unchecked Sendable {
         "projectSectionRenameOptions": 1, "projectSectionRename": 1, "projectSectionRenameRetryOutcome": 1,
         "projectSectionDeleteOptions": 1, "projectSectionDelete": 1, "projectSectionDeleteRetryOutcome": 1,
         "projectSectionOrderOptions": 1, "projectSectionOrder": 1, "projectSectionOrderRetryOutcome": 1,
+        "appLockOptions": 1, "appLock": 1, "appLockRetryOutcome": 1,
         "generalPreferenceOptions": 1, "generalPreference": 1, "generalPreferenceRetryOutcome": 1,
         "manageTaxonomyOptions": 1, "manageTaxonomy": 1, "manageTaxonomyRetryOutcome": 1,
         "managePersonEditOptions": 1, "managePersonEdit": 1, "managePersonEditRetryOutcome": 1,
@@ -199,7 +209,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -287,6 +297,10 @@ private final class Engine: @unchecked Sendable {
             if let command = pending, command.method == "projectSectionOrderCommit" {
                 _ = try invoke("projectSectionOrderValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validateProjectSectionOrderAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "appLockCommit" {
+                _ = try invoke("appLockValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateAppLockAcknowledgment(command, value: value) }
             }
             if let command = pending, command.method == "generalPreferenceCommit" {
                 _ = try invoke("generalPreferenceValidate", arguments: journalArguments(command))
@@ -443,9 +457,19 @@ private final class Engine: @unchecked Sendable {
             // startup. The interactive retry still returns its original error.
             return try startupWindow()
         } catch {
-            releaseRuntime()
+            if !(error is CoreHostAppLockRecovery) { releaseRuntime() }
             throw error
         }
+    }
+
+    func cancelAppLockRecovery() throws {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, unresolvedAppLockRecovery, let command = pending,
+              command.method == "appLockCommit" else { throw HostFailure("No unresolved App lock recovery") }
+        // An explicit cancellation abandons this UUID; it does not claim the old write failed or succeeded.
+        _ = try finish(command, with: .rejected("STALE_REVISION: App lock outcome unknown; pending change cancelled"))
+        unresolvedAppLockRecovery = false
+        NSLog("Native iOS App lock recovery cancelled releaseCheck=v1.3.4/ios-app-lock outcome=cancelled")
     }
 
     private func startupWindow() throws -> String {
@@ -458,6 +482,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringProjectSectionRename = pending?.method == "projectSectionRenameCommit"
         let recoveringProjectSectionDelete = pending?.method == "projectSectionDeleteCommit"
         let recoveringProjectSectionOrder = pending?.method == "projectSectionOrderCommit"
+        let recoveringAppLock = pending?.method == "appLockCommit"
         let recoveringGeneralPreference = pending?.method == "generalPreferenceCommit"
         let recoveringTaxonomy = pending?.method == "manageTaxonomyCommit"
         let recoveringPersonEdit = pending?.method == "managePersonEditCommit"
@@ -502,6 +527,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringProjectSectionRename, let terminal, case .success(let value) = terminal { startupProjectSectionRenameResult = value }
         if recoveringProjectSectionDelete, let terminal, case .success(let value) = terminal { startupProjectSectionDeleteResult = value }
         if recoveringProjectSectionOrder, let terminal, case .success(let value) = terminal { startupProjectSectionOrderResult = value }
+        if recoveringAppLock, let terminal, case .success(let value) = terminal { startupAppLockResult = value }
         if recoveringGeneralPreference, let terminal, case .success(let value) = terminal { startupGeneralPreferenceResult = value }
         if recoveringTaxonomy, let terminal, case .success(let value) = terminal { startupTaxonomyResult = value }
         if recoveringPersonEdit, let terminal, case .success(let value) = terminal { startupPersonEditResult = value }
@@ -538,6 +564,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringSomedaySectionMove, let terminal, case .success(let value) = terminal { startupSomedaySectionMoveResult = value }
         if recoveringSomedaySectionUndo, let terminal, case .success(let value) = terminal { startupSomedaySectionUndoResult = value }
         try resumeActivationIfNeeded()
+        _ = try invoke("pruneReceipts", arguments: [])
         let value = try invoke("window", arguments: [0, 50, ""])
         let recoveredAreas = startupAreaCreateResult ?? startupAreaColorResult ?? startupAreaRenameResult
             ?? startupAreaOrderResult ?? startupAreaDeleteResult
@@ -552,7 +579,7 @@ private final class Engine: @unchecked Sendable {
         let recoveredSomedaySections = startupSomedaySectionCreateResult ?? startupSomedaySectionRenameResult
             ?? startupSomedaySectionDeleteResult ?? startupSomedaySectionOrderResult
             ?? startupSomedaySectionTaskResult
-        let recoveredManage = startupGeneralPreferenceResult ?? startupUnassignedAreaColorResult ?? startupPersonCreateResult
+        let recoveredManage = startupAppLockResult ?? startupGeneralPreferenceResult ?? startupUnassignedAreaColorResult ?? startupPersonCreateResult
             ?? startupPersonDeleteResult ?? startupPersonEditResult ?? startupTaxonomyResult
         let recoveredLists = startupInboxResult ?? startupChecklistResult ?? startupTaskListSortResult
             ?? recoveredManage ?? recoveredSomedaySections
@@ -593,6 +620,7 @@ private final class Engine: @unchecked Sendable {
                 : startupInboxResult != nil ? "inboxPreparedCommit" : startupChecklistResult != nil ? "checklistPreparedCommit"
                 : startupTaskListSortResult != nil ? "taskListSortWrite"
                 : startupPersonCreateResult != nil ? "managePersonCreateCommit"
+                : startupAppLockResult != nil ? "appLockCommit"
                 : startupGeneralPreferenceResult != nil ? "generalPreferenceCommit"
                 : startupTaxonomyResult != nil ? "manageTaxonomyCommit"
                 : startupPersonEditResult != nil ? "managePersonEditCommit"
@@ -615,6 +643,7 @@ private final class Engine: @unchecked Sendable {
         startupProjectSectionRenameResult = nil
         startupProjectSectionDeleteResult = nil
         startupProjectSectionOrderResult = nil
+        startupAppLockResult = nil
         startupGeneralPreferenceResult = nil
         startupTaxonomyResult = nil
         startupPersonEditResult = nil
@@ -671,7 +700,7 @@ private final class Engine: @unchecked Sendable {
             // Mind Sweep has no journal or write before argument validation.
             // Its UI may release an oversized draft only on a definite refusal.
             // With an older command still owed, keep every error uncertain.
-            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "focusSavedFilterWrite", "focusSavedFilterRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
+            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "appLockOptions", "appLock", "appLockRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "focusSavedFilterWrite", "focusSavedFilterRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
             throw error
         }
         guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
@@ -687,9 +716,17 @@ private final class Engine: @unchecked Sendable {
                     throw CoreHostRejection(message: failure.message)
                 }
             }
-            if ["focusGroupRetryOutcome", "taskListSortRetryOutcome", "unassignedAreaColorRetryOutcome", "somedaySectionCreateRetryOutcome", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteRetryOutcome", "somedaySectionOrderRetryOutcome", "somedaySectionTaskRetryOutcome", "projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "projectSectionOrderRetryOutcome", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteRetryOutcome", "managePersonCreateRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaRenameRetryOutcome", "manageAreaEditRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "manageAreaDeleteRetryOutcome", "projectFocusRetryOutcome", "taskFocusRetryOutcome", "focusOrderRetryOutcome", "focusSavedFilterRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectTaskSortRetryOutcome", "projectTaskOrderRetryOutcome", "projectNotesWriteRetryOutcome", "projectTagsWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome", "projectAreaRetryOutcome"].contains(method) {
+            if ["focusGroupRetryOutcome", "taskListSortRetryOutcome", "unassignedAreaColorRetryOutcome", "somedaySectionCreateRetryOutcome", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteRetryOutcome", "somedaySectionOrderRetryOutcome", "somedaySectionTaskRetryOutcome", "projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "projectSectionOrderRetryOutcome", "appLockRetryOutcome", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteRetryOutcome", "managePersonCreateRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaRenameRetryOutcome", "manageAreaEditRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "manageAreaDeleteRetryOutcome", "projectFocusRetryOutcome", "taskFocusRetryOutcome", "focusOrderRetryOutcome", "focusSavedFilterRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectTaskSortRetryOutcome", "projectTaskOrderRetryOutcome", "projectNotesWriteRetryOutcome", "projectTagsWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome", "projectAreaRetryOutcome"].contains(method) {
                 do {
                     let value = try invoke(method, arguments: args)
+                    if method == "appLockRetryOutcome" {
+                        guard let encoded = args.first as? String,
+                              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                              let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any] else {
+                            throw HostFailure("Malformed App lock probe")
+                        }
+                        try validateAppLockResult(result, request: request)
+                    }
                     if method == "generalPreferenceRetryOutcome" {
                         throw HostFailure("Malformed General preference probe: positive outcome is unsupported")
                     }
@@ -752,6 +789,18 @@ private final class Engine: @unchecked Sendable {
                 value = try invoke("menuRead", arguments: ["manageList", encoded])
             } else {
                 value = try invoke(method, arguments: args)
+            }
+            if method == "appLockOptions" {
+                guard value.utf8.count <= 16_384,
+                      let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(options.keys) == Set(["row", "expected", "value"]),
+                      let row = options["row"] as? [String: Any], row["label"] is String, row["description"] is String,
+                      Self.isBoolean(options["value"]), Self.equalJSON(row["value"], options["value"]),
+                      Self.validAppLockExpected(options["expected"]),
+                      let expected = options["expected"] as? [String: Any],
+                      Self.equalJSON(options["value"], (expected["present"] as? Bool == true) ? expected["value"] : false) else {
+                    throw HostFailure("Malformed App lock options")
+                }
             }
             if method == "generalPreferenceOptions" {
                 guard value.utf8.count <= 262_144,
@@ -1466,6 +1515,34 @@ private final class Engine: @unchecked Sendable {
                 _ = try journalArguments(command)
                 _ = try invoke("projectAreaValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "appLock" {
+            do {
+                let value = try invoke("appLockPrepare", arguments: args)
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed App lock write preparation")
+                }
+                if kind == "noop" {
+                    guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any] else {
+                        throw HostFailure("Malformed no-write App lock result")
+                    }
+                    try validateAppLockResult(result, request: submitted)
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any], Self.equalJSON(request, submitted) else {
+                    throw HostFailure("Malformed prepared App lock write")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 8_192 else { throw HostFailure("INVALID_INPUT: Prepared App lock write is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 18_192 else { throw HostFailure("INVALID_INPUT: Prepared App lock write journal is too large") }
+                command = PendingCommand(version: 2, method: "appLockCommit", argumentsJSON: encoded)
+                _ = try invoke("appLockValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "generalPreference" {
             do {
                 let value = try invoke("generalPreferencePrepare", arguments: args)
@@ -2125,7 +2202,15 @@ private final class Engine: @unchecked Sendable {
         try persist(command)
         // A rejection here remains ambiguous: an earlier execution may have
         // succeeded. Only a successful exact replay establishes its terminal value.
-        let value = try invoke(command.method, arguments: journalArguments(command))
+        let value: String
+        do { value = try invoke(command.method, arguments: journalArguments(command)) }
+        catch let failure as HostFailure {
+            if command.method == "appLockCommit", recoveryActivationPending, failure.message.hasPrefix("STALE_REVISION:") {
+                unresolvedAppLockRecovery = true
+                throw CoreHostAppLockRecovery()
+            }
+            throw failure
+        }
         return try finish(command, with: .success(value))
     }
 
@@ -2169,6 +2254,10 @@ private final class Engine: @unchecked Sendable {
         if command.method == "projectSectionOrderCommit" {
             _ = try invoke("projectSectionOrderValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validateProjectSectionOrderAcknowledgment(command, value: value) }
+        }
+        if command.method == "appLockCommit" {
+            _ = try invoke("appLockValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateAppLockAcknowledgment(command, value: value) }
         }
         if command.method == "generalPreferenceCommit" {
             _ = try invoke("generalPreferenceValidate", arguments: journalArguments(command))
@@ -2379,6 +2468,12 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("areaCreateApplied")
 #endif
             NSLog("Native iOS Area saved releaseCheck=v1.3.3/native-ios-area-create outcome=applied")
+        }
+        if command.method == "appLockCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("appLockApplied")
+#endif
+            NSLog("Native iOS App lock saved releaseCheck=v1.3.4/ios-app-lock outcome=confirmed")
         }
         if command.method == "generalPreferenceCommit", case .success(let value) = terminal {
 #if DEBUG
@@ -2612,7 +2707,7 @@ private final class Engine: @unchecked Sendable {
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
-            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
             || (method == "somedaySectionOrderWrite" && message.hasPrefix("STALE_REVISION:"))
@@ -2865,6 +2960,33 @@ private final class Engine: @unchecked Sendable {
               let name = result["name"] as? String, name.utf16.count <= 2_000_000 else {
             throw HostFailure("Malformed Person edit result")
         }
+    }
+
+    private static func validAppLockExpected(_ value: Any?) -> Bool {
+        guard let value = value as? [String: Any], Set(value.keys) == Set(["groupPresent", "present", "value"]),
+              isBoolean(value["groupPresent"]), isBoolean(value["present"]),
+              let group = value["groupPresent"] as? Bool, let present = value["present"] as? Bool,
+              group || !present else { return false }
+        return present ? isBoolean(value["value"]) : value["value"] is NSNull
+    }
+
+    private func validateAppLockResult(_ result: [String: Any], request: [String: Any]) throws {
+        guard Set(result.keys) == Set(["changed", "value"]), Self.isBoolean(result["changed"]),
+              Self.isBoolean(result["value"]), Self.equalJSON(result["value"], request["value"]),
+              let expected = request["expected"] as? [String: Any], Self.validAppLockExpected(expected),
+              result["changed"] as? Bool == !(expected["present"] as? Bool == true && Self.equalJSON(expected["value"], request["value"])) else {
+            throw HostFailure("Malformed App lock result")
+        }
+    }
+
+    private func validateAppLockAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard value.utf8.count <= 1_024, let encoded = args.first as? String,
+              let envelope = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              result["changed"] as? Bool == true else { throw HostFailure("Malformed App lock acknowledgment") }
+        try validateAppLockResult(result, request: request)
     }
 
     private func validateGeneralPreferenceAcknowledgment(_ command: PendingCommand, value: String) throws {
@@ -3858,6 +3980,23 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func journalArguments(_ command: PendingCommand) throws -> [Any] {
+        if command.method == "appLockCommit" {
+            guard command.argumentsJSON.utf8.count <= 49_152,
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 8_192,
+                  let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Set(prepared.keys) == Set(["version", "request"]),
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any], Self.equalJSON(request, original) else {
+                throw HostFailure("Malformed prepared App lock journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("appLock", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
         if command.method == "generalPreferenceCommit" {
             guard command.argumentsJSON.utf8.count <= 49_152,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
@@ -4552,7 +4691,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func arguments(_ method: String, _ json: String, allowPreparedDates: Bool = true) throws -> [Any] {
-        if ["generalPreferenceOptions", "generalPreference", "generalPreferenceRetryOutcome"].contains(method), json.utf8.count > 49_152 {
+        if ["appLockOptions", "appLock", "appLockRetryOutcome", "generalPreferenceOptions", "generalPreference", "generalPreferenceRetryOutcome"].contains(method), json.utf8.count > 49_152 {
             throw HostFailure("INVALID_INPUT: General preference transport is too large")
         }
         if ["manageTaxonomyOptions", "manageTaxonomy", "manageTaxonomyRetryOutcome"].contains(method), json.utf8.count > 12_000_000 {
@@ -4923,7 +5062,7 @@ private final class Engine: @unchecked Sendable {
         }
         if ["inboxView", "captureView", "captureEdit", "captureSubmit", "setAreaFilter", "taskView", "editDraft", "destinationPicker", "search", "mindSweepGuide", "mindSweepAdd",
             "calendarComposerOpen", "calendarComposerEdit", "calendarComposerSave", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome",
-            "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
+            "appLockOptions", "appLock", "appLockRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
             guard let json = args.first as? String,
                   (try NativeJSON.jsonObject(with: Data(json.utf8))) is [String: Any] else {
                 throw HostFailure("Core input must be a JSON object")
@@ -5408,6 +5547,21 @@ private final class Engine: @unchecked Sendable {
                             && !$0.utf8.elementsEqual(taskID.utf8) }) == true
                   }) == true) else {
                 throw HostFailure("INVALID_INPUT: Project task order needs a bounded token, typed anchor, and lowercase UUID")
+            }
+        }
+        if ["appLockOptions", "appLock", "appLockRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 8_192,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else {
+                throw HostFailure("INVALID_INPUT: App lock requires a bounded object")
+            }
+            if method == "appLockOptions" {
+                guard input.isEmpty else { throw HostFailure("INVALID_INPUT: App lock options requires an empty object") }
+            } else {
+                guard Set(input.keys) == Set(["requestId", "value", "expected"]),
+                      let id = input["requestId"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+                      Self.isBoolean(input["value"]), Self.validAppLockExpected(input["expected"]) else {
+                    throw HostFailure("INVALID_INPUT: App lock requires a boolean, witness and lowercase UUID")
+                }
             }
         }
         if ["generalPreferenceOptions", "generalPreference", "generalPreferenceRetryOutcome"].contains(method) {
