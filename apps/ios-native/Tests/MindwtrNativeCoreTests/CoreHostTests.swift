@@ -12690,10 +12690,586 @@ final class CoreHostTests: XCTestCase {
         }
     }
 
+    private func seedPersonEditRows() async throws {
+        try await seedPersonDeleteRows()
+        let sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        let at = recentAreaTestTime()
+        // Seed codec-canonical JSON bytes so untouched rows remain raw-exact
+        // even when a later full snapshot serializes all loaded Task objects.
+        let checklistJSON = #"[{"id":"edit-step","title":"Retained step","isCompleted":true}]"#
+        let attachmentJSON = "[{\"id\":\"edit-file\",\"kind\":\"file\",\"title\":\"Retained file\",\"uri\":\"file:///retained.txt\",\"createdAt\":\"\(at)\",\"updatedAt\":\"\(at)\"}]"
+        let recurrenceJSON = #"{"rule":"weekly","strategy":"strict","byDay":["TH"],"rrule":"FREQ=WEEKLY;BYDAY=TH"}"#
+        _ = try sqlite.execute("UPDATE people SET name = 'Old Person' WHERE id = 'legacy-person'")
+        _ = try sqlite.execute("UPDATE tasks SET assignedTo = 'Old Person' WHERE id LIKE 'person-delete-%'")
+        _ = try sqlite.execute("UPDATE tasks SET description = ?, checklist = ?, attachments = ?, viewSectionIds = ?, recurrence = ?, showFutureRecurrence = 1, priority = 'high', energyLevel = 'low', orderNum = 37, boardOrder = 8, focusOrder = 9, timeEstimate = '15min', timeSpentMinutes = 5 WHERE id LIKE 'person-delete-%'", parametersJSON: json([
+            "Keep full **metadata**", checklistJSON, attachmentJSON,
+            json(["someday": "keep-section", "custom": "keep-custom"]), recurrenceJSON]))
+        for (id, status, purged, contextOnly) in [("person-edit-reference", "reference", false, false), ("person-edit-archive", "archived", false, false), ("person-edit-purged", "next", true, false), ("person-edit-context", "next", false, true)] {
+            _ = try sqlite.execute("INSERT INTO tasks (id, title, status, assignedTo, tags, contexts, checklist, attachments, description, viewSectionIds, recurrence, priority, orderNum, boardOrder, focusOrder, isFocusedToday, showFutureRecurrence, suppressMindwtrReminders, pushCount, createdAt, updatedAt, completedAt, purgedAt, rev) SELECT ?, title, ?, ?, tags, ?, checklist, attachments, description, viewSectionIds, recurrence, priority, orderNum, boardOrder, focusOrder, isFocusedToday, showFutureRecurrence, suppressMindwtrReminders, pushCount, createdAt, updatedAt, ?, ?, rev FROM tasks WHERE id = 'person-delete-live-task'", parametersJSON: json([id, status, contextOnly ? "Sibling" : "Old Person", json(["@Old Person", "@keep"]), status == "archived" ? at as Any : NSNull(), purged ? at as Any : NSNull()]))
+        }
+        // Finished Tasks do not have a focus order in the RN lifecycle model.
+        // Active/reference/purged-only Tasks retain the nondefault value above.
+        _ = try sqlite.execute("UPDATE tasks SET focusOrder = NULL WHERE status IN ('done', 'archived')")
+    }
+
+    private func personEditRequest(_ core: CoreHost, name: String? = "Edited Person", note: String? = "Edited note",
+                                   referenceLink: String? = "tel:123") async throws -> [String: Any] {
+        let options = try object(await core.call("managePersonEditOptions", argumentsJSON: json([json(["personId": "legacy-person"])])))
+        let draft = try XCTUnwrap(options["draft"] as? [String: Any])
+        return ["requestId": UUID().uuidString.lowercased(), "personId": "legacy-person", "expected": try XCTUnwrap(options["expected"]),
+                "name": name ?? draft["name"]!, "note": note ?? draft["note"]!, "referenceLink": referenceLink ?? draft["referenceLink"]!]
+    }
+
+    private func personEditSemanticTables(_ tables: [String], changedTaskIDs: Set<String>) throws -> [String] {
+        // Retain every table/row/column. Only JSON key order in changed Task rows
+        // is insignificant; unaffected rows and all other tables stay raw-exact.
+        let jsonColumns: Set<String> = ["relativeStartOffset", "recurrence", "tags", "contexts", "checklist", "attachments", "viewSectionIds", "tagIds", "data"]
+        guard !changedTaskIDs.isEmpty else { return tables }
+        var result = tables
+        var rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(tables[0].utf8)) as? [[String: Any]])
+        for index in rows.indices where changedTaskIDs.contains(rows[index]["id"] as? String ?? "") {
+            for field in jsonColumns {
+                if let value = rows[index][field] as? String {
+                    rows[index][field] = try JSONSerialization.jsonObject(with: Data(value.utf8), options: [.fragmentsAllowed])
+                }
+            }
+        }
+        result[0] = try json(rows)
+        return result
+    }
+
+    private func assertPersonEditTables(_ before: [String], _ after: [String], metadata: [String: Any], name: String?,
+                                       destinationID: String? = nil, updateAt: String, renameAt: String?, writer: String) throws {
+        var expected = before
+        var changedTaskIDs: Set<String> = []
+        var people = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[3].utf8)) as? [[String: Any]])
+        let sourceIndex = try XCTUnwrap(people.firstIndex { $0["id"] as? String == "legacy-person" })
+        var source = people[sourceIndex]
+        let oldName = try XCTUnwrap(source["name"] as? String)
+        let sourceRev = try XCTUnwrap(source["rev"] as? Int)
+        if !metadata.isEmpty {
+            for (field, value) in metadata { source[field] = value }
+            source["rev"] = sourceRev + 1; source["updatedAt"] = updateAt; source["revBy"] = writer
+        }
+        if let name, let renameAt {
+            source["rev"] = sourceRev + (metadata.isEmpty ? 1 : 2); source["updatedAt"] = renameAt; source["revBy"] = writer
+            if let destinationID {
+                source["deletedAt"] = renameAt
+                let destinationIndex = try XCTUnwrap(people.firstIndex { $0["id"] as? String == destinationID })
+                var destination = people[destinationIndex]
+                for field in ["note", "referenceLink"] where destination[field] is NSNull { destination[field] = source[field] }
+                destination["rev"] = try XCTUnwrap(destination["rev"] as? Int) + 1
+                destination["updatedAt"] = renameAt; destination["revBy"] = writer
+                people[destinationIndex] = destination
+            } else { source["name"] = name }
+            var tasks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[0].utf8)) as? [[String: Any]])
+            for index in tasks.indices where tasks[index]["deletedAt"] is NSNull && tasks[index]["assignedTo"] as? String == oldName {
+                changedTaskIDs.insert(try XCTUnwrap(tasks[index]["id"] as? String))
+                tasks[index]["assignedTo"] = name; tasks[index]["updatedAt"] = renameAt; tasks[index]["revBy"] = writer
+                tasks[index]["rev"] = try XCTUnwrap(tasks[index]["rev"] as? Int) + 1
+            }
+            expected[0] = try json(tasks)
+        }
+        people[sourceIndex] = source; expected[3] = try json(people)
+        XCTAssertEqual(try personEditSemanticTables(after, changedTaskIDs: changedTaskIDs),
+                       try personEditSemanticTables(expected, changedTaskIDs: changedTaskIDs))
+    }
+
+    func testManagePersonEditMetadataThenRenamePreservesFullTaskColumnsAndLegacyRows() async throws {
+        try await seedPersonEditRows()
+        let at = "2026-10-01T12:00:00.000Z"
+        let source = try dateBundle(at: at)
+        let faults = HostIOFaults(); let core = host(faults, bundleURL: source)
+        _ = try await core.start()
+        let sqlite = try SQLiteBridge(url: database); defer { sqlite.close() }
+        let before = try nineTableSnapshot(sqlite)
+        var diagnostics = 0
+        faults.commandDiagnostic = { if $0 == "managePersonEditApplied" { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
+        let wideName = String(repeating: "E", count: 601), wideNote = String(repeating: "N", count: 10_101), wideLink = "obsidian://" + String(repeating: "r", count: 2_101)
+        let request = try await personEditRequest(core, name: wideName, note: wideNote, referenceLink: wideLink)
+        let expected = try XCTUnwrap(request["expected"] as? [String: Any])
+        XCTAssertEqual(expected["createdAt"] as? String, "legacy-created")
+        XCTAssertEqual(expected["updatedAt"] as? String, "legacy-updated")
+        XCTAssertEqual(try nineTableSnapshot(sqlite), before)
+        let result = try object(await core.call("managePersonEdit", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(result), try json(["id": "legacy-person", "personId": "legacy-person", "name": wideName]))
+        let row = try XCTUnwrap(personRows("legacy-person").first)
+        try assertPersonEditTables(before, nineTableSnapshot(sqlite), metadata: ["note": wideNote, "referenceLink": wideLink], name: wideName, updateAt: at, renameAt: at, writer: XCTUnwrap(row["revBy"] as? String))
+        XCTAssertEqual(row["rev"] as? Int, 9)
+        let after = try nineTableSnapshot(sqlite)
+        await expectFailure("STALE_REVISION") { _ = try await core.call("managePersonEditRetryOutcome", argumentsJSON: json([json(request)])) }
+        XCTAssertEqual(try nineTableSnapshot(sqlite), after); XCTAssertEqual(diagnostics, 1)
+    }
+
+    func testManagePersonEditCollisionKeepsDestinationNameAndMetadataPrecedence() async throws {
+        try await seedPersonEditRows()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE people SET referenceLink = 'https://example.com/kept' WHERE id = 'sibling-person'")
+        edit.close()
+        let at = "2026-10-01T12:00:00.000Z", core = host(bundleURL: try dateBundle(at: "2026-10-01T12:00:00.000Z"))
+        _ = try await core.start()
+        let sqlite = try SQLiteBridge(url: database); defer { sqlite.close() }
+        let before = try nineTableSnapshot(sqlite)
+        let request = try await personEditRequest(core, name: " sibling ", note: " Updated before merge ", referenceLink: "")
+        let result = try object(await core.call("managePersonEdit", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(result), try json(["id": "legacy-person", "personId": "sibling-person", "name": "Sibling"]))
+        let source = try XCTUnwrap(personRows("legacy-person").first)
+        try assertPersonEditTables(before, nineTableSnapshot(sqlite), metadata: ["note": "Updated before merge", "referenceLink": NSNull()], name: "sibling", destinationID: "sibling-person", updateAt: at, renameAt: at, writer: XCTUnwrap(source["revBy"] as? String))
+        XCTAssertEqual(source["rev"] as? Int, 9)
+        XCTAssertEqual(try personRows("sibling-person").first?["referenceLink"] as? String, "https://example.com/kept")
+    }
+
+    func testManagePersonEditNoopCancelChecksAndMalformedPrivateInputsNeverWrite() async throws {
+        try await seedPersonEditRows()
+        let faults = HostIOFaults(), core = host(HostIOFaults())
+        _ = try await core.start()
+        await core.close()
+        let reader = host(faults); _ = try await reader.start()
+        let sqlite = try SQLiteBridge(url: database); defer { sqlite.close() }
+        let before = try nineTableSnapshot(sqlite)
+        var sqlWrites = 0, journals = 0
+        faults.beforeSQL = { if $0.range(of: #"(?i)^\s*(?:INSERT|UPDATE|DELETE|REPLACE)"#, options: .regularExpression) != nil { sqlWrites += 1 } }
+        faults.journalWrite = { journals += 1 }
+        let unchanged = try await personEditRequest(reader, name: nil, note: nil, referenceLink: nil)
+        let result = try object(await reader.call("managePersonEdit", argumentsJSON: json([json(unchanged)])))
+        XCTAssertEqual(try json(result), try json(["id": "legacy-person", "personId": "legacy-person", "name": "Old Person"]))
+        for (name, disabled) in [("  \n", true), ("Old   Person", false), (String(repeating: "L", count: 601), false)] {
+            let check = try object(await reader.call("menuRead", argumentsJSON: json(["managePersonEditCheck", json(["name": name])])))
+            XCTAssertEqual(check["saveDisabled"] as? Bool, disabled)
+        }
+        for privateMethod in ["managePersonEditPrepare", "managePersonEditValidate", "managePersonEditCommit"] {
+            await expectFailure { _ = try await reader.call(privateMethod, argumentsJSON: json([json(unchanged)])) }
+        }
+        for corruption in ["unknown", "uuid", "expected-null", "note-number", "oversized", "blank"] {
+            var malformed = unchanged
+            if corruption == "unknown" { malformed["extra"] = true }
+            if corruption == "uuid" { malformed["requestId"] = "INVALID" }
+            if corruption == "expected-null" { var expected = try XCTUnwrap(malformed["expected"] as? [String: Any]); expected["note"] = NSNull(); malformed["expected"] = expected }
+            if corruption == "note-number" { malformed["note"] = 3 }
+            if corruption == "oversized" { malformed["note"] = String(repeating: "漢", count: 700_000) }
+            if corruption == "blank" { malformed["name"] = "  " }
+            await expectFailure { _ = try await reader.call("managePersonEdit", argumentsJSON: json([json(malformed)])) }
+        }
+        for check in [["name": 3], ["name": "Old Person", "extra": true]] as [[String: Any]] {
+            await expectFailure { _ = try await reader.call("menuRead", argumentsJSON: json(["managePersonEditCheck", json(check)])) }
+        }
+        for input in [["personId": "missing"], ["personId": "legacy-person", "extra": "bad"]] {
+            await expectFailure { _ = try await reader.call("managePersonEditOptions", argumentsJSON: json([json(input)])) }
+        }
+        await expectFailure("STALE_REVISION") { _ = try await reader.call("managePersonEditRetryOutcome", argumentsJSON: json([json(unchanged)])) }
+        XCTAssertEqual(try nineTableSnapshot(sqlite), before); XCTAssertEqual(sqlWrites, 0); XCTAssertEqual(journals, 0)
+    }
+
+    func testManagePersonEditMetadataOnlyPreservesRawWhitespaceName() async throws {
+        try await seedPersonEditRows()
+        // Startup normalizes loaded names; inject a later raw store row inside the test bundle.
+        // This tests the RN action policy when metadata arrives after initialization.
+        let source = try dateBundle(at: "2026-10-01T12:00:00.000Z")
+        var script = try String(contentsOf: source)
+        let pattern = #"([A-Za-z_$][A-Za-z0-9_$]*)\.getState\(\)\._allPeople"#
+        let regex = try NSRegularExpression(pattern: pattern)
+        let match = try XCTUnwrap(regex.firstMatch(in: script, range: NSRange(script.startIndex..., in: script)))
+        let store = String(script[try XCTUnwrap(Range(match.range(at: 1), in: script))])
+        let end = try XCTUnwrap(script.range(of: "})();", options: .backwards))
+        let hook = """
+        ;(() => { const options = globalThis.MindwtrHost.managePersonEditOptions;
+          globalThis.MindwtrHost.managePersonEditOptions = function(json) {
+            const state = \(store).getState();
+            \(store).setState({_allPeople: state._allPeople.map(p => p.id === 'legacy-person' ? {...p, name: 'Raw   Person'} : p)});
+            return options(json);
+          };
+        })();
+        """
+        script.insert(contentsOf: hook, at: end.lowerBound)
+        try script.write(to: source, atomically: true, encoding: .utf8)
+        let core = host(bundleURL: source); _ = try await core.start()
+        let sqlite = try SQLiteBridge(url: database); defer { sqlite.close() }
+        // Match the post-load raw row in durable storage before Options opens.
+        // The bounded durable read must acknowledge it with full expected CAS,
+        // rather than bypassing the adapter's external-commit fence.
+        _ = try sqlite.execute("UPDATE people SET name = 'Raw   Person' WHERE id = 'legacy-person'")
+        let before = try nineTableSnapshot(sqlite)
+        let request = try await personEditRequest(core, name: nil, note: "Only metadata", referenceLink: nil)
+        let result = try object(await core.call("managePersonEdit", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(result["name"] as? String, "Raw   Person")
+        let row = try XCTUnwrap(personRows("legacy-person").first)
+        try assertPersonEditTables(before, nineTableSnapshot(sqlite), metadata: ["note": "Only metadata"], name: nil, updateAt: "2026-10-01T12:00:00.000Z", renameAt: nil, writer: XCTUnwrap(row["revBy"] as? String))
+        XCTAssertEqual(row["rev"] as? Int, 8)
+    }
+
     private func personDeleteRequest(_ core: CoreHost, personID: String = "legacy-person",
                                      requestID: String = UUID().uuidString.lowercased()) async throws -> [String: Any] {
         let options = try object(await core.call("managePersonDeleteOptions", argumentsJSON: json([json(["personId": personID])])))
         return ["requestId": requestID, "personId": personID, "expected": try XCTUnwrap(options["expected"])]
+    }
+
+    func testManagePersonEditTwoFailedAttemptsColdRecoveryKeepsBothOriginalClocks() async throws {
+        try await seedPersonEditRows()
+        let faults = HostIOFaults()
+        let clock = try dateBundle(at: "2026-10-01T12:00:00.000Z", suffix: """
+        (() => {
+            const prepare = MindwtrHost.managePersonEditPrepare;
+            MindwtrHost.managePersonEditPrepare = function(json) {
+                const PreviousDate = Date; let calls = 0;
+                globalThis.Date = class extends PreviousDate {
+                    constructor(...args) { super(...(args.length ? args : [PreviousDate.parse(calls++ ? '2026-10-01T12:00:01.000Z' : '2026-10-01T12:00:00.000Z')])); }
+                };
+                try { return prepare(json); } finally { globalThis.Date = PreviousDate; }
+            };
+        })();
+        """)
+        let writer = host(faults, bundleURL: clock)
+        _ = try await writer.start()
+        let request = try await personEditRequest(writer)
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Person Edit COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("managePersonEdit", argumentsJSON: json([json(request)])) }
+        let frozen = try Data(contentsOf: journal)
+        let saved = try object(String(decoding: frozen, as: UTF8.self))
+        XCTAssertEqual(saved["method"] as? String, "managePersonEditCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        let prepared = try XCTUnwrap(object(XCTUnwrap(args.first))["prepared"] as? [String: Any])
+        let stamp = try XCTUnwrap(prepared["updateAt"] as? String)
+        let renameStamp = try XCTUnwrap(prepared["renameAt"] as? String)
+        XCTAssertEqual(stamp, "2026-10-01T12:00:00.000Z")
+        XCTAssertEqual(renameStamp, "2026-10-01T12:00:01.000Z")
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        try assertJournalContentUnchanged(frozen)
+        let failed = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failed), before)
+        failed.close()
+        await writer.close()
+        let recoveryFaults = HostIOFaults()
+        var diagnostics = 0
+        recoveryFaults.commandDiagnostic = { if $0 == "managePersonEditApplied" { diagnostics += 1 } }
+        let recovered = host(recoveryFaults)
+        let startup = try object(await recovered.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "managePersonEditCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["id": "legacy-person", "personId": "legacy-person", "name": "Edited Person"]))
+        let row = try XCTUnwrap(personRows("legacy-person").first)
+        XCTAssertTrue(row["deletedAt"] is NSNull)
+        XCTAssertEqual(row["updatedAt"] as? String, renameStamp)
+        XCTAssertEqual(row["rev"] as? Int, 9)
+        let check = try SQLiteBridge(url: database)
+        let after = try nineTableSnapshot(check)
+        check.close()
+        try assertPersonEditTables(before, after, metadata: ["note": "Edited note", "referenceLink": "tel:123"], name: "Edited Person", updateAt: stamp, renameAt: renameStamp, writer: XCTUnwrap(row["revBy"] as? String))
+        XCTAssertEqual(diagnostics, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testManagePersonEditColdRelevantConflictsRefuseAndUnrelatedChangesRemain() async throws {
+        try await seedPersonEditRows()
+        let faults = HostIOFaults(), writer = host(HostIOFaults())
+        _ = try await writer.start(); await writer.close()
+        let first = host(faults); _ = try await first.start()
+        let request = try await personEditRequest(first, name: "sibling")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Person Edit COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await first.call("managePersonEdit", argumentsJSON: json([json(request)])) }
+        let frozen = try Data(contentsOf: journal)
+        let saved = try object(String(decoding: frozen, as: UTF8.self))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        let prepared = try XCTUnwrap(object(XCTUnwrap(args.first))["prepared"] as? [String: Any])
+        let updateAt = try XCTUnwrap(prepared["updateAt"] as? String), renameAt = try XCTUnwrap(prepared["renameAt"] as? String)
+        await first.close()
+        // The host deliberately retains committed WAL pages on close. Capture
+        // a standalone backup, rather than mixing main-file bytes with a prior case's WAL.
+        let baselineURL = directory.appendingPathComponent("person-edit-cold-baseline.sqlite")
+        let snapshot = try SQLiteBridge(url: database)
+        let baselineTables = try nineTableSnapshot(snapshot)
+        try snapshot.prepareRecovery(at: baselineURL); snapshot.close()
+        let baseline = try Data(contentsOf: baselineURL)
+        for change in ["source", "restore", "destination", "task", "new-task", "unrelated"] {
+            for suffix in ["-wal", "-shm"] {
+                let sidecar = URL(fileURLWithPath: database.path + suffix)
+                if FileManager.default.fileExists(atPath: sidecar.path) { try FileManager.default.removeItem(at: sidecar) }
+            }
+            try baseline.write(to: database); try frozen.write(to: journal)
+            let edit = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(edit), baselineTables, "Restored isolated baseline for \(change)")
+            if change == "source" { _ = try edit.execute("UPDATE people SET name = 'Intervening rename', rev = rev + 1 WHERE id = 'legacy-person'") }
+            if change == "restore" { _ = try edit.execute("UPDATE people SET deletedAt = NULL, rev = rev + 2, note = 'Restored after partial application' WHERE id = 'legacy-person'") }
+            if change == "destination" { _ = try edit.execute("UPDATE people SET note = 'Changed destination', rev = rev + 1 WHERE id = 'sibling-person'") }
+            if change == "task" { _ = try edit.execute("UPDATE tasks SET description = 'Changed affected Task', rev = rev + 1 WHERE id = 'person-delete-live-task'") }
+            if change == "new-task" { _ = try edit.execute("UPDATE tasks SET assignedTo = 'Old Person', rev = rev + 1 WHERE id = 'person-edit-context'") }
+            if change == "unrelated" { _ = try edit.execute("UPDATE tasks SET description = 'Unrelated context Task edit', rev = rev + 1 WHERE id = 'person-edit-context'") }
+            let before = try nineTableSnapshot(edit); edit.close()
+            let replayFaults = HostIOFaults(); var writes = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
+            }
+            let reopened = host(replayFaults)
+            if change == "unrelated" {
+                let startup = try object(await reopened.start())
+                XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "managePersonEditCommit")
+                let check = try SQLiteBridge(url: database); defer { check.close() }
+                let row = try XCTUnwrap(personRows("legacy-person").first)
+                try assertPersonEditTables(before, nineTableSnapshot(check), metadata: ["note": "Edited note", "referenceLink": "tel:123"], name: "sibling", destinationID: "sibling-person", updateAt: updateAt, renameAt: renameAt, writer: XCTUnwrap(row["revBy"] as? String))
+            } else {
+                await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+                let check = try SQLiteBridge(url: database)
+                XCTAssertEqual(try nineTableSnapshot(check), before, change); check.close()
+                XCTAssertEqual(writes, 0, change)
+            }
+            await reopened.close()
+        }
+    }
+
+    func testManagePersonEditLegacyTerminalFocusOrderColdPreservesRawRowsAndConflictsRefuse() async throws {
+        try await seedPersonEditRows()
+        // Prime one-time/day-gated load maintenance on the same clock as the
+        // writer before injecting legacy raw fields. That maintenance may save
+        // a normal projection independently of the Person edit under test.
+        let at = "2026-10-01T12:00:00.000Z", clock = try dateBundle(at: "2026-10-01T12:00:00.000Z")
+        let initializer = host(bundleURL: clock); _ = try await initializer.start(); await initializer.close()
+        // Real legacy SQL can retain a focus order that normal load clears only
+        // in memory. Freeze the durable baseline and preserve these raw fields.
+        let legacy = try SQLiteBridge(url: database)
+        _ = try legacy.execute("UPDATE tasks SET focusOrder = 9 WHERE id IN ('person-delete-done-task', 'person-edit-archive')")
+        legacy.close()
+        let faults = HostIOFaults(), writer = host(faults, bundleURL: clock)
+        _ = try await writer.start()
+        let request = try await personEditRequest(writer, name: "sibling")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected legacy focus-order COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("managePersonEdit", argumentsJSON: json([json(request)])) }
+        let frozen = try Data(contentsOf: journal)
+        let saved = try object(String(decoding: frozen, as: UTF8.self))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        let prepared = try XCTUnwrap(object(XCTUnwrap(args.first))["prepared"] as? [String: Any])
+        XCTAssertEqual(try json(XCTUnwrap(prepared["request"])), try json(request))
+        XCTAssertEqual(prepared["updateAt"] as? String, at)
+        XCTAssertEqual(prepared["renameAt"] as? String, at)
+        let scope = try XCTUnwrap(prepared["scope"] as? [String: Any])
+        let tasks = try XCTUnwrap(scope["tasks"] as? [[String: Any]])
+        for id in ["person-delete-done-task", "person-edit-archive"] {
+            let before = try XCTUnwrap(tasks.first { $0["id"] as? String == id })
+            XCTAssertEqual(before["focusOrder"] as? Int, 9)
+            XCTAssertEqual(try storedTask(id)["focusOrder"] as? Int, 9)
+        }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        try assertJournalContentUnchanged(frozen)
+        for id in ["person-delete-done-task", "person-edit-archive"] { XCTAssertEqual(try storedTask(id)["focusOrder"] as? Int, 9) }
+        // Pin original durable before rows/journal before the successful retry,
+        // then restore that authority for the separate recreated-host branches.
+        let snapshot = try SQLiteBridge(url: database)
+        let baselineURL = directory.appendingPathComponent("person-edit-legacy-baseline.sqlite")
+        let baselineTables = try nineTableSnapshot(snapshot)
+        try snapshot.prepareRecovery(at: baselineURL); snapshot.close()
+        let baseline = try Data(contentsOf: baselineURL)
+        faults.beforeSQL = nil
+        let pendingValue = try await writer.retryPending()
+        let acknowledgment = try object(XCTUnwrap(pendingValue))
+        XCTAssertEqual(try json(acknowledgment), try json(["id": "legacy-person", "personId": "sibling-person", "name": "Sibling"]))
+        let sameHostRow = try XCTUnwrap(personRows("legacy-person").first)
+        let sameHostCheck = try SQLiteBridge(url: database)
+        try assertPersonEditTables(baselineTables, nineTableSnapshot(sameHostCheck), metadata: ["note": "Edited note", "referenceLink": "tel:123"], name: "sibling", destinationID: "sibling-person", updateAt: at, renameAt: at, writer: XCTUnwrap(sameHostRow["revBy"] as? String))
+        sameHostCheck.close()
+        for id in ["person-delete-done-task", "person-edit-archive"] { XCTAssertEqual(try storedTask(id)["focusOrder"] as? Int, 9) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await writer.close()
+        for changed in [true, false] {
+            for suffix in ["-wal", "-shm"] {
+                let sidecar = URL(fileURLWithPath: database.path + suffix)
+                if FileManager.default.fileExists(atPath: sidecar.path) { try FileManager.default.removeItem(at: sidecar) }
+            }
+            try baseline.write(to: database); try frozen.write(to: journal)
+            let edit = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(edit), baselineTables)
+            if changed { _ = try edit.execute("UPDATE tasks SET focusOrder = 10 WHERE id = 'person-delete-done-task'") }
+            let before = try nineTableSnapshot(edit); edit.close()
+            let replayFaults = HostIOFaults(); var writes = 0, diagnostics = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
+            }
+            replayFaults.commandDiagnostic = { if $0 == "managePersonEditApplied" { diagnostics += 1 } }
+            let reopened = host(replayFaults)
+            if changed {
+                await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+                let check = try SQLiteBridge(url: database)
+                XCTAssertEqual(try nineTableSnapshot(check), before); check.close()
+                XCTAssertEqual(writes, 0); XCTAssertEqual(diagnostics, 0)
+                try assertJournalContentUnchanged(frozen)
+                XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
+            } else {
+                let startup = try object(await reopened.start())
+                let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+                XCTAssertEqual(recovery["method"] as? String, "managePersonEditCommit")
+                XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["id": "legacy-person", "personId": "sibling-person", "name": "Sibling"]))
+                let row = try XCTUnwrap(personRows("legacy-person").first)
+                let check = try SQLiteBridge(url: database)
+                try assertPersonEditTables(before, nineTableSnapshot(check), metadata: ["note": "Edited note", "referenceLink": "tel:123"], name: "sibling", destinationID: "sibling-person", updateAt: at, renameAt: at, writer: XCTUnwrap(row["revBy"] as? String))
+                check.close()
+                for id in ["person-delete-done-task", "person-edit-archive"] { XCTAssertEqual(try storedTask(id)["focusOrder"] as? Int, 9) }
+                XCTAssertEqual(diagnostics, 1)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            }
+            await reopened.close()
+        }
+    }
+
+    func testManagePersonEditForgedColdJournalsRefuseBeforeSQLite() async throws {
+        try await seedPersonEditRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await personEditRequest(writer)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Person Edit COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("managePersonEdit", argumentsJSON: json([json(request)])) }
+        let saved = try object(String(contentsOf: journal))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        let original = try object(XCTUnwrap(args.first))
+        await writer.close()
+        let databaseBytes = try Data(contentsOf: database)
+        for corruption in ["request", "effect", "task", "result", "time", "terminal", "oversized", "raw"] {
+            var envelope = original
+            var forged = saved
+            if corruption == "request" {
+                var changed = try XCTUnwrap(envelope["request"] as? [String: Any])
+                changed["requestId"] = UUID().uuidString.lowercased()
+                envelope["request"] = changed
+            } else if corruption == "effect" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                var people = try XCTUnwrap(effect["people"] as? [[String: Any]])
+                var pair = try XCTUnwrap(people.first), after = try XCTUnwrap(pair["after"] as? [String: Any])
+                after["note"] = "Forged note"; pair["after"] = after; people[0] = pair
+                effect["people"] = people; prepared["effect"] = effect
+                envelope["prepared"] = prepared
+            } else if ["task", "result", "time"].contains(corruption) {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                if corruption == "task" {
+                    var effect = try XCTUnwrap(prepared["effect"] as? [String: Any]), tasks = try XCTUnwrap((prepared["effect"] as? [String: Any])?["tasks"] as? [[String: Any]])
+                    var pair = try XCTUnwrap(tasks.first), after = try XCTUnwrap(pair["after"] as? [String: Any])
+                    after["description"] = "Forged Task metadata"; pair["after"] = after; tasks[0] = pair; effect["tasks"] = tasks; prepared["effect"] = effect
+                } else if corruption == "result" { prepared["result"] = ["id": "legacy-person", "personId": "legacy-person", "name": "Forged name"] }
+                else { prepared["renameAt"] = "legacy stamp" }
+                envelope["prepared"] = prepared
+            } else if corruption == "terminal" {
+                forged["terminal"] = ["success": ["_0": try json(["id": "wrong-person", "personId": "legacy-person", "name": "Edited Person"])]]
+            }
+            if corruption == "raw" {
+                forged["method"] = "managePersonEdit"
+                forged["argumentsJSON"] = try json([json(request)])
+            } else if corruption == "oversized" {
+                forged["argumentsJSON"] = try json([String(repeating: "x", count: 2_000_001)])
+            } else if corruption != "terminal" {
+                forged["argumentsJSON"] = try json([json(envelope)])
+            }
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var sql = 0, cleanup = 0
+            blockedFaults.beforeSQL = { _ in sql += 1 }
+            blockedFaults.journalRemove = { cleanup += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(sql, 0, corruption); XCTAssertEqual(cleanup, 0, corruption)
+            XCTAssertEqual(try Data(contentsOf: database), databaseBytes, corruption)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, corruption)
+            await blocked.close()
+        }
+    }
+
+    func testManagePersonEditUnknownAcknowledgmentColdExactAfterWritesNothing() async throws {
+        try await seedPersonEditRows()
+        let source = try dateBundle(at: "2026-10-01T12:00:00.000Z", suffix: """
+        (() => {
+            const commit = MindwtrHost.managePersonEditCommit, poll = MindwtrHost.poll;
+            const tickets = new Set();
+            MindwtrHost.managePersonEditCommit = function (json) { const id = commit(json); tickets.add(id); return id; };
+            MindwtrHost.poll = function (id) {
+                const raw = poll(id);
+                if (!raw || !tickets.has(id)) return raw;
+                const result = JSON.parse(raw);
+                if (result.ok) result.value = {id: 'wrong-person', personId: 'legacy-person', name: 'Edited Person'};
+                return JSON.stringify(result);
+            };
+        })();
+        """)
+        let faults = HostIOFaults()
+        let writer = host(faults, bundleURL: source)
+        _ = try await writer.start()
+        var diagnostics = 0
+        faults.commandDiagnostic = { if $0 == "managePersonEditApplied" { diagnostics += 1 } }
+        let request = try await personEditRequest(writer)
+        await expectFailure("acknowledgment") { _ = try await writer.call("managePersonEdit", argumentsJSON: json([json(request)])) }
+        XCTAssertEqual(diagnostics, 0)
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertNil(saved["terminal"])
+        let committed = try XCTUnwrap(personRows("legacy-person").first)
+        XCTAssertEqual(committed["updatedAt"] as? String, "2026-10-01T12:00:00.000Z")
+        await writer.close()
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        let replayFaults = HostIOFaults()
+        var libraryWrites = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { libraryWrites += 1 }
+        }
+        replayFaults.commandDiagnostic = { if $0 == "managePersonEditApplied" { diagnostics += 1 } }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "managePersonEditCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["id": "legacy-person", "personId": "legacy-person", "name": "Edited Person"]))
+        XCTAssertEqual(try json(XCTUnwrap(personRows("legacy-person").first)), try json(committed))
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertEqual(libraryWrites, 0); XCTAssertEqual(diagnostics, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testManagePersonEditTerminalCleanupPreservesInterveningRestoreAndProbeRefuses() async throws {
+        try await seedPersonEditRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await personEditRequest(writer)
+        faults.journalRemove = { throw HostFailure("Injected Person Edit cleanup failure") }
+        await expectFailure("cleanup") { _ = try await writer.call("managePersonEdit", argumentsJSON: json([json(request)])) }
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertNotNil((saved["terminal"] as? [String: Any])?["success"])
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE people SET name = 'Later restored Person', deletedAt = NULL, rev = rev + 1 WHERE id = 'legacy-person'")
+        _ = try edit.execute("UPDATE tasks SET description = 'Later Task edit', rev = rev + 1 WHERE id = 'person-delete-live-task'")
+        // Keep the intervening inventory self-consistent: surviving assignments
+        // have an independent live Person, so ordinary load need not derive one.
+        let interveningAt = recentAreaTestTime()
+        _ = try edit.execute("INSERT INTO people (id, name, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?)",
+                             parametersJSON: json(["independent-edited-person", "Edited Person", interveningAt, interveningAt, 1]))
+        let before = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var libraryWrites = 0, diagnostics = 0
+        var libraryStatements: [String] = []
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil {
+                libraryWrites += 1; libraryStatements.append(sql)
+            }
+        }
+        replayFaults.commandDiagnostic = { event in
+            if event == "managePersonEditApplied" {
+                diagnostics += 1
+                XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path))
+            }
+        }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "managePersonEditCommit")
+        XCTAssertEqual(try personRows("legacy-person").first?["name"] as? String, "Later restored Person")
+        await expectFailure("STALE_REVISION") { _ = try await reopened.call("managePersonEditRetryOutcome", argumentsJSON: json([json(request)])) }
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertEqual(libraryWrites, 0, "Unexpected domain SQL: \(libraryStatements)"); XCTAssertEqual(diagnostics, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 
     func testManagePersonDeleteRichLegacyRowPreservesAllTaskAssignmentsAndOtherTables() async throws {

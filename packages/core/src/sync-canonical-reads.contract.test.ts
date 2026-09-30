@@ -1050,6 +1050,28 @@ describe('canonical local reads contract', () => {
                 expect(useTaskStore.getState()._peopleById.get(request.expectedPersonId))
                     .toEqual(planned.prepared.effect.person.after);
             },
+            commitPreparedPersonEdit: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getPersonEditOptions({ personId }));
+                const request = { requestId: 'd242af1d-03ec-477b-bc94-a69bef840fc2', personId,
+                    expected: options.expected, name: 'Contract prepared Person rename',
+                    note: 'Contract edited Person note', referenceLink: 'https://example.com/edited-person' };
+                const planned = nativeValue(await host.preparePersonEdit(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    for (const { after } of planned.prepared.effect.people) {
+                        expect(written.people?.find((entry) => entry.id === after.id)).toEqual(after);
+                    }
+                    for (const { after } of planned.prepared.effect.tasks) {
+                        expect(written.tasks.find((entry) => entry.id === after.id)).toEqual(after);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedPersonEdit({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._peopleById.get(personId))
+                    .toEqual(planned.prepared.effect.people[0].after);
+            },
             commitPreparedPersonDelete: async (control) => {
                 const host = await nativeHost(control);
                 const options = nativeValue(host.getPersonDeleteOptions({ personId }));

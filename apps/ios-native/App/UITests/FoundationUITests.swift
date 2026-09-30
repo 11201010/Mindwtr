@@ -11615,4 +11615,196 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task94OpenEditor(_ app: XCUIApplication) {
+        let edit = app.buttons["manage-person-edit-0"]
+        revealPagedElement(app, edit, in: app.scrollViews["manage-someday-scroll"])
+        boardTap(app, "manage-person-edit-0")
+        XCTAssertTrue(app.textFields["manage-person-edit-name"].waitForExistence(timeout: 10))
+    }
+
+    private func task94Tap(_ app: XCUIApplication, _ action: String) {
+        let identifier = "manage-person-edit-" + action
+        revealPagedElement(app, app.buttons[identifier],
+                           in: app.scrollViews.containing(.textField, identifier: "manage-person-edit-name").firstMatch)
+        boardTap(app, identifier)
+    }
+
+    private func task94Fill(_ app: XCUIApplication, name: String = "Native Person 94 世界") {
+        let scroll = app.scrollViews.containing(.textField, identifier: "manage-person-edit-name").firstMatch
+        let input = app.textFields["manage-person-edit-name"]
+        revealPagedElement(app, input, in: scroll); boardEnabled(input)
+        replaceProjectNotesText(input, with: name); input.typeText("\n")
+        let note = app.textViews["manage-person-edit-note"]
+        revealPagedElement(app, note, in: scroll)
+        replaceTextView(note, with: "Task94 edited note")
+        boardTap(app, "manage-person-edit-keyboard-done")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.keyboards.firstMatch)
+        waitForExpectations(timeout: 10)
+        let reference = app.textFields["manage-person-edit-reference"]
+        revealPagedElement(app, reference, in: scroll)
+        reference.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+        revealPagedElement(app, reference, in: scroll)
+        // Select the whole single-line paragraph, including the horizontally scrolled suffix.
+        reference.tap(withNumberOfTaps: 3, numberOfTouches: 1)
+        reference.typeText("obsidian://task94/reference")
+        XCTAssertEqual(reference.value as? String, "obsidian://task94/reference")
+        reference.typeText("\n")
+    }
+
+    private func task94Closed(_ app: XCUIApplication) {
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.textFields["manage-person-edit-name"])
+        waitForExpectations(timeout: 20)
+        boardEnabled(app.buttons["manage-back"])
+    }
+
+    func testManagePersonEditNormal() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "a9ea9848-c6fb-4a02-939b-acf5735e7084"]
+        app.launch(); task92OpenPeople(app); task94OpenEditor(app)
+        let input = app.textFields["manage-person-edit-name"]
+        boardEnabled(input)
+        XCTAssertEqual(input.value as? String, "A Task94 Original")
+        replaceTextView(input, with: "   ", tapOffset: CGVector(dx: 0.94, dy: 0.5))
+        XCTAssertFalse(app.buttons["manage-person-edit-save"].isEnabled)
+        task94Tap(app, "cancel"); task94Closed(app)
+        task94OpenEditor(app)
+        boardEnabled(app.buttons["manage-person-edit-save"])
+        task94Tap(app, "save"); task94Closed(app)
+        task94OpenEditor(app)
+        task94Fill(app); task94Tap(app, "save"); task94Closed(app)
+        task92AssertPerson(app, "Native Person 94 世界")
+        app.terminate(); app.launch(); task92OpenPeople(app)
+        task92AssertPerson(app, "Native Person 94 世界")
+        app.terminate()
+    }
+
+    func testManagePersonEditLargestText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "5d33bd4f-03e1-41fe-af36-8bdc1ba6e6d8"]
+        app.launch(); task92OpenPeople(app); task94OpenEditor(app)
+        let scroll = app.scrollViews.containing(.textField, identifier: "manage-person-edit-name").firstMatch
+        for control in [app.textFields["manage-person-edit-name"], app.textViews["manage-person-edit-note"],
+                        app.textFields["manage-person-edit-reference"], app.buttons["manage-person-edit-cancel"]] {
+            revealPagedElement(app, control, in: scroll)
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44 - 0.001)
+        }
+        task94Fill(app)
+        revealPagedElement(app, app.buttons["manage-person-edit-save"], in: scroll)
+        let image = XCTAttachment(screenshot: app.screenshot())
+        image.name = "Person Edit largest text"; image.lifetime = .keepAlways; add(image)
+        task94Tap(app, "save"); task94Closed(app)
+        task92AssertPerson(app, "Native Person 94 世界")
+        app.terminate()
+    }
+
+    func testManagePersonEditCollision() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "726b8923-47e1-49e2-826b-04a348f93c92"]
+        app.launch(); task92OpenPeople(app); task94OpenEditor(app)
+        task94Fill(app, name: "z task94 destination")
+        task94Tap(app, "save"); task94Closed(app)
+        task92AssertPerson(app, "Z Task94 Destination")
+        XCTAssertFalse(app.staticTexts["A Task94 Original"].exists)
+        app.terminate(); app.launch(); task92OpenPeople(app)
+        task92AssertPerson(app, "Z Task94 Destination")
+        app.terminate()
+    }
+
+    func testManagePersonEditReadFailureRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "7887e010-e05b-450a-9cba-43aae02cd6a7", "--native-manage-person-edit-read-failure"]
+        app.launch(); task92OpenPeople(app); task94OpenEditor(app)
+        task94Fill(app); task94Tap(app, "save")
+        let failure = app.staticTexts["manage-person-edit-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-person-edit-save"].isEnabled)
+        XCTAssertFalse(app.buttons["manage-person-edit-cancel"].isEnabled)
+        for attempt in 0..<2 {
+            task94Tap(app, "retry")
+            if attempt == 0 { boardEnabled(app.buttons["manage-person-edit-retry"], timeout: 20) }
+        }
+        task94Closed(app); task92AssertPerson(app, "Native Person 94 世界")
+        app.terminate()
+    }
+
+    func testManagePersonEditOptionsReadRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8f7f570b-75cf-42be-a314-56c9640b9862", "--native-manage-person-edit-options-read-failure"]
+        app.launch(); task92OpenPeople(app); task94OpenEditor(app)
+        XCTAssertTrue(app.staticTexts["manage-person-edit-error"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-person-edit-save"].isEnabled)
+        boardEnabled(app.buttons["manage-person-edit-cancel"])
+        task94Tap(app, "retry")
+        task94Fill(app); task94Tap(app, "save"); task94Closed(app)
+        task92AssertPerson(app, "Native Person 94 世界")
+        app.terminate()
+    }
+
+    func testManagePersonEditSaveFailure() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "6c5322b0-2620-4053-8887-7245d60b5515"]
+        app.launch(); task92OpenPeople(app); task94OpenEditor(app)
+        task94Fill(app); task94Tap(app, "save")
+        let failure = app.staticTexts["manage-person-edit-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["manage-person-edit-save"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-person-edit-cancel"].isEnabled)
+            XCTAssertFalse(app.textFields["manage-person-edit-name"].isEnabled)
+            XCTAssertEqual(app.textFields["manage-person-edit-name"].value as? String, "Native Person 94 世界")
+            task94Tap(app, "retry")
+            boardEnabled(app.buttons["manage-person-edit-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    func testManagePersonEditColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "6c5322b0-2620-4053-8887-7245d60b5515"]
+        app.launch()
+        XCTAssertTrue(app.buttons["manage-back"].waitForExistence(timeout: 30))
+        task92OpenPeople(app); task92AssertPerson(app, "Native Person 94 世界")
+        XCTAssertFalse(app.textFields["manage-person-edit-name"].exists)
+        app.terminate(); app.launch(); task92OpenPeople(app)
+        task92AssertPerson(app, "Native Person 94 世界")
+        app.terminate()
+    }
+
+    func testManagePersonEditDefiniteRefusal() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "ee5b99d8-b380-4e82-96de-7173efedc100", "--native-manage-person-edit-refusal"]
+        app.launch(); task92OpenPeople(app); task94OpenEditor(app)
+        task94Fill(app); task94Tap(app, "save")
+        XCTAssertTrue(app.staticTexts["manage-person-edit-error"].waitForExistence(timeout: 20))
+        boardEnabled(app.buttons["manage-person-edit-save"])
+        XCTAssertEqual(app.textFields["manage-person-edit-name"].value as? String, "Native Person 94 世界")
+        boardEnabled(app.buttons["manage-person-edit-cancel"])
+        task94Tap(app, "save"); task94Closed(app)
+        task92AssertPerson(app, "Native Person 94 世界")
+        app.terminate()
+    }
+
+    func testManagePersonEditCreateRegression() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "375474f6-1f70-4964-80e1-17c231529c03"]
+        app.launch(); task92OpenPeople(app); task92OpenPersonEditor(app)
+        task92FillPerson(app, name: "Native Create Regression 94", note: "Task94 edited note", reference: "obsidian://task94/reference")
+        task92PersonTap(app, "save"); task92PersonClosed(app)
+        task92AssertPerson(app, "Native Create Regression 94")
+        task92AssertPerson(app, "A Task94 Original")
+        app.terminate()
+    }
+
 }

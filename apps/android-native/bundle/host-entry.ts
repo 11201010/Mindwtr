@@ -413,6 +413,7 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     manageSettings: (input) => contract.getManageSettings(input),
     manageList: (input) => contract.getManageSettingsList(input),
     manageCheck: (input) => contract.checkManageEditor(input),
+    managePersonEditCheck: (input) => contract.checkPersonEdit(input),
     managePersonCreateCheck: (input) => {
         const value = input as unknown as Record<string, unknown>;
         return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1
@@ -868,6 +869,21 @@ globalThis.MindwtrHost = {
     },
     managePersonCreateCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedPersonCreate(JSON.parse(json))));
+    },
+    managePersonEditOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.getPersonEditOptions(JSON.parse(json))); });
+    },
+    managePersonEditRetryOutcome(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.probePersonEditOutcome(JSON.parse(json))); });
+    },
+    managePersonEditPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.preparePersonEdit(JSON.parse(json))); });
+    },
+    managePersonEditValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedPersonEdit(JSON.parse(json))));
+    },
+    managePersonEditCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedPersonEdit(JSON.parse(json))));
     },
     managePersonDeleteOptions(json: string): string {
         return submit(async () => {

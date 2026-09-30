@@ -244,6 +244,18 @@ export type PreparedPersonDelete = {
     updateAt: string;
 };
 
+/** Frozen atomic final state of the existing metadata-then-rename Person editor. */
+export type PreparedPersonEdit = {
+    scope: import('./person-edit').PersonEditScope;
+    effect: import('./person-edit').PersonEditEffect;
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    updateAt: string;
+    renameAt: string | null;
+    result: import('./person-edit').PersonEditResult;
+    request: { requestId: string; personId: string; expected: Person; name: string; note: string; referenceLink: string };
+};
+
 /** Frozen final rows for a native Area create or legacy tombstone restoration. */
 export type PreparedAreaCreate = {
     kind: 'fresh' | 'restored';
@@ -608,6 +620,9 @@ export interface TaskStore {
     /** Add a new managed person for delegated tasks */
     addPerson: (name: string, initialProps?: Partial<Person>) => Promise<Person | null>;
     commitPreparedPersonCreate: (input: PreparedPersonCreate & { request: { requestId: string; name: string; note: string; referenceLink: string; expectedPersonId: string } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedPersonEdit: (input: PreparedPersonEdit, authority: {
+        snapshot: AppData; taskReference: Task[]; lastDataChangeAt: number;
+    }) => Promise<PreparedTaskEditResult>;
     commitPreparedPersonDelete: (input: PreparedPersonDelete & { request: { requestId: string; personId: string; expected: Person } }) => Promise<PreparedTaskEditResult>;
     /** Update managed person metadata */
     updatePerson: (id: string, updates: Partial<Person>) => Promise<StoreActionResult>;

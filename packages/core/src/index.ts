@@ -315,3 +315,5 @@ export * from './onboarding-guidance';
 export * from './docs-guidance';
 export { afterPaint } from './after-paint';
 export { isGettingStartedProject } from './getting-started-seed';
+
+export * from './native-host-contract-person-edit';

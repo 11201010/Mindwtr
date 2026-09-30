@@ -6,8 +6,8 @@ struct SettingsScreen: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var renameFocused: Bool
     @FocusState private var areaNameFocused: Bool
-    private enum PersonCreateField: Hashable { case name, note, reference }
-    @FocusState private var personCreateFocused: PersonCreateField?
+    private enum PersonEditorField: Hashable { case name, note, reference }
+    @FocusState private var personEditorFocused: PersonEditorField?
     @State private var deleteConfirmPresented = false
     @State private var deleteConfirmAnswered = false
     @State private var personDeleteConfirmPresented = false
@@ -33,7 +33,7 @@ struct SettingsScreen: View {
                           || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
                           || model.somedaySectionOrderActive || model.unassignedAreaColorActive
                           || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
-                          || model.settingsPersonCreatePresented)
+                          || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
                 .accessibilityLabel(model.label("common.back"))
                 .accessibilityIdentifier(model.settingsManagePresented ? "manage-back" : "settings-back")
                 Text(model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
@@ -123,7 +123,11 @@ struct SettingsScreen: View {
         .sheet(isPresented: Binding(
             get: { model.settingsPersonCreatePresented },
             set: { if !$0 { model.cancelSettingsPersonCreate() } }
-        )) { newPersonSheet }
+        )) { personEditorSheet(editing: false) }
+        .sheet(isPresented: Binding(
+            get: { model.settingsPersonEditPresented },
+            set: { if !$0 { model.cancelSettingsPersonEdit() } }
+        )) { personEditorSheet(editing: true) }
         .sheet(isPresented: Binding(
             get: { model.settingsAreaEditActive },
             set: { if !$0 { model.cancelSettingsAreaEdit() } }
@@ -359,7 +363,7 @@ struct SettingsScreen: View {
             }
             .accessibilityIdentifier("manage-someday-scroll")
         }
-        .disabled(model.settingsPersonCreatePresented)
+        .disabled(model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
     }
 
     private func inventoryContent(_ key: String) -> some View {
@@ -446,7 +450,13 @@ struct SettingsScreen: View {
                     .accessibilityLabel(copy.text("openReference"))
                     .accessibilityIdentifier("manage-person-reference-\(index)")
                 }
-                disabledInventoryAction("pencil", label: copy.text("editLabel"))
+                Button { Task { await model.openSettingsPersonEdit(index: index) } } label: {
+                    Image(systemName: "pencil").font(.system(size: 18))
+                        .foregroundStyle(palette.secondary).frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.manageInventoryActionsEnabled)
+                .accessibilityLabel(copy.text("editLabel"))
+                .accessibilityIdentifier("manage-person-edit-\(index)")
                 Button {
                     Task {
                         await model.openSettingsPersonDelete(index: index)
@@ -587,73 +597,92 @@ struct SettingsScreen: View {
         .padding(.horizontal, 12).frame(minHeight: 56)
     }
 
-    private func endPersonCreateEditing() {
-        personCreateFocused = nil
+    private func endPersonEditing() {
+        personEditorFocused = nil
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
-    private var newPersonSheet: some View {
-        let copy = model.manageSettings.object("editor").object("text").object("newPerson")
+    private func personEditorSheet(editing: Bool) -> some View {
+        let prefix = editing ? "manage-person-edit-" : "manage-person-create-"
+        let inputEnabled = editing ? model.settingsPersonEditInputEnabled : model.settingsPersonCreateInputEnabled
+        let canCancel = editing ? model.settingsPersonEditCanCancel : model.settingsPersonCreateCanCancel
+        let canSave = editing ? model.settingsPersonEditCanSave : model.settingsPersonCreateCanSave
+        let failure = editing ? (model.settingsPersonEditError ?? model.settingsPersonEditReadError)
+            : (model.settingsPersonCreateError ?? model.settingsPersonCreateReadError)
+        let copy = model.manageSettings.object("editor").object("text").object(editing ? "person" : "newPerson")
         let fields = copy.object("personFields")
         return NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     TextField(copy.text("namePlaceholder"), text: Binding(
-                        get: { model.settingsPersonCreateName }, set: { model.setSettingsPersonCreateName($0) }))
-                        .focused($personCreateFocused, equals: .name).submitLabel(.done)
-                        .onSubmit { endPersonCreateEditing() }
+                        get: { editing ? model.settingsPersonEditName : model.settingsPersonCreateName },
+                        set: { if editing { model.setSettingsPersonEditName($0) } else { model.setSettingsPersonCreateName($0) } }))
+                        .focused($personEditorFocused, equals: .name).submitLabel(.done)
+                        .onSubmit { endPersonEditing() }
                         .rnFont(16).padding(.horizontal, 12).frame(minHeight: 48)
                         .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
-                        .disabled(!model.settingsPersonCreateInputEnabled)
+                        .disabled(!inputEnabled)
                         .accessibilityLabel(copy.text("namePlaceholder"))
-                        .accessibilityIdentifier("manage-person-create-name")
+                        .accessibilityIdentifier(prefix + "name")
                     ZStack(alignment: .topLeading) {
-                        if model.settingsPersonCreateNote.isEmpty {
+                        if (editing ? model.settingsPersonEditNote : model.settingsPersonCreateNote).isEmpty {
                             Text(fields.text("notePlaceholder")).rnFont(16).foregroundStyle(palette.secondary)
                                 .padding(.top, 8).padding(.leading, 5).accessibilityHidden(true)
                         }
                         TextEditor(text: Binding(
-                            get: { model.settingsPersonCreateNote }, set: { model.setSettingsPersonCreateNote($0) }))
-                            .focused($personCreateFocused, equals: .note)
+                            get: { editing ? model.settingsPersonEditNote : model.settingsPersonCreateNote },
+                        set: { if editing { model.setSettingsPersonEditNote($0) } else { model.setSettingsPersonCreateNote($0) } }))
+                            .focused($personEditorFocused, equals: .note)
                             .rnFont(16).scrollContentBackground(.hidden).frame(minHeight: 140)
-                            .disabled(!model.settingsPersonCreateInputEnabled)
+                            .disabled(!inputEnabled)
                             .accessibilityLabel(fields.text("notePlaceholder"))
-                            .accessibilityIdentifier("manage-person-create-note")
+                            .accessibilityIdentifier(prefix + "note")
                     }
                     .padding(8).background(palette.input, in: RoundedRectangle(cornerRadius: 10))
                     TextField(fields.text("referencePlaceholder"), text: Binding(
-                        get: { model.settingsPersonCreateReference }, set: { model.setSettingsPersonCreateReference($0) }))
-                        .focused($personCreateFocused, equals: .reference).submitLabel(.done)
-                        .onSubmit { endPersonCreateEditing() }
+                        get: { editing ? model.settingsPersonEditReference : model.settingsPersonCreateReference },
+                        set: { if editing { model.setSettingsPersonEditReference($0) } else { model.setSettingsPersonCreateReference($0) } }))
+                        .focused($personEditorFocused, equals: .reference).submitLabel(.done)
+                        .onSubmit { endPersonEditing() }
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .rnFont(16).padding(.horizontal, 12).frame(minHeight: 48)
                         .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
-                        .disabled(!model.settingsPersonCreateInputEnabled)
+                        .disabled(!inputEnabled)
                         .accessibilityLabel(fields.text("referencePlaceholder"))
-                        .accessibilityIdentifier("manage-person-create-reference")
-                    if let failure = model.settingsPersonCreateError ?? model.settingsPersonCreateReadError {
-                        errorBlock(failure, id: "manage-person-create-error", retryID: "manage-person-create-retry") {
-                            endPersonCreateEditing()
+                        .accessibilityIdentifier(prefix + "reference")
+                    if let failure {
+                        errorBlock(failure, id: prefix + "error", retryID: prefix + "retry") {
+                            endPersonEditing()
                             Task {
                                 if model.retryNeeded { await model.retry() }
+                                else if editing { await model.retrySettingsPersonEditRead() }
                                 else { await model.retrySettingsPersonCreateRead() }
                             }
                         }
                     }
                     HStack(spacing: 12) {
-                        Button { endPersonCreateEditing(); model.cancelSettingsPersonCreate() } label: {
+                        Button {
+                            endPersonEditing()
+                            if editing { model.cancelSettingsPersonEdit() } else { model.cancelSettingsPersonCreate() }
+                        } label: {
                             Text(copy.text("cancelLabel"))
                                 .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
                         }
-                        .disabled(!model.settingsPersonCreateCanCancel)
-                        .accessibilityIdentifier("manage-person-create-cancel")
-                        Button { endPersonCreateEditing(); Task { await model.saveSettingsPersonCreate() } } label: {
+                        .disabled(!canCancel)
+                        .accessibilityIdentifier(prefix + "cancel")
+                        Button {
+                            endPersonEditing()
+                            Task {
+                                if editing { await model.saveSettingsPersonEdit() }
+                                else { await model.saveSettingsPersonCreate() }
+                            }
+                        } label: {
                             Text(copy.text("saveLabel")).foregroundStyle(palette.onTint)
                                 .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
                         }
                         .buttonStyle(.borderedProminent).tint(palette.tint)
-                        .disabled(!model.settingsPersonCreateCanSave)
-                        .accessibilityIdentifier("manage-person-create-save")
+                        .disabled(!canSave)
+                        .accessibilityIdentifier(prefix + "save")
                     }
                 }
                 .padding(20)
@@ -664,15 +693,15 @@ struct SettingsScreen: View {
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
-                    Button(model.label("common.done")) { endPersonCreateEditing() }
+                    Button(model.label("common.done")) { endPersonEditing() }
                         .frame(minHeight: 44)
-                        .accessibilityIdentifier("manage-person-create-keyboard-done")
+                        .accessibilityIdentifier(prefix + "keyboard-done")
                 }
             }
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-        .interactiveDismissDisabled(!model.settingsPersonCreateCanCancel)
+        .interactiveDismissDisabled(!canCancel)
     }
 
     private var newAreaSheet: some View {

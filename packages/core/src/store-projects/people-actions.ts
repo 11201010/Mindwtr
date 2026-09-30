@@ -11,6 +11,9 @@ import { getPersonNameKey, normalizePersonName, normalizePersonNote, normalizePe
 import { taskEditValuesEqual } from '../json-value-equality';
 import { PERSON_SQLITE_COLUMNS, personFromSqliteRow, personToSqliteRow } from '../person-sync-schema';
 import { planManageEditorSave } from '../manage-settings-model';
+import { planPersonMetadataUpdates, planPersonRename, planPersonEditorSave, selectPersonRenameDestination, selectPersonRenameTasks } from '../person-edit';
+import { sameAreaAdditionRow } from '../area-rename';
+import { normalizeTaskForLoad } from '../task-status';
 import type { PreparedPersonDelete, PreparedTaskEditResult } from '../store-types';
 import { generateUUID as uuidv4 } from '../uuid';
 import type { PeopleActions, Person, ProjectActionContext } from './shared';
@@ -149,25 +152,75 @@ export const createPeopleActions = ({
         return result;
     },
 
+    commitPreparedPersonEdit: async (input, authority): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Person edit conflicts with current data' };
+        set((state) => {
+            const { scope, effect } = input;
+            if (state._allTasks !== authority.taskReference || state.lastDataChangeAt !== authority.lastDataChangeAt) return state;
+            const durable = authority.snapshot;
+            const durablePeople = durable.people ?? [];
+            const completeAfter = effect.people.every(({ after }) => {
+                const row = durablePeople.find((candidate) => candidate.id === after.id);
+                return row && samePersonAdditionRow(row, after);
+            }) && effect.tasks.every(({ after }) => {
+                const row = durable.tasks.find((candidate) => candidate.id === after.id);
+                return row && sameAreaAdditionRow.task(row, after);
+            });
+            if (completeAfter && (!input.deviceIdToInitialize || durable.settings.deviceId === input.deviceIdToInitialize)) {
+                result = { success: true, id: scope.person.id, outcome: 'replayed' };
+                return state;
+            }
+            const source = durablePeople.find((row) => row.id === scope.person.id);
+            if (!source || source.deletedAt || !samePersonAdditionRow(source, scope.person)
+                || (durable.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)) return state;
+            if (input.renameAt !== null) {
+                const destination = selectPersonRenameDestination(durablePeople, source.id, input.request.name);
+                if (destination ? !scope.destination || !samePersonAdditionRow(destination, scope.destination)
+                    : scope.destination !== null) return state;
+                const tasks = selectPersonRenameTasks(durable.tasks, source.name);
+                if (tasks.length !== scope.tasks.length || tasks.some((row) => {
+                    const before = scope.tasks.find((candidate) => candidate.id === row.id);
+                    return !before || !sameAreaAdditionRow.task(row, before);
+                })) return state;
+            }
+            const planned = planPersonEditorSave({ people: [personPersistedSnapshot(source), ...(scope.destination ? [scope.destination] : [])],
+                tasks: scope.tasks }, source.id, input.request, input.deviceIdBefore ?? input.deviceIdToInitialize!,
+                input.updateAt, input.renameAt);
+            if (!planned || !taskEditValuesEqual(planned.result, input.result)
+                || !taskEditValuesEqual(JSON.parse(JSON.stringify(planned.effect)), effect)) return state;
+            const people = replaceEntitiesInArray(durablePeople, effect.people.map(({ after }) => after));
+            const tasks = replaceEntitiesInArray(durable.tasks, effect.tasks.map(({ after }) => after));
+            const settings = input.deviceIdToInitialize ? { ...durable.settings, deviceId: input.deviceIdToInitialize } : durable.settings;
+            // Persist complete durable rows; display-only load cleanup is not a write.
+            // Changed Tasks keep that existing UI projection except for rename policy fields.
+            const memoryTasks = tasks.map((row) => {
+                const existing = state._allTasks.find((candidate) => candidate.id === row.id);
+                const renamed = effect.tasks.find(({ after }) => after.id === row.id)?.after;
+                return existing && renamed ? { ...existing, assignedTo: renamed.assignedTo,
+                    updatedAt: renamed.updatedAt, rev: renamed.rev, revBy: renamed.revBy }
+                    : existing && sameAreaAdditionRow.task(existing, row) ? existing : normalizeTaskForLoad(row);
+            });
+            clearDerivedCache();
+            persist(set, debouncedSave, { ...state, _allTasks: durable.tasks, _allPeople: durablePeople,
+                _allProjects: durable.projects, _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [],
+                settings: durable.settings }, { ...durable, people, tasks, settings });
+            result = { success: true, id: source.id, outcome: 'applied' };
+            return { _allPeople: people, _allTasks: memoryTasks,
+                _allProjects: durable.projects, _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [], settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
     updatePerson: async (id: string, updates: Partial<Person>) => {
         let invalidName = false;
         const result = await mutateEntities({ set, debouncedSave }, {
             collection: 'people',
             select: (state) => state._allPeople.filter((person) => person.id === id),
             buildUpdates: (person) => {
-                const nextName = updates.name !== undefined ? normalizePersonName(updates.name) : person.name;
-                if (!nextName) {
-                    invalidName = true;
-                    return null;
-                }
-                const hasNoteUpdate = Object.prototype.hasOwnProperty.call(updates, 'note');
-                const hasReferenceLinkUpdate = Object.prototype.hasOwnProperty.call(updates, 'referenceLink');
-                const normalizedUpdates: Partial<Person> = {
-                    ...updates,
-                    name: nextName,
-                    note: hasNoteUpdate ? normalizePersonNote(updates.note) : person.note,
-                    referenceLink: hasReferenceLinkUpdate ? normalizePersonReferenceLink(updates.referenceLink) : person.referenceLink,
-                };
+                const normalizedUpdates = planPersonMetadataUpdates(person, updates);
+                if (!normalizedUpdates) invalidName = true;
                 return normalizedUpdates;
             },
             missingMessage: 'Person not found',
@@ -206,60 +259,12 @@ export const createPeopleActions = ({
                 missingPerson = true;
                 return state;
             }
-            const oldKey = getPersonNameKey(person.name);
-            const nextKey = getPersonNameKey(nextName);
-            if (oldKey === nextKey && person.name === nextName) return state;
+            if (getPersonNameKey(person.name) === getPersonNameKey(nextName) && person.name === nextName) return state;
             const deviceState = ensureDeviceId(state.settings);
-            const existingTarget = state._allPeople.find((item) => item.id !== id && !item.deletedAt && getPersonNameKey(item.name) === nextKey);
-            let nextAllPeople: Person[];
-            if (existingTarget) {
-                const deletedPerson: Person = {
-                    ...person,
-                    deletedAt: now,
-                    updatedAt: now,
-                    rev: nextRevision(person.rev),
-                    revBy: deviceState.deviceId,
-                };
-                const mergedPerson: Person = {
-                    ...existingTarget,
-                    note: existingTarget.note ?? person.note,
-                    referenceLink: existingTarget.referenceLink ?? person.referenceLink,
-                    updatedAt: now,
-                    rev: nextRevision(existingTarget.rev),
-                    revBy: deviceState.deviceId,
-                };
-                nextAllPeople = state._allPeople.map((item) => {
-                    if (item.id === id) return deletedPerson;
-                    if (item.id === existingTarget.id) return mergedPerson;
-                    return item;
-                });
-            } else {
-                nextAllPeople = state._allPeople.map((item) => (
-                    item.id === id
-                        ? {
-                            ...item,
-                            name: nextName,
-                            updatedAt: now,
-                            rev: nextRevision(item.rev),
-                            revBy: deviceState.deviceId,
-                        }
-                        : item
-                ));
-            }
-
-            let nextAllTasks = state._allTasks;
-            if (options?.updateTasks !== false) {
-                nextAllTasks = state._allTasks.map((task) => {
-                    if (task.deletedAt || getPersonNameKey(task.assignedTo) !== oldKey) return task;
-                    return {
-                        ...task,
-                        assignedTo: nextName,
-                        updatedAt: now,
-                        rev: nextRevision(task.rev),
-                        revBy: deviceState.deviceId,
-                    };
-                });
-            }
+            const planned = planPersonRename({ people: state._allPeople, tasks: state._allTasks }, id, nextName,
+                options?.updateTasks !== false, deviceState.deviceId, now)!;
+            const nextAllPeople = planned.people;
+            const nextAllTasks = planned.tasks;
 
             clearDerivedCache();
             persist(set, debouncedSave, state, {
