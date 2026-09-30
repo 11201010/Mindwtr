@@ -13,16 +13,23 @@
 // file), then JobScheduler's `cmd jobscheduler run -f` runs CoreWork in a new process: each item stored once, the check-off and
 // the defer applied once and recorded in RKStorage, audio and Pomodoro left untouched, the damaged file removed; (5) a process
 // death between an item's store write and its file delete (debug property `queue_stop`), for a capture and for a check-off: the
-// next boot's journal replay stores nothing twice and removes the file. At the end Automation capture is off again. It grants
+// next boot's journal replay stores nothing twice and removes the file; (6) a check-off stored and saved whose RKStorage record
+// write fails (debug property `fail_kv_set`), drained by a context trigger's CoreWork job while the app shows: the drain is owed
+// (file and journal entry kept, no record), a newer edit on the screen waits behind it (Mark Done on another task writes nothing
+// and the owed retry shows), the trigger posts nothing, and the job's retry replays the journal first (record written, file
+// gone, the check-off written once), then posts; the screen's Try again then clears its owed retry;
+// (7) a context broadcast with a 12 KB context is dropped with no crash. At the end Automation capture is off again. It grants
 // the development app the notification permission (and keeps it). Titles are 80 + a 12-digit run id + one digit
 // (check-projects-device.mjs --prune-old removes earlier runs'). It never launches over another app and leaves the device on its
-// home screen. Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
+// home screen. The capture token never reaches a disk: screens are read through `uiautomator dump /dev/tty` (no file on the
+// phone), and no failure evidence is saved while the token is on screen. Exit 0 = pass, 1 = fail, 2 = refused before touching the
+// device, 3 = stopped.
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { check, connect, evidenced, fail, inEditor, Stopped, switchOn, tab, tagged, withDescription } from './device.mjs';
+import { check, connect, evidenced, fail, field, inEditor, owedRetry, Stopped, switchOn, tab, tagged, withDescription, withholdEvidenceWhen } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -43,8 +50,11 @@ const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const CAPTURE = `${PKG}/tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver`;
 const CONTEXT = `${PKG}/tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver`;
 const TAG = 'MindwtrNativeDev';
-const UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
-const PROPS = ['core_work_delay_ms', 'queue_stop'];
+// The screen streams to adb and is never written on the phone: GTD › Capture can show the capture token.
+const UI_FILE = '/dev/tty';
+// Where the other checks (and this one's earlier runs) wrote the screen; removed at the start and the end.
+const SHARED_UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
+const PROPS = ['core_work_delay_ms', 'queue_stop', 'fail_kv_set'];
 const DB = 'mindwtr-native-dev.db';
 const QUEUE = 'files/pending-captures';
 const CONFIG = 'no_backup/android-capture-intent.json';
@@ -99,6 +109,13 @@ const storedToken = () => {
     const raw = runAs(`cat ${CONFIG} 2>/dev/null || true`);
     return raw ? JSON.parse(raw).token : null;
 };
+// No screenshot or screen XML is saved while the stored token is on screen (read in memory, from adb's stream).
+withholdEvidenceWhen(() => {
+    const token = storedToken();
+    if (!token) return null;
+    const xml = execFileSync(adbBin, ['-s', serial, 'exec-out', 'uiautomator', 'dump', '/dev/tty'], { maxBuffer: 64 << 20 }).toString('utf8');
+    return !xml.includes('<hierarchy') || xml.includes(token) ? 'the capture token may be on screen' : null;
+});
 const iso = (ms) => new Date(ms).toISOString();
 
 // ---- process and broadcasts ----
@@ -126,6 +143,19 @@ const count = (text, ...needles) => text.split('\n').filter((line) => needles.ev
 const INGESTED = ['Native Android core work', '"job":"ingest","outcome":"success"'];
 const CONTEXT_DONE = ['Native Android core work', '"job":"context","outcome":"success"'];
 const POSTED = ['Native Android notification', '"kind":"context-automation","outcome":"posted"'];
+/** Taps this run's context notification in the shade: the app opens and the notification goes (auto-cancelled). */
+const tapNotification = async (step) => {
+    sh('cmd statusbar expand-notifications');
+    await sleep(1500);
+    const nodes = await screen();
+    const entry = nodes.find((node) => node.text === `@${context} next action`) ?? fail('the notification is not in the shade');
+    const [x1, y1, x2, y2] = entry.bounds.match(/\d+/g).map(Number);
+    sh(`input tap ${Math.round((x1 + x2) / 2)} ${Math.round((y1 + y2) / 2)}`);
+    await waitUntil('the app in front', () => front().includes(`${PKG}/`), 20_000);
+    check(true, `${step} a tap on the notification opens the app`);
+    await sleep(1000);
+    check(!sh(`dumpsys notification --noredact | grep -A 40 'pkg=${PKG}' || true`).includes(`@${context} next action`), `${step} the tapped notification is gone`);
+};
 const waitUntil = async (description, predicate, timeoutMs = 60_000, everyMs = 1000) => {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -138,6 +168,8 @@ const waitUntil = async (description, predicate, timeoutMs = 60_000, everyMs = 1
 
 // ---- Settings › GTD › Capture (core's English) ----
 const sheetOpen = (nodes) => Boolean(tagged(nodes, 'more-sheet'));
+const inSearch = (nodes) => Boolean(tagged(nodes, 'global-search')) && !inEditor(nodes);
+const results = (nodes) => nodes.filter((node) => (node['resource-id'] ?? '').endsWith('search-result')).map((node) => node['content-desc'] || node.text);
 const onSettings = (id) => (nodes) => Boolean(tagged(nodes, `settings-${id}`)) && !tagged(nodes, 'settings-picker');
 const withPrefix = (nodes, prefix) => nodes.find((node) => (node['content-desc'] ?? '').startsWith(prefix));
 const settingsScreen = (nodes) => nodes.some((node) => /(^|\/)settings-[\w-]+$/.test(node['resource-id'] ?? ''));
@@ -191,6 +223,12 @@ const leftovers = [];
 const restore = async () => {
     for (const name of PROPS) { try { setProp(name, ''); } catch { /* device gone */ } }
     try { if (leftovers.length > 0) runAs(`rm -f ${leftovers.map((name) => `${QUEUE}/${name}`).join(' ')}`); } catch { /* device gone */ }
+    // An owed retry a stopped step (6) left: Try again first (fail_kv_set is off now), so the Menu is usable.
+    try {
+        if (!front().includes(`${PKG}/`)) device.launch(ACTIVITY);
+        const nodes = await toTabs();
+        if (owedRetry(nodes)) await tapExpecting(owedRetry(nodes), (current) => !owedRetry(current), 'Try again');
+    } catch { /* the steps below report what stays */ }
     // Automation capture off, as a development app nobody set up has it.
     try {
         if (storedToken()) await setAutomationCapture(false);
@@ -198,7 +236,7 @@ const restore = async () => {
     try { await toTabs(); } catch { /* the app is gone */ }
     try { if (front().includes(`${PKG}/`)) sh('input keyevent KEYCODE_HOME'); } catch { /* device gone */ }
     try { sh(`settings put system accelerometer_rotation ${originalAccelerometer === 'null' ? 1 : originalAccelerometer}`); } catch { /* device gone */ }
-    try { sh(`rm -f ${UI_FILE}`); } catch { /* device gone */ }
+    try { sh(`rm -f ${SHARED_UI_FILE}`); } catch { /* device gone */ }
 };
 
 try {
@@ -206,6 +244,7 @@ try {
     console.log(`device: ${sh('getprop ro.product.model')} / Android ${sh('getprop ro.build.version.release')} (API ${sh('getprop ro.build.version.sdk')})`);
     console.log(`apk: ${apk}\napk sha256: ${createHash('sha256').update(readFileSync(apk)).digest('hex')}`);
     for (const name of PROPS) setProp(name, '');
+    sh(`rm -f ${SHARED_UI_FILE}`);
     const beforeInstall = front();
     if (!beforeInstall.includes(`${PKG}/`) && !beforeInstall.includes(`${home}/`)) throw new Stopped(`another app is in front: ${beforeInstall.trim()}`);
     execFileSync(adbBin, ['-s', serial, 'install', '-r', apk], { stdio: 'inherit' });
@@ -293,16 +332,7 @@ try {
         await waitUntil('the deactivation\'s job', () => contextJobs() >= jobsBefore + 2);
         check(posted() === postedBefore + 1, '(3) a deactivation posts nothing');
         // The tap: RN's notification opens the app (and goes, auto-cancelled).
-        sh('cmd statusbar expand-notifications');
-        await sleep(1500);
-        const nodes = await screen();
-        const entry = nodes.find((node) => node.text === `@${context} next action`) ?? fail('the notification is not in the shade');
-        const [x1, y1, x2, y2] = entry.bounds.match(/\d+/g).map(Number);
-        sh(`input tap ${Math.round((x1 + x2) / 2)} ${Math.round((y1 + y2) / 2)}`);
-        await waitUntil('the app in front', () => front().includes(`${PKG}/`), 20_000);
-        check(true, '(3) a tap on the notification opens the app');
-        await sleep(1000);
-        check(!sh(`dumpsys notification --noredact | grep -A 40 'pkg=${PKG}' || true`).includes(`@${context} next action`), '(3) the tapped notification is gone');
+        await tapNotification('(3)');
         sh('input keyevent KEYCODE_HOME');
     }
 
@@ -413,6 +443,86 @@ try {
             check(end.status === 'done' && end.rev === atStop.rev, `(5 complete) still done, written once (rev ${atStop.rev})`);
             check(allLogs().includes('stale-queued-command-skipped') && allLogs().includes('"outcome":"replayed"'), '(5 complete) core found the replay in its record');
         }
+    }
+
+    // (6) A check-off stored and saved whose record write fails, drained by a context trigger's job while the app shows.
+    {
+        const token = storedToken() ?? fail('Automation capture went off');
+        // A next action in the run's context, so the trigger has a notification to post once it may.
+        check(captureIntent(`${title(2)} @${context} /next`, token) === -1, '(6) a next action in the context: RESULT_OK');
+        await waitUntil('its drain', () => stored(title(2)).length === 1);
+        const [target] = stored(title(8));
+        const [other] = stored(title(1));
+        check(target.status !== 'done' && other.status !== 'done', '(6) the check-off\'s task and the task Mark Done tries are open');
+        if (!front().includes(`${PKG}/`)) device.launch(ACTIVITY);
+        await toTabs();
+        const id = randomUUID();
+        const lines = () => allLogs();
+        const [jobsBefore, postedBefore, replaysBefore] = [count(lines(), ...CONTEXT_DONE), count(lines(), ...POSTED), count(lines(), 'journal replay sent=1 dropped=1 left=0 owed=none')];
+        const retriesBefore = count(lines(), 'Native Android core work', '"job":"context","outcome":"retry"');
+        setProp('fail_kv_set', '1');
+        try {
+            enqueue(id, JSON.stringify({ kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
+            contextTrigger('ACTIVATE_CONTEXT', context);
+            await waitUntil('the trigger\'s job to wait for the owed drain', () => count(lines(), 'Native Android core work', '"job":"context","outcome":"retry"') > retriesBefore);
+            check(count(lines(), 'Native Android queue drain', '"outcome":"failed","error":"SAVE_FAILED"') > 0, '(6) the drain answered SAVE_FAILED: owed, not a success');
+            const [atFailure] = stored(title(8));
+            check(atFailure.status === 'done' && atFailure.rev === target.rev + 1, `(6) the check-off is stored and saved (rev ${target.rev} → ${atFailure.rev})`);
+            check(queued().includes(`${id}.json`) && journal().some((entry) => entry.method === 'ingest') && lastApplied()[target.id]?.id !== id,
+                '(6) its file and the drain\'s journal entry stay, and RKStorage has no record of it');
+            check(count(lines(), ...POSTED) === postedBefore, '(6) the trigger posted nothing from unfinished state');
+
+            // A newer edit on the screen waits behind the owed drain: Mark Done on another task writes nothing.
+            let nodes = await tapExpecting(withDescription(await toTabs(), en['search.title']) ?? fail('no Search button'), inSearch, 'the search screen');
+            await device.focusAtEnd(field(nodes) ?? fail('no search field'));
+            requireAppFront();
+            sh(`input text ${title(1)}`);
+            nodes = await waitFor(`the result ${title(1)}`, (current) => JSON.stringify(results(current)) === JSON.stringify([title(1)]), 20_000);
+            await device.tap(withDescription(nodes, en['review.markDone']) ?? fail('no Mark Done on the result'));
+            await sleep(3000);
+            const [otherAfter] = stored(title(1));
+            check(otherAfter.status === other.status && otherAfter.rev === other.rev, '(6) Mark Done on another task wrote nothing while the drain is owed');
+            // Back out of the search one step at a time (the keyboard first): a Back sent while it closes would leave the app.
+            for (let step = 0; step < 4 && inSearch(await screen()); step += 1) {
+                requireAppFront();
+                sh('input keyevent KEYCODE_BACK');
+                await sleep(1500);
+            }
+            await toTabs();
+            await waitFor('the owed retry on the tabs', (current) => Boolean(owedRetry(current)), 10_000);
+            check(true, '(6) the screen offers the owed retry');
+        } finally {
+            setProp('fail_kv_set', '');
+        }
+        // The job's own retry recovers with no tap: the journal's replay first, then the drain, then the trigger's notification.
+        await waitUntil('the trigger\'s retry to recover and post', () => count(lines(), ...CONTEXT_DONE) > jobsBefore, 180_000, 5000);
+        const text = lines();
+        const replayAt = text.lastIndexOf('journal replay sent=1 dropped=1 left=0 owed=none');
+        check(count(text, 'journal replay sent=1 dropped=1 left=0 owed=none') > replaysBefore && replayAt < text.lastIndexOf('"job":"context","outcome":"success"'),
+            '(6) the job\'s retry replayed the owed journal entry before its job');
+        check(count(text, ...POSTED) === postedBefore + 1, '(6) and then posted the trigger\'s notification');
+        const [recovered] = stored(title(8));
+        check(!queued().includes(`${id}.json`) && journal().length === 0 && lastApplied()[target.id]?.id === id && recovered.rev === target.rev + 1,
+            `(6) recovered: the record written, the file and the entry gone, the check-off written once (rev ${recovered.rev})`);
+        // The screen's Try again: nothing is left to replay or drain (the job did both), so the owed retry clears.
+        let nodes = await toTabs();
+        nodes = owedRetry(nodes) ? nodes : await waitFor('the owed retry', (current) => Boolean(owedRetry(current)), 10_000);
+        await tapExpecting(owedRetry(nodes), (current) => !owedRetry(current), 'Try again');
+        check(true, '(6) Try again cleared the owed retry');
+        await tapNotification('(6)');
+        await toTabs();
+    }
+
+    // (7) A context broadcast with a 12 KB context: dropped before WorkManager sees it (core's 2,000-character bound), no crash.
+    {
+        const processId = pid();
+        const dropped = () => count(allLogs(), 'Native Android context trigger dropped reason=too-long');
+        const crashes = () => count(execFileSync(adbBin, ['-s', serial, 'logcat', '-d', '-b', 'crash'], { encoding: 'utf8', maxBuffer: 64 << 20 }), PKG);
+        const [before, crashesBefore] = [dropped(), crashes()];
+        contextTrigger('ACTIVATE_CONTEXT', 'x'.repeat(12 * 1024));
+        await waitUntil('the dropped trigger', () => dropped() > before, 20_000);
+        await sleep(2000);
+        check(pid() === processId && crashes() === crashesBefore, '(7) a 12 KB context is dropped; the app keeps running, with no crash');
     }
 
     // Automation capture goes back off through its card: the token is deleted.

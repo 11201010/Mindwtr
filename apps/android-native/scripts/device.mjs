@@ -27,6 +27,12 @@ export const atInboxTop = (nodes) => nodes.some((node) => node.text === en['proj
 
 // The last connected device, for failure evidence.
 let evidenceDevice;
+let evidenceWithheld = () => null;
+/**
+ * A script's rule for a secret: [reason] answers why no evidence may be saved now (a secret on screen), or null. A reason that
+ * throws withholds too.
+ */
+export const withholdEvidenceWhen = (reason) => { evidenceWithheld = reason; };
 /**
  * Saves a screenshot and the uiautomator XML of the phone as it is now to
  * /home/dd/.mindwtr-harness/failures/<script>-<timestamp>/ and prints the path.
@@ -34,15 +40,18 @@ let evidenceDevice;
  */
 export const saveEvidence = () => {
     if (!evidenceDevice) return undefined;
+    let withheld;
+    try { withheld = evidenceWithheld(); } catch { withheld = 'the secret check failed'; }
+    if (withheld) {
+        console.error(`failure evidence withheld: ${withheld}`);
+        return undefined;
+    }
     const script = basename(process.argv[1] ?? 'device', '.mjs');
     const dir = `/home/dd/.mindwtr-harness/failures/${script}-${new Date().toISOString().replace(/[:.]/g, '-')}`;
     try {
         mkdirSync(dir, { recursive: true });
         try { writeFileSync(`${dir}/screen.png`, evidenceDevice.adbRaw('exec-out', 'screencap', '-p')); } catch { /* device gone */ }
-        try {
-            evidenceDevice.sh(`uiautomator dump ${evidenceDevice.uiFile}`);
-            writeFileSync(`${dir}/ui.xml`, evidenceDevice.adbRaw('exec-out', 'cat', evidenceDevice.uiFile));
-        } catch { /* hierarchy unavailable */ }
+        try { writeFileSync(`${dir}/ui.xml`, evidenceDevice.dump()); } catch { /* hierarchy unavailable */ }
         console.error(`failure evidence: ${dir}`);
         return dir;
     } catch {
@@ -275,7 +284,16 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         if (/^input text\b/.test(command)) requireEnglishKeyboard();
         return shell(command);
     };
-    evidenceDevice = { adbRaw, sh, uiFile };
+    /**
+     * The uiautomator XML of the screen now. [uiFile] `/dev/tty` streams it to adb and never writes it on the phone (a screen
+     * that can show a secret); any other path is written there, then read.
+     */
+    const dump = () => {
+        if (uiFile === '/dev/tty') return adbRaw('exec-out', 'uiautomator', 'dump', '/dev/tty');
+        sh(`uiautomator dump ${uiFile}`);
+        return adbRaw('exec-out', 'cat', uiFile);
+    };
+    evidenceDevice = { adbRaw, sh, dump };
     const home = sh('cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
         .split('\n').pop().split('/')[0];
     const front = () => sh('dumpsys activity activities').split('\n')
@@ -314,8 +332,7 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
     const screen = async () => {
         for (let attempt = 0; attempt < 5; attempt += 1) {
             try {
-                sh(`uiautomator dump ${uiFile}`);
-                const xml = adbRaw('exec-out', 'cat', uiFile).toString('utf8');
+                const xml = dump().toString('utf8');
                 if (xml.includes('<hierarchy')) {
                     return [...xml.matchAll(/<node [^>]*>/g)].map(([tag]) => Object.fromEntries(
                         [...tag.matchAll(/([\w-]+)="([^"]*)"/g)].map(([, name, value]) => [name, decode(value)]),
