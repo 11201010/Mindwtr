@@ -844,10 +844,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // holds them, and Kotlin never calls them.
     const iosPreparedCommits = ['captureCommit', 'draftCommit'];
     const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask'];
-    // Core writes no host method calls yet (reminder actions, Settings › Sync's option, Settings › Calendar's edits, Settings › AI):
+    // Core writes no host method calls yet (reminder actions, Settings › Calendar's edits):
     // wiring one into host-entry fails the write-list checks above until the journal takes it.
-    const unwiredWrites = ['completeReminderTask', 'snoozeReminder', 'setCalendarSetting',
-        'addCalendarFeed', 'openAISettings', 'setAISetting', 'setAIKey', 'setAIEndpoint'];
+    const unwiredWrites = ['completeReminderTask', 'snoozeReminder', 'setCalendarSetting', 'addCalendarFeed'];
     assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
     assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
@@ -863,7 +862,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         'submitCaptureModal', 'submitCaptureModalLines',
         // Settings › Sync: its option (a receipt of its own) and the screen's commands (never journaled: core keeps no payload of theirs).
         'setSyncPreference', 'openSyncSettings', 'closeSyncSettings', 'selectSyncBackend', 'saveSyncBackend', 'syncNow', 'testSyncConnection',
-        'pickSyncFolder', 'connectDropbox', 'disconnectDropbox', 'runSyncEncryptionAction'];
+        'pickSyncFolder', 'connectDropbox', 'disconnectDropbox', 'runSyncEncryptionAction',
+        // Settings › AI (pass C1): a control's change and the screen's open (receipts of their own), a key and a base URL (never journaled).
+        'setAISetting', 'openAISettings', 'setAIKey', 'setAIEndpoint'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -873,6 +874,28 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.deepEqual([...new Set(writeCalls)].sort(), [...coreWrites].sort(), 'the journaled methods call exactly core\'s write commands');
     const readCalls = [...methods.filter((m) => !writes.includes(m.name)).flatMap((m) => called(m.body)), ...called(table('MENU_READS'))];
     assert.deepEqual(readCalls.filter((name) => coreWrites.includes(name)), [], 'no unjournaled host method calls a core write');
+    // The AI's requests are reads too: they send task text to the provider and write nothing (an answer applies through the screen's edits).
+    assert.deepEqual(called(table('AI_REQUESTS')).filter((name) => coreWrites.includes(name) || unwiredWrites.includes(name)), [], 'no AI request calls a core write');
+    assert.deepEqual(called(table('AI_REQUESTS')).sort(), ['loadAIModels', 'requestAICopilot', 'requestInboxClarify', 'requestTaskEditorBreakdown',
+        'requestTaskEditorClarify', 'requestTaskEditorCopilot', 'requestWeeklyReviewAnalysis'], 'AI_REQUESTS are core\'s AI requests');
+    assert.match(host, /aiRequest\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*const request = AI_REQUESTS\[name\];[\s\S]{0,120}?return unwrap\(await request\(JSON\.parse\(json\) as never\)\);/);
+    // Settings › AI (AISettings.kt) keeps a key and a base URL in memory only: no saved state, no saveable Compose state, no log
+    // line with a typed value; a key or base URL goes only through its unjournaled command, never the Menu tab's send(). A consent
+    // reset exists only behind the debug-only property.
+    {
+        const aiScreen = code(source('AISettings.kt'));
+        assert.doesNotMatch(aiScreen, /saved\[|SavedStateHandle|rememberSaveable|keepDialog/, 'Settings › AI keeps nothing in saved state');
+        assert.doesNotMatch(aiScreen, /Log\.\w\([^\n]*(typed|keys|text|next|value)\b/, 'Settings › AI logs no typed value');
+        assert.match(aiScreen, /screenWrite\("setAIKey", /);
+        assert.match(aiScreen, /screenWrite\("setAIEndpoint", /);
+        assert.match(aiScreen, /fun set\(change: JSONObject, agreed: Boolean = false\) =\s+menu\.command\("setAISetting", /);
+        const aiActions = code(source('AIActions.kt'));
+        assert.doesNotMatch(aiActions, /menuCommand\(|rememberSaveable|saved\[/, 'the AI actions write nothing themselves and keep no saved state');
+        assert.match(coreHost, /if \(debugFault\("ai_consent_reset"\) == "1"\) keyValue\.remove\("mindwtr-ai-provider-consent-v1"\)/);
+    }
+    // Core's AI device binds RN's stores (host-ai.ts): the refused secret calls (an AI key is no sync commit), RN's AsyncStorage.
+    assert.match(hostEntry, /const nativeAI = nativeSync \? createNativeAI\(keyValue, \(\) => globalThis\.__mindwtrSecrets as HostSecrets\) : null;/);
+    assert.match(hostEntry, /createNativeHostContract\(\{ \.\.\.\(nativeSync \? \{ syncSettings: nativeSync\.settingsHost \} : \{\}\), \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\) \}\)/);
     assert.match(host, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];/);
     // An entry replays only while it fits its write as host-entry takes it (WriteJournal.SHAPES): a JSON object for `json`, a
     // boolean for a boolean, a Menu command for menuCommand's name, text for the rest; MENU names exactly host-entry's
@@ -937,15 +960,19 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         assert.deepEqual([...(kotlin[1] ?? '').matchAll(/"(\w+)"/g)].map((m) => m[1]).sort(), expected, 'WriteJournal.UNJOURNALED is core\'s NATIVE_UNJOURNALED_COMMANDS by journal key');
         assert.match(journalKt, /require\(method in WRITES\) \{ "\$method is not a write" \}\s+if \(key\(method, args\) in UNJOURNALED\) return null/);
         assert.match(journalKt, /\n        fun key\(method: String, args: List<Any\?>\): Any\? = if \(method == "menuCommand"\) args\.firstOrNull\(\) else method/);
-        // The long call path (CoreHost.callLong: Settings › Sync's commands, which never hold the engine) takes only an
-        // unjournaled write, so no journaled write can skip the journal through it; its only caller is syncCommand.
+        // The long call path (CoreHost.callLong: Settings › Sync's commands and the AI's requests, which never hold the engine) takes
+        // only an unjournaled write or a read, so no journaled write can skip the journal through it.
         assert.match(journalKt, /fun unjournaled\(method: String, args: List<Any\?>\): Boolean = method in WRITES && key\(method, args\) in UNJOURNALED/);
-        assert.match(coreHost, /private fun callLong\(method: String, vararg args: Any\?\): JSONObject \{\s+require\(WriteJournal\.unjournaled\(method, args\.toList\(\)\)\)/);
-        assert.deepEqual([...coreHost.matchAll(/\bcallLong\("(\w+)"/g)].map((m) => m[1]), ['menuCommand'], 'only Settings › Sync\'s commands take the long path');
+        assert.match(coreHost, /private fun callLong\(method: String, vararg args: Any\?\): JSONObject \{\s+require\(method !in WriteJournal\.WRITES \|\| WriteJournal\.unjournaled\(method, args\.toList\(\)\)\)/);
+        assert.deepEqual([...coreHost.matchAll(/\bcallLong\("(\w+)"/g)].map((m) => m[1]), ['menuCommand', 'aiRequest'], 'only Settings › Sync\'s commands and the AI\'s requests take the long path');
         assert.match(coreHost, /fun syncCommand\(name: String, json: String\): JSONObject = callLong\("menuCommand", name, json\)/);
-        // The Kotlin screen's command set is the unjournaled set.
-        const syncCommands = [.../val SYNC_COMMANDS = setOf\(([^)]*)\)/.exec(source('SyncSettings.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]).sort();
-        assert.deepEqual(syncCommands, [...(kotlin[1] ?? '').matchAll(/"(\w+)"/g)].map((m) => m[1]).sort(), 'SyncSettings.kt SYNC_COMMANDS is WriteJournal.UNJOURNALED');
+        assert.match(coreHost, /fun aiRequest\(name: String, json: String\): JSONObject = callLong\("aiRequest", name, json\)/);
+        assert(!writes.includes('aiRequest'), 'an AI request is no journaled write');
+        // The Kotlin screens' unjournaled commands are the unjournaled set: Settings › Sync's, and Settings › AI's key and base URL.
+        const syncCommands = [.../val SYNC_COMMANDS = setOf\(([^)]*)\)/.exec(source('SyncSettings.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
+        const aiCommands = [.../val AI_COMMANDS = setOf\(([^)]*)\)/.exec(source('AISettings.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
+        assert.deepEqual([...syncCommands, ...aiCommands.filter((name) => name !== 'openAISettings')].sort(), [...(kotlin[1] ?? '').matchAll(/"(\w+)"/g)].map((m) => m[1]).sort(),
+            'SYNC_COMMANDS and AI_COMMANDS (but its journaled open) are WriteJournal.UNJOURNALED');
         // Review S3 4: each backend choice goes, in tap order; only the same choice still pending is dropped.
         assert.match(source('SyncSettings.kt'), /run\("selectSyncBackend", [^\n]*key = "selectSyncBackend:\$option", ordered = choices\)/);
         assert.match(source('SyncSettings.kt'), /if \(!light && !inFlight\.add\(key\)\) return/);
@@ -1473,7 +1500,7 @@ assert.match(model, /ProcessingStore\(File\(app\.noBackupFilesDir, "process-inbo
 assert.match(processUi, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(state\.toString\(\)\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
 // Edits: one at a time, answered for their own session and still first in the queue; an older reply never resets newer typing.
 assert.match(model, /val now = processing\?\.takeIf \{ it\.sessionId == current\.sessionId && it\.edits\.firstOrNull\(\) === next \}/);
-assert.match(processUi, /LaunchedEffect\(key, coreValue, typing\) \{ if \(!typing && !pending && field\.text != coreValue\)/);
+assert.match(processUi, /LaunchedEffect\(key, coreValue, typing, pending\) \{ if \(!typing && !pending && field\.text != coreValue\)/);
 assert.match(processUi, /\.onFocusChanged \{ typing = it\.isFocused \}/, 'a focused draft input keeps its typing over core replies');
 // No Kotlin policy: every chip sends core's own edit; Kotlin builds only the picker's setDate, the typed text, and the disclosure.
 assert.match(processUi, /DayPickerDialog\(row\?\.text\("date"\)/, 'the picker starts on core\'s date and hands core only the picked day');
@@ -1562,10 +1589,13 @@ assert.match(coreHost, /fun menuCommand\(name: String, json: String\): JSONObjec
     const hostKinds = [...hostEntry.slice(hostEntry.indexOf('const MENU_COMMANDS'), hostEntry.indexOf('};', hostEntry.indexOf('const MENU_COMMANDS'))).matchAll(/^\s+(\w+): \(input\) => contract\.\w+\(input\),$/gm)].map(([, kind]) => kind);
     // Settings › Sync's screen commands are Menu commands too, sent by SyncSettings.kt through CoreHost.syncCommand, never by send().
     const syncKinds = [.../val SYNC_COMMANDS = setOf\(([^)]*)\)/.exec(source('SyncSettings.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
-    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds].sort(), 'every menu command kind is one host command, logged as its operation');
-    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand;`));
+    // Settings › AI's screen writes too (its open, a key, a base URL), sent by AISettings.kt; its controls' setAISetting is a Settings kind.
+    const aiKinds = [.../val AI_COMMANDS = setOf\(([^)]*)\)/.exec(source('AISettings.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
+    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds].sort(), 'every menu command kind is one host command, logged as its operation');
+    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand;`));
     assert.match(hostEntry, new RegExp(`type SyncScreenCommand = ${syncKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
-    assert.doesNotMatch(menuModel, new RegExp(`"(${syncKinds.join('|')})"`), 'the Menu tab never sends a Sync screen command itself');
+    assert.match(hostEntry, new RegExp(`type AIScreenCommand = ${aiKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
+    assert.doesNotMatch(menuModel, new RegExp(`"(${[...syncKinds, ...aiKinds].join('|')})"`), 'the Menu tab never sends a Sync or AI screen command itself');
     assert.match(hostEntry, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];[\s\S]{0,120}?return taskResult\(name as MenuCommand, await command\(JSON\.parse\(json\) as never\)\);/);
     assert.match(hostEntry, /menuRead\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{[\s\S]{0,300}?if \(name !== 'more'\) requireSaved\(\);\s*const read = MENU_READS\[name\];[\s\S]{0,100}?return unwrap\(read\(JSON\.parse\(json\) as never\)\);/);
     const input = code(menuModel.slice(menuModel.indexOf('private fun input(action: FailedAction)'), menuModel.indexOf('}.toString()', menuModel.indexOf('private fun input('))));
@@ -2023,7 +2053,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(settingsModel, /fun gtd\(edit: JSONObject\) = menu\.command\("gtdSetting", JSONObject\(\)\.put\("edit", edit\)\)/);
     assert.match(settingsModel, /fun saveEditor\(action: FailedAction\) = menu\.create\(action\)/);
     assert.match(settingsModel, /return FailedAction\("manageEditor", open\.getString\("requestId"\), input\.toString\(\)\)/, 'the editor\'s request UUID stays with its dialog');
-    assert.match(menuModel, /"generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting", "syncPreference" -> JSONObject\(action\.title\)\.put\("requestId", action\.id\)/);
+    assert.match(menuModel, /"generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting", "syncPreference", "setAISetting" -> JSONObject\(action\.title\)\.put\("requestId", action\.id\)/);
     assert.match(menuModel, /"somedayRename", "somedayReorder", "somedayDelete" -> JSONObject\(action\.title\)/);
     for (const call of ['"manageDelete")', '"somedayDelete")']) {
         const at = settingsUi.indexOf(call);

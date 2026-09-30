@@ -192,6 +192,8 @@ class CoreHost(
             bridge.setProperty("kvMultiSet", guarded { args -> keyValue.multiSet(JSONArray(args[0] as String).let { pairs ->
                 List(pairs.length()) { pairs.getJSONArray(it).let { pair -> pair.getString(0) to pair.getString(1) } } }); null })
             bridge.setProperty("kvMultiRemove", guarded { args -> keyValue.multiRemove(stringList(args[0] as String)); null })
+            // Debug builds only (check-ai-device.mjs): RN's AI consent record goes before boot, so the check sees RN's question again.
+            if (debugFault("ai_consent_reset") == "1") keyValue.remove("mindwtr-ai-provider-consent-v1")
             // An event for the screens: handed on as text; a listener that throws never reaches JS.
             bridge.setProperty("hostEvent", guarded { args -> runCatching { onEvent?.invoke(args[0] as String) }; null })
             engine.globalObject.setProperty("__mindwtrNative", bridge)
@@ -387,6 +389,12 @@ class CoreHost(
      */
     fun syncCommand(name: String, json: String): JSONObject = callLong("menuCommand", name, json)
 
+    /**
+     * An AI request (host-entry.ts AI_REQUESTS) with [json] unchanged: it waits on the provider for up to RN's longest request
+     * timeout (5 min), so it never holds the engine ([callLong]). It is a read: nothing to journal.
+     */
+    fun aiRequest(name: String, json: String): JSONObject = callLong("aiRequest", name, json)
+
     /** Core's getProjects: its Active, Deferred, and Archived groups in its order. */
     fun projects(): JSONObject = callAsync("projects")
 
@@ -452,12 +460,13 @@ class CoreHost(
     }
 
     /**
-     * A long operation (a Sync screen command) that never holds the engine: it starts here, then the idle pump and every other
-     * call's pump advance it while the caller waits on this thread. Only an unjournaled write comes here, so no journaled write
-     * skips the journal. Past [SYNC_WAIT_MS] the caller stops waiting; nothing holds the engine, so nothing needs to stop.
+     * A long operation (a Sync screen command, an AI request) that never holds the engine: it starts here, then the idle pump and
+     * every other call's pump advance it while the caller waits on this thread. Only an unjournaled write or a read comes here, so
+     * no journaled write skips the journal. Past [SYNC_WAIT_MS] the caller stops waiting; nothing holds the engine, so nothing
+     * needs to stop.
      */
     private fun callLong(method: String, vararg args: Any?): JSONObject {
-        require(WriteJournal.unjournaled(method, args.toList())) { "$method is not an unjournaled command" }
+        require(method !in WriteJournal.WRITES || WriteJournal.unjournaled(method, args.toList())) { "$method is a journaled write" }
         check(Thread.currentThread() !== engineThread) { "A long operation is waited for off the engine thread" }
         val done = CompletableFuture<String>()
         val id = onEngine {
