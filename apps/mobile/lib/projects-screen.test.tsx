@@ -1,7 +1,7 @@
 import React from 'react';
-import { FlatList, Text } from 'react-native';
+import { FlatList, Platform, Text } from 'react-native';
 import { act, create } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   archiveSectionForProjectArchive,
   type Area,
@@ -12,6 +12,7 @@ import {
 } from '@mindwtr/core';
 
 import ProjectsScreen from '../app/(drawer)/projects-screen';
+import { SHEET_DISMISS_SETTLE_MS } from './capture-route-presence';
 
 const asyncStorageMock = vi.hoisted(() => ({
   getItem: vi.fn(),
@@ -23,6 +24,7 @@ const detailModal = vi.hoisted(() => ({ props: null as Record<string, any> | nul
 const taskEditModal = vi.hoisted(() => ({ props: null as Record<string, any> | null }));
 const focusEffect = vi.hoisted(() => ({ callback: null as null | (() => void | (() => void)) }));
 const consumePendingCaptureTaskOpenMock = vi.hoisted(() => vi.fn());
+const openQuickCaptureMock = vi.hoisted(() => vi.fn());
 const filteringHarness = vi.hoisted(() => ({ useRealHook: false }));
 
 const flattenStyle = (value: unknown): Record<string, unknown> => Object.assign(
@@ -117,6 +119,7 @@ beforeEach(() => {
   taskEditModal.props = null;
   focusEffect.callback = null;
   consumePendingCaptureTaskOpenMock.mockReset();
+  openQuickCaptureMock.mockReset();
   consumePendingCaptureTaskOpenMock.mockReturnValue(null);
   storeState.projects = [testProject];
   storeState._allProjects = [testProject];
@@ -205,7 +208,7 @@ vi.mock('../contexts/toast-context', () => ({
 }));
 
 vi.mock('../contexts/quick-capture-context', () => ({
-  useQuickCapture: () => ({ openQuickCapture: vi.fn() }),
+  useQuickCapture: () => ({ openQuickCapture: openQuickCaptureMock }),
 }));
 
 vi.mock('@/hooks/use-theme-tokens', () => ({
@@ -365,6 +368,112 @@ describe('ProjectsScreen project quick add', () => {
     });
 
     expect(detailModal.props?.project?.id).toBe(testProject.id);
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+});
+
+describe('ProjectsScreen project quick add ordering', () => {
+  const originalOS = Platform.OS;
+  afterEach(() => {
+    Platform.OS = originalOS;
+  });
+
+  const openProjectAndQuickAdd = async () => {
+    routeParams.current = { projectId: testProject.id, openToken: 'token-1' };
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<ProjectsScreen />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      detailModal.props?.onOpenQuickAdd?.(testProject);
+      await Promise.resolve();
+    });
+    return tree;
+  };
+
+  // Presenting the capture route while UIKit is still dismissing the project
+  // sheet races two presentations on one presenter; a lost race left an
+  // invisible modal host over the Projects list that swallowed every touch.
+  it('on iOS opens capture only after the project sheet reports dismissal', async () => {
+    Platform.OS = 'ios';
+    const tree = await openProjectAndQuickAdd();
+
+    expect(detailModal.props?.project).toBeNull();
+    expect(openQuickCaptureMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      detailModal.props?.onDismiss?.();
+      await Promise.resolve();
+    });
+
+    expect(openQuickCaptureMock).toHaveBeenCalledTimes(1);
+    expect(openQuickCaptureMock).toHaveBeenCalledWith(expect.objectContaining({
+      initialProps: { projectId: testProject.id, status: 'next' },
+      returnTo: expect.any(String),
+    }));
+
+    // A later dismissal (closing the reopened sheet by hand) must not open
+    // capture again.
+    await act(async () => {
+      detailModal.props?.onDismiss?.();
+      await Promise.resolve();
+    });
+    expect(openQuickCaptureMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  // Save & edit opens the editor and the project, two sibling sheets. iOS
+  // refuses the second presentation and left its invisible host over the list,
+  // so on iOS the project reopens only after the editor is dismissed.
+  it('on iOS opens the Save & edit editor first and reopens the project after it closes', async () => {
+    Platform.OS = 'ios';
+    vi.useFakeTimers();
+    try {
+      storeState.tasks = [testNextActionTask];
+      storeState._allTasks = [testNextActionTask];
+      const tree = await openProjectAndQuickAdd();
+      consumePendingCaptureTaskOpenMock.mockReturnValueOnce({ taskId: testNextActionTask.id, taskTab: 'task' });
+
+      await act(async () => {
+        focusEffect.callback?.();
+        await Promise.resolve();
+      });
+
+      expect(taskEditModal.props?.visible).toBe(true);
+      expect(detailModal.props?.project).toBeNull();
+
+      await act(async () => {
+        taskEditModal.props?.onClose?.();
+        await Promise.resolve();
+      });
+      expect(detailModal.props?.project).toBeNull();
+
+      await act(async () => {
+        vi.advanceTimersByTime(SHEET_DISMISS_SETTLE_MS);
+        await Promise.resolve();
+      });
+      expect(detailModal.props?.project?.id).toBe(testProject.id);
+
+      await act(async () => {
+        tree.unmount();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('on Android opens capture at once (Modal.onDismiss is iOS-only)', async () => {
+    Platform.OS = 'android';
+    const tree = await openProjectAndQuickAdd();
+
+    expect(openQuickCaptureMock).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       tree.unmount();

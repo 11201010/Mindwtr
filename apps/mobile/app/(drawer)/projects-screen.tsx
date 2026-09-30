@@ -6,6 +6,7 @@ import type { GettingStartedAction } from '@/components/GettingStartedActions';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AREA_PRESET_COLORS, areaOrderIdsForIntent, Attachment, collectProjectTaskLinks, DEFAULT_PROJECT_COLOR, getProjectSectionsForView, planProjectMove, Project, type ProjectAreaGroup, projectTagsForIntent, shallow, Task, type Section, type TaskSortBy, undoProjectDelete, useTaskStore } from '@mindwtr/core';
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
+import { runAfterCaptureRouteGone, SHEET_DISMISS_SETTLE_MS } from '@/lib/capture-route-presence';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react-native';
 
 import {
@@ -384,6 +385,8 @@ export default function ProjectsScreen() {
 
   const reopenProjectIdAfterCaptureRef = useRef<string | null>(null);
   const pendingGettingStartedAction = useRef<GettingStartedAction | null>(null);
+  const pendingProjectDismissActionRef = useRef<(() => void) | null>(null);
+  const reopenProjectAfterEditorRef = useRef<Project | null>(null);
 
   useEffect(() => {
     if (!projectId || typeof projectId !== 'string') return;
@@ -802,13 +805,20 @@ export default function ProjectsScreen() {
     persistSelectedProjectEdits(selectedProject);
     reopenProjectIdAfterCaptureRef.current = projectToAddTo.id;
     setSelectedProject(null);
-    openQuickCapture({
+    const openCapture = () => openQuickCapture({
       initialProps: {
         projectId: projectToAddTo.id,
         status: 'next',
       },
       returnTo: buildProjectQuickCaptureReturnTo(projectToAddTo.id),
     });
+    // UIKit must finish dismissing the project sheet before presenting capture,
+    // as for the Getting Started actions below.
+    if (Platform.OS === 'ios') {
+      pendingProjectDismissActionRef.current = openCapture;
+      return;
+    }
+    openCapture();
     // commitSelectedProjectNotes/persistSelectedProjectEdits are re-created every
     // render; listing them would rebuild this callback on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -828,29 +838,38 @@ export default function ProjectsScreen() {
   routeProjectIdRef.current = typeof projectId === 'string' ? projectId : undefined;
 
   useFocusEffect(
-    useCallback(() => {
+    useCallback(() => runAfterCaptureRouteGone(() => {
       const pendingId = reopenProjectIdAfterCaptureRef.current;
-      if (pendingId) {
-        reopenProjectIdAfterCaptureRef.current = null;
-        const project = projectsRef.current.find((item) => item.id === pendingId && !item.deletedAt);
-        if (project) openProjectRef.current(project);
-      }
+      reopenProjectIdAfterCaptureRef.current = null;
+      const project = pendingId
+        ? projectsRef.current.find((item) => item.id === pendingId && !item.deletedAt)
+        : undefined;
       // Save & edit from this project's capture: open the editor on THIS
       // screen instance. The capture route cannot navigate here — any
       // navigation to a screen that is already on top stacks a duplicate of
       // it, so leaving the project would take an extra back tap (#1029).
       const pendingTask = consumePendingCaptureTaskOpen(pendingId ?? routeProjectIdRef.current);
-      if (!pendingTask) return;
-      const task = tasksRef.current.find((item) => item.id === pendingTask.taskId && !item.deletedAt);
-      if (!task) return;
+      const task = pendingTask
+        ? tasksRef.current.find((item) => item.id === pendingTask.taskId && !item.deletedAt)
+        : undefined;
+      if (project) {
+        // iOS presents one sheet at a time: the editor and the project are
+        // siblings, so the second would be refused and leave an invisible
+        // layer. Open the editor first and the project once it is dismissed.
+        if (task && Platform.OS === 'ios') reopenProjectAfterEditorRef.current = project;
+        else openProjectRef.current(project);
+      }
+      if (!pendingTask || !task) return;
       setHighlightTask(task.id);
       setTaskModalDefaultTab(pendingTask.taskTab);
       setTaskModalOpenKey(`capture:${pendingTask.taskId}`);
       setEditingTask(task);
+      // Presenting a sheet while UIKit still dismisses the capture route is
+      // refused and leaves an invisible layer over the list, so wait for it.
       // setHighlightTask (zustand) and the useState setters are stable; data
       // is read through refs so this callback never changes identity.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }), [])
   );
 
   const closeProjectDetail = (navigateBack = true) => {
@@ -878,6 +897,13 @@ export default function ProjectsScreen() {
     } else if (action === 'focus') {
       router.navigate('/(drawer)/(tabs)/focus');
     }
+  };
+
+  const handleProjectDetailDismiss = () => {
+    const pendingAction = pendingProjectDismissActionRef.current;
+    pendingProjectDismissActionRef.current = null;
+    pendingAction?.();
+    finishGettingStartedAction();
   };
 
   const openGettingStartedAction = (action: GettingStartedAction) => {
@@ -1080,7 +1106,7 @@ export default function ProjectsScreen() {
         notes={notesEditor}
         onClose={() => closeProjectDetail()}
         onGettingStartedAction={openGettingStartedAction}
-        onDismiss={finishGettingStartedAction}
+        onDismiss={handleProjectDetailDismiss}
         onDeleteProject={handleDeleteProject}
         onDuplicateProject={handleDuplicateProject}
         onOpenAreaPicker={openAreaPicker}
@@ -1107,7 +1133,13 @@ export default function ProjectsScreen() {
             || (selectedProject?.id === editingTask.projectId && selectedProject.status === 'archived')
           )
         )}
-        onClose={() => setEditingTask(null)}
+        onClose={() => {
+          setEditingTask(null);
+          const project = reopenProjectAfterEditorRef.current;
+          reopenProjectAfterEditorRef.current = null;
+          // Wait for UIKit to finish removing the editor sheet (iOS only).
+          if (project) setTimeout(() => openProjectRef.current(project), SHEET_DISMISS_SETTLE_MS);
+        }}
         onSave={(taskId, updates) => {
           const state = useTaskStore.getState();
           const liveTask = state._allTasks?.find((task) => task.id === taskId);

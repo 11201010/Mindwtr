@@ -68,6 +68,7 @@ import { ThemedAlertHost } from '@/components/themed-alert';
 import { SandboxWorkspaceCue } from '@/components/sandbox-workspace-cue';
 import { QuickAddPreview } from '@/components/QuickAddPreview';
 import { openTaskScreen, stashPendingCaptureTaskOpen } from '@/lib/task-meta-navigation';
+import { markCaptureRouteMounted } from '@/lib/capture-route-presence';
 
 // The route params, and every rule about them, are core's (capture-modal-model.ts).
 export { sanitizeCaptureReturnToParam };
@@ -127,6 +128,9 @@ export default function CaptureScreen() {
   const screenMountedRef = useRef(true);
   const copilotMountedRef = useRef(true);
   const copilotAbortRef = useRef<AbortController | null>(null);
+
+  // Screens under capture wait for this before presenting a modal (iOS, see capture-route-presence).
+  useEffect(() => markCaptureRouteMounted(), []);
 
   useEffect(() => {
     setTimeout(() => inputRef.current?.focus(), 120);
