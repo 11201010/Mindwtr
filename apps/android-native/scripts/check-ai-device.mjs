@@ -17,8 +17,9 @@
 //   (6) Process Inbox's Clarify: core's dialog, and its button edits the step's draft only;
 //   (7) the Weekly Review's Run analysis on the stale step: core's suggestions (or its empty line), and nothing written;
 //   (8) the capture screen's copilot: its chips from the stub; Cancel writes nothing;
-//   (9) a kill during a key save: after each of several kills, the stub sees either the key before or the key being saved, never
-//       another, and the journal holds no key and no setAIKey entry.
+//   (9) a kill during a key save: the stub sees a key the field held while typing (each keystroke is one write, in order; at a
+//       kill at once, also the key before), never another; a key the field showed as saved survives a kill at once
+//       after; the journal holds no key and no setAIKey entry.
 // It installs with `install -r` (development data stays), touches only the development package, never launches over another
 // app, and on exit removes the port mapping and debug properties, stops the stub and puts the keyboard back. Leave the device on
 // its home screen. Exit 0 = pass, 1 = fail, 2 = refused, 3 = stopped.
@@ -527,24 +528,51 @@ try {
     await tapExpecting(tagged(nodes, 'capture-modal-cancel'), (current) => !tagged(current, 'capture-modal'), 'the capture cancelled');
     check(taskByTitle(titles.capture).length === 0, '(8) Cancel wrote nothing');
 
-    // (9) Kills during a key save: the key is the one before or the one being saved, never another; no journal entry holds it.
+    // (9) Kills during a key save: the key is the one before or one the field held while typing, never another; no journal entry holds it.
     let storedKey = KEYS.first;
-    // The key goes 500 ms after typing pauses (AISettings.kt TYPING_PAUSE_MS); the kills fall before, around and after it.
-    for (const [index, waitMs] of [0, 300, 480, 540, 620, 900].entries()) {
+    // Each keystroke is one setAIKey, in order (AISettings.kt, review C1 4): the kills fall while the writes run and after.
+    const modelsAsked = async (seenBefore, description) => {
+        await until(description, () => stub.state.seen.slice(seenBefore).some((entry) => entry.path === '/v1/models'), 30_000);
+        return stub.state.seen.slice(seenBefore).find((entry) => entry.path === '/v1/models').bearer;
+    };
+    const journalClean = (key) => {
+        const journal = journalEntries();
+        check(!journal.includes(key) && !/"setAIKey"/.test(journal), '(9) the journal holds neither the key nor a setAIKey entry');
+    };
+    for (const [index, waitMs] of [0, 300, 600].entries()) {
         const next = `sk${run}kill${index}`;
         await openAI();
         await unfold('ai-assistant-card', (current) => Boolean(tagged(current, 'ai-enabled')));
-        await typeInto('ai-assistant-key', next, true, 0);
+        // Typed after the dots (no clear): the field's first edit starts the key over, so each write is a prefix of the new key.
+        await typeInto('ai-assistant-key', next, false, 0);
         await sleep(waitMs);
         const seenBefore = stub.state.seen.length;
         await restart();
         await openAI();
-        await until('the model list asked with the stored key', () => stub.state.seen.slice(seenBefore).some((entry) => entry.path === '/v1/models'), 30_000);
-        const bearer = stub.state.seen.slice(seenBefore).find((entry) => entry.path === '/v1/models').bearer;
-        check(bearer === storedKey || bearer === next, `(9) killed ${waitMs} ms after typing: the stored key is ${bearer === next ? 'the new one' : 'the one before'}, never another`);
+        const bearer = await modelsAsked(seenBefore, 'the model list asked with the stored key');
+        const typedPart = bearer.length > 0 && next.startsWith(bearer);
+        // At once after typing a write may not have landed yet (the key before); from 300 ms on, the field's text is stored.
+        const allowed = typedPart || (waitMs === 0 && bearer === storedKey);
+        check(allowed, `(9) killed ${waitMs} ms after typing: the stored key is ${typedPart ? `${bearer.length} of the ${next.length} typed characters` : bearer === storedKey ? 'the one before' : 'another'}`);
         storedKey = bearer;
-        const journal = journalEntries();
-        check(!journal.includes(next) && !/"setAIKey"/.test(journal), '(9) the journal holds neither the key nor a setAIKey entry');
+        journalClean(next);
+    }
+    // A key the field showed as saved (its writes stored, the model list asked with it) survives a kill at once after.
+    {
+        const saved = `sk${run}saved`;
+        await openAI();
+        await unfold('ai-assistant-card', (current) => Boolean(tagged(current, 'ai-enabled')));
+        const seenTyping = stub.state.seen.length;
+        await typeInto('ai-assistant-key', saved, false, 0);
+        await hideKeyboard();
+        await tapTag('ai-model', (current) => Boolean(current), 'the key field left');
+        await until('the model list asked with the whole key', () => stub.state.seen.slice(seenTyping).some((entry) => entry.path === '/v1/models' && entry.bearer === saved), 30_000);
+        const seenBefore = stub.state.seen.length;
+        await restart();
+        await openAI();
+        const bearer = await modelsAsked(seenBefore, 'the model list asked after the kill');
+        check(bearer === saved, '(9) a key the field showed as saved is the stored key after a kill at once after');
+        journalClean(saved);
     }
 
     // AI off again, so the other device checks see the editor and Process Inbox without it.

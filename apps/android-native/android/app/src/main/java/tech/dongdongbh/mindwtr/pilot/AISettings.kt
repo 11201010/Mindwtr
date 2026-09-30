@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import java.util.UUID
+import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -87,7 +88,10 @@ private const val KEY_DOT = "•"
 /** RN's picker Check (lucide at stroke 2.5). */
 private val PickerCheck = lucide("PickerCheck", "M20 6 9 17l-5-5", stroke = 2.5f)
 
-/** The typed text a field sends once typing pauses (RN writes each keystroke; one write per pause keeps the journal small). */
+/**
+ * The typed text a synced field sends once typing pauses (RN writes each keystroke; one write per pause keeps the journal small).
+ * A key and a base URL have no pause (review C1 4): each change is one unjournaled write, in order, so a kill never loses one.
+ */
 private const val TYPING_PAUSE_MS = 500L
 
 class AISettingsModel(private val menu: MenuModel) {
@@ -118,8 +122,12 @@ class AISettingsModel(private val menu: MenuModel) {
     var consent by mutableStateOf<Pair<JSONObject, JSONObject>?>(null); private set
     /** The model lists asked for, by list, so each request goes once (core's `modelLists`). */
     private val asked = HashMap<String, String>()
-    /** Each field's pending typed text: its send runs once typing pauses, or at once on blur or leave. */
+    /** Each synced field's pending typed text: its send runs once typing pauses, or at once on blur or leave. */
     private val pending = LinkedHashMap<String, Runnable>()
+    /** A key field whose last write failed: it keeps the typed key on blur (it never shows saved). Main thread. */
+    private val unsaved = HashSet<String>()
+    /** The model lists loading: leaving the screen or a newer request cancels one (its provider call stops). */
+    private val modelCalls = AIRequestSlots<CoreHost.LongCall> { call -> shell.coreHost()?.cancel(call) }
 
     /** Settings' read of this screen: it opens once per visit (journaled), then core's view for the visit. */
     fun read(runtime: CoreHost): JSONObject {
@@ -175,11 +183,15 @@ class AISettingsModel(private val menu: MenuModel) {
     private fun loadModels(list: String, request: String) {
         if (asked[list] != request || !opened) return
         val runtime = shell.coreHost() ?: return
+        val handle = CoreHost.LongCall()
+        modelCalls.start(list, handle)
         Thread({
-            runCatching { runtime.aiRequest("loadAIModels", JSONObject().put("list", list).put("request", request).toString()) }
-                .onFailure { Log.w(CoreHost.TAG, "AI model list failed code=${it.message?.substringBefore(':')}") }
+            runCatching { runtime.aiRequest("loadAIModels", JSONObject().put("list", list).put("request", request).toString(), handle) }
+                .onFailure { if (it !is CancellationException) Log.w(CoreHost.TAG, "AI model list failed code=${it.message?.substringBefore(':')}") }
+            val wanted = modelCalls.wanted(list, handle)
+            modelCalls.finished(list, handle)
             // Read again once no action runs (a background read skips while one does), so the new list shows.
-            shell.ui { menu.whenIdle { settings.refresh() } }
+            if (wanted) shell.ui { menu.whenIdle { settings.refresh() } }
         }, "mindwtr-ai-models").start()
     }
 
@@ -193,10 +205,11 @@ class AISettingsModel(private val menu: MenuModel) {
     fun leave() {
         if (!opened && typed.isEmpty() && pending.isEmpty()) return
         flushAll()
+        modelCalls.cancel("assistant", "speech")
         opened = false
         assistantOpen = false; speechOpen = false; advancedOpen = false; extraOpen = false
         picker = null; typed = emptyMap(); keys = emptyMap(); extraDraft = null; extraFollowed = null; consent = null
-        asked.clear()
+        asked.clear(); unsaved.clear()
         val runtime = shell.coreHost() ?: return
         ordered.execute { runCatching { runtime.menuRead("aiSettingsClose", "{}") }.onFailure { Log.w(CoreHost.TAG, "AI screen close failed", it) } }
     }
@@ -213,17 +226,17 @@ class AISettingsModel(private val menu: MenuModel) {
         schedule(field) { menu.whenIdle { set(change()) } }
     }
 
-    /** A base URL as typed ([field] "baseUrl" or "speechBaseUrl"): setAIEndpoint once typing pauses. Never journaled. */
+    /** A base URL as typed ([field] "baseUrl" or "speechBaseUrl"): setAIEndpoint at once, in order. Never journaled. */
     fun typeUrl(field: String, text: String) {
         typed = typed + (field to text)
         val target = if (field == "baseUrl") "assistant" else "speech"
-        schedule(field) { screenWrite("setAIEndpoint", JSONObject().put("field", target).put("value", text)) }
+        screenWrite("setAIEndpoint", JSONObject().put("field", target).put("value", text))
     }
 
     /**
      * A key field's text. RN's secure field starts with the stored key; here it starts with core's dots, so the first edit starts
      * the key over: the text typed after the dots, or, for any other edit (a Backspace, a keystroke among the dots), what was typed,
-     * dots left out. A partial edit of the dots never becomes the key. setAIKey goes once typing pauses, naming the provider shown.
+     * dots left out. A partial edit of the dots never becomes the key. setAIKey goes at once, in order, naming the provider shown.
      */
     fun typeKey(field: String, provider: String, mask: String, text: String) {
         val current = keys[field]
@@ -233,13 +246,15 @@ class AISettingsModel(private val menu: MenuModel) {
             else -> text.replace(KEY_DOT, "")
         }
         keys = keys + (field to next)
-        schedule("key:$field") { screenWrite("setAIKey", JSONObject().put("field", field).put("provider", provider).put("value", next)) }
+        screenWrite("setAIKey", JSONObject().put("field", field).put("provider", provider).put("value", next), keyField = field)
     }
 
-    /** A key field lost focus: its key is sent now and leaves the screen's state; the field shows core's dots again. */
+    /**
+     * A key field lost focus: once its writes before are stored, the key leaves the screen's state and the field shows core's dots
+     * (saved). A failed write keeps the typed key in the field.
+     */
     fun blurKey(field: String) {
-        flush("key:$field")
-        keys = keys - field
+        ordered.execute { shell.ui { if (field !in unsaved) keys = keys - field } }
     }
 
     /** The extra request parameters as typed, and their Save (core parses the text and answers the field's text). */
@@ -264,12 +279,16 @@ class AISettingsModel(private val menu: MenuModel) {
     private fun flush(key: String) { pending.remove(key)?.let { main.removeCallbacks(it); it.run() } }
     private fun flushAll() { pending.keys.toList().forEach(::flush) }
 
-    /** A key or base URL write, in order, off the main thread; core's view is read again after it. Its failure is shown, never kept. */
-    private fun screenWrite(name: String, input: JSONObject) {
+    /**
+     * A key or base URL write, in order, off the main thread; core's view is read again after it. Its failure is shown, never
+     * kept for a retry; a key's ([keyField]) marks the field unsaved until a later write of it lands.
+     */
+    private fun screenWrite(name: String, input: JSONObject, keyField: String? = null) {
         val runtime = shell.coreHost() ?: return
         ordered.execute {
             val result = runCatching { runtime.menuCommand(name, input.put("requestId", uuid()).toString()) }
             shell.ui {
+                keyField?.let { if (result.isSuccess) unsaved -= it else unsaved += it }
                 result.exceptionOrNull()?.let { error ->
                     // Core's message names no key: its failures are redacted (redactAIError).
                     Log.w(CoreHost.TAG, "AI screen command failed command=$name code=${error.message?.substringBefore(':')}")
