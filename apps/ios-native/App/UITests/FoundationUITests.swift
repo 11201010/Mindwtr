@@ -12609,4 +12609,134 @@ final class FoundationUITests: XCTestCase {
         XCTAssertEqual(task102LockToggle(app).value as? String, "0"); app.terminate()
     }
 
+    private func task103Open(_ app: XCUIApplication) {
+        if !app.buttons["gtd-back"].exists {
+            if !app.buttons["settings-back"].exists {
+                boardTap(app, "tab-menu")
+                let settings = app.buttons["menu-settings"]
+                if !settings.isHittable { revealPagedElement(app, settings, in: app.scrollViews.containing(.button, identifier: "menu-settings").firstMatch) }
+                boardTap(app, "menu-settings")
+            }
+            let row = app.buttons["settings-gtd"]
+            revealPagedElement(app, row, in: app.scrollViews.containing(.button, identifier: "settings-gtd").firstMatch)
+            boardTap(app, "settings-gtd")
+        }
+        boardEnabled(app.buttons["gtd-back"], timeout: 30)
+    }
+
+    private func task103Option(_ app: XCUIApplication, _ field: String, _ value: String) -> XCUIElement {
+        let option = app.buttons["gtd-" + field + "-" + value]
+        revealPagedElement(app, option, in: app.scrollViews["gtd-scroll"])
+        boardEnabled(option)
+        return option
+    }
+
+    private func task103Time(_ app: XCUIApplication, _ value: String, expected: String) {
+        let input = app.textFields["gtd-defaultScheduleTime"]
+        revealPagedElement(app, input, in: app.scrollViews["gtd-scroll"])
+        if value.isEmpty {
+            input.tap()
+            input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (input.value as? String ?? "").count))
+        } else { replaceTextView(input, with: value, tapOffset: CGVector(dx: 0.5, dy: 0.5)) }
+        let done = app.buttons["gtd-time-done"]
+        if done.exists { boardTap(app, "gtd-time-done") }
+        else { app.keyboards.buttons["Done"].tap() }
+        let displayed = expected.isEmpty ? (input.placeholderValue ?? "") : expected
+        expectation(for: NSPredicate(format: "(value == %@ OR value == %@) AND enabled == true", expected, displayed), evaluatedWith: input)
+        waitForExpectations(timeout: 20)
+        boardEnabled(app.buttons["gtd-back"])
+    }
+
+    private func task103Normal(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task103Open(app)
+        task103Time(app, "25:99", expected: "")
+        XCTAssertTrue(app.staticTexts["gtd-error"].exists)
+        task103Time(app, "930", expected: "09:30")
+        task103Time(app, "", expected: "")
+        task103Time(app, "09:30", expected: "09:30")
+        for (field, value) in [("focusTaskLimit", "3"), ("defaultProjectFlowMode", "sequential")] {
+            let option = task103Option(app, field, value); option.tap()
+            expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: option)
+            waitForExpectations(timeout: 20)
+            option.tap(); boardEnabled(option); XCTAssertTrue(option.isSelected)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "GTD workflow choices"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task103Open(app)
+        XCTAssertEqual(app.textFields["gtd-defaultScheduleTime"].value as? String, "09:30")
+        XCTAssertTrue(task103Option(app, "focusTaskLimit", "3").isSelected)
+        XCTAssertTrue(task103Option(app, "defaultProjectFlowMode", "sequential").isSelected)
+        boardTap(app, "gtd-back"); boardEnabled(app.buttons["settings-back"])
+        app.terminate()
+    }
+
+    func testGtdWorkflowNormal() { task103Normal("8873db3f-7d5a-445f-92e2-91a43dfee1e4") }
+    func testGtdWorkflowLargest() { task103Normal("7ce5f0b9-62c8-4395-92e8-1f92e5c3efff") }
+
+    func testGtdWorkflowAcknowledgedReadRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "65a3f9df-36ec-4994-9e6c-8a67a9551ddb", "--native-gtd-workflow-read-failure"]
+        app.launch(); task103Open(app); task103Option(app, "focusTaskLimit", "3").tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-back"], timeout: 30)
+        XCTAssertTrue(task103Option(app, "focusTaskLimit", "3").isSelected)
+        app.terminate()
+    }
+
+    func testGtdWorkflowRefusalCorrection() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "4cf68dd6-b7fe-4316-a433-71b4b31dd546", "--native-gtd-workflow-refusal"]
+        app.launch(); task103Open(app); task103Option(app, "focusTaskLimit", "3").tap()
+        XCTAssertTrue(app.staticTexts["gtd-error"].waitForExistence(timeout: 20))
+        XCTAssertTrue(task103Option(app, "focusTaskLimit", "5").isSelected)
+        let option = task103Option(app, "focusTaskLimit", "3"); option.tap()
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: option)
+        waitForExpectations(timeout: 20); app.terminate()
+    }
+
+    func testGtdWorkflowFailedSaveExactRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "dd053d3a-bc35-4513-96fe-96b80a371c4f"]
+        app.launch(); task103Open(app); task103Option(app, "focusTaskLimit", "3").tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-retry"], timeout: 30); app.terminate()
+    }
+
+    func testGtdWorkflowColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "dd053d3a-bc35-4513-96fe-96b80a371c4f"]
+        app.launch(); boardEnabled(app.buttons["gtd-back"], timeout: 30)
+        XCTAssertTrue(task103Option(app, "focusTaskLimit", "3").isSelected)
+        XCTAssertFalse(app.buttons["gtd-retry"].exists); app.terminate()
+    }
+
+    func testGtdWorkflowDirtyDraftActions() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "252e9f65-4c21-45a8-98d7-c204f0111dcb"]
+        app.launch(); task103Open(app)
+        let input = app.textFields["gtd-defaultScheduleTime"]
+        revealPagedElement(app, input, in: app.scrollViews["gtd-scroll"])
+        replaceTextView(input, with: "930", tapOffset: CGVector(dx: 0.5, dy: 0.5))
+        let option = task103Option(app, "focusTaskLimit", "1"); option.tap()
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: option)
+        waitForExpectations(timeout: 20)
+        XCTAssertEqual(input.value as? String, "09:30")
+        revealPagedElement(app, input, in: app.scrollViews["gtd-scroll"])
+        replaceTextView(input, with: "1045", tapOffset: CGVector(dx: 0.5, dy: 0.5))
+        boardTap(app, "gtd-back"); boardEnabled(app.buttons["settings-back"])
+        app.terminate(); app.launch(); task103Open(app)
+        XCTAssertEqual(input.value as? String, "10:45")
+        XCTAssertTrue(task103Option(app, "focusTaskLimit", "1").isSelected)
+        app.terminate()
+    }
+
 }

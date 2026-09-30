@@ -1076,6 +1076,26 @@ describe('canonical local reads contract', () => {
                 expect(nativeValue(await host.commitPreparedGeneralPreference({ request, prepared: planned.prepared })))
                     .toEqual(planned.prepared.result);
             },
+            commitPreparedGtdWorkflow: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(await host.getGtdWorkflowOptions({}));
+                const choice = options.hub.focusTaskLimit.options.find((row) => !row.selected);
+                expect(choice).toBeDefined();
+                if (!choice) return;
+                const request = { requestId: 'e6f4db74-d874-4799-b2b3-849c024d0103',
+                    edit: { type: 'focusTaskLimit' as const, value: choice.value },
+                    expected: options.expected.focusTaskLimit };
+                const planned = nativeValue(await host.prepareGtdWorkflow(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.settings.gtd?.focusTaskLimit).toBe(choice.value);
+                    expect(written.settings.syncPreferencesUpdatedAt?.gtd).toBe(planned.prepared.after.stamp);
+                    expect(written.tasks).toHaveLength(settled.tasks.length);
+                });
+                expect(nativeValue(await host.commitPreparedGtdWorkflow({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+            },
             commitPreparedAppLock: async (control) => {
                 const host = await nativeHost(control);
                 const options = nativeValue(await host.getAppLockOptions({}));

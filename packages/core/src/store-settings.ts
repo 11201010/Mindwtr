@@ -35,6 +35,7 @@ import { buildLoadContext, runAutoArchive, runLoadMigrations } from './store-loa
 import { createSeedGettingStartedAction } from './getting-started-seed';
 import { beginNotifyProfile, endNotifyProfile, profilerNow, recordDerivedStateRebuild, type NotifyProfile } from './store-notify-profiler';
 import { buildGeneralSettingsUpdate } from './general-settings-model';
+import { buildGtdSettingsUpdate, isGtdSettingStored } from './gtd-settings-model';
 import { generalPreferenceWitness } from './general-preference-witness';
 import { taskEditValuesEqual } from './json-value-equality';
 
@@ -94,6 +95,30 @@ export const appLockWitness = (settings: AppSettings): AppLockWitness | null => 
     const present = owns(group, 'mobileAppLockEnabled');
     const value = present ? group.mobileAppLockEnabled : null;
     return present && typeof value !== 'boolean' ? null : { groupPresent: true, present, value: value ?? null };
+};
+
+export type GtdWorkflowType = 'defaultScheduleTime' | 'focusTaskLimit' | 'defaultProjectFlowMode';
+export type GtdWorkflowWitness = { present: boolean; value: string | number | null;
+    stampPresent: boolean; stamp: string | null };
+const boundedRawGtdValue = (type: GtdWorkflowType, value: unknown): value is string | number =>
+    type === 'focusTaskLimit'
+        ? typeof value === 'number' && Number.isSafeInteger(value) && Math.abs(value) <= 1_000_000
+        : typeof value === 'string' && value.length <= 500;
+/** One raw GTD scalar and its group stamp, without carrying the Settings row. */
+export const gtdWorkflowWitness = (settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null => {
+    const group = settings.gtd;
+    const stamps = settings.syncPreferencesUpdatedAt;
+    if (group !== undefined && (!group || typeof group !== 'object' || Array.isArray(group))
+        || stamps !== undefined && (!stamps || typeof stamps !== 'object' || Array.isArray(stamps))) return null;
+    const present = group !== undefined && owns(group, type) && group[type] !== undefined;
+    const value = present ? group?.[type] : null;
+    const stampPresent = stamps !== undefined && owns(stamps, 'gtd') && stamps.gtd !== undefined;
+    const stamp = stampPresent ? stamps?.gtd : null;
+    if (present && !boundedRawGtdValue(type, value)
+        || stampPresent && !(typeof stamp === 'string' && stamp.length <= 40
+            && Number.isFinite(Date.parse(stamp)) && new Date(stamp).toISOString() === stamp)) return null;
+    return { present, value: present ? value as string | number : null,
+        stampPresent, stamp: stampPresent ? stamp! : null };
 };
 
 export const prepareLocalSavedFilterUpdates = (
@@ -176,7 +201,7 @@ type SettingsActionContext = {
     getStorage: () => StorageAdapter;
 };
 
-type SettingsActions = Pick<TaskStore, 'fetchData' | 'seedGettingStarted' | 'updateSettings' | 'commitPreparedGeneralPreference' | 'commitPreparedAppLock' | 'retryPreparedAppLockSnapshot' | 'commitPreparedFocusSavedFilter' | 'persistSnapshot' | 'getDerivedState' | 'getFocusedCount' | 'setHighlightTask'>;
+type SettingsActions = Pick<TaskStore, 'fetchData' | 'seedGettingStarted' | 'updateSettings' | 'commitPreparedGeneralPreference' | 'commitPreparedGtdWorkflow' | 'commitPreparedAppLock' | 'retryPreparedAppLockSnapshot' | 'commitPreparedFocusSavedFilter' | 'persistSnapshot' | 'getDerivedState' | 'getFocusedCount' | 'setHighlightTask'>;
 
 export const createSettingsActions = ({
     set,
@@ -743,6 +768,58 @@ export const createSettingsActions = ({
                     [group]: input.after.stamp },
                 ...(input.deviceIdToInitialize ? { deviceId: input.deviceIdToInitialize } : {}) };
             const fresh = generalPreferenceWitness(settings, edit.type);
+            if (!fresh || !fresh.present || !taskEditValuesEqual(fresh.value, input.after.value)
+                || !fresh.stampPresent || fresh.stamp !== input.after.stamp) return memory;
+            const freshTasks = durable.tasks.map((row) => normalizeTaskForLoad(row));
+            const freshProjects = durable.projects.map(normalizeProjectLifecycleFields);
+            clearDerivedCache();
+            persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks,
+                _allProjects: durable.projects, _allSections: durable.sections ?? [],
+                _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [], settings: durable.settings },
+            { ...durable, settings });
+            const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+            authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
+                generation: getSaveGeneration(), failure: memory.persistenceFailure };
+            result = { success: true, outcome: 'applied' };
+            return { _allTasks: freshTasks, _allProjects: freshProjects,
+                _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [],
+                _allPeople: durable.people ?? [], settings, lastDataChangeAt };
+        });
+        return result;
+    },
+
+    commitPreparedGtdWorkflow: async (input, authority) => {
+        let result: import('./store-types').PreparedTaskEditResult = { success: false,
+            reason: 'conflict', error: 'GTD workflow default changed; refresh GTD' };
+        set((memory) => {
+            const before = authority.state;
+            if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                || memory._allAreas !== before._allAreas || memory._allSections !== before._allSections
+                || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
+            const durable = authority.snapshot;
+            const { edit, expected } = input.request;
+            const current = gtdWorkflowWitness(durable.settings, edit.type);
+            if (!current) return memory;
+            const after = current.present && taskEditValuesEqual(current.value, input.after.value)
+                && current.stampPresent && current.stamp === input.after.stamp
+                && (durable.settings.deviceId ?? null)
+                    === (input.deviceIdBefore ?? input.deviceIdToInitialize);
+            if (after) {
+                result = { success: true, outcome: 'replayed' };
+                return memory;
+            }
+            if (!taskEditValuesEqual(current, expected)
+                || (durable.settings.deviceId ?? null) !== input.deviceIdBefore) return memory;
+            if (isGtdSettingStored(durable.settings, edit)) return memory;
+            const update = buildGtdSettingsUpdate(durable.settings, edit);
+            if (!update || input.after.stamp !== timestampAtLeastAfter(input.preparedAt, expected.stamp ?? undefined))
+                return memory;
+            const settings: AppData['settings'] = { ...durable.settings, ...update,
+                syncPreferencesUpdatedAt: { ...(durable.settings.syncPreferencesUpdatedAt ?? {}),
+                    gtd: input.after.stamp },
+                ...(input.deviceIdToInitialize ? { deviceId: input.deviceIdToInitialize } : {}) };
+            const fresh = gtdWorkflowWitness(settings, edit.type);
             if (!fresh || !fresh.present || !taskEditValuesEqual(fresh.value, input.after.value)
                 || !fresh.stampPresent || fresh.stamp !== input.after.stamp) return memory;
             const freshTasks = durable.tasks.map((row) => normalizeTaskForLoad(row));

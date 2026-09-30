@@ -244,6 +244,21 @@ final class CoreModel: ObservableObject {
             && settingsPersonDeleteError == nil && manageReadError == nil
     }
 
+    @Published private(set) var settingsGtdPresented = false
+    @Published private(set) var gtdWorkflow: CoreObject = [:]
+    @Published private(set) var gtdWorkflowError: String?
+    @Published private(set) var gtdWorkflowReadError: String?
+    @Published private(set) var gtdWorkflowAwaitingRefresh = false
+    @Published private(set) var gtdScheduleDraft = ""
+    private var gtdWorkflowExpected: CoreObject = [:]
+    private var gtdWorkflowRequest: String?
+    private var gtdWorkflowEdit: CoreObject = [:]
+    var gtdWorkflowPending: Bool { gtdWorkflowRequest != nil || gtdWorkflowAwaitingRefresh }
+    var gtdWorkflowDraftDirty: Bool { settingsGtdPresented && gtdScheduleDraft != gtdWorkflow.object("defaultScheduleTime").text("value") }
+    var gtdWorkflowEnabled: Bool {
+        ready && selectedSurface == .settings && settingsGtdPresented && !busy && !retryNeeded
+            && !gtdWorkflowPending && gtdWorkflowReadError == nil && !gtdWorkflow.isEmpty
+    }
     @Published private(set) var settingsGeneralPresented = false
     @Published private(set) var generalSettings: CoreObject = [:]
     let appLock = AppLockController()
@@ -264,7 +279,7 @@ final class CoreModel: ObservableObject {
     private var generalPreferenceRequest: String?
     private var generalPreferenceEdit: CoreObject = [:]
     private var generalPreferenceAcknowledged = false
-    var generalPreferenceActive: Bool { generalPreferenceRequest != nil || generalPreferenceAwaitingRefresh || appLockActive }
+    var generalPreferenceActive: Bool { generalPreferenceRequest != nil || generalPreferenceAwaitingRefresh || appLockActive || gtdWorkflowPending || gtdWorkflowDraftDirty }
     var generalPreferenceEnabled: Bool {
         ready && selectedSurface == .settings && settingsGeneralPresented && !busy && !retryNeeded
             && !generalPreferenceActive && generalPreferenceReadError == nil && !generalSettings.isEmpty
@@ -676,6 +691,8 @@ final class CoreModel: ObservableObject {
     private var managePersonDeleteOptionsTestReadFailures = 0
     private var managePersonDeleteTestRefusals = 0
     private var appLockTestReadFailures = 0
+    private var gtdWorkflowTestReadFailures = 0
+    private var gtdWorkflowTestRefusals = 0
     private var generalPreferenceTestReadFailures = 0
     private var generalPreferenceMenuTestReadFailures = 0
     private var generalPreferenceThemeTestReadFailures = 0
@@ -1657,6 +1674,8 @@ final class CoreModel: ObservableObject {
                     managePersonDeleteOptionsTestReadFailures = arguments.contains("--native-manage-person-delete-options-read-failure") ? 1 : 0
                     managePersonDeleteTestRefusals = arguments.contains("--native-manage-person-delete-refusal") ? 1 : 0
                     appLockTestReadFailures = arguments.contains("--native-app-lock-read-failure") ? 2 : 0
+                    gtdWorkflowTestReadFailures = arguments.contains("--native-gtd-workflow-read-failure") ? 2 : 0
+                    gtdWorkflowTestRefusals = arguments.contains("--native-gtd-workflow-refusal") ? 1 : 0
                     generalPreferenceTestReadFailures = arguments.contains("--native-general-preference-read-failure") ? 2 : 0
                     generalPreferenceMenuTestReadFailures = arguments.contains("--native-general-preference-menu-read-failure") ? 2 : 0
                     generalPreferenceThemeTestReadFailures = arguments.contains("--native-general-preference-theme-read-failure") ? 2 : 0
@@ -1827,6 +1846,9 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .focus
             } else if recovery.text("method") == "taskListSortWrite" {
                 selectedSurface = .reference
+            } else if recovery.text("method") == "gtdWorkflowCommit" {
+                selectedSurface = .settings
+                settingsGtdPresented = true
             } else if ["generalPreferenceCommit", "appLockCommit"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsGeneralPresented = true
@@ -1950,6 +1972,7 @@ final class CoreModel: ObservableObject {
         settingsReadError = nil
         settingsSearch = ""
         settingsGeneralPresented = false
+        settingsGtdPresented = false
         generalPreferencePicker = nil
         selectedSurface = .settings
         busy = true
@@ -1997,6 +2020,132 @@ final class CoreModel: ObservableObject {
         guard generation == nil || settingsSearchGeneration == generation else { return }
         settingsMenu = result
         settingsReadError = nil
+    }
+
+    func openGtdSettings() async {
+        guard ready, selectedSurface == .settings, !settingsManagePresented, !settingsGeneralPresented, !busy, !retryNeeded else { return }
+        settingsSearchTask?.cancel()
+        settingsSearchGeneration += 1
+        settingsGtdPresented = true
+        gtdWorkflowError = nil
+        busy = true
+        defer { finishOperation() }
+        do { try await readGtdWorkflow() }
+        catch { gtdWorkflowReadError = error.localizedDescription }
+    }
+
+    func closeGtdSettings() async {
+        guard settingsGtdPresented, !busy, !retryNeeded, !gtdWorkflowPending else { return }
+        if gtdWorkflowDraftDirty {
+            await commitGtdScheduleDraft()
+            guard gtdWorkflowError == nil else { return }
+        }
+        guard !busy, !retryNeeded, !gtdWorkflowPending, !gtdWorkflowDraftDirty else { return }
+        settingsGtdPresented = false
+        gtdWorkflowReadError = nil
+    }
+
+    private func readGtdWorkflow() async throws {
+        let options = try await query("gtdWorkflowOptions", ["{}"])
+        let hub = options.object("hub"), expected = options.object("expected")
+        guard Set(options.keys) == Set(["hub", "expected"]), !hub.text("title").isEmpty,
+              Set(expected.keys) == Set(["defaultScheduleTime", "focusTaskLimit", "defaultProjectFlowMode"]) else { throw CocoaError(.coderReadCorrupt) }
+        gtdWorkflow = hub
+        gtdWorkflowExpected = expected
+        gtdScheduleDraft = hub.object("defaultScheduleTime").text("value")
+        gtdWorkflowReadError = nil
+        gtdWorkflowAwaitingRefresh = false
+    }
+
+    func setGtdScheduleDraft(_ value: String) {
+        guard gtdWorkflowEnabled else { return }
+        gtdScheduleDraft = value
+        gtdWorkflowError = nil
+    }
+
+    func commitGtdScheduleDraft() async {
+        guard gtdWorkflowEnabled, gtdWorkflowDraftDirty, !appLock.concealed else { return }
+        busy = true
+        let draft = gtdScheduleDraft
+        do {
+            let normalized = try await query("gtdWorkflowDraft", [try json(["value": draft])])
+            guard normalized.flag("valid") else {
+                gtdScheduleDraft = gtdWorkflow.object("defaultScheduleTime").text("value")
+                gtdWorkflowError = gtdWorkflow.object("defaultScheduleTime").text("invalidMessage")
+                finishOperation()
+                return
+            }
+            gtdScheduleDraft = normalized.text("value")
+            finishOperation()
+            await saveGtdWorkflow(["type": "defaultScheduleTime", "value": normalized.text("value")])
+        } catch {
+            if isDefiniteRejection(error) {
+                gtdScheduleDraft = gtdWorkflow.object("defaultScheduleTime").text("value")
+                gtdWorkflowError = gtdWorkflow.object("defaultScheduleTime").text("invalidMessage")
+            } else { gtdWorkflowError = error.localizedDescription }
+            finishOperation()
+        }
+    }
+
+    func chooseGtdWorkflow(_ edit: CoreObject) async {
+        guard gtdWorkflowEnabled else { return }
+        if gtdWorkflowDraftDirty {
+            await commitGtdScheduleDraft()
+            guard gtdWorkflowError == nil else { return }
+        }
+        guard gtdWorkflowEnabled, !gtdWorkflowDraftDirty else { return }
+        await saveGtdWorkflow(edit)
+    }
+
+    private func saveGtdWorkflow(_ edit: CoreObject) async {
+        guard gtdWorkflowEnabled, let expected = gtdWorkflowExpected[edit.text("type")] as? CoreObject else { return }
+        gtdWorkflowEdit = edit
+        gtdWorkflowError = nil
+        busy = true
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "edit": edit, "expected": expected])
+            gtdWorkflowRequest = request
+            try acknowledgeGtdWorkflow(await query("gtdWorkflow", [request]))
+            try await readGtdWorkflow()
+        } catch { await handleGtdWorkflowError(error) }
+    }
+
+    private func acknowledgeGtdWorkflow(_ result: CoreObject) throws {
+        guard gtdWorkflowRequest != nil, Set(result.keys) == Set(["type", "value", "changed"]),
+              result.text("type") == gtdWorkflowEdit.text("type"), result["changed"] is Bool,
+              try json(["value": result["value"] ?? NSNull()]) == json(["value": gtdWorkflowEdit["value"] ?? NSNull()]) else { throw CocoaError(.coderReadCorrupt) }
+        gtdWorkflowRequest = nil
+        gtdWorkflowAwaitingRefresh = true
+        gtdWorkflowError = nil
+        retryNeeded = false
+        error = nil
+    }
+
+    private func handleGtdWorkflowError(_ failure: Error) async {
+        gtdWorkflowError = failure.localizedDescription
+        if gtdWorkflowRequest != nil && isDefiniteRejection(failure) {
+            gtdWorkflowRequest = nil
+            retryNeeded = false
+            error = nil
+            gtdWorkflowAwaitingRefresh = true
+            do { try await readGtdWorkflow() }
+            catch { gtdWorkflowReadError = error.localizedDescription }
+        } else if gtdWorkflowRequest != nil {
+            retryNeeded = true
+            error = failure.localizedDescription
+        } else {
+            gtdWorkflowReadError = failure.localizedDescription
+        }
+    }
+
+    func retryGtdWorkflow() async {
+        if retryNeeded { await retry(); return }
+        guard settingsGtdPresented, !busy, gtdWorkflowRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do { try await readGtdWorkflow(); gtdWorkflowError = nil }
+        catch { gtdWorkflowReadError = error.localizedDescription }
     }
 
     func openGeneralSettings() async {
@@ -2190,7 +2339,7 @@ final class CoreModel: ObservableObject {
                     "taskEdit.details", "projects.statusLabel", "projects.projectTypeLabel", "projects.sequentialScope",
                     "projects.sequentialAcrossSections", "projects.sequentialWithinSections",
                     "projects.projectTypeHelpText", "projects.sequentialScopeHelpText",
-                    "projects.sectionsLabel", "projects.addSection", "projects.sectionPlaceholder", "projects.deleteSectionConfirm", "settings.manage", "settings.general", "taskEdit.tagsLabel", "taskEdit.startDateLabel", "taskEdit.dueDateLabel",
+                    "projects.sectionsLabel", "projects.addSection", "projects.sectionPlaceholder", "projects.deleteSectionConfirm", "settings.manage", "settings.general", "settings.gtd", "taskEdit.tagsLabel", "taskEdit.startDateLabel", "taskEdit.dueDateLabel",
                     "projects.reviewAt", "common.none",
                     "project.notes",
                     "areas.manage", "areas.nameExists", "projects.manageAreas", "projects.changeColor", "projects.colorNone",
@@ -14275,6 +14424,15 @@ final class CoreModel: ObservableObject {
                 try await acknowledgeAppLock(result)
                 return
             }
+            if let request = gtdWorkflowRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("gtdWorkflowRetryOutcome", [request]) }
+                try acknowledgeGtdWorkflow(result)
+                do { try await readGtdWorkflow() }
+                catch { gtdWorkflowReadError = error.localizedDescription }
+                return
+            }
             if let request = generalPreferenceRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -14517,6 +14675,10 @@ final class CoreModel: ObservableObject {
             }
             if appLockRequest != nil {
                 await handleAppLockError(error)
+                return
+            }
+            if gtdWorkflowRequest != nil {
+                await handleGtdWorkflowError(error)
                 return
             }
             if generalPreferenceRequest != nil {
@@ -15266,6 +15428,10 @@ final class CoreModel: ObservableObject {
         case .someday: await readSomeday()
         case .settings:
             try await readSettingsMenu()
+            if settingsGtdPresented {
+                do { try await readGtdWorkflow() }
+                catch { gtdWorkflowReadError = error.localizedDescription; throw error }
+            }
             if settingsGeneralPresented {
                 do { try await readGeneralSettings() }
                 catch { generalPreferenceReadError = error.localizedDescription; throw error }
@@ -15400,6 +15566,14 @@ final class CoreModel: ObservableObject {
         if method == "theme", generalPreferenceAcknowledged, generalPreferenceThemeTestReadFailures > 0 {
             generalPreferenceThemeTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
+        }
+        if method == "gtdWorkflowOptions", gtdWorkflowAwaitingRefresh, gtdWorkflowTestReadFailures > 0 {
+            gtdWorkflowTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "gtdWorkflow", gtdWorkflowRequest != nil, gtdWorkflowTestRefusals > 0 {
+            gtdWorkflowTestRefusals -= 1
+            throw SimulatedManageAreaRefusal()
         }
         if method == "generalPreferenceOptions", generalPreferenceAcknowledged, generalPreferenceTestReadFailures > 0 {
             generalPreferenceTestReadFailures -= 1

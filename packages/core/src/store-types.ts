@@ -596,6 +596,9 @@ export interface TaskStore {
     /** Four synced General preference fields, prepared against a saved scalar and sync-group stamp. */
     commitPreparedGeneralPreference: (input: import('./native-host-contract-general-preference').NativePreparedGeneralPreference,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** One GTD workflow scalar and its group stamp, applied against raw saved authority. */
+    commitPreparedGtdWorkflow: (input: import('./native-host-contract-gtd-workflow').NativePreparedGtdWorkflow,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** One raw device-local security field, compared and queued against fresh durable authority. */
     commitPreparedAppLock: (request: import('./native-host-contract-app-lock').AppLockRequest,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;

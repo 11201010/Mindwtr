@@ -4,6 +4,7 @@ struct SettingsScreen: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @FocusState private var gtdTimeFocused: Bool
     @FocusState private var renameFocused: Bool
     @FocusState private var taxonomyNameFocused: Bool
     @State private var taxonomyDeleteConfirmPresented = false
@@ -23,7 +24,8 @@ struct SettingsScreen: View {
             HStack(spacing: 12) {
                 Button {
                     renameFocused = false
-                    if model.settingsGeneralPresented { model.closeGeneralSettings() }
+                    if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
+                    else if model.settingsGeneralPresented { model.closeGeneralSettings() }
                     else if model.settingsManagePresented { model.closeManageSettings() }
                     else { Task { await model.closeSettings() } }
                 } label: {
@@ -36,18 +38,19 @@ struct SettingsScreen: View {
                           || model.somedaySectionRenameAwaitingRefresh
                           || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
                           || model.somedaySectionOrderActive || model.unassignedAreaColorActive
-                          || model.generalPreferenceActive || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
+                          || (model.settingsGtdPresented ? model.gtdWorkflowPending : model.generalPreferenceActive) || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
                           || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
                 .accessibilityLabel(model.label("common.back"))
-                .accessibilityIdentifier(model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
-                Text(model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
+                .accessibilityIdentifier(model.settingsGtdPresented ? "gtd-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
+                Text(model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
                     .rnFont(20, .bold).foregroundStyle(palette.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
             }
             .padding(.horizontal, 12).padding(.vertical, 5)
             .background(palette.card)
-            if model.settingsGeneralPresented { generalContent }
+            if model.settingsGtdPresented { gtdContent }
+            else if model.settingsGeneralPresented { generalContent }
             else if model.settingsManagePresented { manageContent }
             else { menuContent }
         }
@@ -167,9 +170,110 @@ struct SettingsScreen: View {
             set: { if !$0 && !model.appLock.concealed { model.closeGeneralPreferencePicker() } }
         )) { generalPreferenceSheet }
         .accessibilityAction(.escape) {
-            if model.settingsGeneralPresented { model.closeGeneralSettings() }
+            if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
+            else if model.settingsGeneralPresented { model.closeGeneralSettings() }
             else if model.settingsManagePresented { model.closeManageSettings() }
             else { Task { await model.closeSettings() } }
+        }
+    }
+
+    private var gtdContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(model.gtdWorkflow.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 12) {
+                    generalSettingLabel(model.gtdWorkflow.object("features"), description: "description")
+                    palette.border.frame(height: 0.5)
+                    Toggle(isOn: .constant(model.gtdWorkflow.object("pomodoro").flag("value"))) {
+                        generalSettingLabel(model.gtdWorkflow.object("pomodoro"), description: "description")
+                    }.disabled(true).opacity(0.55).accessibilityIdentifier("gtd-pomodoro")
+                    if model.gtdWorkflow["pomodoroSettings"] is CoreObject { gtdNavigationRow("pomodoroSettings") }
+                }.padding(14).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        generalSettingLabel(model.gtdWorkflow.object("defaultScheduleTime"), description: "description")
+                        TextField(model.gtdWorkflow.object("defaultScheduleTime").text("placeholder"), text: Binding(
+                            get: { model.gtdScheduleDraft }, set: { model.setGtdScheduleDraft($0) }))
+                            .rnFont(16).keyboardType(.numbersAndPunctuation).submitLabel(.done)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .focused($gtdTimeFocused).disabled(!model.gtdWorkflowEnabled)
+                            .padding(12).frame(minHeight: 44)
+                            .background(palette.bg, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                            .accessibilityLabel(model.gtdWorkflow.object("defaultScheduleTime").text("label"))
+                            .accessibilityIdentifier("gtd-defaultScheduleTime")
+                            .onSubmit { gtdTimeFocused = false; Task { await model.commitGtdScheduleDraft() } }
+                    }.padding(14)
+                    ForEach(["focusTaskLimit", "defaultProjectFlowMode"], id: \.self) { field in
+                        palette.border.frame(height: 0.5)
+                        VStack(alignment: .leading, spacing: 12) {
+                            generalSettingLabel(model.gtdWorkflow.object(field), description: "description")
+                            let options = model.gtdWorkflow.object(field).objects("options")
+                            let columns = dynamicTypeSize.isAccessibilitySize
+                                ? (field == "defaultProjectFlowMode" ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 140), spacing: 4)])
+                                : Array(repeating: GridItem(.flexible(), spacing: 4), count: max(1, options.count))
+                            LazyVGrid(columns: columns, spacing: 4) {
+                                ForEach(options.indices, id: \.self) { index in
+                                    let option = options[index]
+                                    Button {
+                                        Task { await model.chooseGtdWorkflow(option.object("edit")); gtdTimeFocused = false }
+                                    } label: {
+                                        Text(option.text("label")).rnFont(14, .semibold)
+                                            .foregroundStyle(option.flag("selected") ? palette.tint : palette.secondary)
+                                            .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                                            .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 6)
+                                            .background(option.flag("selected") ? palette.filter : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                                    }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
+                                        .accessibilityAddTraits(option.flag("selected") ? .isSelected : [])
+                                        .accessibilityIdentifier("gtd-" + field + "-" + (field == "focusTaskLimit" ? String(option.number("value")) : option.text("value")))
+                                }
+                            }.padding(4).background(palette.bg, in: RoundedRectangle(cornerRadius: 10))
+                        }.padding(14)
+                    }
+                    gtdNavigationRow("autoArchive")
+                }.background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                if let message = model.gtdWorkflowReadError ?? model.gtdWorkflowError {
+                    Text(message).rnFont(13).foregroundStyle(palette.danger).accessibilityIdentifier("gtd-error")
+                    if model.gtdWorkflowReadError != nil || model.retryNeeded || model.gtdWorkflowAwaitingRefresh {
+                        Button(model.label("common.retry")) { Task { await model.retryGtdWorkflow() } }
+                            .disabled(model.busy).accessibilityIdentifier("gtd-retry")
+                    }
+                }
+                ForEach([["taskEditor", "capture"], ["review", "inbox"]], id: \.self) { fields in
+                    VStack(spacing: 0) {
+                        ForEach(fields, id: \.self) { field in gtdNavigationRow(field, divider: field != fields.first) }
+                    }.background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }.padding(16).padding(.bottom, 24)
+        }
+        .accessibilityIdentifier("gtd-scroll")
+        .onChange(of: gtdTimeFocused) { focused in
+            if !focused && !model.appLock.concealed { Task { await model.commitGtdScheduleDraft() } }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button(model.label("common.done")) { gtdTimeFocused = false; Task { await model.commitGtdScheduleDraft() } }
+                    .accessibilityIdentifier("gtd-time-done")
+            }
+        }
+    }
+
+    private func gtdNavigationRow(_ field: String, divider: Bool = true) -> some View {
+        let row = model.gtdWorkflow.object(field)
+        return VStack(spacing: 0) {
+            if divider { palette.border.frame(height: 0.5) }
+            Button {} label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(row.text("title")).rnFont(15).foregroundStyle(palette.text)
+                        Text(row.text("description")).rnFont(12).foregroundStyle(palette.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.right").foregroundStyle(palette.secondary).accessibilityHidden(true)
+                }.padding(14).frame(minHeight: 48)
+            }.buttonStyle(.plain).disabled(true).opacity(0.55).accessibilityIdentifier("gtd-" + field)
         }
     }
 
@@ -362,6 +466,7 @@ struct SettingsScreen: View {
                                 Button {
                                     if row.text("id") == "manage" { Task { await model.openManageSettings() } }
                                     else if row.text("id") == "general" { Task { await model.openGeneralSettings() } }
+                                    else if row.text("id") == "gtd" { Task { await model.openGtdSettings() } }
                                 } label: {
                                     HStack(spacing: 12) {
                                         Image(systemName: settingsSymbol(row.text("icon")))
@@ -381,8 +486,8 @@ struct SettingsScreen: View {
                                     }
                                     .padding(.horizontal, 14).frame(minHeight: 60).contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain).disabled(!["manage", "general"].contains(row.text("id")) || model.busy || model.retryNeeded)
-                                .opacity(["manage", "general"].contains(row.text("id")) ? 1 : 0.55)
+                                .buttonStyle(.plain).disabled(!["manage", "general", "gtd"].contains(row.text("id")) || model.busy || model.retryNeeded)
+                                .opacity(["manage", "general", "gtd"].contains(row.text("id")) ? 1 : 0.55)
                                 .accessibilityLabel(row.text("accessibilityLabel").isEmpty ? row.text("title") : row.text("accessibilityLabel"))
                                 .accessibilityIdentifier("settings-" + row.text("id"))
                                 if rowIndex < groups[groupIndex].count - 1 { palette.border.frame(height: 0.5) }

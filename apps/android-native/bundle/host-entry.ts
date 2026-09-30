@@ -1091,6 +1091,24 @@ globalThis.MindwtrHost = {
     generalPreferenceCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedGeneralPreference(JSON.parse(json))));
     },
+    gtdWorkflowOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.getGtdWorkflowOptions(JSON.parse(json))); });
+    },
+    gtdWorkflowDraft(json: string): string {
+        return submit(async () => unwrap(contract.normalizeGtdWorkflowDraft(JSON.parse(json))));
+    },
+    gtdWorkflowRetryOutcome(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.probeGtdWorkflowOutcome(JSON.parse(json))); });
+    },
+    gtdWorkflowPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareGtdWorkflow(JSON.parse(json))); });
+    },
+    gtdWorkflowValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedGtdWorkflow(JSON.parse(json))));
+    },
+    gtdWorkflowCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedGtdWorkflow(JSON.parse(json))));
+    },
     appLockOptions(json: string): string {
         return submit(async () => unwrap(await contract.getAppLockOptions(JSON.parse(json))));
     },
