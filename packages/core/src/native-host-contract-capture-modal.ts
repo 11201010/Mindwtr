@@ -25,10 +25,12 @@
  *   the user came from (#1169).
  * - A failed save: set `failed` in the draft; the card shows the failure until
  *   the next save starts (clear it when submitting).
- * - The AI: `view.copilot.request` is what React Native asks the AI now; the
- *   answer goes back as a setSuggestion edit. This host keeps no AI key yet
- *   (pass AI1), so a provider that needs one is never asked, as in React Native
- *   with no key; an OpenAI-compatible endpoint needs none.
+ * - The AI: `view.copilot.request` is what React Native asks the AI now; send
+ *   it to requestAICopilot, and the answer back as a setSuggestion edit. A host
+ *   that binds AI (createNativeHostContract's `ai`) is asked for any provider:
+ *   requestAICopilot loads the key itself and answers null without one, as
+ *   React Native asks nothing with no key. A host without it is asked only for
+ *   a provider that needs no key (an OpenAI-compatible endpoint).
  *
  * Shared files (initialProps.attachments) are left out: this host has no
  * managed attachments folder until the attachments pass (A2).
@@ -90,6 +92,8 @@ type CaptureModalDeps = {
     /** The user's date formatting (createDateFormatter). */
     formatDate: () => DateFormatter;
     requestIdPattern: RegExp;
+    /** The host binds AI: requestAICopilot, which checks the key, answers the copilot's question. */
+    aiBound: () => boolean;
 };
 
 export type NativeCaptureModalView = CaptureModalView & {
@@ -264,8 +268,8 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
         return {
             aiEnabled: settings.ai?.enabled === true,
             keyRequired: isAIKeyRequired(settings),
-            // ponytail: this host keeps no AI key until pass AI1, so a provider that needs one is never asked.
-            hasKey: false,
+            // requestAICopilot loads the key; a host without AI holds none, so a provider that needs one is never asked.
+            hasKey: deps.aiBound(),
             timeEstimatesEnabled: resolveFeatureFlags(settings).timeEstimates,
         };
     };

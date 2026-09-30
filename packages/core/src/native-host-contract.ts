@@ -1731,6 +1731,7 @@ export function createNativeHostContract(options: {
             formatDate: () => createDateFormatter(dateFormatting()),
             revision: (now) => `${revision()}:${displayRevision(now)}`,
             requestIdPattern: CAPTURE_ID_PATTERN,
+            aiBound: () => Boolean(options.ai),
         }),
         // A saved search's screen: native-host-contract-saved-search.ts.
         ...createSavedSearchMethods({
