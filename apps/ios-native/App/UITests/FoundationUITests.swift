@@ -4602,7 +4602,7 @@ final class FoundationUITests: XCTestCase {
                 boardTap(app, "tab-menu")
                 let settings = app.buttons["menu-settings"]
                 if !settings.isHittable {
-                    revealPagedElement(app, settings, in: app.scrollViews.containing(.button, identifier: "menu-projects").firstMatch)
+                    revealPagedElement(app, settings, in: app.scrollViews.containing(.button, identifier: "menu-settings").firstMatch)
                 }
                 boardTap(app, "menu-settings")
             }
@@ -4614,8 +4614,10 @@ final class FoundationUITests: XCTestCase {
     private func task97Picker(_ app: XCUIApplication, _ type: String) {
         let scroll = app.scrollViews["general-scroll"]
         let toggle = app.buttons["general-regional-toggle"]
-        revealPagedElement(app, toggle, in: scroll)
-        if toggle.value as? String == "collapsed" { boardTap(app, "general-regional-toggle") }
+        if type != "quickAccessView" {
+            revealPagedElement(app, toggle, in: scroll)
+            if toggle.value as? String == "collapsed" { boardTap(app, "general-regional-toggle") }
+        }
         let row = app.buttons["general-" + type]
         revealPagedElement(app, row, in: scroll)
         boardTap(app, "general-" + type)
@@ -4738,6 +4740,97 @@ final class FoundationUITests: XCTestCase {
 
     func testGeneralPreferencesColdRecovery() {
         let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "90f8667b-0455-4a88-89e0-28ba516c9520"]
+        app.launch(); task97Open(app); task97Picker(app, "dateFormat")
+        XCTAssertTrue(app.buttons["general-option-ymd"].isSelected)
+        boardTap(app, "general-picker-cancel"); app.terminate()
+    }
+
+    private func task98Normal(_ library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task97Open(app)
+        for value in ["review", "projects", "calendar", "contexts"] {
+            task97Picker(app, "quickAccessView"); boardTap(app, "general-picker-cancel")
+            task97Picker(app, "quickAccessView"); task97Choose(app, value)
+            task97Picker(app, "quickAccessView")
+            XCTAssertTrue(app.buttons["general-option-" + value].isSelected)
+            task97Choose(app, value)
+            boardTap(app, "general-back"); boardTap(app, "settings-back")
+            boardTap(app, "tab-" + value)
+            XCTAssertTrue(app.buttons["tab-" + value].isSelected)
+            if value == "contexts" {
+                XCTAssertTrue(app.textFields["contexts-search"].exists)
+                XCTAssertFalse(app.buttons["contexts-back"].exists)
+            }
+            boardTap(app, "tab-menu")
+            XCTAssertFalse(app.buttons["menu-" + value].exists)
+            for other in ["review", "projects", "calendar", "contexts"] where other != value {
+                XCTAssertTrue(app.buttons["menu-" + other].exists)
+            }
+            boardTap(app, "tab-menu")
+            task97Open(app)
+        }
+        task97Picker(app, "quickAccessView")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Quick Access picker"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "general-picker-cancel")
+        app.terminate(); app.launch(); task97Open(app); task97Picker(app, "quickAccessView")
+        XCTAssertTrue(app.buttons["general-option-contexts"].isSelected)
+        boardTap(app, "general-picker-cancel"); boardTap(app, "general-back"); boardTap(app, "settings-back")
+        boardTap(app, "tab-contexts"); XCTAssertTrue(app.buttons["tab-contexts"].isSelected)
+        app.terminate()
+    }
+
+    func testQuickAccessNormal() { task98Normal("604073a6-d5c1-4279-847e-d9eb4bb8040c") }
+    func testQuickAccessLargest() { task98Normal("af9e1c95-7249-4e9c-bcf5-f70b8bd7124a") }
+
+    private func task98ReadFailure(_ library: String, flag: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library, flag]
+        app.launch(); task97Open(app); task97Picker(app, "quickAccessView"); task97Choose(app, "contexts", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["general-picker-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["general-option-contexts"].isEnabled)
+            boardTap(app, "general-retry")
+        }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["general-picker-cancel"])
+        waitForExpectations(timeout: 20)
+        boardTap(app, "general-back"); boardTap(app, "settings-back")
+        boardTap(app, "tab-contexts"); XCTAssertTrue(app.buttons["tab-contexts"].isSelected)
+        app.terminate()
+    }
+    func testQuickAccessReadFailure() { task98ReadFailure("cea1420c-cdae-435b-b1c3-54cae130b56b", flag: "--native-general-preference-read-failure") }
+    func testQuickAccessMenuReadFailure() { task98ReadFailure("9a17e147-3b5b-4d0f-a461-9ddbf3e995b7", flag: "--native-general-preference-menu-read-failure") }
+
+    func testQuickAccessRefusal() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "1726f385-31d4-4669-86fd-cc062a7ab5ff", "--native-general-preference-refusal"]
+        app.launch(); task97Open(app); task97Picker(app, "quickAccessView"); task97Choose(app, "contexts", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        boardEnabled(app.buttons["general-option-contexts"])
+        task97Choose(app, "contexts"); app.terminate()
+    }
+
+    func testQuickAccessFailedSave() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "fcc52828-9290-436e-ad4e-572c42c947ab"]
+        app.launch(); task97Open(app); task97Picker(app, "quickAccessView"); task97Choose(app, "contexts", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["general-picker-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["general-option-contexts"].isEnabled)
+            let retry = app.buttons["general-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews.containing(.button, identifier: "general-option-contexts").firstMatch)
+            boardTap(app, "general-retry"); boardEnabled(retry, timeout: 20)
+        }
+        app.terminate()
+    }
+
+    func testQuickAccessColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "fcc52828-9290-436e-ad4e-572c42c947ab"]
+        app.launch(); task97Open(app); task97Picker(app, "quickAccessView")
+        XCTAssertTrue(app.buttons["general-option-contexts"].isSelected)
+        boardTap(app, "general-picker-cancel"); app.terminate()
+    }
+
+    func testQuickAccessLegacyJournalRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "85beed22-0a8f-4ac0-b326-f1a35998238b"]
         app.launch(); task97Open(app); task97Picker(app, "dateFormat")
         XCTAssertTrue(app.buttons["general-option-ymd"].isSelected)
         boardTap(app, "general-picker-cancel"); app.terminate()

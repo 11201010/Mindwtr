@@ -1058,13 +1058,13 @@ describe('canonical local reads contract', () => {
                 const host = await nativeHost(control);
                 const options = nativeValue(await host.getGeneralPreferenceOptions({}));
                 const request = { requestId: '97a7fe31-4444-4000-8000-000000000097',
-                    edit: { type: 'showTaskAge' as const, value: options.expected.showTaskAge.value !== true },
-                    expected: options.expected.showTaskAge };
+                    edit: { type: 'quickAccessView' as const, value: 'contexts' as const },
+                    expected: options.expected.quickAccessView };
                 const planned = nativeValue(await host.prepareGeneralPreference(request));
                 expect(planned.kind).toBe('prepared');
                 if (planned.kind !== 'prepared') return;
                 control.expectPersisted((written) => {
-                    expect(written.settings.appearance?.showTaskAge).toBe(request.edit.value);
+                    expect(written.settings.appearance?.mobileQuickAccessView).toBe(request.edit.value);
                     expect(written.settings.syncPreferencesUpdatedAt?.appearance).toBe(planned.prepared.after.stamp);
                     expect(written.tasks).toHaveLength(settled.tasks.length);
                 });

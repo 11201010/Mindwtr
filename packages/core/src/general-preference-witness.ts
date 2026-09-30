@@ -1,6 +1,6 @@
 import type { AppSettings } from './types';
 
-export type GeneralPreferenceType = 'showTaskAge' | 'weekStart' | 'dateFormat' | 'timeFormat';
+export type GeneralPreferenceType = 'showTaskAge' | 'quickAccessView' | 'weekStart' | 'dateFormat' | 'timeFormat';
 export type GeneralPreferenceWitness = { present: boolean; value: boolean | string | number | null;
     stampPresent: boolean; stamp: string | null };
 
@@ -14,18 +14,23 @@ export const legacyGeneralPreferenceNumber = (value: unknown): value is number =
 
 /** The one raw value and sync-group stamp that may enter a General journal. */
 export const generalPreferenceWitness = (settings: AppSettings, type: GeneralPreferenceType): GeneralPreferenceWitness | null => {
-    const value = type === 'showTaskAge' ? settings.appearance?.showTaskAge : settings[type];
-    const present = value !== undefined && (type === 'showTaskAge'
-        ? settings.appearance !== undefined && record(settings.appearance) && own(settings.appearance, 'showTaskAge')
+    const appearanceKey = type === 'showTaskAge' ? 'showTaskAge'
+        : type === 'quickAccessView' ? 'mobileQuickAccessView' : null;
+    const value = appearanceKey ? settings.appearance?.[appearanceKey]
+        : type === 'weekStart' ? settings.weekStart
+            : type === 'dateFormat' ? settings.dateFormat : settings.timeFormat;
+    const present = value !== undefined && (appearanceKey
+        ? settings.appearance !== undefined && record(settings.appearance) && own(settings.appearance, appearanceKey)
         : own(settings, type));
-    const group = type === 'showTaskAge' ? 'appearance' : 'language';
+    const group = appearanceKey ? 'appearance' : 'language';
     const stamps = settings.syncPreferencesUpdatedAt;
-    if (type === 'showTaskAge' && settings.appearance !== undefined && !record(settings.appearance)
+    if (appearanceKey && settings.appearance !== undefined && !record(settings.appearance)
         || stamps !== undefined && !record(stamps)) return null;
     const stampPresent = stamps !== undefined && own(stamps, group) && stamps[group] !== undefined;
     const stamp = stampPresent ? stamps?.[group] : null;
     if (present && !(type === 'showTaskAge' ? typeof value === 'boolean'
-        : typeof value === 'string' && value.length <= 500 || legacyGeneralPreferenceNumber(value))
+        : typeof value === 'string' && value.length <= 500
+            || type !== 'quickAccessView' && legacyGeneralPreferenceNumber(value))
         || stampPresent && !iso(stamp)) return null;
     return { present, value: present ? value as boolean | string | number : null,
         stampPresent, stamp: stampPresent ? stamp! : null };

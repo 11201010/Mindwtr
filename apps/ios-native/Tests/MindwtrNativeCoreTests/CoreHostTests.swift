@@ -13097,13 +13097,14 @@ final class CoreHostTests: XCTestCase {
         let backup = directory.appendingPathComponent("general97-baseline.sqlite")
         try snapshot.prepareRecovery(at: backup); snapshot.close()
         let baseline = try Data(contentsOf: backup)
-        let group = type == "showTaskAge" ? "appearance" : "language"
+        let appearanceField = type == "quickAccessView" ? "mobileQuickAccessView" : type
+        let group = ["showTaskAge", "quickAccessView"].contains(type) ? "appearance" : "language"
         func assertEffect(_ before: [String], _ after: [String]) throws {
             var expectedTables = before
             var rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[5].utf8)) as? [[String: Any]])
             var row = try object(XCTUnwrap(rows.first?["data"] as? String))
-            if type == "showTaskAge" {
-                var appearance = try XCTUnwrap(row["appearance"] as? [String: Any]); appearance[type] = value; row["appearance"] = appearance
+            if group == "appearance" {
+                var appearance = try XCTUnwrap(row["appearance"] as? [String: Any]); appearance[appearanceField] = value; row["appearance"] = appearance
             } else { row[type] = value }
             var stamps = try XCTUnwrap(row["syncPreferencesUpdatedAt"] as? [String: Any]); stamps[group] = expectedStamp; row["syncPreferencesUpdatedAt"] = stamps
             rows[0]["data"] = try json(row); expectedTables[5] = try json(rows)
@@ -13146,8 +13147,8 @@ final class CoreHostTests: XCTestCase {
             var changed = try calendarPreferenceSettings()
             if scenario == "stale" {
                 // Same desired value written independently is not the frozen operation's receipt.
-                if type == "showTaskAge" {
-                    var appearance = try XCTUnwrap(changed["appearance"] as? [String: Any]); appearance[type] = value; changed["appearance"] = appearance
+                if group == "appearance" {
+                    var appearance = try XCTUnwrap(changed["appearance"] as? [String: Any]); appearance[appearanceField] = value; changed["appearance"] = appearance
                 } else { changed[type] = value }
                 var stamps = try XCTUnwrap(changed["syncPreferencesUpdatedAt"] as? [String: Any]); stamps[group] = "2026-10-01T12:00:00.007Z"; changed["syncPreferencesUpdatedAt"] = stamps
                 try writeCalendarPreferenceSettings(changed)
@@ -13183,6 +13184,10 @@ final class CoreHostTests: XCTestCase {
     func testGeneralPreferenceWeekRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "weekStart", value: "saturday") }
     func testGeneralPreferenceDateRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "dateFormat", value: "ymd") }
     func testGeneralPreferenceTimeRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "timeFormat", value: "24h") }
+
+    func testGeneralPreferenceQuickAccessRecovery() async throws {
+        try await exerciseGeneralPreferenceRecovery(type: "quickAccessView", value: "contexts")
+    }
 
     private func exerciseTaxonomyRecovery(kind: String, action: String) async throws {
         let at = "2026-10-01T12:00:00.000Z", clock = try dateBundle(at: "2026-10-01T12:00:00.000Z")

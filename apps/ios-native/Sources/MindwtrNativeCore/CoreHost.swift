@@ -760,7 +760,7 @@ private final class Engine: @unchecked Sendable {
                       let model = options["model"] as? [String: Any], model["title"] is String,
                       model["appearance"] is [String: Any], model["regional"] is [String: Any],
                       let expected = options["expected"] as? [String: Any],
-                      Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat"]),
+                      Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView"]),
                       expected.values.allSatisfy({ Self.validGeneralPreferenceExpected($0) }) else {
                     throw HostFailure("Malformed General preference options")
                 }
@@ -2380,11 +2380,16 @@ private final class Engine: @unchecked Sendable {
 #endif
             NSLog("Native iOS Area saved releaseCheck=v1.3.3/native-ios-area-create outcome=applied")
         }
-        if command.method == "generalPreferenceCommit", case .success = terminal {
+        if command.method == "generalPreferenceCommit", case .success(let value) = terminal {
 #if DEBUG
             faults?.commandDiagnostic?("generalPreferenceApplied")
 #endif
-            NSLog("Native iOS General preference saved releaseCheck=v1.3.4/ios-general-preference outcome=confirmed")
+            let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any]
+            if result?["type"] as? String == "quickAccessView" {
+                NSLog("Native iOS Quick Access saved releaseCheck=v1.3.4/ios-quick-access outcome=confirmed")
+            } else {
+                NSLog("Native iOS General preference saved releaseCheck=v1.3.4/ios-general-preference outcome=confirmed")
+            }
         }
         if command.method == "manageTaxonomyCommit", case .success = terminal {
 #if DEBUG
@@ -2793,6 +2798,7 @@ private final class Engine: @unchecked Sendable {
               let type = edit["type"] as? String else { return false }
         switch type {
         case "showTaskAge": return isBoolean(edit["value"])
+        case "quickAccessView": return ["review", "projects", "calendar", "contexts"].contains(edit["value"] as? String ?? "")
         case "weekStart": return ["system", "monday", "sunday", "saturday"].contains(edit["value"] as? String ?? "")
         case "dateFormat": return ["system", "dmy", "mdy", "ymd"].contains(edit["value"] as? String ?? "")
         case "timeFormat": return ["system", "12h", "24h"].contains(edit["value"] as? String ?? "")

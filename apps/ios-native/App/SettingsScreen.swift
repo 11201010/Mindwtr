@@ -194,7 +194,7 @@ struct SettingsScreen: View {
                     .disabled(!model.generalPreferenceEnabled)
                     .accessibilityIdentifier("general-show-task-age")
                     palette.border.frame(height: 0.5)
-                    generalSettingRow(appearance.object("quickAccess"), type: "quickAccess", enabled: false)
+                    generalSettingRow(appearance.object("quickAccess"), type: "quickAccessView", enabled: true)
                 }
                 .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
                 Text(privacy.text("title")).rnFont(13, .semibold).foregroundStyle(palette.secondary)
@@ -278,7 +278,9 @@ struct SettingsScreen: View {
 
     private var generalPreferenceSheet: some View {
         let type = model.generalPreferencePicker ?? ""
-        let picker = model.generalSettings.object("regional").object(type)
+        let picker = type == "quickAccessView"
+            ? model.generalSettings.object("appearance").object("quickAccess")
+            : model.generalSettings.object("regional").object(type)
         return VStack(spacing: 12) {
             HStack {
                 Text(picker.text("pickerTitle")).rnFont(20, .bold).foregroundStyle(palette.text)

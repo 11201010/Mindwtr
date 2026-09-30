@@ -39,7 +39,7 @@ struct InboxScreen: View {
                             ContextsScreen(model: model, palette: palette)
                                 .accessibilityAction(.escape) {
                                     endContextsInput()
-                                    Task { await model.closeContexts() }
+                                    if model.quickAccessView != "contexts" { Task { await model.closeContexts() } }
                                 }
                         } else if model.selectedSurface == .waiting {
                             menuListHeader
@@ -104,7 +104,8 @@ struct InboxScreen: View {
                 }
                 if model.selectedSurface != .search && model.selectedSurface != .project && model.selectedSurface != .waiting
                     && model.selectedSurface != .someday && model.selectedSurface != .reference && model.selectedSurface != .history
-                    && model.selectedSurface != .trash && model.selectedSurface != .contexts
+                    && model.selectedSurface != .trash
+                    && (model.selectedSurface != .contexts || model.quickAccessView == "contexts")
                     && model.selectedSurface != .settings {
                     tabBar
                 }
@@ -740,23 +741,25 @@ struct InboxScreen: View {
         }
     }
 
-    private var menuListBack: some View {
-        Button {
-            endContextsInput()
-            Task {
-                if model.selectedSurface == .contexts { await model.closeContexts() }
-                else if model.selectedSurface == .trash { await model.closeTrash() }
-                else if model.selectedSurface == .history { await model.closeHistory() }
-                else if model.selectedSurface == .reference { await model.closeReference() }
-                else if model.selectedSurface == .someday { await model.closeSomeday() }
-                else { await model.closeWaiting() }
+    @ViewBuilder private var menuListBack: some View {
+        if model.selectedSurface != .contexts || model.quickAccessView != "contexts" {
+            Button {
+                endContextsInput()
+                Task {
+                    if model.selectedSurface == .contexts { await model.closeContexts() }
+                    else if model.selectedSurface == .trash { await model.closeTrash() }
+                    else if model.selectedSurface == .history { await model.closeHistory() }
+                    else if model.selectedSurface == .reference { await model.closeReference() }
+                    else if model.selectedSurface == .someday { await model.closeSomeday() }
+                    else { await model.closeWaiting() }
+                }
+            } label: {
+                AppIcon(name: "chevron", size: 24).rotationEffect(.degrees(90)).frame(width: 44, height: 44)
             }
-        } label: {
-            AppIcon(name: "chevron", size: 24).rotationEffect(.degrees(90)).frame(width: 44, height: 44)
+            .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+            .accessibilityLabel(model.label("common.back"))
+            .accessibilityIdentifier(menuListPrefix + "-back")
         }
-        .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
-        .accessibilityLabel(model.label("common.back"))
-        .accessibilityIdentifier(menuListPrefix + "-back")
     }
 
     private var menuListTitle: some View {
@@ -887,7 +890,7 @@ struct InboxScreen: View {
             .accessibilityLabel(model.label("nav.addTask"))
             .accessibilityIdentifier("capture-open")
             quickAccessTab
-            Button { Task { await model.toggleMore() } } label: {
+            Button { endContextsInput(); Task { await model.toggleMore() } } label: {
                 VStack(spacing: 2) {
                     AppIcon(name: "menu", size: model.morePresented ? 26 : 24).opacity(model.morePresented ? 1 : 0.65)
                     Text(model.label("tab.menu")).rnFont(10, model.morePresented ? .bold : .semibold, maxScale: 1.15).lineLimit(1)
@@ -928,10 +931,12 @@ struct InboxScreen: View {
             || (model.quickAccessView == "review" && model.selectedSurface == .review)
             || (model.quickAccessView == "calendar" && model.selectedSurface == .calendar)
             || (model.quickAccessView == "board" && model.selectedSurface == .board)
+            || (model.quickAccessView == "contexts" && model.selectedSurface == .contexts)
         return Button { Task {
             if model.quickAccessView == "review" { await model.openReview() }
             else if model.quickAccessView == "calendar" { await model.openCalendar() }
             else if model.quickAccessView == "board" { await model.openBoard() }
+            else if model.quickAccessView == "contexts" { await model.openContexts() }
             else { await model.openProjects() }
         } } label: {
             VStack(spacing: 2) {
@@ -941,7 +946,7 @@ struct InboxScreen: View {
             .foregroundStyle(selected ? palette.tint : palette.secondary)
             .frame(maxWidth: .infinity, minHeight: 56).contentShape(Rectangle())
         }
-        .buttonStyle(.plain).disabled(!["projects", "review", "calendar", "board"].contains(model.quickAccessView) || !model.ready || model.busy || model.retryNeeded)
+        .buttonStyle(.plain).disabled(!["projects", "review", "calendar", "board", "contexts"].contains(model.quickAccessView) || !model.ready || model.busy || model.retryNeeded)
         .accessibilityLabel(model.quickAccessLabel).accessibilityIdentifier("tab-" + model.quickAccessView)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -964,8 +969,6 @@ struct InboxScreen: View {
             }
             .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
             .frame(width: 24, height: 24).accessibilityHidden(true)
-        } else if model.quickAccessView == "calendar" {
-            Image(systemName: "calendar").font(.system(size: 24)).frame(width: 24, height: 24).accessibilityHidden(true)
         } else { AppIcon(name: "review", size: 24) }
     }
 

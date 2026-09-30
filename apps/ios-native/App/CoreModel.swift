@@ -667,6 +667,7 @@ final class CoreModel: ObservableObject {
     private var managePersonDeleteOptionsTestReadFailures = 0
     private var managePersonDeleteTestRefusals = 0
     private var generalPreferenceTestReadFailures = 0
+    private var generalPreferenceMenuTestReadFailures = 0
     private var generalPreferenceOptionsTestFailure = false
     private var generalPreferenceTestRefusals = 0
     private var manageTaxonomyTestReadFailures = 0
@@ -1640,6 +1641,7 @@ final class CoreModel: ObservableObject {
                     managePersonDeleteOptionsTestReadFailures = arguments.contains("--native-manage-person-delete-options-read-failure") ? 1 : 0
                     managePersonDeleteTestRefusals = arguments.contains("--native-manage-person-delete-refusal") ? 1 : 0
                     generalPreferenceTestReadFailures = arguments.contains("--native-general-preference-read-failure") ? 2 : 0
+                    generalPreferenceMenuTestReadFailures = arguments.contains("--native-general-preference-menu-read-failure") ? 2 : 0
                     generalPreferenceOptionsTestFailure = arguments.contains("--native-general-preference-options-failure")
                     generalPreferenceTestRefusals = arguments.contains("--native-general-preference-refusal") ? 1 : 0
                     manageTaxonomyTestReadFailures = arguments.contains("--native-manage-taxonomy-read-failure") ? 2 : 0
@@ -2031,7 +2033,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openGeneralPreferencePicker(_ type: String) {
-        guard generalPreferenceEnabled, ["weekStart", "dateFormat", "timeFormat"].contains(type) else { return }
+        guard generalPreferenceEnabled, ["weekStart", "dateFormat", "timeFormat", "quickAccessView"].contains(type) else { return }
         generalPreferencePicker = type
         generalPreferenceError = nil
     }
@@ -2046,7 +2048,7 @@ final class CoreModel: ObservableObject {
         let model = options.object("model")
         let expected = options.object("expected")
         guard !model.text("title").isEmpty, model["appearance"] is CoreObject, model["regional"] is CoreObject,
-              Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat"]) else {
+              Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView"]) else {
             throw CocoaError(.coderReadCorrupt)
         }
         generalSettings = model
@@ -2101,6 +2103,9 @@ final class CoreModel: ObservableObject {
         guard settingsGeneralPresented, generalPreferenceRequest == nil else { return }
         do {
             try await readGeneralSettings()
+            if generalPreferenceEdit.text("type") == "quickAccessView" {
+                moreMenu = try await query("menuRead", ["more", "{}"])
+            }
             generalPreferenceAwaitingRefresh = false
             if generalPreferenceAcknowledged {
                 generalPreferencePicker = nil
@@ -15179,6 +15184,10 @@ final class CoreModel: ObservableObject {
         if method == "menuRead", args.first as? String == "manageSettings",
            settingsTaxonomyAcknowledged, manageTaxonomyTestReadFailures > 0 {
             manageTaxonomyTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "menuRead", args.first as? String == "more", generalPreferenceAcknowledged, generalPreferenceMenuTestReadFailures > 0 {
+            generalPreferenceMenuTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
         if method == "generalPreferenceOptions", generalPreferenceAcknowledged, generalPreferenceTestReadFailures > 0 {

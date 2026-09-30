@@ -723,7 +723,7 @@ export const createSettingsActions = ({
             const update = buildGeneralSettingsUpdate(durable.settings, edit);
             if (!update || input.after.stamp !== timestampAtLeastAfter(input.preparedAt, expected.stamp ?? undefined))
                 return memory;
-            const group = edit.type === 'showTaskAge' ? 'appearance' : 'language';
+            const group = edit.type === 'showTaskAge' || edit.type === 'quickAccessView' ? 'appearance' : 'language';
             const settings: AppData['settings'] = { ...durable.settings, ...update,
                 syncPreferencesUpdatedAt: { ...(durable.settings.syncPreferencesUpdatedAt ?? {}),
                     [group]: input.after.stamp },

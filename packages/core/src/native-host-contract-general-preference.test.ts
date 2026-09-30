@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNativeHostContract } from './native-host-contract';
+import { MOBILE_QUICK_ACCESS_VIEW_OPTIONS } from './general-settings-model';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { NativeGeneralPreferenceRequest } from './native-host-contract-general-preference';
 import type { AppData, Task } from './types';
@@ -61,6 +62,7 @@ describe('prepared General preferences', () => {
         const env = await open(initial());
         const { options, envelope, prepared } = await planned(env, { type, value } as NativeGeneralPreferenceRequest['edit']);
         expect(options.model.appearance.showTaskAge.value).toBe(false);
+        expect(prepared.version).toBe(1);
         expect(env.host.validatePreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
         expect(JSON.stringify(envelope)).not.toContain('private-value');
         expect(await env.host.commitPreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
@@ -75,6 +77,91 @@ describe('prepared General preferences', () => {
         const cold = await env.reopen();
         expect(await cold.host.commitPreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
         expect(cold.saves()).toBe(0);
+    });
+
+    it.each(MOBILE_QUICK_ACCESS_VIEW_OPTIONS)('offers and cold-replays Quick Access %s through the shared picker', async (value) => {
+        const env = await open(initial());
+        const options = await env.host.getGeneralPreferenceOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(Object.keys(options.value.expected).sort()).toEqual([
+            'showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat'].sort());
+        expect(options.value.expected.quickAccessView).toMatchObject({ present: false, value: null,
+            stampPresent: true, stamp: AT });
+        expect(options.value.model.appearance.quickAccess.options.map((row) => row.value))
+            .toEqual(MOBILE_QUICK_ACCESS_VIEW_OPTIONS);
+        expect(options.value.model.appearance.quickAccess.options.find((row) => row.selected)?.value).toBe('review');
+        const choice = options.value.model.appearance.quickAccess.options.find((row) => row.value === value);
+        expect(choice?.edit).toEqual({ type: 'quickAccessView', value });
+        const { envelope, prepared } = await planned(env, { type: 'quickAccessView', value });
+        expect(prepared.version).toBe(1);
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(env.data().settings.appearance).toMatchObject({ density: 'compact', mobileQuickAccessView: value });
+        expect(env.data().settings.syncPreferencesUpdatedAt?.appearance).toBe(prepared.after.stamp);
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+        const current = await cold.host.getGeneralPreferenceOptions({});
+        if (!current.ok) throw new Error(JSON.stringify(current));
+        expect(current.value.model.appearance.quickAccess.options.find((row) => row.selected)?.value).toBe(value);
+    });
+
+    it('treats own undefined Quick Access and appearance stamp as JSON-durable absence', async () => {
+        const start = initial();
+        start.settings.appearance!.mobileQuickAccessView = undefined;
+        start.settings.syncPreferencesUpdatedAt!.appearance = undefined;
+        const env = await open(start);
+        const options = await env.host.getGeneralPreferenceOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(options.value.expected.quickAccessView).toEqual({ present: false, value: null,
+            stampPresent: false, stamp: null });
+        expect(options.value.model.appearance.quickAccess.options.find((row) => row.selected)?.value).toBe('review');
+        const { envelope } = await planned(env, { type: 'quickAccessView', value: 'review' });
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: true,
+            value: { changed: true } });
+        expect(env.data().settings.appearance?.mobileQuickAccessView).toBe('review');
+    });
+
+    it('keeps raw unknown Quick Access and sibling appearance values until explicit choice', async () => {
+        const start = initial();
+        start.settings.appearance = { ...start.settings.appearance, mobileQuickAccessView: 'legacy-quick',
+            unassignedAreaColor: '#abcdef' } as typeof start.settings.appearance;
+        const env = await open(start);
+        const options = await env.host.getGeneralPreferenceOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(options.value.expected.quickAccessView).toMatchObject({ present: true, value: 'legacy-quick' });
+        expect(options.value.model.appearance.quickAccess.options.find((row) => row.selected)?.value).toBe('review');
+        expect(env.data().settings.appearance?.mobileQuickAccessView).toBe('legacy-quick');
+        const { envelope } = await planned(env, { type: 'quickAccessView', value: 'contexts' });
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: true });
+        expect(env.data().settings.appearance).toMatchObject({ mobileQuickAccessView: 'contexts',
+            density: 'compact', unassignedAreaColor: '#abcdef' });
+        const fresh = await env.reopen();
+        const next = await fresh.host.getGeneralPreferenceOptions({});
+        if (!next.ok) throw new Error(JSON.stringify(next));
+        const noop = await fresh.host.prepareGeneralPreference({ requestId: ID,
+            edit: { type: 'quickAccessView', value: 'contexts' }, expected: next.value.expected.quickAccessView });
+        expect(noop).toMatchObject({ ok: true, value: { kind: 'noop', result: { changed: false } } });
+        expect(fresh.saves()).toBe(0);
+    });
+
+    it('refuses Quick Access field or appearance stamp conflicts even at the same target', async () => {
+        const env = await open(initial());
+        const { envelope } = await planned(env, { type: 'quickAccessView', value: 'projects' });
+        env.changeSaved((data) => ({ ...data, settings: { ...data.settings,
+            appearance: { ...data.settings.appearance, mobileQuickAccessView: 'projects' },
+            syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                appearance: '2026-09-02T00:00:00.000Z' } } }));
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        env.changeSaved((data) => ({ ...data, settings: { ...data.settings,
+            appearance: { ...data.settings.appearance, mobileQuickAccessView: 'calendar' },
+            syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt, appearance: AT } } }));
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(env.saves()).toBe(0);
+        const malformed = { ...envelope.request, expected: { ...envelope.request.expected, value: 1, present: true } };
+        expect(await env.host.prepareGeneralPreference(malformed as never)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
     });
 
     it('keeps absent and explicit system distinct, and no-op writes nothing', async () => {
@@ -155,7 +242,7 @@ describe('prepared General preferences', () => {
         if (!options.ok) throw new Error(JSON.stringify(options));
         expect(options.value.expected.weekStart).toMatchObject({ present: true, value: 'saturday' });
         expect(options.value.model.regional.weekStart.options.find((row) => row.value === 'saturday')?.selected).toBe(true);
-        const { envelope } = await planned(env, { type: 'showTaskAge', value: true });
+        const { envelope } = await planned(env, { type: 'quickAccessView', value: 'contexts' });
         expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: true });
         expect(useTaskStore.getState()._allTasks.find((row) => row.id === 'live')?.description).toBe('fresh from disk');
         expect(useTaskStore.getState()._allProjects.find((row) => row.id === 'project')?.title).toBe('Fresh project');
@@ -176,7 +263,7 @@ describe('prepared General preferences', () => {
         expect(await commit()).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         env.changeSaved((data) => ({ ...data, settings: { ...data.settings, timeFormat: '24h',
             syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt, language: prepared.after.stamp } } }));
-        // The exact planned scalar/stamp is the only persisted receipt the four-field scope permits.
+        // The exact planned scalar/stamp is the only persisted receipt this bounded command permits.
         expect(await commit()).toMatchObject({ ok: true });
         expect(env.saves()).toBe(0);
     });
@@ -201,7 +288,7 @@ describe('prepared General preferences', () => {
     it('retries the exact request after a failed save without changing the prepared time', async () => {
         let failing = false;
         const env = await open(initial(), () => failing);
-        const { envelope } = await planned(env, { type: 'showTaskAge', value: true });
+        const { envelope } = await planned(env, { type: 'quickAccessView', value: 'contexts' });
         failing = true;
         expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: false,
             error: { code: 'SAVE_FAILED' } });
@@ -217,7 +304,7 @@ describe('prepared General preferences', () => {
         start.tasks.push({ id: 'foreign', title: 'Foreign', status: 'next', contexts: [], tags: [],
             description: 'before', createdAt: AT, updatedAt: AT });
         const env = await open(start, () => failing);
-        const { envelope } = await planned(env, { type: 'showTaskAge', value: true });
+        const { envelope } = await planned(env, { type: 'quickAccessView', value: 'contexts' });
         const before = structuredClone(env.data());
         let armed = true;
         let foreign: Promise<unknown> | undefined;

@@ -1,4 +1,4 @@
-import { buildGeneralSettingsUpdate, isGeneralSettingStored, type GeneralSettingsEdit,
+import { buildGeneralSettingsUpdate, isGeneralSettingStored, MOBILE_QUICK_ACCESS_VIEW_OPTIONS, type GeneralSettingsEdit,
     type GeneralSettingsModel } from './general-settings-model';
 import { generalPreferenceWitness, legacyGeneralPreferenceNumber,
     type GeneralPreferenceType, type GeneralPreferenceWitness } from './general-preference-witness';
@@ -27,8 +27,9 @@ export type NativeGeneralPreferencePreparation = { kind: 'noop'; result: NativeG
     | { kind: 'prepared'; prepared: NativePreparedGeneralPreference };
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const TYPES: GeneralPreferenceType[] = ['showTaskAge', 'weekStart', 'dateFormat', 'timeFormat'];
+const TYPES: GeneralPreferenceType[] = ['showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat'];
 const VALUES: Record<Exclude<GeneralPreferenceType, 'showTaskAge'>, readonly string[]> = {
+    quickAccessView: MOBILE_QUICK_ACCESS_VIEW_OPTIONS,
     weekStart: ['system', 'sunday', 'monday', 'saturday'],
     dateFormat: ['system', 'dmy', 'mdy', 'ymd'],
     timeFormat: ['system', '12h', '24h'],
@@ -52,7 +53,8 @@ const validWitness = (value: unknown, type: GeneralPreferenceType): value is Gen
     record(value) && exact(value, ['present', 'value', 'stampPresent', 'stamp'])
     && typeof value.present === 'boolean' && typeof value.stampPresent === 'boolean'
     && (value.present ? type === 'showTaskAge' ? typeof value.value === 'boolean'
-        : bounded(value.value) || legacyGeneralPreferenceNumber(value.value) : value.value === null)
+        : bounded(value.value) || type !== 'quickAccessView' && legacyGeneralPreferenceNumber(value.value)
+        : value.value === null)
     && (value.stampPresent ? iso(value.stamp) : value.stamp === null);
 
 const readRequest = (input: unknown): NativeGeneralPreferenceRequest | null => {
