@@ -340,6 +340,12 @@ for (const init of ['?token=1&a=2&token=3', '']) {
     assert.deepEqual(await failure(run("fetch('https://dav.example/after', { method: 'PUT', body: '{}' })")), { name: 'AbortError', message: 'The host operation timed out' });
     assert.deepEqual(await failure(secrets.setSecret('mindwtr_cloud_token', 'x')), { name: 'AbortError', message: 'The host operation timed out' });
     assert.equal(sent.length, refusedFrom, 'no call reaches the host while the operation drains');
+    // Review 11: sync's secrets (host-sync.ts) are never refused. Another call's deadline must not fail a Save's commit
+    // half-way (its URL written, its password refused) and leave sync off; a keystore call answers at once, so the drain ends.
+    const syncSaved = net.__mindwtrSyncSecrets.setSecret('mindwtr_cloud_token', 'drained');
+    net.__pumpTimers();
+    assert.equal(await syncSaved, undefined);
+    assert.equal(store.get('mindwtr_cloud_token'), 'drained', 'a sync secret write reaches the host while another call drains');
     net.__resumeHostCalls();
     run("fetch('https://dav.example/later')");
     assert.equal(sent.at(-1).url, 'https://dav.example/later', 'calls reach the host again once it resumes them');
@@ -348,6 +354,8 @@ const coreHost = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongd
 const sqliteBridge = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/SqliteBridge.kt'), 'utf8');
 const hostEntry = readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8');
 assert.match(hostEntry, /new ValidatedSqliteAdapter\(sqlite, \{ rejectConcurrentWrites: true \}\)/);
+// Review 11: sync's service, its Save commit and its screen use the secrets no other call's deadline refuses.
+assert.equal(/createNativeSync\(\{[\s\S]*?localData:/.exec(hostEntry)[0].match(/__mindwtrSyncSecrets/g)?.length, 3, 'sync binds the unrefused secrets');
 // Durable request receipts: core's adapter commits a write's receipt in its data's transaction (the hook right before
 // COMMIT in both data saves, into native_request_receipts), and boot loads them before activation and the journal's replay.
 {

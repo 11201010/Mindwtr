@@ -686,25 +686,31 @@
     // The host's secure storage (SecretStore.kt: RN's expo-secure-store items in
     // the Android Keystore, under RN's key names), for the credentials core's
     // sync and AI settings keep. Each call runs off the engine thread.
-    var secretCall = function (op, key, value) {
+    var secretCall = function (op, key, value, refuse) {
         return new Promise(function (resolve, reject) {
-            refuseIfCancelled();
+            if (refuse) refuseIfCancelled();
             startIo(hostCall(native().secretCall(JSON.stringify({ op: op, key: String(key), value: value }))), function (answer) {
                 if (answer.error !== undefined) reject(new Error(answer.error));
                 else resolve(op === 'get' ? answer.value : undefined);
             });
         });
     };
-    global.__mindwtrSecrets = {
-        /** The value saved under [key], or null. */
-        getSecret: function (key) { mark('secrets'); return secretCall('get', key); },
-        setSecret: function (key, value) {
-            mark('secrets');
-            if (typeof value !== 'string') return Promise.reject(new TypeError('A secret value must be a string'));
-            return secretCall('set', key, value);
-        },
-        deleteSecret: function (key) { mark('secrets'); return secretCall('delete', key); },
+    var secrets = function (refuse) {
+        return {
+            /** The value saved under [key], or null. */
+            getSecret: function (key) { mark('secrets'); return secretCall('get', key, undefined, refuse); },
+            setSecret: function (key, value) {
+                mark('secrets');
+                if (typeof value !== 'string') return Promise.reject(new TypeError('A secret value must be a string'));
+                return secretCall('set', key, value, refuse);
+            },
+            deleteSecret: function (key) { mark('secrets'); return secretCall('delete', key, undefined, refuse); },
+        };
     };
+    global.__mindwtrSecrets = secrets(true);
+    // Sync's (host-sync.ts), never refused while another call drains: a Save's commit refused half-way leaves sync off,
+    // and a keystore call answers at once, so the timed-out call still ends.
+    global.__mindwtrSyncSecrets = secrets(false);
 
     // --- localStorage -------------------------------------------------------
     // In-memory only. The core stores the chosen language here; the experiment

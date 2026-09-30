@@ -188,9 +188,9 @@ const nativeSync: NativeSync | null = typeof (globalThis.__mindwtrNative as { kv
     ? createNativeSync({
         keyValue,
         secrets: {
-            getSecret: (key) => (globalThis.__mindwtrSecrets as HostSecrets).getSecret(key),
-            setSecret: (key, value) => (globalThis.__mindwtrSecrets as HostSecrets).setSecret(key, value),
-            deleteSecret: (key) => (globalThis.__mindwtrSecrets as HostSecrets).deleteSecret(key),
+            getSecret: (key) => (globalThis.__mindwtrSyncSecrets as HostSecrets).getSecret(key),
+            setSecret: (key, value) => (globalThis.__mindwtrSyncSecrets as HostSecrets).setSecret(key, value),
+            deleteSecret: (key) => (globalThis.__mindwtrSyncSecrets as HostSecrets).deleteSecret(key),
         },
         localData: () => {
             if (!bootAdapter) throw new Error('Native storage is not loaded yet');
