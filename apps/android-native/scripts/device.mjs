@@ -67,7 +67,7 @@ export const blended = (dim, full, under, alpha = 0.5) => {
 };
 
 // uiautomator escapes a line break in a node's text as &#10; (the capture popup's several lines).
-const decode = (value) => value.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code))).replace(/&quot;/g, '"')
+const decode = (value) => value.replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code))).replace(/&quot;/g, '"')
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 export const field = (nodes) => nodes.find((node) => node.class === 'android.widget.EditText');
 /** A swipe that starts left of this x can be read as the system Back gesture (gesture navigation). */

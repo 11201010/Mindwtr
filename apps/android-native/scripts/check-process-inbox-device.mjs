@@ -188,8 +188,8 @@ try {
     nodes = await tapExpecting(button(nodes, back) ?? fail('no Back on the step'), (current) => showsStep(current, guided), 'the first question again');
     check(true, `(c) "${guided.choices[0]}" shows "${next.question}", and Back returns`);
 
-    // (d) Rotation keeps the step.
-    nodes = await rotate(1, (current) => showsItem(current, guided), 'the step in landscape');
+    // (d) Rotation keeps the step. Landscape asks only for the item: similar tasks can push the question below the fold.
+    nodes = await rotate(1, (current) => inProcess(current) && itemTitle(current) === guided.title, 'the step in landscape');
     nodes = await rotate(0, (current) => showsStep(current, guided), 'the step in portrait');
     check(true, '(d) rotation keeps the item and the step');
 
