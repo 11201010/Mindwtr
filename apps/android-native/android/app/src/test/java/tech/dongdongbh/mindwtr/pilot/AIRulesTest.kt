@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.json.JSONObject
 import org.junit.Test
 
 /** AIRules.kt: review C1 5 (obsolete requests are cancelled), 6 (an Inbox answer stays with its session) and 7 (capture dedupe). */
@@ -35,11 +36,13 @@ class AIRulesTest {
     }
 
     @Test fun anInboxAnswerBelongsToItsSessionAndStep() {
-        val asked = InboxStepKey("s1", "t1", "actionable")
-        assertEquals(asked, InboxStepKey("s1", "t1", "actionable"))
-        // Process Inbox closed and opened again on the same task: a new session.
-        assertNotEquals(asked, InboxStepKey("s2", "t1", "actionable"))
-        assertNotEquals(asked, InboxStepKey("s1", "t1", "decisions"))
+        fun flow(session: String, step: String) = InboxProcessing(session, JSONObject().put("taskId", "t1").put("step", step))
+        val asked = InboxStepKey.of(flow("s1", "actionable"))
+        assertEquals(asked, InboxStepKey.of(flow("s1", "actionable")))
+        // Process Inbox closed and opened again on the same task and step: a new session, so the old answer is not taken.
+        assertNotEquals(asked, InboxStepKey.of(flow("s2", "actionable")))
+        assertNotEquals(asked, InboxStepKey.of(flow("s1", "decisions")))
+        assertEquals(null, InboxStepKey.of(null))
     }
 
     @Test fun theCaptureScreensQuestionIsKeyedByItsSession() {
