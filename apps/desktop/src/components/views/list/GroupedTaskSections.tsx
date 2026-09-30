@@ -108,6 +108,11 @@ type GroupedTaskSectionHeaderProps = {
     addTaskLabel?: (group: TaskGroup) => string | undefined;
 };
 
+/** A section's rows: its projects (#1319) and its tasks. */
+const groupRowCount = (group: { tasks: readonly unknown[]; projects?: readonly unknown[] }) => (
+    group.tasks.length + (group.projects?.length ?? 0)
+);
+
 export function GroupedTaskSectionHeader({
     group,
     collapsed,
@@ -117,7 +122,7 @@ export function GroupedTaskSectionHeader({
     onAddTaskToGroup,
     addTaskLabel,
 }: GroupedTaskSectionHeaderProps) {
-    const collapsible = Boolean(onToggleGroup) && group.tasks.length > 0;
+    const collapsible = Boolean(onToggleGroup) && groupRowCount(group) > 0;
     const title = (
         <span className="inline-flex min-w-0 items-center gap-1.5">
             {collapsible && (
@@ -151,7 +156,7 @@ export function GroupedTaskSectionHeader({
                         className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >{title}</button>
                 ) : <div className="min-w-0 flex-1">{title}</div>}
-                <span className="shrink-0 text-muted-foreground">{group.tasks.length}</span>
+                <span className="shrink-0 text-muted-foreground">{groupRowCount(group)}</span>
                 <button
                     type="button"
                     onClick={() => onAddTaskToGroup(group)}
@@ -180,7 +185,7 @@ export function GroupedTaskSectionHeader({
             )}
         >
             {title}
-            <span className="shrink-0 text-muted-foreground">{group.tasks.length}</span>
+            <span className="shrink-0 text-muted-foreground">{groupRowCount(group)}</span>
         </button>
     ) : (
         <div className={cn(
@@ -189,7 +194,7 @@ export function GroupedTaskSectionHeader({
             className,
         )}>
             {title}
-            <span className="shrink-0 text-muted-foreground">{group.tasks.length}</span>
+            <span className="shrink-0 text-muted-foreground">{groupRowCount(group)}</span>
         </div>
     );
 }

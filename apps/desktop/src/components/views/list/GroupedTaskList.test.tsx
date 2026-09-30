@@ -193,6 +193,28 @@ describe('GroupedTaskList', () => {
         }
     });
 
+    it('counts a section\'s projects in its header, so a projects-only section is not "0" (#1319)', () => {
+        const project = { id: 'p1', title: 'Trip', status: 'someday', color: '#000', order: 0, tagIds: [],
+            createdAt: '2026-05-01T00:00:00.000Z', updatedAt: '2026-05-01T00:00:00.000Z' } as Project;
+        const onlyProjects: TaskGroup[] = [{ id: 'only', title: 'Only projects', tasks: [], projects: [project] }];
+        const view = render(
+            <GroupedTaskList
+                groups={onlyProjects}
+                tasks={[]}
+                virtualRows={buildGroupedVirtualRows(onlyProjects, new Set(), getSectionDomId)}
+                virtualizer={null}
+                collapsedGroupIds={new Set()}
+                onToggleGroup={() => {}}
+                getSectionDomId={getSectionDomId}
+                renderProject={(item) => <div data-project-id={item.id}>{item.title}</div>}
+                renderTask={(item) => <div key={item.id}>{item.title}</div>}
+            />,
+        );
+        const header = view.getByText('Only projects').closest('button, div') as HTMLElement;
+        expect(within(header.parentElement as HTMLElement).getByText('1')).toBeTruthy();
+        view.unmount();
+    });
+
     it('renders a flat list without cards when there is no grouping', () => {
         const { container, queryAllByRole } = render(
             <GroupedTaskList
