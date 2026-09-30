@@ -28,7 +28,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, chipOn, connect, evidenced, hasText, inEditor, inList, Stopped, switchOn, tab, tabSelected, withDescription } from './device.mjs';
+import { button, check, chipOn, connect, evidenced, fail, hasText, inEditor, inList, Stopped, switchOn, tab, tabSelected, withDescription } from './device.mjs';
 
 const [serial] = process.argv.slice(2);
 if (!serial) {
@@ -390,13 +390,13 @@ const shootAI = async (prefix, suffix, rn) => {
     const heading = (current, title, description) => (rn ? current.find((node) => node.text === description) : withDescription(current, `${title}, ${description}`));
     const cards = [[en['settings.ai'], en['settings.aiDesc'], en['settings.aiEnable']], [en['settings.speechTitle'], en['settings.speechDesc'], en['settings.speechEnable']]];
     for (const [index, [title, description, inside]] of cards.entries()) {
-        const shown = await waitFor(`the ${title} card`, (current) => Boolean(heading(current, title, description)), 30_000);
-        // The speech card is shot alone: the assistant card folds again first.
+        // The speech card is shot alone: the assistant card folds again first (unfolded, it pushes the speech card below the fold).
         if (index === 1) {
-            await tap(heading(shown, cards[0][0], cards[0][1]));
+            await tap(heading(await screen(), cards[0][0], cards[0][1]) ?? fail('no assistant card heading'));
             await waitFor('the assistant card folded', (current) => !hasText(current, cards[0][2]), 15_000);
         }
-        await tap(heading(await screen(), title, description));
+        const shown = await waitFor(`the ${title} card`, (current) => Boolean(heading(current, title, description)), 30_000);
+        await tap(heading(shown, title, description));
         await shoot(`${prefix}-settings-ai-${index === 0 ? 'assistant' : 'speech'}-${suffix}`, (current) => hasText(current, inside));
     }
     for (let step = 0; step < 2; step += 1) {
