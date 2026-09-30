@@ -49,6 +49,21 @@ afterEach(async () => {
 });
 
 describe('prepared native checklist Save and Reset', () => {
+    it('saves Location together with a checklist edit through the existing combined writer', async () => {
+        const original = source();
+        const { host } = await open(original);
+        const request = { id: original.id, requestId: id,
+            base: { location: '' }, patch: { location: '  Clinic B  ' }, scheduleBase,
+            checklist: { base: original.checklist!, value: [item('one', 'Revised'), item('two', 'Second')] } };
+        const plan = unwrap(host.prepareTaskChecklistSave(request));
+        expect(plan.kind).toBe('prepared');
+        if (plan.kind !== 'prepared') return;
+        expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: plan.prepared })))
+            .toEqual({ id: original.id });
+        expect(savedTask()).toMatchObject({ location: 'Clinic B', rev: 4,
+            checklist: [item('one', 'Revised'), item('two', 'Second')] });
+    });
+
     it('projects an unsaved checklist into editor layout without changing the saved edit source', async () => {
         const { host } = await open(source({ checklist: [] }));
         const draft = createTaskDraft(savedTask());

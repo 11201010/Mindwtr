@@ -206,7 +206,7 @@ struct TaskViewSheet: View {
 
     @ViewBuilder private func editorSection(_ section: CoreObject) -> some View {
         let fields = (section["fields"] as? [String] ?? []).filter { field in
-            ["description", "priority", "energyLevel", "timeEstimate", "contexts", "tags", "startTime", "dueDate", "reviewAt", "recurrence", "checklist"].contains(field)
+            ["description", "location", "priority", "energyLevel", "timeEstimate", "contexts", "tags", "startTime", "dueDate", "reviewAt", "recurrence", "checklist"].contains(field)
                 || (section.text("id") == "basic" && field == model.taskDestination.object("destination").text("fieldId"))
                 || (section.text("id") == "basic" && field == "section" && model.taskDestination.object("section").flag("visible"))
         }
@@ -254,6 +254,19 @@ struct TaskViewSheet: View {
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
                     .accessibilityLabel(strings.text("taskEdit.descriptionLabel"))
                     .accessibilityIdentifier("task-editor-note")
+                    .disabled(model.taskScheduleUpdating)
+            }
+        } else if field == "location" {
+            VStack(alignment: .leading, spacing: 8) {
+                label(strings.text("taskEdit.locationLabel"))
+                TextField(strings.text("taskEdit.locationPlaceholder"), text: $model.taskLocationDraft)
+                    .rnFont(16).padding(12).frame(minHeight: 44)
+                    .submitLabel(.done).onSubmit(endEditingBeforeAction)
+                    .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+                    .accessibilityLabel(strings.text("taskEdit.locationLabel"))
+                    .accessibilityHint(strings.text("taskEdit.locationPlaceholder"))
+                    .accessibilityIdentifier("task-editor-location")
                     .disabled(model.taskScheduleUpdating)
             }
         } else if ["startTime", "dueDate", "reviewAt"].contains(field) {

@@ -28,7 +28,7 @@ export type NativeTaskRecurrenceBase = {
     recurrence: Exclude<Task['recurrence'], undefined> | null;
     showFutureRecurrence: boolean | null;
 };
-type SaveField = 'title' | 'description' | 'priority' | 'energyLevel' | 'timeEstimate' | 'contexts' | 'tags' | 'status'
+type SaveField = 'title' | 'description' | 'location' | 'priority' | 'energyLevel' | 'timeEstimate' | 'contexts' | 'tags' | 'status'
     | 'projectId' | 'areaId' | 'sectionId' | 'startTime' | 'dueDate' | 'reviewAt' | 'relativeStartOffset'
     | 'recurrence' | 'recurrenceStrategy' | 'recurrenceRRule' | 'showFutureRecurrence';
 type SaveFields = Partial<{ [K in SaveField]: Exclude<TaskDraft[K], undefined> | (K extends 'relativeStartOffset' ? null : never) }>;
@@ -61,14 +61,14 @@ export type NativePreparedTaskDraftSaveV2 = {
 };
 export type NativePreparedTaskDraftSaveAny = NativePreparedTaskDraftSave | NativePreparedTaskDraftSaveV2;
 
-const FIELDS: readonly SaveField[] = ['title', 'description', 'priority', 'energyLevel', 'timeEstimate', 'contexts', 'tags', 'status',
+const FIELDS: readonly SaveField[] = ['title', 'description', 'location', 'priority', 'energyLevel', 'timeEstimate', 'contexts', 'tags', 'status',
     'projectId', 'areaId', 'sectionId', 'startTime', 'dueDate', 'reviewAt', 'relativeStartOffset',
     'recurrence', 'recurrenceStrategy', 'recurrenceRRule', 'showFutureRecurrence'];
 const STORED_FIELDS = FIELDS.filter((field) => field !== 'recurrenceStrategy' && field !== 'recurrenceRRule');
 const SCHEDULE = ['startTime', 'dueDate', 'relativeStartOffset', 'reviewAt'] as const;
 const RECURRENCE = ['recurrence', 'recurrenceStrategy', 'recurrenceRRule', 'showFutureRecurrence'] as const;
 const ASSOCIATIONS = ['projectId', 'areaId', 'sectionId'] as const;
-const REFERENCE_FIELDS = new Set<SaveField>(['title', 'description', 'contexts', 'tags', 'energyLevel',
+const REFERENCE_FIELDS = new Set<SaveField>(['title', 'description', 'location', 'contexts', 'tags', 'energyLevel',
     'projectId', 'areaId', 'sectionId']);
 const referenceEditable = (request: NativeTaskDraftSaveRequest): boolean => Object.keys(request.patch)
     .every((field) => REFERENCE_FIELDS.has(field as SaveField)
@@ -344,7 +344,13 @@ export function createTaskDraftSaveMethods(deps: {
     validateField: (field: TaskDraftField, value: unknown) => boolean;
 }) {
     const patchValues = nativeTaskDraftPatchValues;
-    const readRequest = (input: unknown, allowPlain = false) => readNativeTaskDraftSaveRequest(input, deps.validateField, false, allowPlain);
+    const readRequest = (input: unknown, allowPlain = false) => {
+        const request = readNativeTaskDraftSaveRequest(input, deps.validateField, false, allowPlain);
+        // V1 was sealed before Location was offered. Checklist has its own
+        // parser and v2 permits this field, but old prepared journal grammar
+        // must not silently widen to a new mixed date/Location payload.
+        return request && (!allowPlain && own(request.patch, 'location') ? null : request);
+    };
     const serializedDirect = serializeNativeTaskDraftDirect;
     const validBases = validNativeTaskDraftBases;
     const saves = createAreaSaveGuard(deps.save);

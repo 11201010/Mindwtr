@@ -197,7 +197,7 @@ final class CoreHostTests: XCTestCase {
             _ = try await core.start()
             let editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
             let before = try storedTask(id)
-            let payload = try datePayload(id, editor: editor, patch: ["title": "Durable edited title", "description": "Durable edited note"])
+            let payload = try datePayload(id, editor: editor, patch: ["title": "Durable edited title", "description": "Durable edited note", "location": "  Library 111  "])
             if afterCommit {
                 var writes = 0
                 faults.journalWrite = { writes += 1; if writes == 2 { throw HostFailure("Injected editor lost acknowledgment") } }
@@ -229,9 +229,10 @@ final class CoreHostTests: XCTestCase {
             let recovered = try storedTask(id)
             XCTAssertEqual(recovered["title"] as? String, "Durable edited title")
             XCTAssertEqual(recovered["description"] as? String, "Durable edited note")
+            XCTAssertEqual(recovered["location"] as? String, "Library 111")
             XCTAssertEqual(recovered["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
-            XCTAssertEqual(try datePreservedFields(recovered, excluding: ["title", "description", "rev", "revBy", "updatedAt"]),
-                           try datePreservedFields(before, excluding: ["title", "description", "rev", "revBy", "updatedAt"]))
+            XCTAssertEqual(try datePreservedFields(recovered, excluding: ["title", "description", "location", "rev", "revBy", "updatedAt"]),
+                           try datePreservedFields(before, excluding: ["title", "description", "location", "rev", "revBy", "updatedAt"]))
             replayFaults.journalRemove = nil
             _ = try await reopened.start()
             let absent = try await reopened.retryPending()
@@ -261,14 +262,69 @@ final class CoreHostTests: XCTestCase {
         }
         XCTAssertEqual(try json(storedTask(id)), try json(before))
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
-        _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["title": "Reference saved", "description": "Reference note", "energyLevel": "high"]))
+        _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["title": "Reference saved", "description": "Reference note", "energyLevel": "high", "location": "Reference shelf"]))
         let after = try storedTask(id)
         XCTAssertEqual(after["title"] as? String, "Reference saved")
         XCTAssertEqual(after["description"] as? String, "Reference note")
         XCTAssertEqual(after["energyLevel"] as? String, "high")
+        XCTAssertEqual(after["location"] as? String, "Reference shelf")
         XCTAssertEqual(after["status"] as? String, "reference")
         XCTAssertTrue(after["priority"] is NSNull)
         XCTAssertEqual(after["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
+    }
+
+    func testLocationEditorClearNoopAndMalformedTransport() async throws {
+        let id = try await seedDestinationTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        var editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["location": " Library 111 "]))
+        XCTAssertEqual(try storedTask(id)["location"] as? String, "Library 111")
+        editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["location": "   "]))
+        XCTAssertTrue(try storedTask(id)["location"] is NSNull)
+        editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["location": "   "]))
+        XCTAssertEqual(try nineTableSnapshot(sqlite), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        var statements = 0
+        faults.beforeSQL = { _ in statements += 1 }
+        for patch: [String: Any] in [["location": true], ["location": "Place", "attachments": []]] {
+            await expectFailure("INVALID_INPUT") {
+                _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: patch))
+            }
+        }
+        XCTAssertEqual(statements, 0)
+        XCTAssertEqual(try nineTableSnapshot(sqlite), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        sqlite.close()
+    }
+
+    func testLocationEditorRejectsLegacyPlainJournalBeforeSQLite() async throws {
+        let id = try await seedDestinationTask()
+        let request = try json([json(["id": id, "base": ["location": ""], "patch": ["location": "Unsupported legacy edit"]])])
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        var statements = 0
+        faults.beforeSQL = { _ in statements += 1 }
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("saveDraft", argumentsJSON: request) }
+        XCTAssertEqual(statements, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+        let saved = try json(["version": 2, "method": "saveDraft", "argumentsJSON": request])
+        try Data(saved.utf8).write(to: journal)
+        let before = try Data(contentsOf: database)
+        let replayFaults = HostIOFaults()
+        replayFaults.beforeSQL = { _ in statements += 1 }
+        let reopened = host(replayFaults)
+        await expectFailure { _ = try await reopened.start() }
+        XCTAssertEqual(statements, 0)
+        XCTAssertEqual(try Data(contentsOf: database), before)
+        XCTAssertEqual(try Data(contentsOf: journal), Data(saved.utf8))
     }
 
     func testDurableEditorNoopCannotReplacePendingSave() async throws {
@@ -10108,7 +10164,7 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual((edited["draft"] as? [String: Any])?["status"] as? String, "done")
         let checklist = try XCTUnwrap(edited["checklist"] as? [[String: Any]])
         let request = try checklistSaveRequest(id, opening: opening, checklist: checklist,
-                                               patch: ["status": "done", "description": "Checklist and date saved together", "dueDate": "2036-10-03"])
+                                               patch: ["status": "done", "description": "Checklist and date saved together", "location": "Checklist location", "dueDate": "2036-10-03"])
         let before = try storedTask(id)
         let count = try taskCount()
         var writes = 0
@@ -10122,6 +10178,7 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(completed["status"] as? String, "done")
         XCTAssertEqual(completed["dueDate"] as? String, "2036-10-03")
         XCTAssertEqual(completed["description"] as? String, "Checklist and date saved together")
+        XCTAssertEqual(completed["location"] as? String, "Checklist location")
         XCTAssertEqual(try checklistItems(id).first?["isCompleted"] as? Bool, true)
         XCTAssertEqual(completed["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
         let saved = try object(String(contentsOf: journal))

@@ -509,6 +509,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var taskDestinationError: String?
     @Published var taskTitleDraft = ""
     @Published var taskNoteDraft = ""
+    @Published var taskLocationDraft = ""
     @Published var taskEstimateInput = ""
     @Published private(set) var taskChecklist: [CoreObject] = []
     @Published private(set) var taskChecklistField: CoreObject = [:]
@@ -653,7 +654,7 @@ final class CoreModel: ObservableObject {
     private let taskRecurrenceFields = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
     private let taskDateFields = ["startTime", "dueDate", "reviewAt"]
     private var taskEstimateResolvedInput = ""
-    private let taskSaveFields = ["title", "description", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "startTime", "dueDate", "reviewAt"]
+    private let taskSaveFields = ["title", "description", "location", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "startTime", "dueDate", "reviewAt"]
     private let taskTokenFields = ["contexts", "tags"]
     private var taskTokenCanonical: [String: String] = [:]
     private var taskTokenResolvedInputs: [String: String] = [:]
@@ -1588,6 +1589,7 @@ final class CoreModel: ObservableObject {
         var draft = taskEditor.object("draft")
         draft["title"] = taskTitleDraft
         draft["description"] = taskNoteDraft
+        draft["location"] = taskLocationDraft
         for field in taskTokenFields {
             if let canonical = taskTokenCanonical[field] { draft[field] = canonical }
         }
@@ -12349,6 +12351,7 @@ final class CoreModel: ObservableObject {
         taskOriginalDraft = [:]
         taskTitleDraft = ""
         taskNoteDraft = ""
+        taskLocationDraft = ""
         taskEstimateInput = ""
         taskEstimateResolvedInput = ""
         taskError = nil
@@ -13390,6 +13393,7 @@ final class CoreModel: ObservableObject {
                     synchronizeTaskRecurrenceInputs()
                     taskTitleDraft = editor.object("draft").text("title")
                     taskNoteDraft = editor.object("draft").text("description")
+                    taskLocationDraft = editor.object("draft").text("location")
                     initializeTaskTokens()
                     resetTaskEstimateInput()
                 }

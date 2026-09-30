@@ -89,6 +89,83 @@ describe('prepared native task draft save', () => {
         expect(saveData).not.toHaveBeenCalled();
     });
 
+    it('uses shared Location trimming for set, clear, and whitespace-only no-op', async () => {
+        const set = request({ location: '  Clinic A  ' });
+        const setPlan = await host.prepareTaskDraftSaveV2(set);
+        expect(setPlan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!setPlan.ok || setPlan.value.kind !== 'prepared') return;
+        expect(setPlan.value.prepared.effect.task.after.location).toBe('Clinic A');
+        expect(await host.commitPreparedTaskDraftSave({ request: set, prepared: setPlan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ location: 'Clinic A', rev: 8 });
+        await open();
+        expect(await host.commitPreparedTaskDraftSave({ request: set, prepared: setPlan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saveData).not.toHaveBeenCalled();
+
+        const clear = request({ location: '' });
+        const clearPlan = await host.prepareTaskDraftSaveV2(clear);
+        expect(clearPlan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!clearPlan.ok || clearPlan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: clear, prepared: clearPlan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved().location).toBeUndefined();
+        const before = saved();
+        saveData.mockClear();
+        expect(await host.prepareTaskDraftSaveV2(request({ location: '   ' })))
+            .toMatchObject({ ok: true, value: { kind: 'noop', result: { id: 'edit' } } });
+        expect(saved()).toEqual(before);
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('allows shared Reference Location while retaining the exact legacy v1 prepared roster', async () => {
+        await seed({ status: 'reference' });
+        const input = request({ location: '  Archive shelf  ' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ status: 'reference', location: 'Archive shelf' });
+
+        await seed();
+        const mixed = request({ location: 'Clinic', dueDate: '2036-10-05' });
+        expect(host.prepareTaskDraftSave(mixed)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const v2 = await host.prepareTaskDraftSaveV2(mixed);
+        expect(v2).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!v2.ok || v2.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: mixed, prepared: v2.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ location: 'Clinic', dueDate: '2036-10-05' });
+
+        await seed();
+        const old = host.prepareTaskDraftSave(request({ dueDate: '2036-10-05' }));
+        if (!old.ok) throw new Error(JSON.stringify(old));
+        const forged = json(old.value);
+        forged.request = mixed;
+        expect(host.validatePreparedTaskDraftSave({ request: mixed, prepared: forged }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    it('incorporates a fresh sibling before Location preparation but rejects a forged frozen Location', async () => {
+        const input = request({ location: 'Clinic' });
+        durable.tasks[0].description = 'Independent note';
+        durable.tasks[0].rev = 8;
+        durable.tasks[0].updatedAt = '2026-09-27T11:00:00.000Z';
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(plan.value.prepared.effect.task.before.description).toBe('Independent note');
+        const forged = json(plan.value.prepared);
+        forged.effect.task.after.location = 'Injected';
+        expect(host.validatePreparedTaskDraftSave({ request: input, prepared: forged }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(saveData).not.toHaveBeenCalled();
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ description: 'Independent note', location: 'Clinic', rev: 9 });
+    });
+
     it('replays an exact Task receipt after an independent device ID change when the edit did not initialize it', async () => {
         const input = request({ title: 'Changed' });
         const plan = await host.prepareTaskDraftSaveV2(input);

@@ -7735,7 +7735,7 @@ final class FoundationUITests: XCTestCase {
         // Text fields expose their placeholder as the value after clearing.
         XCTAssertTrue((input.value as? String ?? "").isEmpty || input.value as? String == input.placeholderValue)
         if !text.isEmpty { input.typeText(text) }
-        XCTAssertEqual(input.value as? String ?? "", text)
+        XCTAssertTrue(input.value as? String == text || (text.isEmpty && input.value as? String == input.placeholderValue))
     }
 
     private func projectNotesAutosave(library: String) {
@@ -11181,6 +11181,106 @@ final class FoundationUITests: XCTestCase {
         enabled(app.buttons["task-editor-destination"])
         XCTAssertEqual(app.buttons["task-editor-destination"].value as? String, "None")
         tap("task-view-close")
+    }
+
+    func testTaskLocationPresetEditDiscardAndRestart() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let library = UUID().uuidString.lowercased()
+        app.launchArguments = ["--native-ui-test-library", library]
+        print("Location editor isolated library: " + library)
+        app.launch()
+        let title = "iOS location " + String(UUID().uuidString.prefix(8))
+        boardEnabled(app.buttons["capture-open"], timeout: 30); boardTap(app, "capture-open")
+        app.textViews["capture-input"].typeText(title)
+        boardTap(app, "capture-save")
+        boardEnabled(app.buttons[title], timeout: 30)
+        let taskID = String(app.buttons[title].identifier.dropFirst("task-title-".count))
+        func openTask() {
+            boardTap(app, "search-open")
+            let input = app.textFields["search-input"]; boardEnabled(input); input.tap(); input.typeText(title)
+            let row = app.buttons["search-task-" + taskID]
+            boardEnabled(row, timeout: 30); row.tap(); boardTap(app, "task-mode-edit")
+        }
+        func closeTask() { boardTap(app, "task-view-close"); boardTap(app, "search-close") }
+        var fullFields = false
+        func preset(_ value: String) {
+            task108Open(app); task109Pick(app, value)
+            fullFields = value == "full"
+            boardTap(app, "gtd-taskEditor-back"); boardTap(app, "gtd-back"); boardTap(app, "settings-back")
+        }
+        func disclosureReady(_ control: XCUIElement) {
+            boardEnabled(control)
+            expectation(for: NSPredicate(format: "value IN %@", ["Expand", "Collapse"]), evaluatedWith: control)
+            waitForExpectations(timeout: 10)
+        }
+        func editReady() {
+            expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["task-mode-edit"])
+            waitForExpectations(timeout: 10)
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-editor-title").firstMatch.waitForExistence(timeout: 10))
+        }
+        func location() -> XCUIElement {
+            editReady()
+            let scroll = app.scrollViews["task-editor-scroll"]
+            for section in fullFields ? ["scheduling", "organization"] : [] {
+                let control = app.buttons["task-editor-section-" + section]
+                disclosureReady(control)
+                if control.value as? String == "Collapse" {
+                    revealPagedElement(app, control, in: scroll, outerEdge: true)
+                    control.tap()
+                    expectation(for: NSPredicate(format: "value == %@", "Expand"), evaluatedWith: control)
+                    waitForExpectations(timeout: 10)
+                }
+            }
+            let header = app.buttons["task-editor-section-details"]
+            disclosureReady(header)
+            revealPagedElement(app, header, in: scroll, outerEdge: true)
+            if header.value as? String == "Expand" {
+                header.tap()
+                expectation(for: NSPredicate(format: "value == %@", "Collapse"), evaluatedWith: header)
+                waitForExpectations(timeout: 10)
+            }
+            let input = app.textFields["task-editor-location"]
+            for _ in 0..<12 {
+                if input.exists && input.isHittable && scroll.frame.contains(input.frame) { break }
+                if input.exists && input.frame.minY < scroll.frame.minY { scroll.swipeDown() }
+                else { scroll.swipeUp() }
+                XCTAssertEqual(header.value as? String, "Collapse", "Scrolling keeps Details open")
+            }
+            boardEnabled(input)
+            XCTAssertTrue(input.isHittable && scroll.frame.contains(input.frame))
+            return input
+        }
+        preset("simple"); openTask()
+        XCTAssertFalse(app.textFields["task-editor-location"].exists)
+        closeTask()
+        preset("full"); openTask()
+        let value = "Library 111"
+        let input = location(); input.tap(); input.typeText(value)
+        boardTap(app, "task-mode-view")
+        revealPagedElement(app, app.staticTexts[value], in: app.scrollViews["task-editor-scroll"])
+        boardTap(app, "task-mode-edit")
+        editReady()
+        for (section, expected) in [("scheduling", "Expand"), ("organization", "Expand"), ("details", "Collapse")] {
+            let header = app.buttons["task-editor-section-" + section]
+            disclosureReady(header)
+            XCTAssertEqual(header.value as? String, expected, "Preview retains the section disclosure state")
+        }
+        XCTAssertEqual(location().value as? String, value, "Preview refresh retains the unsaved Location")
+        boardTap(app, "task-editor-save")
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30)
+        openTask(); XCTAssertEqual(location().value as? String, value)
+        replaceProjectNotesText(location(), with: "Discard this location")
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard"); boardTap(app, "search-close")
+        preset("simple"); openTask()
+        XCTAssertEqual(location().value as? String, value, "Filled Location remains visible under Simple")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Saved Location editor"; shot.lifetime = .keepAlways; add(shot)
+        let clearing = location()
+        replaceProjectNotesText(clearing, with: "")
+        boardTap(app, "task-editor-save")
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30)
+        openTask(); XCTAssertFalse(app.textFields["task-editor-location"].exists)
+        closeTask(); app.terminate()
     }
 
     func testTaskMetadataEditPreviewDiscardAndRestart() {
