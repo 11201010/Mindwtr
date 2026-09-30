@@ -1706,6 +1706,26 @@ describe('canonical local reads contract', () => {
                 notCanonical.push({ action, ...outcome });
             }
         }
+        const preparedTheme = await runMutation('native prepared General Theme', async (control) => {
+            const host = await nativeHost(control);
+            const options = nativeValue(await host.getGeneralPreferenceOptions({}));
+            const request = { requestId: 'ddcf0526-c537-4ec9-82d9-46acf9e73001',
+                edit: { type: 'theme' as const, value: 'material3-dark' as const },
+                expected: options.expected.theme };
+            const planned = nativeValue(await host.prepareGeneralPreference(request));
+            expect(planned.kind).toBe('prepared');
+            if (planned.kind !== 'prepared') return;
+            control.expectPersisted((written) => {
+                expect(written.settings.theme).toBe('material3-dark');
+                expect(written.settings.syncPreferencesUpdatedAt?.appearance).toBe(planned.prepared.after.stamp);
+                expect(written.tasks).toHaveLength(settled.tasks.length);
+            });
+            expect(nativeValue(await host.commitPreparedGeneralPreference({ request, prepared: planned.prepared })))
+                .toEqual(planned.prepared.result);
+        });
+        if (preparedTheme.storeFields.length > 0 || preparedTheme.readFields.length > 0) {
+            notCanonical.push({ action: 'native prepared General Theme', ...preparedTheme });
+        }
         const restoredArea = await runMutation('native prepared Area restore', async (control) => {
             const host = await nativeHost(control);
             await call('deleteArea', areaId);

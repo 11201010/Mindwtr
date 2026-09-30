@@ -2,6 +2,7 @@ import { buildGeneralSettingsUpdate, isGeneralSettingStored, MOBILE_QUICK_ACCESS
     type GeneralSettingsModel } from './general-settings-model';
 import { generalPreferenceWitness, legacyGeneralPreferenceNumber,
     type GeneralPreferenceType, type GeneralPreferenceWitness } from './general-preference-witness';
+import { SETTINGS_THEME_VALUES } from './settings-options';
 import { taskEditValuesEqual } from './json-value-equality';
 import { readAreaDurableData, createAreaSaveGuard } from './native-host-contract-area-durable';
 import type { NativeHostResult } from './native-host-contract';
@@ -27,13 +28,14 @@ export type NativeGeneralPreferencePreparation = { kind: 'noop'; result: NativeG
     | { kind: 'prepared'; prepared: NativePreparedGeneralPreference };
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const TYPES: GeneralPreferenceType[] = ['showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat', 'calendarSystem'];
+const TYPES: GeneralPreferenceType[] = ['showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat', 'calendarSystem', 'theme'];
 const VALUES: Record<Exclude<GeneralPreferenceType, 'showTaskAge'>, readonly string[]> = {
     quickAccessView: MOBILE_QUICK_ACCESS_VIEW_OPTIONS,
     weekStart: ['system', 'sunday', 'monday', 'saturday'],
     dateFormat: ['system', 'dmy', 'mdy', 'ymd'],
     timeFormat: ['system', '12h', '24h'],
     calendarSystem: ['gregorian', 'jalali'],
+    theme: SETTINGS_THEME_VALUES,
 };
 const same = taskEditValuesEqual;
 const bounded = (value: unknown, max = 500): value is string => typeof value === 'string' && value.length <= max;
@@ -54,7 +56,7 @@ const validWitness = (value: unknown, type: GeneralPreferenceType): value is Gen
     record(value) && exact(value, ['present', 'value', 'stampPresent', 'stamp'])
     && typeof value.present === 'boolean' && typeof value.stampPresent === 'boolean'
     && (value.present ? type === 'showTaskAge' ? typeof value.value === 'boolean'
-        : bounded(value.value) || type !== 'quickAccessView' && type !== 'calendarSystem'
+        : bounded(value.value) || type !== 'quickAccessView' && type !== 'calendarSystem' && type !== 'theme'
             && legacyGeneralPreferenceNumber(value.value)
         : value.value === null)
     && (value.stampPresent ? iso(value.stamp) : value.stamp === null);
@@ -96,14 +98,16 @@ const readPrepared = (input: unknown): NativePreparedGeneralPreference | null =>
 
 export function createGeneralPreferenceMethods(deps: { readiness: () => NativeHostResult<null>;
     save: () => Promise<NativeHostResult<null>>;
-    model: (settings: AppSettings) => GeneralSettingsModel }) {
+    model: (settings: AppSettings, deviceTheme?: string | null) => GeneralSettingsModel }) {
     const saves = createAreaSaveGuard(deps.save);
     const resultFor = (edit: GeneralPreferenceEdit, changed: boolean): NativeGeneralPreferenceResult =>
         ({ type: edit.type, value: edit.value, changed });
     return {
-        async getGeneralPreferenceOptions(input: Record<string, never>): Promise<NativeHostResult<NativeGeneralPreferenceOptions>> {
+        async getGeneralPreferenceOptions(input: { deviceTheme?: string | null }): Promise<NativeHostResult<NativeGeneralPreferenceOptions>> {
             const ready = deps.readiness(); if (!ready.ok) return ready;
-            if (!record(input) || !exact(input, [])) return fail('INVALID_INPUT', 'Empty General options input is required');
+            if (!record(input) || !exact(input, []) && !exact(input, ['deviceTheme'])
+                || input.deviceTheme !== undefined && input.deviceTheme !== null && !bounded(input.deviceTheme))
+                return fail('INVALID_INPUT', 'General options need an optional bounded device theme');
             const read = await readAreaDurableData(); if (!read.ok) return read;
             const settings = read.value.authority.snapshot.settings;
             const expected = {} as Record<GeneralPreferenceType, GeneralPreferenceWitness>;
@@ -112,7 +116,7 @@ export function createGeneralPreferenceMethods(deps: { readiness: () => NativeHo
                 if (!witness) return fail('INVALID_INPUT', `Saved ${type} preference has an unsupported value`);
                 expected[type] = witness;
             }
-            const value = { model: deps.model(settings), expected };
+            const value = { model: deps.model(settings, input.deviceTheme), expected };
             return isNativeJsonWithinBytes(value, 2_000_000) ? { ok: true, value }
                 : fail('INVALID_INPUT', 'General options exceed the bounded response');
         },

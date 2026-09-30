@@ -668,6 +668,7 @@ final class CoreModel: ObservableObject {
     private var managePersonDeleteTestRefusals = 0
     private var generalPreferenceTestReadFailures = 0
     private var generalPreferenceMenuTestReadFailures = 0
+    private var generalPreferenceThemeTestReadFailures = 0
     private var generalPreferenceOptionsTestFailure = false
     private var generalPreferenceTestRefusals = 0
     private var manageTaxonomyTestReadFailures = 0
@@ -881,6 +882,7 @@ final class CoreModel: ObservableObject {
     private var preference = "nativeFoundation.capture.addAnother"
     private var storedLanguage = ""
     private var storedTheme = ""
+    private var themePreferencePrefix = ""
     private var initialAddAnother = false
 
     var focusControlsEnabled: Bool {
@@ -1642,6 +1644,7 @@ final class CoreModel: ObservableObject {
                     managePersonDeleteTestRefusals = arguments.contains("--native-manage-person-delete-refusal") ? 1 : 0
                     generalPreferenceTestReadFailures = arguments.contains("--native-general-preference-read-failure") ? 2 : 0
                     generalPreferenceMenuTestReadFailures = arguments.contains("--native-general-preference-menu-read-failure") ? 2 : 0
+                    generalPreferenceThemeTestReadFailures = arguments.contains("--native-general-preference-theme-read-failure") ? 2 : 0
                     generalPreferenceOptionsTestFailure = arguments.contains("--native-general-preference-options-failure")
                     generalPreferenceTestRefusals = arguments.contains("--native-general-preference-refusal") ? 1 : 0
                     manageTaxonomyTestReadFailures = arguments.contains("--native-manage-taxonomy-read-failure") ? 2 : 0
@@ -1676,6 +1679,7 @@ final class CoreModel: ObservableObject {
                     let legacy = try LegacyRNStorage(containerURL: container, bundleIdentifier: identifier)
                     storedLanguage = try legacy.value(forKey: "mindwtr-language") ?? ""
                     storedTheme = try legacy.value(forKey: "@mindwtr_theme") ?? ""
+                    themePreferencePrefix = "nativeRNRehearsal."
                     initialAddAnother = try legacy.value(forKey: "mindwtr:quickCapture:addAnother") == "true"
                     preference = "nativeRNRehearsal.capture.addAnother"
                     initialProjectShowCompleted = try legacy.value(forKey: "mindwtr:view:project-detail:show-completed:v1") == "true"
@@ -1740,6 +1744,7 @@ final class CoreModel: ObservableObject {
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 }
             }
+            storedTheme = preferenceDefaults.object(forKey: themePreferencePrefix + "@mindwtr_theme") as? String ?? storedTheme
             projectShowCompleted = (preferenceDefaults.object(forKey: projectShowCompletedPreference) as? Bool)
                 ?? initialProjectShowCompleted
             if preferenceDefaults.object(forKey: manageOpenSectionsPreference) == nil,
@@ -1861,7 +1866,7 @@ final class CoreModel: ObservableObject {
                         "settings.feedback.saveFailed", "settings.feedback.actionFailed",
                         "viewSections.add", "viewSections.nameHint", "viewSections.namePlaceholder", "viewSections.updateFailed"]
             strings = try await query("strings", [try json(keys)]).object("strings")
-            theme = try await query("theme", [storedTheme])
+            try await readTheme()
             if boardRecoveredResult != nil { selectedSurface = .board }
             if calendarComposerRecoveredResult != nil { selectedSurface = .calendar }
             if mindSweepRecoveredResult != nil { selectedSurface = .inbox }
@@ -1898,7 +1903,7 @@ final class CoreModel: ObservableObject {
         busy = true
         defer { finishOperation() }
         do {
-            theme = try await query("theme", [storedTheme])
+            try await readTheme()
             try await readSelectedSurface()
             error = nil
         } catch { self.error = error.localizedDescription }
@@ -2036,7 +2041,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openGeneralPreferencePicker(_ type: String) {
-        guard generalPreferenceEnabled, ["weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem"].contains(type) else { return }
+        guard generalPreferenceEnabled, ["weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem", "theme"].contains(type) else { return }
         guard type != "calendarSystem" || generalSettings.object("regional")["calendarSystem"] is CoreObject else { return }
         generalPreferencePicker = type
         generalPreferenceError = nil
@@ -2048,16 +2053,43 @@ final class CoreModel: ObservableObject {
     }
 
     private func readGeneralSettings() async throws {
-        let options = try await query("generalPreferenceOptions", ["{}"])
+        let options = try await query("generalPreferenceOptions", [try json(["deviceTheme": storedTheme])])
         let model = options.object("model")
         let expected = options.object("expected")
         guard !model.text("title").isEmpty, model["appearance"] is CoreObject, model["regional"] is CoreObject,
-              Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem"]) else {
+              Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem", "theme"]) else {
             throw CocoaError(.coderReadCorrupt)
         }
         generalSettings = model
         generalPreferenceExpected = expected
         generalPreferenceReadError = nil
+    }
+
+    private func readTheme() async throws {
+        let next = try await query("theme", [storedTheme])
+        guard let writes = next["deviceWrites"] as? [CoreObject], writes.isEmpty || writes.count == 2 else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        var mirrors: [String: String] = [:]
+        for write in writes {
+            guard Set(write.keys) == Set(["key", "value"]), let name = write["key"] as? String,
+                  let value = write["value"] as? String, mirrors[name] == nil,
+                  (name == "@mindwtr_theme" && !value.isEmpty && value.utf16.count <= 500 && value == next.text("mode"))
+                    || (name == "@mindwtr_theme_style" && ["material3", "default"].contains(value)) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            mirrors[name] = value
+        }
+        guard mirrors.isEmpty || Set(mirrors.keys) == Set(["@mindwtr_theme", "@mindwtr_theme_style"]) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        // These core-approved mirrors follow the saved field; cold startup reconciles an interrupted pair.
+        for (name, value) in mirrors {
+            let key = themePreferencePrefix + name
+            if preferenceDefaults.object(forKey: key) as? String != value { preferenceDefaults.set(value, forKey: key) }
+        }
+        if let value = mirrors["@mindwtr_theme"] { storedTheme = value }
+        theme = next
     }
 
     func saveGeneralPreference(_ edit: CoreObject) async {
@@ -2110,6 +2142,7 @@ final class CoreModel: ObservableObject {
             if generalPreferenceEdit.text("type") == "quickAccessView" {
                 moreMenu = try await query("menuRead", ["more", "{}"])
             }
+            if generalPreferenceEdit.text("type") == "theme" { try await readTheme() }
             generalPreferenceAwaitingRefresh = false
             if generalPreferenceAcknowledged {
                 generalPreferencePicker = nil
@@ -15192,6 +15225,10 @@ final class CoreModel: ObservableObject {
         }
         if method == "menuRead", args.first as? String == "more", generalPreferenceAcknowledged, generalPreferenceMenuTestReadFailures > 0 {
             generalPreferenceMenuTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "theme", generalPreferenceAcknowledged, generalPreferenceThemeTestReadFailures > 0 {
+            generalPreferenceThemeTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
         if method == "generalPreferenceOptions", generalPreferenceAcknowledged, generalPreferenceTestReadFailures > 0 {

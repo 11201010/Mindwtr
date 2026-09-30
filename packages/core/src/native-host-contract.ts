@@ -1791,10 +1791,10 @@ export function createNativeHostContract(options: {
         ...createPersonEditMethods({ readiness, save }),
         ...createTaxonomyMethods({ readiness, save, t: () => translate }),
         ...createGeneralPreferenceMethods({ readiness, save,
-            model: (settings) => buildNativeGeneralSettingsModel(settings, {
+            model: (settings, deviceTheme) => buildNativeGeneralSettingsModel(settings, {
                 t: () => translate, language: () => language,
                 systemLocale: () => systemLocale, dateFormatting,
-            }) }),
+            }, deviceTheme) }),
         ...createPersonDeleteMethods({ readiness, save, t: () => translate }),
 
         ...createAreaCreateMethods({ readiness, save,

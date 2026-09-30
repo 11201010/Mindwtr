@@ -1,6 +1,6 @@
 import type { AppSettings } from './types';
 
-export type GeneralPreferenceType = 'showTaskAge' | 'quickAccessView' | 'weekStart' | 'dateFormat' | 'timeFormat' | 'calendarSystem';
+export type GeneralPreferenceType = 'showTaskAge' | 'quickAccessView' | 'weekStart' | 'dateFormat' | 'timeFormat' | 'calendarSystem' | 'theme';
 export type GeneralPreferenceWitness = { present: boolean; value: boolean | string | number | null;
     stampPresent: boolean; stamp: string | null };
 
@@ -19,11 +19,12 @@ export const generalPreferenceWitness = (settings: AppSettings, type: GeneralPre
     const value = appearanceKey ? settings.appearance?.[appearanceKey]
         : type === 'weekStart' ? settings.weekStart
             : type === 'dateFormat' ? settings.dateFormat
-                : type === 'timeFormat' ? settings.timeFormat : settings.calendarSystem;
+                : type === 'timeFormat' ? settings.timeFormat
+                    : type === 'calendarSystem' ? settings.calendarSystem : settings.theme;
     const present = value !== undefined && (appearanceKey
         ? settings.appearance !== undefined && record(settings.appearance) && own(settings.appearance, appearanceKey)
         : own(settings, type));
-    const group = appearanceKey ? 'appearance' : 'language';
+    const group = appearanceKey || type === 'theme' ? 'appearance' : 'language';
     const stamps = settings.syncPreferencesUpdatedAt;
     if (appearanceKey && settings.appearance !== undefined && !record(settings.appearance)
         || stamps !== undefined && !record(stamps)) return null;
@@ -31,7 +32,8 @@ export const generalPreferenceWitness = (settings: AppSettings, type: GeneralPre
     const stamp = stampPresent ? stamps?.[group] : null;
     if (present && !(type === 'showTaskAge' ? typeof value === 'boolean'
         : typeof value === 'string' && value.length <= 500
-            || type !== 'quickAccessView' && type !== 'calendarSystem' && legacyGeneralPreferenceNumber(value))
+            || type !== 'quickAccessView' && type !== 'calendarSystem' && type !== 'theme'
+                && legacyGeneralPreferenceNumber(value))
         || stampPresent && !iso(stamp)) return null;
     return { present, value: present ? value as boolean | string | number : null,
         stampPresent, stamp: stampPresent ? stamp! : null };

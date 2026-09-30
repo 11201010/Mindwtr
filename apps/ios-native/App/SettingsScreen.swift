@@ -182,7 +182,7 @@ struct SettingsScreen: View {
                 Text(appearance.text("title")).rnFont(13, .semibold).foregroundStyle(palette.secondary)
                     .accessibilityAddTraits(.isHeader)
                 VStack(spacing: 0) {
-                    generalSettingRow(appearance.object("theme"), type: "theme", enabled: false)
+                    generalSettingRow(appearance.object("theme"), type: "theme", enabled: true)
                     palette.border.frame(height: 0.5)
                     Toggle(isOn: Binding(
                         get: { appearance.object("showTaskAge")["value"] as? Bool ?? false },
@@ -278,9 +278,10 @@ struct SettingsScreen: View {
 
     private var generalPreferenceSheet: some View {
         let type = model.generalPreferencePicker ?? ""
-        let picker = type == "quickAccessView"
-            ? model.generalSettings.object("appearance").object("quickAccess")
+        let picker = ["quickAccessView", "theme"].contains(type)
+            ? model.generalSettings.object("appearance").object(type == "theme" ? "theme" : "quickAccess")
             : model.generalSettings.object("regional").object(type)
+        let groups = picker["groups"] as? [[CoreObject]] ?? [picker["options"] as? [CoreObject] ?? []]
         return VStack(spacing: 12) {
             HStack {
                 Text(picker.text("pickerTitle")).rnFont(20, .bold).foregroundStyle(palette.text)
@@ -295,22 +296,10 @@ struct SettingsScreen: View {
             }.padding(.horizontal, 16).padding(.top, 20)
             ScrollView {
                 VStack(spacing: 8) {
-                    if let options = picker["options"] as? [CoreObject] {
-                        ForEach(options.indices, id: \.self) { index in
-                            let option = options[index]
-                            Button { Task { await model.saveGeneralPreference(option.object("edit")) } } label: {
-                                HStack {
-                                    Text(option.text("label")).rnFont(16).foregroundStyle(palette.text)
-                                        .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
-                                    if option["selected"] as? Bool == true {
-                                        Image(systemName: "checkmark").foregroundStyle(palette.tint).accessibilityHidden(true)
-                                    }
-                                }.padding(14).frame(minHeight: 48).contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
-                            .disabled(!model.generalPreferenceEnabled)
-                            .accessibilityAddTraits(option["selected"] as? Bool == true ? .isSelected : [])
-                            .accessibilityIdentifier("general-option-" + option.text("value"))
+                    ForEach(groups.indices, id: \.self) { group in
+                        if group > 0 { palette.border.frame(height: 1).padding(.vertical, 4).accessibilityHidden(true) }
+                        ForEach(groups[group].indices, id: \.self) { index in
+                            generalPreferenceOption(groups[group][index])
                         }
                     }
                     generalPreferenceFailure
@@ -321,6 +310,26 @@ struct SettingsScreen: View {
         .presentationDetents(dynamicTypeSize.isAccessibilitySize || model.generalPreferenceActive ? [.large] : [.medium, .large])
         .presentationDragIndicator(.visible)
         .interactiveDismissDisabled(model.busy || model.retryNeeded || model.generalPreferenceActive)
+    }
+
+    private func generalPreferenceOption(_ option: CoreObject) -> some View {
+        Button { Task { await model.saveGeneralPreference(option.object("edit")) } } label: {
+            HStack {
+                if !option.text("icon").isEmpty {
+                    Image(systemName: settingsSymbol(option.text("icon")))
+                        .font(.system(size: 20)).foregroundStyle(palette.secondary).frame(width: 24).accessibilityHidden(true)
+                }
+                Text(option.text("label")).rnFont(16).foregroundStyle(palette.text)
+                    .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                if option["selected"] as? Bool == true {
+                    Image(systemName: "checkmark").foregroundStyle(palette.tint).accessibilityHidden(true)
+                }
+            }.padding(14).frame(minHeight: 48).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+        .disabled(!model.generalPreferenceEnabled)
+        .accessibilityAddTraits(option["selected"] as? Bool == true ? .isSelected : [])
+        .accessibilityIdentifier("general-option-" + option.text("value"))
     }
 
     private var menuContent: some View {
@@ -1345,6 +1354,16 @@ struct SettingsScreen: View {
         case "Info": return "info.circle"
         case "Sparkles": return "sparkles"
         case "CalendarDays": return "calendar"
+        case "phone-portrait-outline": return "iphone"
+        case "contrast-outline": return "circle.lefthalf.filled"
+        case "sunny-outline": return "sun.max"
+        case "moon-outline": return "moon"
+        case "color-palette-outline": return "paintpalette"
+        case "document-text-outline": return "doc.text"
+        case "snow-outline": return "snowflake"
+        case "cafe-outline": return "cup.and.saucer"
+        case "wine-outline": return "wineglass"
+        case "book-outline": return "book"
         default: return "gearshape"
         }
     }

@@ -8,6 +8,8 @@ import {
     createDiagnosticsLog,
     createNativeHostContract,
     diagnosticsEntryFromLogPayload,
+    getGeneralSettingsDeviceWrites,
+    getPersistenceStatus,
     isDiagnosticsLoggingEnabled,
     legacyImportMismatch,
     assertNativeLegacyBackupSafe,
@@ -766,14 +768,36 @@ globalThis.MindwtrHost = {
      */
     theme(stored: string): string {
         return submit(async () => {
-            const synced = useTaskStore.getState().settings?.theme;
+            const state = useTaskStore.getState();
+            const synced = state.settings?.theme;
             const mode = typeof synced === 'string' && synced ? synced : (stored || 'system');
             const descriptor = themeDescriptor(mode);
             const preset = descriptor?.statusPreset ?? null;
             const lightPreset = resolveThemeStatusPreset(mode as AppTheme, 'light');
             const darkPreset = resolveThemeStatusPreset(mode as AppTheme, 'dark');
+            // A failed or in-flight save can leave the store showing an optimistic theme.
+            // Only the canonical saved Settings row may authorize local mirrors.
+            let deviceWrites: ReturnType<typeof getGeneralSettingsDeviceWrites> = [];
+            const before = getPersistenceStatus();
+            if (bootAdapter && !before.failed && !before.queued && !before.inFlight && !before.immediate && !before.retrying) {
+                const row = await sqlite.get<{ data: string }>('SELECT data FROM settings WHERE id = 1');
+                let saved: unknown = {};
+                if (row) {
+                    try { saved = JSON.parse(row.data); }
+                    catch { throw new Error('Invalid settings load'); }
+                }
+                if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings load');
+                const raw = (saved as { theme?: unknown }).theme;
+                const after = getPersistenceStatus();
+                if (useTaskStore.getState().settings === state.settings && after.generation === before.generation
+                    && !after.failed && !after.queued && !after.inFlight && !after.immediate && !after.retrying
+                    && raw === synced && typeof raw === 'string' && (raw === 'system' || themeDescriptor(raw))) {
+                    deviceWrites = getGeneralSettingsDeviceWrites({ type: 'theme', value: raw as AppTheme });
+                }
+            }
             return {
                 mode,
+                deviceWrites,
                 preset: preset ?? 'default',
                 presets: {
                     light: lightPreset ?? 'default',

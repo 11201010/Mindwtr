@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNativeHostContract } from './native-host-contract';
 import { MOBILE_QUICK_ACCESS_VIEW_OPTIONS } from './general-settings-model';
+import { SETTINGS_THEME_VALUES } from './settings-options';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { NativeGeneralPreferenceRequest } from './native-host-contract-general-preference';
 import type { AppData, Task } from './types';
@@ -84,7 +85,7 @@ describe('prepared General preferences', () => {
         const options = await env.host.getGeneralPreferenceOptions({});
         if (!options.ok) throw new Error(JSON.stringify(options));
         expect(Object.keys(options.value.expected).sort()).toEqual([
-            'showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat', 'calendarSystem'].sort());
+            'showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat', 'calendarSystem', 'theme'].sort());
         expect(options.value.expected.quickAccessView).toMatchObject({ present: false, value: null,
             stampPresent: true, stamp: AT });
         expect(options.value.model.appearance.quickAccess.options.map((row) => row.value))
@@ -103,6 +104,108 @@ describe('prepared General preferences', () => {
         const current = await cold.host.getGeneralPreferenceOptions({});
         if (!current.ok) throw new Error(JSON.stringify(current));
         expect(current.value.model.appearance.quickAccess.options.find((row) => row.selected)?.value).toBe(value);
+    });
+
+    it.each(SETTINGS_THEME_VALUES)('offers, saves, and cold-replays shared Theme %s', async (value) => {
+        const env = await open(initial());
+        const options = await env.host.getGeneralPreferenceOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        const groups = options.value.model.appearance.theme.groups;
+        expect(groups).toHaveLength(2);
+        expect(groups[0].map((row) => row.value)).toEqual(['system', 'system-oled', 'light', 'dark']);
+        expect(groups[1].map((row) => row.value)).toEqual(['material3-light', 'material3-dark', 'eink',
+            'nord', 'catppuccin-macchiato', 'dracula', 'sepia', 'oled']);
+        expect([...groups.flat().map((row) => row.value)].sort()).toEqual([...SETTINGS_THEME_VALUES].sort());
+        expect(groups.flat().find((row) => row.value === value)?.edit).toEqual({ type: 'theme', value });
+        expect(options.value.expected.theme).toEqual({ present: false, value: null,
+            stampPresent: true, stamp: AT });
+        const { envelope, prepared } = await planned(env, { type: 'theme', value });
+        expect(prepared.version).toBe(1);
+        expect(JSON.stringify(envelope)).not.toContain('private-value');
+        expect(env.host.validatePreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(env.data().settings.theme).toBe(value);
+        expect(env.data().settings.syncPreferencesUpdatedAt?.appearance).toBe(prepared.after.stamp);
+        expect(env.data().settings.syncPreferencesUpdatedAt?.language).toBe(AT);
+        expect(env.data().settings.appearance).toEqual(initial().settings.appearance);
+        expect(env.data().tasks).toEqual(initial().tasks);
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+    });
+
+    it('keeps device Theme a display hint while pinning raw absent and unknown saved values', async () => {
+        const env = await open(initial());
+        const hinted = await env.host.getGeneralPreferenceOptions({ deviceTheme: 'nord' });
+        if (!hinted.ok) throw new Error(JSON.stringify(hinted));
+        expect(hinted.value.expected.theme).toMatchObject({ present: false, value: null });
+        expect(hinted.value.model.appearance.theme.groups.flat().find((row) => row.selected)?.value).toBe('nord');
+        const selected = await env.host.getGeneralPreferenceOptions({ deviceTheme: null });
+        if (!selected.ok) throw new Error(JSON.stringify(selected));
+        expect(selected.value.model.appearance.theme.groups.flat().find((row) => row.selected)?.value).toBe('system');
+        const { envelope } = await planned(env, { type: 'theme', value: 'nord' });
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: true, value: { changed: true } });
+        const same = await env.host.getGeneralPreferenceOptions({ deviceTheme: 'dark' });
+        if (!same.ok) throw new Error(JSON.stringify(same));
+        expect(same.value.model.appearance.theme.groups.flat().find((row) => row.selected)?.value).toBe('nord');
+        expect(await env.host.prepareGeneralPreference({ requestId: ID, edit: { type: 'theme', value: 'nord' },
+            expected: same.value.expected.theme })).toMatchObject({ ok: true, value: { kind: 'noop', result: { changed: false } } });
+
+        const unknown = initial(); unknown.settings.theme = 'legacy-theme' as never;
+        const other = await open(unknown);
+        const raw = await other.host.getGeneralPreferenceOptions({ deviceTheme: 'dark' });
+        if (!raw.ok) throw new Error(JSON.stringify(raw));
+        expect(raw.value.expected.theme).toMatchObject({ present: true, value: 'legacy-theme' });
+        expect(raw.value.model.appearance.theme.groups.flat().some((row) => row.selected)).toBe(false);
+        expect(other.data().settings.theme).toBe('legacy-theme');
+        const replace = await planned(other, { type: 'theme', value: 'dark' });
+        expect(await other.host.commitPreparedGeneralPreference(replace.envelope)).toMatchObject({ ok: true });
+        expect(other.data().settings.theme).toBe('dark');
+    });
+
+    it('rejects malformed Theme reads, raw values, choices, and forged frozen payloads', async () => {
+        const env = await open(initial());
+        for (const input of [{ deviceTheme: 1 }, { deviceTheme: 'x'.repeat(501) }, { extra: true }])
+            expect(await env.host.getGeneralPreferenceOptions(input as never)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        for (const value of ['constructor', '__proto__', 'legacy-theme'])
+            expect(await env.host.prepareGeneralPreference({ requestId: ID, edit: { type: 'theme', value },
+                expected: { present: false, value: null, stampPresent: true, stamp: AT } } as never))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const { envelope } = await planned(env, { type: 'theme', value: 'dark' });
+        const numeric = structuredClone(envelope);
+        numeric.request.expected = { present: true, value: 1, stampPresent: true, stamp: AT };
+        numeric.prepared.request.expected = numeric.request.expected;
+        expect(env.host.validatePreparedGeneralPreference(numeric)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        const forged = structuredClone(envelope); forged.prepared.after.value = 'light';
+        expect(env.host.validatePreparedGeneralPreference(forged)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        for (const value of [null, 1, {}, 'x'.repeat(501)]) {
+            const start = initial(); start.settings.theme = value as never;
+            const invalid = await open(start);
+            expect(await invalid.host.getGeneralPreferenceOptions({})).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        }
+    });
+
+    it('refuses Theme field or appearance sibling changes, including an independent same target', async () => {
+        const env = await open(initial());
+        const { envelope } = await planned(env, { type: 'theme', value: 'dark' });
+        env.changeSaved((data) => ({ ...data, settings: { ...data.settings, theme: 'dark',
+            syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                appearance: '2026-09-02T00:00:00.000Z' } } }));
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        env.changeSaved((data) => ({ ...data, settings: { ...data.settings, theme: undefined,
+            appearance: { ...data.settings.appearance, showTaskAge: true } } }));
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        env.changeSaved((data) => ({ ...data, settings: { ...data.settings,
+            appearance: { ...data.settings.appearance, showTaskAge: false },
+            syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt, appearance: AT } } }));
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: true });
+        expect(env.data().settings.theme).toBe('dark');
     });
 
     it.each([
@@ -397,6 +500,7 @@ describe('prepared General preferences', () => {
     it.each([
         { type: 'quickAccessView', value: 'contexts', group: 'appearance' },
         { type: 'calendarSystem', value: 'jalali', group: 'language' },
+        { type: 'theme', value: 'material3-dark', group: 'appearance' },
     ] as const)('retries frozen $type after a failed save even when locale changes', async ({ type, value, group }) => {
         let failing = false;
         const env = await open(initial(), () => failing);
@@ -419,6 +523,8 @@ describe('prepared General preferences', () => {
         { timing: 'microtask', type: 'quickAccessView', value: 'contexts' },
         { timing: 'synchronous', type: 'calendarSystem', value: 'jalali' },
         { timing: 'microtask', type: 'calendarSystem', value: 'jalali' },
+        { timing: 'synchronous', type: 'theme', value: 'nord' },
+        { timing: 'microtask', type: 'theme', value: 'nord' },
     ] as const)('does not claim a $timing foreign failed Task save for $type', async ({ timing, type, value }) => {
         let failing = false;
         const start = initial();

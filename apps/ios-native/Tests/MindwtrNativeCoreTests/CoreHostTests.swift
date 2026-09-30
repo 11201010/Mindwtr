@@ -13129,12 +13129,13 @@ final class CoreHostTests: XCTestCase {
         try snapshot.prepareRecovery(at: backup); snapshot.close()
         let baseline = try Data(contentsOf: backup)
         let appearanceField = type == "quickAccessView" ? "mobileQuickAccessView" : type
-        let group = ["showTaskAge", "quickAccessView"].contains(type) ? "appearance" : "language"
+        let nestedAppearance = ["showTaskAge", "quickAccessView"].contains(type)
+        let group = nestedAppearance || type == "theme" ? "appearance" : "language"
         func assertEffect(_ before: [String], _ after: [String]) throws {
             var expectedTables = before
             var rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[5].utf8)) as? [[String: Any]])
             var row = try object(XCTUnwrap(rows.first?["data"] as? String))
-            if group == "appearance" {
+            if nestedAppearance {
                 var appearance = try XCTUnwrap(row["appearance"] as? [String: Any]); appearance[appearanceField] = value; row["appearance"] = appearance
             } else { row[type] = value }
             var stamps = try XCTUnwrap(row["syncPreferencesUpdatedAt"] as? [String: Any]); stamps[group] = expectedStamp; row["syncPreferencesUpdatedAt"] = stamps
@@ -13178,7 +13179,7 @@ final class CoreHostTests: XCTestCase {
             var changed = try calendarPreferenceSettings()
             if scenario == "stale" {
                 // Same desired value written independently is not the frozen operation's receipt.
-                if group == "appearance" {
+                if nestedAppearance {
                     var appearance = try XCTUnwrap(changed["appearance"] as? [String: Any]); appearance[appearanceField] = value; changed["appearance"] = appearance
                 } else { changed[type] = value }
                 var stamps = try XCTUnwrap(changed["syncPreferencesUpdatedAt"] as? [String: Any]); stamps[group] = "2026-10-01T12:00:00.007Z"; changed["syncPreferencesUpdatedAt"] = stamps
@@ -13222,6 +13223,81 @@ final class CoreHostTests: XCTestCase {
 
     func testGeneralPreferenceCalendarSystemRecovery() async throws {
         try await exerciseGeneralPreferenceRecovery(type: "calendarSystem", value: "jalali")
+    }
+
+    func testGeneralPreferenceThemeRecovery() async throws {
+        try await exerciseGeneralPreferenceRecovery(type: "theme", value: "material3-dark")
+    }
+
+    func testGeneralPreferenceThemeChoicesAndMirrors() async throws {
+        let bootstrap = host()
+        _ = try await bootstrap.start(); await bootstrap.close()
+        var initial = try calendarPreferenceSettings(); initial.removeValue(forKey: "theme")
+        try writeCalendarPreferenceSettings(initial)
+        let faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        let options = try object(await core.call("generalPreferenceOptions", argumentsJSON: json([json(["deviceTheme": "nord"])])))
+        let model = try XCTUnwrap(options["model"] as? [String: Any])
+        let picker = try XCTUnwrap((model["appearance"] as? [String: Any])?["theme"] as? [String: Any])
+        let groups = try XCTUnwrap(picker["groups"] as? [[[String: Any]]])
+        XCTAssertEqual(groups.map(\.count), [4, 8])
+        let choices = groups.flatMap { $0 }.compactMap { $0["value"] as? String }
+        XCTAssertEqual(choices, ["system", "system-oled", "light", "dark", "material3-light", "material3-dark",
+                                 "eink", "nord", "catppuccin-macchiato", "dracula", "sepia", "oled"])
+        XCTAssertEqual(groups.flatMap { $0 }.filter { $0["selected"] as? Bool == true }.first?["value"] as? String, "nord")
+        let descriptor = try object(await core.call("theme", argumentsJSON: json(["nord"])))
+        XCTAssertEqual(descriptor["mode"] as? String, "nord")
+        XCTAssertEqual((descriptor["deviceWrites"] as? [[String: Any]])?.count, 0)
+        for value in choices {
+            let beforeDB = try SQLiteBridge(url: database)
+            let before = try nineTableSnapshot(beforeDB); beforeDB.close()
+            let current = try object(await core.call("generalPreferenceOptions", argumentsJSON: json(["{}"])))
+            let expected = try XCTUnwrap(current["expected"] as? [String: Any])
+            let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+                "edit": ["type": "theme", "value": value], "expected": try XCTUnwrap(expected["theme"])]
+            let result = try object(await core.call("generalPreference", argumentsJSON: json([json(request)])))
+            XCTAssertEqual(result["changed"] as? Bool, true)
+            let saved = try object(await core.call("theme", argumentsJSON: json(["nord"])))
+            XCTAssertEqual(saved["mode"] as? String, value)
+            let mirrors = try XCTUnwrap(saved["deviceWrites"] as? [[String: Any]])
+            XCTAssertEqual(try json(mirrors), try json([
+                ["key": "@mindwtr_theme", "value": value],
+                ["key": "@mindwtr_theme_style", "value": value.hasPrefix("material3-") ? "material3" : "default"]]))
+            let afterDB = try SQLiteBridge(url: database)
+            let after = try nineTableSnapshot(afterDB); afterDB.close()
+            XCTAssertEqual(before.count, 9); XCTAssertEqual(after.count, 9)
+            for index in before.indices where index != 5 { XCTAssertEqual(before[index], after[index]) }
+            let oldRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[5].utf8)) as? [[String: Any]])
+            let newRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(after[5].utf8)) as? [[String: Any]])
+            var settings = try object(XCTUnwrap(oldRows.first?["data"] as? String))
+            let actual = try object(XCTUnwrap(newRows.first?["data"] as? String))
+            var stamps = settings["syncPreferencesUpdatedAt"] as? [String: Any] ?? [:]
+            stamps["appearance"] = try XCTUnwrap((actual["syncPreferencesUpdatedAt"] as? [String: Any])?["appearance"])
+            settings["theme"] = value; settings["syncPreferencesUpdatedAt"] = stamps
+            XCTAssertEqual(try json(actual), try json(settings))
+            var expectedRows = oldRows; expectedRows[0]["data"] = newRows[0]["data"]
+            XCTAssertEqual(try json(newRows), try json(expectedRows))
+        }
+        var writes = 0, journalWrites = 0
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE ") || $0.hasPrefix("INSERT ") { writes += 1 } }
+        faults.journalWrite = { journalWrites += 1 }
+        let current = try object(await core.call("generalPreferenceOptions", argumentsJSON: json(["{}"])))
+        let witness = try XCTUnwrap((current["expected"] as? [String: Any])?["theme"])
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+            "edit": ["type": "theme", "value": "oled"], "expected": witness]
+        let noop = try object(await core.call("generalPreference", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(noop["changed"] as? Bool, false)
+        var invalid = request; invalid["edit"] = ["type": "theme", "value": "future-theme"]
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("generalPreference", argumentsJSON: json([json(invalid)])) }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journalWrites, 0)
+        faults.beforeSQL = { if $0.contains("FROM settings") { throw HostFailure("Injected theme read failure") } }
+        await expectFailure("Injected theme read failure") { _ = try await core.call("theme", argumentsJSON: json([""])) }
+        faults.beforeSQL = nil
+        let refreshed = try object(await core.call("theme", argumentsJSON: json([""])))
+        XCTAssertEqual(refreshed["mode"] as? String, "oled")
+        XCTAssertEqual((refreshed["deviceWrites"] as? [[String: Any]])?.count, 2)
+        XCTAssertEqual(journalWrites, 0)
+        await core.close()
     }
 
     private func exerciseTaxonomyRecovery(kind: String, action: String) async throws {

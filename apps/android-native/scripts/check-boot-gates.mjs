@@ -2743,6 +2743,12 @@ export function setNativeReplayTokens(mode) { globalThis.replayTokens = mode; }
 export async function pruneNativeRequestReceipts() { return 3; }
 export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
 export async function flushPendingSave() { globalThis.events.push('flush'); }
+export function getPersistenceStatus() { return globalThis.persistenceStatus ||
+  { generation: 0, queued: false, inFlight: false, immediate: false, retrying: false, failed: false }; }
+export function getGeneralSettingsDeviceWrites(edit) { return [
+  { key: '@mindwtr_theme', value: edit.value },
+  { key: '@mindwtr_theme_style', value: edit.value === 'material3-light' || edit.value === 'material3-dark' ? 'material3' : 'default' },
+]; }
 // The debug net check's WebDAV calls: bundled, never run here.
 export const [cloudHeadJson, webdavDeleteFile, webdavGetFile, webdavGetJson, webdavGetSyncDocument, webdavHeadFile, webdavMakeDirectory, webdavPutFile, webdavPutJson] = Array(9).fill(async () => null);
 export function createNativeHostContract() {
@@ -2869,7 +2875,8 @@ export const STATUS_COLORS_BY_THEME = {
 };
 export const TASK_PRIORITY_COLORS = { urgent: '#dc2626', low: '#3b82f6' };
 export function themeDescriptor(theme) {
-  return { nord: { scheme: 'dark', statusPreset: 'nord' }, 'material3-light': { scheme: 'light', statusPreset: null } }[theme];
+  return new Map([['nord', { scheme: 'dark', statusPreset: 'nord' }],
+    ['material3-light', { scheme: 'light', statusPreset: null }]]).get(theme);
 }
 export function resolveThemeStatusPreset(theme) { return themeDescriptor(theme)?.statusPreset ?? null; }
 export const useTaskStore = { getState: () => ({
@@ -2904,7 +2911,8 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         snapshotResult: { ok: true, value: { fileName: 'data.2026-09-24T10-00-00.000.snapshot.json', contents: '{}' } }, editorInputs: [], updateInputs: [], focusInputs: [],
         // host-polyfills.js gives QuickJS these; the harness runs host-entry alone.
         AbortController, setTimeout,
-        languageInputs: [], projectInputs: [], settings: undefined, newInputs: [], menuInputs: [],
+        languageInputs: [], projectInputs: [], settings: undefined, persistenceStatus: null,
+        settingsReadFailure: false, newInputs: [], menuInputs: [],
         menuReadResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Someday changed; restart paging from offset zero' } },
         menuCommandResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
         taskFocusResult: { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } },
@@ -2916,6 +2924,12 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         logText: null, logOps: [], logFailure: null,
         __mindwtrNative: {
             sqlAll(sql) {
+                if (sql === 'SELECT data FROM settings WHERE id = 1') {
+                    if (state.settingsReadFailure) return '!MindwtrNativeError:settings storage unavailable';
+                    return state.fakeData.settings ? JSON.stringify([{ data: JSON.stringify(state.fakeData.settings) }]) : '[]';
+                }
+                if (sql === 'SELECT COUNT(*) AS n FROM settings WHERE id = 1')
+                    return JSON.stringify([{ n: state.fakeData.settings ? 1 : 0 }]);
                 // 'auto': the tasks count matches the load, as a real database would.
                 if (sql.includes('COUNT(*)') && sql.includes('tasks')) {
                     return JSON.stringify([{ n: taskCount === 'auto' ? state.lastLoaded.tasks.length : taskCount }]);
@@ -3085,13 +3099,33 @@ assert.deepEqual(ready.languageInputs, ['{"storedLanguage":null,"systemLocale":"
 // Theme: the synced setting wins over RN's device-local choice, then the system; core classifies it and sends its hues.
 {
     const theme = async (stored) => (await poll(ready, ready.MindwtrHost.theme(stored))).value;
-    assert.deepEqual(await theme(''), { mode: 'system', preset: 'default', presets: { light: 'default', dark: 'default' }, material: false, scheme: null,
+    assert.deepEqual(await theme(''), { mode: 'system', deviceWrites: [], preset: 'default', presets: { light: 'default', dark: 'default' }, material: false, scheme: null,
         status: { light: { done: { bg: '#22C55E20', text: '#22C55E', border: '#22C55E' } }, dark: { done: { bg: '#4ADE8026', text: '#4ADE80', border: '#4ADE80' } } }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
-    assert.deepEqual(await theme('material3-light'), { mode: 'material3-light', preset: 'default', presets: { light: 'default', dark: 'default' }, material: true, scheme: 'light',
+    assert.deepEqual(await theme('material3-light'), { mode: 'material3-light', deviceWrites: [], preset: 'default', presets: { light: 'default', dark: 'default' }, material: true, scheme: 'light',
         status: { light: { done: { bg: '#22C55E20', text: '#22C55E', border: '#22C55E' } }, dark: { done: { bg: '#4ADE8026', text: '#4ADE80', border: '#4ADE80' } } }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
     ready.settings = { theme: 'nord' };
-    assert.deepEqual(await theme('material3-light'), { mode: 'nord', preset: 'nord', presets: { light: 'nord', dark: 'nord' }, material: false, scheme: 'dark',
+    ready.fakeData.settings = { theme: 'nord' };
+    assert.deepEqual(await theme('material3-light'), { mode: 'nord', deviceWrites: [
+        { key: '@mindwtr_theme', value: 'nord' }, { key: '@mindwtr_theme_style', value: 'default' }],
+    preset: 'nord', presets: { light: 'nord', dark: 'nord' }, material: false, scheme: 'dark',
         status: { light: { done: { bg: '#A3BE8C26', text: '#A3BE8C', border: '#A3BE8C' } }, dark: { done: { bg: '#A3BE8C26', text: '#A3BE8C', border: '#A3BE8C' } } }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
+    ready.fakeData.settings = { theme: 'constructor' };
+    ready.settings = { theme: 'constructor' };
+    assert.deepEqual((await theme('')).deviceWrites, []);
+    ready.fakeData.settings = { theme: 'nord' };
+    ready.settings = { theme: 'nord' };
+    ready.persistenceStatus = { generation: 1, queued: true, inFlight: false, immediate: false, retrying: false, failed: false };
+    assert.deepEqual((await theme('')).deviceWrites, [], 'queued settings never authorize an optimistic mirror');
+    ready.persistenceStatus = { generation: 1, queued: false, inFlight: false, immediate: false, retrying: false, failed: true };
+    assert.deepEqual((await theme('')).deviceWrites, [], 'failed settings never authorize an optimistic mirror');
+    ready.persistenceStatus = null;
+    ready.fakeData.settings = { theme: 'dark' };
+    assert.deepEqual((await theme('')).deviceWrites, [], 'a memory/disk mismatch never authorizes a mirror');
+    ready.fakeData.settings = { theme: 'nord' };
+    ready.settingsReadFailure = true;
+    assert.match((await poll(ready, ready.MindwtrHost.theme(''))).error, /settings storage unavailable/);
+    ready.settingsReadFailure = false;
+    assert.equal((await theme('')).deviceWrites[0].value, 'nord', 'a settled Settings read may retry');
     ready.settings = undefined;
 }
 // Projects pass Kotlin's arguments to core unchanged; the first window has no revision, and a stale one keeps its code prefix.

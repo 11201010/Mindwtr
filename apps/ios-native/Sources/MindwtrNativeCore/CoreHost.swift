@@ -760,7 +760,7 @@ private final class Engine: @unchecked Sendable {
                       let model = options["model"] as? [String: Any], model["title"] is String,
                       model["appearance"] is [String: Any], model["regional"] is [String: Any],
                       let expected = options["expected"] as? [String: Any],
-                      Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem"]),
+                      Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem", "theme"]),
                       expected.values.allSatisfy({ Self.validGeneralPreferenceExpected($0) }) else {
                     throw HostFailure("Malformed General preference options")
                 }
@@ -2389,6 +2389,8 @@ private final class Engine: @unchecked Sendable {
                 NSLog("Native iOS Quick Access saved releaseCheck=v1.3.4/ios-quick-access outcome=confirmed")
             } else if result?["type"] as? String == "calendarSystem" {
                 NSLog("Native iOS Calendar system saved releaseCheck=v1.3.4/ios-calendar-system outcome=confirmed")
+            } else if result?["type"] as? String == "theme" {
+                NSLog("Native iOS Theme saved releaseCheck=v1.3.4/ios-theme outcome=confirmed")
             } else {
                 NSLog("Native iOS General preference saved releaseCheck=v1.3.4/ios-general-preference outcome=confirmed")
             }
@@ -2800,6 +2802,7 @@ private final class Engine: @unchecked Sendable {
               let type = edit["type"] as? String else { return false }
         switch type {
         case "showTaskAge": return isBoolean(edit["value"])
+        case "theme": return (edit["value"] as? String).map { !$0.isEmpty && $0.utf16.count <= 500 } == true
         case "quickAccessView": return ["review", "projects", "calendar", "contexts"].contains(edit["value"] as? String ?? "")
         case "calendarSystem": return ["gregorian", "jalali"].contains(edit["value"] as? String ?? "")
         case "weekStart": return ["system", "monday", "sunday", "saturday"].contains(edit["value"] as? String ?? "")
@@ -5411,7 +5414,10 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: General preference requires a bounded object")
             }
             if method == "generalPreferenceOptions" {
-                guard input.isEmpty else { throw HostFailure("INVALID_INPUT: General preference options requires empty input") }
+                guard input.isEmpty || Set(input.keys) == Set(["deviceTheme"])
+                    && (input["deviceTheme"] is NSNull || (input["deviceTheme"] as? String).map { $0.utf16.count <= 500 } == true) else {
+                    throw HostFailure("INVALID_INPUT: General preference options requires a bounded theme hint")
+                }
             } else {
                 guard Set(input.keys) == Set(["requestId", "edit", "expected"]),
                       let id = input["requestId"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,

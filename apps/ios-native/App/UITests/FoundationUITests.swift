@@ -4614,7 +4614,7 @@ final class FoundationUITests: XCTestCase {
     private func task97Picker(_ app: XCUIApplication, _ type: String) {
         let scroll = app.scrollViews["general-scroll"]
         let toggle = app.buttons["general-regional-toggle"]
-        if type != "quickAccessView" {
+        if !["quickAccessView", "theme"].contains(type) {
             revealPagedElement(app, toggle, in: scroll)
             if toggle.value as? String == "collapsed" { boardTap(app, "general-regional-toggle") }
         }
@@ -4623,6 +4623,10 @@ final class FoundationUITests: XCTestCase {
         boardTap(app, "general-" + type)
         XCTAssertTrue(app.buttons["general-picker-cancel"].waitForExistence(timeout: 10))
         XCTAssertGreaterThanOrEqual(app.buttons["general-picker-cancel"].frame.height, 44 - 0.001)
+        if type == "theme" {
+            // A full swipe expands the native sheet before precise row-sized scrolls.
+            app.scrollViews.containing(.button, identifier: "general-option-system").firstMatch.swipeUp()
+        }
     }
 
     private func task97Choose(_ app: XCUIApplication, _ value: String, closes: Bool = true) {
@@ -4933,6 +4937,118 @@ final class FoundationUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["general-error"].exists)
         app.terminate()
     }
+
+    private func task100Normal(_ library: String, allChoices: Bool = true, initial: String? = "system") {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task97Open(app); task97Picker(app, "theme")
+        if let initial {
+            let option = app.buttons["general-option-" + initial]
+            revealPagedElement(app, option, in: app.scrollViews.containing(.button, identifier: "general-option-" + initial).firstMatch)
+            XCTAssertTrue(option.isSelected)
+        }
+        boardTap(app, "general-picker-cancel")
+        let values = allChoices ? ["system", "system-oled", "light", "dark", "material3-light", "material3-dark", "eink", "nord", "catppuccin-macchiato", "dracula", "sepia", "oled"] : ["material3-dark", "oled"]
+        for value in values {
+            task97Picker(app, "theme"); task97Choose(app, value)
+            task97Picker(app, "theme")
+            let option = app.buttons["general-option-" + value]
+            revealPagedElement(app, option, in: app.scrollViews.containing(.button, identifier: "general-option-" + value).firstMatch)
+            XCTAssertTrue(option.isSelected)
+            if allChoices || ["material3-dark", "oled"].contains(value) {
+                let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Theme " + value; shot.lifetime = .keepAlways; add(shot)
+            }
+            task97Choose(app, value)
+        }
+        app.terminate(); app.launch(); task97Open(app); task97Picker(app, "theme")
+        let option = app.buttons["general-option-oled"]
+        revealPagedElement(app, option, in: app.scrollViews.containing(.button, identifier: "general-option-oled").firstMatch)
+        XCTAssertTrue(option.isSelected)
+        boardTap(app, "general-picker-cancel"); app.terminate()
+    }
+
+    func testGeneralThemeNormal() { task100Normal("e8f237c4-7dde-48ba-b20e-91ef4a93dae7") }
+    func testGeneralThemeLargest() { task100Normal("a9b130be-3183-452b-88e8-596cf45ef73c", allChoices: false) }
+    func testGeneralThemeDeviceFallback() { task100Normal("d1ec74df-400d-4076-917d-3df542bee6c6", allChoices: false, initial: "nord") }
+    func testGeneralThemeUnknown() { task100Normal("609cfdc9-5692-461a-8e14-612900c817a1", allChoices: false, initial: nil) }
+
+    func testGeneralThemeReadFailure() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "acd0d32b-78b1-4d1f-8b52-616cc3c619dc"] + ["--native-general-preference-read-failure"]
+        app.launch(); task97Open(app); task97Picker(app, "theme"); task97Choose(app, "material3-dark", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["general-picker-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["general-option-material3-dark"].isEnabled)
+            let retry = app.buttons["general-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews.containing(.button, identifier: "general-option-material3-dark").firstMatch)
+            boardTap(app, "general-retry")
+        }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["general-picker-cancel"])
+        waitForExpectations(timeout: 20); app.terminate()
+    }
+
+    func testGeneralThemeRefusal() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "26088286-6d10-416c-a980-c58a7cf17424"] + ["--native-general-preference-refusal"]
+        app.launch(); task97Open(app); task97Picker(app, "theme"); task97Choose(app, "material3-dark", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        boardEnabled(app.buttons["general-option-material3-dark"])
+        task97Choose(app, "material3-dark"); app.terminate()
+    }
+
+    func testGeneralThemeFailedSave() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "34f78767-aa7d-481f-8b1e-4d432250a8fa"]
+        app.launch(); task97Open(app); task97Picker(app, "theme"); task97Choose(app, "material3-dark", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["general-picker-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["general-option-material3-dark"].isEnabled)
+            let retry = app.buttons["general-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews.containing(.button, identifier: "general-option-material3-dark").firstMatch)
+            boardTap(app, "general-retry"); boardEnabled(retry, timeout: 20)
+        }
+        app.terminate()
+    }
+
+    func testGeneralThemeThemeReadFailure() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "1a67de63-ff3b-4d25-a61c-af7aee4a979e"] + ["--native-general-preference-theme-read-failure"]
+        app.launch(); task97Open(app); task97Picker(app, "theme"); task97Choose(app, "material3-dark", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["general-picker-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["general-option-material3-dark"].isEnabled)
+            let retry = app.buttons["general-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews.containing(.button, identifier: "general-option-material3-dark").firstMatch)
+            boardTap(app, "general-retry")
+        }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["general-picker-cancel"])
+        waitForExpectations(timeout: 20); app.terminate()
+    }
+
+
+    func testGeneralThemeColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "34f78767-aa7d-481f-8b1e-4d432250a8fa"]
+        app.launch(); task97Open(app); task97Picker(app, "theme")
+        let option = app.buttons["general-option-material3-dark"]
+        revealPagedElement(app, option, in: app.scrollViews.containing(.button, identifier: "general-option-material3-dark").firstMatch)
+        XCTAssertTrue(option.isSelected)
+        boardTap(app, "general-picker-cancel"); app.terminate()
+    }
+
+    private func task100SystemAppearance(_ library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task97Open(app)
+        for value in ["system", "system-oled"] {
+            task97Picker(app, "theme"); task97Choose(app, value)
+            boardTap(app, "general-back"); boardTap(app, "settings-back"); boardTap(app, "tab-inbox")
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "System appearance " + value; shot.lifetime = .keepAlways; add(shot)
+            task97Open(app)
+        }
+        app.terminate(); app.launch(); task97Open(app); task97Picker(app, "theme")
+        XCTAssertTrue(app.buttons["general-option-system-oled"].isSelected)
+        boardTap(app, "general-picker-cancel"); app.terminate()
+    }
+
+    func testGeneralThemeSystemLight() { task100SystemAppearance("71813317-e723-4557-944d-70059b95ad84") }
+    func testGeneralThemeSystemDark() { task100SystemAppearance("edcf34cc-4f7c-4d74-8f32-d9fd49d3c1fb") }
 
     private func task96Open(_ app: XCUIApplication, kind: String, deleting: Bool = false) {
         task91Section(app, kind == "context" ? "contexts" : "tags", open: true)
