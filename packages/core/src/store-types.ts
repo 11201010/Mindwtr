@@ -593,6 +593,9 @@ export interface TaskStore {
     commitPreparedAreaDelete: (input: PreparedAreaDelete & { request: { requestId: string; areaId: string;
         detachProjects?: true }; result: { areaId: string } }, authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     commitPreparedTaxonomy: (input: PreparedTaxonomy, authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Four synced General preference fields, prepared against a saved scalar and sync-group stamp. */
+    commitPreparedGeneralPreference: (input: import('./native-host-contract-general-preference').NativePreparedGeneralPreference,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Update a project */
     updateProject: (id: string, updates: Partial<Project>) => Promise<StoreActionResult>;
     /** Archive a project as cancelled and cancel its unfinished child tasks */

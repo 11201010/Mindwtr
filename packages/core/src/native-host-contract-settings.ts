@@ -135,6 +135,19 @@ import { sortViewSectionDefinitions } from './view-sections';
 
 type Translate = (key: string) => string;
 
+/** Build General from one saved Settings snapshot, including its regional defaults. */
+export function buildNativeGeneralSettingsModel(settings: import('./types').AppSettings, deps: Pick<SettingsDeps,
+    't' | 'language' | 'systemLocale' | 'dateFormatting'>, deviceTheme?: string | null,
+appSearch: { supported: boolean; enabled: boolean } = { supported: false, enabled: false }): GeneralSettingsModel {
+    const locale = deps.systemLocale() ?? '';
+    const sample = createDateFormatter({ ...deps.dateFormatting(), dateFormat: 'system',
+        calendarSystem: settings.calendarSystem, timeFormat: settings.timeFormat })(new Date(), 'P');
+    return buildGeneralSettingsModel({ settings,
+        themeMode: resolveGeneralThemeMode(settings.theme, deviceTheme), language: deps.language(),
+        systemLocale: locale, systemWeekStart: getSystemWeekStart(locale), systemDateSample: sample,
+        appSearch, t: deps.t() });
+}
+
 export type SettingsDeps = {
     readiness: () => NativeHostResult<null>;
     save: () => Promise<NativeHostResult<null>>;
@@ -349,19 +362,7 @@ export function createSettingsMethods(deps: SettingsDeps) {
 
     const generalModel = (input: { deviceTheme?: string | null; appSearch?: { supported: boolean; enabled: boolean } }) => {
         const state = useTaskStore.getState();
-        const locale = systemLocale();
-        // The System date format's sample: today in the short date the app shows under System.
-        const sample = createDateFormatter({ ...deps.dateFormatting(), dateFormat: 'system' })(new Date(), 'P');
-        return buildGeneralSettingsModel({
-            settings: state.settings,
-            themeMode: resolveGeneralThemeMode(state.settings.theme, input.deviceTheme),
-            language: deps.language(),
-            systemLocale: locale,
-            systemWeekStart: getSystemWeekStart(locale),
-            systemDateSample: sample,
-            appSearch: input.appSearch ?? { supported: false, enabled: false },
-            t: deps.t(),
-        });
+        return buildNativeGeneralSettingsModel(state.settings, deps, input.deviceTheme, input.appSearch);
     };
 
     // Carriers of a context or tag, as the store's rename and delete match them.

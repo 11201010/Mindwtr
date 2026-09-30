@@ -23,7 +23,8 @@ struct SettingsScreen: View {
             HStack(spacing: 12) {
                 Button {
                     renameFocused = false
-                    if model.settingsManagePresented { model.closeManageSettings() }
+                    if model.settingsGeneralPresented { model.closeGeneralSettings() }
+                    else if model.settingsManagePresented { model.closeManageSettings() }
                     else { Task { await model.closeSettings() } }
                 } label: {
                     Image(systemName: "chevron.left")
@@ -35,18 +36,19 @@ struct SettingsScreen: View {
                           || model.somedaySectionRenameAwaitingRefresh
                           || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
                           || model.somedaySectionOrderActive || model.unassignedAreaColorActive
-                          || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
+                          || model.generalPreferenceActive || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
                           || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
                 .accessibilityLabel(model.label("common.back"))
-                .accessibilityIdentifier(model.settingsManagePresented ? "manage-back" : "settings-back")
-                Text(model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
+                .accessibilityIdentifier(model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
+                Text(model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
                     .rnFont(20, .bold).foregroundStyle(palette.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
             }
             .padding(.horizontal, 12).padding(.vertical, 5)
             .background(palette.card)
-            if model.settingsManagePresented { manageContent }
+            if model.settingsGeneralPresented { generalContent }
+            else if model.settingsManagePresented { manageContent }
             else { menuContent }
         }
         .background(palette.bg)
@@ -160,10 +162,163 @@ struct SettingsScreen: View {
             get: { model.settingsAreaEditActive },
             set: { if !$0 { model.cancelSettingsAreaEdit() } }
         )) { areaEditSheet }
+        .sheet(isPresented: Binding(
+            get: { model.generalPreferencePicker != nil },
+            set: { if !$0 { model.closeGeneralPreferencePicker() } }
+        )) { generalPreferenceSheet }
         .accessibilityAction(.escape) {
-            if model.settingsManagePresented { model.closeManageSettings() }
+            if model.settingsGeneralPresented { model.closeGeneralSettings() }
+            else if model.settingsManagePresented { model.closeManageSettings() }
             else { Task { await model.closeSettings() } }
         }
+    }
+
+    private var generalContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                let appearance = model.generalSettings.object("appearance")
+                let privacy = model.generalSettings.object("privacy")
+                let regional = model.generalSettings.object("regional")
+                Text(appearance.text("title")).rnFont(13, .semibold).foregroundStyle(palette.secondary)
+                    .accessibilityAddTraits(.isHeader)
+                VStack(spacing: 0) {
+                    generalSettingRow(appearance.object("theme"), type: "theme", enabled: false)
+                    palette.border.frame(height: 0.5)
+                    Toggle(isOn: Binding(
+                        get: { appearance.object("showTaskAge")["value"] as? Bool ?? false },
+                        set: { value in Task { await model.saveGeneralPreference(["type": "showTaskAge", "value": value]) } }
+                    )) {
+                        generalSettingLabel(appearance.object("showTaskAge"), description: "description")
+                    }
+                    .tint(palette.tint).padding(14).frame(minHeight: 48)
+                    .disabled(!model.generalPreferenceEnabled)
+                    .accessibilityIdentifier("general-show-task-age")
+                    palette.border.frame(height: 0.5)
+                    generalSettingRow(appearance.object("quickAccess"), type: "quickAccess", enabled: false)
+                }
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                Text(privacy.text("title")).rnFont(13, .semibold).foregroundStyle(palette.secondary)
+                    .accessibilityAddTraits(.isHeader)
+                Toggle(isOn: .constant(privacy.object("appLock")["value"] as? Bool ?? false)) {
+                    generalSettingLabel(privacy.object("appLock"), description: "description")
+                }
+                .padding(14).disabled(true).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                generalSettingRow(model.generalSettings.object("language"), type: "language", enabled: false)
+                    .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                VStack(spacing: 0) {
+                    Button { model.toggleGeneralRegional() } label: {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(regional.text("label")).rnFont(15).foregroundStyle(palette.text)
+                                Text(regional.text("summary")).rnFont(12).foregroundStyle(palette.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: model.generalRegionalOpen ? "chevron.up" : "chevron.down")
+                                .foregroundStyle(palette.secondary).accessibilityHidden(true)
+                        }.padding(14).frame(minHeight: 48).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.generalPreferenceEnabled)
+                    .accessibilityValue(model.generalRegionalOpen ? "expanded" : "collapsed")
+                    .accessibilityIdentifier("general-regional-toggle")
+                    if model.generalRegionalOpen {
+                        ForEach(["weekStart", "dateFormat", "calendarSystem", "timeFormat"], id: \.self) { type in
+                            if let row = regional[type] as? CoreObject {
+                                palette.border.frame(height: 0.5)
+                                generalSettingRow(row, type: type, enabled: type != "calendarSystem")
+                            }
+                        }
+                    }
+                }
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                if model.generalPreferencePicker == nil { generalPreferenceFailure }
+            }
+            .padding(16)
+        }
+        .accessibilityIdentifier("general-scroll")
+    }
+
+    private func generalSettingLabel(_ row: CoreObject, description: String = "value") -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(row.text("label")).rnFont(15).foregroundStyle(palette.text)
+            if !row.text(description).isEmpty {
+                Text(row.text(description)).rnFont(12).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func generalSettingRow(_ row: CoreObject, type: String, enabled: Bool) -> some View {
+        Button { model.openGeneralPreferencePicker(type) } label: {
+            HStack(spacing: 12) {
+                generalSettingLabel(row)
+                Image(systemName: "chevron.down").foregroundStyle(palette.secondary).accessibilityHidden(true)
+            }.padding(14).frame(minHeight: 48).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!enabled || !model.generalPreferenceEnabled)
+        .opacity(enabled ? 1 : 0.55)
+        .accessibilityIdentifier("general-" + type)
+    }
+
+    @ViewBuilder private var generalPreferenceFailure: some View {
+        if let failure = model.generalPreferenceReadError ?? model.generalPreferenceError {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(failure).rnFont(14).foregroundStyle(palette.danger)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("general-error")
+                if model.retryNeeded || model.generalPreferenceReadError != nil {
+                    Button { Task { await model.retryGeneralPreference() } } label: {
+                        Text(model.label("common.retry")).rnFont(15, .semibold)
+                            .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                    }
+                        .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                        .disabled(model.busy).accessibilityIdentifier("general-retry")
+                }
+            }
+        }
+    }
+
+    private var generalPreferenceSheet: some View {
+        let type = model.generalPreferencePicker ?? ""
+        let picker = model.generalSettings.object("regional").object(type)
+        return VStack(spacing: 12) {
+            HStack {
+                Text(picker.text("pickerTitle")).rnFont(20, .bold).foregroundStyle(palette.text)
+                    .accessibilityAddTraits(.isHeader).frame(maxWidth: .infinity, alignment: .leading)
+                Button { model.closeGeneralPreferencePicker() } label: {
+                    Text(model.label("common.cancel")).rnFont(15)
+                        .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                    .disabled(model.busy || model.retryNeeded || model.generalPreferenceActive)
+                    .accessibilityIdentifier("general-picker-cancel")
+            }.padding(.horizontal, 16).padding(.top, 20)
+            ScrollView {
+                VStack(spacing: 8) {
+                    if let options = picker["options"] as? [CoreObject] {
+                        ForEach(options.indices, id: \.self) { index in
+                            let option = options[index]
+                            Button { Task { await model.saveGeneralPreference(option.object("edit")) } } label: {
+                                HStack {
+                                    Text(option.text("label")).rnFont(16).foregroundStyle(palette.text)
+                                        .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                                    if option["selected"] as? Bool == true {
+                                        Image(systemName: "checkmark").foregroundStyle(palette.tint).accessibilityHidden(true)
+                                    }
+                                }.padding(14).frame(minHeight: 48).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                            .disabled(!model.generalPreferenceEnabled)
+                            .accessibilityAddTraits(option["selected"] as? Bool == true ? .isSelected : [])
+                            .accessibilityIdentifier("general-option-" + option.text("value"))
+                        }
+                    }
+                    generalPreferenceFailure
+                }.padding(.horizontal, 16).padding(.bottom, 24)
+            }
+        }
+        .background(palette.bg)
+        .presentationDetents(dynamicTypeSize.isAccessibilitySize || model.generalPreferenceActive ? [.large] : [.medium, .large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(model.busy || model.retryNeeded || model.generalPreferenceActive)
     }
 
     private var menuContent: some View {
@@ -184,6 +339,7 @@ struct SettingsScreen: View {
                                 let row = groups[groupIndex][rowIndex]
                                 Button {
                                     if row.text("id") == "manage" { Task { await model.openManageSettings() } }
+                                    else if row.text("id") == "general" { Task { await model.openGeneralSettings() } }
                                 } label: {
                                     HStack(spacing: 12) {
                                         Image(systemName: settingsSymbol(row.text("icon")))
@@ -203,8 +359,8 @@ struct SettingsScreen: View {
                                     }
                                     .padding(.horizontal, 14).frame(minHeight: 60).contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain).disabled(row.text("id") != "manage" || model.busy || model.retryNeeded)
-                                .opacity(row.text("id") == "manage" ? 1 : 0.55)
+                                .buttonStyle(.plain).disabled(!["manage", "general"].contains(row.text("id")) || model.busy || model.retryNeeded)
+                                .opacity(["manage", "general"].contains(row.text("id")) ? 1 : 0.55)
                                 .accessibilityLabel(row.text("accessibilityLabel").isEmpty ? row.text("title") : row.text("accessibilityLabel"))
                                 .accessibilityIdentifier("settings-" + row.text("id"))
                                 if rowIndex < groups[groupIndex].count - 1 { palette.border.frame(height: 0.5) }
@@ -336,7 +492,7 @@ struct SettingsScreen: View {
                                                           || model.somedaySectionDeleteActive
                                                           || model.somedaySectionOrderActive
                                                           || model.unassignedAreaColorActive
-                                                          || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                                                          || model.generalPreferenceActive || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                             .opacity((someday || areas || inventory) ? 1 : 0.55)
                             .accessibilityValue(section.flag("open") ? "expanded" : "collapsed")
                             .accessibilityIdentifier("manage-section-toggle-" + (someday ? "someday-sections" : section.text("key")))
@@ -362,7 +518,7 @@ struct SettingsScreen: View {
                                               || model.unassignedAreaColorActive
                                               || model.somedaySectionRenameIndex != nil
                                               || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
-                                              || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                                              || model.generalPreferenceActive || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                                     .accessibilityIdentifier("manage-areas-more")
                                 }
                                 newAreaRow
@@ -386,7 +542,7 @@ struct SettingsScreen: View {
                                                   || model.somedaySectionDeleteActive
                                                   || model.somedaySectionOrderActive
                                                   || model.unassignedAreaColorActive
-                                                  || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                                                  || model.generalPreferenceActive || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                                         .accessibilityIdentifier("manage-someday-more")
                                     }
                                 }
@@ -578,7 +734,7 @@ struct SettingsScreen: View {
             .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
                       || model.unassignedAreaColorActive || model.somedaySectionRenameIndex != nil
                       || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
-                      || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                      || model.generalPreferenceActive || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
             .accessibilityLabel(model.label("common.edit") + ": " + row.text("label"))
             .accessibilityIdentifier("manage-unassigned-color")
         }
@@ -599,7 +755,7 @@ struct SettingsScreen: View {
             }
             .buttonStyle(.plain)
             .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
-                      || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaCreatePresented
+                      || model.generalPreferenceActive || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaCreatePresented
                       || model.settingsAreaEditActive || model.unassignedAreaColorActive
                       || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
                       || model.somedaySectionRenameIndex != nil)
@@ -616,7 +772,7 @@ struct SettingsScreen: View {
             }
             .buttonStyle(.plain)
             .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
-                      || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive || model.settingsAreaCreatePresented
+                      || model.generalPreferenceActive || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive || model.settingsAreaCreatePresented
                       || model.unassignedAreaColorActive || model.somedaySectionDeleteActive
                       || model.somedaySectionOrderActive || model.somedaySectionRenameIndex != nil)
             .accessibilityLabel(model.label("common.delete") + ": " + row.text("name"))
@@ -642,7 +798,7 @@ struct SettingsScreen: View {
                 .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
                           || model.settingsAreaCreatePresented || model.unassignedAreaColorActive
                           || model.somedaySectionRenameIndex != nil || model.somedaySectionDeleteActive
-                          || model.somedaySectionOrderActive || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                          || model.somedaySectionOrderActive || model.generalPreferenceActive || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                 .frame(minWidth: 86, minHeight: 44)
                 .accessibilityLabel(row.text("label"))
                 .accessibilityIdentifier("manage-area-add")

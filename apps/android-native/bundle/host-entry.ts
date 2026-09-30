@@ -901,6 +901,21 @@ globalThis.MindwtrHost = {
     manageTaxonomyCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedTaxonomy(JSON.parse(json))));
     },
+    generalPreferenceOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.getGeneralPreferenceOptions(JSON.parse(json))); });
+    },
+    generalPreferenceRetryOutcome(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.probeGeneralPreferenceOutcome(JSON.parse(json))); });
+    },
+    generalPreferencePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareGeneralPreference(JSON.parse(json))); });
+    },
+    generalPreferenceValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedGeneralPreference(JSON.parse(json))));
+    },
+    generalPreferenceCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedGeneralPreference(JSON.parse(json))));
+    },
     managePersonDeleteOptions(json: string): string {
         return submit(async () => {
             requireSaved();

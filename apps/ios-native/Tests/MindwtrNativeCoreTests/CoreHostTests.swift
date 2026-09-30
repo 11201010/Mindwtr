@@ -13019,6 +13019,171 @@ final class CoreHostTests: XCTestCase {
         }
     }
 
+    func testGeneralPreferenceAbsentDefaultNoopAndMalformedTransport() async throws {
+        let clock = try dateBundle(at: "2026-10-01T12:00:00.000Z")
+        let bootstrap = host(bundleURL: clock); _ = try await bootstrap.start(); await bootstrap.close()
+        var settings = try calendarPreferenceSettings(); settings.removeValue(forKey: "dateFormat")
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults(), core = host(faults, bundleURL: clock); _ = try await core.start()
+        func request(_ options: [String: Any]) throws -> [String: Any] {
+            let expected = try XCTUnwrap(options["expected"] as? [String: Any])
+            return ["requestId": UUID().uuidString.lowercased(), "edit": ["type": "dateFormat", "value": "system"], "expected": try XCTUnwrap(expected["dateFormat"])]
+        }
+        let options = try object(await core.call("generalPreferenceOptions", argumentsJSON: json(["{}"])))
+        let input = try request(options)
+        XCTAssertEqual((input["expected"] as? [String: Any])?["present"] as? Bool, false)
+        let saved = try object(await core.call("generalPreference", argumentsJSON: json([json(input)])))
+        XCTAssertEqual(saved["changed"] as? Bool, true)
+        let next = try object(await core.call("generalPreferenceOptions", argumentsJSON: json(["{}"])))
+        let noop = try request(next)
+        var writes = 0, journalWrites = 0
+        faults.beforeSQL = { sql in if sql.hasPrefix("UPDATE ") || sql.hasPrefix("INSERT ") { writes += 1 } }
+        faults.journalWrite = { journalWrites += 1 }
+        let unchanged = try object(await core.call("generalPreference", argumentsJSON: json([json(noop)])))
+        XCTAssertEqual(unchanged["changed"] as? Bool, false)
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journalWrites, 0)
+        var extra = noop; extra["secret"] = "must-not-enter-journal"
+        var wrong = noop; wrong["edit"] = ["type": "calendarSystem", "value": "jalali"]
+        var wrongBool = noop; wrongBool["edit"] = ["type": "showTaskAge", "value": 1]
+        var badUUID = noop; badUUID["requestId"] = UUID().uuidString.uppercased()
+        var badWitness = noop; badWitness["expected"] = ["present": false, "value": "system", "stampPresent": false, "stamp": NSNull()]
+        var sql = 0; faults.beforeSQL = { _ in sql += 1 }
+        for invalid in [extra, wrong, wrongBool, badUUID, badWitness] {
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("generalPreference", argumentsJSON: json([json(invalid)])) }
+        }
+        await expectFailure("unavailable") { _ = try await core.call("generalPreferenceCommit", argumentsJSON: json([json(noop)])) }
+        XCTAssertEqual(sql, 0); XCTAssertEqual(journalWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    private func exerciseGeneralPreferenceRecovery(type: String, value: Any) async throws {
+        let at = "2026-10-01T12:00:00.000Z", originalStamp = "2026-10-01T12:00:00.005Z"
+        let expectedStamp = "2026-10-01T12:00:00.006Z"
+        let clock = try dateBundle(at: at)
+        let bootstrap = host(bundleURL: clock)
+        _ = try await bootstrap.start(); await bootstrap.close()
+        var settings = try calendarPreferenceSettings()
+        settings["appearance"] = ["showTaskAge": false, "unassignedAreaColor": "#abcdef", "legacy97": "keep"]
+        // Preserve the numeric legacy witness exactly until an explicit regional choice replaces it.
+        settings["weekStart"] = 1; settings["dateFormat"] = "system"; settings["timeFormat"] = "system"
+        settings["syncPreferencesUpdatedAt"] = ["appearance": originalStamp, "language": originalStamp, "gtd": at]
+        settings["unrelated97"] = ["credential": "general97-private-fixture", "url": "https://example.invalid/private-fixture"]
+        try writeCalendarPreferenceSettings(settings)
+        let setup = try SQLiteBridge(url: database)
+        _ = try setup.execute("INSERT INTO tasks (id,title,status,contexts,tags,createdAt,updatedAt,completedAt,focusOrder,rev,revBy,isFocusedToday,pushCount,showFutureRecurrence,suppressMindwtrReminders) VALUES ('general97-raw','Retained','done','[]','[]',?,?,?,9,4,'legacy',0,0,0,0)", parametersJSON: json([at,at,at]))
+        let original = try nineTableSnapshot(setup); setup.close()
+        let faults = HostIOFaults(), writer = host(faults, bundleURL: clock)
+        _ = try await writer.start()
+        let options = try object(await writer.call("generalPreferenceOptions", argumentsJSON: json(["{}"])))
+        let expected = try XCTUnwrap(options["expected"] as? [String: Any])
+        XCTAssertNotNil(options["model"])
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": ["type": type, "value": value], "expected": try XCTUnwrap(expected[type])]
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected General COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("generalPreference", argumentsJSON: json([json(request)])) }
+        let frozen = try Data(contentsOf: journal), saved = try object(String(decoding: frozen, as: UTF8.self))
+        XCTAssertFalse(String(decoding: frozen, as: UTF8.self).contains("general97-private-fixture"))
+        XCTAssertFalse(String(decoding: frozen, as: UTF8.self).contains("example.invalid"))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        let prepared = try XCTUnwrap(object(XCTUnwrap(args.first))["prepared"] as? [String: Any])
+        XCTAssertEqual(saved["method"] as? String, "generalPreferenceCommit")
+        XCTAssertEqual(prepared["preparedAt"] as? String, at)
+        XCTAssertEqual(try json(XCTUnwrap(prepared["request"])), try json(request))
+        XCTAssertEqual((prepared["after"] as? [String: Any])?["stamp"] as? String, expectedStamp)
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        try assertJournalContentUnchanged(frozen)
+        let snapshot = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(snapshot), original)
+        let backup = directory.appendingPathComponent("general97-baseline.sqlite")
+        try snapshot.prepareRecovery(at: backup); snapshot.close()
+        let baseline = try Data(contentsOf: backup)
+        let group = type == "showTaskAge" ? "appearance" : "language"
+        func assertEffect(_ before: [String], _ after: [String]) throws {
+            var expectedTables = before
+            var rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[5].utf8)) as? [[String: Any]])
+            var row = try object(XCTUnwrap(rows.first?["data"] as? String))
+            if type == "showTaskAge" {
+                var appearance = try XCTUnwrap(row["appearance"] as? [String: Any]); appearance[type] = value; row["appearance"] = appearance
+            } else { row[type] = value }
+            var stamps = try XCTUnwrap(row["syncPreferencesUpdatedAt"] as? [String: Any]); stamps[group] = expectedStamp; row["syncPreferencesUpdatedAt"] = stamps
+            rows[0]["data"] = try json(row); expectedTables[5] = try json(rows)
+            var actual = after
+            var actualRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(after[5].utf8)) as? [[String: Any]])
+            actualRows[0]["data"] = try json(object(XCTUnwrap(actualRows[0]["data"] as? String)))
+            actual[5] = try json(actualRows)
+            XCTAssertEqual(actual, expectedTables)
+        }
+        faults.beforeSQL = nil
+        let retried = try await writer.retryPending()
+        let result = try object(XCTUnwrap(retried))
+        XCTAssertEqual(try json(result), try json(XCTUnwrap(prepared["result"])))
+        let successful = try SQLiteBridge(url: database)
+        try assertEffect(original, nineTableSnapshot(successful)); successful.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        if type == "weekStart" {
+            let view = try object(await writer.call("menuRead", argumentsJSON: json(["calendar", json([
+                "state": ["viewMode": "week", "selectedDate": "2026-10-01", "visibleMonth": "2026-10-01"],
+                "offset": 0, "limit": 10] as [String: Any])])))
+            let range = try XCTUnwrap(view["range"] as? [String: Any])
+            let parser = ISO8601DateFormatter(); parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let start = try XCTUnwrap(parser.date(from: XCTUnwrap(range["start"] as? String)))
+            XCTAssertEqual(Calendar(identifier: .gregorian).component(.weekday, from: start), 7)
+        }
+        await writer.close()
+        for scenario in ["forged", "stale", "unrelated"] {
+            for suffix in ["-wal", "-shm"] {
+                let sidecar = URL(fileURLWithPath: database.path + suffix)
+                if FileManager.default.fileExists(atPath: sidecar.path) { try FileManager.default.removeItem(at: sidecar) }
+            }
+            try baseline.write(to: database)
+            var replayJournal = frozen
+            if scenario == "forged" {
+                var forged = prepared; forged["preparedAt"] = "2026-10-01T12:00:01.000Z"
+                var envelope = saved; envelope["argumentsJSON"] = try json([json(["request": request, "prepared": forged])])
+                replayJournal = Data(try json(envelope).utf8)
+            }
+            try replayJournal.write(to: journal)
+            var changed = try calendarPreferenceSettings()
+            if scenario == "stale" {
+                // Same desired value written independently is not the frozen operation's receipt.
+                if type == "showTaskAge" {
+                    var appearance = try XCTUnwrap(changed["appearance"] as? [String: Any]); appearance[type] = value; changed["appearance"] = appearance
+                } else { changed[type] = value }
+                var stamps = try XCTUnwrap(changed["syncPreferencesUpdatedAt"] as? [String: Any]); stamps[group] = "2026-10-01T12:00:00.007Z"; changed["syncPreferencesUpdatedAt"] = stamps
+                try writeCalendarPreferenceSettings(changed)
+            } else if scenario == "unrelated" {
+                changed["independent97"] = "retained"; try writeCalendarPreferenceSettings(changed)
+            }
+            let reader = try SQLiteBridge(url: database); let before = try nineTableSnapshot(reader); reader.close()
+            let replayFaults = HostIOFaults(); var statements = 0, writes = 0, diagnostics = 0
+            replayFaults.beforeSQL = { sql in
+                statements += 1
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
+            }
+            replayFaults.commandDiagnostic = { if $0 == "generalPreferenceApplied" { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
+            let recovered = host(replayFaults, bundleURL: clock)
+            if scenario != "unrelated" {
+                await expectFailure(scenario == "forged" ? "INVALID_INPUT" : "STALE_REVISION") { _ = try await recovered.start() }
+                let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), before); check.close()
+                XCTAssertEqual(writes, 0); XCTAssertEqual(diagnostics, 0)
+                if scenario == "forged" { XCTAssertEqual(statements, 0) }
+                try assertJournalContentUnchanged(replayJournal)
+            } else {
+                let startup = try object(await recovered.start()), recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+                XCTAssertEqual(recovery["method"] as? String, "generalPreferenceCommit")
+                XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(result))
+                let check = try SQLiteBridge(url: database); try assertEffect(before, nineTableSnapshot(check)); check.close()
+                XCTAssertEqual(diagnostics, 1)
+            }
+            await recovered.close()
+        }
+    }
+
+    func testGeneralPreferenceAgeRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "showTaskAge", value: true) }
+    func testGeneralPreferenceWeekRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "weekStart", value: "saturday") }
+    func testGeneralPreferenceDateRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "dateFormat", value: "ymd") }
+    func testGeneralPreferenceTimeRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "timeFormat", value: "24h") }
+
     private func exerciseTaxonomyRecovery(kind: String, action: String) async throws {
         let at = "2026-10-01T12:00:00.000Z", clock = try dateBundle(at: "2026-10-01T12:00:00.000Z")
         let bootstrap = host(bundleURL: clock)

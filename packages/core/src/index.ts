@@ -318,4 +318,5 @@ export { isGettingStartedProject } from './getting-started-seed';
 
 export * from './native-host-contract-person-edit';
 export * from './native-host-contract-taxonomy';
+export * from './native-host-contract-general-preference';
 export * from './taxonomy-policy';

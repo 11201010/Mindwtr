@@ -4594,6 +4594,155 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task97Open(_ app: XCUIApplication) {
+        let entry = app.buttons.matching(NSPredicate(format: "identifier == %@ OR identifier == %@ OR identifier == %@", "general-back", "settings-back", "tab-menu")).firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 30))
+        if !app.buttons["general-back"].exists {
+            if !app.buttons["settings-back"].exists {
+                boardTap(app, "tab-menu")
+                let settings = app.buttons["menu-settings"]
+                if !settings.isHittable {
+                    revealPagedElement(app, settings, in: app.scrollViews.containing(.button, identifier: "menu-projects").firstMatch)
+                }
+                boardTap(app, "menu-settings")
+            }
+            boardTap(app, "settings-general")
+        }
+        boardEnabled(app.buttons["general-back"])
+    }
+
+    private func task97Picker(_ app: XCUIApplication, _ type: String) {
+        let scroll = app.scrollViews["general-scroll"]
+        let toggle = app.buttons["general-regional-toggle"]
+        revealPagedElement(app, toggle, in: scroll)
+        if toggle.value as? String == "collapsed" { boardTap(app, "general-regional-toggle") }
+        let row = app.buttons["general-" + type]
+        revealPagedElement(app, row, in: scroll)
+        boardTap(app, "general-" + type)
+        XCTAssertTrue(app.buttons["general-picker-cancel"].waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(app.buttons["general-picker-cancel"].frame.height, 44 - 0.001)
+    }
+
+    private func task97Choose(_ app: XCUIApplication, _ value: String, closes: Bool = true) {
+        let option = app.buttons["general-option-" + value]
+        revealPagedElement(app, option, in: app.scrollViews.containing(.button, identifier: "general-option-" + value).firstMatch)
+        XCTAssertGreaterThanOrEqual(option.frame.height, 44 - 0.001)
+        boardTap(app, "general-option-" + value)
+        if closes {
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["general-picker-cancel"])
+            waitForExpectations(timeout: 20)
+            boardEnabled(app.buttons["general-back"])
+        }
+    }
+
+    private func task97Normal(_ library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task97Open(app)
+        let age = app.switches["general-show-task-age"]
+        revealPagedElement(app, age, in: app.scrollViews["general-scroll"])
+        boardEnabled(age); XCTAssertEqual(age.value as? String, "0")
+        for expected in ["1", "0", "1"] {
+            age.tap(); expectation(for: NSPredicate(format: "value == %@ AND enabled == true", expected), evaluatedWith: age)
+            waitForExpectations(timeout: 20)
+        }
+        for (type, value) in [("weekStart", "saturday"), ("dateFormat", "ymd"), ("timeFormat", "24h")] {
+            task97Picker(app, type)
+            boardTap(app, "general-picker-cancel")
+            task97Picker(app, type)
+            if type == "dateFormat" {
+                let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "General regional picker"; shot.lifetime = .keepAlways; add(shot)
+            }
+            task97Choose(app, value)
+            task97Picker(app, type); task97Choose(app, value)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "General preferences"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "general-back"); boardTap(app, "settings-back")
+        boardTap(app, "tab-focus")
+        boardTap(app, "focus-view-options")
+        let details = app.buttons["focus-details"]
+        revealPagedElement(app, details, in: app.scrollViews.containing(.button, identifier: "focus-details").firstMatch)
+        if !details.isSelected {
+            details.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 4)).tap()
+            expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: details)
+            waitForExpectations(timeout: 10)
+        }
+        boardTap(app, "focus-controls-close")
+        let focusScroll = app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch
+        let section = app.buttons["focus-section-focus"]
+        revealPagedElement(app, section, in: focusScroll)
+        if section.value as? String == "Expand" { section.tap() }
+        let taskAge = app.descendants(matching: .any).matching(identifier: "task-age-task97-age").firstMatch
+        revealPagedElement(app, taskAge, in: focusScroll)
+        XCTAssertTrue(taskAge.exists); XCTAssertFalse(taskAge.label.isEmpty)
+        let ageShot = XCTAttachment(screenshot: app.screenshot()); ageShot.name = "General preference task age result"; ageShot.lifetime = .keepAlways; add(ageShot)
+        app.terminate(); app.launch(); task97Open(app)
+        revealPagedElement(app, age, in: app.scrollViews["general-scroll"])
+        XCTAssertEqual(age.value as? String, "1")
+        for (type, value) in [("weekStart", "saturday"), ("dateFormat", "ymd"), ("timeFormat", "24h")] {
+            task97Picker(app, type)
+            XCTAssertTrue(app.buttons["general-option-" + value].isSelected)
+            boardTap(app, "general-picker-cancel")
+        }
+        app.terminate()
+    }
+
+    func testGeneralPreferencesNormal() { task97Normal("80b4758d-018e-49ca-8c51-55e859e24af9") }
+    func testGeneralPreferencesLargest() { task97Normal("617c40e0-4b86-4998-869d-c623784297dc") }
+
+    func testGeneralPreferencesOptionsFailure() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "c5000c31-c95b-47dc-b974-03ad56cd997d", "--native-general-preference-options-failure"]
+        app.launch(); task97Open(app)
+        let retry = app.buttons["general-retry"]
+        revealPagedElement(app, retry, in: app.scrollViews["general-scroll"])
+        boardTap(app, "general-retry")
+        task97Picker(app, "dateFormat"); task97Choose(app, "ymd")
+        app.terminate()
+    }
+
+    func testGeneralPreferencesRefusal() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "dcd7f927-e996-4071-acdb-7c9cf44d1d82", "--native-general-preference-refusal"]
+        app.launch(); task97Open(app); task97Picker(app, "dateFormat"); task97Choose(app, "ymd", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        boardEnabled(app.buttons["general-option-ymd"])
+        task97Choose(app, "ymd"); app.terminate()
+    }
+
+    func testGeneralPreferencesReadFailure() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "ece98d25-c75a-49c9-807b-28a2091076f2", "--native-general-preference-read-failure"]
+        app.launch(); task97Open(app); task97Picker(app, "dateFormat"); task97Choose(app, "ymd", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["general-picker-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["general-option-ymd"].isEnabled)
+            let retry = app.buttons["general-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews.containing(.button, identifier: "general-option-ymd").firstMatch)
+            boardTap(app, "general-retry")
+        }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["general-picker-cancel"])
+        waitForExpectations(timeout: 20); app.terminate()
+    }
+
+    func testGeneralPreferencesFailedSave() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "90f8667b-0455-4a88-89e0-28ba516c9520"]
+        app.launch(); task97Open(app); task97Picker(app, "dateFormat"); task97Choose(app, "ymd", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["general-picker-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["general-option-ymd"].isEnabled)
+            let retry = app.buttons["general-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews.containing(.button, identifier: "general-option-ymd").firstMatch)
+            boardTap(app, "general-retry"); boardEnabled(retry, timeout: 20)
+        }
+        app.terminate()
+    }
+
+    func testGeneralPreferencesColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "90f8667b-0455-4a88-89e0-28ba516c9520"]
+        app.launch(); task97Open(app); task97Picker(app, "dateFormat")
+        XCTAssertTrue(app.buttons["general-option-ymd"].isSelected)
+        boardTap(app, "general-picker-cancel"); app.terminate()
+    }
+
     private func task96Open(_ app: XCUIApplication, kind: String, deleting: Bool = false) {
         task91Section(app, kind == "context" ? "contexts" : "tags", open: true)
         let action = deleting ? "delete" : "edit"

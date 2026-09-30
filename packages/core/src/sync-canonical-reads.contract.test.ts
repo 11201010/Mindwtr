@@ -1054,6 +1054,23 @@ describe('canonical local reads contract', () => {
                 expect(nativeValue(await host.commitPreparedTaxonomy({ request, prepared: planned.prepared })))
                     .toEqual(planned.prepared.result);
             },
+            commitPreparedGeneralPreference: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(await host.getGeneralPreferenceOptions({}));
+                const request = { requestId: '97a7fe31-4444-4000-8000-000000000097',
+                    edit: { type: 'showTaskAge' as const, value: options.expected.showTaskAge.value !== true },
+                    expected: options.expected.showTaskAge };
+                const planned = nativeValue(await host.prepareGeneralPreference(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.settings.appearance?.showTaskAge).toBe(request.edit.value);
+                    expect(written.settings.syncPreferencesUpdatedAt?.appearance).toBe(planned.prepared.after.stamp);
+                    expect(written.tasks).toHaveLength(settled.tasks.length);
+                });
+                expect(nativeValue(await host.commitPreparedGeneralPreference({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+            },
             commitPreparedPersonCreate: async (control) => {
                 const host = await nativeHost(control);
                 const request = { requestId: 'd97f91ae-d02d-48a5-90ef-fc26a14343b9',

@@ -34,6 +34,9 @@ import { DEFAULT_TOMBSTONE_RETENTION_DAYS, purgeExpiredTombstones } from './sync
 import { buildLoadContext, runAutoArchive, runLoadMigrations } from './store-load-migrations';
 import { createSeedGettingStartedAction } from './getting-started-seed';
 import { beginNotifyProfile, endNotifyProfile, profilerNow, recordDerivedStateRebuild, type NotifyProfile } from './store-notify-profiler';
+import { buildGeneralSettingsUpdate } from './general-settings-model';
+import { generalPreferenceWitness } from './general-preference-witness';
+import { taskEditValuesEqual } from './json-value-equality';
 
 const STORAGE_TIMEOUT_MS = 15_000;
 // Runtime diagnostic threshold: loads slower than this get a phase-breakdown log line.
@@ -160,7 +163,7 @@ type SettingsActionContext = {
     getStorage: () => StorageAdapter;
 };
 
-type SettingsActions = Pick<TaskStore, 'fetchData' | 'seedGettingStarted' | 'updateSettings' | 'commitPreparedFocusSavedFilter' | 'persistSnapshot' | 'getDerivedState' | 'getFocusedCount' | 'setHighlightTask'>;
+type SettingsActions = Pick<TaskStore, 'fetchData' | 'seedGettingStarted' | 'updateSettings' | 'commitPreparedGeneralPreference' | 'commitPreparedFocusSavedFilter' | 'persistSnapshot' | 'getDerivedState' | 'getFocusedCount' | 'setHighlightTask'>;
 
 export const createSettingsActions = ({
     set,
@@ -692,6 +695,58 @@ export const createSettingsActions = ({
                 lastDataChangeAt: shouldTrackChange ? getNextDataChangeAt(state.lastDataChangeAt) : state.lastDataChangeAt,
             };
         });
+    },
+
+    commitPreparedGeneralPreference: async (input, authority) => {
+        let result: import('./store-types').PreparedTaskEditResult = { success: false,
+            reason: 'conflict', error: 'Prepared General preference changed; refresh General' };
+        set((memory) => {
+            const before = authority.state;
+            if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                || memory._allAreas !== before._allAreas || memory._allSections !== before._allSections
+                || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
+            const durable = authority.snapshot;
+            const { edit, expected } = input.request;
+            const current = generalPreferenceWitness(durable.settings, edit.type);
+            if (!current) return memory;
+            const after = current.present && taskEditValuesEqual(current.value, input.after.value)
+                && current.stampPresent && current.stamp === input.after.stamp
+                && (durable.settings.deviceId ?? null)
+                    === (input.deviceIdBefore ?? input.deviceIdToInitialize);
+            if (after) {
+                result = { success: true, outcome: 'replayed' };
+                return memory;
+            }
+            if (!taskEditValuesEqual(current, expected)
+                || (durable.settings.deviceId ?? null) !== input.deviceIdBefore) return memory;
+            const update = buildGeneralSettingsUpdate(durable.settings, edit);
+            if (!update || input.after.stamp !== timestampAtLeastAfter(input.preparedAt, expected.stamp ?? undefined))
+                return memory;
+            const group = edit.type === 'showTaskAge' ? 'appearance' : 'language';
+            const settings: AppData['settings'] = { ...durable.settings, ...update,
+                syncPreferencesUpdatedAt: { ...(durable.settings.syncPreferencesUpdatedAt ?? {}),
+                    [group]: input.after.stamp },
+                ...(input.deviceIdToInitialize ? { deviceId: input.deviceIdToInitialize } : {}) };
+            const fresh = generalPreferenceWitness(settings, edit.type);
+            if (!fresh || !fresh.present || !taskEditValuesEqual(fresh.value, input.after.value)
+                || !fresh.stampPresent || fresh.stamp !== input.after.stamp) return memory;
+            const freshTasks = durable.tasks.map((row) => normalizeTaskForLoad(row));
+            const freshProjects = durable.projects.map(normalizeProjectLifecycleFields);
+            clearDerivedCache();
+            persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks,
+                _allProjects: durable.projects, _allSections: durable.sections ?? [],
+                _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [], settings: durable.settings },
+            { ...durable, settings });
+            const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+            authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
+                generation: getSaveGeneration(), failure: memory.persistenceFailure };
+            result = { success: true, outcome: 'applied' };
+            return { _allTasks: freshTasks, _allProjects: freshProjects,
+                _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [],
+                _allPeople: durable.people ?? [], settings, lastDataChangeAt };
+        });
+        return result;
     },
 
     commitPreparedFocusSavedFilter: async (input) => {

@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-general-preference`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS General preference saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. Change Show Task Age or week/date/time format in Settings → General; failed saves retain the exact request through Retry and relaunch. No setting values, identifiers or library content are logged.
+
 - **`v1.3.4/ios-manage-taxonomy`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Manage Context or Tag saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. Rename or delete a Context or Tag in Settings → Manage; failed saves retain the original request through Retry and relaunch, while changed relevant rows refuse recovery. No names, identifiers or Task data are logged.
 
 - **`v1.3.4/ios-area-durable-recovery`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Area durable recovery confirmed` with `outcome=confirmed` follows durable acknowledgement and journal cleanup for Area creation/restoration, rename/merge and deletion. Retry a failed save in the same session or relaunch with the original pending journal: stored Task fields, including legacy terminal focus order, remain intact except the shared Area policy changes. Actual relevant row changes refuse recovery. No names, identifiers, task content or URLs are logged.
