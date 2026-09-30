@@ -405,6 +405,8 @@ const captureModalModel = source('CaptureModalModel.kt');
 // The Menu tab (pass 6): its model, the More sheet, the shared widgets, and one file per list screen.
 const menuModel = source('MenuModel.kt');
 const moreUi = source('MoreSheet.kt');
+// The Menu tab's sync dot: its opacity layer after the offset (a layer before it drew nothing on the S23).
+assert.match(moreUi, /Box\(Modifier\.align\(Alignment\.TopEnd\)\.offset\(x = 7\.dp, y = \(-2\)\.dp\)\.size\(7\.dp\)\.fade\(0\.85f\)\.clip\(CircleShape\)\.background\(dot\)/);
 const menuUi = source('MenuWidgets.kt');
 const waitingUi = source('WaitingScreen.kt');
 const somedayUi = source('SomedayScreen.kt');

@@ -76,9 +76,10 @@ fun RowScope.MenuTab(model: InboxViewModel) {
     ) {
         Box {
             Icon(Lucide.Menu, null, tint = color, modifier = Modifier.size(if (open) 26.dp else 24.dp).fade(if (open) 1f else 0.8f))
-            // RN's menuSyncDot: the sync badge's color, top right of the glyph; hidden from TalkBack, as RN's is.
+            // RN's menuSyncDot: the sync badge's color, top right of the glyph; hidden from TalkBack, as RN's is. Its opacity goes
+            // after the offset: a layer placed before it drew nothing on the phone.
             coreColorOrNull(model.syncBadge.color)?.let { dot ->
-                Box(Modifier.fade(0.85f).align(Alignment.TopEnd).offset(x = 7.dp, y = (-2).dp).size(7.dp).clip(CircleShape).background(dot)
+                Box(Modifier.align(Alignment.TopEnd).offset(x = 7.dp, y = (-2).dp).size(7.dp).fade(0.85f).clip(CircleShape).background(dot)
                     .border(1.5.dp, c.cardBg, CircleShape).clearAndSetSemantics { }.testTag("menu-sync-dot"))
             }
         }
