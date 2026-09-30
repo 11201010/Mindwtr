@@ -2,7 +2,7 @@ import { DEFAULT_PROJECT_COLOR } from '../color-constants';
 import { ensureDeviceId, getNextDataChangeAt, nextRevision, persist, replaceEntitiesInArray } from '../store-helpers';
 import { areaOrderIdsForIntent, sortAreasForOrderDisplay } from '../area-ordering';
 import { countLiveProjectsByArea } from '../area-project-usage';
-import { areaRenameEffect, planAreaRename, sameAreaAdditionRow, selectAreaRenameScope } from '../area-rename';
+import { areaRenameEffect, planAreaColorChange, planAreaEditorSave, planAreaRename, sameAreaAdditionRow, selectAreaRenameScope } from '../area-rename';
 import { logInfo, logWarn } from '../logger';
 import { clearDerivedCache } from '../store-settings';
 import { generateUUID as uuidv4 } from '../uuid';
@@ -68,27 +68,7 @@ export function areaOrderEffect(areas: Area[], orderedIds: string[], deviceId: s
     } })) };
 }
 
-/** The existing updateArea color branch, including its denormalized Project title repair. */
-export function planAreaColorChange(area: Area, projects: Project[], color: string | undefined,
-    deviceId: string, now: string): { area: Area; projects: Project[]; projectsChanged: boolean } {
-    const targetColor = color ?? DEFAULT_PROJECT_COLOR;
-    const title = area.name.trim() || undefined;
-    let projectsChanged = false;
-    const nextProjects = projects.map((project) => {
-        if (project.areaId !== area.id) return project;
-        const wantsColor = project.color !== targetColor;
-        const wantsTitle = project.areaTitle !== title;
-        if (!wantsColor && !wantsTitle) return project;
-        projectsChanged = true;
-        return { ...project,
-            ...(wantsColor ? { color: targetColor } : {}),
-            ...(wantsTitle ? { areaTitle: title } : {}),
-            updatedAt: now, rev: nextRevision(project.rev), revBy: deviceId };
-    });
-    return { area: { ...area, color, name: area.name, order: area.order,
-        updatedAt: now, rev: nextRevision(area.rev), revBy: deviceId },
-        projects: nextProjects, projectsChanged };
-}
+export { planAreaColorChange } from '../area-rename';
 
 export function selectAreaColorScope(areas: Area[], projects: Project[], areaId: string): PreparedAreaColor['scope'] | null {
     const area = areas.find((row) => row.id === areaId);
@@ -373,9 +353,9 @@ export const createAreaActions = ({
             const liveAreas = state._allAreas.filter((row) => !row.deletedAt);
             if (liveAreas.length !== scope.areas.length || liveAreas.some((row, index) =>
                 !sameAreaAdditionRow.area(row, scope.areas[index]))) return state;
-            const planned = planAreaRename({ areas: state._allAreas, projects: state._allProjects,
-                tasks: state._allTasks }, request.areaId, { name: request.name },
-            input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            const planned = planAreaEditorSave({ areas: state._allAreas, projects: state._allProjects,
+                tasks: state._allTasks }, request.areaId, request.name, request.manageColor,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
             if (!planned || !taskEditValuesEqual(planned.result, input.result)) return state;
             const currentScope = selectAreaRenameScope({ areas: state._allAreas,
                 projects: state._allProjects, tasks: state._allTasks }, request.areaId, planned.result.areaId);
@@ -384,7 +364,7 @@ export const createAreaActions = ({
             if (!sameRows(currentScope.projects, scope.projects, sameAreaAdditionRow.project)
                 || !sameRows(currentScope.tasks, scope.tasks, sameAreaAdditionRow.task)) return state;
             const replanned = areaRenameEffect(currentScope, request.areaId, request.name,
-                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt, request.manageColor);
             if (!replanned || !taskEditValuesEqual(replanned.effect, effect)
                 || !taskEditValuesEqual(replanned.result, input.result)) return state;
             const settings = input.deviceIdToInitialize

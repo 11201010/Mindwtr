@@ -28,7 +28,7 @@ struct SettingsScreen: View {
                           || model.somedaySectionRenameAwaitingRefresh
                           || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
                           || model.somedaySectionOrderActive || model.unassignedAreaColorActive
-                          || model.settingsAreaDeleteActive)
+                          || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                 .accessibilityLabel(model.label("common.back"))
                 .accessibilityIdentifier(model.settingsManagePresented ? "manage-back" : "settings-back")
                 Text(model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
@@ -94,6 +94,10 @@ struct SettingsScreen: View {
             get: { model.settingsAreaCreatePresented },
             set: { if !$0 { model.cancelSettingsAreaCreate() } }
         )) { newAreaSheet }
+        .sheet(isPresented: Binding(
+            get: { model.settingsAreaEditActive },
+            set: { if !$0 { model.cancelSettingsAreaEdit() } }
+        )) { areaEditSheet }
         .accessibilityAction(.escape) {
             if model.settingsManagePresented { model.closeManageSettings() }
             else { Task { await model.closeSettings() } }
@@ -227,7 +231,7 @@ struct SettingsScreen: View {
                                                       || model.somedaySectionDeleteActive
                                                       || model.somedaySectionOrderActive
                                                       || model.unassignedAreaColorActive
-                                                      || model.settingsAreaDeleteActive)
+                                                      || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                         .opacity((someday || areas) ? 1 : 0.55)
                         .accessibilityValue(section.flag("open") ? "expanded" : "collapsed")
                         .accessibilityIdentifier("manage-section-toggle-" + (someday ? "someday-sections" : section.text("key")))
@@ -250,7 +254,7 @@ struct SettingsScreen: View {
                                           || model.unassignedAreaColorActive
                                           || model.somedaySectionRenameIndex != nil
                                           || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
-                                          || model.settingsAreaDeleteActive)
+                                          || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                                 .accessibilityIdentifier("manage-areas-more")
                             }
                             newAreaRow
@@ -274,7 +278,7 @@ struct SettingsScreen: View {
                                               || model.somedaySectionDeleteActive
                                               || model.somedaySectionOrderActive
                                               || model.unassignedAreaColorActive
-                                              || model.settingsAreaDeleteActive)
+                                              || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                                     .accessibilityIdentifier("manage-someday-more")
                                 }
                             }
@@ -309,7 +313,7 @@ struct SettingsScreen: View {
             .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
                       || model.unassignedAreaColorActive || model.somedaySectionRenameIndex != nil
                       || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
-                      || model.settingsAreaDeleteActive)
+                      || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
             .accessibilityLabel(model.label("common.edit") + ": " + row.text("label"))
             .accessibilityIdentifier("manage-unassigned-color")
         }
@@ -324,11 +328,17 @@ struct SettingsScreen: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 .accessibilityIdentifier("manage-area-name-\(index)")
-            Button {} label: {
+            Button { Task { await model.openSettingsAreaEdit(index: index) } } label: {
                 Image(systemName: "pencil").font(.system(size: 18)).foregroundStyle(palette.secondary)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
             }
-            .disabled(true).accessibilityLabel(model.label("common.edit") + ": " + row.text("name"))
+            .buttonStyle(.plain)
+            .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
+                      || model.settingsAreaDeleteActive || model.settingsAreaCreatePresented
+                      || model.settingsAreaEditActive || model.unassignedAreaColorActive
+                      || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
+                      || model.somedaySectionRenameIndex != nil)
+            .accessibilityLabel(model.label("common.edit") + ": " + row.text("name"))
             .accessibilityIdentifier("manage-area-edit-\(index)")
             Button {
                 Task {
@@ -341,7 +351,7 @@ struct SettingsScreen: View {
             }
             .buttonStyle(.plain)
             .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
-                      || model.settingsAreaDeleteActive || model.settingsAreaCreatePresented
+                      || model.settingsAreaDeleteActive || model.settingsAreaEditActive || model.settingsAreaCreatePresented
                       || model.unassignedAreaColorActive || model.somedaySectionDeleteActive
                       || model.somedaySectionOrderActive || model.somedaySectionRenameIndex != nil)
             .accessibilityLabel(model.label("common.delete") + ": " + row.text("name"))
@@ -367,7 +377,7 @@ struct SettingsScreen: View {
                 .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
                           || model.settingsAreaCreatePresented || model.unassignedAreaColorActive
                           || model.somedaySectionRenameIndex != nil || model.somedaySectionDeleteActive
-                          || model.somedaySectionOrderActive || model.settingsAreaDeleteActive)
+                          || model.somedaySectionOrderActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
                 .frame(minWidth: 86, minHeight: 44)
                 .accessibilityLabel(row.text("label"))
                 .accessibilityIdentifier("manage-area-add")
@@ -450,6 +460,88 @@ struct SettingsScreen: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .interactiveDismissDisabled(!model.settingsAreaCreateCanCancel)
+    }
+
+    private var areaEditSheet: some View {
+        let copy = model.manageSettings.object("editor").object("text").object("area")
+        let colors = model.manageSettings.object("editor").objects("colors")
+        let custom = model.settingsAreaEditColor
+        return NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    TextField(copy.text("namePlaceholder"), text: Binding(
+                        get: { model.areaRenameDraft }, set: { model.setAreaRenameDraft($0) }))
+                        .focused($areaNameFocused).submitLabel(.done)
+                        .onSubmit { areaNameFocused = false }
+                        .rnFont(16).padding(.horizontal, 12).frame(minHeight: 48)
+                        .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                        .disabled(!model.settingsAreaEditInputEnabled)
+                        .accessibilityLabel(copy.text("namePlaceholder"))
+                        .accessibilityIdentifier("manage-area-edit-name")
+                    Text(copy.text("changeColor")).rnFont(14, .semibold)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 52), spacing: 12)], spacing: 12) {
+                        ForEach(colors.indices, id: \.self) { index in
+                            let choice = colors[index]
+                            let selected = model.settingsAreaEditColor == choice.text("color")
+                            Button { model.setSettingsAreaEditColor(choice.text("color")) } label: {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color(hex: choice.text("color")))
+                                    .frame(minWidth: 48, minHeight: 48)
+                                    .overlay {
+                                        if selected {
+                                            Image(systemName: "checkmark").font(.system(size: 17, weight: .bold))
+                                                .foregroundStyle(.white)
+                                        }
+                                    }
+                            }
+                            .buttonStyle(.plain).disabled(!model.settingsAreaEditInputEnabled)
+                            .accessibilityLabel(copy.text("changeColor") + ": " + choice.text("color"))
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                            .accessibilityIdentifier("manage-area-edit-color-option-\(index)")
+                        }
+                        if !custom.isEmpty && !colors.contains(where: { $0.text("color") == custom }) {
+                            RoundedRectangle(cornerRadius: 8).fill(Color(hex: custom))
+                                .frame(minWidth: 48, minHeight: 48)
+                                .overlay {
+                                    Image(systemName: "checkmark").font(.system(size: 17, weight: .bold))
+                                        .foregroundStyle(.white)
+                                }
+                                .accessibilityLabel(copy.text("changeColor") + ": " + custom)
+                                .accessibilityAddTraits(.isSelected)
+                        }
+                    }
+                    if let failure = model.areaRenameError ?? model.areaRenameReadError {
+                        errorBlock(failure, id: "manage-area-edit-error", retryID: "manage-area-edit-retry") {
+                            Task { await model.retrySettingsAreaEdit() }
+                        }
+                    }
+                    HStack(spacing: 12) {
+                        Button { areaNameFocused = false; model.cancelSettingsAreaEdit() } label: {
+                            Text(copy.text("cancelLabel"))
+                                .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .disabled(!model.settingsAreaEditCanCancel)
+                        .accessibilityIdentifier("manage-area-edit-cancel")
+                        Button { areaNameFocused = false; Task { await model.saveSettingsAreaEdit() } } label: {
+                            Text(copy.text("saveLabel"))
+                                .foregroundStyle(palette.onTint)
+                                .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderedProminent).tint(palette.tint)
+                        .disabled(!model.settingsAreaEditCanSave)
+                        .accessibilityIdentifier("manage-area-edit-save")
+                    }
+                }
+                .padding(20)
+            }
+            .accessibilityIdentifier("manage-area-edit-scroll")
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle(copy.text("title"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(!model.settingsAreaEditCanCancel)
     }
 
     private var unassignedAreaColorSheet: some View {

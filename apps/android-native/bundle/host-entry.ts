@@ -881,6 +881,15 @@ globalThis.MindwtrHost = {
     areaRenameCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedAreaRename(JSON.parse(json))));
     },
+    manageAreaEditRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeAreaRenameOutcome(JSON.parse(json)));
+        });
+    },
+    manageAreaEditCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedAreaRename(JSON.parse(json))));
+    },
     areaOrderOptions(): string {
         return submit(async () => {
             requireSaved();

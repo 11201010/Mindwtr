@@ -56,6 +56,104 @@ async function open(initial: Partial<AppData>, fail?: () => boolean) {
 afterEach(async () => { vi.useRealTimers(); await flushPendingSave(); resetForTests(); });
 
 describe('prepared native Area rename', () => {
+    it('uses the Manage opening draft for blank, unchanged custom color, and default gray no-ops', async () => {
+        const custom = await open({ areas: [area('custom', 'Work', 0, { color: '#123456' })], settings: {} });
+        useTaskStore.setState({ settings: {} });
+        for (const name of [' ', 'Work']) {
+            expect(custom.methods.prepareAreaRename(custom.request('custom', name, { manageColor: '#123456' })))
+                .toEqual({ ok: true, value: { kind: 'noop',
+                    result: { id: 'custom', areaId: 'custom', name: 'Work' } } });
+        }
+        expect(custom.saves()).toBe(0);
+        expect(useTaskStore.getState().settings.deviceId).toBeUndefined();
+        const gray = await open({ areas: [area('gray', 'Gray', 0, { color: undefined })] });
+        expect(gray.methods.prepareAreaRename(gray.request('gray', 'Gray', { manageColor: '#94a3b8' })))
+            .toMatchObject({ ok: true, value: { kind: 'noop' } });
+    });
+
+    it('atomically applies a color-only Manage edit with the RN Project repair', async () => {
+        const source = area('source', 'Work', 0, { color: '#123456' });
+        const linked = project('linked', source.id, 'stale', { color: '#123456', deletedAt: NOW });
+        const { methods, request, data } = await open({ areas: [source], projects: [linked] });
+        const input = request(source.id, 'Work', { manageColor: '#10b981' });
+        const plan = methods.prepareAreaRename(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const prepared = plan.value.prepared;
+        expect(prepared.result).toEqual({ id: source.id, areaId: source.id, name: source.name });
+        expect(prepared.effect.areas).toHaveLength(1);
+        expect(prepared.effect.projects[0].after).toMatchObject({ areaTitle: 'Work', color: '#10b981', deletedAt: NOW });
+        expect(prepared.effect.tasks).toEqual([]);
+        expect(methods.validatePreparedAreaRename({ request: input, prepared })).toMatchObject({ ok: true });
+        expect(await methods.commitPreparedAreaRename({ request: input, prepared })).toMatchObject({ ok: true });
+        expect(data().areas[0].name).toBe('Work');
+        expect(data().projects[0].color).toBe('#10b981');
+    });
+
+    it('follows the RN trimmed-name policy when an opening name contains whitespace', async () => {
+        const source = area('source', ' Work ', 0);
+        const { methods, request } = await open({ areas: [source] });
+        const input = request(source.id, source.name, { manageColor: source.color });
+        const plan = methods.prepareAreaRename(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        expect(plan.value.prepared.result.name).toBe('Work');
+        expect(plan.value.prepared.effect.areas[0].after.name).toBe('Work');
+    });
+
+    it('merges a combined Manage edit with one prepared effect and rejects forged mode or effect', async () => {
+        const source = area('source', 'Work', 0);
+        const destination = area('destination', 'Home', 1, { color: '#22c55e' });
+        const deleted = project('deleted', source.id, source.name, { deletedAt: NOW });
+        const stale = project('stale', destination.id, 'Old', { color: '#22c55e' });
+        const direct = task('direct', source.id, { deletedAt: NOW });
+        const { methods, request, data } = await open({ areas: [source, destination], projects: [deleted, stale], tasks: [direct] });
+        const input = request(source.id, 'Home', { manageColor: '#ef4444' });
+        const plan = methods.prepareAreaRename(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const prepared = plan.value.prepared;
+        expect(prepared.result.areaId).toBe(destination.id);
+        expect(prepared.effect.areas).toHaveLength(2);
+        expect(prepared.effect.projects.map(({ after }) => [after.id, after.color, after.areaTitle]))
+            .toEqual([['deleted', '#ef4444', 'Home'], ['stale', '#22c55e', 'Home']]);
+        expect(prepared.effect.tasks[0].after).toMatchObject({ areaId: destination.id, deletedAt: NOW });
+        expect(methods.validatePreparedAreaRename({ request: { ...input, manageColor: undefined }, prepared }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const forged = structuredClone(prepared);
+        forged.effect.projects[0].after.color = '#3b82f6';
+        expect(methods.validatePreparedAreaRename({ request: input, prepared: forged }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await methods.commitPreparedAreaRename({ request: input, prepared })).toMatchObject({ ok: true });
+        expect(data().areas.find((row) => row.id === destination.id)?.color).toBe('#ef4444');
+        expect(data().projects.find((row) => row.id === deleted.id)?.deletedAt).toBe(NOW);
+    });
+
+    it('requires a palette or unchanged opening custom color and replays only the complete Manage receipt', async () => {
+        const source = area('source', 'Work', 0, { color: '#123456' });
+        const linked = project('linked', source.id, source.name);
+        const { methods, request, saves } = await open({ areas: [source], projects: [linked] });
+        expect(methods.prepareAreaRename(request(source.id, 'Work', { manageColor: '#654321' })))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(methods.prepareAreaRename(request(source.id, 'Work', { manageColor: null as never })))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const input = request(source.id, 'Work', { manageColor: '#10b981' });
+        const plan = methods.prepareAreaRename(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const envelope = { request: input, prepared: plan.value.prepared };
+        useTaskStore.setState({ _allProjects: [...useTaskStore.getState()._allProjects,
+            project('new-link', source.id, source.name)] });
+        expect(await methods.commitPreparedAreaRename(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        useTaskStore.setState({ _allProjects: [linked] });
+        expect(await methods.commitPreparedAreaRename(envelope)).toMatchObject({ ok: true });
+        const saved = saves();
+        useTaskStore.setState({ _allAreas: [...useTaskStore.getState()._allAreas, area('other', 'Other', 1)] });
+        expect(await methods.commitPreparedAreaRename(envelope)).toMatchObject({ ok: true });
+        expect(saves()).toBe(saved);
+        useTaskStore.setState({ _allProjects: useTaskStore.getState()._allProjects.map((row) => row.id === linked.id
+            ? { ...row, title: 'changed', rev: 7 } : row) });
+        expect(await methods.commitPreparedAreaRename(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+    });
+
     it('returns blank and exact-spelling no-ops without initializing a device or saving', async () => {
         const { methods, request, saves } = await open({ areas: [area('source', 'Work', 0)], settings: {} });
         useTaskStore.setState({ settings: {} });

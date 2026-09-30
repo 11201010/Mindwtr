@@ -7,13 +7,14 @@ import { AREA_SYNC_FIELD_SCHEMA, areaToSqliteRow } from './area-sync-schema';
 import { PROJECT_SYNC_FIELD_SCHEMA, projectToSqliteRow } from './project-sync-schema';
 import { TASK_SYNC_FIELD_SCHEMA, taskToSqliteRow } from './task-sync-schema';
 import { MAX_SYNC_REVISION } from './sync-revision';
-import { areaRenameEffect, planAreaRename, selectAreaRenameScope, type AreaRenameResult } from './area-rename';
+import { areaRenameEffect, planAreaEditorSave, selectAreaRenameScope, type AreaRenameResult } from './area-rename';
+import { AREA_PRESET_COLORS, DEFAULT_AREA_COLOR } from './color-constants';
 import type { PreparedAreaRename } from './store-types';
 import { taskEditValuesEqual } from './json-value-equality';
 import type { Area, Project, Task } from './types';
 
 export type NativeAreaRenameRequest = { requestId: string; areaId: string; name: string;
-    expected: NativeAreaOrderToken };
+    expected: NativeAreaOrderToken; manageColor?: string };
 export type NativeAreaRenameResult = AreaRenameResult;
 export type NativePreparedAreaRename = PreparedAreaRename & { version: 1; request: NativeAreaRenameRequest;
     result: NativeAreaRenameResult };
@@ -35,13 +36,18 @@ const token = (area: Area): NativeAreaOrderToken => ({ id: area.id, name: area.n
 
 const readRequest = (value: unknown): NativeAreaRenameRequest | null => {
     const input = detach<Record<string, unknown>>(value);
-    if (!input || !exact(input, ['requestId', 'areaId', 'name', 'expected'])
+    if (!input || !(exact(input, ['requestId', 'areaId', 'name', 'expected'])
+        || exact(input, ['requestId', 'areaId', 'name', 'expected', 'manageColor']))
         || typeof input.requestId !== 'string' || !UUID.test(input.requestId)
         || typeof input.areaId !== 'string' || !input.areaId || input.areaId.length > 500
         || typeof input.name !== 'string' || input.name.length > 10_000
         || !record(input.expected)
         || !exact(input.expected, ['id', 'name', 'color', 'order', 'rev', 'revBy', 'updatedAt'])) return null;
     const expected = input.expected;
+    if (Object.prototype.hasOwnProperty.call(input, 'manageColor')
+        && (typeof input.manageColor !== 'string' || !(
+            (AREA_PRESET_COLORS as readonly string[]).includes(input.manageColor)
+            || input.manageColor === (expected.color || DEFAULT_AREA_COLOR)))) return null;
     return expected.id === input.areaId
         && typeof expected.name === 'string' && expected.name.length <= 10_000
         && (expected.color === null || typeof expected.color === 'string' && expected.color.length <= 500)
@@ -127,11 +133,11 @@ const readPrepared = (value: unknown): NativePreparedAreaRename | null => {
         const source = scope.areas.find((row) => row.id === request.areaId);
         if (!source || !same(token(source), request.expected)) return null;
         const name = request.name.trim();
-        if (!name || name === source.name) return null;
+        if (!name || request.manageColor === undefined && name === source.name) return null;
         const planned = areaRenameEffect(scope, request.areaId, request.name,
-            prepared.deviceIdBefore ?? prepared.deviceIdToInitialize!, prepared.updateAt);
+            prepared.deviceIdBefore ?? prepared.deviceIdToInitialize!, prepared.updateAt, request.manageColor);
         if (!planned || !same(planned.result, prepared.result) || !same(planned.effect, prepared.effect)
-            || prepared.result.id !== request.areaId || prepared.result.name !== name
+            || prepared.result.id !== request.areaId
             || scope.projects.some((row) => row.areaId !== request.areaId && row.areaId !== prepared.result.areaId)
             || scope.tasks.some((row) => row.areaId !== request.areaId)
             || prepared.effect.areas.length !== (prepared.result.areaId === request.areaId ? 1 : 2)
@@ -165,15 +171,18 @@ export function createAreaRenameMethods(deps: {
             if (!source || source.deletedAt || !same(token(source), request.expected))
                 return fail('STALE_REVISION', 'Area changed; refresh before renaming');
             const name = request.name.trim();
-            if (!name || name === source.name) return { ok: true, value: { kind: 'noop',
+            if (!name || request.manageColor === undefined && name === source.name) return { ok: true, value: { kind: 'noop',
                 result: { id: source.id, areaId: source.id, name: source.name } } };
             const device = ensureDeviceId(state.settings);
             const updateAt = new Date().toISOString();
             const rows = { areas: state._allAreas, projects: state._allProjects, tasks: state._allTasks };
-            const planned = planAreaRename(rows, request.areaId, { name: request.name }, device.deviceId, updateAt);
-            if (!planned) return fail('STALE_REVISION', 'Area changed; refresh before renaming');
+            const planned = planAreaEditorSave(rows, request.areaId, request.name, request.manageColor,
+                device.deviceId, updateAt);
+            if (!planned) return { ok: true, value: { kind: 'noop',
+                result: { id: source.id, areaId: source.id, name: source.name } } };
             const scope = selectAreaRenameScope(rows, request.areaId, planned.result.areaId);
-            const effect = areaRenameEffect(scope, request.areaId, request.name, device.deviceId, updateAt);
+            const effect = areaRenameEffect(scope, request.areaId, request.name, device.deviceId, updateAt,
+                request.manageColor);
             if (!effect || !same(effect.result, planned.result))
                 return fail('STALE_REVISION', 'Area changed; refresh before renaming');
             const prepared: NativePreparedAreaRename = { version: 1, request, scope, effect: effect.effect,

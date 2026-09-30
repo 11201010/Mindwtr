@@ -90,7 +90,8 @@ struct InboxScreen: View {
                             && !(model.selectedSurface == .someday && model.somedayMoveUndoError != nil)
                             && !(model.selectedSurface == .settings && model.somedaySectionRenameError != nil)
                             && !(model.selectedSurface == .settings && model.somedaySectionDeleteError != nil)
-                            && !(model.selectedSurface == .settings && model.settingsAreaDeleteError != nil) {
+                            && !(model.selectedSurface == .settings && model.settingsAreaDeleteError != nil)
+                            && !(model.selectedSurface == .settings && model.settingsAreaEditActive && model.areaRenameError != nil) {
                             FailureBanner(model: model, palette: palette)
                         }
                     }

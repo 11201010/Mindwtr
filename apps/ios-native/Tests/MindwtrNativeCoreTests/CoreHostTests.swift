@@ -9948,7 +9948,7 @@ final class CoreHostTests: XCTestCase {
                 "contentMtimeMs": 1_700_000_000_000, "contentSize": 17,
             ] as [String: Any]])
             _ = try sqlite.execute("INSERT INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, createdAt, updatedAt, deletedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                   parametersJSON: json([id, "Project \(id)", "active", color, 9, "[\"keep-tag\"]", 1, "project", "title", 1, "Keep **notes**", attachments, "2036-10-02", "2036-10-03T12:00:00.000Z", areaID, areaTitle, at, at, deleted ? at as Any : NSNull(), rev]))
+                                   parametersJSON: json([id, "Project \(id)", "active", color, 9, "[]", 1, "project", "title", 1, "Keep **notes**", attachments, "2036-10-02", "2036-10-03T12:00:00.000Z", areaID, areaTitle, at, at, deleted ? at as Any : NSNull(), rev]))
         }
         _ = try sqlite.execute("INSERT INTO sections (id, projectId, title, orderNum, isCollapsed, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                                parametersJSON: json(["rename-section", "rename-source-live", "Keep section", 4, 1, at, at, 21]))
@@ -9994,6 +9994,13 @@ final class CoreHostTests: XCTestCase {
         let rows = try XCTUnwrap(options["areas"] as? [[String: Any]])
         let expected = try XCTUnwrap(rows.first { $0["id"] as? String == areaID })
         return ["requestId": requestID, "areaId": areaID, "name": name, "expected": expected]
+    }
+
+    private func manageAreaEditRequest(_ core: CoreHost, areaID: String = "rename-source", name: String,
+                                       color: String) async throws -> [String: Any] {
+        var request = try await areaRenameRequest(core, areaID: areaID, name: name)
+        request["manageColor"] = color
+        return request
     }
 
     private func nineTableSnapshot(_ sqlite: SQLiteBridge) throws -> [String] {
@@ -12977,6 +12984,254 @@ final class CoreHostTests: XCTestCase {
             }
             var forged: [String: Any] = ["version": 2, "method": method, "argumentsJSON": argumentsJSON]
             if let terminal { forged["terminal"] = terminal }
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var sql = 0, cleanup = 0
+            blockedFaults.beforeSQL = { _ in sql += 1 }
+            blockedFaults.journalRemove = { cleanup += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(sql, 0)
+            XCTAssertEqual(cleanup, 0)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes)
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), before)
+            check.close()
+            await blocked.close()
+        }
+    }
+
+    func testManageAreaEditColorOnlyNoOpAndStrictOrigin() async throws {
+        try await seedAreaRenameRows()
+        let core = host()
+        _ = try await core.start()
+        let sourceName = try XCTUnwrap(areaRows("rename-source").first?["name"] as? String)
+        let linked = try XCTUnwrap(projectRows("rename-source-live").first)
+        let deleted = try XCTUnwrap(projectRows("rename-source-deleted").first)
+        let unrelated = try json(XCTUnwrap(projectRows("rename-unrelated").first))
+        let task = try json(try storedTask("rename-direct"))
+        let request = try await manageAreaEditRequest(core, name: sourceName, color: "#3b82f6")
+        let result = try object(await core.call("manageAreaEdit", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(Set(result.keys), Set(["id", "areaId", "name"]))
+        XCTAssertEqual(result["areaId"] as? String, "rename-source")
+        XCTAssertEqual(result["name"] as? String, sourceName)
+        XCTAssertEqual(try areaRows("rename-source").first?["color"] as? String, "#3b82f6")
+        for (id, prior) in [("rename-source-live", linked), ("rename-source-deleted", deleted)] {
+            let saved = try XCTUnwrap(projectRows(id).first)
+            XCTAssertEqual(saved["color"] as? String, "#3b82f6")
+            XCTAssertEqual(saved["rev"] as? Int, (prior["rev"] as? Int ?? 0) + 1)
+            XCTAssertEqual(saved["deletedAt"] as? String, prior["deletedAt"] as? String)
+        }
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("rename-unrelated").first)), unrelated)
+        XCTAssertEqual(try json(try storedTask("rename-direct")), task)
+        let beforeNoOp = try SQLiteBridge(url: database)
+        let snapshot = try nineTableSnapshot(beforeNoOp)
+        beforeNoOp.close()
+        for name in [sourceName, "  \(sourceName)  ", "   "] {
+            let noOp = try await manageAreaEditRequest(core, name: name, color: "#3b82f6")
+            _ = try await core.call("manageAreaEdit", argumentsJSON: json([json(noOp)]))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), snapshot)
+            check.close()
+        }
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("areaRename", argumentsJSON: json([json(request)])) }
+        let missingColor = request.filter { $0.key != "manageColor" }
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("manageAreaEdit", argumentsJSON: json([json(missingColor)])) }
+        for method in ["areaRenamePrepare", "areaRenameValidate", "manageAreaEditCommit"] {
+            await expectFailure("unavailable") { _ = try await core.call(method, argumentsJSON: json([json(request)])) }
+        }
+    }
+
+    func testManageAreaEditCustomAndDefaultGrayAreNoOp() async throws {
+        for (kind, storedColor, draftColor) in [("custom", "#123abc" as String?, "#123abc"),
+                                                 ("default", nil, "#94a3b8")] {
+            let parent = directory!
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedAreaRenameRows()
+            let edit = try SQLiteBridge(url: database)
+            _ = try edit.execute("UPDATE areas SET color = ? WHERE id = 'rename-source'",
+                                 parametersJSON: json([storedColor.map { $0 as Any } ?? NSNull()]))
+            edit.close()
+            let core = host()
+            _ = try await core.start()
+            let name = try XCTUnwrap(areaRows("rename-source").first?["name"] as? String)
+            let request = try await manageAreaEditRequest(core, name: name, color: draftColor)
+            let before = try SQLiteBridge(url: database)
+            let snapshot = try nineTableSnapshot(before)
+            before.close()
+            let result = try object(await core.call("manageAreaEdit", argumentsJSON: json([json(request)])))
+            XCTAssertEqual(result["areaId"] as? String, "rename-source")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            let after = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(after), snapshot)
+            after.close()
+            await core.close()
+            directory = parent
+        }
+    }
+
+    func testManageAreaEditCombinedCollisionAtomicRetryPreservesLinkedDeletedRows() async throws {
+        try await seedAreaRenameRows()
+        let faults = HostIOFaults()
+        var diagnostics: [String] = []
+        faults.commandDiagnostic = { diagnostics.append($0) }
+        let core = host(faults)
+        _ = try await core.start()
+        let request = try await manageAreaEditRequest(core, name: "  M\u{FEFF}ERGE e\u{301}  ", color: "#3b82f6")
+        let sourceProjects = try Dictionary(uniqueKeysWithValues: ["rename-source-live", "rename-source-deleted"].map {
+            ($0, try XCTUnwrap(projectRows($0).first))
+        })
+        let destinationProjects = try Dictionary(uniqueKeysWithValues: ["rename-destination-live", "rename-destination-deleted"].map {
+            ($0, try XCTUnwrap(projectRows($0).first))
+        })
+        let directTasks = try Dictionary(uniqueKeysWithValues: ["rename-direct", "rename-direct-deleted"].map {
+            ($0, try storedTask($0))
+        })
+        let unrelated = try json(XCTUnwrap(projectRows("rename-unrelated").first))
+        let nested = try json(try storedTask("rename-nested"))
+        let before = try SQLiteBridge(url: database)
+        let snapshot = try nineTableSnapshot(before)
+        before.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Manage Area edit failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("manageAreaEdit", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertEqual(try object(String(contentsOf: journal))["method"] as? String, "manageAreaEditCommit")
+        let rolledBack = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(rolledBack), snapshot)
+        rolledBack.close()
+        XCTAssertFalse(diagnostics.contains("manageAreaEditApplied"))
+        faults.beforeSQL = nil
+        let retryValue = try await core.retryPending()
+        let result = try object(XCTUnwrap(retryValue))
+        XCTAssertEqual(Set(result.keys), Set(["id", "areaId", "name"]))
+        XCTAssertEqual(result["id"] as? String, "rename-source")
+        XCTAssertEqual(result["areaId"] as? String, "rename-destination")
+        XCTAssertEqual(result["name"] as? String, "M\u{FEFF}ERGE e\u{301}")
+        XCTAssertNotNil(try areaRows("rename-source").first?["deletedAt"] as? String)
+        XCTAssertEqual(try areaRows("rename-destination").first?["color"] as? String, "#3b82f6")
+        for (id, prior) in sourceProjects {
+            let saved = try XCTUnwrap(projectRows(id).first)
+            XCTAssertEqual(saved["areaId"] as? String, "rename-destination")
+            XCTAssertEqual(saved["areaTitle"] as? String, "M\u{FEFF}ERGE e\u{301}")
+            XCTAssertEqual(saved["color"] as? String, "#3b82f6")
+            XCTAssertEqual(saved["deletedAt"] as? String, prior["deletedAt"] as? String)
+            XCTAssertEqual(saved["rev"] as? Int, (prior["rev"] as? Int ?? 0) + 1)
+        }
+        for (id, prior) in destinationProjects {
+            let saved = try XCTUnwrap(projectRows(id).first)
+            XCTAssertEqual(saved["areaTitle"] as? String, "M\u{FEFF}ERGE e\u{301}")
+            XCTAssertEqual(saved["color"] as? String, prior["color"] as? String)
+            XCTAssertEqual(saved["deletedAt"] as? String, prior["deletedAt"] as? String)
+            XCTAssertEqual(saved["rev"] as? Int, (prior["rev"] as? Int ?? 0) + 1)
+        }
+        for (id, prior) in directTasks {
+            let saved = try storedTask(id)
+            XCTAssertEqual(saved["areaId"] as? String, "rename-destination")
+            XCTAssertEqual(saved["deletedAt"] as? String, prior["deletedAt"] as? String)
+            XCTAssertEqual(saved["rev"] as? Int, (prior["rev"] as? Int ?? 0) + 1)
+        }
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("rename-unrelated").first)), unrelated)
+        XCTAssertEqual(try json(try storedTask("rename-nested")), nested)
+        XCTAssertEqual(diagnostics, ["manageAreaEditApplied"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testManageAreaEditTwiceFailedExactJournalColdRecoveryKeepsOrigin() async throws {
+        try await seedAreaRenameRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await manageAreaEditRequest(writer, name: "Updated Source", color: "#3b82f6")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Manage Area edit failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("manageAreaEdit", argumentsJSON: json([json(request)]))
+        }
+        let firstBytes = try Data(contentsOf: journal)
+        let first = try object(String(decoding: firstBytes, as: UTF8.self))
+        XCTAssertEqual(first["method"] as? String, "manageAreaEditCommit")
+        let arguments = try XCTUnwrap(first["argumentsJSON"] as? String)
+        let frozenArguments = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String])
+        let envelope = try object(XCTUnwrap(frozenArguments.first))
+        let frozenRequest = try XCTUnwrap(envelope["request"] as? [String: Any])
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        XCTAssertEqual(try json(frozenRequest), try json(request))
+        XCTAssertEqual(try json(XCTUnwrap(prepared["request"])), try json(request))
+        XCTAssertEqual(frozenRequest["requestId"] as? String, request["requestId"] as? String)
+        XCTAssertNotNil(prepared["updateAt"] as? String)
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        try assertJournalContentUnchanged(firstBytes)
+        await writer.close()
+        let before = try SQLiteBridge(url: database)
+        let baseline = try nineTableSnapshot(before)
+        before.close()
+        var diagnostics: [String] = []
+        let replayFaults = HostIOFaults()
+        replayFaults.commandDiagnostic = { diagnostics.append($0) }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "manageAreaEditCommit")
+        let result = try XCTUnwrap(recovery["result"] as? [String: Any])
+        XCTAssertEqual(result["id"] as? String, "rename-source")
+        XCTAssertEqual(result["areaId"] as? String, "rename-source")
+        XCTAssertEqual(result["name"] as? String, "Updated Source")
+        XCTAssertEqual(try areaRows("rename-source").first?["color"] as? String, "#3b82f6")
+        XCTAssertEqual(diagnostics, ["manageAreaEditApplied"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let after = try SQLiteBridge(url: database)
+        let settled = try nineTableSnapshot(after)
+        after.close()
+        XCTAssertNotEqual(settled, baseline)
+        await reopened.close()
+        let again = host()
+        _ = try await again.start()
+        let noDuplicate = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(noDuplicate), settled)
+        noDuplicate.close()
+        await again.close()
+    }
+
+    func testManageAreaEditForgedModeAndEffectRefuseBeforeSQLite() async throws {
+        try await seedAreaRenameRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await manageAreaEditRequest(writer, name: "Updated Source", color: "#3b82f6")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pending Manage Area edit") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("manageAreaEdit", argumentsJSON: json([json(request)]))
+        }
+        let pending = try object(String(contentsOf: journal))
+        let originalArguments = try XCTUnwrap(pending["argumentsJSON"] as? String)
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(originalArguments.utf8)) as? [String])
+        let originalEnvelope = try object(XCTUnwrap(args.first))
+        await writer.close()
+        let baseline = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(baseline)
+        baseline.close()
+        for corruption in ["origin", "effect", "mode"] {
+            var method = "manageAreaEditCommit"
+            var envelope = originalEnvelope
+            switch corruption {
+            case "origin": method = "areaRenameCommit"
+            case "effect":
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                prepared["effect"] = ["areas": [], "projects": [], "tasks": []]
+                envelope["prepared"] = prepared
+            default:
+                var badRequest = try XCTUnwrap(envelope["request"] as? [String: Any])
+                badRequest.removeValue(forKey: "manageColor")
+                envelope["request"] = badRequest
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                prepared["request"] = badRequest
+                envelope["prepared"] = prepared
+            }
+            let forged: [String: Any] = ["version": 2, "method": method,
+                                         "argumentsJSON": try json([json(envelope)])]
             let bytes = Data(try json(forged).utf8)
             try bytes.write(to: journal)
             let blockedFaults = HostIOFaults()

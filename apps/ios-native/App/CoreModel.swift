@@ -238,6 +238,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var areaRenameEditingID: String?
     @Published private(set) var areaRenameOriginalName = ""
     @Published private(set) var areaRenameDraft = ""
+    @Published private(set) var settingsAreaEditColor = ""
     @Published private(set) var areaRenameError: String?
     @Published private(set) var areaRenameReadError: String?
     @Published private(set) var areaDeleteOptions: CoreObject = [:]
@@ -436,7 +437,7 @@ final class CoreModel: ObservableObject {
     var unassignedAreaColorCanSave: Bool {
         selectedSurface == .settings && settingsManagePresented && !busy && !retryNeeded
             && !unassignedAreaColorOptions.isEmpty && unassignedAreaColorRequest == nil
-            && !unassignedAreaColorAwaitingRefresh && manageReadError == nil && !settingsAreaCreatePresented
+            && !unassignedAreaColorAwaitingRefresh && manageReadError == nil && !settingsAreaCreatePresented && !settingsAreaEditActive
     }
     private var somedaySectionRenameRequest: String?
     private var somedaySectionRenameID: String?
@@ -579,6 +580,9 @@ final class CoreModel: ObservableObject {
     private var manageAreaDeleteOptionsTestReadFailures = 0
     private var manageAreaDeleteTestReadFailures = 0
     private var manageAreaDeleteTestRefusals = 0
+    private var manageAreaEditOptionsTestReadFailures = 0
+    private var manageAreaEditTestReadFailures = 0
+    private var manageAreaEditTestRefusals = 0
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -683,6 +687,10 @@ final class CoreModel: ObservableObject {
     private var areaRenameRequest: String?
     private var areaRenameExpectedSourceID: String?
     private var areaRenameCloseAfterRefresh = false
+    private var areaRenameFromSettings = false
+    private var settingsAreaEditIndex: Int?
+    private var settingsAreaEditOpeningColor = ""
+    @Published private(set) var settingsAreaEditAwaitingRefresh = false
     private var areaDeleteRequest: String?
     private var areaDeleteExpectedID: String?
     private var areaDeleteFromSettings = false
@@ -1187,6 +1195,21 @@ final class CoreModel: ObservableObject {
     var areaOrderPending: Bool { areaOrderRequest != nil }
     var areaRenamePending: Bool { areaRenameRequest != nil }
     var areaRenameEditing: Bool { areaRenameEditingID != nil }
+    var settingsAreaEditActive: Bool { areaRenameFromSettings && areaRenameEditingID != nil }
+    var settingsAreaEditCanCancel: Bool {
+        settingsAreaEditActive && !busy && !retryNeeded && areaRenameRequest == nil
+            && !settingsAreaEditAwaitingRefresh
+    }
+    var settingsAreaEditInputEnabled: Bool {
+        ready && selectedSurface == .settings && settingsManagePresented && settingsAreaEditActive
+            && !busy && !retryNeeded && areaRenameRequest == nil && !settingsAreaEditAwaitingRefresh
+            && areaRenameOpeningExpected != nil && areaRenameReadError == nil && manageReadError == nil
+    }
+    var settingsAreaEditCanSave: Bool {
+        settingsAreaEditInputEnabled && !areaRenameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (manageSettings.object("editor").objects("colors").contains { $0.text("color") == settingsAreaEditColor }
+                || settingsAreaEditColor == settingsAreaEditOpeningColor)
+    }
     var areaDeletePending: Bool { areaDeleteRequest != nil }
     var settingsAreaDeletePending: Bool { areaDeleteFromSettings && areaDeleteRequest != nil }
     var settingsAreaDeleteCanCancel: Bool {
@@ -1293,13 +1316,13 @@ final class CoreModel: ObservableObject {
         ready && selectedSurface == .settings && settingsManagePresented && somedaySectionDeleteID != nil
             && !busy && !retryNeeded && !somedaySectionDeletePending && !somedaySectionDeleteAwaitingRefresh
             && somedaySectionDeleteOptions.text("id") == somedaySectionDeleteID && manageReadError == nil
-            && !unassignedAreaColorActive && !settingsAreaCreatePresented
+            && !unassignedAreaColorActive && !settingsAreaCreatePresented && !settingsAreaEditActive
     }
     var somedaySectionRenameInputEnabled: Bool {
         ready && selectedSurface == .settings && settingsManagePresented && somedaySectionRenameIndex != nil
             && !busy && !retryNeeded && !somedaySectionRenamePending && !somedaySectionRenameAwaitingRefresh
             && !somedaySectionRenameOptions.isEmpty && manageReadError == nil
-            && !unassignedAreaColorActive && !settingsAreaCreatePresented
+            && !unassignedAreaColorActive && !settingsAreaCreatePresented && !settingsAreaEditActive
     }
     var somedaySectionRenameCanSave: Bool {
         somedaySectionRenameInputEnabled && !somedaySectionRenameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1474,6 +1497,9 @@ final class CoreModel: ObservableObject {
                     manageAreaDeleteOptionsTestReadFailures = arguments.contains("--native-manage-area-delete-options-failure") ? 1 : 0
                     manageAreaDeleteTestReadFailures = arguments.contains("--native-manage-area-delete-read-failure") ? 2 : 0
                     manageAreaDeleteTestRefusals = arguments.contains("--native-manage-area-delete-refusal") ? 1 : 0
+                    manageAreaEditOptionsTestReadFailures = arguments.contains("--native-manage-area-edit-options-failure") ? 1 : 0
+                    manageAreaEditTestReadFailures = arguments.contains("--native-manage-area-edit-read-failure") ? 2 : 0
+                    manageAreaEditTestRefusals = arguments.contains("--native-manage-area-edit-refusal") ? 1 : 0
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1618,7 +1644,8 @@ final class CoreModel: ObservableObject {
             } else if recovery.text("method") == "taskListSortWrite" {
                 selectedSurface = .reference
             } else if ["somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite",
-                       "unassignedAreaColorWrite", "manageAreaCreateCommit", "manageAreaDeleteCommit"].contains(recovery.text("method")) {
+                       "unassignedAreaColorWrite", "manageAreaCreateCommit", "manageAreaDeleteCommit",
+                       "manageAreaEditCommit"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsManagePresented = true
             } else if ["somedaySectionCreateWrite", "somedaySectionTaskCommit", "somedaySectionMoveCommit",
@@ -1698,7 +1725,7 @@ final class CoreModel: ObservableObject {
               somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented else { return }
+              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         guard !busy else { refreshRequested = true; return }
         busy = true
         defer { finishOperation() }
@@ -1718,7 +1745,7 @@ final class CoreModel: ObservableObject {
               managePendingCandidate == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
-              !settingsAreaCreatePresented,
+              !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedayMovePending, !somedayMoveAwaitingRefresh, !somedayMoveUndoAwaitingRefresh,
               somedayMoveCreatedSectionID == nil else { return }
         morePresented = false
@@ -1738,7 +1765,7 @@ final class CoreModel: ObservableObject {
               somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented else { return }
+              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         if morePresented { morePresented = false; return }
         busy = true
         defer { finishOperation() }
@@ -1758,7 +1785,7 @@ final class CoreModel: ObservableObject {
         guard ready, !busy, !retryNeeded, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, !somedaySectionDeleteActive,
               !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
-              !settingsAreaCreatePresented else { return }
+              !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         settingsCaller = selectedSurface
         morePresented = false
         settingsManagePresented = false
@@ -1776,7 +1803,7 @@ final class CoreModel: ObservableObject {
         guard selectedSurface == .settings, !busy, !retryNeeded,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented else { return }
+              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         settingsSearchTask?.cancel()
         settingsSearchGeneration += 1
         settingsManagePresented = false
@@ -1833,7 +1860,7 @@ final class CoreModel: ObservableObject {
         guard settingsManagePresented, !busy, !retryNeeded, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, !somedaySectionDeletePending,
               !somedaySectionDeleteAwaitingRefresh, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented else { return }
+              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         cancelSomedaySectionRename()
         cancelSomedaySectionDelete()
         settingsManagePresented = false
@@ -1918,7 +1945,7 @@ final class CoreModel: ObservableObject {
 
     func toggleManageSection(_ key: String) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !settingsAreaCreatePresented,
+              manageReadError == nil, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
@@ -1935,7 +1962,7 @@ final class CoreModel: ObservableObject {
 
     func loadMoreManagedSomedaySections() async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !settingsAreaCreatePresented,
+              manageReadError == nil, !settingsAreaCreatePresented, !settingsAreaEditActive,
               somedaySectionRenameIndex == nil, !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
               managedSomedaySections.count < managedSomedayTotal else { return }
@@ -1953,7 +1980,7 @@ final class CoreModel: ObservableObject {
 
     func loadMoreManagedAreas() async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !unassignedAreaColorActive, !settingsAreaCreatePresented,
+              manageReadError == nil, !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
               managedAreas.count < managedAreasTotal else { return }
@@ -1971,7 +1998,7 @@ final class CoreModel: ObservableObject {
 
     func retryManageSettingsRead() async {
         guard selectedSurface == .settings, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented,
+              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive else { return }
@@ -1993,7 +2020,7 @@ final class CoreModel: ObservableObject {
 
     func openUnassignedAreaColor() async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !unassignedAreaColorActive, !settingsAreaCreatePresented,
+              manageReadError == nil, !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
               somedaySectionRenameIndex == nil, !somedaySectionRenameReadPending else { return }
@@ -2118,7 +2145,7 @@ final class CoreModel: ObservableObject {
 
     func openSomedaySectionRename(index: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented,
+              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               manageReadError == nil, somedaySectionRenameOpeningIndex == nil,
               somedaySectionRenameIndex == nil, !somedaySectionDeleteActive, !somedaySectionOrderActive,
@@ -2255,7 +2282,7 @@ final class CoreModel: ObservableObject {
 
     func openSomedaySectionDelete(index: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented,
+              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionDeleteActive, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, somedaySectionRenameIndex == nil,
               somedaySectionRenameOpeningIndex == nil, manageReadError == nil,
@@ -2373,7 +2400,7 @@ final class CoreModel: ObservableObject {
 
     func moveManagedSomedaySection(index: Int, offset: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented,
+              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionOrderActive, !somedaySectionDeleteActive, !settingsAreaDeleteActive,
               somedaySectionRenameIndex == nil, !somedaySectionRenameReadPending,
               manageReadError == nil, managedSomedaySections.indices.contains(index),
@@ -5214,7 +5241,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openSettingsAreaCreate() async {
-        guard ready, selectedSurface == .settings, settingsManagePresented, !settingsAreaCreatePresented,
+        guard ready, selectedSurface == .settings, settingsManagePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !busy, !retryNeeded, manageReadError == nil, !unassignedAreaColorActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
@@ -5792,6 +5819,11 @@ final class CoreModel: ObservableObject {
         areaRenameOpeningExpected = nil
         areaRenameExpectedSourceID = nil
         areaRenameCloseAfterRefresh = false
+        areaRenameFromSettings = false
+        settingsAreaEditIndex = nil
+        settingsAreaEditColor = ""
+        settingsAreaEditOpeningColor = ""
+        settingsAreaEditAwaitingRefresh = false
     }
 
     func openAreaRename(_ id: String) {
@@ -5799,6 +5831,7 @@ final class CoreModel: ObservableObject {
               let row = areaOrderOptions.objects("areas").first(where: { $0.text("id") == id }),
               let expected = areaRenameToken(row) else { return }
         areaRenameEditingID = id
+        areaRenameFromSettings = false
         areaRenameOriginalName = row.text("name")
         areaRenameDraft = row.text("name")
         areaRenameOpeningExpected = expected
@@ -5809,7 +5842,8 @@ final class CoreModel: ObservableObject {
     }
 
     func setAreaRenameDraft(_ name: String) {
-        guard areaRenameInputEnabled, Data(name.utf8) != Data(areaRenameDraft.utf8) else { return }
+        guard (areaRenameFromSettings ? settingsAreaEditInputEnabled : areaRenameInputEnabled),
+              Data(name.utf8) != Data(areaRenameDraft.utf8) else { return }
         areaRenameDraft = name
         areaRenameError = nil
     }
@@ -5824,6 +5858,117 @@ final class CoreModel: ObservableObject {
     func cancelAreaRename() {
         guard areaRenameCanCancel else { return }
         clearAreaRenameForm()
+    }
+
+    func openSettingsAreaEdit(index: Int) async {
+        guard ready, selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
+              manageReadError == nil, !settingsAreaEditActive, !settingsAreaDeleteActive,
+              !settingsAreaCreatePresented, !unassignedAreaColorActive,
+              !somedaySectionDeleteActive, !somedaySectionOrderActive,
+              somedaySectionRenameIndex == nil, managedAreas.indices.contains(index) else { return }
+        let row = managedAreas[index]
+        let edit = row.object("edit")
+        let target = edit.object("target")
+        let draft = edit.object("draft")
+        let id = row.text("id")
+        guard !id.isEmpty, target.text("type") == "area", target.text("id") == id,
+              !target.text("revision").isEmpty, !draft.text("name").isEmpty,
+              !draft.text("color").isEmpty else { return }
+        areaRenameFromSettings = true
+        areaRenameEditingID = id
+        settingsAreaEditIndex = index
+        areaRenameOriginalName = draft.text("name")
+        areaRenameDraft = draft.text("name")
+        settingsAreaEditColor = draft.text("color")
+        settingsAreaEditOpeningColor = draft.text("color")
+        areaRenameOpeningExpected = nil
+        areaRenameError = nil
+        areaRenameReadError = nil
+        busy = true
+        defer { finishOperation() }
+        do { try await readSettingsAreaEditOpening(id: id) }
+        catch { areaRenameReadError = error.localizedDescription }
+    }
+
+    private func readSettingsAreaEditOpening(id: String) async throws {
+        try await readAreaOrderOptions()
+        guard let index = settingsAreaEditIndex, managedAreas.indices.contains(index),
+              managedAreas[index].text("id") == id,
+              let row = areaOrderOptions.objects("areas").first(where: { $0.text("id") == id }),
+              let expected = areaRenameToken(row),
+              managedAreas[index].object("edit").object("target").text("revision")
+                == "\(row.number("rev")):\(row.text("revBy")):\(row.text("updatedAt"))" else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        areaRenameOpeningExpected = expected
+        areaRenameOriginalName = row.text("name")
+        settingsAreaEditOpeningColor = managedAreas[index].object("edit").object("draft").text("color")
+        areaRenameReadError = nil
+    }
+
+    func setSettingsAreaEditColor(_ color: String) {
+        guard settingsAreaEditInputEnabled,
+              manageSettings.object("editor").objects("colors").contains(where: { $0.text("color") == color }) else { return }
+        settingsAreaEditColor = color
+        areaRenameError = nil
+    }
+
+    func cancelSettingsAreaEdit() {
+        guard settingsAreaEditCanCancel else { return }
+        clearAreaRenameForm()
+    }
+
+    func saveSettingsAreaEdit() async {
+        guard settingsAreaEditCanSave, let id = areaRenameEditingID,
+              let expected = areaRenameOpeningExpected else { return }
+        busy = true
+        areaRenameError = nil
+        defer { finishOperation() }
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString.lowercased(), "areaId": id,
+                                "name": areaRenameDraft, "manageColor": settingsAreaEditColor,
+                                "expected": expected])
+            areaRenameRequest = request
+            areaRenameExpectedSourceID = id
+        } catch { areaRenameReadError = error.localizedDescription; return }
+        let result: CoreObject
+        do { result = try await query("manageAreaEdit", [request]) }
+        catch { await handleAreaRenameWriteError(error); return }
+        do { try acknowledgeAreaRename(result) }
+        catch { await handleAreaRenameWriteError(error); return }
+        await refreshManageAfterAreaEdit()
+    }
+
+    private func refreshManageAfterAreaEdit() async {
+        guard settingsAreaEditActive, settingsAreaEditAwaitingRefresh else { return }
+        do {
+            try await readManageSettings()
+            completeAreaRenameAfterRefresh()
+            error = nil
+        } catch { areaRenameReadError = error.localizedDescription }
+    }
+
+    private func refreshSettingsAreaEditOpening() async {
+        guard settingsAreaEditActive, let id = areaRenameEditingID else { return }
+        areaRenameOpeningExpected = nil
+        do {
+            try await readManageSettings()
+            settingsAreaEditIndex = managedAreas.firstIndex(where: { $0.text("id") == id })
+            try await readSettingsAreaEditOpening(id: id)
+        } catch { areaRenameReadError = error.localizedDescription }
+    }
+
+    func retrySettingsAreaEdit() async {
+        if retryNeeded { await retry(); return }
+        guard settingsAreaEditActive, !busy, areaRenameRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        if settingsAreaEditAwaitingRefresh { await refreshManageAfterAreaEdit() }
+        else {
+            await refreshSettingsAreaEditOpening()
+            if areaRenameReadError == nil { areaRenameError = nil }
+        }
     }
 
     func renameArea() async {
@@ -5868,6 +6013,7 @@ final class CoreModel: ObservableObject {
         areaRenameRequest = nil
         areaRenameExpectedSourceID = nil
         areaRenameCloseAfterRefresh = true
+        if areaRenameFromSettings { settingsAreaEditAwaitingRefresh = true }
         retryNeeded = false
         areaRenameError = nil
         areaRenameReadError = nil
@@ -5888,6 +6034,7 @@ final class CoreModel: ObservableObject {
             areaRenameError = failure.localizedDescription
             areaRenameReadError = failure.localizedDescription
             error = nil
+            if areaRenameFromSettings { await refreshSettingsAreaEditOpening() }
         } else {
             retryNeeded = areaRenameRequest != nil
             areaRenameError = failure.localizedDescription
@@ -5947,7 +6094,7 @@ final class CoreModel: ObservableObject {
 
     func openSettingsAreaDelete(index: Int) async {
         guard ready, selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !settingsAreaDeleteActive, !settingsAreaCreatePresented,
+              manageReadError == nil, !settingsAreaDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !unassignedAreaColorActive, !somedaySectionDeleteActive, !somedaySectionOrderActive,
               somedaySectionRenameIndex == nil, managedAreas.indices.contains(index) else { return }
         let id = managedAreas[index].text("id")
@@ -11775,7 +11922,7 @@ final class CoreModel: ObservableObject {
 
     func openCapture() async {
         guard ready, !busy, !retryNeeded, !areaPickerPresented, !taskPresented,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented,
+              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !projectRenameEditing,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented else { return }
         morePresented = false
@@ -12811,14 +12958,17 @@ final class CoreModel: ObservableObject {
             if let request = areaRenameRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
-                else { result = try await query("areaRenameRetryOutcome", [request]) }
+                else { result = try await query(areaRenameFromSettings ? "manageAreaEditRetryOutcome" : "areaRenameRetryOutcome", [request]) }
                 try acknowledgeAreaRename(result)
-                do {
-                    try await refreshAreaManagerAfterWrite()
-                    completeAreaRenameAfterRefresh()
-                } catch {
-                    areaRenameReadError = error.localizedDescription
-                    self.error = error.localizedDescription
+                if areaRenameFromSettings { await refreshManageAfterAreaEdit() }
+                else {
+                    do {
+                        try await refreshAreaManagerAfterWrite()
+                        completeAreaRenameAfterRefresh()
+                    } catch {
+                        areaRenameReadError = error.localizedDescription
+                        self.error = error.localizedDescription
+                    }
                 }
                 return
             }
@@ -13863,6 +14013,21 @@ final class CoreModel: ObservableObject {
            settingsAreaDeleteAwaitingRefresh, manageAreaDeleteTestReadFailures > 0 {
             manageAreaDeleteTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
+        }
+        if method == "menuRead", args.first as? String == "manageSettings",
+           settingsAreaEditAwaitingRefresh, manageAreaEditTestReadFailures > 0 {
+            manageAreaEditTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "areaOrderOptions", settingsAreaEditActive,
+           manageAreaEditOptionsTestReadFailures > 0 {
+            manageAreaEditOptionsTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "manageAreaEdit", settingsAreaEditActive,
+           manageAreaEditTestRefusals > 0 {
+            manageAreaEditTestRefusals -= 1
+            throw SimulatedManageAreaRefusal()
         }
         if method == "areaDeleteOptions", settingsAreaDeleteActive,
            manageAreaDeleteOptionsTestReadFailures > 0 {

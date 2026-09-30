@@ -535,7 +535,7 @@ export interface TaskStore {
     commitPreparedProjectTaskOrder: (input: PreparedProjectTaskOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaCreate: (input: PreparedAreaCreate & { request: { requestId: string; name: string; color: string; expectedAreaId: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaColor: (input: PreparedAreaColor & { request: { requestId: string; areaId: string; color: string | null } }) => Promise<PreparedTaskEditResult>;
-    commitPreparedAreaRename: (input: PreparedAreaRename & { request: { requestId: string; areaId: string; name: string };
+    commitPreparedAreaRename: (input: PreparedAreaRename & { request: { requestId: string; areaId: string; name: string; manageColor?: string };
         result: { id: string; areaId: string; name: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaOrder: (input: PreparedAreaOrder & { request: { requestId: string; intent: AreaOrderIntent; expectedAreas: unknown[] }; result: { orderedIds: string[] } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaDelete: (input: PreparedAreaDelete & { request: { requestId: string; areaId: string;

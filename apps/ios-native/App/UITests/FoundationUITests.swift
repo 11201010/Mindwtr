@@ -4233,6 +4233,248 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task90OpenEdit(_ app: XCUIApplication, index: Int, name: String) -> XCUIElement {
+        task89Area(app, index: index, title: name)
+        let button = app.buttons["manage-area-edit-\(index)"]
+        boardEnabled(button)
+        XCTAssertGreaterThanOrEqual(button.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        button.tap()
+        let input = app.textFields["manage-area-edit-name"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        return input
+    }
+
+    private func task90ReplaceName(_ app: XCUIApplication, _ input: XCUIElement, with text: String, selectAll: Bool = false) {
+        boardEnabled(input)
+        revealPagedElement(app, input, in: app.scrollViews["manage-area-edit-scroll"])
+        XCTAssertTrue(input.isHittable)
+        input.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+        if selectAll { replaceProjectNotesText(input, with: text) }
+        else {
+            // These short fixtures fit the field; tap past the text inside its padding.
+            replaceTextView(input, with: text, tapOffset: CGVector(dx: 0.9, dy: 0.5))
+        }
+        XCTAssertEqual(input.value as? String, text)
+        let done = app.keyboards.buttons["Done"]
+        if done.exists { done.tap() }
+        else { input.typeText("\n") }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.keyboards.firstMatch)
+        waitForExpectations(timeout: 10)
+    }
+
+    private func task90SelectBlue(_ app: XCUIApplication) {
+        let swatch = app.buttons["manage-area-edit-color-option-0"]
+        revealPagedElement(app, swatch, in: app.scrollViews["manage-area-edit-scroll"])
+        boardEnabled(swatch)
+        XCTAssertGreaterThanOrEqual(swatch.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(swatch.frame.height, 44 - 0.001)
+        swatch.tap()
+        XCTAssertTrue(swatch.isSelected)
+    }
+
+    private func task90Save(_ app: XCUIApplication) {
+        let button = app.buttons["manage-area-edit-save"]
+        revealPagedElement(app, button, in: app.scrollViews["manage-area-edit-scroll"])
+        boardTap(app, "manage-area-edit-save")
+    }
+
+    private func task90WaitClosed(_ app: XCUIApplication) {
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.textFields["manage-area-edit-name"])
+        waitForExpectations(timeout: 20)
+        boardEnabled(app.buttons["manage-back"])
+    }
+
+    func testManageAreaEditCancelNoOpAndCombined() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "46613c08-79bf-4006-bd11-2f1c54bcd579"]
+        app.launch(); task89OpenManageAreas(app, search: true)
+        let original = "Task90 Area normal"
+        let input = task90OpenEdit(app, index: 0, name: original)
+        XCTAssertEqual(input.value as? String, original)
+        boardTap(app, "manage-area-edit-cancel")
+        task89Area(app, index: 0, title: original)
+        _ = task90OpenEdit(app, index: 0, name: original)
+        task90Save(app)
+        task90WaitClosed(app)
+        task89Area(app, index: 0, title: original)
+        let edited = task90OpenEdit(app, index: 0, name: original)
+        task90ReplaceName(app, edited, with: "Task90 Edited normal")
+        task90SelectBlue(app)
+        task90Save(app)
+        task90WaitClosed(app)
+        task89Area(app, index: 0, title: "Task90 Edited normal")
+        _ = task90OpenEdit(app, index: 0, name: "Task90 Edited normal")
+        XCTAssertTrue(app.buttons["manage-area-edit-color-option-0"].isSelected)
+        boardTap(app, "manage-area-edit-cancel")
+        app.terminate(); app.launch(); task89OpenManageAreas(app, search: true)
+        task89Area(app, index: 0, title: "Task90 Edited normal")
+        app.terminate()
+    }
+
+    func testManageAreaEditColorOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8a4d5daa-6265-477f-9e0a-ed43a4fb24f9"]
+        app.launch(); task89OpenManageAreas(app)
+        let initial = "Task90 Area color"
+        _ = task90OpenEdit(app, index: 0, name: initial)
+        task90SelectBlue(app); task90Save(app); task90WaitClosed(app)
+        task89Area(app, index: 0, title: initial)
+        _ = task90OpenEdit(app, index: 0, name: initial)
+        XCTAssertTrue(app.buttons["manage-area-edit-color-option-0"].isSelected)
+        boardTap(app, "manage-area-edit-cancel")
+        app.terminate()
+    }
+
+    func testManageAreaEditCollision() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "40e3e4b8-3b17-43a1-84bf-8ec9fe51a348"]
+        app.launch(); task89OpenManageAreas(app)
+        let initial = "Task90 Area collision"
+        let input = task90OpenEdit(app, index: 0, name: initial)
+        task90ReplaceName(app, input, with: "Task90 Destination collision")
+        task90SelectBlue(app); task90Save(app); task90WaitClosed(app)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label == %@", initial)).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", "Task90 Destination collision")).firstMatch.exists)
+        app.terminate()
+    }
+
+    func testManageAreaEditLargestText() {
+        continueAfterFailure = false
+        let largest = XCUIApplication()
+        largest.launchArguments = ["--native-ui-test-library", "24038cf3-b905-4427-bbfa-a26bd5ee39c9"]
+        largest.launch(); task89OpenManageAreas(largest)
+        let input = task90OpenEdit(largest, index: 0, name: "Task90 Area largest")
+        task90ReplaceName(largest, input, with: "Task90 Edited largest", selectAll: true)
+        task90SelectBlue(largest)
+        // A full native swipe brings the sheet’s bottom controls into view.
+        largest.scrollViews["manage-area-edit-scroll"].swipeUp(velocity: .slow)
+        let shot = XCTAttachment(screenshot: largest.screenshot())
+        shot.name = "Largest Manage Area editor"; shot.lifetime = .keepAlways; add(shot)
+        task90Save(largest); task90WaitClosed(largest)
+        task89Area(largest, index: 0, title: "Task90 Edited largest")
+        largest.terminate()
+    }
+
+    func testManageAreaEditPaging() {
+        continueAfterFailure = false
+        let paging = XCUIApplication()
+        paging.launchArguments = ["--native-ui-test-library", "1337c033-e84b-4924-90ab-961ca5e1b5b9"]
+        paging.launch(); task89OpenManageAreas(paging)
+        let paged = task90OpenEdit(paging, index: 105, name: "Task90 Area paging")
+        task90ReplaceName(paging, paged, with: "Task90 Edited paging")
+        task90SelectBlue(paging); task90Save(paging); task90WaitClosed(paging)
+        task89Area(paging, index: 105, title: "Task90 Edited paging")
+        paging.terminate(); paging.launch(); task89OpenManageAreas(paging)
+        task89Area(paging, index: 105, title: "Task90 Edited paging")
+        paging.terminate()
+    }
+
+    func testManageAreaEditOptionsFailureCancelRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "52b77cb2-a34c-4ac2-b0b9-0c76159ce2a4",
+                               "--native-manage-area-edit-options-failure"]
+        app.launch(); task89OpenManageAreas(app)
+        _ = task90OpenEdit(app, index: 0, name: "Task90 Area optionsfailure")
+        XCTAssertTrue(app.staticTexts["manage-area-edit-error"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["manage-area-edit-save"].isEnabled)
+        boardTap(app, "manage-area-edit-cancel")
+        task89Area(app, index: 0, title: "Task90 Area optionsfailure")
+        app.terminate(); app.launch(); task89OpenManageAreas(app)
+        let input = task90OpenEdit(app, index: 0, name: "Task90 Area optionsfailure")
+        boardTap(app, "manage-area-edit-retry")
+        boardEnabled(app.buttons["manage-area-edit-save"])
+        task90ReplaceName(app, input, with: "Task90 Edited optionsfailure")
+        task90SelectBlue(app); task90Save(app); task90WaitClosed(app)
+        task89Area(app, index: 0, title: "Task90 Edited optionsfailure")
+        app.terminate()
+    }
+
+    func testManageAreaEditPostAckReadRetryOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "cc48887a-e628-460f-98fe-863ec094f3a9",
+                               "--native-manage-area-edit-read-failure"]
+        app.launch(); task89OpenManageAreas(app)
+        let input = task90OpenEdit(app, index: 0, name: "Task90 Area readfailure")
+        task90ReplaceName(app, input, with: "Task90 Edited readfailure")
+        task90SelectBlue(app); task90Save(app)
+        let failure = app.staticTexts["manage-area-edit-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-area-edit-cancel"].isEnabled)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        for attempt in 0..<2 {
+            boardTap(app, "manage-area-edit-retry")
+            if attempt == 0 { XCTAssertTrue(failure.waitForExistence(timeout: 20)) }
+        }
+        task90WaitClosed(app)
+        task89Area(app, index: 0, title: "Task90 Edited readfailure")
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", "cc48887a-e628-460f-98fe-863ec094f3a9"]
+        app.launch(); task89OpenManageAreas(app)
+        task89Area(app, index: 0, title: "Task90 Edited readfailure")
+        app.terminate()
+    }
+
+    /// Run before the paired cold test while the isolated SQLite trigger rejects this edit.
+    func testManageAreaEditFailedSaveKeepsExactRequest() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "e332e9fa-8ba0-465a-a690-87974bff32c5"]
+        app.launch(); task89OpenManageAreas(app)
+        let input = task90OpenEdit(app, index: 0, name: "Task90 Area savefailure")
+        task90ReplaceName(app, input, with: "Task90 Edited savefailure")
+        task90SelectBlue(app); task90Save(app)
+        let failure = app.staticTexts["manage-area-edit-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["manage-area-edit-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+            boardTap(app, "manage-area-edit-retry")
+            boardEnabled(app.buttons["manage-area-edit-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    /// Root disarms only the failure trigger, preserving this library's pending journal.
+    func testManageAreaEditColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "e332e9fa-8ba0-465a-a690-87974bff32c5"]
+        app.launch()
+        XCTAssertTrue(app.buttons["manage-back"].waitForExistence(timeout: 30))
+        task89OpenManageAreas(app)
+        task89Area(app, index: 0, title: "Task90 Edited savefailure")
+        XCTAssertFalse(app.staticTexts["manage-area-edit-error"].exists)
+        app.terminate(); app.launch(); task89OpenManageAreas(app)
+        task89Area(app, index: 0, title: "Task90 Edited savefailure")
+        app.terminate()
+    }
+
+    func testManageAreaEditDefiniteRefusalFreshSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "762bf650-713b-4435-864e-443e0741d943",
+                               "--native-manage-area-edit-refusal"]
+        app.launch(); task89OpenManageAreas(app)
+        let input = task90OpenEdit(app, index: 0, name: "Task90 Area refusal")
+        task90ReplaceName(app, input, with: "Task90 Edited refusal")
+        task90SelectBlue(app); task90Save(app)
+        XCTAssertTrue(app.staticTexts["manage-area-edit-error"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        XCTAssertEqual(input.value as? String, "Task90 Edited refusal")
+        boardTap(app, "manage-area-edit-retry")
+        boardEnabled(app.buttons["manage-area-edit-save"])
+        task90Save(app); task90WaitClosed(app)
+        task89Area(app, index: 0, title: "Task90 Edited refusal")
+        app.terminate()
+    }
+
     private func task85Arrow(_ app: XCUIApplication, index: Int, up: Bool) -> XCUIElement {
         let arrow = app.buttons.matching(identifier: "manage-someday-\(up ? "up" : "down")-\(index)").firstMatch
         // A boundary arrow is intentionally disabled; reveal its row via an enabled sibling.
@@ -6452,7 +6694,8 @@ final class FoundationUITests: XCTestCase {
             selectAll.tap()
             input.typeText(XCUIKeyboardKey.delete.rawValue)
         }
-        XCTAssertEqual(input.value as? String ?? "", "")
+        // Text fields expose their placeholder as the value after clearing.
+        XCTAssertTrue((input.value as? String ?? "").isEmpty || input.value as? String == input.placeholderValue)
         if !text.isEmpty { input.typeText(text) }
         XCTAssertEqual(input.value as? String ?? "", text)
     }
