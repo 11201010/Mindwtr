@@ -985,7 +985,7 @@ describe('ingestPendingCaptures', () => {
         expect(storeUpdate).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps the queue file until the record of the applied command is stored, and a replay after that writes nothing', async () => {
+    it('keeps the queue file while the delete fails after the record, and a replay after that writes nothing', async () => {
         oneFile('c.json', { kind: 'complete', id: 'c1', taskId: 'open', completedAt: '2026-09-10T09:00:03.000Z', source: 'android-widget' });
         const tasks = [{ id: 'open', title: 'Open', status: 'next' } as Task];
         const storeUpdate = vi.fn(async (id: string, updates: Partial<Task>) => {
@@ -997,16 +997,10 @@ describe('ingestPendingCaptures', () => {
             people: [], settings: emptySettings, flushPendingSave: vi.fn(async () => undefined),
         };
 
-        // Killed between the durable save and the record.
-        deviceStorage.setItem.mockRejectedValueOnce(new Error('killed before the record'));
-        expect(await ingestPendingCaptures(deps)).toBe(0);
-        expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalled();
-        expect(storeUpdate).toHaveBeenCalledOnce();
-
         // Killed between the record and the delete.
         fileSystemMocks.deleteAsync.mockRejectedValueOnce(new Error('killed before the delete'));
         expect(await ingestPendingCaptures(deps)).toBe(0);
-        expect(deviceStorage.setItem).toHaveBeenCalledTimes(2);
+        expect(deviceStorage.setItem).toHaveBeenCalledOnce();
         expect(storeUpdate).toHaveBeenCalledOnce();
 
         // The user reopens the task; the replay of the recorded command leaves it open.
@@ -1015,6 +1009,35 @@ describe('ingestPendingCaptures', () => {
         expect(storeUpdate).toHaveBeenCalledOnce();
         expect(tasks[0].status).toBe('next');
         expect(fileSystemMocks.deleteAsync).toHaveBeenLastCalledWith('file:///data/Documents/pending-captures/c.json', { idempotent: true });
+    });
+
+    it('removes a check-off whose record write failed, so a task reopened before the next drain stays open', async () => {
+        // The queue folder as the file system holds it: a delete removes the file.
+        const files = new Map([['c.json', JSON.stringify({ kind: 'complete', id: 'c2', taskId: 'open', completedAt: new Date(Date.now() - 1000).toISOString(), source: 'android-widget' })]]);
+        fileSystemMocks.readDirectoryAsync.mockImplementation(async () => [...files.keys()]);
+        fileSystemMocks.readAsStringAsync.mockImplementation(async (uri: string) => files.get(uri.split('/').pop()!)!);
+        fileSystemMocks.deleteAsync.mockImplementation(async (uri: string) => { files.delete(uri.split('/').pop()!); });
+        const tasks = [{ id: 'open', title: 'Open', status: 'next' } as Task];
+        const storeUpdate = vi.fn(async (id: string, updates: Partial<Task>) => {
+            Object.assign(tasks.find((task) => task.id === id)!, updates);
+            return { success: true };
+        });
+        const deps = {
+            addTask: addTaskMock(), updateTask: storeUpdate, addProject, projects: [], areas: [], tasks, getTasks: () => tasks,
+            people: [], settings: emptySettings, flushPendingSave: vi.fn(async () => undefined),
+        };
+
+        // The check-off is stored and saved; the record write fails (the app keeps running).
+        deviceStorage.setItem.mockRejectedValueOnce(new Error('storage full'));
+        expect(await ingestPendingCaptures(deps)).toBe(0);
+        expect(tasks[0].status).toBe('done');
+
+        // The user reopens the task before the next drain: the check-off never applies again.
+        tasks[0].status = 'next';
+        await ingestPendingCaptures(deps);
+        expect(storeUpdate).toHaveBeenCalledOnce();
+        expect(tasks[0].status).toBe('next');
+        expect(files.size).toBe(0);
     });
 
     it('orders Watch commands by createdAt even when UUID filenames sort differently', async () => {

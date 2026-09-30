@@ -145,6 +145,11 @@ export async function ingestPendingCaptures({ transcribeAudio, ...deps }: Ingest
             warn: (message, context) => logWarn(message, context),
             error: (error, context) => logError(error, context),
         },
+        // Core removes a check-off whose record write failed and keeps an unsaved item queued; this line proves either ran.
+        onUnfinished: (state) => logWarn('Pending capture left unfinished', {
+            scope: 'capture',
+            extra: { releaseCheck: 'v1.3.4/pending-capture-unfinished', state },
+        }),
         audio: {
             resolvePath: resolveSafePendingAudioPath,
             transcribe: transcribeAudio,
