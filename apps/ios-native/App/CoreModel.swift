@@ -654,8 +654,8 @@ final class CoreModel: ObservableObject {
     private let taskRecurrenceFields = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
     private let taskDateFields = ["startTime", "dueDate", "reviewAt"]
     private var taskEstimateResolvedInput = ""
-    private let taskSaveFields = ["title", "description", "location", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "startTime", "dueDate", "reviewAt"]
-    private let taskTokenFields = ["contexts", "tags"]
+    private let taskSaveFields = ["title", "description", "location", "assignedTo", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "startTime", "dueDate", "reviewAt"]
+    private let taskTokenFields = ["contexts", "tags", "assignedTo"]
     private var taskTokenCanonical: [String: String] = [:]
     private var taskTokenResolvedInputs: [String: String] = [:]
     private var taskTokenSuggestionInputs: [String: String] = [:]
@@ -13109,7 +13109,7 @@ final class CoreModel: ObservableObject {
             guard !busy, !retryNeeded else { return }
             taskTokenNeedsRead.remove(field)
             do {
-                let result = try await query("editorSuggestions", [id, field, raw, 4])
+                let result = try await readTaskTokenSuggestions(field, raw: raw, id: id)
                 guard taskPresented, viewedTaskID == id, taskTokenGenerations[field] == generation,
                       taskTokenInputs[field] == raw else { return }
                 try acceptTaskTokenRead(result, field: field, raw: raw)
@@ -13120,6 +13120,15 @@ final class CoreModel: ObservableObject {
                 taskTokenErrors[field] = error.localizedDescription
             }
         }
+    }
+
+    private func readTaskTokenSuggestions(_ field: String, raw: String, id: String) async throws -> CoreObject {
+        // Suggestions have a bounded query; a free-text assignment may be longer.
+        // Keep that scalar intact for shared edit/save validation without querying it.
+        if field == "assignedTo", raw.utf16.count > 2000 {
+            return ["draftValue": raw, "matches": [CoreObject](), "quick": [CoreObject]()]
+        }
+        return try await query("editorSuggestions", [id, field, raw, 4])
     }
 
     private func acceptTaskTokenRead(_ result: CoreObject, field: String, raw: String) throws {
@@ -13154,7 +13163,7 @@ final class CoreModel: ObservableObject {
             for field in taskTokenFields where taskTokenResolvedInputs[field] != inputs[field] {
                 let raw = inputs[field] ?? ""
                 do {
-                    let result = try await query("editorSuggestions", [id, field, raw, 4])
+                    let result = try await readTaskTokenSuggestions(field, raw: raw, id: id)
                     guard taskPresented, viewedTaskID == id, taskScheduleSession == session else { throw CancellationError() }
                     if taskTokenInputs[field] == raw { try acceptTaskTokenRead(result, field: field, raw: raw) }
                 } catch {
@@ -13350,6 +13359,7 @@ final class CoreModel: ObservableObject {
         var keys = ["common.none", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
                     "taskEdit.scheduling", "taskEdit.organization", "taskEdit.details",
                     "taskEdit.contextsLabel", "taskEdit.contextsPlaceholder", "taskEdit.tagsLabel", "taskEdit.tagsPlaceholder",
+                    "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder",
                     "taskEdit.startDateLabel", "taskEdit.dueDateLabel", "taskEdit.reviewDateLabel", "taskEdit.dateOnly",
                     "taskEdit.startModeAbsolute", "taskEdit.startModeRelative", "taskEdit.relativeStartAmount",
                     "taskEdit.relativeStartBeforeDue", "task.aria.startTime", "task.aria.dueTime", "calendar.changeTime", "common.done",

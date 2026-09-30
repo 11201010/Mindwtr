@@ -118,6 +118,108 @@ describe('prepared native task draft save', () => {
         expect(saveData).not.toHaveBeenCalled();
     });
 
+    it('uses shared Assigned To trimming, clearing, and unchanged no-op without a second writer', async () => {
+        const set = request({ assignedTo: '  Alex Rivera  ' });
+        const plan = await host.prepareTaskDraftSaveV2(set);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(plan.value.prepared.effect.task.after.assignedTo).toBe('Alex Rivera');
+        expect(await host.commitPreparedTaskDraftSave({ request: set, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ assignedTo: 'Alex Rivera', rev: 8 });
+        const unchanged = saved();
+        saveData.mockClear();
+        expect(await host.prepareTaskDraftSaveV2(request({ assignedTo: '  Alex Rivera  ' })))
+            .toMatchObject({ ok: true, value: { kind: 'noop', result: { id: 'edit' } } });
+        expect(saved()).toEqual(unchanged);
+        expect(saveData).not.toHaveBeenCalled();
+
+        const clear = request({ assignedTo: '' });
+        const clearPlan = await host.prepareTaskDraftSaveV2(clear);
+        expect(clearPlan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!clearPlan.ok || clearPlan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: clear, prepared: clearPlan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved().assignedTo).toBeUndefined();
+        saveData.mockClear();
+        expect(await host.prepareTaskDraftSaveV2(request({ assignedTo: '   ' })))
+            .toMatchObject({ ok: true, value: { kind: 'noop', result: { id: 'edit' } } });
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('preserves a long Unicode free-text assignment without widening the suggestions transport', async () => {
+        const longName = `  ${'😀'.repeat(1001)}  `;
+        expect(longName.length).toBe(2006);
+        expect(host.getTaskEditorSuggestions({ id: 'edit', field: 'assignedTo', query: longName, limit: 4 }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const input = request({ assignedTo: longName });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved().assignedTo).toBe(longName.trim());
+    });
+
+    it('allows Assigned To on Reference in v2 while sealing mixed v1 and plain payloads', async () => {
+        await seed({ status: 'reference' });
+        const input = request({ assignedTo: '  Casey  ' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ status: 'reference', assignedTo: 'Casey' });
+
+        await seed();
+        const mixed = request({ assignedTo: 'Taylor', dueDate: '2036-10-05' });
+        expect(host.prepareTaskDraftSave(mixed)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const v2 = await host.prepareTaskDraftSaveV2(mixed);
+        expect(v2).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        const old = host.prepareTaskDraftSave(request({ dueDate: '2036-10-05' }));
+        if (!old.ok) throw new Error(JSON.stringify(old));
+        const forged = json(old.value);
+        forged.request = mixed;
+        expect(host.validatePreparedTaskDraftSave({ request: mixed, prepared: forged }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    it('accepts a fresh sibling before Assigned To prepare but rejects a forged after value', async () => {
+        const input = request({ assignedTo: 'Casey' });
+        durable.tasks[0].description = 'Independent note';
+        durable.tasks[0].rev = 8;
+        durable.tasks[0].updatedAt = '2026-09-27T11:00:00.000Z';
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(plan.value.prepared.effect.task.before.description).toBe('Independent note');
+        const forged = json(plan.value.prepared);
+        forged.effect.task.after.assignedTo = 'Injected';
+        expect(host.validatePreparedTaskDraftSave({ request: input, prepared: forged }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: forged }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(saveData).not.toHaveBeenCalled();
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ description: 'Independent note', assignedTo: 'Casey', rev: 9 });
+    });
+
+    it('refuses an independent same-Task edit after Assigned To was frozen', async () => {
+        const input = request({ assignedTo: 'Casey' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        durable.tasks[0].description = 'Other writer';
+        durable.tasks[0].rev = 8;
+        durable.tasks[0].updatedAt = '2026-09-27T11:00:00.000Z';
+        const intervening = saved();
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(saved()).toEqual(intervening);
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
     it('allows shared Reference Location while retaining the exact legacy v1 prepared roster', async () => {
         await seed({ status: 'reference' });
         const input = request({ location: '  Archive shelf  ' });

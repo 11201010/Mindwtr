@@ -7715,7 +7715,7 @@ final class FoundationUITests: XCTestCase {
 
     private func replaceProjectNotesText(_ input: XCUIElement, with text: String) {
         input.tap()
-        if !(input.value as? String ?? "").isEmpty {
+        if let value = input.value as? String, !value.isEmpty, value != input.placeholderValue {
             input.press(forDuration: 1)
             let app = XCUIApplication()
             let selectAll = app.descendants(matching: .any)["Select All"].firstMatch
@@ -11181,6 +11181,93 @@ final class FoundationUITests: XCTestCase {
         enabled(app.buttons["task-editor-destination"])
         XCTAssertEqual(app.buttons["task-editor-destination"].value as? String, "None")
         tap("task-view-close")
+    }
+
+    func testTaskAssignedToSuggestionsSaveDiscardAndRestart() {
+        taskAssignedToEditor(library: "6cf1eaad-8b3c-48ec-9e23-a275b06ac1bb")
+    }
+
+    func testTaskAssignedToSuggestionsLargestTextAndRestart() {
+        taskAssignedToEditor(library: "631d0565-de3c-4594-a5d5-81a1b1692cf0")
+    }
+
+    private func taskAssignedToEditor(library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        func openTask(_ id: String, title: String) {
+            boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+            let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText(title)
+            boardTap(app, "search-task-" + id); boardTap(app, "task-mode-edit")
+            expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["task-mode-edit"])
+            waitForExpectations(timeout: 10)
+        }
+        func reveal(_ element: XCUIElement) {
+            boardEnabled(element)
+            let scroll = app.scrollViews["task-editor-scroll"]
+            for _ in 0..<15 {
+                var frame = scroll.frame
+                if app.keyboards.firstMatch.exists { frame.size.height = max(0, app.keyboards.firstMatch.frame.minY - frame.minY) }
+                if element.exists && element.isHittable && frame.contains(element.frame) { break }
+                let above = element.exists && element.frame.minY < frame.minY
+                if app.keyboards.firstMatch.exists {
+                    let origin = app.coordinate(withNormalizedOffset: .zero)
+                    let start = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (above ? 0.2 : 0.8)))
+                    let end = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (above ? 0.8 : 0.2)))
+                    start.press(forDuration: 0, thenDragTo: end, withVelocity: .fast, thenHoldForDuration: 0)
+                } else if above { scroll.swipeDown() }
+                else { scroll.swipeUp() }
+            }
+            XCTAssertTrue(element.isHittable)
+        }
+        func assignment() -> XCUIElement {
+            let header = app.buttons["task-editor-section-organization"]
+            boardEnabled(header)
+            expectation(for: NSPredicate(format: "value IN %@", ["Expand", "Collapse"]), evaluatedWith: header)
+            waitForExpectations(timeout: 10)
+            if header.value as? String == "Expand" {
+                reveal(header); header.tap()
+                expectation(for: NSPredicate(format: "value == %@", "Collapse"), evaluatedWith: header)
+                waitForExpectations(timeout: 10)
+            }
+            let input = app.textFields["task-editor-assignedTo"]; reveal(input); return input
+        }
+        func restart() { app.terminate(); app.launch() }
+        openTask("task112-waiting", title: "Task112 Waiting")
+        let input = assignment(); XCTAssertEqual(input.label, "Assigned To"); XCTAssertFalse((input.placeholderValue ?? "").isEmpty); input.tap(); input.typeText("Person112 A")
+        let choice = app.buttons["task-assignedTo-suggestion-Person112 Ada"]
+        reveal(choice); choice.tap()
+        XCTAssertEqual(input.value as? String, "Person112 Ada")
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "Choosing a Person keeps the field focused")
+        boardTap(app, "task-editor-save")
+        restart(); openTask("task112-waiting", title: "Task112 Waiting")
+        XCTAssertEqual(assignment().value as? String, "Person112 Ada")
+        replaceProjectNotesText(assignment(), with: "  Freeform112  ")
+        boardTap(app, "task-mode-view")
+        XCTAssertTrue(app.staticTexts["Freeform112"].waitForExistence(timeout: 10))
+        boardTap(app, "task-mode-edit")
+        XCTAssertEqual(assignment().value as? String, "  Freeform112  ")
+        boardTap(app, "task-editor-save")
+        restart(); openTask("task112-waiting", title: "Task112 Waiting")
+        XCTAssertEqual(assignment().value as? String, "Freeform112")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Saved Assigned To editor"; shot.lifetime = .keepAlways; add(shot)
+        replaceProjectNotesText(assignment(), with: "Discard112")
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard"); boardTap(app, "search-close")
+        openTask("task112-waiting", title: "Task112 Waiting")
+        XCTAssertEqual(assignment().value as? String, "Freeform112")
+        replaceProjectNotesText(assignment(), with: "")
+        boardTap(app, "task-editor-save")
+        restart(); openTask("task112-waiting", title: "Task112 Waiting")
+        let cleared = assignment(); XCTAssertEqual(cleared.value as? String, cleared.placeholderValue)
+        boardTap(app, "task-view-close"); boardTap(app, "search-close")
+        // A bounded suggestions query must not truncate a longer free-text assignment.
+        openTask("task112-next", title: "Task112 Next")
+        let long = String(repeating: "Q", count: 2001)
+        let next = assignment(); next.tap(); next.typeText(long)
+        boardTap(app, "task-editor-save")
+        restart(); openTask("task112-next", title: "Task112 Next")
+        XCTAssertEqual(assignment().value as? String, long)
+        XCTAssertFalse(app.staticTexts["task-assignedTo-error"].exists)
+        boardTap(app, "task-view-close"); boardTap(app, "search-close"); app.terminate()
     }
 
     func testTaskLocationPresetEditDiscardAndRestart() {

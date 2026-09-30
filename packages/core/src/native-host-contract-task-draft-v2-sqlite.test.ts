@@ -61,6 +61,46 @@ async function open(path: string, seed = false) {
 }
 
 describe('native Task Editor v2 durable SQLite save', () => {
+    it('recovers an Assigned To save after two failed COMMITs and refuses a cold same-value ABA', async () => {
+        const directory = mkdtempSync(join(root, 'task-draft-v2-')); directories.push(directory);
+        const path = join(directory, 'data.sqlite');
+        const { db, host, fault } = await open(path, true);
+        const model = host.getTaskEditorModel({ id: 'edit' });
+        if (!model.ok) throw new Error(model.error.message);
+        const request = { id: 'edit', base: { assignedTo: model.value.draft.assignedTo },
+            patch: { assignedTo: '  Casey  ' }, scheduleBase: model.value.scheduleBase };
+        const plan = await host.prepareTaskDraftSaveV2(request);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const prepared = plan.value.prepared;
+        const before = db.prepare('SELECT * FROM tasks ORDER BY id').all();
+        fault.commits = 10;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            expect(await host.commitPreparedTaskDraftSave({ request, prepared }))
+                .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+            expect(db.prepare('SELECT * FROM tasks ORDER BY id').all()).toEqual(before);
+        }
+        fault.commits = 0;
+        expect(await host.commitPreparedTaskDraftSave({ request, prepared }))
+            .toMatchObject({ ok: true });
+        const committed = db.prepare('SELECT * FROM tasks ORDER BY id').all();
+        expect(db.prepare('SELECT assignedTo, rev, updatedAt FROM tasks WHERE id = ?').get('edit'))
+            .toEqual({ assignedTo: 'Casey', rev: prepared.effect.task.after.rev, updatedAt: prepared.preparedAt });
+        expect(committed.find((row) => (row as { id: string }).id === 'other'))
+            .toEqual(before.find((row) => (row as { id: string }).id === 'other'));
+        const cold = await open(path);
+        expect(await cold.host.commitPreparedTaskDraftSave({ request, prepared })).toMatchObject({ ok: true });
+        expect(cold.db.prepare('SELECT * FROM tasks ORDER BY id').all()).toEqual(committed);
+        cold.db.prepare('UPDATE tasks SET assignedTo = ?, rev = ?, revBy = ?, updatedAt = ? WHERE id = ?')
+            .run('Other person', 80, 'other-device', '2026-09-30T13:00:00.000Z', 'edit');
+        cold.db.prepare('UPDATE tasks SET assignedTo = ?, rev = ?, revBy = ?, updatedAt = ? WHERE id = ?')
+            .run('Casey', 81, 'other-device', '2026-09-30T14:00:00.000Z', 'edit');
+        const aba = cold.db.prepare('SELECT * FROM tasks ORDER BY id').all();
+        const coldAgain = await open(path);
+        expect(await coldAgain.host.commitPreparedTaskDraftSave({ request, prepared }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(coldAgain.db.prepare('SELECT * FROM tasks ORDER BY id').all()).toEqual(aba);
+    }, 30_000);
+
     it('recovers a frozen Location save after failed COMMITs and refuses cold same-target ABA', async () => {
         const directory = mkdtempSync(join(root, 'task-draft-v2-')); directories.push(directory);
         const path = join(directory, 'data.sqlite');

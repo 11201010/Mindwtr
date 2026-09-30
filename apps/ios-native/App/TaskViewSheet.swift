@@ -206,7 +206,7 @@ struct TaskViewSheet: View {
 
     @ViewBuilder private func editorSection(_ section: CoreObject) -> some View {
         let fields = (section["fields"] as? [String] ?? []).filter { field in
-            ["description", "location", "priority", "energyLevel", "timeEstimate", "contexts", "tags", "startTime", "dueDate", "reviewAt", "recurrence", "checklist"].contains(field)
+            ["description", "location", "assignedTo", "priority", "energyLevel", "timeEstimate", "contexts", "tags", "startTime", "dueDate", "reviewAt", "recurrence", "checklist"].contains(field)
                 || (section.text("id") == "basic" && field == model.taskDestination.object("destination").text("fieldId"))
                 || (section.text("id") == "basic" && field == "section" && model.taskDestination.object("section").flag("visible"))
         }
@@ -278,7 +278,7 @@ struct TaskViewSheet: View {
                 openCustom: { monthlyCustom = $0 })
         } else if field == "checklist" {
             checklistEditor
-        } else if field == "contexts" || field == "tags" {
+        } else if field == "contexts" || field == "tags" || field == "assignedTo" {
             TaskTokenField(model: model, palette: palette, field: field, beforeAction: endEditingBeforeAction)
                 .disabled(model.taskScheduleUpdating)
         } else if field == "project" || field == "area" {
@@ -1563,7 +1563,7 @@ private struct TaskTokenField: View {
     let field: String
     let beforeAction: () -> Void
     @FocusState private var focused: Bool
-    private var label: String { model.strings.text("taskEdit." + field + "Label") }
+    private var label: String { model.strings.text(field == "assignedTo" ? "taskEdit.assignedTo" : "taskEdit." + field + "Label") }
     private var placeholder: String { model.strings.text("taskEdit." + field + "Placeholder") }
     private var current: Bool { model.taskTokenChoicesCurrent(field) }
     private var suggestions: CoreObject { model.taskTokenSuggestions[field] ?? [:] }
@@ -1571,14 +1571,14 @@ private struct TaskTokenField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: field == "contexts" ? "at" : "tag").font(.system(size: 16)).accessibilityHidden(true)
+                Image(systemName: field == "assignedTo" ? "person" : field == "contexts" ? "at" : "tag").font(.system(size: 16)).accessibilityHidden(true)
                 Text(label.uppercased()).rnFont(14)
             }
             .foregroundStyle(palette.secondary).accessibilityAddTraits(.isHeader)
             TextField(placeholder, text: Binding(
                 get: { model.taskTokenInputs[field] ?? "" },
                 set: { model.setTaskTokenInput(field, text: $0) }))
-                .rnFont(16).textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.done)
+                .rnFont(16).textInputAutocapitalization(field == "assignedTo" ? .words : .never).autocorrectionDisabled().submitLabel(.done)
                 .focused($focused)
                 .padding(12).frame(minHeight: 44).background(palette.input, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))

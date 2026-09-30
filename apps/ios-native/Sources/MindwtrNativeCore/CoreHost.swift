@@ -6176,7 +6176,7 @@ private final class Engine: @unchecked Sendable {
                           checklist["base"] is [[String: Any]], checklist["value"] is [[String: Any]] else {
                         throw HostFailure("INVALID_INPUT: Checklist save needs exact baselines and final list")
                     }
-                    let allowed = Set(["title", "description", "location", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "status"])
+                    let allowed = Set(["title", "description", "location", "assignedTo", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "status"])
                         .union(Self.scheduleFields).union(Self.recurrenceFields)
                     guard Set(patch.keys).isSubset(of: allowed), patch.keys.allSatisfy({ field in
                         if field == "relativeStartOffset" { return Self.isOffset(base[field]) && Self.isOffset(patch[field]) }
@@ -6494,7 +6494,7 @@ private final class Engine: @unchecked Sendable {
             let hasRecurrence = !Self.recurrenceFields.isDisjoint(with: patch.keys)
             let isPrepared = hasSchedule || hasRecurrence || input["scheduleBase"] != nil
             let allowed = Set(["title", "description", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags"])
-                .union(allowPreparedDates && isPrepared ? ["location"] : [])
+                .union(allowPreparedDates && isPrepared ? ["location", "assignedTo"] : [])
                 .union(allowPreparedDates ? Self.scheduleFields.union(Self.recurrenceFields) : [])
             var inputFields: Set<String> = ["id", "base", "patch"]
             if isPrepared && allowPreparedDates { inputFields.insert("scheduleBase") }

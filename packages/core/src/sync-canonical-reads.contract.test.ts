@@ -1645,8 +1645,10 @@ describe('canonical local reads contract', () => {
             commitPreparedTaskDraftV2: async (control) => {
                 const host = await nativeHost(control);
                 const model = nativeValue(host.getTaskEditorModel({ id: taskId }));
-                const request = { id: taskId, base: { title: model.draft.title, location: model.draft.location },
-                    patch: { title: 'Contract durable draft', location: 'Contract desk' }, scheduleBase: model.scheduleBase };
+                const request = { id: taskId,
+                    base: { title: model.draft.title, location: model.draft.location, assignedTo: model.draft.assignedTo },
+                    patch: { title: 'Contract durable draft', location: 'Contract desk', assignedTo: 'Contract person' },
+                    scheduleBase: model.scheduleBase };
                 const planned = nativeValue(await host.prepareTaskDraftSaveV2(request));
                 expect(planned.kind).toBe('prepared');
                 if (planned.kind !== 'prepared') return;
@@ -1657,6 +1659,7 @@ describe('canonical local reads contract', () => {
                     .toEqual({ id: taskId, draft: createTaskDraft(planned.prepared.effect.task.after) });
                 expect(useTaskStore.getState()._tasksById.get(taskId)?.title).toBe('Contract durable draft');
                 expect(useTaskStore.getState()._tasksById.get(taskId)?.location).toBe('Contract desk');
+                expect(useTaskStore.getState()._tasksById.get(taskId)?.assignedTo).toBe('Contract person');
             },
             commitPreparedTaskFocus: async (control) => {
                 const host = await nativeHost(control);
