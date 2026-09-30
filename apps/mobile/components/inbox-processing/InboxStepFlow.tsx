@@ -146,6 +146,9 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
 
   // Answering a question moves the next one in from the side; reduced motion
   // lands it flat. Two plain Values — the RN shim has no interpolate().
+  // JS-driven on purpose: on iOS (new architecture) a re-render of a view whose
+  // opacity the native driver animates re-applied a stale value, so the step
+  // stayed faded or invisible until another re-render (#1317).
   useEffect(() => {
     if (reducedMotion) {
       fade.setValue(1);
@@ -154,8 +157,8 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
     }
     fade.setValue(0);
     slide.setValue(STEP_TRANSITION_OFFSET);
-    Animated.timing(fade, { toValue: 1, duration: STEP_TRANSITION_MS, useNativeDriver: true }).start();
-    Animated.timing(slide, { toValue: 0, duration: STEP_TRANSITION_MS, useNativeDriver: true }).start();
+    Animated.timing(fade, { toValue: 1, duration: STEP_TRANSITION_MS, useNativeDriver: false }).start();
+    Animated.timing(slide, { toValue: 0, duration: STEP_TRANSITION_MS, useNativeDriver: false }).start();
   }, [fade, reducedMotion, slide, step, taskId]);
 
   const commit = useCallback(async (committed: ProcessInboxCommitted, run: () => Promise<boolean>) => {
