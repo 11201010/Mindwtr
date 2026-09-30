@@ -6,6 +6,7 @@ import { getProcessInboxDefaultScheduleTime } from './process-inbox-model';
 import type { GtdWorkflowEdit, NativeGtdWorkflowRequest } from './native-host-contract-gtd-workflow';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppData, Task } from './types';
+import { generateUUID } from './uuid';
 
 const ID = '00000000-0000-4000-8000-000000000103';
 const AT = '2026-09-01T00:00:00.000Z';
@@ -51,6 +52,24 @@ async function planned(env: Awaited<ReturnType<typeof open>>,
 async function plannedReview(env: Awaited<ReturnType<typeof open>>,
     edit: { type: 'dailyReviewFocusStep' | 'weeklyReviewContextStep'; value: boolean }) {
     const options = await env.host.getGtdReviewOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID, edit, expected: options.value.expected[edit.type] };
+    const plan = await env.host.prepareGtdWorkflow(request);
+    if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+    return { options: options.value, request, prepared: plan.value.prepared,
+        envelope: { request, prepared: plan.value.prepared } };
+}
+
+type InboxType = 'inboxTwoMinute' | 'inboxProjectFirst' | 'inboxContextStep' | 'inboxSchedule';
+const inboxField: Record<InboxType, string> = {
+    inboxTwoMinute: 'twoMinuteEnabled', inboxProjectFirst: 'projectFirst',
+    inboxContextStep: 'contextStepEnabled', inboxSchedule: 'scheduleEnabled',
+};
+const inboxToggle = { inboxTwoMinute: 'twoMinute', inboxProjectFirst: 'projectFirst',
+    inboxContextStep: 'contextStep', inboxSchedule: 'schedule' } as const;
+async function plannedInbox(env: Awaited<ReturnType<typeof open>>,
+    edit: { type: InboxType; value: boolean }) {
+    const options = await env.host.getGtdInboxOptions({});
     if (!options.ok) throw new Error(JSON.stringify(options));
     const request: NativeGtdWorkflowRequest = { requestId: ID, edit, expected: options.value.expected[edit.type] };
     const plan = await env.host.prepareGtdWorkflow(request);
@@ -407,5 +426,146 @@ describe('GTD Review variants in the original v1 workflow journal', () => {
         expect(env.host.probeGtdWorkflowOutcome(request)).toMatchObject({ ok: false,
             error: { code: 'STALE_REVISION' } });
         expect(env.saves()).toBe(0);
+    });
+});
+
+describe('GTD Inbox variants in the original v1 workflow journal', () => {
+    it.each([
+        { type: 'inboxTwoMinute', value: false, defaultValue: true },
+        { type: 'inboxProjectFirst', value: true, defaultValue: false },
+        { type: 'inboxContextStep', value: false, defaultValue: true },
+        { type: 'inboxSchedule', value: true, defaultValue: false },
+    ] as const)('saves $type with its shared default and only selected raw field', async (edit) => {
+        const start = initial();
+        start.settings.gtd = { ...start.settings.gtd,
+            inboxProcessing: { legacyInbox: { marker: 105 } } as never,
+            pomodoro: 'malformed-unrelated' as never };
+        const env = await open(start);
+        const { options, envelope, prepared } = await plannedInbox(env, { type: edit.type, value: edit.value });
+        expect(Object.keys(options.expected).sort()).toEqual(Object.keys(inboxField).sort());
+        expect(options.expected[edit.type]).toEqual({ parentPresent: true, present: false,
+            value: null, stampPresent: true, stamp: AT });
+        expect(options.inbox[inboxToggle[edit.type]]).toMatchObject({ value: edit.defaultValue,
+            edit: { type: edit.type, value: edit.value } });
+        expect(prepared.version).toBe(1);
+        expect(Object.keys(envelope.request.expected).sort()).toEqual([
+            'parentPresent', 'present', 'stamp', 'stampPresent', 'value']);
+        expect(JSON.stringify(envelope)).not.toContain('legacyInbox');
+        expect(env.host.validatePreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        const saved = env.data();
+        expect((saved.settings.gtd?.inboxProcessing as Record<string, unknown>)[inboxField[edit.type]]).toBe(edit.value);
+        expect(saved.settings.gtd?.inboxProcessing).toMatchObject({ legacyInbox: { marker: 105 } });
+        expect(saved.settings.syncPreferencesUpdatedAt?.gtd).toBe(prepared.after.stamp);
+        expect(saved.tasks).toEqual(start.tasks);
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+    });
+
+    it('applies the two on and two off defaults as offered flips, refusing absent materialization', async () => {
+        for (const type of Object.keys(inboxField) as InboxType[]) {
+            const env = await open(initial());
+            const options = await env.host.getGtdInboxOptions({});
+            if (!options.ok) throw new Error(JSON.stringify(options));
+            const offered = options.value.inbox[inboxToggle[type]].edit;
+            expect(options.value.expected[type]).toEqual({ parentPresent: false, present: false,
+                value: null, stampPresent: true, stamp: AT });
+            expect(await env.host.prepareGtdWorkflow({ requestId: ID,
+                edit: { type, value: !offered.value }, expected: options.value.expected[type] }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            const { envelope } = await plannedInbox(env, { type, value: offered.value });
+            const forged = structuredClone(envelope);
+            forged.request.edit.value = !offered.value;
+            forged.prepared.request.edit.value = !offered.value;
+            forged.prepared.after.value = !offered.value;
+            forged.prepared.result.value = !offered.value;
+            expect(env.host.validatePreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+            expect(env.saves()).toBe(0);
+            for (const value of [true, false]) {
+                const start = initial();
+                start.settings.gtd = { ...start.settings.gtd,
+                    inboxProcessing: { [inboxField[type]]: value } };
+                const present = await open(start);
+                const current = await present.host.getGtdInboxOptions({});
+                if (!current.ok) throw new Error(JSON.stringify(current));
+                expect(await present.host.prepareGtdWorkflow({ requestId: ID,
+                    edit: { type, value }, expected: current.value.expected[type] }))
+                    .toMatchObject({ ok: true, value: { kind: 'noop', result: { changed: false } } });
+                expect(present.saves()).toBe(0);
+            }
+        }
+    });
+
+    it('refuses malformed relevant rows and a changed parent, field, or GTD stamp', async () => {
+        for (const bad of [null, [], 'bad', { twoMinuteEnabled: 'false' }, { scheduleEnabled: 1 }]) {
+            const start = initial(); start.settings.gtd = { ...start.settings.gtd, inboxProcessing: bad as never };
+            const env = await open(start);
+            expect(await env.host.getGtdInboxOptions({})).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        }
+        for (const change of [
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                gtd: { ...data.settings.gtd, inboxProcessing: {} } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                gtd: { ...data.settings.gtd, inboxProcessing: { scheduleEnabled: true } } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                    gtd: '2026-09-02T00:00:00.000Z' } } }),
+        ]) {
+            const env = await open(initial());
+            const { envelope } = await plannedInbox(env, { type: 'inboxSchedule', value: true });
+            env.changeSaved(change);
+            expect(await env.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'STALE_REVISION' } });
+            expect(env.saves()).toBe(0);
+        }
+    });
+
+    it('makes all four saved choices visible in a fresh real Process Inbox session', async () => {
+        const start = initial();
+        start.tasks.push({ ...terminal, id: 'gtd-inbox-candidate', title: 'Sort mail', status: 'inbox',
+            deletedAt: undefined, focusOrder: undefined });
+        const env = await open(start);
+        const baseline = env.host.startInboxProcessing({ mode: 'quick' });
+        if (!baseline.ok || !baseline.value.view) throw new Error(JSON.stringify(baseline));
+        expect(baseline.value.view.choices.map((choice) => choice.id)).toContain('done');
+        expect(baseline.value.view.projectFirst).toBe(false);
+        for (const edit of [
+            { type: 'inboxTwoMinute', value: false }, { type: 'inboxProjectFirst', value: true },
+            { type: 'inboxContextStep', value: false }, { type: 'inboxSchedule', value: true },
+        ] as const) {
+            const { envelope } = await plannedInbox(env, edit);
+            expect(await env.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: true });
+        }
+        const cold = await env.reopen();
+        const quick = cold.host.startInboxProcessing({ mode: 'quick' });
+        if (!quick.ok || !quick.value.view) throw new Error(JSON.stringify(quick));
+        expect(quick.value.view.choices.map((choice) => choice.id)).not.toContain('done');
+        expect(quick.value.view.projectFirst).toBe(true);
+        const guided = cold.host.startInboxProcessing({ mode: 'guided' });
+        if (!guided.ok || !guided.value.view) throw new Error(JSON.stringify(guided));
+        const sessionId = guided.value.sessionId!;
+        let view = guided.value.view;
+        const choose = async (choice: string) => {
+            const next = await cold.host.commitInboxProcessingStep({ sessionId, taskId: view.taskId,
+                step: view.step, decision: { choice }, requestId: generateUUID() });
+            if (!next.ok || !next.value.view) throw new Error(JSON.stringify(next));
+            view = next.value.view;
+        };
+        expect(view.step).toBe('actionable');
+        await choose('actionable');
+        expect(view.step).toBe('execution');
+        await choose('defer');
+        await choose('single');
+        expect(view.step).toBe('file');
+        expect(view.contexts).toBeNull();
+        expect(view.projectFirst).toBe(true);
+        const expanded = cold.host.getInboxProcessingStep({ sessionId, taskId: view.taskId,
+            step: view.step, edit: { type: 'toggleAdvancedOptions' } });
+        if (!expanded.ok) throw new Error(JSON.stringify(expanded));
+        expect(expanded.value.moreOptions?.scheduling?.rows.map((row) => row.field))
+            .toEqual(['startTime', 'dueDate', 'reviewAt']);
     });
 });

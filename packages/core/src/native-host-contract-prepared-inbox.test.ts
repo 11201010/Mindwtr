@@ -165,6 +165,33 @@ describe('native prepared Process Inbox writer', () => {
         expect(host.inboxAfterCommit({ sessionId: request.sessionId, requestId: request.requestId })).toEqual(next);
     });
 
+    it('refuses a frozen Inbox decision after its saved processing plan changes', async () => {
+        const recorder = createWriteRecorder();
+        await seedProcessInboxStore(fixture, scenario('skipping the last item'), recorder);
+        const host = createNativeHostContract();
+        expect(await host.activate({ writeSafetyReady: true })).toMatchObject({ ok: true });
+        const started = host.startInboxProcessing();
+        if (!started.ok || !started.value.view) throw new Error('Missing Inbox task');
+        const request = { sessionId: started.value.sessionId!, taskId: started.value.view.taskId,
+            step: started.value.view.step, decision: { choice: 'trash' }, requestId: generateUUID() };
+        const prepared = host.inboxCommitPrepare(request);
+        if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+        const envelope = { request, prepared: prepared.value.prepared };
+        expect(host.inboxPreparedValidate(envelope)).toMatchObject({ ok: true });
+        const options = await host.getGtdInboxOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        const change = { requestId: generateUUID(), edit: options.value.inbox.schedule.edit,
+            expected: options.value.expected.inboxSchedule };
+        const planned = await host.prepareGtdWorkflow(change);
+        if (!planned.ok || planned.value.kind !== 'prepared') throw new Error(JSON.stringify(planned));
+        expect(await host.commitPreparedGtdWorkflow({ request: change, prepared: planned.value.prepared }))
+            .toMatchObject({ ok: true });
+        const before = useTaskStore.getState()._tasksById.get(request.taskId);
+        expect(await host.inboxPreparedCommit(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(useTaskStore.getState()._tasksById.get(request.taskId)).toEqual(before);
+    });
+
     it('keeps Skip draft edits and rejects a forged after-row before touching the store', async () => {
         const recorder = createWriteRecorder();
         await seedProcessInboxStore(fixture, scenario('start later'), recorder);

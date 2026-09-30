@@ -13089,8 +13089,10 @@ final class CoreHostTests: XCTestCase {
 
     private func exerciseGeneralPreferenceRecovery(type: String, value: Any, workflow: Bool = false) async throws {
         let method = workflow ? "gtdWorkflow" : "generalPreference"
-        let reviewParent: String? = type == "dailyReviewFocusStep" ? "dailyReview" : type == "weeklyReviewContextStep" ? "weeklyReview" : nil
-        let reviewField = type == "dailyReviewFocusStep" ? "includeFocusStep" : "includeContextStep"
+        let inboxFields = ["inboxTwoMinute": "twoMinuteEnabled", "inboxProjectFirst": "projectFirst", "inboxContextStep": "contextStepEnabled", "inboxSchedule": "scheduleEnabled"]
+        let inboxing = inboxFields[type] != nil
+        let nestedParent: String? = inboxing ? "inboxProcessing" : type == "dailyReviewFocusStep" ? "dailyReview" : type == "weeklyReviewContextStep" ? "weeklyReview" : nil
+        let nestedField = inboxFields[type] ?? (type == "dailyReviewFocusStep" ? "includeFocusStep" : "includeContextStep")
         let at = "2026-10-01T12:00:00.000Z", originalStamp = "2026-10-01T12:00:00.005Z"
         let expectedStamp = "2026-10-01T12:00:00.006Z"
         let clock = try dateBundle(at: at)
@@ -13105,7 +13107,9 @@ final class CoreHostTests: XCTestCase {
             var gtd = settings["gtd"] as? [String: Any] ?? [:]
             gtd["defaultScheduleTime"] = ""; gtd["focusTaskLimit"] = 5; gtd["defaultProjectFlowMode"] = "parallel"
             gtd["unknown103"] = ["retained": true]
-            if reviewParent != nil {
+            if inboxing {
+                gtd["inboxProcessing"] = ["twoMinuteEnabled": true, "projectFirst": false, "contextStepEnabled": true, "scheduleEnabled": false, "retained105": "inbox"]
+            } else if nestedParent != nil {
                 gtd["dailyReview"] = ["includeFocusStep": true, "retained104": "daily"]
                 gtd["weeklyReview"] = ["includeContextStep": true, "retained104": "weekly"]
             }
@@ -13121,9 +13125,9 @@ final class CoreHostTests: XCTestCase {
         let faults = HostIOFaults(), writer = host(faults, bundleURL: clock)
         _ = try await writer.start()
         if type == "calendarSystem" { _ = try await writer.call("language", argumentsJSON: json(["fa", "en-US"])) }
-        let options = try object(await writer.call(reviewParent == nil ? method + "Options" : "gtdReviewOptions", argumentsJSON: json(["{}"])))
+        let options = try object(await writer.call(inboxing ? "gtdInboxOptions" : nestedParent == nil ? method + "Options" : "gtdReviewOptions", argumentsJSON: json(["{}"])))
         let expected = try XCTUnwrap(options["expected"] as? [String: Any])
-        XCTAssertNotNil(options[reviewParent != nil ? "review" : workflow ? "hub" : "model"])
+        XCTAssertNotNil(options[inboxing ? "inbox" : nestedParent != nil ? "review" : workflow ? "hub" : "model"])
         let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": ["type": type, "value": value], "expected": try XCTUnwrap(expected[type])]
         faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected General COMMIT failure") } }
         await expectFailure("SAVE_FAILED") { _ = try await writer.call(method, argumentsJSON: json([json(request)])) }
@@ -13148,9 +13152,9 @@ final class CoreHostTests: XCTestCase {
         let group = workflow ? "gtd" : nestedAppearance || type == "theme" ? "appearance" : "language"
         func applyGtd(_ settings: inout [String: Any]) throws {
             var gtd = try XCTUnwrap(settings["gtd"] as? [String: Any])
-            if let reviewParent {
-                var parent = try XCTUnwrap(gtd[reviewParent] as? [String: Any])
-                parent[reviewField] = value; gtd[reviewParent] = parent
+            if let nestedParent {
+                var parent = try XCTUnwrap(gtd[nestedParent] as? [String: Any])
+                parent[nestedField] = value; gtd[nestedParent] = parent
             } else { gtd[type] = value }
             settings["gtd"] = gtd
         }
@@ -13220,7 +13224,7 @@ final class CoreHostTests: XCTestCase {
                 statements += 1
                 if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
             }
-            replayFaults.commandDiagnostic = { if $0 == (reviewParent == nil ? method + "Applied" : "gtdReviewApplied") { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
+            replayFaults.commandDiagnostic = { if $0 == (inboxing ? "gtdInboxApplied" : nestedParent == nil ? method + "Applied" : "gtdReviewApplied") { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
             let recovered = host(replayFaults, bundleURL: clock)
             if scenario != "unrelated" {
                 await expectFailure(scenario == "forged" ? "INVALID_INPUT" : "STALE_REVISION") { _ = try await recovered.start() }
@@ -13237,6 +13241,40 @@ final class CoreHostTests: XCTestCase {
             }
             await recovered.close()
         }
+    }
+
+    func testGtdInboxTwoMinuteRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "inboxTwoMinute", value: false, workflow: true) }
+    func testGtdInboxProjectFirstRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "inboxProjectFirst", value: true, workflow: true) }
+    func testGtdInboxContextRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "inboxContextStep", value: false, workflow: true) }
+    func testGtdInboxScheduleRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "inboxSchedule", value: true, workflow: true) }
+
+    func testGtdInboxBooleanAndParentBoundary() async throws {
+        let bootstrap = host(); _ = try await bootstrap.start(); await bootstrap.close()
+        var settings = try calendarPreferenceSettings(), gtd = settings["gtd"] as? [String: Any] ?? [:]
+        gtd["inboxProcessing"] = ["twoMinuteEnabled": true, "projectFirst": false, "contextStepEnabled": true, "scheduleEnabled": false, "retained105": true]
+        settings["gtd"] = gtd; try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let options = try object(await core.call("gtdInboxOptions", argumentsJSON: json(["{}"])))
+        XCTAssertEqual(Set(options.keys), Set(["inbox", "expected"]))
+        let expected = try XCTUnwrap(options["expected"] as? [String: Any])
+        var statements = 0, journalWrites = 0
+        faults.beforeSQL = { _ in statements += 1 }; faults.journalWrite = { journalWrites += 1 }
+        for type in ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"] {
+            let witness = try XCTUnwrap(expected[type] as? [String: Any])
+            XCTAssertEqual(witness["parentPresent"] as? Bool, true)
+            XCTAssertEqual(witness["present"] as? Bool, true)
+            let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": ["type": type, "value": !(witness["value"] as? Bool ?? false)], "expected": witness]
+            var number = request; number["edit"] = ["type": type, "value": 0]
+            var absent = witness; absent["parentPresent"] = false
+            var malformedParent = request; malformedParent["expected"] = absent
+            var oldWitness = witness; oldWitness.removeValue(forKey: "parentPresent")
+            var missingParent = request; missingParent["expected"] = oldWitness
+            for input in [number, malformedParent, missingParent] {
+                await expectFailure("INVALID_INPUT") { _ = try await core.call("gtdWorkflow", argumentsJSON: json([json(input)])) }
+            }
+        }
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journalWrites, 0)
+        await core.close()
     }
 
     func testGtdReviewDailyRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "dailyReviewFocusStep", value: false, workflow: true) }

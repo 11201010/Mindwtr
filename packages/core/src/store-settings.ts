@@ -99,15 +99,24 @@ export const appLockWitness = (settings: AppSettings): AppLockWitness | null => 
 
 export type GtdWorkflowDirectType = 'defaultScheduleTime' | 'focusTaskLimit' | 'defaultProjectFlowMode';
 export type GtdWorkflowReviewType = 'dailyReviewFocusStep' | 'weeklyReviewContextStep';
-export type GtdWorkflowType = GtdWorkflowDirectType | GtdWorkflowReviewType;
+export type GtdWorkflowInboxType = 'inboxTwoMinute' | 'inboxProjectFirst' | 'inboxContextStep' | 'inboxSchedule';
+export type GtdWorkflowType = GtdWorkflowDirectType | GtdWorkflowReviewType | GtdWorkflowInboxType;
 export type GtdWorkflowDirectWitness = { present: boolean; value: string | number | null;
     stampPresent: boolean; stamp: string | null };
 export type GtdWorkflowReviewWitness = { parentPresent: boolean; present: boolean; value: boolean | null;
     stampPresent: boolean; stamp: string | null };
-export type GtdWorkflowWitness = GtdWorkflowDirectWitness | GtdWorkflowReviewWitness;
-const reviewPath = (type: GtdWorkflowReviewType) => type === 'dailyReviewFocusStep'
-    ? { parent: 'dailyReview' as const, field: 'includeFocusStep' as const }
-    : { parent: 'weeklyReview' as const, field: 'includeContextStep' as const };
+export type GtdWorkflowInboxWitness = GtdWorkflowReviewWitness;
+export type GtdWorkflowWitness = GtdWorkflowDirectWitness | GtdWorkflowReviewWitness | GtdWorkflowInboxWitness;
+export const gtdWorkflowNestedPath = (type: GtdWorkflowReviewType | GtdWorkflowInboxType) => {
+    switch (type) {
+        case 'dailyReviewFocusStep': return { parent: 'dailyReview' as const, field: 'includeFocusStep' as const };
+        case 'weeklyReviewContextStep': return { parent: 'weeklyReview' as const, field: 'includeContextStep' as const };
+        case 'inboxTwoMinute': return { parent: 'inboxProcessing' as const, field: 'twoMinuteEnabled' as const };
+        case 'inboxProjectFirst': return { parent: 'inboxProcessing' as const, field: 'projectFirst' as const };
+        case 'inboxContextStep': return { parent: 'inboxProcessing' as const, field: 'contextStepEnabled' as const };
+        case 'inboxSchedule': return { parent: 'inboxProcessing' as const, field: 'scheduleEnabled' as const };
+    }
+};
 const boundedRawGtdValue = (type: GtdWorkflowDirectType, value: unknown): value is string | number =>
     type === 'focusTaskLimit'
         ? typeof value === 'number' && Number.isSafeInteger(value) && Math.abs(value) <= 1_000_000
@@ -115,6 +124,7 @@ const boundedRawGtdValue = (type: GtdWorkflowDirectType, value: unknown): value 
 /** One raw GTD scalar and its group stamp, without carrying the Settings row. */
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowDirectType): GtdWorkflowDirectWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowReviewType): GtdWorkflowReviewWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowInboxType): GtdWorkflowInboxWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null {
     const group = settings.gtd;
@@ -125,8 +135,10 @@ export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType)
     const stamp = stampPresent ? stamps?.gtd : null;
     if (stampPresent && !(typeof stamp === 'string' && stamp.length <= 40
         && Number.isFinite(Date.parse(stamp)) && new Date(stamp).toISOString() === stamp)) return null;
-    if (type === 'dailyReviewFocusStep' || type === 'weeklyReviewContextStep') {
-        const path = reviewPath(type);
+    if (type === 'dailyReviewFocusStep' || type === 'weeklyReviewContextStep'
+        || type === 'inboxTwoMinute' || type === 'inboxProjectFirst'
+        || type === 'inboxContextStep' || type === 'inboxSchedule') {
+        const path = gtdWorkflowNestedPath(type);
         const parentPresent = group !== undefined && owns(group, path.parent) && group[path.parent] !== undefined;
         const parent = parentPresent ? group?.[path.parent] as Record<string, unknown> : undefined;
         if (parentPresent && (!parent || typeof parent !== 'object' || Array.isArray(parent))) return null;

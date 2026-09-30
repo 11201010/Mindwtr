@@ -247,6 +247,8 @@ final class CoreModel: ObservableObject {
     @Published private(set) var settingsGtdPresented = false
     @Published private(set) var settingsGtdReviewPresented = false
     @Published private(set) var gtdReview: CoreObject = [:]
+    @Published private(set) var settingsGtdInboxPresented = false
+    @Published private(set) var gtdInbox: CoreObject = [:]
     @Published private(set) var gtdWorkflow: CoreObject = [:]
     @Published private(set) var gtdWorkflowError: String?
     @Published private(set) var gtdWorkflowReadError: String?
@@ -256,10 +258,10 @@ final class CoreModel: ObservableObject {
     private var gtdWorkflowRequest: String?
     private var gtdWorkflowEdit: CoreObject = [:]
     var gtdWorkflowPending: Bool { gtdWorkflowRequest != nil || gtdWorkflowAwaitingRefresh }
-    var gtdWorkflowDraftDirty: Bool { settingsGtdPresented && !settingsGtdReviewPresented && gtdScheduleDraft != gtdWorkflow.object("defaultScheduleTime").text("value") }
+    var gtdWorkflowDraftDirty: Bool { settingsGtdPresented && !settingsGtdReviewPresented && !settingsGtdInboxPresented && gtdScheduleDraft != gtdWorkflow.object("defaultScheduleTime").text("value") }
     var gtdWorkflowEnabled: Bool {
         ready && selectedSurface == .settings && settingsGtdPresented && !busy && !retryNeeded
-            && !gtdWorkflowPending && gtdWorkflowReadError == nil && !(settingsGtdReviewPresented ? gtdReview : gtdWorkflow).isEmpty
+            && !gtdWorkflowPending && gtdWorkflowReadError == nil && !(settingsGtdInboxPresented ? gtdInbox : settingsGtdReviewPresented ? gtdReview : gtdWorkflow).isEmpty
     }
     @Published private(set) var settingsGeneralPresented = false
     @Published private(set) var generalSettings: CoreObject = [:]
@@ -1852,6 +1854,7 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .settings
                 settingsGtdPresented = true
                 settingsGtdReviewPresented = ["dailyReviewFocusStep", "weeklyReviewContextStep"].contains(recovery.object("result").text("type"))
+                settingsGtdInboxPresented = ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"].contains(recovery.object("result").text("type"))
             } else if ["generalPreferenceCommit", "appLockCommit"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsGeneralPresented = true
@@ -1977,6 +1980,7 @@ final class CoreModel: ObservableObject {
         settingsGeneralPresented = false
         settingsGtdPresented = false
         settingsGtdReviewPresented = false
+        settingsGtdInboxPresented = false
         generalPreferencePicker = nil
         selectedSurface = .settings
         busy = true
@@ -2032,6 +2036,7 @@ final class CoreModel: ObservableObject {
         settingsSearchGeneration += 1
         settingsGtdPresented = true
         settingsGtdReviewPresented = false
+        settingsGtdInboxPresented = false
         gtdWorkflowError = nil
         busy = true
         defer { finishOperation() }
@@ -2039,14 +2044,16 @@ final class CoreModel: ObservableObject {
         catch { gtdWorkflowReadError = error.localizedDescription }
     }
 
-    func openGtdReviewSettings() async {
-        guard gtdWorkflowEnabled, !settingsGtdReviewPresented else { return }
+    func openGtdSubpage(_ page: String) async {
+        guard ["review", "inbox"].contains(page), gtdWorkflowEnabled,
+              !settingsGtdReviewPresented, !settingsGtdInboxPresented else { return }
         if gtdWorkflowDraftDirty {
             await commitGtdScheduleDraft()
             guard gtdWorkflowError == nil else { return }
         }
         guard gtdWorkflowEnabled, !gtdWorkflowDraftDirty else { return }
-        settingsGtdReviewPresented = true
+        settingsGtdReviewPresented = page == "review"
+        settingsGtdInboxPresented = page == "inbox"
         gtdWorkflowError = nil
         busy = true
         defer { finishOperation() }
@@ -2056,8 +2063,9 @@ final class CoreModel: ObservableObject {
 
     func closeGtdSettings() async {
         guard settingsGtdPresented, !busy, !retryNeeded, !gtdWorkflowPending else { return }
-        if settingsGtdReviewPresented {
+        if settingsGtdReviewPresented || settingsGtdInboxPresented {
             settingsGtdReviewPresented = false
+            settingsGtdInboxPresented = false
             gtdWorkflowError = nil
             busy = true
             defer { finishOperation() }
@@ -2075,14 +2083,15 @@ final class CoreModel: ObservableObject {
     }
 
     private func readGtdSettings() async throws {
-        let reviewing = settingsGtdReviewPresented
-        let options = try await query(reviewing ? "gtdReviewOptions" : "gtdWorkflowOptions", ["{}"])
-        let contentKey = reviewing ? "review" : "hub"
+        let reviewing = settingsGtdReviewPresented, inboxing = settingsGtdInboxPresented
+        let options = try await query(inboxing ? "gtdInboxOptions" : reviewing ? "gtdReviewOptions" : "gtdWorkflowOptions", ["{}"])
+        let contentKey = inboxing ? "inbox" : reviewing ? "review" : "hub"
         let content = options.object(contentKey), expected = options.object("expected")
-        let fields = reviewing ? ["dailyReviewFocusStep", "weeklyReviewContextStep"] : ["defaultScheduleTime", "focusTaskLimit", "defaultProjectFlowMode"]
+        let fields = inboxing ? ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"] : reviewing ? ["dailyReviewFocusStep", "weeklyReviewContextStep"] : ["defaultScheduleTime", "focusTaskLimit", "defaultProjectFlowMode"]
         guard Set(options.keys) == Set([contentKey, "expected"]), !content.text("title").isEmpty,
               Set(expected.keys) == Set(fields) else { throw CocoaError(.coderReadCorrupt) }
-        if reviewing { gtdReview = content }
+        if inboxing { gtdInbox = content }
+        else if reviewing { gtdReview = content }
         else {
             gtdWorkflow = content
             gtdScheduleDraft = content.object("defaultScheduleTime").text("value")
@@ -2374,7 +2383,7 @@ final class CoreModel: ObservableObject {
                     "taskEdit.details", "projects.statusLabel", "projects.projectTypeLabel", "projects.sequentialScope",
                     "projects.sequentialAcrossSections", "projects.sequentialWithinSections",
                     "projects.projectTypeHelpText", "projects.sequentialScopeHelpText",
-                    "projects.sectionsLabel", "projects.addSection", "projects.sectionPlaceholder", "projects.deleteSectionConfirm", "settings.manage", "settings.general", "settings.gtd", "settings.reviewSettings", "taskEdit.tagsLabel", "taskEdit.startDateLabel", "taskEdit.dueDateLabel",
+                    "projects.sectionsLabel", "projects.addSection", "projects.sectionPlaceholder", "projects.deleteSectionConfirm", "settings.manage", "settings.general", "settings.gtd", "settings.reviewSettings", "settings.inboxProcessing", "taskEdit.tagsLabel", "taskEdit.startDateLabel", "taskEdit.dueDateLabel",
                     "projects.reviewAt", "common.none",
                     "project.notes",
                     "areas.manage", "areas.nameExists", "projects.manageAreas", "projects.changeColor", "projects.colorNone",
@@ -15602,7 +15611,7 @@ final class CoreModel: ObservableObject {
             generalPreferenceThemeTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
-        if ["gtdWorkflowOptions", "gtdReviewOptions"].contains(method), gtdWorkflowAwaitingRefresh, gtdWorkflowTestReadFailures > 0 {
+        if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions"].contains(method), gtdWorkflowAwaitingRefresh, gtdWorkflowTestReadFailures > 0 {
             gtdWorkflowTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }

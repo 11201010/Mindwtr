@@ -8,16 +8,16 @@ import type { NativeHostResult } from './native-host-contract';
 import { detach, exact, record } from './native-host-contract-project-shared';
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { useTaskStore } from './store';
-import { gtdWorkflowWitness, timestampAtLeastAfter,
-    type GtdWorkflowType, type GtdWorkflowDirectType, type GtdWorkflowReviewType,
+import { gtdWorkflowNestedPath, gtdWorkflowWitness, timestampAtLeastAfter,
+    type GtdWorkflowType, type GtdWorkflowDirectType, type GtdWorkflowReviewType, type GtdWorkflowInboxType,
     type GtdWorkflowWitness, type GtdWorkflowDirectWitness,
-    type GtdWorkflowReviewWitness } from './store-settings';
+    type GtdWorkflowReviewWitness, type GtdWorkflowInboxWitness } from './store-settings';
 import { ensureDeviceId } from './store-helpers';
 import type { AppData, AppSettings } from './types';
 
 export type { GtdWorkflowType, GtdWorkflowWitness } from './store-settings';
 export type GtdWorkflowEdit = Extract<GtdSettingsEdit,
-    { type: GtdWorkflowDirectType }> | { type: GtdWorkflowReviewType; value: boolean };
+    { type: GtdWorkflowDirectType }> | { type: GtdWorkflowReviewType | GtdWorkflowInboxType; value: boolean };
 export type NativeGtdWorkflowRequest = { requestId: string; edit: GtdWorkflowEdit;
     expected: GtdWorkflowWitness };
 export type NativeGtdWorkflowResult = { type: GtdWorkflowType; value: string | number | boolean; changed: boolean };
@@ -28,6 +28,8 @@ export type NativeGtdWorkflowOptions = { hub: GtdSettingsModel['hub'];
     expected: Record<GtdWorkflowDirectType, GtdWorkflowDirectWitness> };
 export type NativeGtdReviewOptions = { review: GtdSettingsModel['review'];
     expected: Record<GtdWorkflowReviewType, GtdWorkflowReviewWitness> };
+export type NativeGtdInboxOptions = { inbox: GtdSettingsModel['inbox'];
+    expected: Record<GtdWorkflowInboxType, GtdWorkflowInboxWitness> };
 export type NativeGtdWorkflowPreparation = { kind: 'noop'; result: NativeGtdWorkflowResult }
     | { kind: 'prepared'; prepared: NativePreparedGtdWorkflow };
 export type NativeGtdWorkflowDraft = { valid: true; value: string } | { valid: false; value: null };
@@ -35,8 +37,14 @@ export type NativeGtdWorkflowDraft = { valid: true; value: string } | { valid: f
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const TYPES: GtdWorkflowDirectType[] = ['defaultScheduleTime', 'focusTaskLimit', 'defaultProjectFlowMode'];
 const REVIEW_TYPES: GtdWorkflowReviewType[] = ['dailyReviewFocusStep', 'weeklyReviewContextStep'];
+const INBOX_TYPES: GtdWorkflowInboxType[] = ['inboxTwoMinute', 'inboxProjectFirst', 'inboxContextStep', 'inboxSchedule'];
 const isReview = (type: GtdWorkflowType): type is GtdWorkflowReviewType =>
     type === 'dailyReviewFocusStep' || type === 'weeklyReviewContextStep';
+const isInbox = (type: GtdWorkflowType): type is GtdWorkflowInboxType =>
+    type === 'inboxTwoMinute' || type === 'inboxProjectFirst'
+        || type === 'inboxContextStep' || type === 'inboxSchedule';
+const isNested = (type: GtdWorkflowType): type is GtdWorkflowReviewType | GtdWorkflowInboxType =>
+    isReview(type) || isInbox(type);
 const same = taskEditValuesEqual;
 const bounded = (value: unknown, max = 500): value is string => typeof value === 'string' && value.length <= max;
 const iso = (value: unknown): value is string => bounded(value, 40)
@@ -55,19 +63,23 @@ const validEdit = (value: unknown): value is GtdWorkflowEdit => {
             return value.value === 'parallel' || value.value === 'sequential';
         case 'dailyReviewFocusStep':
         case 'weeklyReviewContextStep':
+        case 'inboxTwoMinute':
+        case 'inboxProjectFirst':
+        case 'inboxContextStep':
+        case 'inboxSchedule':
             return typeof value.value === 'boolean';
         default: return false;
     }
 };
 
 const validWitness = (value: unknown, type: GtdWorkflowType): value is GtdWorkflowWitness =>
-    record(value) && exact(value, isReview(type)
+    record(value) && exact(value, isNested(type)
         ? ['parentPresent', 'present', 'value', 'stampPresent', 'stamp']
         : ['present', 'value', 'stampPresent', 'stamp'])
     && typeof value.present === 'boolean' && typeof value.stampPresent === 'boolean'
-    && (!isReview(type) || typeof value.parentPresent === 'boolean'
+    && (!isNested(type) || typeof value.parentPresent === 'boolean'
         && (value.parentPresent || !value.present))
-    && (value.present ? isReview(type) ? typeof value.value === 'boolean' : type === 'focusTaskLimit'
+    && (value.present ? isNested(type) ? typeof value.value === 'boolean' : type === 'focusTaskLimit'
         ? typeof value.value === 'number' && Number.isSafeInteger(value.value) && Math.abs(value.value) <= 1_000_000
         : bounded(value.value) : value.value === null)
     && (value.stampPresent ? iso(value.stamp) : value.stamp === null);
@@ -84,9 +96,8 @@ const readRequest = (input: unknown): NativeGtdWorkflowRequest | null => {
 const plannedStamp = (preparedAt: string, witness: GtdWorkflowWitness) =>
     timestampAtLeastAfter(preparedAt, witness.stamp ?? undefined);
 const settingsByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): AppSettings => {
-    if (isReview(edit.type)) {
-        const field = edit.type === 'dailyReviewFocusStep' ? 'includeFocusStep' : 'includeContextStep';
-        const parent = edit.type === 'dailyReviewFocusStep' ? 'dailyReview' : 'weeklyReview';
+    if (isNested(edit.type)) {
+        const { field, parent } = gtdWorkflowNestedPath(edit.type);
         return { gtd: { [parent]: (witness as GtdWorkflowReviewWitness).parentPresent
             ? (witness.present ? { [field]: witness.value } : {}) : undefined } } as AppSettings;
     }
@@ -94,11 +105,15 @@ const settingsByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): 
 };
 const storedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): boolean =>
     isGtdSettingStored(settingsByWitness(edit, witness), edit);
-const reviewOfferedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): boolean => {
-    if (!isReview(edit.type)) return true;
-    const review = buildGtdSettingsModel({ settings: settingsByWitness(edit, witness), areas: [],
-        taskOpenMode: 'automatic', t: (key) => key }).review;
-    const offered = edit.type === 'dailyReviewFocusStep' ? review.dailyFocusStep.edit : review.weeklyContextStep.edit;
+const nestedOfferedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): boolean => {
+    if (!isNested(edit.type)) return true;
+    const model = buildGtdSettingsModel({ settings: settingsByWitness(edit, witness), areas: [],
+        taskOpenMode: 'automatic', t: (key) => key });
+    const offered = isReview(edit.type)
+        ? edit.type === 'dailyReviewFocusStep' ? model.review.dailyFocusStep.edit : model.review.weeklyContextStep.edit
+        : edit.type === 'inboxTwoMinute' ? model.inbox.twoMinute.edit
+            : edit.type === 'inboxProjectFirst' ? model.inbox.projectFirst.edit
+                : edit.type === 'inboxContextStep' ? model.inbox.contextStep.edit : model.inbox.schedule.edit;
     return same(offered, edit);
 };
 
@@ -121,7 +136,7 @@ const readPrepared = (input: unknown): NativePreparedGtdWorkflow | null => {
         || !record(prepared.result) || !exact(prepared.result, ['type', 'value', 'changed'])
         || !same(prepared.result, { type: request.edit.type, value: request.edit.value, changed: true })
         || storedByWitness(request.edit, request.expected)
-        || !reviewOfferedByWitness(request.edit, request.expected)) return null;
+        || !nestedOfferedByWitness(request.edit, request.expected)) return null;
     return prepared as NativePreparedGtdWorkflow;
 };
 
@@ -150,6 +165,15 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
         } };
         return buildGtdSettingsModel({ settings: display, areas: [],
             taskOpenMode: 'automatic', t: deps.t() }).review;
+    };
+    const inboxFor = (data: AppData): GtdSettingsModel['inbox'] => {
+        const inbox = data.settings.gtd?.inboxProcessing;
+        const display = { ...data.settings, gtd: { inboxProcessing: {
+            twoMinuteEnabled: inbox?.twoMinuteEnabled, projectFirst: inbox?.projectFirst,
+            contextStepEnabled: inbox?.contextStepEnabled, scheduleEnabled: inbox?.scheduleEnabled,
+        } } };
+        return buildGtdSettingsModel({ settings: display, areas: [],
+            taskOpenMode: 'automatic', t: deps.t() }).inbox;
     };
     return {
         async getGtdWorkflowOptions(input: unknown): Promise<NativeHostResult<NativeGtdWorkflowOptions>> {
@@ -182,6 +206,21 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             return isNativeJsonWithinBytes(value, 2_000_000) ? { ok: true, value }
                 : fail('INVALID_INPUT', 'GTD Review options exceed the bounded response');
         },
+        async getGtdInboxOptions(input: unknown): Promise<NativeHostResult<NativeGtdInboxOptions>> {
+            const ready = deps.readiness(); if (!ready.ok) return ready;
+            if (!record(input) || !exact(input, [])) return fail('INVALID_INPUT', 'GTD Inbox options take an empty object');
+            const read = await readAreaDurableData(); if (!read.ok) return read;
+            const snapshot = read.value.authority.snapshot;
+            const expected = {} as Record<GtdWorkflowInboxType, GtdWorkflowInboxWitness>;
+            for (const type of INBOX_TYPES) {
+                const witness = gtdWorkflowWitness(snapshot.settings, type);
+                if (!witness) return fail('INVALID_INPUT', `Saved ${type} GTD Inbox step has an unsupported value`);
+                expected[type] = witness;
+            }
+            const value = { inbox: inboxFor(snapshot), expected };
+            return isNativeJsonWithinBytes(value, 2_000_000) ? { ok: true, value }
+                : fail('INVALID_INPUT', 'GTD Inbox options exceed the bounded response');
+        },
         normalizeGtdWorkflowDraft(input: unknown): NativeHostResult<NativeGtdWorkflowDraft> {
             if (!record(input) || !exact(input, ['value']) || !bounded(input.value, 50))
                 return fail('INVALID_INPUT', 'A bounded GTD time draft is required');
@@ -212,6 +251,13 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
                     ? review.dailyFocusStep : review.weeklyContextStep;
                 if (!same(toggle.edit, request.edit))
                     return fail('INVALID_INPUT', 'GTD Review choice is unavailable');
+            } else if (isInbox(request.edit.type)) {
+                const inbox = inboxFor(read.value.authority.snapshot);
+                const toggle = request.edit.type === 'inboxTwoMinute' ? inbox.twoMinute
+                    : request.edit.type === 'inboxProjectFirst' ? inbox.projectFirst
+                        : request.edit.type === 'inboxContextStep' ? inbox.contextStep : inbox.schedule;
+                if (!same(toggle.edit, request.edit))
+                    return fail('INVALID_INPUT', 'GTD Inbox choice is unavailable');
             } else {
                 const hub = hubFor(read.value.authority.snapshot);
                 if (request.edit.type === 'focusTaskLimit'

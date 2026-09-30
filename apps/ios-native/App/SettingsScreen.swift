@@ -41,15 +41,16 @@ struct SettingsScreen: View {
                           || (model.settingsGtdPresented ? model.gtdWorkflowPending : model.generalPreferenceActive) || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
                           || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
                 .accessibilityLabel(model.label("common.back"))
-                .accessibilityIdentifier(model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
-                Text(model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
+                .accessibilityIdentifier(model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
+                Text(model.settingsGtdInboxPresented ? (model.gtdInbox.text("title").isEmpty ? model.label("settings.inboxProcessing") : model.gtdInbox.text("title")) : model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
                     .rnFont(20, .bold).foregroundStyle(palette.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
             }
             .padding(.horizontal, 12).padding(.vertical, 5)
             .background(palette.card)
-            if model.settingsGtdReviewPresented { gtdReviewContent }
+            if model.settingsGtdInboxPresented { gtdInboxContent }
+            else if model.settingsGtdReviewPresented { gtdReviewContent }
             else if model.settingsGtdPresented { gtdContent }
             else if model.settingsGeneralPresented { generalContent }
             else if model.settingsManagePresented { manageContent }
@@ -266,17 +267,37 @@ struct SettingsScreen: View {
                     VStack(alignment: .leading, spacing: 12) {
                         generalSettingLabel(model.gtdReview.object(group), description: "description")
                         palette.border.frame(height: 0.5)
-                        Toggle(isOn: Binding(get: { row.flag("value") }, set: { _ in
-                            Task { await model.chooseGtdWorkflow(row.object("edit")) }
-                        })) { generalSettingLabel(row, description: "description") }
-                            .disabled(!model.gtdWorkflowEnabled).frame(minHeight: 44)
-                            .tint(palette.tint)
-                            .accessibilityIdentifier("gtd-" + row.object("edit").text("type"))
+                        gtdToggle(row)
                     }.padding(14).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
                 }
                 gtdFeedback
             }.padding(16).padding(.bottom, 24)
         }.accessibilityIdentifier("gtd-review-scroll")
+    }
+
+    private var gtdInboxContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(model.gtdInbox.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 0) {
+                    ForEach(["twoMinute", "projectFirst", "contextStep", "schedule"], id: \.self) { field in
+                        if field != "twoMinute" { palette.border.frame(height: 0.5) }
+                        gtdToggle(model.gtdInbox.object(field)).padding(14)
+                    }
+                }.background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                gtdFeedback
+            }.padding(16).padding(.bottom, 24)
+        }.accessibilityIdentifier("gtd-inbox-scroll")
+    }
+
+    private func gtdToggle(_ row: CoreObject) -> some View {
+        Toggle(isOn: Binding(get: { row.flag("value") }, set: { _ in
+            Task { await model.chooseGtdWorkflow(row.object("edit")) }
+        })) { generalSettingLabel(row, description: "description") }
+            .disabled(!model.gtdWorkflowEnabled).frame(minHeight: 44)
+            .tint(palette.tint)
+            .accessibilityIdentifier("gtd-" + row.object("edit").text("type"))
     }
 
     @ViewBuilder private var gtdFeedback: some View {
@@ -295,7 +316,7 @@ struct SettingsScreen: View {
         return VStack(spacing: 0) {
             if divider { palette.border.frame(height: 0.5) }
             Button {
-                if field == "review" { Task { await model.openGtdReviewSettings(); gtdTimeFocused = false } }
+                if ["review", "inbox"].contains(field) { Task { await model.openGtdSubpage(field); gtdTimeFocused = false } }
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -305,8 +326,8 @@ struct SettingsScreen: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: "chevron.right").foregroundStyle(palette.secondary).accessibilityHidden(true)
                 }.padding(14).frame(minHeight: 48)
-            }.buttonStyle(.plain).disabled(field != "review" || !model.gtdWorkflowEnabled)
-                .opacity(field == "review" ? 1 : 0.55).accessibilityIdentifier("gtd-" + field)
+            }.buttonStyle(.plain).disabled(!["review", "inbox"].contains(field) || !model.gtdWorkflowEnabled)
+                .opacity(["review", "inbox"].contains(field) ? 1 : 0.55).accessibilityIdentifier("gtd-" + field)
         }
     }
 

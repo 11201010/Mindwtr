@@ -12866,4 +12866,141 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+
+    private func task105Open(_ app: XCUIApplication) {
+        if !app.buttons["gtd-inbox-back"].exists {
+            task103Open(app)
+            revealPagedElement(app, app.buttons["gtd-inbox"], in: app.scrollViews["gtd-scroll"])
+            boardTap(app, "gtd-inbox")
+        }
+        boardEnabled(app.buttons["gtd-inbox-back"], timeout: 30)
+    }
+
+    private func task105Toggle(_ app: XCUIApplication, _ type: String, on: Bool) {
+        let control = app.switches["gtd-" + type]
+        revealPagedElement(app, control, in: app.scrollViews["gtd-inbox-scroll"])
+        boardEnabled(control)
+        if control.value as? String != (on ? "1" : "0") { control.tap() }
+        expectation(for: NSPredicate(format: "value == %@ AND enabled == true", on ? "1" : "0"), evaluatedWith: control)
+        waitForExpectations(timeout: 30)
+    }
+
+    private func task105Normal(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task103Open(app)
+        let input = app.textFields["gtd-defaultScheduleTime"]
+        revealPagedElement(app, input, in: app.scrollViews["gtd-scroll"])
+        replaceTextView(input, with: "930", tapOffset: CGVector(dx: 0.5, dy: 0.5))
+        task105Open(app)
+        let fields = [("inboxTwoMinute", true), ("inboxProjectFirst", false), ("inboxContextStep", true), ("inboxSchedule", false)]
+        for (type, initial) in fields {
+            XCTAssertEqual(app.switches["gtd-" + type].value as? String, initial ? "1" : "0")
+            task105Toggle(app, type, on: !initial)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "GTD Inbox switches"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task105Open(app)
+        for (type, initial) in fields {
+            XCTAssertEqual(app.switches["gtd-" + type].value as? String, initial ? "0" : "1")
+            task105Toggle(app, type, on: initial)
+        }
+        boardTap(app, "gtd-inbox-back"); boardEnabled(app.buttons["gtd-back"])
+        XCTAssertEqual(input.value as? String, "09:30")
+        let focus = task103Option(app, "focusTaskLimit", "3"); focus.tap()
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: focus)
+        waitForExpectations(timeout: 20)
+        boardTap(app, "gtd-back"); boardEnabled(app.buttons["settings-back"])
+        app.terminate()
+    }
+
+    func testGtdInboxNormal() { task105Normal("ad9ce2df-a050-4899-9394-289787002f70") }
+    func testGtdInboxLargest() { task105Normal("b76f2d37-315e-4ad2-b367-accf4d4cf46e") }
+
+    func testGtdInboxAcknowledgedReadRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "3529fb7c-5173-4f39-98e7-708d5d00f479", "--native-gtd-workflow-read-failure"]
+        app.launch(); task105Open(app)
+        task105RevealSchedule(app).tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-inbox-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-inbox-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-inbox-back"], timeout: 30)
+        XCTAssertEqual(app.switches["gtd-inboxSchedule"].value as? String, "1")
+        app.terminate()
+    }
+
+    private func task105RevealSchedule(_ app: XCUIApplication) -> XCUIElement {
+        let control = app.switches["gtd-inboxSchedule"]
+        revealPagedElement(app, control, in: app.scrollViews["gtd-inbox-scroll"])
+        boardEnabled(control); return control
+    }
+
+    func testGtdInboxRefusalCorrection() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "d40ccf5d-7760-4888-9d6a-cb3a0e8fe3ac", "--native-gtd-workflow-refusal"]
+        app.launch(); task105Open(app); task105RevealSchedule(app).tap()
+        XCTAssertTrue(app.staticTexts["gtd-error"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.switches["gtd-inboxSchedule"].value as? String, "0")
+        task105Toggle(app, "inboxSchedule", on: true)
+        app.terminate()
+    }
+
+    func testGtdInboxFailedSaveExactRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "67c41220-46f9-4300-8176-58827206a912"]
+        app.launch(); task105Open(app); task105RevealSchedule(app).tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-inbox-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-inbox-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-retry"], timeout: 30); app.terminate()
+    }
+
+    func testGtdInboxColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "67c41220-46f9-4300-8176-58827206a912"]
+        app.launch(); boardEnabled(app.buttons["gtd-inbox-back"], timeout: 30)
+        XCTAssertEqual(app.switches["gtd-inboxSchedule"].value as? String, "1")
+        XCTAssertFalse(app.buttons["gtd-retry"].exists); app.terminate()
+    }
+
+    func testGtdInboxConsumerAfterRestart() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "7e14057b-e506-490c-a87f-8bdd6222797f"]
+        func process(_ changed: Bool) {
+            boardEnabled(app.buttons["tab-inbox"], timeout: 30); boardTap(app, "tab-inbox")
+            boardTap(app, "inbox-process-primary"); boardEnabled(app.buttons["process-inbox-close"])
+            boardTap(app, "process-inbox-mode"); boardEnabled(app.buttons["process-inbox-choice-next"])
+            XCTAssertEqual(app.buttons["process-inbox-choice-done"].exists, !changed)
+            boardTap(app, "process-inbox-mode"); boardEnabled(app.buttons["process-inbox-choice-actionable"])
+            let scroll = app.scrollViews["process-inbox-scroll"]
+            var choices = ["process-inbox-choice-actionable"]
+            if !changed { choices.append("process-inbox-choice-no") }
+            choices += ["process-inbox-choice-defer", "process-inbox-choice-single"]
+            for id in choices {
+                revealPagedElement(app, app.buttons[id], in: scroll); boardTap(app, id)
+            }
+            boardEnabled(app.buttons["process-inbox-file"])
+            XCTAssertEqual(app.textFields["process-inbox-context-input"].exists, !changed)
+            XCTAssertTrue(app.textFields["process-inbox-project-search"].exists)
+            let more = app.buttons["process-inbox-more"]
+            revealPagedElement(app, more, in: scroll)
+            if more.value as? String == "Expand" { boardTap(app, "process-inbox-more") }
+            expectation(for: NSPredicate(format: "value == %@", "Collapse"), evaluatedWith: more)
+            waitForExpectations(timeout: 20)
+            if changed { XCTAssertTrue(app.buttons["process-inbox-date-startTime"].waitForExistence(timeout: 20)) }
+            XCTAssertEqual(app.buttons["process-inbox-date-startTime"].exists, changed)
+            XCTAssertEqual(app.buttons["process-inbox-date-dueDate"].exists, changed)
+            boardTap(app, "process-inbox-close"); boardEnabled(app.buttons["tab-menu"])
+        }
+        app.launch(); process(false); task105Open(app)
+        for (type, on) in [("inboxTwoMinute", false), ("inboxProjectFirst", true), ("inboxContextStep", false), ("inboxSchedule", true)] {
+            task105Toggle(app, type, on: on)
+        }
+        app.terminate(); app.launch(); process(true); app.terminate()
+    }
+
 }
