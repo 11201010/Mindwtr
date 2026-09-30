@@ -669,6 +669,7 @@ final class CoreModel: ObservableObject {
     private var generalPreferenceTestReadFailures = 0
     private var generalPreferenceMenuTestReadFailures = 0
     private var generalPreferenceThemeTestReadFailures = 0
+    private var generalPreferenceLanguageTestReadFailures = 0
     private var generalPreferenceOptionsTestFailure = false
     private var generalPreferenceTestRefusals = 0
     private var manageTaxonomyTestReadFailures = 0
@@ -882,7 +883,7 @@ final class CoreModel: ObservableObject {
     private var preference = "nativeFoundation.capture.addAnother"
     private var storedLanguage = ""
     private var storedTheme = ""
-    private var themePreferencePrefix = ""
+    private var devicePreferencePrefix = ""
     private var initialAddAnother = false
 
     var focusControlsEnabled: Bool {
@@ -1645,6 +1646,7 @@ final class CoreModel: ObservableObject {
                     generalPreferenceTestReadFailures = arguments.contains("--native-general-preference-read-failure") ? 2 : 0
                     generalPreferenceMenuTestReadFailures = arguments.contains("--native-general-preference-menu-read-failure") ? 2 : 0
                     generalPreferenceThemeTestReadFailures = arguments.contains("--native-general-preference-theme-read-failure") ? 2 : 0
+                    generalPreferenceLanguageTestReadFailures = arguments.contains("--native-general-preference-language-read-failure") ? 2 : 0
                     generalPreferenceOptionsTestFailure = arguments.contains("--native-general-preference-options-failure")
                     generalPreferenceTestRefusals = arguments.contains("--native-general-preference-refusal") ? 1 : 0
                     manageTaxonomyTestReadFailures = arguments.contains("--native-manage-taxonomy-read-failure") ? 2 : 0
@@ -1679,7 +1681,7 @@ final class CoreModel: ObservableObject {
                     let legacy = try LegacyRNStorage(containerURL: container, bundleIdentifier: identifier)
                     storedLanguage = try legacy.value(forKey: "mindwtr-language") ?? ""
                     storedTheme = try legacy.value(forKey: "@mindwtr_theme") ?? ""
-                    themePreferencePrefix = "nativeRNRehearsal."
+                    devicePreferencePrefix = "nativeRNRehearsal."
                     initialAddAnother = try legacy.value(forKey: "mindwtr:quickCapture:addAnother") == "true"
                     preference = "nativeRNRehearsal.capture.addAnother"
                     initialProjectShowCompleted = try legacy.value(forKey: "mindwtr:view:project-detail:show-completed:v1") == "true"
@@ -1744,7 +1746,8 @@ final class CoreModel: ObservableObject {
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 }
             }
-            storedTheme = preferenceDefaults.object(forKey: themePreferencePrefix + "@mindwtr_theme") as? String ?? storedTheme
+            storedLanguage = preferenceDefaults.object(forKey: devicePreferencePrefix + "mindwtr-language") as? String ?? storedLanguage
+            storedTheme = preferenceDefaults.object(forKey: devicePreferencePrefix + "@mindwtr_theme") as? String ?? storedTheme
             projectShowCompleted = (preferenceDefaults.object(forKey: projectShowCompletedPreference) as? Bool)
                 ?? initialProjectShowCompleted
             if preferenceDefaults.object(forKey: manageOpenSectionsPreference) == nil,
@@ -1825,47 +1828,7 @@ final class CoreModel: ObservableObject {
                 // The durable data recovered, but the in-memory queue did not.
                 selectedSurface = .inbox
             }
-            let resolvedLanguage = try await query("language", [storedLanguage, Locale.preferredLanguages.first ?? Locale.current.identifier])
-            guard let uiLanguage = resolvedLanguage["language"] as? String, !uiLanguage.isEmpty else { throw CocoaError(.coderReadCorrupt) }
-            // Keep UI language selection while supplying the actual regional locale to shared policy.
-            _ = try await query("language", [uiLanguage, Locale.current.identifier])
-            let keys = ["tab.next", "tab.inbox", "tab.review", "tab.menu", "nav.addTask", "search.title",
-                        "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading",
-                        "task.aria.changeStatus", "task.aria.changeStatusHint", "quickAdd.audioRecord",
-                        "common.more", "agenda.reviewDueProjects", "agenda.laterToday",
-                        "agenda.addToFocus", "agenda.removeFromFocus",
-                        "agenda.collapseOtherSections", "agenda.expandOtherSections", "markdown.expand", "markdown.collapse",
-                        "projects.areaFilter", "filters.excluded", "taskEdit.tab.view", "common.notSet", "status.active", "status.waiting", "status.someday",
-                        "common.save", "common.edit", "common.rename", "common.discard", "taskEdit.discardChanges", "taskEdit.discardChangesDesc",
-                        "markdown.edit", "markdown.preview", "taskEdit.titleLabel", "taskEdit.descriptionLabel",
-                        "taskEdit.descriptionPlaceholder", "search.placeholder", "search.noResults", "search.searching",
-                        "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators",
-                        "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone",
-                        "nav.projects", "nav.review", "nav.calendar", "nav.board", "nav.contexts", "common.back", "common.tasks",
-                        "task.aria.openContext", "task.aria.openTag",
-                        "projects.title", "projects.activeSection", "projects.deferredSection", "projects.closed",
-                        "projects.noArea", "projects.empty", "list.noTasks", "projects.noNextAction",
-                        "projects.addPlaceholder", "projects.add", "projects.tagFilter", "projects.allTags", "projects.noTags", "projects.emptyTag",
-                        "filters.show", "filters.hide", "projects.areaLabel",
-                        "projects.areaAvailableSelectToAssign", "common.add",
-                        "taskEdit.details", "projects.statusLabel", "projects.projectTypeLabel", "projects.sequentialScope",
-                        "projects.sequentialAcrossSections", "projects.sequentialWithinSections",
-                        "projects.projectTypeHelpText", "projects.sequentialScopeHelpText",
-                        "projects.sectionsLabel", "projects.addSection", "projects.sectionPlaceholder", "projects.deleteSectionConfirm", "settings.manage", "settings.general", "taskEdit.tagsLabel", "taskEdit.startDateLabel", "taskEdit.dueDateLabel",
-                        "projects.reviewAt", "common.none",
-                        "project.notes",
-                        "areas.manage", "areas.nameExists", "projects.manageAreas", "projects.changeColor", "projects.colorNone",
-                        "projects.sortByName", "projects.sortByColor", "projects.moveUp", "projects.moveDown", "projects.areaInUse",
-                        "common.delete",
-                        "projects.addToFocus", "projects.removeFromFocus", "projects.actionsLabel", "waiting.title",
-                        "someday.title", "common.search", "filters.contexts", "filters.projects", "filters.timeEstimate",
-                        "filters.more", "filters.priority", "filters.remove", "filters.active", "filters.clear", "taskEdit.energyLevel",
-                        "taskEdit.locationLabel", "taskEdit.locationPlaceholder", "reference.title", "nav.history", "nav.trash",
-                        "filters.matchAny", "filters.contextMatchMode", "filters.tagMatchMode",
-                        "sort.label", "list.groupBy", "taskEdit.moreOptions", "dailyReview.completeDesc",
-                        "settings.feedback.saveFailed", "settings.feedback.actionFailed",
-                        "viewSections.add", "viewSections.nameHint", "viewSections.namePlaceholder", "viewSections.updateFailed"]
-            strings = try await query("strings", [try json(keys)]).object("strings")
+            try await readLanguage()
             try await readTheme()
             if boardRecoveredResult != nil { selectedSurface = .board }
             if calendarComposerRecoveredResult != nil { selectedSurface = .calendar }
@@ -1903,6 +1866,7 @@ final class CoreModel: ObservableObject {
         busy = true
         defer { finishOperation() }
         do {
+            try await readLanguage()
             try await readTheme()
             try await readSelectedSurface()
             error = nil
@@ -2041,7 +2005,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openGeneralPreferencePicker(_ type: String) {
-        guard generalPreferenceEnabled, ["weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem", "theme"].contains(type) else { return }
+        guard generalPreferenceEnabled, ["weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem", "theme", "language"].contains(type) else { return }
         guard type != "calendarSystem" || generalSettings.object("regional")["calendarSystem"] is CoreObject else { return }
         generalPreferencePicker = type
         generalPreferenceError = nil
@@ -2056,13 +2020,79 @@ final class CoreModel: ObservableObject {
         let options = try await query("generalPreferenceOptions", [try json(["deviceTheme": storedTheme])])
         let model = options.object("model")
         let expected = options.object("expected")
-        guard !model.text("title").isEmpty, model["appearance"] is CoreObject, model["regional"] is CoreObject,
-              Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem", "theme"]) else {
+        guard !model.text("title").isEmpty, model["appearance"] is CoreObject, model["regional"] is CoreObject, model["language"] is CoreObject,
+              Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem", "theme", "language"]) else {
             throw CocoaError(.coderReadCorrupt)
         }
         generalSettings = model
         generalPreferenceExpected = expected
         generalPreferenceReadError = nil
+    }
+
+    private func readLanguage() async throws {
+        let localHint = storedLanguage.utf16.count <= 500 ? storedLanguage : ""
+        let resolved = try await query("languageSaved", [localHint, Locale.preferredLanguages.first ?? Locale.current.identifier])
+        guard Set(resolved.keys) == Set(["language", "deviceWrites"]),
+              let uiLanguage = resolved["language"] as? String, !uiLanguage.isEmpty, uiLanguage.utf16.count <= 500,
+              let writes = resolved["deviceWrites"] as? [CoreObject], writes.count <= 1 else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        if let write = writes.first {
+            guard Set(write.keys) == Set(["key", "value"]), write["key"] as? String == "mindwtr-language",
+                  write["value"] as? String == uiLanguage else { throw CocoaError(.coderReadCorrupt) }
+        }
+        // UI translation and the actual regional locale remain separate shared inputs.
+        _ = try await query("language", [uiLanguage, Locale.current.identifier])
+        try await readStrings()
+        if !writes.isEmpty {
+            let key = devicePreferencePrefix + "mindwtr-language"
+            if preferenceDefaults.object(forKey: key) as? String != uiLanguage { preferenceDefaults.set(uiLanguage, forKey: key) }
+            storedLanguage = uiLanguage
+        }
+    }
+
+    private func readStrings() async throws {
+        let keys = ["tab.next", "tab.inbox", "tab.review", "tab.menu", "nav.addTask", "search.title",
+                    "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading",
+                    "task.aria.changeStatus", "task.aria.changeStatusHint", "quickAdd.audioRecord",
+                    "common.more", "agenda.reviewDueProjects", "agenda.laterToday",
+                    "agenda.addToFocus", "agenda.removeFromFocus",
+                    "agenda.collapseOtherSections", "agenda.expandOtherSections", "markdown.expand", "markdown.collapse",
+                    "projects.areaFilter", "filters.excluded", "taskEdit.tab.view", "common.notSet", "status.active", "status.waiting", "status.someday",
+                    "common.save", "common.edit", "common.rename", "common.discard", "taskEdit.discardChanges", "taskEdit.discardChangesDesc",
+                    "markdown.edit", "markdown.preview", "taskEdit.titleLabel", "taskEdit.descriptionLabel",
+                    "taskEdit.descriptionPlaceholder", "search.placeholder", "search.noResults", "search.searching",
+                    "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators",
+                    "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone",
+                    "nav.projects", "nav.review", "nav.calendar", "nav.board", "nav.contexts", "common.back", "common.tasks",
+                    "task.aria.openContext", "task.aria.openTag",
+                    "projects.title", "projects.activeSection", "projects.deferredSection", "projects.closed",
+                    "projects.noArea", "projects.empty", "list.noTasks", "projects.noNextAction",
+                    "projects.addPlaceholder", "projects.add", "projects.tagFilter", "projects.allTags", "projects.noTags", "projects.emptyTag",
+                    "filters.show", "filters.hide", "projects.areaLabel",
+                    "projects.areaAvailableSelectToAssign", "common.add",
+                    "taskEdit.details", "projects.statusLabel", "projects.projectTypeLabel", "projects.sequentialScope",
+                    "projects.sequentialAcrossSections", "projects.sequentialWithinSections",
+                    "projects.projectTypeHelpText", "projects.sequentialScopeHelpText",
+                    "projects.sectionsLabel", "projects.addSection", "projects.sectionPlaceholder", "projects.deleteSectionConfirm", "settings.manage", "settings.general", "taskEdit.tagsLabel", "taskEdit.startDateLabel", "taskEdit.dueDateLabel",
+                    "projects.reviewAt", "common.none",
+                    "project.notes",
+                    "areas.manage", "areas.nameExists", "projects.manageAreas", "projects.changeColor", "projects.colorNone",
+                    "projects.sortByName", "projects.sortByColor", "projects.moveUp", "projects.moveDown", "projects.areaInUse",
+                    "common.delete",
+                    "projects.addToFocus", "projects.removeFromFocus", "projects.actionsLabel", "waiting.title",
+                    "someday.title", "common.search", "filters.contexts", "filters.projects", "filters.timeEstimate",
+                    "filters.more", "filters.priority", "filters.remove", "filters.active", "filters.clear", "taskEdit.energyLevel",
+                    "taskEdit.locationLabel", "taskEdit.locationPlaceholder", "reference.title", "nav.history", "nav.trash",
+                    "filters.matchAny", "filters.contextMatchMode", "filters.tagMatchMode",
+                    "sort.label", "list.groupBy", "taskEdit.moreOptions", "dailyReview.completeDesc",
+                    "settings.feedback.saveFailed", "settings.feedback.actionFailed",
+                    "viewSections.add", "viewSections.nameHint", "viewSections.namePlaceholder", "viewSections.updateFailed"]
+        let result = try await query("strings", [try json(keys)])
+        guard let translated = result["strings"] as? CoreObject, translated.values.allSatisfy({ $0 is String }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        strings = translated
     }
 
     private func readTheme() async throws {
@@ -2085,7 +2115,7 @@ final class CoreModel: ObservableObject {
         }
         // These core-approved mirrors follow the saved field; cold startup reconciles an interrupted pair.
         for (name, value) in mirrors {
-            let key = themePreferencePrefix + name
+            let key = devicePreferencePrefix + name
             if preferenceDefaults.object(forKey: key) as? String != value { preferenceDefaults.set(value, forKey: key) }
         }
         if let value = mirrors["@mindwtr_theme"] { storedTheme = value }
@@ -2138,7 +2168,12 @@ final class CoreModel: ObservableObject {
     private func refreshGeneralPreference() async {
         guard settingsGeneralPresented, generalPreferenceRequest == nil else { return }
         do {
-            try await readGeneralSettings()
+            if generalPreferenceEdit.text("type") == "language" {
+                try await readLanguage()
+                try await readSelectedSurface()
+            } else {
+                try await readGeneralSettings()
+            }
             if generalPreferenceEdit.text("type") == "quickAccessView" {
                 moreMenu = try await query("menuRead", ["more", "{}"])
             }
@@ -15225,6 +15260,10 @@ final class CoreModel: ObservableObject {
         }
         if method == "menuRead", args.first as? String == "more", generalPreferenceAcknowledged, generalPreferenceMenuTestReadFailures > 0 {
             generalPreferenceMenuTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "strings", generalPreferenceAcknowledged, generalPreferenceLanguageTestReadFailures > 0 {
+            generalPreferenceLanguageTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
         if method == "theme", generalPreferenceAcknowledged, generalPreferenceThemeTestReadFailures > 0 {

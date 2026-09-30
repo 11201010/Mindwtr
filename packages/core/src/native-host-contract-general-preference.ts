@@ -3,6 +3,7 @@ import { buildGeneralSettingsUpdate, isGeneralSettingStored, MOBILE_QUICK_ACCESS
 import { generalPreferenceWitness, legacyGeneralPreferenceNumber,
     type GeneralPreferenceType, type GeneralPreferenceWitness } from './general-preference-witness';
 import { SETTINGS_THEME_VALUES } from './settings-options';
+import { SUPPORTED_LANGUAGES } from './i18n/i18n-constants';
 import { taskEditValuesEqual } from './json-value-equality';
 import { readAreaDurableData, createAreaSaveGuard } from './native-host-contract-area-durable';
 import type { NativeHostResult } from './native-host-contract';
@@ -28,7 +29,7 @@ export type NativeGeneralPreferencePreparation = { kind: 'noop'; result: NativeG
     | { kind: 'prepared'; prepared: NativePreparedGeneralPreference };
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const TYPES: GeneralPreferenceType[] = ['showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat', 'calendarSystem', 'theme'];
+const TYPES: GeneralPreferenceType[] = ['showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat', 'calendarSystem', 'theme', 'language'];
 const VALUES: Record<Exclude<GeneralPreferenceType, 'showTaskAge'>, readonly string[]> = {
     quickAccessView: MOBILE_QUICK_ACCESS_VIEW_OPTIONS,
     weekStart: ['system', 'sunday', 'monday', 'saturday'],
@@ -36,6 +37,7 @@ const VALUES: Record<Exclude<GeneralPreferenceType, 'showTaskAge'>, readonly str
     timeFormat: ['system', '12h', '24h'],
     calendarSystem: ['gregorian', 'jalali'],
     theme: SETTINGS_THEME_VALUES,
+    language: SUPPORTED_LANGUAGES,
 };
 const same = taskEditValuesEqual;
 const bounded = (value: unknown, max = 500): value is string => typeof value === 'string' && value.length <= max;
@@ -57,6 +59,7 @@ const validWitness = (value: unknown, type: GeneralPreferenceType): value is Gen
     && typeof value.present === 'boolean' && typeof value.stampPresent === 'boolean'
     && (value.present ? type === 'showTaskAge' ? typeof value.value === 'boolean'
         : bounded(value.value) || type !== 'quickAccessView' && type !== 'calendarSystem' && type !== 'theme'
+            && type !== 'language'
             && legacyGeneralPreferenceNumber(value.value)
         : value.value === null)
     && (value.stampPresent ? iso(value.stamp) : value.stamp === null);

@@ -10,6 +10,7 @@ import {
     diagnosticsEntryFromLogPayload,
     getGeneralSettingsDeviceWrites,
     getPersistenceStatus,
+    isSupportedLanguage,
     isDiagnosticsLoggingEnabled,
     legacyImportMismatch,
     assertNativeLegacyBackupSafe,
@@ -601,6 +602,22 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
 };
 
 let bootAdapter: ValidatedSqliteAdapter | null = null;
+/** A current, settled Settings-only read for device-key reconciliation; null never authorizes a mirror. */
+const savedSettingsIfSettled = async (settingsReference: unknown): Promise<Record<string, unknown> | null> => {
+    const before = getPersistenceStatus();
+    if (!bootAdapter || before.failed || before.queued || before.inFlight || before.immediate || before.retrying) return null;
+    const row = await sqlite.get<{ data: string }>('SELECT data FROM settings WHERE id = 1');
+    let saved: unknown = {};
+    if (row) {
+        try { saved = JSON.parse(row.data); }
+        catch { throw new Error('Invalid settings load'); }
+    }
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings load');
+    const after = getPersistenceStatus();
+    return useTaskStore.getState().settings === settingsReference && after.generation === before.generation
+        && !after.failed && !after.queued && !after.inFlight && !after.immediate && !after.retrying
+        ? saved as Record<string, unknown> : null;
+};
 const activateAndVerify = async (adapter: ValidatedSqliteAdapter, recoveryLoad = false) => {
     unwrap(await contract.activate(recoveryLoad ? { writeSafetyReady: true, recoveryLoad: true } : { writeSafetyReady: true }));
     await flushPendingSave();
@@ -756,6 +773,27 @@ globalThis.MindwtrHost = {
     language(stored: string, system: string): string {
         return submit(async () => unwrap(await contract.setLanguage({ storedLanguage: stored || null, systemLocale: system || null })));
     },
+    /** Opt-in iOS read: a settled synced language wins; the legacy device-key route above is unchanged. */
+    languageSaved(stored: string, system: string): string {
+        return submit(async () => {
+            if (!bootAdapter) throw new Error('Native storage has not been loaded and validated');
+            if (typeof stored !== 'string' || stored.length > 500 || typeof system !== 'string' || system.length > 500)
+                throw new Error('INVALID_INPUT: Language hints must be bounded strings');
+            const state = useTaskStore.getState();
+            const generation = getPersistenceStatus().generation;
+            const saved = await savedSettingsIfSettled(state.settings);
+            const raw = saved?.language;
+            const synced = typeof raw === 'string' && isSupportedLanguage(raw) ? raw : null;
+            const winner = synced ?? (stored || null);
+            const resolved = unwrap(await contract.setLanguage({ storedLanguage: winner, systemLocale: system || null }));
+            const after = getPersistenceStatus();
+            const deviceWrites = synced !== null && synced === state.settings?.language
+                && useTaskStore.getState().settings === state.settings && after.generation === generation
+                && !after.failed && !after.queued && !after.inFlight && !after.immediate && !after.retrying
+                ? getGeneralSettingsDeviceWrites({ type: 'language', value: synced }) : [];
+            return { language: resolved.language, deviceWrites };
+        });
+    },
     /** `keysJson` is a JSON array of core i18n keys. */
     strings(keysJson: string): string {
         return submit(async () => unwrap(contract.getStrings({ keys: JSON.parse(keysJson) as string[] })));
@@ -778,22 +816,14 @@ globalThis.MindwtrHost = {
             // A failed or in-flight save can leave the store showing an optimistic theme.
             // Only the canonical saved Settings row may authorize local mirrors.
             let deviceWrites: ReturnType<typeof getGeneralSettingsDeviceWrites> = [];
-            const before = getPersistenceStatus();
-            if (bootAdapter && !before.failed && !before.queued && !before.inFlight && !before.immediate && !before.retrying) {
-                const row = await sqlite.get<{ data: string }>('SELECT data FROM settings WHERE id = 1');
-                let saved: unknown = {};
-                if (row) {
-                    try { saved = JSON.parse(row.data); }
-                    catch { throw new Error('Invalid settings load'); }
-                }
-                if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid settings load');
-                const raw = (saved as { theme?: unknown }).theme;
-                const after = getPersistenceStatus();
-                if (useTaskStore.getState().settings === state.settings && after.generation === before.generation
-                    && !after.failed && !after.queued && !after.inFlight && !after.immediate && !after.retrying
-                    && raw === synced && typeof raw === 'string' && (raw === 'system' || themeDescriptor(raw))) {
-                    deviceWrites = getGeneralSettingsDeviceWrites({ type: 'theme', value: raw as AppTheme });
-                }
+            const generation = getPersistenceStatus().generation;
+            const saved = await savedSettingsIfSettled(state.settings);
+            const raw = saved?.theme;
+            const after = getPersistenceStatus();
+            if (raw === synced && typeof raw === 'string' && (raw === 'system' || themeDescriptor(raw))
+                && useTaskStore.getState().settings === state.settings && after.generation === generation
+                && !after.failed && !after.queued && !after.inFlight && !after.immediate && !after.retrying) {
+                deviceWrites = getGeneralSettingsDeviceWrites({ type: 'theme', value: raw as AppTheme });
             }
             return {
                 mode,

@@ -4614,7 +4614,7 @@ final class FoundationUITests: XCTestCase {
     private func task97Picker(_ app: XCUIApplication, _ type: String) {
         let scroll = app.scrollViews["general-scroll"]
         let toggle = app.buttons["general-regional-toggle"]
-        if !["quickAccessView", "theme"].contains(type) {
+        if !["quickAccessView", "theme", "language"].contains(type) {
             revealPagedElement(app, toggle, in: scroll)
             if toggle.value as? String == "collapsed" { boardTap(app, "general-regional-toggle") }
         }
@@ -4623,9 +4623,9 @@ final class FoundationUITests: XCTestCase {
         boardTap(app, "general-" + type)
         XCTAssertTrue(app.buttons["general-picker-cancel"].waitForExistence(timeout: 10))
         XCTAssertGreaterThanOrEqual(app.buttons["general-picker-cancel"].frame.height, 44 - 0.001)
-        if type == "theme" {
+        if ["theme", "language"].contains(type) {
             // A full swipe expands the native sheet before precise row-sized scrolls.
-            app.scrollViews.containing(.button, identifier: "general-option-system").firstMatch.swipeUp()
+            app.scrollViews.containing(.button, identifier: "general-option-" + (type == "language" ? "en" : "system")).firstMatch.swipeUp()
         }
     }
 
@@ -5029,6 +5029,89 @@ final class FoundationUITests: XCTestCase {
         app.launch(); task97Open(app); task97Picker(app, "theme")
         let option = app.buttons["general-option-material3-dark"]
         revealPagedElement(app, option, in: app.scrollViews.containing(.button, identifier: "general-option-material3-dark").firstMatch)
+        XCTAssertTrue(option.isSelected)
+        boardTap(app, "general-picker-cancel"); app.terminate()
+    }
+
+
+    private func task101Normal(_ library: String, initial: String = "en", rtl: Bool = false, values: [String] = ["es", "fa", "ar", "en"]) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library, "-AppleLanguages", rtl ? "(ar)" : "(en)", "-AppleLocale", rtl ? "ar_SA" : "en_US"]
+        app.launch(); task97Open(app); task97Picker(app, "language")
+        let initialOption = app.buttons["general-option-" + initial]
+        revealPagedElement(app, initialOption, in: app.scrollViews.containing(.button, identifier: "general-option-" + initial).firstMatch)
+        XCTAssertTrue(initialOption.isSelected)
+        boardTap(app, "general-picker-cancel")
+        for value in values {
+            task97Picker(app, "language"); task97Choose(app, value)
+            let regional = app.buttons["general-regional-toggle"]
+            revealPagedElement(app, regional, in: app.scrollViews["general-scroll"])
+            if regional.value as? String == "collapsed" { boardTap(app, "general-regional-toggle") }
+            XCTAssertEqual(app.buttons["general-calendarSystem"].exists, value == "fa")
+            boardTap(app, "general-regional-toggle")
+            task97Picker(app, "language")
+            let option = app.buttons["general-option-" + value]
+            revealPagedElement(app, option, in: app.scrollViews.containing(.button, identifier: "general-option-" + value).firstMatch)
+            XCTAssertTrue(option.isSelected)
+            XCTAssertEqual(app.buttons["general-picker-cancel"].label == "Cancel", value == "en")
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Language " + value; shot.lifetime = .keepAlways; add(shot)
+            task97Choose(app, value)
+        }
+        app.terminate(); app.launch(); task97Open(app); task97Picker(app, "language")
+        let selected = app.buttons["general-option-en"]
+        revealPagedElement(app, selected, in: app.scrollViews.containing(.button, identifier: "general-option-en").firstMatch)
+        XCTAssertTrue(selected.isSelected); XCTAssertEqual(app.buttons["general-picker-cancel"].label, "Cancel")
+        boardTap(app, "general-picker-cancel"); app.terminate()
+    }
+    func testGeneralLanguageOverlongDeviceFallback() { task101Normal("d8973e8f-3043-4ca5-a868-1e4fdce247f9", values: ["es", "en"]) }
+    func testGeneralLanguageNormal() { task101Normal("44e4fe46-ecc8-4093-870f-386f38e2aff2") }
+    func testGeneralLanguageLargest() { task101Normal("b0f0a4e8-ecdf-481e-a54a-e31edb3dd8f8", values: ["fa", "en"]) }
+    func testGeneralLanguageDeviceFallback() { task101Normal("918e8af2-a500-48fe-b4bb-d5974e91764c", initial: "es", values: ["es", "en"]) }
+    func testGeneralLanguageUnknown() { task101Normal("2c97942d-2131-426b-8f40-796c349e9e02", initial: "es", values: ["es", "en"]) }
+    func testGeneralLanguageRTLDevice() { task101Normal("82c479ed-2c72-4c07-a599-985153456e6a", rtl: true, values: ["fa", "ar", "en"]) }
+
+    func testGeneralLanguageReadFailure() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "56582d31-c5c3-42b8-8b77-dfef26cc5cae"] + ["--native-general-preference-language-read-failure"]
+        app.launch(); task97Open(app); task97Picker(app, "language"); task97Choose(app, "es", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["general-picker-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["general-option-es"].isEnabled)
+            let retry = app.buttons["general-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews.containing(.button, identifier: "general-option-es").firstMatch)
+            boardTap(app, "general-retry")
+        }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["general-picker-cancel"])
+        waitForExpectations(timeout: 20); app.terminate()
+    }
+
+    func testGeneralLanguageRefusal() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "6ca44a22-bda8-462e-bbdd-947dcab24478"] + ["--native-general-preference-refusal"]
+        app.launch(); task97Open(app); task97Picker(app, "language"); task97Choose(app, "es", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        boardEnabled(app.buttons["general-option-es"])
+        task97Choose(app, "es"); app.terminate()
+    }
+
+    func testGeneralLanguageFailedSave() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "77ba832d-b63d-4d25-afd9-d3ee1b28f9cb"]
+        app.launch(); task97Open(app); task97Picker(app, "language"); task97Choose(app, "es", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["general-picker-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["general-option-es"].isEnabled)
+            let retry = app.buttons["general-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews.containing(.button, identifier: "general-option-es").firstMatch)
+            boardTap(app, "general-retry"); boardEnabled(retry, timeout: 20)
+        }
+        app.terminate()
+    }
+
+    func testGeneralLanguageColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "77ba832d-b63d-4d25-afd9-d3ee1b28f9cb"]
+        app.launch(); task97Open(app); task97Picker(app, "language")
+        let option = app.buttons["general-option-es"]
+        revealPagedElement(app, option, in: app.scrollViews.containing(.button, identifier: "general-option-es").firstMatch)
         XCTAssertTrue(option.isSelected)
         boardTap(app, "general-picker-cancel"); app.terminate()
     }

@@ -152,7 +152,7 @@ private final class Engine: @unchecked Sendable {
     private static let methods: [String: Int] = [
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
         "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1,
-        "language": 2, "strings": 1, "complete": 1, "taskView": 1, "editorModel": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
+        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "editorModel": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
         "projects": 0, "projectDetail": 4, "projectNotes": 4, "projectCreateOptions": 0, "projectCreate": 1, "projectCreateRetryOutcome": 1,
         "projectSectionOptions": 1, "projectSectionCreate": 1, "projectSectionCreateRetryOutcome": 1,
         "projectSectionRenameOptions": 1, "projectSectionRename": 1, "projectSectionRenameRetryOutcome": 1,
@@ -758,9 +758,9 @@ private final class Engine: @unchecked Sendable {
                       let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
                       Set(options.keys) == Set(["model", "expected"]),
                       let model = options["model"] as? [String: Any], model["title"] is String,
-                      model["appearance"] is [String: Any], model["regional"] is [String: Any],
+                      model["appearance"] is [String: Any], model["regional"] is [String: Any], model["language"] is [String: Any],
                       let expected = options["expected"] as? [String: Any],
-                      Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem", "theme"]),
+                      Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem", "theme", "language"]),
                       expected.values.allSatisfy({ Self.validGeneralPreferenceExpected($0) }) else {
                     throw HostFailure("Malformed General preference options")
                 }
@@ -2389,6 +2389,8 @@ private final class Engine: @unchecked Sendable {
                 NSLog("Native iOS Quick Access saved releaseCheck=v1.3.4/ios-quick-access outcome=confirmed")
             } else if result?["type"] as? String == "calendarSystem" {
                 NSLog("Native iOS Calendar system saved releaseCheck=v1.3.4/ios-calendar-system outcome=confirmed")
+            } else if result?["type"] as? String == "language" {
+                NSLog("Native iOS Language saved releaseCheck=v1.3.4/ios-language outcome=confirmed")
             } else if result?["type"] as? String == "theme" {
                 NSLog("Native iOS Theme saved releaseCheck=v1.3.4/ios-theme outcome=confirmed")
             } else {
@@ -2802,7 +2804,7 @@ private final class Engine: @unchecked Sendable {
               let type = edit["type"] as? String else { return false }
         switch type {
         case "showTaskAge": return isBoolean(edit["value"])
-        case "theme": return (edit["value"] as? String).map { !$0.isEmpty && $0.utf16.count <= 500 } == true
+        case "theme", "language": return (edit["value"] as? String).map { !$0.isEmpty && $0.utf16.count <= 500 } == true
         case "quickAccessView": return ["review", "projects", "calendar", "contexts"].contains(edit["value"] as? String ?? "")
         case "calendarSystem": return ["gregorian", "jalali"].contains(edit["value"] as? String ?? "")
         case "weekStart": return ["system", "monday", "sunday", "saturday"].contains(edit["value"] as? String ?? "")

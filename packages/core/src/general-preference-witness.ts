@@ -1,6 +1,6 @@
 import type { AppSettings } from './types';
 
-export type GeneralPreferenceType = 'showTaskAge' | 'quickAccessView' | 'weekStart' | 'dateFormat' | 'timeFormat' | 'calendarSystem' | 'theme';
+export type GeneralPreferenceType = 'showTaskAge' | 'quickAccessView' | 'weekStart' | 'dateFormat' | 'timeFormat' | 'calendarSystem' | 'theme' | 'language';
 export type GeneralPreferenceWitness = { present: boolean; value: boolean | string | number | null;
     stampPresent: boolean; stamp: string | null };
 
@@ -20,7 +20,8 @@ export const generalPreferenceWitness = (settings: AppSettings, type: GeneralPre
         : type === 'weekStart' ? settings.weekStart
             : type === 'dateFormat' ? settings.dateFormat
                 : type === 'timeFormat' ? settings.timeFormat
-                    : type === 'calendarSystem' ? settings.calendarSystem : settings.theme;
+                    : type === 'calendarSystem' ? settings.calendarSystem
+                        : type === 'theme' ? settings.theme : settings.language;
     const present = value !== undefined && (appearanceKey
         ? settings.appearance !== undefined && record(settings.appearance) && own(settings.appearance, appearanceKey)
         : own(settings, type));
@@ -32,7 +33,7 @@ export const generalPreferenceWitness = (settings: AppSettings, type: GeneralPre
     const stamp = stampPresent ? stamps?.[group] : null;
     if (present && !(type === 'showTaskAge' ? typeof value === 'boolean'
         : typeof value === 'string' && value.length <= 500
-            || type !== 'quickAccessView' && type !== 'calendarSystem' && type !== 'theme'
+            || type !== 'quickAccessView' && type !== 'calendarSystem' && type !== 'theme' && type !== 'language'
                 && legacyGeneralPreferenceNumber(value))
         || stampPresent && !iso(stamp)) return null;
     return { present, value: present ? value as boolean | string | number : null,

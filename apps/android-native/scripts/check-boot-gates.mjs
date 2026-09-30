@@ -2745,7 +2745,9 @@ export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
 export async function flushPendingSave() { globalThis.events.push('flush'); }
 export function getPersistenceStatus() { return globalThis.persistenceStatus ||
   { generation: 0, queued: false, inFlight: false, immediate: false, retrying: false, failed: false }; }
-export function getGeneralSettingsDeviceWrites(edit) { return [
+export function isSupportedLanguage(value) { return ['en', 'zh', 'fa', 'de'].includes(value); }
+export function getGeneralSettingsDeviceWrites(edit) { return edit.type === 'language'
+  ? [{ key: 'mindwtr-language', value: edit.value }] : [
   { key: '@mindwtr_theme', value: edit.value },
   { key: '@mindwtr_theme_style', value: edit.value === 'material3-light' || edit.value === 'material3-dark' ? 'material3' : 'default' },
 ]; }
@@ -2806,6 +2808,7 @@ export function createNativeHostContract() {
     },
     async setLanguage(input) {
       globalThis.languageInputs.push(JSON.stringify(input));
+      globalThis.afterLanguage?.();
       return { ok: true, value: { language: input.storedLanguage ?? 'en' } };
     },
     getStrings(input) {
@@ -2912,7 +2915,7 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         // host-polyfills.js gives QuickJS these; the harness runs host-entry alone.
         AbortController, setTimeout,
         languageInputs: [], projectInputs: [], settings: undefined, persistenceStatus: null,
-        settingsReadFailure: false, newInputs: [], menuInputs: [],
+        settingsReadFailure: false, afterLanguage: null, newInputs: [], menuInputs: [],
         menuReadResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Someday changed; restart paging from offset zero' } },
         menuCommandResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
         taskFocusResult: { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } },
@@ -2972,6 +2975,8 @@ assert.equal(state.activationCount, 0);
 assert.equal(state.saveCount, 0);
 assert.equal(state.createCount, 0);
 assert.equal(state.completeCount, 0);
+assert.match((await poll(state, state.MindwtrHost.languageSaved('', 'en-US'))).error,
+    /Native storage has not been loaded and validated/);
 
 const full = { tasks: [{ id: 'first' }], projects: [], sections: [], areas: [], people: [], settings: {} };
 const partial = { ...full, tasks: [] };
@@ -3096,6 +3101,49 @@ assert.deepEqual(await poll(ready, ready.MindwtrHost.strings('["tab.inbox"]')),
     { ok: true, value: { language: 'zh', strings: { 'tab.inbox': '收集箱' }, missing: [] } });
 assert.deepEqual(ready.languageInputs, ['{"storedLanguage":null,"systemLocale":"en-US"}', '{"storedLanguage":"zh","systemLocale":"en-US"}',
     '{"keys":["tab.inbox"]}']);
+// The new iOS-only route reads the settled Settings row. The two-arg Android route above keeps its device-key semantics.
+{
+    const savedLanguage = async (stored = 'zh', system = 'en-US') => await poll(ready, ready.MindwtrHost.languageSaved(stored, system));
+    assert.deepEqual(await savedLanguage(), { ok: true, value: { language: 'zh', deviceWrites: [] } });
+    ready.fakeData.settings = { language: 'fa' };
+    ready.settings = { language: 'fa' };
+    assert.deepEqual(await savedLanguage(), { ok: true, value: { language: 'fa',
+        deviceWrites: [{ key: 'mindwtr-language', value: 'fa' }] } });
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.language('zh', 'en-US')),
+        { ok: true, value: { language: 'zh' } }, 'legacy Android route ignores synced preference');
+    ready.settings = { language: 'de' };
+    assert.deepEqual((await savedLanguage()).value, { language: 'fa', deviceWrites: [] },
+        'mismatched optimistic memory cannot authorize a mirror');
+    ready.settings = { language: 'fa' };
+    ready.persistenceStatus = { generation: 1, queued: true, inFlight: false, immediate: false, retrying: false, failed: false };
+    assert.deepEqual((await savedLanguage()).value, { language: 'zh', deviceWrites: [] });
+    ready.persistenceStatus = { generation: 1, queued: false, inFlight: false, immediate: false, retrying: false, failed: true };
+    assert.deepEqual((await savedLanguage()).value, { language: 'zh', deviceWrites: [] });
+    ready.persistenceStatus = null;
+    ready.afterLanguage = () => { ready.persistenceStatus = { generation: 2, queued: false, inFlight: false,
+        immediate: false, retrying: false, failed: false }; };
+    assert.deepEqual((await savedLanguage()).value, { language: 'fa', deviceWrites: [] },
+        'an intervening generation cannot authorize a mirror');
+    ready.afterLanguage = null;
+    ready.persistenceStatus = null;
+    for (const raw of ['constructor', '__proto__', null, { code: 'fa' }]) {
+        ready.fakeData.settings = { language: raw };
+        ready.settings = { language: raw };
+        assert.deepEqual((await savedLanguage()).value, { language: 'zh', deviceWrites: [] });
+    }
+    ready.fakeData.settings = [];
+    assert.match((await savedLanguage()).error, /Invalid settings load/);
+    ready.fakeData.settings = { language: 'fa' };
+    ready.settings = { language: 'fa' };
+    ready.settingsReadFailure = true;
+    assert.match((await savedLanguage()).error, /settings storage unavailable/);
+    ready.settingsReadFailure = false;
+    assert.equal((await savedLanguage()).value.deviceWrites[0].value, 'fa', 'a settled Settings read may retry');
+    assert.match((await poll(ready, ready.MindwtrHost.languageSaved('x'.repeat(501), 'en-US'))).error,
+        /INVALID_INPUT/);
+    ready.settings = undefined;
+    ready.fakeData.settings = {};
+}
 // Theme: the synced setting wins over RN's device-local choice, then the system; core classifies it and sends its hues.
 {
     const theme = async (stored) => (await poll(ready, ready.MindwtrHost.theme(stored))).value;

@@ -1726,6 +1726,26 @@ describe('canonical local reads contract', () => {
         if (preparedTheme.storeFields.length > 0 || preparedTheme.readFields.length > 0) {
             notCanonical.push({ action: 'native prepared General Theme', ...preparedTheme });
         }
+        const preparedLanguage = await runMutation('native prepared General Language', async (control) => {
+            const host = await nativeHost(control);
+            const options = nativeValue(await host.getGeneralPreferenceOptions({}));
+            const request = { requestId: '8534a711-ce76-4f07-8934-6a359bc9ca07',
+                edit: { type: 'language' as const, value: 'fa' as const },
+                expected: options.expected.language };
+            const planned = nativeValue(await host.prepareGeneralPreference(request));
+            expect(planned.kind).toBe('prepared');
+            if (planned.kind !== 'prepared') return;
+            control.expectPersisted((written) => {
+                expect(written.settings.language).toBe('fa');
+                expect(written.settings.syncPreferencesUpdatedAt?.language).toBe(planned.prepared.after.stamp);
+                expect(written.tasks).toHaveLength(settled.tasks.length);
+            });
+            expect(nativeValue(await host.commitPreparedGeneralPreference({ request, prepared: planned.prepared })))
+                .toEqual(planned.prepared.result);
+        });
+        if (preparedLanguage.storeFields.length > 0 || preparedLanguage.readFields.length > 0) {
+            notCanonical.push({ action: 'native prepared General Language', ...preparedLanguage });
+        }
         const restoredArea = await runMutation('native prepared Area restore', async (control) => {
             const host = await nativeHost(control);
             await call('deleteArea', areaId);

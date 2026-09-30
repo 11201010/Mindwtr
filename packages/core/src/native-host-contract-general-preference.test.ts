@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNativeHostContract } from './native-host-contract';
-import { MOBILE_QUICK_ACCESS_VIEW_OPTIONS } from './general-settings-model';
+import { MOBILE_QUICK_ACCESS_VIEW_OPTIONS, SETTINGS_LANGUAGE_OPTIONS } from './general-settings-model';
+import { SUPPORTED_LANGUAGES } from './i18n/i18n-constants';
 import { SETTINGS_THEME_VALUES } from './settings-options';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { NativeGeneralPreferenceRequest } from './native-host-contract-general-preference';
@@ -85,7 +86,7 @@ describe('prepared General preferences', () => {
         const options = await env.host.getGeneralPreferenceOptions({});
         if (!options.ok) throw new Error(JSON.stringify(options));
         expect(Object.keys(options.value.expected).sort()).toEqual([
-            'showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat', 'calendarSystem', 'theme'].sort());
+            'showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat', 'calendarSystem', 'theme', 'language'].sort());
         expect(options.value.expected.quickAccessView).toMatchObject({ present: false, value: null,
             stampPresent: true, stamp: AT });
         expect(options.value.model.appearance.quickAccess.options.map((row) => row.value))
@@ -132,6 +133,99 @@ describe('prepared General preferences', () => {
         const cold = await env.reopen();
         expect(await cold.host.commitPreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
         expect(cold.saves()).toBe(0);
+    });
+
+    it.each(SUPPORTED_LANGUAGES)('offers, saves, and cold-replays shared Language %s', async (value) => {
+        const env = await open(initial());
+        const options = await env.host.getGeneralPreferenceOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(options.value.model.language.options.map((row) => row.value))
+            .toEqual(SETTINGS_LANGUAGE_OPTIONS.map((row) => row.id));
+        expect(options.value.model.language.options.find((row) => row.value === value)?.edit)
+            .toEqual({ type: 'language', value });
+        expect(options.value.expected.language).toEqual({ present: false, value: null,
+            stampPresent: true, stamp: AT });
+        const { envelope, prepared } = await planned(env, { type: 'language', value });
+        expect(prepared.version).toBe(1);
+        expect(JSON.stringify(envelope)).not.toContain('private-value');
+        expect(env.host.validatePreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(env.data().settings.language).toBe(value);
+        expect(env.data().settings.syncPreferencesUpdatedAt?.language).toBe(prepared.after.stamp);
+        expect(env.data().settings.syncPreferencesUpdatedAt?.appearance).toBe(AT);
+        expect(env.data().settings.calendarSystem).toBe('gregorian');
+        expect(env.data().tasks).toEqual(initial().tasks);
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+        expect(await cold.host.setLanguage({ storedLanguage: value, systemLocale: 'en-US' }))
+            .toMatchObject({ ok: true, value: { language: value } });
+        const current = await cold.host.getGeneralPreferenceOptions({});
+        if (!current.ok) throw new Error(JSON.stringify(current));
+        expect(current.value.model.language.options.find((row) => row.selected)?.value).toBe(value);
+    });
+
+    it('distinguishes an absent synced Language from the local choice and preserves unknown raw values', async () => {
+        const env = await open(initial());
+        expect(await env.host.setLanguage({ storedLanguage: 'fa', systemLocale: 'en-US' }))
+            .toMatchObject({ ok: true, value: { language: 'fa' } });
+        const options = await env.host.getGeneralPreferenceOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(options.value.model.language.options.find((row) => row.selected)?.value).toBe('fa');
+        expect(options.value.expected.language).toMatchObject({ present: false, value: null });
+        const { envelope } = await planned(env, { type: 'language', value: 'fa' });
+        expect(await env.host.commitPreparedGeneralPreference(envelope))
+            .toMatchObject({ ok: true, value: { changed: true } });
+        const current = await env.host.getGeneralPreferenceOptions({});
+        if (!current.ok) throw new Error(JSON.stringify(current));
+        expect(await env.host.prepareGeneralPreference({ requestId: ID, edit: { type: 'language', value: 'fa' },
+            expected: current.value.expected.language }))
+            .toMatchObject({ ok: true, value: { kind: 'noop', result: { changed: false } } });
+
+        const start = initial(); start.settings.language = 'legacy-language' as never;
+        const other = await open(start);
+        const raw = await other.host.getGeneralPreferenceOptions({});
+        if (!raw.ok) throw new Error(JSON.stringify(raw));
+        expect(raw.value.expected.language).toMatchObject({ present: true, value: 'legacy-language' });
+        expect(other.data().settings.language).toBe('legacy-language');
+        const replace = await planned(other, { type: 'language', value: 'de' });
+        expect(await other.host.commitPreparedGeneralPreference(replace.envelope)).toMatchObject({ ok: true });
+        expect(other.data().settings.language).toBe('de');
+    });
+
+    it('rejects malformed Language raw values, choices, and forged numeric witnesses', async () => {
+        const env = await open(initial());
+        for (const value of ['constructor', '__proto__', 'unknown-language'])
+            expect(await env.host.prepareGeneralPreference({ requestId: ID, edit: { type: 'language', value },
+                expected: { present: false, value: null, stampPresent: true, stamp: AT } } as never))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const { envelope } = await planned(env, { type: 'language', value: 'fa' });
+        const numeric = structuredClone(envelope);
+        numeric.request.expected = { present: true, value: 1, stampPresent: true, stamp: AT };
+        numeric.prepared.request.expected = numeric.request.expected;
+        expect(env.host.validatePreparedGeneralPreference(numeric))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        for (const value of [null, 1, {}, 'x'.repeat(501)]) {
+            const start = initial(); start.settings.language = value as never;
+            const invalid = await open(start);
+            expect(await invalid.host.getGeneralPreferenceOptions({}))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+    });
+
+    it('refuses Language field and group-stamp conflicts, including an independent same target', async () => {
+        const env = await open(initial());
+        const { envelope } = await planned(env, { type: 'language', value: 'fa' });
+        env.changeSaved((data) => ({ ...data, settings: { ...data.settings, language: 'fa',
+            syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                language: '2026-09-02T00:00:00.000Z' } } }));
+        expect(await env.host.commitPreparedGeneralPreference(envelope))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        env.changeSaved((data) => ({ ...data, settings: { ...data.settings, language: undefined,
+            dateFormat: 'dmy' } }));
+        expect(await env.host.commitPreparedGeneralPreference(envelope))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(env.saves()).toBe(0);
     });
 
     it('keeps device Theme a display hint while pinning raw absent and unknown saved values', async () => {
@@ -492,7 +586,7 @@ describe('prepared General preferences', () => {
             error: { code: 'INVALID_INPUT' } });
         expect(env.host.probeGeneralPreferenceOutcome(request)).toMatchObject({ ok: false,
             error: { code: 'STALE_REVISION' } });
-        const invalid = { ...request, edit: { type: 'language', value: 'fa' } };
+        const invalid = { ...request, edit: { type: 'appLock', value: true } };
         expect(await env.host.prepareGeneralPreference(invalid as never)).toMatchObject({ ok: false,
             error: { code: 'INVALID_INPUT' } });
     });
@@ -501,6 +595,7 @@ describe('prepared General preferences', () => {
         { type: 'quickAccessView', value: 'contexts', group: 'appearance' },
         { type: 'calendarSystem', value: 'jalali', group: 'language' },
         { type: 'theme', value: 'material3-dark', group: 'appearance' },
+        { type: 'language', value: 'fa', group: 'language' },
     ] as const)('retries frozen $type after a failed save even when locale changes', async ({ type, value, group }) => {
         let failing = false;
         const env = await open(initial(), () => failing);
@@ -525,6 +620,8 @@ describe('prepared General preferences', () => {
         { timing: 'microtask', type: 'calendarSystem', value: 'jalali' },
         { timing: 'synchronous', type: 'theme', value: 'nord' },
         { timing: 'microtask', type: 'theme', value: 'nord' },
+        { timing: 'synchronous', type: 'language', value: 'fa' },
+        { timing: 'microtask', type: 'language', value: 'fa' },
     ] as const)('does not claim a $timing foreign failed Task save for $type', async ({ timing, type, value }) => {
         let failing = false;
         const start = initial();

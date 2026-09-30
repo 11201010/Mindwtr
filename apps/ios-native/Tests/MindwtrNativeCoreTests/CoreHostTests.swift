@@ -13300,6 +13300,87 @@ final class CoreHostTests: XCTestCase {
         await core.close()
     }
 
+    func testGeneralPreferenceLanguageRecovery() async throws {
+        try await exerciseGeneralPreferenceRecovery(type: "language", value: "fa")
+    }
+
+    func testGeneralPreferenceLanguageChoicesAndMirrors() async throws {
+        let bootstrap = host()
+        _ = try await bootstrap.start(); await bootstrap.close()
+        var initial = try calendarPreferenceSettings(); initial.removeValue(forKey: "language")
+        try writeCalendarPreferenceSettings(initial)
+        let faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        let fallback = try object(await core.call("languageSaved", argumentsJSON: json(["es", "en-US"])))
+        XCTAssertEqual(fallback["language"] as? String, "es")
+        XCTAssertEqual((fallback["deviceWrites"] as? [[String: Any]])?.count, 0)
+        let options = try object(await core.call("generalPreferenceOptions", argumentsJSON: json(["{}"])))
+        let model = try XCTUnwrap(options["model"] as? [String: Any])
+        let picker = try XCTUnwrap(model["language"] as? [String: Any])
+        let choices = try XCTUnwrap(picker["options"] as? [[String: Any]]).compactMap { $0["value"] as? String }
+        XCTAssertEqual(choices.count, 23); XCTAssertEqual(Set(choices).count, choices.count)
+        // Explicitly storing the displayed fallback is a change when the synced field is absent.
+        for value in ["es"] + choices {
+            let beforeDB = try SQLiteBridge(url: database)
+            let before = try nineTableSnapshot(beforeDB); beforeDB.close()
+            let current = try object(await core.call("generalPreferenceOptions", argumentsJSON: json(["{}"])))
+            let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+                "edit": ["type": "language", "value": value],
+                "expected": try XCTUnwrap((current["expected"] as? [String: Any])?["language"])]
+            _ = try await core.call("generalPreference", argumentsJSON: json([json(request)]))
+            let saved = try object(await core.call("languageSaved", argumentsJSON: json(["ja", "en-US"])))
+            XCTAssertEqual(saved["language"] as? String, value)
+            XCTAssertEqual(try json(XCTUnwrap(saved["deviceWrites"])), try json([["key": "mindwtr-language", "value": value]]))
+            let labels = try object(await core.call("strings", argumentsJSON: json([json(["settings.language", "common.cancel"])])))
+            let languageLabel = try XCTUnwrap((labels["strings"] as? [String: Any])?["settings.language"] as? String)
+            XCTAssertFalse(languageLabel.isEmpty); XCTAssertNotEqual(languageLabel, "settings.language")
+            let afterDB = try SQLiteBridge(url: database)
+            let after = try nineTableSnapshot(afterDB); afterDB.close()
+            for index in before.indices where index != 5 { XCTAssertEqual(before[index], after[index]) }
+            let oldRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[5].utf8)) as? [[String: Any]])
+            let newRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(after[5].utf8)) as? [[String: Any]])
+            var expected = try object(XCTUnwrap(oldRows.first?["data"] as? String))
+            let actual = try object(XCTUnwrap(newRows.first?["data"] as? String))
+            var stamps = expected["syncPreferencesUpdatedAt"] as? [String: Any] ?? [:]
+            stamps["language"] = try XCTUnwrap((actual["syncPreferencesUpdatedAt"] as? [String: Any])?["language"])
+            expected["language"] = value; expected["syncPreferencesUpdatedAt"] = stamps
+            XCTAssertEqual(try json(actual), try json(expected))
+            var expectedRows = oldRows; expectedRows[0]["data"] = newRows[0]["data"]
+            XCTAssertEqual(try json(newRows), try json(expectedRows))
+        }
+        var writes = 0, journals = 0
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE ") || $0.hasPrefix("INSERT ") { writes += 1 } }
+        faults.journalWrite = { journals += 1 }
+        let current = try object(await core.call("generalPreferenceOptions", argumentsJSON: json(["{}"])))
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+            "edit": ["type": "language", "value": try XCTUnwrap(choices.last)],
+            "expected": try XCTUnwrap((current["expected"] as? [String: Any])?["language"])]
+        let noop = try object(await core.call("generalPreference", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(noop["changed"] as? Bool, false); XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+        faults.beforeSQL = { if $0.contains("FROM settings") { throw HostFailure("Injected language read failure") } }
+        await expectFailure("Injected language read failure") { _ = try await core.call("languageSaved", argumentsJSON: json(["en", "en-US"])) }
+        faults.beforeSQL = nil
+        let refreshed = try object(await core.call("languageSaved", argumentsJSON: json(["en", "en-US"])))
+        XCTAssertEqual(refreshed["language"] as? String, choices.last)
+        XCTAssertEqual(journals, 0)
+        await core.close()
+        // A recreated host must reconcile from the saved language, not an old device mirror.
+        let cold = host(); _ = try await cold.start()
+        let winner = try object(await cold.call("languageSaved", argumentsJSON: json(["en", "en-US"])))
+        XCTAssertEqual(winner["language"] as? String, choices.last)
+        await cold.close()
+        var unknown = try calendarPreferenceSettings(); unknown["language"] = "future-language"
+        try writeCalendarPreferenceSettings(unknown)
+        let legacy = host(); _ = try await legacy.start()
+        let unchanged = try calendarPreferenceSettings()
+        let fallbackAgain = try object(await legacy.call("languageSaved", argumentsJSON: json(["es", "en-US"])))
+        XCTAssertEqual(fallbackAgain["language"] as? String, "es")
+        XCTAssertEqual((fallbackAgain["deviceWrites"] as? [[String: Any]])?.count, 0)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(unchanged))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await legacy.close()
+    }
+
     private func exerciseTaxonomyRecovery(kind: String, action: String) async throws {
         let at = "2026-10-01T12:00:00.000Z", clock = try dateBundle(at: "2026-10-01T12:00:00.000Z")
         let bootstrap = host(bundleURL: clock)

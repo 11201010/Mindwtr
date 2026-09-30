@@ -203,7 +203,7 @@ struct SettingsScreen: View {
                     generalSettingLabel(privacy.object("appLock"), description: "description")
                 }
                 .padding(14).disabled(true).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
-                generalSettingRow(model.generalSettings.object("language"), type: "language", enabled: false)
+                generalSettingRow(model.generalSettings.object("language"), type: "language", enabled: true)
                     .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
                 VStack(spacing: 0) {
                     Button { model.toggleGeneralRegional() } label: {
@@ -280,7 +280,7 @@ struct SettingsScreen: View {
         let type = model.generalPreferencePicker ?? ""
         let picker = ["quickAccessView", "theme"].contains(type)
             ? model.generalSettings.object("appearance").object(type == "theme" ? "theme" : "quickAccess")
-            : model.generalSettings.object("regional").object(type)
+            : type == "language" ? model.generalSettings.object("language") : model.generalSettings.object("regional").object(type)
         let groups = picker["groups"] as? [[CoreObject]] ?? [picker["options"] as? [CoreObject] ?? []]
         return VStack(spacing: 12) {
             HStack {

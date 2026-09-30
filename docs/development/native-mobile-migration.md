@@ -269,3 +269,6 @@ Settings General Calendar system follow-up (2026-09-30, Task99): Gregorian and J
 
 
 Settings General Theme follow-up (2026-09-30, Task100): the native picker uses RN’s twelve grouped choices and shared theme descriptors. The existing prepared General command updates the saved Theme and its appearance-group timestamp while preserving unrelated settings and rows. Device fallback and style mirrors follow the canonical saved value, reconcile on startup, and never adopt a failed optimistic save. An acknowledged palette-read failure retries reads only. App lock, Language and the wider Settings/platform/production-upgrade gates remain open. Development evidence is recorded in the [parity ledger](native-mobile-parity.md).
+
+
+Task101 extends the existing General command with Language. The read-only `languageSaved` bridge resolves a settled canonical supported language before the device fallback; the original language bridge retains its caller semantics. Native startup and refresh rebind translation separately from regional locale, reload shared labels, and reconcile the scoped device mirror. Acknowledged Language changes retain ownership until translated Settings/options/menu reads succeed. App lock and the remaining platform replacement gates are separate work.
