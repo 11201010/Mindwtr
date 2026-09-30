@@ -12739,4 +12739,131 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task104Open(_ app: XCUIApplication) {
+        if !app.buttons["gtd-review-back"].exists {
+            task103Open(app)
+            let row = app.buttons["gtd-review"]
+            revealPagedElement(app, row, in: app.scrollViews["gtd-scroll"])
+            boardTap(app, "gtd-review")
+        }
+        boardEnabled(app.buttons["gtd-review-back"], timeout: 30)
+    }
+
+    private func task104Toggle(_ app: XCUIApplication, _ type: String, on: Bool) {
+        let control = app.switches["gtd-" + type]
+        revealPagedElement(app, control, in: app.scrollViews["gtd-review-scroll"])
+        boardEnabled(control)
+        if control.value as? String != (on ? "1" : "0") { control.tap() }
+        expectation(for: NSPredicate(format: "value == %@ AND enabled == true", on ? "1" : "0"), evaluatedWith: control)
+        waitForExpectations(timeout: 30)
+    }
+
+    private func task104Normal(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task103Open(app)
+        let input = app.textFields["gtd-defaultScheduleTime"]
+        revealPagedElement(app, input, in: app.scrollViews["gtd-scroll"])
+        replaceTextView(input, with: "930", tapOffset: CGVector(dx: 0.5, dy: 0.5))
+        task104Open(app)
+        for type in ["dailyReviewFocusStep", "weeklyReviewContextStep"] {
+            XCTAssertEqual(app.switches["gtd-" + type].value as? String, "1")
+            task104Toggle(app, type, on: false)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "GTD Review switches"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task104Open(app)
+        for type in ["dailyReviewFocusStep", "weeklyReviewContextStep"] {
+            XCTAssertEqual(app.switches["gtd-" + type].value as? String, "0")
+            task104Toggle(app, type, on: true)
+        }
+        boardTap(app, "gtd-review-back"); boardEnabled(app.buttons["gtd-back"])
+        XCTAssertEqual(input.value as? String, "09:30")
+        let focus = task103Option(app, "focusTaskLimit", "3"); focus.tap()
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: focus)
+        waitForExpectations(timeout: 20)
+        boardTap(app, "gtd-back"); boardEnabled(app.buttons["settings-back"])
+        app.terminate()
+    }
+
+    func testGtdReviewNormal() { task104Normal("fb9e6050-e8fb-4afa-8d98-749913dcbc2e") }
+    func testGtdReviewMergedNormal() { task104Normal("b003bad7-93e3-4590-9aae-79f05573d7d0") }
+    func testGtdReviewLargest() { task104Normal("a35c1277-62b7-4d10-995d-bd58960e78b6") }
+
+    func testGtdReviewAcknowledgedReadRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "2ff04f2a-3be2-4b8e-a390-0eaea5f73de4", "--native-gtd-workflow-read-failure"]
+        app.launch(); task104Open(app)
+        app.switches["gtd-dailyReviewFocusStep"].tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-review-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-review-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-review-back"], timeout: 30)
+        XCTAssertEqual(app.switches["gtd-dailyReviewFocusStep"].value as? String, "0")
+        app.terminate()
+    }
+
+    func testGtdReviewRefusalCorrection() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "2885dfca-014e-424a-b820-993396c1287a", "--native-gtd-workflow-refusal"]
+        app.launch(); task104Open(app); app.switches["gtd-dailyReviewFocusStep"].tap()
+        XCTAssertTrue(app.staticTexts["gtd-error"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.switches["gtd-dailyReviewFocusStep"].value as? String, "1")
+        task104Toggle(app, "dailyReviewFocusStep", on: false)
+        app.terminate()
+    }
+
+    func testGtdReviewFailedSaveExactRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e019dddb-f1ff-4ad4-9a53-2a285bdab306"]
+        app.launch(); task104Open(app); app.switches["gtd-dailyReviewFocusStep"].tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-review-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-review-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-retry"], timeout: 30); app.terminate()
+    }
+
+    func testGtdReviewColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e019dddb-f1ff-4ad4-9a53-2a285bdab306"]
+        app.launch(); boardEnabled(app.buttons["gtd-review-back"], timeout: 30)
+        XCTAssertEqual(app.switches["gtd-dailyReviewFocusStep"].value as? String, "0")
+        XCTAssertFalse(app.buttons["gtd-retry"].exists); app.terminate()
+    }
+
+    func testGtdReviewGuideCheckpoint() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "967d0967-f14b-4b27-a2ba-d0a6a8d48ccd"]
+        func guide(_ kind: String) {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            if app.buttons["tab-review"].exists { boardTap(app, "tab-review") }
+            else { boardTap(app, "tab-menu"); boardTap(app, "menu-review") }
+            boardTap(app, "review-start"); boardTap(app, "review-start-" + kind)
+            boardEnabled(app.buttons["review-guide-close"])
+        }
+        app.launch()
+        for (kind, step) in [("daily", "focus"), ("weekly", "contexts")] {
+            guide(kind)
+            let content = app.scrollViews["review-guide-content-" + step]
+            for _ in 0..<15 where !content.exists {
+                boardTap(app, "review-guide-next"); boardEnabled(app.buttons["review-guide-close"])
+            }
+            XCTAssertTrue(content.exists)
+            boardTap(app, "review-guide-close")
+        }
+        task104Open(app)
+        task104Toggle(app, "dailyReviewFocusStep", on: false)
+        task104Toggle(app, "weeklyReviewContextStep", on: false)
+        app.terminate(); app.launch()
+        for (kind, step) in [("daily", "focus"), ("weekly", "contexts")] {
+            guide(kind)
+            XCTAssertFalse(app.scrollViews["review-guide-content-" + step].exists)
+            boardTap(app, "review-guide-close")
+        }
+        app.terminate()
+    }
+
 }

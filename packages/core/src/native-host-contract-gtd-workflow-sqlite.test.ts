@@ -60,7 +60,7 @@ async function open(path: string, seed = false) {
 }
 
 async function plan(host: ReturnType<typeof createNativeHostContract>,
-    edit: NativeGtdWorkflowRequest['edit']) {
+    edit: Extract<NativeGtdWorkflowRequest['edit'], { type: 'defaultScheduleTime' | 'focusTaskLimit' | 'defaultProjectFlowMode' }>) {
     const options = await host.getGtdWorkflowOptions({});
     if (!options.ok) throw new Error(JSON.stringify(options));
     const request: NativeGtdWorkflowRequest = { requestId: ID, edit, expected: options.value.expected[edit.type] };
@@ -68,6 +68,21 @@ async function plan(host: ReturnType<typeof createNativeHostContract>,
     if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
     return { request, prepared: prepared.value.prepared };
 }
+
+async function planReview(host: ReturnType<typeof createNativeHostContract>,
+    edit: { type: 'dailyReviewFocusStep' | 'weeklyReviewContextStep'; value: boolean }) {
+    const options = await host.getGtdReviewOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID, edit, expected: options.value.expected[edit.type] };
+    const prepared = await host.prepareGtdWorkflow(request);
+    if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+    return { request, prepared: prepared.value.prepared };
+}
+
+const tables = ['tasks', 'projects', 'areas', 'people', 'sections', 'settings', 'saved_filters',
+    'schema_migrations', 'calendar_sync'] as const;
+const nineTables = (db: Database) => Object.fromEntries(tables.map((table) =>
+    [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
 
 describe('GTD workflow SQLite recovery', () => {
     it('requeues raw saved rows after failed COMMIT and cold-replays the exact field/stamp', async () => {
@@ -138,5 +153,70 @@ describe('GTD workflow SQLite recovery', () => {
         expect(await afterAba.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
             error: { code: 'STALE_REVISION' } });
         expect((await afterAba.adapter.getData()).settings.gtd?.defaultScheduleTime).toBeUndefined();
+    });
+});
+
+describe('GTD Review variants retain the v1 SQLite recovery contract', () => {
+    it('retries two failed COMMITs from owned raw rows, then cold-replays exact Review field/stamp', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-review-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const first = await open(path, true);
+        const before = nineTables(first.db);
+        const envelope = await planReview(first.host, { type: 'dailyReviewFocusStep', value: false });
+        expect(envelope.prepared.version).toBe(1);
+        first.fault.commits = 10;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            expect(await first.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'SAVE_FAILED' } });
+            expect(nineTables(first.db)).toEqual(before);
+        }
+        first.fault.commits = 0;
+        expect(await first.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: { type: 'dailyReviewFocusStep', value: false, changed: true } });
+        const saved = nineTables(first.db);
+        for (const table of tables.filter((name) => name !== 'settings')) expect(saved[table]).toEqual(before[table]);
+        expect((await first.adapter.getData()).settings.gtd?.dailyReview?.includeFocusStep).toBe(false);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        expect(nineTables(cold.db)).toEqual(saved);
+    }, 20_000);
+
+    it('cold-refuses an independently landed same target and parent/group ABA', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-review-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const first = await open(path, true);
+        const envelope = await planReview(first.host, { type: 'weeklyReviewContextStep', value: false });
+        const independent = await first.adapter.getData();
+        independent.settings.gtd = { ...independent.settings.gtd,
+            weeklyReview: { includeContextStep: false } };
+        independent.settings.syncPreferencesUpdatedAt = { ...independent.settings.syncPreferencesUpdatedAt,
+            gtd: '2026-09-02T00:00:00.000Z' };
+        await first.adapter.saveData(independent);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        const sameTarget = nineTables(cold.db);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(cold.db)).toEqual(sameTarget);
+        const changed = await cold.adapter.getData();
+        changed.settings.gtd = { ...changed.settings.gtd,
+            weeklyReview: { includeContextStep: true } };
+        changed.settings.syncPreferencesUpdatedAt = { ...changed.settings.syncPreferencesUpdatedAt,
+            gtd: '2026-09-03T00:00:00.000Z' };
+        await cold.adapter.saveData(changed);
+        const restored = await cold.adapter.getData();
+        restored.settings.gtd = { ...restored.settings.gtd,
+            weeklyReview: { includeContextStep: false } };
+        restored.settings.syncPreferencesUpdatedAt = { ...restored.settings.syncPreferencesUpdatedAt,
+            gtd: '2026-09-04T00:00:00.000Z' };
+        await cold.adapter.saveData(restored);
+        cold.db.close(); databases.splice(databases.indexOf(cold.db), 1);
+        const afterAba = await open(path);
+        const beforeRefusal = nineTables(afterAba.db);
+        expect(await afterAba.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(afterAba.db)).toEqual(beforeRefusal);
     });
 });

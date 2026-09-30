@@ -277,3 +277,5 @@ Task102 adds the device-local App lock setting and an iOS root view gate. Shared
 
 
 Task103 adds Settings → GTD workflow defaults: Default schedule time, Today's Focus limit and Default Project flow. The native screen consumes the shared RN labels, choices, time normalizer and stored-value policy. Prepared writes bind the selected raw field and GTD group stamp, preserve unrelated raw data, and recover with the original timestamp; acknowledged retries read only. Review, Inbox, Capture, Task editor, Auto-archive and Pomodoro remain separate migration slices. See the [parity ledger](native-mobile-parity.md) for development evidence and remaining platform gates.
+
+Task104 adds Settings → GTD → Review for the Daily Focus and Weekly Contexts steps. Shared RN values and toggle policy feed the existing GTD prepared-write path, with nested parent/field witnesses and unchanged direct-field v1 recovery. Returning to GTD refreshes its witness after a Review change. See the [parity ledger](native-mobile-parity.md) for the validation status; Inbox, Capture, Task editor, Auto-archive and Pomodoro remain separate slices.

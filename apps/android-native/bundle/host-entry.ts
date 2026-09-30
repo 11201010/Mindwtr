@@ -1094,6 +1094,9 @@ globalThis.MindwtrHost = {
     gtdWorkflowOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.getGtdWorkflowOptions(JSON.parse(json))); });
     },
+    gtdReviewOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.getGtdReviewOptions(JSON.parse(json))); });
+    },
     gtdWorkflowDraft(json: string): string {
         return submit(async () => unwrap(contract.normalizeGtdWorkflowDraft(JSON.parse(json))));
     },

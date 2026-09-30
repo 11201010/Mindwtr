@@ -97,29 +97,51 @@ export const appLockWitness = (settings: AppSettings): AppLockWitness | null => 
     return present && typeof value !== 'boolean' ? null : { groupPresent: true, present, value: value ?? null };
 };
 
-export type GtdWorkflowType = 'defaultScheduleTime' | 'focusTaskLimit' | 'defaultProjectFlowMode';
-export type GtdWorkflowWitness = { present: boolean; value: string | number | null;
+export type GtdWorkflowDirectType = 'defaultScheduleTime' | 'focusTaskLimit' | 'defaultProjectFlowMode';
+export type GtdWorkflowReviewType = 'dailyReviewFocusStep' | 'weeklyReviewContextStep';
+export type GtdWorkflowType = GtdWorkflowDirectType | GtdWorkflowReviewType;
+export type GtdWorkflowDirectWitness = { present: boolean; value: string | number | null;
     stampPresent: boolean; stamp: string | null };
-const boundedRawGtdValue = (type: GtdWorkflowType, value: unknown): value is string | number =>
+export type GtdWorkflowReviewWitness = { parentPresent: boolean; present: boolean; value: boolean | null;
+    stampPresent: boolean; stamp: string | null };
+export type GtdWorkflowWitness = GtdWorkflowDirectWitness | GtdWorkflowReviewWitness;
+const reviewPath = (type: GtdWorkflowReviewType) => type === 'dailyReviewFocusStep'
+    ? { parent: 'dailyReview' as const, field: 'includeFocusStep' as const }
+    : { parent: 'weeklyReview' as const, field: 'includeContextStep' as const };
+const boundedRawGtdValue = (type: GtdWorkflowDirectType, value: unknown): value is string | number =>
     type === 'focusTaskLimit'
         ? typeof value === 'number' && Number.isSafeInteger(value) && Math.abs(value) <= 1_000_000
         : typeof value === 'string' && value.length <= 500;
 /** One raw GTD scalar and its group stamp, without carrying the Settings row. */
-export const gtdWorkflowWitness = (settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null => {
+export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowDirectType): GtdWorkflowDirectWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowReviewType): GtdWorkflowReviewWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null {
     const group = settings.gtd;
     const stamps = settings.syncPreferencesUpdatedAt;
     if (group !== undefined && (!group || typeof group !== 'object' || Array.isArray(group))
         || stamps !== undefined && (!stamps || typeof stamps !== 'object' || Array.isArray(stamps))) return null;
-    const present = group !== undefined && owns(group, type) && group[type] !== undefined;
-    const value = present ? group?.[type] : null;
     const stampPresent = stamps !== undefined && owns(stamps, 'gtd') && stamps.gtd !== undefined;
     const stamp = stampPresent ? stamps?.gtd : null;
-    if (present && !boundedRawGtdValue(type, value)
-        || stampPresent && !(typeof stamp === 'string' && stamp.length <= 40
-            && Number.isFinite(Date.parse(stamp)) && new Date(stamp).toISOString() === stamp)) return null;
+    if (stampPresent && !(typeof stamp === 'string' && stamp.length <= 40
+        && Number.isFinite(Date.parse(stamp)) && new Date(stamp).toISOString() === stamp)) return null;
+    if (type === 'dailyReviewFocusStep' || type === 'weeklyReviewContextStep') {
+        const path = reviewPath(type);
+        const parentPresent = group !== undefined && owns(group, path.parent) && group[path.parent] !== undefined;
+        const parent = parentPresent ? group?.[path.parent] as Record<string, unknown> : undefined;
+        if (parentPresent && (!parent || typeof parent !== 'object' || Array.isArray(parent))) return null;
+        const present = parentPresent && owns(parent!, path.field) && parent?.[path.field] !== undefined;
+        const value = present ? parent?.[path.field] : null;
+        if (present && typeof value !== 'boolean') return null;
+        return { parentPresent, present, value: present ? value as boolean : null,
+            stampPresent, stamp: stampPresent ? stamp! : null };
+    }
+    const present = group !== undefined && owns(group, type) && group[type] !== undefined;
+    const value = present ? group?.[type] : null;
+    if (present && !boundedRawGtdValue(type, value)) return null;
     return { present, value: present ? value as string | number : null,
         stampPresent, stamp: stampPresent ? stamp! : null };
-};
+}
 
 export const prepareLocalSavedFilterUpdates = (
     previous: readonly SavedFilter[] | undefined,
