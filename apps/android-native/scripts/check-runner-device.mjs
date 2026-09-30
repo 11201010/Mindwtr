@@ -13,11 +13,11 @@
 // file), then JobScheduler's `cmd jobscheduler run -f` runs CoreWork in a new process: each item stored once, the check-off and
 // the defer applied once and recorded in RKStorage, audio and Pomodoro left untouched, the damaged file removed; (5) a process
 // death between an item's store write and its file delete (debug property `queue_stop`), for a capture and for a check-off: the
-// next boot's journal replay stores nothing twice and removes the file; (6) a check-off stored and saved whose RKStorage record
-// write fails (debug property `fail_kv_set`), drained by a context trigger's CoreWork job while the app shows: the drain is owed
-// (file and journal entry kept, no record), a newer edit on the screen waits behind it (Mark Done on another task writes nothing
-// and the owed retry shows), the trigger posts nothing, and the job's retry replays the journal first (record written, file
-// gone, the check-off written once), then posts; the screen's Try again then clears its owed retry;
+// next boot's journal replay stores nothing twice and removes the file; (6a) a check-off stored and saved whose RKStorage record
+// write fails (debug property `fail_kv_set`): the drain is owed, the file is removed anyway, and CoreWork's retry replays the entry
+// with no tap, the check-off written once; (6b) a drain whose save fails (`fail_commit`) under a context trigger's job while the
+// app shows: file and journal entry kept, a newer Mark Done on the screen is never sent and the owed retry shows, the trigger
+// posts nothing, and the job's retry replays the journal first (the check-off written once and recorded), then posts;
 // (7) a context broadcast with a 12 KB context is dropped with no crash. At the end Automation capture is off again. It grants
 // the development app the notification permission (and keeps it). Titles are 80 + a 12-digit run id + one digit
 // (check-projects-device.mjs --prune-old removes earlier runs'). It never launches over another app and leaves the device on its
@@ -54,7 +54,7 @@ const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/dev/tty';
 // Where the other checks (and this one's earlier runs) wrote the screen; removed at the start and the end.
 const SHARED_UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
-const PROPS = ['core_work_delay_ms', 'queue_stop', 'fail_kv_set'];
+const PROPS = ['core_work_delay_ms', 'queue_stop', 'fail_kv_set', 'fail_commit'];
 const DB = 'mindwtr-native-dev.db';
 const QUEUE = 'files/pending-captures';
 const CONFIG = 'no_backup/android-capture-intent.json';
@@ -445,43 +445,74 @@ try {
         }
     }
 
-    // (6) A check-off stored and saved whose record write fails, drained by a context trigger's job while the app shows.
+    // (6a) A check-off stored and saved whose record write fails (debug fail_kv_set), drained by a CoreWork job while the app
+    // shows: owed, and its file is removed anyway, so nothing can apply it again; the job's retry recovers with no tap.
+    const replayLine = 'journal replay sent=1 dropped=1 left=0 owed=none';
+    const lines = () => allLogs();
+    const clearOwedRetry = async () => {
+        const nodes = await toTabs();
+        if (owedRetry(nodes)) await tapExpecting(owedRetry(nodes), (current) => !owedRetry(current), 'Try again');
+    };
     {
         const token = storedToken() ?? fail('Automation capture went off');
-        // A next action in the run's context, so the trigger has a notification to post once it may.
+        // A next action in the run's context, so a trigger has a notification to post once it may.
         check(captureIntent(`${title(2)} @${context} /next`, token) === -1, '(6) a next action in the context: RESULT_OK');
         await waitUntil('its drain', () => stored(title(2)).length === 1);
         const [target] = stored(title(8));
-        const [other] = stored(title(1));
-        check(target.status !== 'done' && other.status !== 'done', '(6) the check-off\'s task and the task Mark Done tries are open');
+        check(target.status !== 'done', '(6a) the check-off\'s task is open');
         if (!front().includes(`${PKG}/`)) device.launch(ACTIVITY);
         await toTabs();
         const id = randomUUID();
-        const lines = () => allLogs();
-        const [jobsBefore, postedBefore, replaysBefore] = [count(lines(), ...CONTEXT_DONE), count(lines(), ...POSTED), count(lines(), 'journal replay sent=1 dropped=1 left=0 owed=none')];
-        const retriesBefore = count(lines(), 'Native Android core work', '"job":"context","outcome":"retry"');
+        const [failedBefore, replaysBefore] = [count(lines(), 'Native Android queue drain', '"error":"SAVE_FAILED"'), count(lines(), replayLine)];
         setProp('fail_kv_set', '1');
+        try {
+            enqueue(id, JSON.stringify({ kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
+            contextTrigger('DEACTIVATE_CONTEXT', context);
+            await waitUntil('the owed drain', () => count(lines(), 'Native Android queue drain', '"error":"SAVE_FAILED"') > failedBefore);
+        } finally {
+            setProp('fail_kv_set', '');
+        }
+        const [atFailure] = stored(title(8));
+        check(atFailure.status === 'done' && atFailure.rev === target.rev + 1 && lastApplied()[target.id]?.id !== id,
+            `(6a) the drain answered SAVE_FAILED: the check-off is stored and saved (rev ${target.rev} → ${atFailure.rev}), with no record`);
+        check(!queued().includes(`${id}.json`), '(6a) its file is removed anyway: nothing can apply it again after a reopen');
+        await waitUntil('the retry to replay the owed entry', () => count(lines(), replayLine) > replaysBefore && journal().length === 0, 300_000, 5000);
+        const [end] = stored(title(8));
+        check(end.rev === target.rev + 1, `(6a) CoreWork's retry replayed the owed entry with no tap; the check-off was written once (rev ${end.rev})`);
+        await clearOwedRetry();
+    }
+
+    // (6b) A drain owed while its save fails (debug fail_commit), under a context trigger's job while the app shows: a newer edit
+    // waits behind it, the trigger posts nothing, and the job's retry replays the journal first, then posts.
+    {
+        const [target] = stored(title(1));
+        const [other] = stored(title(2));
+        check(target.status !== 'done' && other.status !== 'done', '(6b) the check-off\'s task and the task Mark Done tries are open');
+        await toTabs();
+        const id = randomUUID();
+        const [jobsBefore, postedBefore, replaysBefore] = [count(lines(), ...CONTEXT_DONE), count(lines(), ...POSTED), count(lines(), replayLine)];
+        const retriesBefore = count(lines(), 'Native Android core work', '"job":"context","outcome":"retry"');
+        setProp('fail_commit', '1');
         try {
             enqueue(id, JSON.stringify({ kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
             contextTrigger('ACTIVATE_CONTEXT', context);
             await waitUntil('the trigger\'s job to wait for the owed drain', () => count(lines(), 'Native Android core work', '"job":"context","outcome":"retry"') > retriesBefore);
-            check(count(lines(), 'Native Android queue drain', '"outcome":"failed","error":"SAVE_FAILED"') > 0, '(6) the drain answered SAVE_FAILED: owed, not a success');
-            const [atFailure] = stored(title(8));
-            check(atFailure.status === 'done' && atFailure.rev === target.rev + 1, `(6) the check-off is stored and saved (rev ${target.rev} → ${atFailure.rev})`);
-            check(queued().includes(`${id}.json`) && journal().some((entry) => entry.method === 'ingest') && lastApplied()[target.id]?.id !== id,
-                '(6) its file and the drain\'s journal entry stay, and RKStorage has no record of it');
-            check(count(lines(), ...POSTED) === postedBefore, '(6) the trigger posted nothing from unfinished state');
+            const [atFailure] = stored(title(1));
+            check(atFailure.rev === target.rev && atFailure.status === target.status, '(6b) the drain\'s save failed: nothing of it is on disk');
+            check(queued().includes(`${id}.json`) && journal().some((entry) => entry.method === 'ingest'), '(6b) its file and the drain\'s journal entry stay');
+            check(count(lines(), ...POSTED) === postedBefore, '(6b) the trigger posted nothing from unfinished state');
 
-            // A newer edit on the screen waits behind the owed drain: Mark Done on another task writes nothing.
+            // A newer edit on the screen waits behind the owed drain: Mark Done on another task is never sent.
             let nodes = await tapExpecting(withDescription(await toTabs(), en['search.title']) ?? fail('no Search button'), inSearch, 'the search screen');
             await device.focusAtEnd(field(nodes) ?? fail('no search field'));
             requireAppFront();
-            sh(`input text ${title(1)}`);
-            nodes = await waitFor(`the result ${title(1)}`, (current) => JSON.stringify(results(current)) === JSON.stringify([title(1)]), 20_000);
+            sh(`input text ${title(2)}`);
+            nodes = await waitFor(`the result ${title(2)}`, (current) => JSON.stringify(results(current)) === JSON.stringify([title(2)]), 20_000);
             await device.tap(withDescription(nodes, en['review.markDone']) ?? fail('no Mark Done on the result'));
             await sleep(3000);
-            const [otherAfter] = stored(title(1));
-            check(otherAfter.status === other.status && otherAfter.rev === other.rev, '(6) Mark Done on another task wrote nothing while the drain is owed');
+            const [otherAfter] = stored(title(2));
+            check(otherAfter.status === other.status && otherAfter.rev === other.rev && !journal().some((entry) => entry.method === 'complete'),
+                '(6b) Mark Done on another task was never sent while the drain is owed');
             // While a retry is owed, the search screen's Back is off (SearchScreen's BackHandler), so Back leaves the app, as for any
             // owed command there; the app then reopens on the tabs with the owed retry.
             for (let step = 0; step < 4 && front().includes(`${PKG}/`) && inSearch(await screen()); step += 1) {
@@ -492,26 +523,23 @@ try {
             requireAppFront();
             await toTabs();
             await waitFor('the owed retry on the tabs', (current) => Boolean(owedRetry(current)), 10_000);
-            check(true, '(6) the screen offers the owed retry');
+            check(true, '(6b) the screen offers the owed retry');
         } finally {
-            setProp('fail_kv_set', '');
+            setProp('fail_commit', '');
         }
         // The job's own retry recovers with no tap: the journal's replay first, then the drain, then the trigger's notification.
-        await waitUntil('the trigger\'s retry to recover and post', () => count(lines(), ...CONTEXT_DONE) > jobsBefore, 180_000, 5000);
+        await waitUntil('the trigger\'s retry to recover and post', () => count(lines(), ...CONTEXT_DONE) > jobsBefore, 400_000, 5000);
         const text = lines();
-        const replayAt = text.lastIndexOf('journal replay sent=1 dropped=1 left=0 owed=none');
-        check(count(text, 'journal replay sent=1 dropped=1 left=0 owed=none') > replaysBefore && replayAt < text.lastIndexOf('"job":"context","outcome":"success"'),
-            '(6) the job\'s retry replayed the owed journal entry before its job');
-        check(count(text, ...POSTED) === postedBefore + 1, '(6) and then posted the trigger\'s notification');
-        const [recovered] = stored(title(8));
-        check(!queued().includes(`${id}.json`) && journal().length === 0 && lastApplied()[target.id]?.id === id && recovered.rev === target.rev + 1,
-            `(6) recovered: the record written, the file and the entry gone, the check-off written once (rev ${recovered.rev})`);
-        // The screen's Try again: nothing is left to replay or drain (the job did both), so the owed retry clears.
-        let nodes = await toTabs();
-        nodes = owedRetry(nodes) ? nodes : await waitFor('the owed retry', (current) => Boolean(owedRetry(current)), 10_000);
-        await tapExpecting(owedRetry(nodes), (current) => !owedRetry(current), 'Try again');
-        check(true, '(6) Try again cleared the owed retry');
-        await tapNotification('(6)');
+        check(count(text, replayLine) > replaysBefore && text.lastIndexOf(replayLine) < text.lastIndexOf('"job":"context","outcome":"success"'),
+            '(6b) the job\'s retry replayed the owed journal entry before its job');
+        check(count(text, ...POSTED) === postedBefore + 1, '(6b) and then posted the trigger\'s notification');
+        const [recovered] = stored(title(1));
+        check(recovered.status === 'done' && recovered.rev === target.rev + 1 && !queued().includes(`${id}.json`) && journal().length === 0
+            && lastApplied()[target.id]?.id === id, `(6b) recovered: the check-off written once (rev ${recovered.rev}) and recorded, its file and entry gone`);
+        // The screen's Try again: nothing is left to replay or drain, so the owed retry clears.
+        await clearOwedRetry();
+        check(!owedRetry(await screen()), '(6b) Try again cleared the owed retry');
+        await tapNotification('(6b)');
         await toTabs();
     }
 
