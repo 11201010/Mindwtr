@@ -1056,7 +1056,7 @@ export class SqliteAdapter {
         return keepSavedFilters([filter])[0] ?? null;
     }
 
-    async getData(): Promise<AppData> {
+    async getData(options?: { rawTasks?: true }): Promise<AppData> {
         await this.ensureSchema();
         const loadSnapshotRows = () => Promise.all([
             this.loadAllRows('tasks'),
@@ -1087,7 +1087,15 @@ export class SqliteAdapter {
         }
         const [tasksRows, projectsRows, sectionsRows, areasRows, peopleRows, settingsRow, savedFilterRows] = snapshotRows;
 
-        const tasks: Task[] = tasksRows.map((row) => this.mapTaskRow(row));
+        const tasks: Task[] = tasksRows.map((row) => {
+            if (!options?.rawTasks) return this.mapTaskRow(row);
+            const task = taskFromSqliteRow(row);
+            // The display codec uses null as its recurrence fallback. For a
+            // durable raw edit, SQL NULL must remain absence, while a literal
+            // JSON "null" value remains distinct.
+            if (row.recurrence === null) task.recurrence = undefined;
+            return task;
+        });
         const projects: Project[] = projectsRows.map((row) => projectFromSqliteRow(row));
         const sections: Section[] = sectionsRows.map((row) => sectionFromSqliteRow(row));
         const nowIso = new Date().toISOString();

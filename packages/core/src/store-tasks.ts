@@ -12,7 +12,7 @@ import {
 import type { AppData, PendingRemoteAttachmentDelete, Section, Task, TaskStatus } from './types';
 import type { StorageAdapter, TaskQueryOptions } from './storage';
 import { taskMatchesQuery } from './task-query';
-import type { PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedFocusOrder, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, PreparedTaskFocus, StoreActionResult, TaskFocusWitnessRow, TaskStore } from './store-types';
+import type { PreparedAreaAuthority, PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedFocusOrder, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, PreparedTaskFocus, StoreActionResult, TaskFocusWitnessRow, TaskStore } from './store-types';
 import { buildFocusControlsModel } from './focus-controls';
 import {
     applyTaskProjectReactivationTransition,
@@ -51,6 +51,9 @@ import { resolveProcessInboxPlan } from './process-inbox-plan';
 import { boardOrderForDuplicate, countFocusedTasksBeforeBoundary, isTaskFutureFocusCandidate,
     type FocusDateLookup } from './task-utils';
 import { sameTaskSqliteRow, sameSectionDeleteJson } from './store-projects/section-actions';
+import { normalizeTaskForLoad } from './task-status';
+import { normalizeProjectLifecycleFields } from './project-status';
+import { clearDerivedCache } from './store-settings';
 import {
     buildTaskContainerMovePatch,
     normalizeOptionalContainerId,
@@ -127,6 +130,7 @@ type TaskActions = Pick<
     | 'addTasks'
     | 'commitPreparedCapture'
     | 'commitPreparedTaskEdit'
+    | 'commitPreparedTaskDraftV2'
     | 'commitPreparedTaskFocus'
     | 'commitPreparedFocusOrder'
     | 'commitPreparedBoardTask'
@@ -164,6 +168,7 @@ type TaskActionContext = {
     flushPendingSave: () => Promise<void>;
     trackImmediateSave: (save: Promise<void>, retrySnapshot?: AppData) => Promise<void>;
     hasQueuedSnapshotSave: () => boolean;
+    getSaveGeneration: () => number;
 };
 
 const actionOk = (extra?: Omit<StoreActionResult, 'success'>): StoreActionResult => ({ success: true, ...extra });
@@ -705,7 +710,7 @@ export function buildDuplicateTask({ sourceTask, asNextAction, copyId, now, devi
     return newTask;
 }
 
-export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPendingSave, trackImmediateSave, hasQueuedSnapshotSave }: TaskActionContext): TaskActions => ({
+export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPendingSave, trackImmediateSave, hasQueuedSnapshotSave, getSaveGeneration }: TaskActionContext): TaskActions => ({
     /**
      * Add a new task to the store and persist to storage.
      * @param title Task title
@@ -1271,6 +1276,53 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             persist(set, debouncedSave, state, { tasks, ...(device.updated ? { settings: device.settings } : {}) });
             result = { success: true, id: current.id, outcome: 'applied' };
             return { _allTasks: tasks, ...(device.updated ? { settings: device.settings } : {}), lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedTaskDraftV2: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Task edit conflicts with saved data' };
+        set((memory) => {
+            const before = authority.state;
+            if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                || memory._allAreas !== before._allAreas || memory._allSections !== before._allSections
+                || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
+            const durable = authority.snapshot;
+            const matches = durable.tasks.filter((row) => row.id === input.request.id);
+            const current = matches.length === 1 ? matches[0] : null;
+            if (!current) {
+                result = { success: false, reason: 'missing', error: 'Task not found or duplicated' };
+                return memory;
+            }
+            const sameRaw = (left: Task, right: Task) => sameTaskSqliteRow(left, right)
+                && sameSectionDeleteJson(left, right);
+            // Full result receipt wins before mutable parent/order eligibility.
+            if (sameRaw(current, input.effect.task.after)
+                && (input.deviceIdToInitialize === null
+                    || (durable.settings.deviceId ?? null) === input.deviceIdToInitialize)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return memory;
+            }
+            if (!sameRaw(current, input.effect.task.before)
+                || (durable.settings.deviceId ?? null) !== input.deviceIdBefore) return memory;
+            const tasks = durable.tasks.map((row) => row.id === current.id ? input.effect.task.after : row);
+            const settings = input.deviceIdToInitialize
+                ? { ...durable.settings, deviceId: input.deviceIdToInitialize } : durable.settings;
+            const freshTasks = tasks.map((row) => normalizeTaskForLoad(row));
+            const freshProjects = durable.projects.map(normalizeProjectLifecycleFields);
+            clearDerivedCache();
+            persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks,
+                _allProjects: durable.projects, _allSections: durable.sections ?? [],
+                _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [], settings: durable.settings },
+            { ...durable, tasks, settings });
+            const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+            authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
+                generation: getSaveGeneration(), failure: memory.persistenceFailure };
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allTasks: freshTasks, _allProjects: freshProjects,
+                _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [],
+                _allPeople: durable.people ?? [], settings, lastDataChangeAt };
         });
         return result;
     },

@@ -12608,10 +12608,8 @@ final class CoreModel: ObservableObject {
             let checklistSave = checklistChanged || statusChanged
             guard !patch.isEmpty || checklistSave else { dismissTask(); return }
             var request: CoreObject = ["id": viewedTaskID, "base": base, "patch": patch]
-            if checklistSave || recurrenceChanged || (taskDateFields + ["relativeStartOffset"]).contains(where: { patch[$0] != nil }) {
-                guard !taskOriginalSchedule.isEmpty else { throw CocoaError(.coderReadCorrupt) }
-                request["scheduleBase"] = taskOriginalSchedule
-            }
+            guard !taskOriginalSchedule.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            request["scheduleBase"] = taskOriginalSchedule
             if recurrenceChanged {
                 guard !taskOriginalRecurrence.isEmpty else { throw CocoaError(.coderReadCorrupt) }
                 request["recurrenceBase"] = taskOriginalRecurrence

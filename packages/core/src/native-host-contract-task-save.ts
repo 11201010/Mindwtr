@@ -1,8 +1,9 @@
 import type { NativeHostResult } from './native-host-contract';
 import type { PreparedTaskEdit } from './store-types';
-import type { Task } from './types';
+import type { Area, Project, Section, Task } from './types';
 import { useTaskStore } from './store';
-import { applyTaskUpdates, createProjectOrderReserver, findTaskProjectReactivationTarget, normalizeTaskUpdate } from './store-helpers';
+import { applyTaskUpdates, createProjectOrderReserver, ensureDeviceId, findTaskProjectReactivationTarget,
+    getNextProjectOrder, nextRevision, normalizeTaskUpdate } from './store-helpers';
 import { applyPreparedTaskEditChanges, buildPreparedTaskEditChanges, prepareTaskUpdatesForStore, taskEditValuesEqual } from './store-tasks';
 import { createTaskDraft, resolveTaskDraftTitle, taskDraftToUpdatePatch, type TaskDraft, type TaskDraftField } from './task-draft';
 import { applyTaskDraftPatch, buildTaskEditUpdatePatch } from './task-editor-model';
@@ -13,6 +14,9 @@ import { normalizeCancellationTimestamp } from './task-status';
 import { normalizeRecurrenceForLoad } from './recurrence';
 import { hasTimeComponent } from './date';
 import { logInfo } from './logger';
+import { createAreaSaveGuard, readAreaDurableData } from './native-host-contract-area-durable';
+import { TASK_SYNC_FIELD_SCHEMA, taskToSqliteRow } from './task-sync-schema';
+import { sameSectionDeleteJson, sameTaskSqliteRow } from './store-projects/section-actions';
 
 export type NativeTaskScheduleBase = {
     startTime: string | null;
@@ -38,6 +42,24 @@ export type NativeTaskDraftSaveRequest = {
 };
 /** Private journal payload. The host persists this exact result before commit. */
 export type NativePreparedTaskDraftSave = PreparedTaskEdit & { version: 1; request: NativeTaskDraftSaveRequest };
+type ProjectEligibilityWitness = { id: string; status: Project['status']; deletedAt: string | null;
+    purgedAt: string | null; rev: number | null; revBy: string | null; updatedAt: string };
+type SectionEligibilityWitness = { id: string; projectId: string; deletedAt: string | null;
+    rev: number | null; revBy: string | null; updatedAt: string };
+type AreaEligibilityWitness = { id: string; deletedAt: string | null;
+    rev: number | null; revBy: string | null; updatedAt: string };
+export type NativePreparedTaskDraftSaveV2 = {
+    version: 2;
+    request: NativeTaskDraftSaveRequest;
+    preparedAt: string;
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    scope: { sourceProject: ProjectEligibilityWitness | null; targetProject: ProjectEligibilityWitness | null;
+        targetSection: SectionEligibilityWitness | null; targetArea: AreaEligibilityWitness | null;
+        nextProjectOrder: number | null };
+    effect: { task: { before: Task; after: Task } };
+};
+export type NativePreparedTaskDraftSaveAny = NativePreparedTaskDraftSave | NativePreparedTaskDraftSaveV2;
 
 const FIELDS: readonly SaveField[] = ['title', 'description', 'priority', 'energyLevel', 'timeEstimate', 'contexts', 'tags', 'status',
     'projectId', 'areaId', 'sectionId', 'startTime', 'dueDate', 'reviewAt', 'relativeStartOffset',
@@ -46,6 +68,17 @@ const STORED_FIELDS = FIELDS.filter((field) => field !== 'recurrenceStrategy' &&
 const SCHEDULE = ['startTime', 'dueDate', 'relativeStartOffset', 'reviewAt'] as const;
 const RECURRENCE = ['recurrence', 'recurrenceStrategy', 'recurrenceRRule', 'showFutureRecurrence'] as const;
 const ASSOCIATIONS = ['projectId', 'areaId', 'sectionId'] as const;
+const REFERENCE_FIELDS = new Set<SaveField>(['title', 'description', 'contexts', 'tags', 'energyLevel',
+    'projectId', 'areaId', 'sectionId']);
+const referenceEditable = (request: NativeTaskDraftSaveRequest): boolean => Object.keys(request.patch)
+    .every((field) => REFERENCE_FIELDS.has(field as SaveField)
+        || (field === 'priority' || field === 'timeEstimate') && request.patch[field] === '');
+const recurrenceRuleEdited = (request: NativeTaskDraftSaveRequest): boolean =>
+    (['recurrence', 'recurrenceStrategy', 'recurrenceRRule'] as const)
+        .some((field) => own(request.patch, field) && !taskEditValuesEqual(request.patch[field], request.base[field]));
+const recurrenceFlagEdited = (request: NativeTaskDraftSaveRequest): boolean =>
+    own(request.patch, 'showFutureRecurrence')
+        && !taskEditValuesEqual(request.patch.showFutureRecurrence, request.base.showFutureRecurrence);
 const EFFECTS = ['status', 'isFocusedToday', 'focusOrder', 'boardOrder', 'order', 'orderNum', 'pushCount',
     'completedAt', 'cancelledAt', 'statusBeforeProjectArchive', 'completedAtBeforeProjectArchive',
     'isFocusedTodayBeforeProjectArchive', 'projectArchivedAt'];
@@ -83,7 +116,8 @@ export const getNativeTaskRecurrenceBase = (task: Task): NativeTaskRecurrenceBas
 export const nativeTaskDraftPatchValues = (request: NativeTaskDraftSaveRequest): Partial<TaskDraft> => Object.fromEntries(
     Object.entries(request.patch).map(([field, value]) => [field, value === null ? undefined : value]),
 );
-export const readNativeTaskDraftSaveRequest = (input: unknown, validateField: (field: TaskDraftField, value: unknown) => boolean, allowChecklist = false): NativeTaskDraftSaveRequest | null => {
+export const readNativeTaskDraftSaveRequest = (input: unknown, validateField: (field: TaskDraftField, value: unknown) => boolean, allowChecklist = false,
+    allowPlain = false): NativeTaskDraftSaveRequest | null => {
     const value = detach(input, 1_000_000);
     if (!record(value)
         || typeof value.id !== 'string' || !value.id.trim() || value.id.length > 500
@@ -91,7 +125,8 @@ export const readNativeTaskDraftSaveRequest = (input: unknown, validateField: (f
     const fields = Object.keys(value.patch);
     const editsRecurrence = RECURRENCE.some((field) => own(value.patch as object, field));
     if (!keys(value, ['id', 'base', 'patch', 'scheduleBase', ...(editsRecurrence ? ['recurrenceBase'] : [])])
-        || (!allowChecklist && !(editsRecurrence || fields.some((field) => (SCHEDULE as readonly string[]).includes(field))))
+        || (!allowChecklist && fields.length === 0)
+        || (!allowChecklist && !allowPlain && !(editsRecurrence || fields.some((field) => (SCHEDULE as readonly string[]).includes(field))))
         || !keys(value.base, fields) || fields.some((field) => !(FIELDS as readonly string[]).includes(field) || (!allowChecklist && field === 'status'))) return null;
     if (editsRecurrence && (!RECURRENCE.every((field) => own(value.patch as object, field))
         || !record(value.recurrenceBase) || !keys(value.recurrenceBase, ['recurrence', 'showFutureRecurrence'])
@@ -117,13 +152,20 @@ export const serializeNativeTaskDraftDirect = (before: Task, request: NativeTask
     ...createTaskDraft(before), ...nativeTaskDraftPatchValues(request),
     ...(own(request.patch, 'title') ? { title: resolveTaskDraftTitle(request.patch.title!, request.base.title!) } : {}),
 }, before);
-export const validNativeTaskDraftBases = (before: Task, request: NativeTaskDraftSaveRequest): boolean => {
+export const validNativeTaskDraftBases = (before: Task, request: NativeTaskDraftSaveRequest,
+    savedRaw = false): boolean => {
     if (!taskEditValuesEqual(getNativeTaskScheduleBase(before), request.scheduleBase)) return false;
-    if (request.recurrenceBase && !taskEditValuesEqual(getNativeTaskRecurrenceBase(before), request.recurrenceBase)) return false;
+    // Native opens the editor from the load projection. The v2 authority is
+    // raw saved SQLite, so compare the frozen visible recurrence baseline to
+    // that same projection while retaining the raw row for the write receipt.
+    const projected = savedRaw ? { ...before, recurrence: normalizeRecurrenceForLoad(before.recurrence) } : before;
+    const openingTask = savedRaw && request.recurrenceBase
+        && taskEditValuesEqual(getNativeTaskRecurrenceBase(projected), request.recurrenceBase) ? projected : before;
+    if (request.recurrenceBase && !taskEditValuesEqual(getNativeTaskRecurrenceBase(openingTask), request.recurrenceBase)) return false;
     const serialized = serializeNativeTaskDraftDirect(before, request);
     if (!serialized) return false;
-    const current = createTaskDraft(before);
-    const next = createTaskDraft({ ...before, ...serialized });
+    const current = createTaskDraft(openingTask);
+    const next = createTaskDraft({ ...openingTask, ...serialized });
     return (Object.keys(request.patch) as SaveField[]).every((field) => (SCHEDULE as readonly string[]).includes(field)
         || taskEditValuesEqual(current[field], request.base[field])
         || (!(RECURRENCE as readonly string[]).includes(field) && taskEditValuesEqual(current[field], next[field])));
@@ -161,22 +203,159 @@ export const validNativeTaskDraftScheduleEffect = (before: Task, request: Native
     return true;
 };
 
+const TASK_KEYS = new Set(TASK_SYNC_FIELD_SCHEMA.map((field) => field.name));
+const iso = (value: unknown): value is string => typeof value === 'string' && value.length <= 50
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+const nullableText = (value: unknown): value is string | null => value === null
+    || typeof value === 'string' && value.length <= 500;
+const nullableRevision = (value: unknown): value is number | null => value === null
+    || typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+const validRawTask = (value: unknown, id: string): value is Task => {
+    if (!record(value) || Object.keys(value).some((key) => !TASK_KEYS.has(key as keyof Task))) return false;
+    const row = Object.fromEntries(Object.entries(value).map(([key, part]) => [key, part === null ? undefined : part]));
+    if (row.id !== id || typeof row.title !== 'string'
+        || !['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived'].includes(String(row.status))
+        || !Array.isArray(row.tags) || !row.tags.every((part: unknown) => typeof part === 'string')
+        || !Array.isArray(row.contexts) || !row.contexts.every((part: unknown) => typeof part === 'string')
+        || !iso(row.createdAt) || !iso(row.updatedAt)
+        || (row.rev !== undefined && !nullableRevision(row.rev))
+        || (row.revBy !== undefined && !nullableText(row.revBy))) return false;
+    try { taskToSqliteRow(value as unknown as Task); return true; }
+    catch { return false; }
+};
+const projectWitness = (project: Project | undefined): ProjectEligibilityWitness | null => project ? ({
+    id: project.id, status: project.status, deletedAt: project.deletedAt ?? null,
+    purgedAt: project.purgedAt ?? null, rev: project.rev ?? null, revBy: project.revBy ?? null,
+    updatedAt: project.updatedAt,
+}) : null;
+const sectionWitness = (section: Section | undefined): SectionEligibilityWitness | null => section ? ({
+    id: section.id, projectId: section.projectId, deletedAt: section.deletedAt ?? null,
+    rev: section.rev ?? null, revBy: section.revBy ?? null, updatedAt: section.updatedAt,
+}) : null;
+const areaWitness = (area: Area | undefined): AreaEligibilityWitness | null => area ? ({
+    id: area.id, deletedAt: area.deletedAt ?? null, rev: area.rev ?? null,
+    revBy: area.revBy ?? null, updatedAt: area.updatedAt,
+}) : null;
+const validProjectWitness = (value: unknown): value is ProjectEligibilityWitness => record(value)
+    && keys(value, ['id', 'status', 'deletedAt', 'purgedAt', 'rev', 'revBy', 'updatedAt'])
+    && typeof value.id === 'string' && value.id.length > 0 && value.id.length <= 500
+    && ['active', 'someday', 'waiting', 'archived'].includes(String(value.status))
+    && nullableText(value.deletedAt) && nullableText(value.purgedAt)
+    && nullableRevision(value.rev) && nullableText(value.revBy) && iso(value.updatedAt);
+const validSectionWitness = (value: unknown): value is SectionEligibilityWitness => record(value)
+    && keys(value, ['id', 'projectId', 'deletedAt', 'rev', 'revBy', 'updatedAt'])
+    && typeof value.id === 'string' && value.id.length > 0 && value.id.length <= 500
+    && typeof value.projectId === 'string' && value.projectId.length > 0 && value.projectId.length <= 500
+    && nullableText(value.deletedAt) && nullableRevision(value.rev)
+    && nullableText(value.revBy) && iso(value.updatedAt);
+const validAreaWitness = (value: unknown): value is AreaEligibilityWitness => record(value)
+    && keys(value, ['id', 'deletedAt', 'rev', 'revBy', 'updatedAt'])
+    && typeof value.id === 'string' && value.id.length > 0 && value.id.length <= 500
+    && nullableText(value.deletedAt) && nullableRevision(value.rev)
+    && nullableText(value.revBy) && iso(value.updatedAt);
+
+const taskResult = (task: Task): { id: string; draft: TaskDraft } => ({ id: task.id, draft: createTaskDraft(task) });
+const rawTaskEqual = (left: Task, right: Task) => sameTaskSqliteRow(left, right)
+    && sameSectionDeleteJson(left, right);
+
+const draftSaveScope = (before: Task, request: NativeTaskDraftSaveRequest,
+    data: { tasks: Task[]; projects: Project[]; sections: Section[]; areas: Area[] }): NativePreparedTaskDraftSaveV2['scope'] => {
+    const moves = ASSOCIATIONS.some((field) => own(request.patch, field));
+    const projectId = moves ? request.patch.projectId || undefined : before.projectId;
+    const sectionId = moves ? request.patch.sectionId || undefined : before.sectionId;
+    const areaId = moves ? request.patch.areaId || undefined : before.areaId;
+    return {
+        sourceProject: projectWitness(data.projects.find((row) => row.id === before.projectId)),
+        targetProject: moves ? projectWitness(data.projects.find((row) => row.id === projectId)) : null,
+        targetSection: moves ? sectionWitness(data.sections.find((row) => row.id === sectionId)) : null,
+        targetArea: moves ? areaWitness(data.areas.find((row) => row.id === areaId)) : null,
+        nextProjectOrder: moves && projectId && projectId !== before.projectId
+            ? getNextProjectOrder(projectId, data.tasks) ?? null : null,
+    };
+};
+
+/** Project/Area/Section stubs contain exactly the policy inputs frozen in scope. */
+const scopeRows = (scope: NativePreparedTaskDraftSaveV2['scope']) => ({
+    projects: [...new Map([scope.sourceProject, scope.targetProject].filter((value): value is ProjectEligibilityWitness => !!value)
+        .map((value) => [value.id, { ...value, deletedAt: value.deletedAt ?? undefined,
+            purgedAt: value.purgedAt ?? undefined, rev: value.rev ?? undefined,
+            revBy: value.revBy ?? undefined, title: '', color: '', order: 0, tagIds: [], createdAt: value.updatedAt } as Project])).values()],
+    sections: scope.targetSection ? [{ ...scope.targetSection, deletedAt: scope.targetSection.deletedAt ?? undefined,
+        rev: scope.targetSection.rev ?? undefined, revBy: scope.targetSection.revBy ?? undefined,
+        title: '', order: 0, createdAt: scope.targetSection.updatedAt } as Section] : [],
+    areas: scope.targetArea ? [{ ...scope.targetArea, deletedAt: scope.targetArea.deletedAt ?? undefined,
+        rev: scope.targetArea.rev ?? undefined, revBy: scope.targetArea.revBy ?? undefined,
+        name: '', order: 0, createdAt: scope.targetArea.updatedAt } as Area] : [],
+});
+
+const draftSaveEffect = (before: Task, request: NativeTaskDraftSaveRequest,
+    scope: NativePreparedTaskDraftSaveV2['scope'], preparedAt: string, deviceId: string): Task | null => {
+    if (!validNativeTaskDraftBases(before, request, true)) return null;
+    const rows = scopeRows(scope);
+    const draft = applyTaskDraftPatch(createTaskDraft(before), nativeTaskDraftPatchValues(request));
+    const updates = buildTaskEditUpdatePatch({ draft, checklist: before.checklist, attachments: before.attachments }, before);
+    if (!updates) return null;
+    for (const field of SCHEDULE) {
+        if (own(request.patch, field)) Object.assign(updates, { [field]: draft[field] || undefined });
+    }
+    // The editor helper also tidies legacy checklist rows and inconsistent
+    // containers. This writer owns only the requested fields and their shared
+    // schedule/recurrence effects, not that unrelated cleanup.
+    const requested = new Set<string>(Object.keys(request.patch));
+    if (SCHEDULE.some((field) => own(request.patch, field))) SCHEDULE.forEach((field) => requested.add(field));
+    if (RECURRENCE.some((field) => own(request.patch, field))) RECURRENCE.forEach((field) => requested.add(field));
+    if (ASSOCIATIONS.some((field) => own(request.patch, field))) ASSOCIATIONS.forEach((field) => requested.add(field));
+    for (const field of Object.keys(updates)) {
+        if (!requested.has(field)) delete (updates as Record<string, unknown>)[field];
+    }
+    if (!recurrenceRuleEdited(request)) delete updates.recurrence;
+    if (!recurrenceFlagEdited(request) && !recurrenceRuleEdited(request)) delete updates.showFutureRecurrence;
+    if (findTaskProjectReactivationTarget(before, updates, rows.projects)) return null;
+    const moves = ASSOCIATIONS.some((field) => own(request.patch, field));
+    const resolved = moves ? prepareTaskUpdatesForStore({ task: before, updates, allProjects: rows.projects,
+        allSections: rows.sections, allAreas: rows.areas,
+        nowMs: Date.parse(preparedAt),
+        projectOrderReserver: () => scope.nextProjectOrder ?? undefined })
+        : { ok: true as const, updates: normalizeTaskUpdate(before, updates, { nowMs: Date.parse(preparedAt) }) };
+    if (!resolved.ok) return null;
+    const applied = applyTaskUpdates(before, resolved.updates, preparedAt);
+    if (applied.nextRecurringTask) return null;
+    const dependent = SCHEDULE.some((field) => own(request.patch, field))
+        || recurrenceRuleEdited(request) || recurrenceFlagEdited(request);
+    const owned = new Set<string>(Object.keys(updates));
+    if (dependent) ['status', 'startTime', 'dueDate', 'relativeStartOffset', 'reviewAt',
+        'isFocusedToday', 'focusOrder', 'pushCount', 'boardOrder'].forEach((field) => owned.add(field));
+    if (moves) ['projectId', 'sectionId', 'areaId', 'order', 'orderNum'].forEach((field) => owned.add(field));
+    // The shared update computes dependent fields, but a title-only edit must
+    // not copy its unrelated legacy lifecycle normalization into the raw row.
+    const unstamped = { ...before } as Task;
+    for (const field of owned) {
+        const value = applied.updatedTask[field as keyof Task];
+        if (value === undefined) delete (unstamped as unknown as Record<string, unknown>)[field];
+        else (unstamped as unknown as Record<string, unknown>)[field] = value;
+    }
+    if (rawTaskEqual(before, unstamped)) return before;
+    return { ...unstamped, updatedAt: preparedAt, rev: nextRevision(before.rev), revBy: deviceId };
+};
+
 export function createTaskDraftSaveMethods(deps: {
     readiness: () => NativeHostResult<null>;
     save: () => Promise<NativeHostResult<null>>;
     validateField: (field: TaskDraftField, value: unknown) => boolean;
 }) {
     const patchValues = nativeTaskDraftPatchValues;
-    const readRequest = (input: unknown) => readNativeTaskDraftSaveRequest(input, deps.validateField);
+    const readRequest = (input: unknown, allowPlain = false) => readNativeTaskDraftSaveRequest(input, deps.validateField, false, allowPlain);
     const serializedDirect = serializeNativeTaskDraftDirect;
     const validBases = validNativeTaskDraftBases;
+    const saves = createAreaSaveGuard(deps.save);
 
     /** Check semantic authority without rerunning calendar or clock-dependent effects. */
-    const validPrepared = (prepared: NativePreparedTaskDraftSave): boolean => {
+    const validPrepared = (prepared: NativePreparedTaskDraftSave, preserveRaw = false): boolean => {
         const { before, changes, request } = prepared;
         if (before.id !== request.id || typeof before.title !== 'string' || typeof before.createdAt !== 'string'
-            || typeof before.updatedAt !== 'string' || !['inbox', 'next', 'waiting', 'someday', 'done', 'archived'].includes(before.status)
-            || before.deletedAt || before.purgedAt || !validBases(before, request)) return false;
+            || typeof before.updatedAt !== 'string' || !['inbox', 'next', 'waiting', 'someday', 'done', 'archived',
+                ...(preserveRaw ? ['reference'] : [])].includes(before.status)
+            || before.deletedAt || before.purgedAt || !validBases(before, request, preserveRaw)) return false;
         if (Object.keys(changes).some((field) => !(STORED_FIELDS as readonly string[]).includes(field) && !EFFECTS.includes(field))) return false;
         const after = applyPreparedTaskEditChanges(prepared);
         if (!taskEditValuesEqual(changes, buildPreparedTaskEditChanges(before, after))) return false;
@@ -196,26 +375,31 @@ export function createTaskDraftSaveMethods(deps: {
             draft: applyTaskDraftPatch(createTaskDraft(before), patchValues(request)),
             checklist: before.checklist, attachments: before.attachments,
         }, before) : null;
-        const changesRecurrence = recurrenceUpdates && own(recurrenceUpdates, 'recurrence');
+        const changesRecurrence = recurrenceUpdates && own(recurrenceUpdates, 'recurrence')
+            && (!preserveRaw || recurrenceRuleEdited(request));
         const recurrence = changesRecurrence
             ? normalizeTaskUpdate(before, { recurrence: recurrenceUpdates.recurrence }).recurrence : before.recurrence;
         if (changesRecurrence && recurrence && (typeof recurrence !== 'object'
             || recurrence.seriesId !== (normalizeRecurrenceForLoad(before.recurrence)?.seriesId ?? before.id))) return false;
         const showFutureRecurrence = recurrenceUpdates && own(recurrenceUpdates, 'showFutureRecurrence')
+            && (!preserveRaw || recurrenceFlagEdited(request) || recurrenceRuleEdited(request))
             ? recurrenceUpdates.showFutureRecurrence : before.showFutureRecurrence;
         if (!taskEditValuesEqual(after.recurrence, recurrence) || !taskEditValuesEqual(after.showFutureRecurrence, showFutureRecurrence)) return false;
         if (!validNativeTaskDraftScheduleEffect(before, request, after, deps.validateField)) return false;
         const moves = ASSOCIATIONS.some((field) => own(request.patch, field));
         const projectId = moves ? request.patch.projectId || undefined : before.projectId;
         const sectionId = moves ? (projectId ? request.patch.sectionId || undefined : undefined) : before.sectionId;
-        const areaId = projectId ? undefined : moves ? request.patch.areaId || undefined : before.areaId;
+        const areaId = (preserveRaw ? moves && Boolean(projectId) : Boolean(projectId))
+            ? undefined : moves ? request.patch.areaId || undefined : before.areaId;
         if (!taskEditValuesEqual(after.projectId, projectId) || !taskEditValuesEqual(after.sectionId, sectionId) || !taskEditValuesEqual(after.areaId, areaId)) return false;
         const promotes = before.status === 'inbox' && Boolean(after.startTime) && !taskEditValuesEqual(before.startTime, after.startTime);
         if (after.status !== (promotes ? 'next' : before.status)) return false;
         if (own(changes, 'isFocusedToday') && after.isFocusedToday !== false) return false;
         if (own(changes, 'focusOrder') && after.focusOrder !== undefined) return false;
         if (own(changes, 'boardOrder') && (after.boardOrder !== undefined || after.status === before.status)) return false;
-        if (['done', 'archived'].includes(after.status) && (after.isFocusedToday !== false || after.focusOrder !== undefined)) return false;
+        if (['done', 'archived'].includes(after.status) && (!preserveRaw || before.status !== after.status
+            || SCHEDULE.some((field) => own(request.patch, field)) || RECURRENCE.some((field) => own(request.patch, field)))
+            && (after.isFocusedToday !== false || after.focusOrder !== undefined)) return false;
         for (const field of ['order', 'orderNum'] as const) {
             if (!own(changes, field)) continue;
             if (taskEditValuesEqual(before.projectId, after.projectId) || (after.projectId
@@ -223,13 +407,16 @@ export function createTaskDraftSaveMethods(deps: {
                 : after[field] !== undefined)) return false;
         }
         if (own(changes, 'pushCount') && (!own(request.patch, 'dueDate') || after.pushCount !== (before.pushCount ?? 0) + 1)) return false;
-        const cancelledAt = after.status === 'archived' ? normalizeCancellationTimestamp(before.cancelledAt) : undefined;
+        const cancelledAt = preserveRaw ? before.cancelledAt
+            : after.status === 'archived' ? normalizeCancellationTimestamp(before.cancelledAt) : undefined;
         if (!taskEditValuesEqual(after.cancelledAt, cancelledAt)) return false;
         const completed = ['done', 'archived'].includes(after.status) && !cancelledAt;
-        if (!completed ? after.completedAt !== undefined : before.completedAt
+        if (preserveRaw) {
+            if (!taskEditValuesEqual(after.completedAt, before.completedAt)) return false;
+        } else if (!completed ? after.completedAt !== undefined : before.completedAt
             ? after.completedAt !== before.completedAt : !after.completedAt || !deps.validateField('completedAt', after.completedAt)) return false;
         for (const field of ['statusBeforeProjectArchive', 'completedAtBeforeProjectArchive', 'isFocusedTodayBeforeProjectArchive', 'projectArchivedAt'] as const) {
-            if (!taskEditValuesEqual(after[field], before.projectArchivedAt ? undefined : before[field])) return false;
+            if (!taskEditValuesEqual(after[field], preserveRaw ? before[field] : before.projectArchivedAt ? undefined : before[field])) return false;
         }
         return true;
     };
@@ -249,7 +436,76 @@ export function createTaskDraftSaveMethods(deps: {
         }
     };
 
+    const readPreparedV2 = (input: unknown): NativePreparedTaskDraftSaveV2 | null => {
+        const value = detach(input, 2_000_000);
+        if (!record(value) || !keys(value, ['version', 'request', 'preparedAt', 'deviceIdBefore',
+            'deviceIdToInitialize', 'scope', 'effect']) || value.version !== 2
+            || !record(value.scope) || !record(value.effect) || !keys(value.effect, ['task'])
+            || !record(value.effect.task) || !keys(value.effect.task, ['before', 'after'])
+            || !keys(value.scope, ['sourceProject', 'targetProject', 'targetSection', 'targetArea', 'nextProjectOrder'])) return null;
+        const request = readRequest(value.request, true);
+        if (!request || !iso(value.preparedAt)
+            || !nullableText(value.deviceIdBefore) || !nullableText(value.deviceIdToInitialize)
+            || (value.deviceIdBefore === null) === (value.deviceIdToInitialize === null)
+            || !validRawTask(value.effect.task.before, request.id)
+            || !validRawTask(value.effect.task.after, request.id)) return null;
+        const scope = value.scope;
+        if (scope.sourceProject !== null && !validProjectWitness(scope.sourceProject)
+            || scope.targetProject !== null && !validProjectWitness(scope.targetProject)
+            || scope.targetSection !== null && !validSectionWitness(scope.targetSection)
+            || scope.targetArea !== null && !validAreaWitness(scope.targetArea)
+            || scope.nextProjectOrder !== null && !(typeof scope.nextProjectOrder === 'number'
+                && Number.isSafeInteger(scope.nextProjectOrder) && scope.nextProjectOrder >= 0)) return null;
+        const before = value.effect.task.before, after = value.effect.task.after;
+        if (scope.sourceProject && scope.targetProject && scope.sourceProject.id === scope.targetProject.id
+            && !taskEditValuesEqual(scope.sourceProject, scope.targetProject)) return null;
+        const moves = ASSOCIATIONS.some((field) => own(request.patch, field));
+        const projectId = moves ? request.patch.projectId || undefined : before.projectId;
+        const sectionId = moves ? request.patch.sectionId || undefined : before.sectionId;
+        const areaId = moves ? request.patch.areaId || undefined : before.areaId;
+        if (scope.sourceProject && scope.sourceProject.id !== before.projectId
+            || moves && (scope.targetProject?.id !== projectId && !(scope.targetProject === null && !projectId)
+                || scope.targetSection?.id !== sectionId && !(scope.targetSection === null && !sectionId)
+                || scope.targetArea?.id !== areaId && !(scope.targetArea === null && !areaId)
+                || sectionId && scope.targetSection?.projectId !== projectId)
+            || !moves && (scope.targetProject !== null || scope.targetSection !== null || scope.targetArea !== null)
+            || scope.nextProjectOrder !== null !== Boolean(moves && projectId && projectId !== before.projectId)
+            || scope.nextProjectOrder !== null && (after.order !== scope.nextProjectOrder
+                || after.orderNum !== scope.nextProjectOrder)
+            || after.rev !== nextRevision(before.rev)
+            || after.revBy !== (value.deviceIdBefore ?? value.deviceIdToInitialize)
+            || after.updatedAt !== value.preparedAt || before.id !== after.id) return null;
+        const changes = buildPreparedTaskEditChanges(before, after);
+        if (Object.keys(changes).length === 0 || own(changes, 'deletedAt') || own(changes, 'purgedAt')) return null;
+        const prepared = value as unknown as NativePreparedTaskDraftSaveV2;
+        try {
+            const scheduleEdited = SCHEDULE.some((field) => own(request.patch, field));
+            const recurrenceEdited = RECURRENCE.some((field) => own(request.patch, field));
+            const allowed = new Set<string>(Object.keys(request.patch).filter((field) =>
+                field !== 'recurrenceStrategy' && field !== 'recurrenceRRule'));
+            if (moves) ['projectId', 'areaId', 'sectionId', 'order', 'orderNum'].forEach((field) => allowed.add(field));
+            if (scheduleEdited || recurrenceEdited) {
+                ['startTime', 'relativeStartOffset', 'status', 'isFocusedToday', 'focusOrder', 'boardOrder'].forEach((field) => allowed.add(field));
+            }
+            if (own(request.patch, 'dueDate')) allowed.add('pushCount');
+            const changedKeys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+                .filter((field) => !['rev', 'revBy', 'updatedAt'].includes(field)
+                    && !sameSectionDeleteJson(before[field as keyof Task], after[field as keyof Task]));
+            if (!changedKeys.every((field) => allowed.has(field))) return null;
+            if (!scheduleEdited && !recurrenceEdited) {
+                const exact = draftSaveEffect(before, request, scope as NativePreparedTaskDraftSaveV2['scope'],
+                    value.preparedAt, value.deviceIdBefore ?? value.deviceIdToInitialize!);
+                if (!exact || !rawTaskEqual(exact, after)) return null;
+            }
+            return (before.status !== 'reference' || referenceEditable(request))
+                && validPrepared({ version: 1, request, before, changes }, true) ? prepared : null;
+        } catch { return null; }
+    };
+    const readAnyPrepared = (input: unknown): NativePreparedTaskDraftSaveAny | null =>
+        record(input) && input.version === 2 ? readPreparedV2(input) : readPrepared(input);
+
     return {
+        /** Legacy v1 date/recurrence preparation remains strict for old callers and journals. */
         prepareTaskDraftSave(input: NativeTaskDraftSaveRequest): NativeHostResult<NativePreparedTaskDraftSave> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
@@ -274,8 +530,6 @@ export function createTaskDraftSaveMethods(deps: {
             const draft = applyTaskDraftPatch(createTaskDraft(task), patchValues(request));
             const updates = buildTaskEditUpdatePatch({ draft, checklist: task.checklist, attachments: task.attachments }, task);
             if (!updates) return fail('INVALID_INPUT', 'title must not be blank');
-            // An explicit date requests its raw representation, even if it is
-            // textually equal to the current ISO value's display projection.
             for (const field of SCHEDULE) {
                 if (own(request.patch, field)) Object.assign(updates, { [field]: draft[field] || undefined });
             }
@@ -291,13 +545,102 @@ export function createTaskDraftSaveMethods(deps: {
             return prepared ? { ok: true, value: prepared } : fail('INVALID_INPUT', 'Task edit cannot produce a valid prepared journal');
         },
 
-        async commitPreparedTaskDraftSave(input: { request: NativeTaskDraftSaveRequest; prepared: NativePreparedTaskDraftSave }): Promise<NativeHostResult<{ id: string; draft: TaskDraft }>> {
+        async prepareTaskDraftSaveV2(input: NativeTaskDraftSaveRequest): Promise<NativeHostResult<
+            { kind: 'noop'; result: { id: string; draft: TaskDraft } }
+            | { kind: 'prepared'; prepared: NativePreparedTaskDraftSaveV2 }>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const request = readRequest(input, true);
+            if (!request) return fail('INVALID_INPUT', 'A complete task draft and raw baselines are required');
+            const read = await readAreaDurableData(false, true);
+            if (!read.ok) return read;
+            const data = read.value.authority.snapshot;
+            const task = data.tasks.find((row) => row.id === request.id);
+            if (!task || task.deletedAt || task.purgedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            if (isStatusListTaskReadOnly(task, data.projects)
+                || task.status === 'reference' && !referenceEditable(request))
+                return fail('INVALID_INPUT', 'Task is not editable');
+            if (!validBases(task, request, true)) return fail('STALE_REVISION', 'Task changed while editing');
+            if (own(request.patch, 'projectId') && request.patch.projectId
+                && !data.projects.some((project) => project.id === request.patch.projectId && isSelectableProjectForTaskAssignment(project))) {
+                return fail('INVALID_INPUT', 'Project is not available');
+            }
+            if (request.patch.areaId && !data.areas.some((area) => area.id === request.patch.areaId && !area.deletedAt)) {
+                return fail('INVALID_INPUT', 'Area is not available');
+            }
+            if (request.patch.sectionId && !data.sections.some((section) => section.id === request.patch.sectionId
+                && section.projectId === request.patch.projectId && !section.deletedAt)) {
+                return fail('INVALID_INPUT', 'Section is not available');
+            }
+            const preparedAt = new Date().toISOString();
+            const scope = draftSaveScope(task, request, data);
+            const device = ensureDeviceId(data.settings);
+            const after = draftSaveEffect(task, request, scope, preparedAt, device.deviceId);
+            if (!after) return fail('INVALID_INPUT', 'Task edit cannot produce a valid prepared journal');
+            if (rawTaskEqual(task, after)) return { ok: true, value: { kind: 'noop', result: taskResult(task) } };
+            const before = JSON.parse(JSON.stringify(task)) as Task;
+            const frozenAfter = JSON.parse(JSON.stringify(after)) as Task;
+            const prepared = readPreparedV2({ version: 2, request, preparedAt,
+                deviceIdBefore: data.settings.deviceId ?? null,
+                deviceIdToInitialize: device.updated ? device.deviceId : null,
+                scope, effect: { task: { before, after: frozenAfter } } });
+            return prepared ? { ok: true, value: { kind: 'prepared', prepared } }
+                : fail('INVALID_INPUT', 'Task edit cannot produce a valid prepared journal');
+        },
+
+        validatePreparedTaskDraftSave(input: { request: NativeTaskDraftSaveRequest; prepared: NativePreparedTaskDraftSaveAny }):
+            NativeHostResult<{ version: 1; id: string } | { version: 2; result: { id: string; draft: TaskDraft } }> {
+            if (!record(input) || !keys(input, ['request', 'prepared']))
+                return fail('INVALID_INPUT', 'A prepared task edit is required');
+            const prepared = readAnyPrepared(input.prepared);
+            const request = readRequest(input.request, prepared?.version === 2);
+            if (!request || !prepared || !taskEditValuesEqual(request, prepared.request))
+                return fail('INVALID_INPUT', 'Prepared task edit request or journal does not match');
+            return prepared.version === 2
+                ? { ok: true, value: { version: 2, result: taskResult(prepared.effect.task.after) } }
+                : { ok: true, value: { version: 1, id: request.id } };
+        },
+
+        async commitPreparedTaskDraftSave(input: { request: NativeTaskDraftSaveRequest; prepared: NativePreparedTaskDraftSaveAny }): Promise<NativeHostResult<{ id: string; draft: TaskDraft }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             if (!record(input) || !keys(input, ['request', 'prepared'])) return fail('INVALID_INPUT', 'A prepared task edit is required');
-            const request = readRequest(input.request);
-            const prepared = readPrepared(input.prepared);
+            const prepared = readAnyPrepared(input.prepared);
+            const request = readRequest(input.request, prepared?.version === 2);
             if (!request || !prepared || !taskEditValuesEqual(request, prepared.request)) return fail('INVALID_INPUT', 'Prepared task edit request or journal does not match');
+            if (prepared.version === 2) {
+                const read = await readAreaDurableData(true, true);
+                if (!read.ok) return read;
+                if (!saves.mayApply(prepared, read.value.adapter))
+                    return fail('SAVE_FAILED', 'Task edit has an unresolved persistence failure');
+                const data = read.value.authority.snapshot;
+                const currentRows = data.tasks.filter((row) => row.id === request.id);
+                const current = currentRows.length === 1 ? currentRows[0] : null;
+                if (!current) return fail('TASK_NOT_FOUND', 'Task not found or duplicated');
+                const replayed = rawTaskEqual(current, prepared.effect.task.after)
+                    && (prepared.deviceIdToInitialize === null
+                        || (data.settings.deviceId ?? null) === prepared.deviceIdToInitialize);
+                if (!replayed) {
+                    if (!rawTaskEqual(current, prepared.effect.task.before)
+                        || current.status === 'reference' && !referenceEditable(request)
+                        || isStatusListTaskReadOnly(current, data.projects)
+                        || !taskEditValuesEqual(draftSaveScope(current, request, data), prepared.scope))
+                        return fail('STALE_REVISION', 'Task or destination changed while editing');
+                    const selectedProject = prepared.scope.targetProject;
+                    if (selectedProject && !data.projects.some((project) => project.id === selectedProject.id
+                        && isSelectableProjectForTaskAssignment(project)))
+                        return fail('STALE_REVISION', 'Project is no longer available');
+                    if (prepared.scope.targetSection && !data.sections.some((section) => section.id === prepared.scope.targetSection?.id
+                        && section.projectId === prepared.scope.targetSection?.projectId && !section.deletedAt)
+                        || prepared.scope.targetArea && !data.areas.some((area) => area.id === prepared.scope.targetArea?.id
+                            && !area.deletedAt)) return fail('STALE_REVISION', 'Destination is no longer available');
+                }
+                const applied = await useTaskStore.getState().commitPreparedTaskDraftV2(prepared, read.value.authority);
+                if (!applied.success) return fail(applied.reason === 'missing' ? 'TASK_NOT_FOUND'
+                    : applied.reason === 'invalid' ? 'INVALID_INPUT' : 'STALE_REVISION', applied.error ?? 'Task changed while editing');
+                const saved = await saves.finish(prepared, read.value.adapter, applied.outcome === 'replayed', read.value.authority.saveBoundary);
+                return saved.ok ? { ok: true, value: taskResult(prepared.effect.task.after) } : saved;
+            }
             const result = await useTaskStore.getState().commitPreparedTaskEdit(prepared);
             if (!result.success) return fail(result.reason === 'missing' ? 'TASK_NOT_FOUND' : result.reason === 'conflict' ? 'STALE_REVISION' : 'INVALID_INPUT', result.error ?? 'Prepared task edit refused');
             try {

@@ -167,6 +167,244 @@ final class CoreHostTests: XCTestCase {
         return try object(XCTUnwrap(args.first))
     }
 
+    // Old installed builds wrote v1 date journals. Keep their recovery fixtures
+    // explicit while all current editor saves produce exact v2 receipts.
+    private func convertPendingDraftToLegacyFixture() throws {
+        var saved = try object(String(contentsOf: journal))
+        var commit = try pendingDraftCommit()
+        let prepared = try XCTUnwrap(commit["prepared"] as? [String: Any])
+        XCTAssertEqual(prepared["version"] as? Int, 2)
+        let effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        let task = try XCTUnwrap(effect["task"] as? [String: Any])
+        let before = try XCTUnwrap(task["before"] as? [String: Any])
+        let after = try XCTUnwrap(task["after"] as? [String: Any])
+        var changes: [String: Any] = [:]
+        for field in Set(before.keys).union(after.keys).subtracting(["rev", "revBy", "updatedAt"]) {
+            if try json([before[field] ?? NSNull()]) != json([after[field] ?? NSNull()]) {
+                changes[field] = after[field] ?? NSNull()
+            }
+        }
+        commit["prepared"] = ["version": 1, "request": try XCTUnwrap(commit["request"]), "before": before, "changes": changes]
+        saved["argumentsJSON"] = try json([json(commit)])
+        try Data(json(saved).utf8).write(to: journal)
+    }
+
+    func testDurableEditorTextRetriesFrozenWriteAndColdAcknowledgment() async throws {
+        for afterCommit in [false, true] {
+            let id = try await seedDestinationTask()
+            let faults = HostIOFaults()
+            let core = host(faults)
+            _ = try await core.start()
+            let editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
+            let before = try storedTask(id)
+            let payload = try datePayload(id, editor: editor, patch: ["title": "Durable edited title", "description": "Durable edited note"])
+            if afterCommit {
+                var writes = 0
+                faults.journalWrite = { writes += 1; if writes == 2 { throw HostFailure("Injected editor lost acknowledgment") } }
+            } else {
+                faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected editor COMMIT failure") } }
+            }
+            await expectFailure { _ = try await core.call("saveDraft", argumentsJSON: payload) }
+            let pending = try Data(contentsOf: journal)
+            let prepared = try XCTUnwrap(try pendingDraftCommit()["prepared"] as? [String: Any])
+            XCTAssertEqual(prepared["version"] as? Int, 2)
+            if !afterCommit {
+                await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+                try assertJournalContentUnchanged(pending)
+                XCTAssertEqual(try json(storedTask(id)), try json(before))
+            }
+            await core.close()
+            let replayFaults = HostIOFaults()
+            var taskWrites = 0
+            var confirmations = 0
+            replayFaults.commandDiagnostic = { if $0 == "taskEditorDurableApplied" { confirmations += 1 } }
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+tasks\b"#, options: .regularExpression) != nil { taskWrites += 1 }
+            }
+            replayFaults.journalRemove = { throw HostFailure("Injected editor cleanup failure") }
+            let reopened = host(replayFaults, bundleURL: try dateBundle(at: "2030-01-01T12:00:00.000Z", rejectingPreparation: true))
+            await expectFailure("cleanup") { _ = try await reopened.start() }
+            XCTAssertEqual(taskWrites, afterCommit ? 0 : 1)
+            XCTAssertEqual(confirmations, 0)
+            let recovered = try storedTask(id)
+            XCTAssertEqual(recovered["title"] as? String, "Durable edited title")
+            XCTAssertEqual(recovered["description"] as? String, "Durable edited note")
+            XCTAssertEqual(recovered["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
+            XCTAssertEqual(try datePreservedFields(recovered, excluding: ["title", "description", "rev", "revBy", "updatedAt"]),
+                           try datePreservedFields(before, excluding: ["title", "description", "rev", "revBy", "updatedAt"]))
+            replayFaults.journalRemove = nil
+            _ = try await reopened.start()
+            let absent = try await reopened.retryPending()
+            XCTAssertNil(absent)
+            XCTAssertEqual(confirmations, 1)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            XCTAssertEqual(try datePreservedFields(storedTask(id), excluding: []), try datePreservedFields(recovered, excluding: []))
+            await reopened.close()
+        }
+    }
+
+    func testDurableEditorReferenceTextKeepsSharedFieldRules() async throws {
+        let writer = host()
+        _ = try await writer.start()
+        let id = UUID().uuidString.lowercased()
+        _ = try await writer.call("captureSubmit", argumentsJSON: capture(writer, title: "Reference durable", id: id))
+        await writer.close()
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE tasks SET status = 'reference' WHERE id = ?", parametersJSON: json([id]))
+        sqlite.close()
+        let core = host()
+        _ = try await core.start()
+        let editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        let before = try storedTask(id)
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["priority": "urgent"]))
+        }
+        XCTAssertEqual(try json(storedTask(id)), try json(before))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["title": "Reference saved", "description": "Reference note", "energyLevel": "high"]))
+        let after = try storedTask(id)
+        XCTAssertEqual(after["title"] as? String, "Reference saved")
+        XCTAssertEqual(after["description"] as? String, "Reference note")
+        XCTAssertEqual(after["energyLevel"] as? String, "high")
+        XCTAssertEqual(after["status"] as? String, "reference")
+        XCTAssertTrue(after["priority"] is NSNull)
+        XCTAssertEqual(after["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
+    }
+
+    func testDurableEditorNoopCannotReplacePendingSave() async throws {
+        let id = try await seedDestinationTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        let draft = try XCTUnwrap(editor["draft"] as? [String: Any])
+        let noop = try datePayload(id, editor: editor, patch: ["title": try XCTUnwrap(draft["title"])])
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        _ = try await core.call("saveDraft", argumentsJSON: noop)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try nineTableSnapshot(sqlite), before)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected editor COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["title": "Pending title"])) }
+        let pending = try Data(contentsOf: journal)
+        await expectFailure { _ = try await core.call("saveDraft", argumentsJSON: noop) }
+        try assertJournalContentUnchanged(pending)
+        XCTAssertEqual(try nineTableSnapshot(sqlite), before)
+        sqlite.close()
+    }
+
+    func testDurableEditorPreparationFailureLeavesNoPendingCommand() async throws {
+        let id = try await seedDestinationTask()
+        let core = host(bundleURL: try dateBundle(at: "2030-01-01T12:00:00.000Z", rejectingPreparation: true))
+        _ = try await core.start()
+        let editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        do {
+            _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["title": "Unwritten title"]))
+            XCTFail("Expected preparation failure")
+        } catch {
+            XCTAssertTrue(error is CoreHostRejection, "Preparation has not journaled or attempted this write")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let pending = try await core.retryPending()
+        XCTAssertNil(pending)
+        XCTAssertEqual(try nineTableSnapshot(sqlite), before)
+        sqlite.close()
+    }
+
+    func testDurableEditorSameTargetWithNewRevisionIsNotReplay() async throws {
+        let id = try await seedDestinationTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        var writes = 0
+        faults.journalWrite = { writes += 1; if writes == 2 { throw HostFailure("Injected editor lost acknowledgment") } }
+        await expectFailure { _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["title": "Same target"])) }
+        await core.close()
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE tasks SET rev = rev + 1, description = ? WHERE id = ?", parametersJSON: json(["Independent edit", id]))
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        let pending = try Data(contentsOf: journal)
+        let replayFaults = HostIOFaults()
+        var mutations: [String] = []
+        replayFaults.beforeSQL = { sql in
+            // Opening SQLite repeats this idempotent schema-version registration.
+            if !sql.hasPrefix("INSERT OR IGNORE INTO schema_migrations"),
+               sql.range(of: #"(?i)^\s*(?:INSERT|UPDATE|DELETE)\b"#, options: .regularExpression) != nil { mutations.append(sql) }
+        }
+        let reopened = host(replayFaults, bundleURL: try dateBundle(at: "2030-01-01T12:00:00.000Z", rejectingPreparation: true))
+        await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+        XCTAssertEqual(mutations.count, 0, mutations.joined(separator: "\n"))
+        try assertJournalContentUnchanged(pending)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+    }
+
+    func testDurableEditorRejectsForgedTerminalBeforeDatabaseOpen() async throws {
+        let id = try await seedDestinationTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        faults.journalRemove = { throw HostFailure("Injected editor cleanup failure") }
+        await expectFailure("cleanup") { _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["title": "Saved title"])) }
+        await core.close()
+        var saved = try object(String(contentsOf: journal))
+        let terminal = try XCTUnwrap(saved["terminal"] as? [String: Any])
+        let success = try XCTUnwrap(terminal["success"] as? [String: Any])
+        var response = try object(XCTUnwrap(success["_0"] as? String))
+        var draft = try XCTUnwrap(response["draft"] as? [String: Any])
+        draft["title"] = "Forged terminal title"
+        response["draft"] = draft
+        saved["terminal"] = ["success": ["_0": try json(response)]]
+        try Data(json(saved).utf8).write(to: journal)
+        let pending = try Data(contentsOf: journal)
+        let before = try Data(contentsOf: database)
+        let replayFaults = HostIOFaults()
+        var statements = 0
+        replayFaults.beforeSQL = { _ in statements += 1 }
+        let reopened = host(replayFaults)
+        await expectFailure { _ = try await reopened.start() }
+        XCTAssertEqual(statements, 0)
+        XCTAssertEqual(try Data(contentsOf: database), before)
+        XCTAssertEqual(try Data(contentsOf: journal), pending)
+    }
+
+    func testDurableEditorRejectsForgedFrozenTitleBeforeDatabaseOpen() async throws {
+        let id = try await seedDestinationTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected editor COMMIT failure") } }
+        await expectFailure { _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["title": "Requested title"])) }
+        await core.close()
+        var saved = try object(String(contentsOf: journal))
+        var commit = try pendingDraftCommit()
+        var prepared = try XCTUnwrap(commit["prepared"] as? [String: Any])
+        var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        var task = try XCTUnwrap(effect["task"] as? [String: Any])
+        var after = try XCTUnwrap(task["after"] as? [String: Any])
+        after["title"] = "Forged title"
+        task["after"] = after; effect["task"] = task; prepared["effect"] = effect; commit["prepared"] = prepared
+        saved["argumentsJSON"] = try json([json(commit)])
+        try Data(json(saved).utf8).write(to: journal)
+        let pending = try Data(contentsOf: journal)
+        let before = try Data(contentsOf: database)
+        let replayFaults = HostIOFaults()
+        var statements = 0
+        replayFaults.beforeSQL = { _ in statements += 1 }
+        let reopened = host(replayFaults)
+        await expectFailure("INVALID_INPUT") { _ = try await reopened.start() }
+        XCTAssertEqual(statements, 0)
+        XCTAssertEqual(try Data(contentsOf: database), before)
+        XCTAssertEqual(try Data(contentsOf: journal), pending)
+    }
+
     private func recurrenceComparableRow(_ row: [String: Any]) throws -> String {
         var comparable = row
         if let encoded = row["recurrence"] as? String {
@@ -1265,7 +1503,7 @@ final class CoreHostTests: XCTestCase {
         var recurrenceDiagnostics: [String] = []
         faults.beforeSQL = { _ in statements += 1 }
         faults.journalWrite = { journalWrites += 1 }
-        faults.commandDiagnostic = { if $0.hasPrefix("recurrenceSave:") { recurrenceDiagnostics.append($0) } }
+        faults.commandDiagnostic = { if $0 == "taskEditorDurableApplied" { recurrenceDiagnostics.append($0) } }
         let opening = try object(await core.call("editorModel", argumentsJSON: json([id])))
         let baseline = try XCTUnwrap(opening["recurrenceBase"] as? [String: Any])
         XCTAssertEqual(Set(baseline.keys), Set(["recurrence", "showFutureRecurrence"]))
@@ -1284,8 +1522,8 @@ final class CoreHostTests: XCTestCase {
         XCTAssertTrue(recurrenceDiagnostics.isEmpty)
         _ = try await core.call("saveDraft", argumentsJSON: json([json(recurrenceRequest(id, opening: opening, edited: visible))]))
         let flagOnly = try storedTask(id)
-        XCTAssertEqual(try json(JSONSerialization.jsonObject(with: Data(XCTUnwrap(flagOnly["recurrence"] as? String).utf8))), try json(openingRecurrence))
-        XCTAssertEqual(recurrenceDiagnostics, ["recurrenceSave:applied"])
+        XCTAssertEqual(try json(JSONSerialization.jsonObject(with: Data(XCTUnwrap(flagOnly["recurrence"] as? String).utf8))), try json(JSONSerialization.jsonObject(with: Data(XCTUnwrap(before["recurrence"] as? String).utf8))))
+        XCTAssertEqual(recurrenceDiagnostics, ["taskEditorDurableApplied"])
         XCTAssertEqual(flagOnly["showFutureRecurrence"] as? Int, 1)
         XCTAssertEqual(try taskCount(), count)
         XCTAssertEqual(try datePreservedFields(flagOnly, excluding: ["recurrence", "showFutureRecurrence", "rev", "revBy", "updatedAt"]),
@@ -1299,7 +1537,7 @@ final class CoreHostTests: XCTestCase {
         edited = try await recurrenceEdit(core, id: id, editor: edited, action: ["kind": "strategy"])
         let request = try recurrenceRequest(id, opening: current, edited: edited)
         let result = try object(await core.call("saveDraft", argumentsJSON: json([json(request)])))
-        XCTAssertEqual(recurrenceDiagnostics, ["recurrenceSave:applied", "recurrenceSave:applied"])
+        XCTAssertEqual(recurrenceDiagnostics, ["taskEditorDurableApplied", "taskEditorDurableApplied"])
         let acknowledgedDraft = try XCTUnwrap(result["draft"] as? [String: Any])
         // The stored RRULE gains its canonical inherited series stamp. Compare
         // visible core controls, then pin that acknowledged draft across restart.
@@ -1338,6 +1576,7 @@ final class CoreHostTests: XCTestCase {
         let core = host()
         _ = try await core.start()
         let count = try taskCount()
+        let before = try storedTask(id)
         let opening = try object(await core.call("editorModel", argumentsJSON: json([id])))
         let baseline = try XCTUnwrap(opening["recurrenceBase"] as? [String: Any])
         // The SQLite loader presents the legacy string as a rule object and
@@ -1348,8 +1587,7 @@ final class CoreHostTests: XCTestCase {
         let request = try recurrenceRequest(id, opening: opening, edited: opening, dates: ["dueDate": "2036-10-05"])
         _ = try await core.call("saveDraft", argumentsJSON: json([json(request)]))
         let saved = try storedTask(id)
-        XCTAssertEqual(try json(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["recurrence"] as? String).utf8))),
-                       try json(XCTUnwrap(baseline["recurrence"])))
+        XCTAssertEqual(saved["recurrence"] as? String, before["recurrence"] as? String)
         XCTAssertEqual(saved["showFutureRecurrence"] as? Int, 0)
         XCTAssertEqual(saved["dueDate"] as? String, "2036-10-05")
         XCTAssertEqual(try taskCount(), count)
@@ -1360,7 +1598,7 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try json(XCTUnwrap(restored["recurrenceBase"])), try json(baseline))
     }
 
-    func testPreparedRecurrenceRestartRetriesFrozenChangesAndPreservesNewerNotes() async throws {
+    func testLegacyPreparedRecurrenceRestartRetriesFrozenChangesAndPreservesNewerNotes() async throws {
         for afterCommit in [false, true] {
             let id = try await seedDestinationTask()
             let faults = HostIOFaults()
@@ -1378,13 +1616,15 @@ final class CoreHostTests: XCTestCase {
                 faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected recurrence COMMIT failure") } }
             }
             await expectFailure { _ = try await core.call("saveDraft", argumentsJSON: json([json(request)])) }
+            await core.close()
+            try convertPendingDraftToLegacyFixture()
             let commit = try pendingDraftCommit()
             let prepared = try XCTUnwrap(commit["prepared"] as? [String: Any])
             let frozenBefore = try XCTUnwrap(prepared["before"] as? [String: Any])
             let changes = try XCTUnwrap(prepared["changes"] as? [String: Any])
             XCTAssertEqual(try json(XCTUnwrap(commit["request"])), try json(request))
             XCTAssertEqual(try taskCount(), count)
-            await core.close()
+
             let writer = try SQLiteBridge(url: database)
             _ = try writer.execute("UPDATE tasks SET description = ?, rev = rev + 1 WHERE id = ?", parametersJSON: json(["Newer recurrence-independent note", id]))
             writer.close()
@@ -1564,7 +1804,7 @@ final class CoreHostTests: XCTestCase {
         }
     }
 
-    func testPreparedRecurrenceDecoderRejectsForgedStoredChanges() async throws {
+    func testLegacyPreparedRecurrenceDecoderRejectsForgedStoredChanges() async throws {
         let id = try await seedDestinationTask()
         let faults = HostIOFaults()
         let core = host(faults)
@@ -1576,11 +1816,13 @@ final class CoreHostTests: XCTestCase {
         await expectFailure("SAVE_FAILED") {
             _ = try await core.call("saveDraft", argumentsJSON: json([json(recurrenceRequest(id, opening: opening, edited: edited))]))
         }
+        await core.close()
+        try convertPendingDraftToLegacyFixture()
         let commit = try pendingDraftCommit()
         let prepared = try XCTUnwrap(commit["prepared"] as? [String: Any])
         let originalChanges = try XCTUnwrap(prepared["changes"] as? [String: Any])
         let recurrence = try XCTUnwrap(originalChanges["recurrence"] as? [String: Any])
-        await core.close()
+
         var altered = recurrence
         altered["seriesId"] = "forged-series"
         var counter = recurrence
@@ -1681,7 +1923,7 @@ final class CoreHostTests: XCTestCase {
         var dateSaves = 0
         faults.beforeSQL = { _ in statements += 1 }
         faults.journalWrite = { journalWrites += 1 }
-        faults.commandDiagnostic = { if $0 == "dateSave" { dateSaves += 1 } }
+        faults.commandDiagnostic = { if $0 == "taskEditorDurableApplied" { dateSaves += 1 } }
         let editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
         let raw = try XCTUnwrap(editor["scheduleBase"] as? [String: Any])
         XCTAssertEqual(Set(raw.keys), Set(["startTime", "dueDate", "reviewAt", "relativeStartOffset"]))
@@ -1739,7 +1981,7 @@ final class CoreHostTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 
-    func testPreparedDateReplayFreezesDSTDayAndWeekAcrossTimezoneAndLostAcknowledgment() async throws {
+    func testLegacyPreparedDateReplayFreezesDSTDayAndWeekAcrossTimezoneAndLostAcknowledgment() async throws {
         let originalZone = NSTimeZone.default
         let originalTZ = getenv("TZ").map { String(cString: $0) }
         defer {
@@ -1771,6 +2013,8 @@ final class CoreHostTests: XCTestCase {
                     faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected date COMMIT failure") } }
                 }
                 await expectFailure { _ = try await core.call("saveDraft", argumentsJSON: payload) }
+                await core.close()
+                try convertPendingDraftToLegacyFixture()
                 let saved = try object(String(contentsOf: journal))
                 XCTAssertEqual(saved["method"] as? String, "draftCommit")
                 XCTAssertNil(saved["terminal"])
@@ -1784,7 +2028,7 @@ final class CoreHostTests: XCTestCase {
                 XCTAssertEqual(changes["dueDate"] as? String, "2026-11-01T15:00:00.000Z")
                 XCTAssertEqual(try json(XCTUnwrap(changes["relativeStartOffset"])), try json(offset))
                 XCTAssertEqual(changes["pushCount"] as? Int, 1)
-                await core.close()
+
                 let writer = try SQLiteBridge(url: database)
                 _ = try writer.execute("UPDATE tasks SET description = ?, priority = ?, rev = rev + 1 WHERE id = ?",
                                        parametersJSON: json(["Newer independent note", "urgent", id]))
@@ -1895,14 +2139,18 @@ final class CoreHostTests: XCTestCase {
         let request: [String: Any] = ["id": id, "base": ["dueDate": try XCTUnwrap(draft["dueDate"])], "patch": ["dueDate": "2036-10-03"], "scheduleBase": raw]
         var statements = 0
         var journalWrites = 0
-        faults.beforeSQL = { _ in statements += 1 }
+        var taskWrites = 0
+        faults.beforeSQL = { sql in
+            statements += 1
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+tasks\b"#, options: .regularExpression) != nil { taskWrites += 1 }
+        }
         faults.journalWrite = { journalWrites += 1 }
-        for method in ["draftPrepare", "draftCommit"] {
+        for method in ["draftPrepare", "draftCommit", "draftValidate"] {
             await expectFailure("unavailable") { _ = try await core.call(method, argumentsJSON: json([json(request)])) }
         }
         var malformed: [[String: Any]] = [
             request.filter { $0.key != "scheduleBase" },
-            ["id": id, "base": ["title": "Destination task"], "patch": ["title": "Not a date"], "scheduleBase": raw],
+            ["id": id, "base": ["title": "Destination task"], "patch": ["title": true], "scheduleBase": raw],
             ["id": id, "base": ["relativeStartOffset": NSNull()], "patch": ["relativeStartOffset": ["amount": true, "unit": "day"]], "scheduleBase": raw],
             ["id": id, "base": ["relativeStartOffset": NSNull()], "patch": ["relativeStartOffset": ["amount": 1.5, "unit": "day"]], "scheduleBase": raw],
             ["id": id, "base": ["dueDate": "2036-10-02"], "patch": ["dueDate": NSNull()], "scheduleBase": raw],
@@ -1912,6 +2160,7 @@ final class CoreHostTests: XCTestCase {
         malformed.append(incomplete)
         for input in malformed { await expectFailure("INVALID_INPUT") { _ = try await core.call("saveDraft", argumentsJSON: json([json(input)])) } }
         await expectFailure("INVALID_INPUT") { _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["dueDate": "not-a-date"])) }
+        XCTAssertEqual(statements, 0, "Malformed transport must fail before saved reads")
         await expectFailure("INVALID_INPUT") {
             _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor,
                 patch: ["dueDate": "2036-10-03", "projectId": "destination-project-deleted", "sectionId": "", "areaId": ""]))
@@ -1920,11 +2169,12 @@ final class CoreHostTests: XCTestCase {
         let protected = try storedTask(protectedID)
         let protectedEditor = try object(await core.call("editorModel", argumentsJSON: json([protectedID])))
         await expectFailure("INVALID_INPUT") { _ = try await core.call("saveDraft", argumentsJSON: datePayload(protectedID, editor: protectedEditor, patch: ["dueDate": "2036-10-03"])) }
-        XCTAssertEqual(statements, 0)
+        XCTAssertEqual(taskWrites, 0)
         XCTAssertEqual(journalWrites, 0)
         XCTAssertEqual(try json(storedTask(id)), try json(before))
         XCTAssertEqual(try json(storedTask(protectedID)), try json(protected))
         await core.close()
+        statements = 0
         let rawArguments = try json([json(request)])
         var different = request
         different["id"] = "different-task"
@@ -1950,7 +2200,7 @@ final class CoreHostTests: XCTestCase {
         }
     }
 
-    func testPreparedDateDecoderRejectsTamperedChangesWithoutWriting() async throws {
+    func testLegacyPreparedDateDecoderRejectsTamperedChangesWithoutWriting() async throws {
         let id = try await seedDestinationTask()
         let faults = HostIOFaults()
         let core = host(faults)
@@ -1959,12 +2209,14 @@ final class CoreHostTests: XCTestCase {
         let before = try storedTask(id)
         faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected date COMMIT failure") } }
         await expectFailure("SAVE_FAILED") { _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: editor, patch: ["dueDate": "2036-10-03"])) }
+        await core.close()
+        try convertPendingDraftToLegacyFixture()
         let saved = try object(String(contentsOf: journal))
         let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
         let commit = try object(args[0])
         let prepared = try XCTUnwrap(commit["prepared"] as? [String: Any])
         let request = try XCTUnwrap(commit["request"])
-        await core.close()
+
         var invalid: [[String: Any]] = []
         for (field, value) in [("title", "Unrequested title" as Any), ("dueDate", NSNull() as Any), ("rev", 999 as Any)] {
             var candidate = prepared

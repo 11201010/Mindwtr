@@ -73,6 +73,203 @@ describe('prepared native task draft save', () => {
         if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ;
     });
 
+    it('prepares a title-only v2 save from the durable row and replays its exact receipt', async () => {
+        const input = request({ title: 'Changed' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared', prepared: { version: 2 } } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        const prepared = json(plan.value.prepared);
+        expect(host.validatePreparedTaskDraftSave({ request: input, prepared })).toMatchObject({
+            ok: true, value: { version: 2, result: { id: 'edit' } },
+        });
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared })).toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ title: 'Changed', rev: 8, updatedAt: NOW });
+        await open();
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared })).toMatchObject({ ok: true });
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('replays an exact Task receipt after an independent device ID change when the edit did not initialize it', async () => {
+        const input = request({ title: 'Changed' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        expect(plan.value.prepared.deviceIdToInitialize).toBeNull();
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        durable.settings.deviceId = 'independent-device';
+        await open();
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('refuses a cold exact Task receipt if this edit initialized a device ID that another writer replaced', async () => {
+        delete durable.settings.deviceId;
+        await open();
+        const input = request({ title: 'Changed' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        expect(plan.value.prepared.deviceIdBefore).toBeNull();
+        expect(plan.value.prepared.deviceIdToInitialize).toEqual(expect.any(String));
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        durable.settings.deviceId = 'independent-device';
+        await open();
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('freezes a date edit in v2 without a second timezone projection on cold replay', async () => {
+        const input = request({ dueDate: '2026-10-05T15:00:00.000Z' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared', prepared: { version: 2 } } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        const prepared = json(plan.value.prepared);
+        await open('UTC');
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared })).toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ dueDate: '2026-10-05T15:00:00.000Z' });
+    });
+
+    it('accepts a projected legacy recurrence baseline while preserving the raw saved rule on a date save', async () => {
+        await seed({ recurrence: 'daily', showFutureRecurrence: false });
+        const opening = model();
+        const patch = { recurrence: opening.draft.recurrence, recurrenceStrategy: opening.draft.recurrenceStrategy,
+            recurrenceRRule: opening.draft.recurrenceRRule,
+            showFutureRecurrence: opening.draft.showFutureRecurrence, dueDate: '2036-10-05' };
+        const input = { id: 'edit', patch, base: { ...patch, dueDate: opening.draft.dueDate },
+            scheduleBase: opening.scheduleBase, recurrenceBase: opening.recurrenceBase };
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        if (!plan.ok) throw new Error(JSON.stringify({ plan, openingRecurrence: opening.recurrenceBase,
+            raw: saved().recurrence, patch }));
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved().recurrence).toBe('daily');
+        expect(saved().showFutureRecurrence).toBe(false);
+        expect(saved().dueDate).toBe('2036-10-05');
+    });
+
+    it('clears show-future when removing recurrence even if its draft flag was unchanged', async () => {
+        await seed({ recurrence: 'daily', showFutureRecurrence: true });
+        const opening = model();
+        const base = { recurrence: opening.draft.recurrence, recurrenceStrategy: opening.draft.recurrenceStrategy,
+            recurrenceRRule: opening.draft.recurrenceRRule,
+            showFutureRecurrence: opening.draft.showFutureRecurrence };
+        const input = { id: 'edit', base, patch: { ...base, recurrence: '' },
+            scheduleBase: opening.scheduleBase, recurrenceBase: opening.recurrenceBase };
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved().recurrence).toBeUndefined();
+        expect(saved().showFutureRecurrence).toBeUndefined();
+    });
+
+    it.each([{ areaId: 'missing-area' }, { sectionId: 'missing-section', projectId: 'missing-project' }])('keeps a stale untouched container while editing title in v2: %j', async (legacy) => {
+        await seed(legacy);
+        const input = request({ title: 'Revised' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared })).toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ title: 'Revised', ...legacy });
+    });
+
+    it('lets a Reference task edit visible metadata and clear hidden values but refuses hidden writes', async () => {
+        await seed({ status: 'reference', description: 'Old note' });
+        const input = request({ title: 'Reference title', description: 'New note', priority: '',
+            energyLevel: 'high', timeEstimate: '' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared })).toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ status: 'reference', title: 'Reference title', description: 'New note',
+            energyLevel: 'high' });
+        expect(saved().priority).toBeUndefined();
+        expect(saved().timeEstimate).toBeUndefined();
+        expect(await host.prepareTaskDraftSaveV2(request({ priority: 'urgent' })))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.prepareTaskDraftSaveV2(request({ timeEstimate: '45min' })))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.prepareTaskDraftSaveV2(request({ dueDate: '2026-10-05' })))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    it('refuses a forged title-only v2 plan that clears unrelated Focus metadata', async () => {
+        await seed({ isFocusedToday: true, focusOrder: 9 });
+        const input = request({ title: 'Changed' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const prepared = json(plan.value.prepared);
+        prepared.effect.task.after.isFocusedToday = false;
+        delete prepared.effect.task.after.focusOrder;
+        expect(host.validatePreparedTaskDraftSave({ request: input, prepared }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('refuses a forged project reservation in v2 before reading saved data', async () => {
+        await seed({}, [project('project-a')]);
+        const input = request({ projectId: 'project-a', areaId: '', sectionId: '' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const prepared = json(plan.value.prepared);
+        prepared.effect.task.after.order = 999;
+        prepared.effect.task.after.orderNum = 999;
+        expect(host.validatePreparedTaskDraftSave({ request: input, prepared }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('returns a true v2 no-op without any Task stamp or save', async () => {
+        const before = saved();
+        const input = request({ title: 'Original' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'noop', result: { id: 'edit' } } });
+        expect(saved()).toEqual(before);
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('clears priority and energy together through the shared scalar edit policy', async () => {
+        await seed({ priority: 'urgent', energyLevel: 'high' });
+        const input = request({ priority: '', energyLevel: '' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved().priority).toBeUndefined();
+        expect(saved().energyLevel).toBeUndefined();
+    });
+
+    it('rejects malformed frozen v2 Task, stamp, and unrelated after fields before any save', async () => {
+        const input = request({ title: 'Changed' });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const prepared = json(plan.value.prepared);
+        const cases = [
+            (item: typeof prepared) => { item.effect.task.after.rev = 500; },
+            (item: typeof prepared) => { item.effect.task.after.updatedAt = '2025-01-01T00:00:00.000Z'; },
+            (item: typeof prepared) => { item.effect.task.after.description = 'Injected'; },
+            (item: typeof prepared) => { item.effect.task.before.tags = [7 as never]; },
+            (item: typeof prepared) => { item.scope.nextProjectOrder = 9; },
+        ];
+        for (const mutate of cases) {
+            const forged = json(prepared);
+            mutate(forged);
+            expect(host.validatePreparedTaskDraftSave({ request: input, prepared: forged }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: forged }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
     it.each(['2026-10-05', '2026-10-05T08:00', '2026-10-05T15:00:00.000Z'])('prepares without writes and preserves the raw representation %s through restart and replay', async (dueDate) => {
         const before = stored();
         const durableBefore = saved();
@@ -93,6 +290,19 @@ describe('prepared native task draft save', () => {
         const after = stored();
         expect(await commit(prepared)).toMatchObject({ ok: true });
         expectUnchanged(after, committed);
+    });
+
+    it('keeps the legacy v1 date journal rule that clears an inconsistent Area under a Project', async () => {
+        await seed({ projectId: 'project-a', areaId: 'legacy-area' }, [project('project-a')]);
+        const input = request({ dueDate: '2026-10-05' });
+        const plan = host.prepareTaskDraftSave(input);
+        expect(plan).toMatchObject({ ok: true });
+        if (!plan.ok) return;
+        expect(plan.value.changes).toHaveProperty('areaId', null);
+        await open();
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value }))
+            .toMatchObject({ ok: true });
+        expect(saved().areaId).toBeUndefined();
     });
 
     it('returns a detached raw schedule baseline and preserves a no-op without writing', async () => {

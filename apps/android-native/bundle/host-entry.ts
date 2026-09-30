@@ -138,8 +138,8 @@ type LoadedData = Awaited<ReturnType<SqliteAdapter['getData']>>;
 class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter {
     latestData: LoadedData | null = null;
 
-    override async getData(): Promise<LoadedData> {
-        const data = await super.getData();
+    override async getData(options?: { rawTasks?: true }): Promise<LoadedData> {
+        const data = await super.getData(options);
         for (const table of ['tasks', 'projects', 'sections', 'areas', 'people'] as const) {
             const rows = await sqlite.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`);
             if (data[table].length !== rows?.n) throw new Error(`Incomplete ${table} load`);
@@ -163,7 +163,7 @@ class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter {
             || (savedFilters!.n > 0 && data.settings.savedFilters?.length !== savedFilters!.n)) {
             throw new Error('Incomplete saved filters load');
         }
-        this.latestData = data;
+        if (!options?.rawTasks) this.latestData = data;
         return data;
     }
 }
@@ -1812,14 +1812,18 @@ globalThis.MindwtrHost = {
     boardCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedBoardAction(JSON.parse(json))));
     },
-    /** Private native date preparation freezes raw schedule changes before journaling. */
+    /** Private native editor preparation freezes the raw Task effect before journaling. */
     draftPrepare(json: string): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(contract.prepareTaskDraftSave(JSON.parse(json)));
+            return unwrap(await contract.prepareTaskDraftSaveV2(JSON.parse(json)));
         });
     },
-    /** Commit only the exact prepared date envelope; recovery never prepares again. */
+    /** Pure check for both legacy v1 and exact v2 Task Editor journals. */
+    draftValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTaskDraftSave(JSON.parse(json))));
+    },
+    /** Commit only the exact prepared editor envelope; recovery never prepares again. */
     draftCommit(json: string): string {
         return submit(async () => taskResult('saveTaskDraft', await contract.commitPreparedTaskDraftSave(JSON.parse(json))));
     },

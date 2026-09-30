@@ -7,7 +7,7 @@ const failure = (code: 'STALE_REVISION' | 'SAVE_FAILED', message: string): Nativ
     ({ ok: false, error: { code, message } });
 
 /** The three Area commands read saved rows, not the loader's display-only projection. */
-export async function readAreaDurableData(allowFailedSave = false): Promise<NativeHostResult<{
+export async function readAreaDurableData(allowFailedSave = false, rawTasks = false): Promise<NativeHostResult<{
     adapter: ReturnType<typeof getStorageAdapter>; authority: PreparedAreaAuthority;
 }>> {
     const adapter = getStorageAdapter();
@@ -15,7 +15,7 @@ export async function readAreaDurableData(allowFailedSave = false): Promise<Nati
     let snapshot;
     try {
         if (!allowFailedSave || !state.persistenceFailure) await flushPendingSave();
-        snapshot = await adapter.getData();
+        snapshot = await adapter.getData(rawTasks ? { rawTasks: true } : undefined);
     } catch { return failure('SAVE_FAILED', 'Area operation could not read saved data'); }
     const current = useTaskStore.getState();
     if (getStorageAdapter() !== adapter || current._allTasks !== state._allTasks

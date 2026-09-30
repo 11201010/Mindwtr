@@ -258,6 +258,10 @@ private final class Engine: @unchecked Sendable {
             guard let host = runtime.objectForKeyedSubscript("MindwtrHost"), !host.isUndefined, !host.isNull else {
                 throw HostFailure("Core bundle has no host contract")
             }
+            if let command = pending, command.method == "draftCommit" {
+                if case .success(let value) = command.terminal { try validateDraftAcknowledgment(command, value: value) }
+                else { try validateDraftAcknowledgment(command) }
+            }
             if let command = pending, command.method == "boardCommit" {
                 // Full immutable authority is checked before opening SQLite, even
                 // for terminal journals whose remaining work is only cleanup.
@@ -2258,16 +2262,23 @@ private final class Engine: @unchecked Sendable {
                   input["scheduleBase"] != nil {
             do {
                 let value = try invoke("draftPrepare", arguments: args)
-                guard let prepared = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
-                      Self.isInteger(prepared["version"], equalTo: 1),
-                      let request = prepared["request"] as? [String: Any],
-                      try JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]) else {
-                    throw HostFailure("Malformed prepared schedule save")
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String else { throw HostFailure("Malformed editor preparation") }
+                if kind == "noop" {
+                    guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any],
+                          Set(result.keys) == Set(["id", "draft"]), Self.equalJSON(result["id"], input["id"]),
+                          result["draft"] is [String: Any] else { throw HostFailure("Malformed editor no-op") }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 2),
+                      let request = prepared["request"] as? [String: Any], Self.equalJSON(input, request) else {
+                    throw HostFailure("Malformed prepared editor save")
                 }
                 let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
                 let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
                 command = PendingCommand(version: 2, method: "draftCommit", argumentsJSON: encoded)
-                _ = try journalArguments(command)
+                try validateDraftAcknowledgment(command)
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else {
             command = PendingCommand(version: 2, method: method, argumentsJSON: argumentsJSON)
@@ -2298,6 +2309,35 @@ private final class Engine: @unchecked Sendable {
         guard let terminal else { return nil }
         if case .success = terminal, let command { rememberConfirmedSomedayMove(command) }
         return try publicValue(terminal, method: method)
+    }
+
+    private func validateDraftAcknowledgment(_ command: PendingCommand, value: String? = nil) throws {
+        let encoded = try invoke("draftValidate", arguments: journalArguments(command))
+        guard let validation = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else {
+            throw HostFailure("Malformed editor validation")
+        }
+        let expected: [String: Any]?
+        let id: String
+        if Self.isInteger(validation["version"], equalTo: 1) {
+            guard Set(validation.keys) == Set(["version", "id"]), let identifier = validation["id"] as? String else {
+                throw HostFailure("Malformed legacy editor validation")
+            }
+            expected = nil; id = identifier
+        } else {
+            guard Self.isInteger(validation["version"], equalTo: 2), Set(validation.keys) == Set(["version", "result"]),
+                  let result = validation["result"] as? [String: Any], Set(result.keys) == Set(["id", "draft"]),
+                  let identifier = result["id"] as? String, result["draft"] is [String: Any] else {
+                throw HostFailure("Malformed editor validation")
+            }
+            expected = result; id = identifier
+        }
+        if let value {
+            guard let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                  Set(result.keys) == Set(["id", "draft"]), result["id"] as? String == id,
+                  result["draft"] is [String: Any], expected == nil || Self.equalJSON(expected, result) else {
+                throw HostFailure("Malformed editor acknowledgment")
+            }
+        }
     }
 
     private func publicValue(_ terminal: TerminalResult, method: String?) throws -> String {
@@ -2374,6 +2414,10 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func finish(_ command: PendingCommand, with terminal: TerminalResult) throws -> TerminalResult {
+        if command.method == "draftCommit" {
+            if case .success(let value) = terminal { try validateDraftAcknowledgment(command, value: value) }
+            else { try validateDraftAcknowledgment(command) }
+        }
         if command.method == "boardCommit" {
             _ = try invoke("boardValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validateBoardAcknowledgment(command, value: value) }
@@ -2557,6 +2601,12 @@ private final class Engine: @unchecked Sendable {
         pending = finished
         try persist(finished)
         try clearPending()
+        if command.method == "draftCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("taskEditorDurableApplied")
+#endif
+            NSLog("Native iOS Task Editor save confirmed releaseCheck=v1.3.4/ios-editor-durable-save outcome=confirmed")
+        }
         if command.method == "boardCommit", case .success = terminal, !boardActionLogged {
             boardActionLogged = true
 #if DEBUG
@@ -4916,7 +4966,8 @@ private final class Engine: @unchecked Sendable {
                   Set(input.keys) == Set(["request", "prepared"]), let request = input["request"] as? [String: Any],
                   Set(request.keys) == Set(request["recurrenceBase"] == nil
                     ? ["id", "base", "patch", "scheduleBase"] : ["id", "base", "patch", "scheduleBase", "recurrenceBase"]),
-                  let prepared = input["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+                  let prepared = input["prepared"] as? [String: Any],
+                  (Self.isInteger(prepared["version"], equalTo: 1) || Self.isInteger(prepared["version"], equalTo: 2)),
                   let preparedRequest = prepared["request"] as? [String: Any],
                   try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: preparedRequest, options: [.sortedKeys]) else {
                 throw HostFailure("Malformed prepared schedule journal")
@@ -6441,7 +6492,7 @@ private final class Engine: @unchecked Sendable {
             }
             let hasSchedule = !Self.scheduleFields.isDisjoint(with: patch.keys)
             let hasRecurrence = !Self.recurrenceFields.isDisjoint(with: patch.keys)
-            let isPrepared = hasSchedule || hasRecurrence
+            let isPrepared = hasSchedule || hasRecurrence || input["scheduleBase"] != nil
             let allowed = Set(["title", "description", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags"])
                 .union(allowPreparedDates ? Self.scheduleFields.union(Self.recurrenceFields) : [])
             var inputFields: Set<String> = ["id", "base", "patch"]

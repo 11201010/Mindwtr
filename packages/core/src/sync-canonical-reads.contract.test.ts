@@ -39,6 +39,7 @@ import { createNextRecurringTask } from './recurrence';
 import { toStableSyncJson } from './sync-helpers';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createNativeHostContract } from './native-host-contract';
+import { createTaskDraft } from './task-draft';
 import { DEFAULT_FOCUS_CONTROL_STATE } from './focus-controls';
 import { TASK_SQLITE_COLUMNS, TASK_SYNC_FIELD_SCHEMA, TASK_SYNC_SCHEMA_FIXTURE, taskToSqliteRow } from './task-sync-schema';
 import { mapSqliteTaskRow } from './sqlite-adapter';
@@ -1640,6 +1641,21 @@ describe('canonical local reads contract', () => {
                 expect(nativeValue(await host.commitPreparedTaskDraftSave({ request: prepared.request, prepared })).id).toBe(taskId);
                 expect(useTaskStore.getState()._tasksById.get(taskId)?.title).toBe('Contract prepared edit');
                 expect(useTaskStore.getState()._tasksById.get(taskId)?.dueDate).toBe(request.patch.dueDate);
+            },
+            commitPreparedTaskDraftV2: async (control) => {
+                const host = await nativeHost(control);
+                const model = nativeValue(host.getTaskEditorModel({ id: taskId }));
+                const request = { id: taskId, base: { title: model.draft.title },
+                    patch: { title: 'Contract durable draft' }, scheduleBase: model.scheduleBase };
+                const planned = nativeValue(await host.prepareTaskDraftSaveV2(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.tasks.find((entry) => entry.id === taskId)).toEqual(planned.prepared.effect.task.after);
+                });
+                expect(nativeValue(await host.commitPreparedTaskDraftSave({ request, prepared: planned.prepared })))
+                    .toEqual({ id: taskId, draft: createTaskDraft(planned.prepared.effect.task.after) });
+                expect(useTaskStore.getState()._tasksById.get(taskId)?.title).toBe('Contract durable draft');
             },
             commitPreparedTaskFocus: async (control) => {
                 const host = await nativeHost(control);

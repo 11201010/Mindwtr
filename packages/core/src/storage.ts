@@ -26,7 +26,8 @@ export type SearchResults = {
 };
 
 export interface StorageAdapter {
-    getData(): Promise<AppData>;
+    /** Raw Tasks are used only by a prepared native edit; ordinary display reads keep their projection. */
+    getData(options?: { rawTasks?: true }): Promise<AppData>;
     /** Confirms that the exact snapshot returned by getData was applied to the live store. */
     acknowledgeDataLoad?: (data: AppData) => void;
     /** Returns the authoritative persisted snapshot when the backend can provide it. */

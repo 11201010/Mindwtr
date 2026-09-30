@@ -11185,6 +11185,9 @@ final class FoundationUITests: XCTestCase {
 
     func testTaskMetadataEditPreviewDiscardAndRestart() {
         let app = XCUIApplication()
+        let library = UUID().uuidString.lowercased()
+        app.launchArguments = ["--native-ui-test-library", library]
+        print("Durable editor isolated library: " + library)
         app.launch()
         func enabled(_ element: XCUIElement, timeout: TimeInterval = 10) {
             XCTAssertTrue(element.waitForExistence(timeout: timeout))
@@ -11199,7 +11202,9 @@ final class FoundationUITests: XCTestCase {
         }
         func tap(_ id: String) {
             let button = app.buttons.matching(identifier: id).firstMatch
-            for _ in 0..<6 where !button.isHittable { app.swipeUp() }
+            if id.hasPrefix("task-editor-priority-") || id.hasPrefix("task-editor-energyLevel-") || id.hasPrefix("task-editor-section-") {
+                revealPagedElement(app, button, in: app.scrollViews["task-editor-scroll"])
+            }
             enabled(button)
             button.tap()
         }
@@ -11215,6 +11220,8 @@ final class FoundationUITests: XCTestCase {
         let titleInput = app.descendants(matching: .any).matching(identifier: "task-editor-title").firstMatch
         titleInput.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.8)).tap()
         titleInput.typeText(" changed")
+        tap("task-mode-view")
+        tap("task-mode-edit")
         // Metadata is revealed by its captured value, preserving the default hidden-field preference.
         if !app.buttons["task-editor-priority-urgent"].exists { tap("task-editor-section-organization") }
         tap("task-editor-priority-urgent")
@@ -11242,7 +11249,11 @@ final class FoundationUITests: XCTestCase {
         if !app.buttons["task-editor-priority-urgent"].exists { tap("task-editor-section-organization") }
         XCTAssertTrue(app.buttons["task-editor-priority-urgent"].isSelected)
         tap("task-editor-priority-none")
+        expectation(for: NSPredicate { _, _ in !app.buttons["task-editor-priority-urgent"].exists || !app.buttons["task-editor-priority-urgent"].isSelected }, evaluatedWith: app)
+        waitForExpectations(timeout: 10)
         tap("task-editor-energyLevel-none")
+        expectation(for: NSPredicate { _, _ in !app.buttons["task-editor-energyLevel-high"].exists || !app.buttons["task-editor-energyLevel-high"].isSelected }, evaluatedWith: app)
+        waitForExpectations(timeout: 10)
         tap("task-editor-save")
         enabled(inboxTask(title + " changed"))
         app.terminate()
@@ -11257,6 +11268,9 @@ final class FoundationUITests: XCTestCase {
 
     func testTaskTextEditPreviewDiscardAndRestart() {
         let app = XCUIApplication()
+        let library = UUID().uuidString.lowercased()
+        app.launchArguments = ["--native-ui-test-library", library]
+        print("Durable editor isolated library: " + library)
         app.launch()
         func enabled(_ element: XCUIElement, timeout: TimeInterval = 10) {
             XCTAssertTrue(element.waitForExistence(timeout: timeout))

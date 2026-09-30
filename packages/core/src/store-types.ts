@@ -506,6 +506,9 @@ export interface TaskStore {
     }) => Promise<StoreActionResult>;
     /** Internal prepared edit; native validates the journal before this atomic guarded overlay. */
     commitPreparedTaskEdit: (input: PreparedTaskEdit) => Promise<PreparedTaskEditResult>;
+    /** Native Task Editor v2: one raw saved Task effect with an exact durable receipt. */
+    commitPreparedTaskDraftV2: (input: import('./native-host-contract-task-save').NativePreparedTaskDraftSaveV2,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     commitPreparedTaskFocus: (input: PreparedTaskFocus & { request: { taskId: string; focused: boolean } }) => Promise<PreparedTaskEditResult>;
     commitPreparedFocusOrder: (input: PreparedFocusOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedFocusSavedFilter: (input: PreparedFocusSavedFilter) => Promise<PreparedTaskEditResult>;
