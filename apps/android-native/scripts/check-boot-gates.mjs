@@ -726,10 +726,11 @@ for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\
 // only a debug build's stop runs before a delete.
 for (const [name, call] of [['fileList', 'args -> files.list(args[0] as String)'], ['fileRead', 'args -> files.readText(args[0] as String)'],
     ['fileDelete', 'args -> queueStop(); files.delete(args[0] as String); null'], ['kvGet', 'args -> JSONArray().put(keyValue.get(args[0] as String) ?: JSONObject.NULL).toString()'],
-    ['kvSet', 'args -> keyValue.set(args[0] as String, args[1] as String); null']]) {
+    ['kvSet', 'args -> kvFault(); keyValue.set(args[0] as String, args[1] as String); null']]) {
     assert(bridgeCallbacks.includes(`bridge.setProperty("${name}", guarded { ${call} })`), `${name} reaches the queue's port and nothing else`);
 }
 assert.match(coreHost, /private fun queueStop\(\) \{\s+if \(debugFault\("queue_stop"\) != "delete"\) return/, 'the queue stop is debug-only');
+assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_set"\) != "1"\)/, 'the injected RKStorage failure is debug-only');
 // fetch and the secrets (HostIo.kt, SecretStore.kt): started on the engine thread, run off it, answered only through the pump.
 {
     const core = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core', name), 'utf8');
@@ -1036,14 +1037,14 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) recovered\(app, runtime\)\s+return runtime/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/syncStart\(/g).length, 1, 'one start of the triggers, in startSync');
     assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 1, 'startSync only in recovered, after the drain');
-    assert.equal([activity, model, owner, menuModel].join('\n').match(/recovered\(app, runtime\)|ProcessCoreHost\.recovered\(getApplication\(\), runtime\)/g).length, 2, 'recovered after the boot replay and after the owed retry');
+    assert.equal([activity, model, owner, menuModel].join('\n').match(/recovered\(app, runtime\)|ProcessCoreHost\.recovered\(getApplication\(\), runtime\)/g).length, 3, 'recovered after the boot replay, the owed retry and CoreWork\'s recovery');
     // Core's receipts are pruned once per boot, and only after a replay that left nothing: never before the replay, never while an
     // entry that may need its receipt is left.
     assert.match(coreHost, /fun pruneReceipts\(\): JSONObject = callAsync\("pruneReceipts"\)/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/pruneReceipts\(\)/g).length, 1, 'one prune call, after the boot replay');
-    assert.equal(owner.match(/replay\(runtime\)|replayJournal\(\)/g).length, 2);
+    assert.equal(owner.match(/replay\(runtime\)|replayJournal\(\)/g).length, 3, 'the boot\'s replay, and CoreWork\'s recovery');
     assert.match(model, /"journal" -> perform\(action\) \{ runtime ->\s+runtime\.replayJournal\(\)\.owed\?\.let \{ throw IllegalStateException\(it\) \}\s+acknowledged\(action\)\s+\/\/[^\n]*\s+if \(!ProcessCoreHost\.recovered\(getApplication\(\), runtime\)\) throw IllegalStateException\(ProcessCoreHost\.failure\?\.error \?: "SAVE_FAILED"\)\s+\}/);
-    assert.equal([activity, model, owner, menuModel].join('\n').match(/replayJournal\(\)/g).length, 2, 'the boot and the owed retry replay; nothing else');
+    assert.equal([activity, model, owner, menuModel].join('\n').match(/replayJournal\(\)/g).length, 3, 'the boot, the owed retry and CoreWork\'s recovery replay; nothing else');
     // The JVM tests keep the file rules (order, the atomic write, drop and keep, move-aside, writes only).
     const journalTest = readFileSync(resolve(app, 'android/app/src/test/java/tech/dongdongbh/mindwtr/pilot/core/WriteJournalTest.kt'), 'utf8');
     for (const name of ['entriesKeepTheirOrderAcrossAReopen', 'anEntryIsDurableBeforeAppendReturns', 'aWriteCutShortIsNeverAnEntry', 'anyFinalReplyDropsTheEntry',
@@ -2822,7 +2823,19 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         const value = (text) => new RegExp(`private const val ${name} = "([^"]+)"`).exec(text)[1];
         assert.equal(value(nativeContext), value(rnContext));
     }
-    assert.match(nativeContext, /val payload = runCatching \{ ContextAutomationPayload\.fromIntent\(intent\) \}\.getOrNull\(\) \?: return\s+CoreWork\.enqueue\(context\.applicationContext, CoreJob\.CONTEXT, mapOf\("action" to payload\.action, "context" to payload\.context\)\)/);
+    assert.match(nativeContext, /val payload = runCatching \{ ContextAutomationPayload\.fromIntent\(intent\) \}\.getOrNull\(\) \?: return\s+val outcome = queueTrigger\(payload\.action, payload\.context\) \{ CoreWork\.enqueue\(context\.applicationContext, CoreJob\.CONTEXT, it\) \}/);
+    // A trigger is bounded as core bounds it before WorkManager sees it (its Data.build() throws past 10,240 bytes), and an
+    // enqueue that throws drops it (ContextTriggerTest).
+    const coreTextBound = /const isOptionalText = \(value: unknown\) => value === undefined \|\| value === null \|\| isText\(value, (\d+)\);/
+        .exec(readFileSync(resolve(app, '../../packages/core/src/native-host-contract-capture-ingest.ts'), 'utf8'))[1];
+    assert.equal(/internal const val MAX_TRIGGER_TEXT = (\d+)/.exec(nativeContext)[1], coreTextBound, 'the trigger bound is core\'s');
+    assert.match(nativeContext, /if \(context\.length > MAX_TRIGGER_TEXT\) return "too-long"\s+return if \(runCatching \{ enqueue\(mapOf\("action" to action, "context" to context\)\) \}\.isSuccess\) "queued" else "failed"/);
+    // Every job recovers first, as the boot orders it: an owed journal replay, then the drain; a job runs only on finished state.
+    const coreJob = source('CoreJob.kt');
+    assert.match(coreJob, /val host = boot\(\)\s+if \(!host\.recover\(\) \|\| !host\.drain\(\)\) Outcome\.Retry/);
+    assert.match(owner, /fun recover\(app: Application, runtime: CoreHost\): Boolean \{\s+val owed = failure \?: return true\s+if \(owed\.action\.kind != "journal"\) return false\s+runtime\.replayJournal\(\)\.owed\?\.let \{ return false \}\s+clearFailure\(owed\.action\)\s+return recovered\(app, runtime\)\s+\}/);
+    // A drain's owed save (an item stored but not saved or recorded) holds a screen's newer edits back until its replay.
+    assert.match(model, /if \(failedAction == null\) ProcessCoreHost\.failure\?\.takeIf \{ it\.action\.kind == "journal" \}\?\.let \{ owed ->\s+failedAction = owed\.action\s+error = owed\.error\s+\}\s+if \(busy \|\| runtime == null/);
     // CoreWork: WorkManager at RN's version, in the app's process; expedited on Android 12+; a debug build's delay only.
     const rnWork = /androidx\.work:work-runtime(?:-ktx)?:([\d.]+)/.exec(readFileSync(resolve(app, '../../node_modules/expo-background-task/android/build.gradle'), 'utf8'))[1];
     assert.match(gradle, new RegExp(`implementation\\("androidx\\.work:work-runtime:${rnWork.replace(/\./g, '\\.')}"\\)`), 'WorkManager at RN\'s version');

@@ -1784,6 +1784,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
      */
     internal fun perform(action: FailedAction? = null, work: (CoreHost) -> Unit) {
         val runtime = host
+        // A journal retry owed by work no screen sent (a CoreWork queue drain that stored an item but could not save or record
+        // it) holds newer edits back too: until its replay, a reopen would be undone by that item's retry.
+        if (failedAction == null) ProcessCoreHost.failure?.takeIf { it.action.kind == "journal" }?.let { owed ->
+            failedAction = owed.action
+            error = owed.error
+        }
         if (busy || runtime == null || (failedAction != null && failedAction != action)) return
         busy = true
         if (action != null) commandAt = ++issued

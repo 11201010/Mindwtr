@@ -189,7 +189,7 @@ class CoreHost(
             // RN's AsyncStorage (RnKeyValue): reads answer JSON (a value, or AsyncStorage's [[key, value]] pairs); a write is on disk
             // when it returns.
             bridge.setProperty("kvGet", guarded { args -> JSONArray().put(keyValue.get(args[0] as String) ?: JSONObject.NULL).toString() })
-            bridge.setProperty("kvSet", guarded { args -> keyValue.set(args[0] as String, args[1] as String); null })
+            bridge.setProperty("kvSet", guarded { args -> kvFault(); keyValue.set(args[0] as String, args[1] as String); null })
             bridge.setProperty("kvRemove", guarded { args -> keyValue.remove(args[0] as String); null })
             bridge.setProperty("kvMultiGet", guarded { args -> keyValuePairs(keyValue.multiGet(stringList(args[0] as String))) })
             bridge.setProperty("kvMultiSet", guarded { args -> keyValue.multiSet(JSONArray(args[0] as String).let { pairs ->
@@ -668,6 +668,9 @@ class CoreHost(
      * Debug builds only (check-runner-device.mjs): with `debug.mindwtr.native.queue_stop=delete`, the process dies before a
      * queue file's delete, so after that item's write and save.
      */
+    /** Debug builds only (check-runner-device.mjs, an owed drain): `debug.mindwtr.native.fail_kv_set` = 1 refuses an RKStorage write. */
+    private fun kvFault() = check(debugFault("fail_kv_set") != "1") { "Injected RKStorage write failure" }
+
     private fun queueStop() {
         if (debugFault("queue_stop") != "delete") return
         Log.i(TAG, "Native Android queue stop at=delete")

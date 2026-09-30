@@ -65,6 +65,7 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
                 val language = app.getSharedPreferences(DEVICE_PREFS, Context.MODE_PRIVATE).getString(LANGUAGE_KEY, null)
                 val host = ProcessCoreHost.get(app, language).also { booted = it }
                 object : CoreJob.Calls {
+                    override fun recover() = ProcessCoreHost.recover(app, host)
                     override fun drain() = ProcessCoreHost.drain(host, ProcessCoreHost.queue(app))
                     override fun contextAutomation(json: String) = host.contextAutomation(json)
                 }

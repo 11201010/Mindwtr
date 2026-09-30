@@ -8,11 +8,17 @@ import org.junit.Test
 class CoreJobTest {
     private val events = mutableListOf<String>()
     private var drained = true
+    private var recovered = true
     private var notification: JSONObject? = JSONObject().put("title", "@home next action")
     private var bootFailure: Throwable? = null
     private var jobFailure: Throwable? = null
+    private var contextFailure: Throwable? = null
 
     private val calls = object : CoreJob.Calls {
+        override fun recover(): Boolean {
+            events += "recover"
+            return recovered
+        }
         override fun drain(): Boolean {
             events += "drain"
             jobFailure?.let { throw it }
@@ -20,7 +26,7 @@ class CoreJobTest {
         }
         override fun contextAutomation(json: String): JSONObject {
             JSONObject(json).let { events += "context ${it.getString("action")} ${it.getString("context")}" }
-            jobFailure?.let { throw it }
+            contextFailure?.let { throw it }
             return JSONObject().put("notification", notification ?: JSONObject.NULL)
         }
     }
@@ -35,19 +41,35 @@ class CoreJobTest {
 
     @Test fun theHostBootsBeforeTheJobAndWidgetsRefreshAfterIt() {
         assertEquals(CoreJob.Outcome.Success, run(CoreJob.INGEST))
-        assertEquals(listOf("boot", "drain", "widgets"), events)
+        assertEquals(listOf("boot", "recover", "drain", "widgets"), events)
+    }
+
+    @Test fun anOwedJournalThatStillFailsRetriesLaterAndDrainsNothing() {
+        recovered = false
+        assertEquals(CoreJob.Outcome.Retry, run(CoreJob.INGEST))
+        assertEquals(listOf("boot", "recover"), events)
+    }
+
+    @Test fun aContextTriggerWaitsForRecoveryAndTheDrain() {
+        recovered = false
+        assertEquals(CoreJob.Outcome.Retry, run(CoreJob.CONTEXT, mapOf("action" to "activate", "context" to "@home")))
+        recovered = true
+        drained = false
+        assertEquals(CoreJob.Outcome.Retry, run(CoreJob.CONTEXT, mapOf("action" to "activate", "context" to "@home")))
+        // Nothing was posted from unfinished state.
+        assertEquals(listOf("boot", "recover", "boot", "recover", "drain"), events)
     }
 
     @Test fun aDrainThatMustWaitRetriesLater() {
         drained = false
         assertEquals(CoreJob.Outcome.Retry, run(CoreJob.INGEST))
-        assertEquals(listOf("boot", "drain"), events)
+        assertEquals(listOf("boot", "recover", "drain"), events)
     }
 
     @Test fun aFailedDrainRetriesLater() {
         jobFailure = IllegalStateException("Core ingest timed out")
         assertEquals(CoreJob.Outcome.Retry, run(CoreJob.INGEST))
-        assertEquals(listOf("boot", "drain"), events)
+        assertEquals(listOf("boot", "recover", "drain"), events)
     }
 
     @Test fun eachRunLogsOneLineWithItsJobOutcomeAndOnlyAFailuresCode() {
@@ -62,26 +84,27 @@ class CoreJobTest {
     @Test fun aBootThatFailsRunsNoJob() {
         bootFailure = IllegalStateException("Incomplete tasks load")
         assertEquals(CoreJob.Outcome.Retry, run(CoreJob.INGEST))
-        assertEquals(CoreJob.Outcome.Failure, run(CoreJob.CONTEXT, mapOf("action" to "activate", "context" to "@home")))
+        // A trigger whose recovery cannot finish waits for it too.
+        assertEquals(CoreJob.Outcome.Retry, run(CoreJob.CONTEXT, mapOf("action" to "activate", "context" to "@home")))
         assertEquals(listOf("boot", "boot"), events)
     }
 
     @Test fun aContextTriggerPostsCoresNotification() {
         assertEquals(CoreJob.Outcome.Success, run(CoreJob.CONTEXT, mapOf("action" to "activate", "context" to "@home")))
-        assertEquals(listOf("boot", "context activate @home", "post @home next action", "widgets"), events)
+        assertEquals(listOf("boot", "recover", "drain", "context activate @home", "post @home next action", "widgets"), events)
     }
 
     @Test fun aTriggerCoreAnswersWithNoNotificationPostsNothing() {
         notification = null
         assertEquals(CoreJob.Outcome.Success, run(CoreJob.CONTEXT, mapOf("action" to "deactivate", "context" to "@home")))
-        assertEquals(listOf("boot", "context deactivate @home", "widgets"), events)
+        assertEquals(listOf("boot", "recover", "drain", "context deactivate @home", "widgets"), events)
     }
 
     @Test fun aFailedTriggerIsNotRetried() {
-        jobFailure = IllegalStateException("Core contextAutomation timed out")
+        contextFailure = IllegalStateException("Core contextAutomation timed out")
         // A late notification would describe a moment that has passed: RN's headless task does not retry either.
         assertEquals(CoreJob.Outcome.Failure, run(CoreJob.CONTEXT, mapOf("action" to "activate", "context" to "@home")))
-        assertEquals(listOf("boot", "context activate @home"), events)
+        assertEquals(listOf("boot", "recover", "drain", "context activate @home"), events)
     }
 
     @Test fun anUnknownJobBootsNothing() {

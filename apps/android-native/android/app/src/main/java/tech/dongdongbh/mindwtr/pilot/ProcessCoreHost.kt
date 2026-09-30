@@ -198,6 +198,20 @@ internal object ProcessCoreHost {
     }
 
     /**
+     * CoreWork's recovery before its job: an owed journal replay (the boot's or a drain's, kind "journal") sent again, as the
+     * screens' Try again sends it, then the drain and sync it held back (recovered). True once nothing is owed. False while that
+     * replay or the drain still owes a save, or while a screen's own command is owed: only that screen's exact retry recovers it
+     * (the job retries later).
+     */
+    fun recover(app: Application, runtime: CoreHost): Boolean {
+        val owed = failure ?: return true
+        if (owed.action.kind != "journal") return false
+        runtime.replayJournal().owed?.let { return false }
+        clearFailure(owed.action)
+        return recovered(app, runtime)
+    }
+
+    /**
      * One drain of the pending-captures queue (core's ingestPendingCaptures, a journaled write): at every boot, after the journal
      * replay and before this boot hands the host to any screen, entry point or sync; and as CoreWork's ingest job. False when the
      * queue must wait: while a save is owed (its retry comes first), or when the drain failed. A failed save is the screens' owed
