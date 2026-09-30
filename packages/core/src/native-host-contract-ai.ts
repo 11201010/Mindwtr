@@ -1312,7 +1312,8 @@ export function createAIMethods(deps: AIDeps) {
                 const response = await createAIProvider(ai.build()).analyzeReview({ items: staleItems });
                 const analysis = readWeeklyReviewAnalysis(response, staleItems);
                 const labels = getWeeklyReviewLabels(t);
-                const liveTasks = useTaskStore.getState()._tasksById;
+                // The revisions of the snapshot the provider was sent (read before the await): a task changed since is refused.
+                const liveTasks = state._tasksById;
                 return {
                     ok: true,
                     value: {

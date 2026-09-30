@@ -877,6 +877,29 @@ describe('native host contract: AI keys stay out of views, errors and logs', () 
         expect(JSON.stringify([analysis, warned])).not.toContain('pw-old-1');
     });
 
+    // Review C1 2: sync installs a newer, still-stale copy of a task while the analysis waits; Apply must refuse it (CAS).
+    it('gives each suggestion the revision the analysis read, so Apply refuses a task changed while it waited', async () => {
+        const tasks = [{ id: 's1', title: 'Old errand', status: 'next', contexts: [], tags: [], rev: 3, revBy: 'this', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }] as Task[];
+        await seed({ tasks, settings: { ai: { enabled: true, provider: 'openai', baseUrl: 'http://local/v1' } } });
+        const installNewer = async () => {
+            const state = useTaskStore.getState();
+            const newer = { ...state._tasksById.get('s1')!, rev: 4, revBy: 'other-device' } as Task;
+            const swap = (list: Task[]) => list.map((task) => (task.id === 's1' ? newer : task));
+            useTaskStore.setState({ _allTasks: swap(state._allTasks), tasks: swap(state.tasks), _tasksById: new Map(state._tasksById).set('s1', newer) } as never);
+            return { value: { suggestions: [{ id: 's1', action: 'someday', reason: 'Stale' }] } };
+        };
+        const contract = await openHost(createDevice({ queues: { analyzeReview: [installNewer] } }).host);
+        const analysis = value(await contract.requestWeeklyReviewAnalysis());
+        const suggestion = analysis.suggestions!.find((entry) => entry.id === 's1')!;
+        expect(suggestion.taskRevision).toBe('3:this:2026-01-01T00:00:00.000Z');
+        const applied = await contract.runReviewAction({
+            requestId: generateUUID(),
+            action: { type: 'applySuggestions', suggestions: [{ id: 's1', action: 'someday', reason: 'Stale' }], taskRevisions: { s1: suggestion.taskRevision! } },
+        });
+        expect(applied).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(useTaskStore.getState()._tasksById.get('s1')!.status).toBe('next');
+    });
+
     it('answers an unreadable keystore with an alert, and the screen shows no key', async () => {
         const tasks = [{ id: 't1', title: 'Plan the trip', status: 'next', contexts: [], tags: [], createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }] as Task[];
         await seed({ tasks, settings: { ai: { enabled: true, provider: 'gemini' } } });
