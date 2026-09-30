@@ -927,6 +927,20 @@ describe('cloud server utils', () => {
         expect(invalid.error).toContain('viewSectionIds');
     });
 
+    test('validates Project.viewSectionIds like the task field (#1319)', () => {
+        const iso = '2024-01-01T00:00:00.000Z';
+        const project = {
+            id: 'someday-project', title: 'Trip', status: 'someday' as const, color: '#6B7280',
+            order: 0, tagIds: [], createdAt: iso, updatedAt: iso,
+        };
+        expect(validateAppData({ tasks: [], projects: [{ ...project, viewSectionIds: { someday: 'travel', future: 'x' } }] }).ok).toBe(true);
+        expect(validateAppData({ tasks: [], projects: [{ ...project, viewSectionIds: {} }] }).ok).toBe(true);
+        const invalid = validateAppData({ tasks: [], projects: [{ ...project, viewSectionIds: { someday: 42 } }] });
+        expect(invalid.ok).toBe(false);
+        if (invalid.ok) throw new Error('Expected invalid project viewSectionIds');
+        expect(invalid.error).toContain('project viewSectionIds');
+    });
+
     test('validates settings.attachments.pendingRemoteDeletes structure', () => {
         const iso = '2024-01-01T00:00:00.000Z';
         const base = {
