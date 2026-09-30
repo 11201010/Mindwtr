@@ -3,6 +3,7 @@ package tech.dongdongbh.mindwtr.pilot.core
 import android.icu.text.Collator
 import android.icu.text.RuleBasedCollator
 import android.icu.util.ULocale
+import android.os.Trace
 import android.util.Log
 import com.whl.quickjs.android.QuickJSLoader
 import com.whl.quickjs.wrapper.JSCallFunction
@@ -73,7 +74,7 @@ class CoreHost(
         private fun guarded(work: (Array<out Any?>) -> Any?) = JSCallFunction { args ->
             try { work(args) } catch (error: Throwable) { NATIVE_ERROR + (error.message ?: error.javaClass.simpleName) }
         }
-        init { QuickJSLoader.init() }
+        init { traced("core:loadQuickJs") { QuickJSLoader.init() } }
     }
 
     private val lifecycleLock = Any()
@@ -125,16 +126,29 @@ class CoreHost(
     /** [legacyState] and [legacyBackup] come from LegacyRnStoreGuard; both are "" for the dev database. */
     fun start(bundle: String, legacyState: String = "", legacyBackup: String = ""): JSONObject = onEngine {
         try {
+            Trace.beginSection("core:journalOpen")
             journal = WriteJournal(journalDir, log = { Log.i(TAG, it) }, floor = devices.highestSequence())
+            Trace.endSection()
+            Trace.beginSection("core:contextCreate")
             val engine = QuickJSContext.create()
+            Trace.endSection()
             context = engine
+            Trace.beginSection("core:sqliteOpen")
             val database = SqliteBridge(databaseFile)
+            Trace.endSection()
             sqlite = database
+            Trace.beginSection("core:recoveryCheckpoint")
             database.ensureRecoveryCheckpoint()
+            Trace.endSection()
             val bridge = engine.createNewJSObject()
-            bridge.setProperty("sqlRun", guarded { args -> database.run(args[0] as String, args[1] as String); null })
-            bridge.setProperty("sqlAll", guarded { args -> database.all(args[0] as String, args[1] as String) })
-            bridge.setProperty("sqlExec", guarded { args -> database.exec(args[0] as String); null })
+            bridge.setProperty("sqlRun", guarded { args -> traced("sql:run") { database.run(args[0] as String, args[1] as String) }; null })
+            bridge.setProperty("sqlAll", guarded { args -> traced("sql:all") { database.all(args[0] as String, args[1] as String) } })
+            bridge.setProperty("sqlExec", guarded { args -> traced("sql:exec") { database.exec(args[0] as String) }; null })
+            // The bundle's boot steps as trace sections (Perfetto): a name opens one, "" closes the open one.
+            bridge.setProperty("trace", guarded { args ->
+                (args[0] as String).let { if (it.isEmpty()) Trace.endSection() else Trace.beginSection(it.take(127)) }
+                null
+            })
             bridge.setProperty("nowMs", guarded { _ -> (System.nanoTime() - startedAt) / 1e6 })
             bridge.setProperty("randomBytes", guarded { args ->
                 val length = (args[0] as Number).toInt()
@@ -206,7 +220,9 @@ class CoreHost(
             engine.globalObject.setProperty("__mindwtrNative", bridge)
             // A fetch or secret answer queued while no call runs wakes the idle pump, which settles it at once.
             io.wake = { runCatching { executor.execute { idlePump() } } }
+            Trace.beginSection("core:evaluate")
             engine.evaluate(bundle, "core-host.js")
+            Trace.endSection()
             // This host journals every write (WriteJournal), so core requires each write's replay tokens.
             callAsync("boot", legacyState, legacyBackup, "journaled").also { netCheck() }
         } catch (error: Throwable) {
@@ -585,7 +601,7 @@ class CoreHost(
     }
 
     /** Operation [method]'s reply, `{ ok, value }` or `{ ok: false, error }`; one past [deadlineMs] is cancelled and throws. */
-    private fun answer(method: String, args: Array<out Any?>, deadlineMs: Long): JSONObject {
+    private fun answer(method: String, args: Array<out Any?>, deadlineMs: Long): JSONObject = traced("core:$method") {
         val id = call(method, *args) as String
         val answer = pumpUntil(id, deadlineMs) ?: run {
             // Past its deadline: its signal fires, its fetches reject and new host calls are refused, so it ends now, before
@@ -605,7 +621,7 @@ class CoreHost(
         // Work this call's pump advanced: a long operation it finished, and the timers it left.
         settleWatched()
         schedulePump()
-        return JSONObject(answer)
+        JSONObject(answer)
     }
 
     private fun JSONObject.error(): String? = if (getBoolean("ok")) null else getString("error")
@@ -631,6 +647,7 @@ class CoreHost(
      */
     fun replayJournal(): Replay = onEngine {
         stopped?.let { throw IllegalStateException(it) }
+        Trace.beginSection("core:replayJournal")
         val journal = checkNotNull(journal)
         var sent = 0
         var dropped = 0
@@ -646,6 +663,7 @@ class CoreHost(
             }
             if (WriteJournal.keeps(error)) { owed = error; break }
         }
+        Trace.endSection()
         stopped?.let { throw IllegalStateException(it) }
         Replay(sent, dropped, journal.pending().size, owed).also {
             Log.i(TAG, "Native Android journal replay sent=${it.sent} dropped=${it.dropped} left=${it.left} owed=${owed?.substringBefore(':') ?: "none"}")
@@ -733,4 +751,10 @@ fun debugProperty(name: String): String {
         val process = ProcessBuilder("getprop", "debug.mindwtr.native.$name").start()
         process.inputStream.bufferedReader().use { it.readText().trim() }.also { process.waitFor() }
     }.getOrDefault("")
+}
+
+/** [work] as an android.os.Trace section named [name] (startup profiling with Perfetto); almost free while no trace records. */
+internal inline fun <T> traced(name: String, work: () -> T): T {
+    Trace.beginSection(name)
+    try { return work() } finally { Trace.endSection() }
 }

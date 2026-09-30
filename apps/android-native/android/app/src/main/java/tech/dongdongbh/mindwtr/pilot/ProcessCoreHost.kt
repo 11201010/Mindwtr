@@ -11,6 +11,7 @@ import tech.dongdongbh.mindwtr.pilot.core.HostIo
 import tech.dongdongbh.mindwtr.pilot.core.HostNetwork
 import tech.dongdongbh.mindwtr.pilot.core.LegacyRnStoreGuard
 import tech.dongdongbh.mindwtr.pilot.core.RnKeyValue
+import tech.dongdongbh.mindwtr.pilot.core.traced
 import java.io.File
 import java.util.Locale
 import java.util.UUID
@@ -105,7 +106,7 @@ internal object ProcessCoreHost {
             File(app.filesDir, "journal"), deviceStore(app), File(app.filesDir, DiagnosticsLogFile.RELATIVE_PATH),
             RnKeyValue(app.getDatabasePath("RKStorage")), HostFiles(app.filesDir, app.cacheDir))
         try {
-            runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() }, legacy?.bootState ?: "", legacy?.backup ?: "")
+            runtime.start(traced("boot:bundleRead") { app.assets.open("core-host.js").bufferedReader().use { it.readText() } }, legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)
             loadTheme(runtime, legacy?.theme)
             if (replay(runtime)) recovered(app, runtime)
@@ -236,13 +237,13 @@ internal object ProcessCoreHost {
     fun queue(app: Application) = File(app.filesDir, PendingCaptureWriter.DIRECTORY)
 
     /** Core's setLanguage, then the label map read again in that language. Screens render only after this. */
-    private fun setLanguage(runtime: CoreHost, stored: String?) {
+    private fun setLanguage(runtime: CoreHost, stored: String?): Unit = traced("boot:language") {
         runtime.language(stored ?: "", Locale.getDefault().toLanguageTag())
         Labels.load(runtime.strings(LABEL_KEYS))
     }
 
     /** RN's theme as core resolves it. The theme is cosmetic: a failed read keeps RN's default look. */
-    private fun loadTheme(runtime: CoreHost, stored: String?) {
+    private fun loadTheme(runtime: CoreHost, stored: String?): Unit = traced("boot:theme") {
         runCatching { ThemeChoice.load(runtime.theme(stored ?: "")) }
             .onFailure { Log.w(CoreHost.TAG, "Native Android theme read failed; using the default theme", it) }
     }

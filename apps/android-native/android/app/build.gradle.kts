@@ -7,7 +7,8 @@ plugins {
 // The app's link scheme by build type (D6): the development build has its own, so RN's app on the same phone keeps
 // mindwtr:// links; the upgrade harness keeps its RN build's scheme; a release keeps RN's. The manifest's link filter, the
 // shortcuts (scripts/build-shortcuts.mjs), and BuildConfig.URL_SCHEME (the scheme core reads links for) use it.
-val urlSchemes = mapOf("debug" to "mindwtr-native-dev", "upgradetest" to "mindwtr-upgradetest", "release" to "mindwtr")
+val urlSchemes = mapOf("debug" to "mindwtr-native-dev", "upgradetest" to "mindwtr-upgradetest", "release" to "mindwtr") +
+    mapOf("benchmark" to "mindwtr-native-bench", "benchmarkSeed" to "mindwtr-native-bench")
 fun com.android.build.api.dsl.ApplicationBuildType.urlScheme() {
     val scheme = urlSchemes.getValue(name)
     buildConfigField("String", "URL_SCHEME", "\"$scheme\"")
@@ -36,6 +37,25 @@ android {
         create("upgradetest") {
             initWith(getByName("debug"))
             buildConfigField("boolean", "RN_STORAGE", "true")
+            urlScheme()
+        }
+        // Startup measurement only (scripts/measure-startup-device.mjs): a release build (R8, not debuggable)
+        // that the shell may profile, signed with the debug key, under its own id so it never shares the dev app's data.
+        create("benchmark") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".benchmark"
+            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isProfileable = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            urlScheme()
+        }
+        // The benchmark's debuggable twin (same id and key): installed first so run-as can seed a database, then the
+        // benchmark build installs over it and keeps that data.
+        create("benchmarkSeed") {
+            initWith(getByName("benchmark"))
+            isDebuggable = true
+            isMinifyEnabled = false
             urlScheme()
         }
     }

@@ -72,6 +72,8 @@ type NativeBridge = {
     kvMultiRemove(keysJson: string): string | null;
     /** An event for Kotlin (CoreHost's event listener): sync's badge and cycle count, an automatic sync's warning. */
     hostEvent(json: string): string | null;
+    /** Android only: opens an android.os.Trace section named `name`, or closes the open one for "". */
+    trace?(name: string): void;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown };
@@ -87,6 +89,20 @@ const NATIVE_ERROR = '!MindwtrNativeError:';
 const checked = <T,>(value: T): T => {
     if (typeof value === 'string' && value.startsWith(NATIVE_ERROR)) throw new Error(value.slice(NATIVE_ERROR.length));
     return value;
+};
+
+/**
+ * Boot steps as trace sections for startup profiling (Perfetto): each call closes the step before it and opens `name`
+ * ("" only closes). A host without the trace call (iOS) ignores it. A boot that throws leaves its step open; that host is
+ * closed anyway.
+ */
+let tracedStep = false;
+const traceStep = (name: string) => {
+    const bridge = native();
+    if (!bridge.trace) return;
+    if (tracedStep) bridge.trace('');
+    tracedStep = name !== '';
+    if (tracedStep) bridge.trace(name);
 };
 
 const sqlite: SqliteClient = {
@@ -707,8 +723,11 @@ const savedSettingsIfSettled = async (settingsReference: unknown): Promise<Recor
         ? saved as Record<string, unknown> : null;
 };
 const activateAndVerify = async (adapter: ValidatedSqliteAdapter, recoveryLoad = false) => {
+    traceStep('js:activate');
     unwrap(await contract.activate(recoveryLoad ? { writeSafetyReady: true, recoveryLoad: true } : { writeSafetyReady: true }));
+    traceStep('js:flushPendingSave');
     await flushPendingSave();
+    traceStep('js:verifyGetData');
     const data = await adapter.getData();
     const loaded = useTaskStore.getState();
     for (const [table, storeRows] of [
@@ -718,7 +737,10 @@ const activateAndVerify = async (adapter: ValidatedSqliteAdapter, recoveryLoad =
     ] as const) {
         if (storeRows.length !== data[table].length) throw new Error(`Incomplete ${table} activation`);
     }
-    return unwrap(contract.getInboxWindow({ offset: 0, limit: 50 }));
+    traceStep('js:inboxWindow');
+    const inbox = unwrap(contract.getInboxWindow({ offset: 0, limit: 50 }));
+    traceStep('');
+    return inbox;
 };
 const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, journaled = false): string => submit(async () => {
     // A host that journals every write replays it after process death, so each write must carry its replay tokens.
@@ -728,9 +750,12 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     setStorageAdapter(adapter);
     // Before the journal's replay (Kotlin, after boot): a landed request answers from its receipt. A host without
     // a journal keeps its receipts in memory, as before.
+    traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
     else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock'] });
+    traceStep('js:getData');
     await adapter.getData();
+    traceStep('');
     if (legacyState) await importLegacyJson(adapter, JSON.parse(legacyState) as LegacyState, legacyBackup);
     const result = await activateAndVerify(adapter, recoveryLoad);
     bootAdapter = adapter;
@@ -2478,3 +2503,5 @@ globalThis.MindwtrHost = {
 if (globalThis.__mindwtrIntlCheck === true) {
     try { runIntlCheck(); } catch (error) { native().log(`Native Android intl check failed: ${error instanceof Error ? error.message : String(error)}`); }
 }
+// Closes the bundle's init section, opened at the end of host-polyfills.js.
+native().trace?.('');
