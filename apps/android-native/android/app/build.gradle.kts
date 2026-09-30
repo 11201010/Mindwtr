@@ -122,6 +122,8 @@ val buildCoreBundle by tasks.registering(Exec::class) {
         workingDir.resolve("package.json"),
         workingDir.resolve("packages/core/package.json"),
     )
+    // A startup measurement build's per-module trace sections (build-bundle.mjs); unset for every other build.
+    inputs.property("traceModules", System.getenv("MINDWTR_TRACE_MODULES") ?: "")
     outputs.files("src/main/assets/core-host.js", "src/main/assets/core-host.js.sha256")
 }
 val buildShortcuts by tasks.registering(Exec::class) {
