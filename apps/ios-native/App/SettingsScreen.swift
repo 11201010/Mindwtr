@@ -6,6 +6,8 @@ struct SettingsScreen: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var renameFocused: Bool
     @FocusState private var areaNameFocused: Bool
+    private enum PersonCreateField: Hashable { case name, note, reference }
+    @FocusState private var personCreateFocused: PersonCreateField?
     @State private var deleteConfirmPresented = false
     @State private var deleteConfirmAnswered = false
     @State private var areaDeleteConfirmPresented = false
@@ -28,7 +30,8 @@ struct SettingsScreen: View {
                           || model.somedaySectionRenameAwaitingRefresh
                           || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
                           || model.somedaySectionOrderActive || model.unassignedAreaColorActive
-                          || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                          || model.settingsAreaDeleteActive || model.settingsAreaEditActive
+                          || model.settingsPersonCreatePresented)
                 .accessibilityLabel(model.label("common.back"))
                 .accessibilityIdentifier(model.settingsManagePresented ? "manage-back" : "settings-back")
                 Text(model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
@@ -94,6 +97,10 @@ struct SettingsScreen: View {
             get: { model.settingsAreaCreatePresented },
             set: { if !$0 { model.cancelSettingsAreaCreate() } }
         )) { newAreaSheet }
+        .sheet(isPresented: Binding(
+            get: { model.settingsPersonCreatePresented },
+            set: { if !$0 { model.cancelSettingsPersonCreate() } }
+        )) { newPersonSheet }
         .sheet(isPresented: Binding(
             get: { model.settingsAreaEditActive },
             set: { if !$0 { model.cancelSettingsAreaEdit() } }
@@ -316,6 +323,7 @@ struct SettingsScreen: View {
             }
             .accessibilityIdentifier("manage-someday-scroll")
         }
+        .disabled(model.settingsPersonCreatePresented)
     }
 
     private func inventoryContent(_ key: String) -> some View {
@@ -347,13 +355,13 @@ struct SettingsScreen: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    Button {} label: {
+                    Button { Task { await model.openSettingsPersonCreate() } } label: {
                         Image(systemName: "plus").font(.system(size: 18))
                             .frame(width: 44, height: 44).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain).disabled(true).opacity(0.45)
+                    .buttonStyle(.plain).disabled(!model.manageInventoryActionsEnabled)
                     .accessibilityLabel(newPerson.text("addLabel"))
-                    .accessibilityIdentifier("manage-person-add")
+                    .accessibilityIdentifier("manage-person-create-open")
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 56)
             }
@@ -530,6 +538,94 @@ struct SettingsScreen: View {
                 .accessibilityIdentifier("manage-area-add")
         }
         .padding(.horizontal, 12).frame(minHeight: 56)
+    }
+
+    private func endPersonCreateEditing() {
+        personCreateFocused = nil
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private var newPersonSheet: some View {
+        let copy = model.manageSettings.object("editor").object("text").object("newPerson")
+        let fields = copy.object("personFields")
+        return NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    TextField(copy.text("namePlaceholder"), text: Binding(
+                        get: { model.settingsPersonCreateName }, set: { model.setSettingsPersonCreateName($0) }))
+                        .focused($personCreateFocused, equals: .name).submitLabel(.done)
+                        .onSubmit { endPersonCreateEditing() }
+                        .rnFont(16).padding(.horizontal, 12).frame(minHeight: 48)
+                        .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                        .disabled(!model.settingsPersonCreateInputEnabled)
+                        .accessibilityLabel(copy.text("namePlaceholder"))
+                        .accessibilityIdentifier("manage-person-create-name")
+                    ZStack(alignment: .topLeading) {
+                        if model.settingsPersonCreateNote.isEmpty {
+                            Text(fields.text("notePlaceholder")).rnFont(16).foregroundStyle(palette.secondary)
+                                .padding(.top, 8).padding(.leading, 5).accessibilityHidden(true)
+                        }
+                        TextEditor(text: Binding(
+                            get: { model.settingsPersonCreateNote }, set: { model.setSettingsPersonCreateNote($0) }))
+                            .focused($personCreateFocused, equals: .note)
+                            .rnFont(16).scrollContentBackground(.hidden).frame(minHeight: 140)
+                            .disabled(!model.settingsPersonCreateInputEnabled)
+                            .accessibilityLabel(fields.text("notePlaceholder"))
+                            .accessibilityIdentifier("manage-person-create-note")
+                    }
+                    .padding(8).background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                    TextField(fields.text("referencePlaceholder"), text: Binding(
+                        get: { model.settingsPersonCreateReference }, set: { model.setSettingsPersonCreateReference($0) }))
+                        .focused($personCreateFocused, equals: .reference).submitLabel(.done)
+                        .onSubmit { endPersonCreateEditing() }
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .rnFont(16).padding(.horizontal, 12).frame(minHeight: 48)
+                        .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                        .disabled(!model.settingsPersonCreateInputEnabled)
+                        .accessibilityLabel(fields.text("referencePlaceholder"))
+                        .accessibilityIdentifier("manage-person-create-reference")
+                    if let failure = model.settingsPersonCreateError ?? model.settingsPersonCreateReadError {
+                        errorBlock(failure, id: "manage-person-create-error", retryID: "manage-person-create-retry") {
+                            endPersonCreateEditing()
+                            Task {
+                                if model.retryNeeded { await model.retry() }
+                                else { await model.retrySettingsPersonCreateRead() }
+                            }
+                        }
+                    }
+                    HStack(spacing: 12) {
+                        Button { endPersonCreateEditing(); model.cancelSettingsPersonCreate() } label: {
+                            Text(copy.text("cancelLabel"))
+                                .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .disabled(!model.settingsPersonCreateCanCancel)
+                        .accessibilityIdentifier("manage-person-create-cancel")
+                        Button { endPersonCreateEditing(); Task { await model.saveSettingsPersonCreate() } } label: {
+                            Text(copy.text("saveLabel")).foregroundStyle(palette.onTint)
+                                .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderedProminent).tint(palette.tint)
+                        .disabled(!model.settingsPersonCreateCanSave)
+                        .accessibilityIdentifier("manage-person-create-save")
+                    }
+                }
+                .padding(20)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle(copy.text("title"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button(model.label("common.done")) { endPersonCreateEditing() }
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("manage-person-create-keyboard-done")
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(!model.settingsPersonCreateCanCancel)
     }
 
     private var newAreaSheet: some View {

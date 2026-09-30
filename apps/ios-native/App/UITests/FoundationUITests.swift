@@ -11158,4 +11158,241 @@ final class FoundationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Native Manage Refusal 87"].exists)
         app.terminate()
     }
+
+    private func task92OpenPeople(_ app: XCUIApplication, search: Bool = false) {
+        task83OpenManage(app, search: search, ensureOpen: false)
+        task91Section(app, "people", open: true)
+    }
+
+    private func task92OpenPersonEditor(_ app: XCUIApplication) {
+        let open = app.buttons["manage-person-create-open"]
+        revealPagedElement(app, open, in: app.scrollViews["manage-someday-scroll"],
+                           more: "manage-people-more", ready: app.buttons["manage-back"])
+        XCTAssertGreaterThanOrEqual(open.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(open.frame.height, 44 - 0.001)
+        boardTap(app, "manage-person-create-open")
+        XCTAssertTrue(app.textFields["manage-person-create-name"].waitForExistence(timeout: 10))
+    }
+
+    private func task92PersonTap(_ app: XCUIApplication, _ action: String) {
+        let identifier = "manage-person-create-" + action
+        revealPagedElement(app, app.buttons[identifier],
+                           in: app.scrollViews.containing(.textField, identifier: "manage-person-create-name").firstMatch)
+        boardTap(app, identifier)
+    }
+
+    private func task92FillPerson(_ app: XCUIApplication, name: String, note: String? = nil, reference: String? = nil) {
+        let scroll = app.scrollViews.containing(.textField, identifier: "manage-person-create-name").firstMatch
+        let input = app.textFields["manage-person-create-name"]
+        revealPagedElement(app, input, in: scroll)
+        input.tap(); input.typeText(name)
+        XCTAssertEqual(input.value as? String, name)
+        input.typeText("\n")
+        if let note {
+            let field = app.textViews["manage-person-create-note"]
+            revealPagedElement(app, field, in: scroll)
+            field.tap(); field.typeText(note)
+            XCTAssertEqual(field.value as? String, note)
+            boardTap(app, "manage-person-create-keyboard-done")
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.keyboards.firstMatch)
+            waitForExpectations(timeout: 10)
+        }
+        if let reference {
+            let field = app.textFields["manage-person-create-reference"]
+            revealPagedElement(app, field, in: scroll)
+            field.tap(); field.typeText(reference)
+            XCTAssertEqual(field.value as? String, reference)
+            field.typeText("\n")
+        }
+    }
+
+    private func task92PersonClosed(_ app: XCUIApplication) {
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.textFields["manage-person-create-name"])
+        waitForExpectations(timeout: 20)
+        boardEnabled(app.buttons["manage-back"])
+        XCTAssertEqual(app.buttons["manage-section-toggle-people"].value as? String, "expanded")
+    }
+
+    private func task92AssertPerson(_ app: XCUIApplication, _ name: String) {
+        let row = app.staticTexts.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label == %@", "manage-person-name-", name)).firstMatch
+        revealPagedElement(app, row, in: app.scrollViews["manage-someday-scroll"],
+                           more: "manage-people-more", ready: app.buttons["manage-back"])
+        XCTAssertEqual(row.label, name)
+    }
+
+    func testManagePersonCreateNormal() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "5a8ebac1-a7b1-471b-90c2-ed8eb94c6a0f"]
+        app.launch(); task92OpenPeople(app, search: true)
+        task92OpenPersonEditor(app)
+        let input = app.textFields["manage-person-create-name"]
+        XCTAssertFalse(app.buttons["manage-person-create-save"].isEnabled)
+        input.tap(); input.typeText("   ")
+        XCTAssertFalse(app.buttons["manage-person-create-save"].isEnabled)
+        replaceTextView(input, with: String(repeating: "x", count: 501))
+        XCTAssertTrue(app.staticTexts["manage-person-create-error"].waitForExistence(timeout: 10))
+        XCTAssertTrue(input.isEnabled)
+        XCTAssertFalse(app.buttons["manage-person-create-save"].isEnabled)
+        replaceTextView(input, with: "Cancelled Person 92")
+        boardEnabled(app.buttons["manage-person-create-save"])
+        task92PersonTap(app, "cancel"); task92PersonClosed(app)
+
+        task92OpenPersonEditor(app)
+        task92FillPerson(app, name: "Native Person 92 世界", note: "Task92 note", reference: "obsidian://task92/reference")
+        task92PersonTap(app, "save"); task92PersonClosed(app)
+        task92AssertPerson(app, "Native Person 92 世界")
+
+        task92OpenPersonEditor(app)
+        task92FillPerson(app, name: "  tAsK92   eXiStInG  ", note: "Changed duplicate note", reference: "https://example.com/changed")
+        boardEnabled(app.buttons["manage-person-create-save"])
+        task92PersonTap(app, "save"); task92PersonClosed(app)
+        task92AssertPerson(app, "Task92 Existing")
+        task92AssertPerson(app, "Native Person 92 世界")
+        boardTap(app, "manage-back")
+        XCTAssertEqual(app.textFields["settings-search"].value as? String, "Manage")
+        app.terminate(); app.launch(); task92OpenPeople(app)
+        task92AssertPerson(app, "Task92 Existing")
+        task92AssertPerson(app, "Native Person 92 世界")
+        app.terminate()
+    }
+
+    func testManagePersonCreateLargestText() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "0ea9d301-2362-4635-971f-c641b981ede0"]
+        app.launch(); task92OpenPeople(app); task92OpenPersonEditor(app)
+        let scroll = app.scrollViews.containing(.textField, identifier: "manage-person-create-name").firstMatch
+        for control in [app.textFields["manage-person-create-name"], app.textViews["manage-person-create-note"],
+                        app.textFields["manage-person-create-reference"], app.buttons["manage-person-create-cancel"]] {
+            revealPagedElement(app, control, in: scroll)
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44 - 0.001)
+        }
+        let before = XCTAttachment(screenshot: app.screenshot())
+        before.name = "New Person at largest text"; before.lifetime = .keepAlways; add(before)
+        task92FillPerson(app, name: "Native Largest Person 92", note: "Task92 note", reference: "obsidian://task92/reference")
+        let save = app.buttons["manage-person-create-save"]
+        revealPagedElement(app, save, in: scroll)
+        XCTAssertGreaterThanOrEqual(save.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(save.frame.height, 44 - 0.001)
+        let filled = XCTAttachment(screenshot: app.screenshot())
+        filled.name = "New Person full fields at largest text"; filled.lifetime = .keepAlways; add(filled)
+        task92PersonTap(app, "save"); task92PersonClosed(app)
+        task92AssertPerson(app, "Native Largest Person 92")
+        app.terminate()
+    }
+
+    /// Root checks the restored metadata and the entire Tasks table, including the deleted assigned Task.
+    func testManagePersonCreateRestore() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "399138de-da0a-465d-a619-aafe4fa200b5"]
+        app.launch(); task92OpenPeople(app); task92OpenPersonEditor(app)
+        task92FillPerson(app, name: "Task92 Restore")
+        task92PersonTap(app, "save"); task92PersonClosed(app)
+        task92AssertPerson(app, "Task92 Restore")
+        app.terminate(); app.launch(); task92OpenPeople(app)
+        task92AssertPerson(app, "Task92 Restore")
+        app.terminate()
+    }
+
+    func testManagePersonCreateReadFailureRetry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "ee66f858-0500-47e3-bc85-2ae6376f103f",
+                               "--native-manage-person-create-read-failure"]
+        app.launch(); task92OpenPeople(app); task92OpenPersonEditor(app)
+        task92FillPerson(app, name: "Native Read Person 92")
+        task92PersonTap(app, "save")
+        let failure = app.staticTexts["manage-person-create-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-person-create-save"].isEnabled)
+        XCTAssertFalse(app.buttons["manage-person-create-cancel"].isEnabled)
+        XCTAssertFalse(app.staticTexts["persistence-error"].isHittable)
+        for attempt in 0..<2 {
+            task92PersonTap(app, "retry")
+            if attempt == 0 {
+                boardEnabled(app.buttons["manage-person-create-retry"], timeout: 20)
+                XCTAssertTrue(failure.exists)
+            }
+        }
+        task92PersonClosed(app)
+        task92AssertPerson(app, "Native Read Person 92")
+        app.terminate()
+    }
+
+    func testManagePersonCreateOptionsReadRecovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "fa10b77a-7934-43b7-955a-0c9f6d8734f2",
+                               "--native-manage-person-create-options-read-failure"]
+        app.launch(); task92OpenPeople(app); task92OpenPersonEditor(app)
+        let failure = app.staticTexts["manage-person-create-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-person-create-save"].isEnabled)
+        boardEnabled(app.buttons["manage-person-create-cancel"])
+        task92PersonTap(app, "cancel"); task92PersonClosed(app)
+        app.terminate(); app.launch(); task92OpenPeople(app); task92OpenPersonEditor(app)
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        task92PersonTap(app, "retry")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: failure)
+        waitForExpectations(timeout: 20)
+        task92FillPerson(app, name: "Native Options Person 92")
+        task92PersonTap(app, "save"); task92PersonClosed(app)
+        task92AssertPerson(app, "Native Options Person 92")
+        app.terminate()
+    }
+
+    /// Root arms the existing save-failure hook and verifies both retries retain the original journal UUID.
+    func testManagePersonCreateSaveFailure() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "fd51b5a3-23f3-4d7b-8805-ecb79d8f183b"]
+        app.launch(); task92OpenPeople(app); task92OpenPersonEditor(app)
+        task92FillPerson(app, name: "Native Retry Person 92")
+        task92PersonTap(app, "save")
+        let failure = app.staticTexts["manage-person-create-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["manage-person-create-save"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-person-create-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-section-toggle-people"].isEnabled)
+            XCTAssertFalse(app.textFields["manage-person-create-name"].isEnabled)
+            XCTAssertEqual(app.textFields["manage-person-create-name"].value as? String, "Native Retry Person 92")
+            task92PersonTap(app, "retry")
+            boardEnabled(app.buttons["manage-person-create-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    /// Paired with SaveFailure: root disarms the hook while retaining the same library and journal.
+    func testManagePersonCreateColdRecovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "fd51b5a3-23f3-4d7b-8805-ecb79d8f183b"]
+        app.launch()
+        XCTAssertTrue(app.buttons["manage-back"].waitForExistence(timeout: 30))
+        task92OpenPeople(app)
+        task92AssertPerson(app, "Native Retry Person 92")
+        XCTAssertFalse(app.textFields["manage-person-create-name"].exists)
+        XCTAssertFalse(app.staticTexts["manage-person-create-error"].exists)
+        app.terminate(); app.launch(); task92OpenPeople(app)
+        task92AssertPerson(app, "Native Retry Person 92")
+        app.terminate()
+    }
+
+    func testManagePersonCreateDefiniteRefusal() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "b442bc25-703f-4437-bd36-7f724fb6fe3b",
+                               "--native-manage-person-create-refusal"]
+        app.launch(); task92OpenPeople(app); task92OpenPersonEditor(app)
+        task92FillPerson(app, name: "Native Refusal Person 92")
+        task92PersonTap(app, "save")
+        XCTAssertTrue(app.staticTexts["manage-person-create-error"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        XCTAssertEqual(app.textFields["manage-person-create-name"].value as? String, "Native Refusal Person 92")
+        boardEnabled(app.buttons["manage-person-create-cancel"])
+        boardEnabled(app.buttons["manage-person-create-save"])
+        task92PersonTap(app, "save"); task92PersonClosed(app)
+        task92AssertPerson(app, "Native Refusal Person 92")
+        app.terminate()
+    }
+
 }

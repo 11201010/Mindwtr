@@ -413,6 +413,13 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     manageSettings: (input) => contract.getManageSettings(input),
     manageList: (input) => contract.getManageSettingsList(input),
     manageCheck: (input) => contract.checkManageEditor(input),
+    managePersonCreateCheck: (input) => {
+        const value = input as unknown as Record<string, unknown>;
+        return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1
+            && Object.prototype.hasOwnProperty.call(value, 'name') && typeof value.name === 'string' && value.name.length <= 500
+            ? contract.checkManageEditor({ target: { type: 'newPerson' }, name: value.name })
+            : { ok: false, error: { code: 'INVALID_INPUT', message: 'A bounded Person name is required' } };
+    },
     somedaySections: (input) => contract.getSomedaySections(input),
     dataSettings: () => contract.getDataSettings(),
     // Mind Sweep and a saved search's screen.
@@ -836,6 +843,31 @@ globalThis.MindwtrHost = {
     /** Settings Manage uses the same prepared Area policy with its own journal method. */
     manageAreaCreateCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedAreaCreate(JSON.parse(json))));
+    },
+    managePersonCreateResolve(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.resolvePersonCreateName(JSON.parse(json)));
+        });
+    },
+    managePersonCreateRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probePersonCreateOutcome(JSON.parse(json)));
+        });
+    },
+    /** Private prepared Person methods; Swift owns the durable journal. */
+    managePersonCreatePrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.preparePersonCreate(JSON.parse(json)));
+        });
+    },
+    managePersonCreateValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedPersonCreate(JSON.parse(json))));
+    },
+    managePersonCreateCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedPersonCreate(JSON.parse(json))));
     },
     areaColorOptions(): string {
         return submit(async () => {

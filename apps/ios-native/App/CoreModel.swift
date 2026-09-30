@@ -13,6 +13,9 @@ private struct SimulatedSomedayOrderRefusal: LocalizedError {
 private struct SimulatedUnassignedColorRefusal: LocalizedError {
     var errorDescription: String? { "STALE_REVISION: Unassigned Area color changed; read it again" }
 }
+private struct SimulatedManagePersonCreateRefusal: LocalizedError {
+    var errorDescription: String? { "STALE_REVISION: Person changed; read it again" }
+}
 private struct SimulatedManageAreaRefusal: LocalizedError {
     var errorDescription: String? { "STALE_REVISION: Area changed; read it again" }
 }
@@ -225,6 +228,14 @@ final class CoreModel: ObservableObject {
     @Published private(set) var areaCreateNameChecking = false
     @Published private(set) var areaCreateError: String?
     @Published private(set) var areaCreateReadError: String?
+    @Published private(set) var settingsPersonCreatePresented = false
+    @Published private(set) var settingsPersonCreateAwaitingRefresh = false
+    @Published private(set) var settingsPersonCreateName = ""
+    @Published private(set) var settingsPersonCreateNote = ""
+    @Published private(set) var settingsPersonCreateReference = ""
+    @Published private(set) var settingsPersonCreateChecking = false
+    @Published private(set) var settingsPersonCreateError: String?
+    @Published private(set) var settingsPersonCreateReadError: String?
     @Published private(set) var settingsAreaCreatePresented = false
     @Published private(set) var settingsAreaCreateAwaitingRefresh = false
     @Published private(set) var areaColorOptions: CoreObject = [:]
@@ -441,7 +452,7 @@ final class CoreModel: ObservableObject {
     var unassignedAreaColorCanSave: Bool {
         selectedSurface == .settings && settingsManagePresented && !busy && !retryNeeded
             && !unassignedAreaColorOptions.isEmpty && unassignedAreaColorRequest == nil
-            && !unassignedAreaColorAwaitingRefresh && manageReadError == nil && !settingsAreaCreatePresented && !settingsAreaEditActive
+            && !unassignedAreaColorAwaitingRefresh && manageReadError == nil && !settingsPersonCreatePresented && !settingsAreaCreatePresented && !settingsAreaEditActive
     }
     private var somedaySectionRenameRequest: String?
     private var somedaySectionRenameID: String?
@@ -579,6 +590,9 @@ final class CoreModel: ObservableObject {
     private var unassignedColorTestReadFailures = 0
     private var unassignedColorOptionsTestReadFailures = 0
     private var unassignedColorTestRefusals = 0
+    private var managePersonCreateTestReadFailures = 0
+    private var managePersonCreateOptionsTestReadFailures = 0
+    private var managePersonCreateTestRefusals = 0
     private var manageAreaTestReadFailures = 0
     private var manageAreaOptionsTestReadFailures = 0
     private var manageAreaTestRefusals = 0
@@ -681,6 +695,12 @@ final class CoreModel: ObservableObject {
     private var areaCreateExpectedID: String?
     private var areaCreateOptionsCurrent = false
     private var areaCreateNameGeneration = 0
+    private var settingsPersonCreateRequest: String?
+    private var settingsPersonCreateExpectedID: String?
+    private var settingsPersonCreateNameGeneration = 0
+    private var settingsPersonCreateCheckCurrent = false
+    private var settingsPersonCreateSaveDisabled = true
+    private var settingsPersonCreateAcknowledged = false
     private var settingsAreaCreateAcknowledged = false
     private var areaColorRequest: String?
     private var areaColorExpectedID: String?
@@ -1180,6 +1200,19 @@ final class CoreModel: ObservableObject {
     var projectFocusInputEnabled: Bool {
         projectCreateInputEnabled && projectFocusReadError == nil
     }
+    var settingsPersonCreateInputEnabled: Bool {
+        ready && selectedSurface == .settings && settingsManagePresented && settingsPersonCreatePresented
+            && !busy && !retryNeeded && settingsPersonCreateRequest == nil
+            && !settingsPersonCreateAwaitingRefresh && manageReadError == nil
+    }
+    var settingsPersonCreateCanSave: Bool {
+        settingsPersonCreateInputEnabled && settingsPersonCreateReadError == nil && settingsPersonCreateCheckCurrent
+            && !settingsPersonCreateChecking && !settingsPersonCreateSaveDisabled
+    }
+    var settingsPersonCreateCanCancel: Bool {
+        settingsPersonCreatePresented && !busy && !retryNeeded && settingsPersonCreateRequest == nil
+            && !settingsPersonCreateAcknowledged
+    }
     var areaCreatePending: Bool { areaCreateRequest != nil }
     var settingsAreaCreateInputEnabled: Bool {
         ready && selectedSurface == .settings && settingsManagePresented && settingsAreaCreatePresented
@@ -1321,13 +1354,13 @@ final class CoreModel: ObservableObject {
         ready && selectedSurface == .settings && settingsManagePresented && somedaySectionDeleteID != nil
             && !busy && !retryNeeded && !somedaySectionDeletePending && !somedaySectionDeleteAwaitingRefresh
             && somedaySectionDeleteOptions.text("id") == somedaySectionDeleteID && manageReadError == nil
-            && !unassignedAreaColorActive && !settingsAreaCreatePresented && !settingsAreaEditActive
+            && !unassignedAreaColorActive && !settingsPersonCreatePresented && !settingsAreaCreatePresented && !settingsAreaEditActive
     }
     var somedaySectionRenameInputEnabled: Bool {
         ready && selectedSurface == .settings && settingsManagePresented && somedaySectionRenameIndex != nil
             && !busy && !retryNeeded && !somedaySectionRenamePending && !somedaySectionRenameAwaitingRefresh
             && !somedaySectionRenameOptions.isEmpty && manageReadError == nil
-            && !unassignedAreaColorActive && !settingsAreaCreatePresented && !settingsAreaEditActive
+            && !unassignedAreaColorActive && !settingsPersonCreatePresented && !settingsAreaCreatePresented && !settingsAreaEditActive
     }
     var somedaySectionRenameCanSave: Bool {
         somedaySectionRenameInputEnabled && !somedaySectionRenameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1497,6 +1530,9 @@ final class CoreModel: ObservableObject {
                     unassignedColorTestReadFailures = arguments.contains("--native-unassigned-color-read-failure") ? 2 : 0
                     unassignedColorOptionsTestReadFailures = arguments.contains("--native-unassigned-color-options-failure") ? 1 : 0
                     unassignedColorTestRefusals = arguments.contains("--native-unassigned-color-refusal") ? 1 : 0
+                    managePersonCreateTestReadFailures = arguments.contains("--native-manage-person-create-read-failure") ? 2 : 0
+                    managePersonCreateOptionsTestReadFailures = arguments.contains("--native-manage-person-create-options-read-failure") ? 1 : 0
+                    managePersonCreateTestRefusals = arguments.contains("--native-manage-person-create-refusal") ? 1 : 0
                     manageAreaTestReadFailures = arguments.contains("--native-manage-area-read-failure") ? 2 : 0
                     manageAreaOptionsTestReadFailures = arguments.contains("--native-manage-area-options-failure") ? 1 : 0
                     manageAreaTestRefusals = arguments.contains("--native-manage-area-refusal") ? 1 : 0
@@ -1650,7 +1686,7 @@ final class CoreModel: ObservableObject {
             } else if recovery.text("method") == "taskListSortWrite" {
                 selectedSurface = .reference
             } else if ["somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite",
-                       "unassignedAreaColorWrite", "manageAreaCreateCommit", "manageAreaDeleteCommit",
+                       "unassignedAreaColorWrite", "managePersonCreateCommit", "manageAreaCreateCommit", "manageAreaDeleteCommit",
                        "manageAreaEditCommit"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsManagePresented = true
@@ -1731,7 +1767,7 @@ final class CoreModel: ObservableObject {
               somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil, managePendingInventoryDepths == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         guard !busy else { refreshRequested = true; return }
         busy = true
         defer { finishOperation() }
@@ -1751,7 +1787,7 @@ final class CoreModel: ObservableObject {
               managePendingCandidate == nil, managePendingInventoryDepths == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
-              !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedayMovePending, !somedayMoveAwaitingRefresh, !somedayMoveUndoAwaitingRefresh,
               somedayMoveCreatedSectionID == nil else { return }
         morePresented = false
@@ -1771,7 +1807,7 @@ final class CoreModel: ObservableObject {
               somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil, managePendingInventoryDepths == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         if morePresented { morePresented = false; return }
         busy = true
         defer { finishOperation() }
@@ -1791,7 +1827,7 @@ final class CoreModel: ObservableObject {
         guard ready, !busy, !retryNeeded, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, !somedaySectionDeleteActive,
               !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
-              !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
+              !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         settingsCaller = selectedSurface
         morePresented = false
         settingsManagePresented = false
@@ -1809,7 +1845,7 @@ final class CoreModel: ObservableObject {
         guard selectedSurface == .settings, !busy, !retryNeeded,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         settingsSearchTask?.cancel()
         settingsSearchGeneration += 1
         settingsManagePresented = false
@@ -1866,7 +1902,7 @@ final class CoreModel: ObservableObject {
         guard settingsManagePresented, !busy, !retryNeeded, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, !somedaySectionDeletePending,
               !somedaySectionDeleteAwaitingRefresh, !somedaySectionOrderActive, !settingsAreaDeleteActive,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
         cancelSomedaySectionRename()
         cancelSomedaySectionDelete()
         settingsManagePresented = false
@@ -1981,7 +2017,7 @@ final class CoreModel: ObservableObject {
             && !capturePresented && !areaPickerPresented && !taskPresented && !morePresented
             && !taskStatusMenuPresented && !calendarItemPresented && !calendarComposerPresented
             && !mindSweepPresented && !processInboxPresented && !projectRenameEditing
-            && !settingsAreaCreatePresented && !settingsAreaEditActive && !settingsAreaDeleteActive
+            && !settingsPersonCreatePresented && !settingsAreaCreatePresented && !settingsAreaEditActive && !settingsAreaDeleteActive
             && !unassignedAreaColorActive && !somedaySectionRenameReadPending && somedaySectionRenameIndex == nil
             && !somedaySectionRenamePending && !somedaySectionRenameAwaitingRefresh
             && !somedaySectionDeleteActive && !somedaySectionOrderActive
@@ -2040,14 +2076,14 @@ final class CoreModel: ObservableObject {
     }
 
     func dismissManagedPersonReferenceError() {
-        guard selectedSurface == .settings, !busy, !retryNeeded else { return }
+        guard selectedSurface == .settings, !settingsPersonCreatePresented, !busy, !retryNeeded else { return }
         managePersonReferenceError = nil
     }
 
     func toggleManageSection(_ key: String) async {
         if ["people", "contexts", "tags"].contains(key) { guard manageInventoryActionsEnabled else { return } }
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              manageReadError == nil, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
@@ -2064,7 +2100,7 @@ final class CoreModel: ObservableObject {
 
     func loadMoreManagedSomedaySections() async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              manageReadError == nil, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               somedaySectionRenameIndex == nil, !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
               managedSomedaySections.count < managedSomedayTotal else { return }
@@ -2082,7 +2118,7 @@ final class CoreModel: ObservableObject {
 
     func loadMoreManagedAreas() async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              manageReadError == nil, !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
               managedAreas.count < managedAreasTotal else { return }
@@ -2100,7 +2136,7 @@ final class CoreModel: ObservableObject {
 
     func retryManageSettingsRead() async {
         guard selectedSurface == .settings, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive else { return }
@@ -2122,7 +2158,7 @@ final class CoreModel: ObservableObject {
 
     func openUnassignedAreaColor() async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              manageReadError == nil, !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
               somedaySectionRenameIndex == nil, !somedaySectionRenameReadPending else { return }
@@ -2247,7 +2283,7 @@ final class CoreModel: ObservableObject {
 
     func openSomedaySectionRename(index: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               manageReadError == nil, somedaySectionRenameOpeningIndex == nil,
               somedaySectionRenameIndex == nil, !somedaySectionDeleteActive, !somedaySectionOrderActive,
@@ -2384,7 +2420,7 @@ final class CoreModel: ObservableObject {
 
     func openSomedaySectionDelete(index: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionDeleteActive, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, somedaySectionRenameIndex == nil,
               somedaySectionRenameOpeningIndex == nil, manageReadError == nil,
@@ -2502,7 +2538,7 @@ final class CoreModel: ObservableObject {
 
     func moveManagedSomedaySection(index: Int, offset: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionOrderActive, !somedaySectionDeleteActive, !settingsAreaDeleteActive,
               somedaySectionRenameIndex == nil, !somedaySectionRenameReadPending,
               manageReadError == nil, managedSomedaySections.indices.contains(index),
@@ -2588,7 +2624,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openProjects() async {
-        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !projectRenameEditing else { return }
         morePresented = false
         selectedSurface = .projects
@@ -5342,8 +5378,200 @@ final class CoreModel: ObservableObject {
         if fromProject { dismissProjectAreaPresentation() }
     }
 
+    func openSettingsPersonCreate() async {
+        guard manageInventoryActionsEnabled,
+              manageSettings.objects("sections").contains(where: { $0.text("key") == "people" && $0.flag("open") }) else { return }
+        let draft = manageSettings.object("people").object("newPerson").object("edit").object("draft")
+        guard draft["name"] is String, draft["note"] is String, draft["referenceLink"] is String else { return }
+        settingsPersonCreateName = draft.text("name")
+        settingsPersonCreateNote = draft.text("note")
+        settingsPersonCreateReference = draft.text("referenceLink")
+        settingsPersonCreatePresented = true
+        settingsPersonCreateAcknowledged = false
+        settingsPersonCreateAwaitingRefresh = false
+        settingsPersonCreateCheckCurrent = false
+        settingsPersonCreateSaveDisabled = true
+        settingsPersonCreateError = nil
+        settingsPersonCreateReadError = nil
+        settingsPersonCreateNameGeneration += 1
+        busy = true
+        defer { finishOperation() }
+        do { try await readSettingsPersonCreateCheck(generation: settingsPersonCreateNameGeneration) }
+        catch { settingsPersonCreateReadError = error.localizedDescription }
+    }
+
+    func cancelSettingsPersonCreate() {
+        guard settingsPersonCreateCanCancel else { return }
+        dismissSettingsPersonCreate()
+    }
+
+    private func dismissSettingsPersonCreate() {
+        settingsPersonCreatePresented = false
+        settingsPersonCreateAwaitingRefresh = false
+        settingsPersonCreateAcknowledged = false
+        settingsPersonCreateNameGeneration += 1
+        settingsPersonCreateChecking = false
+        settingsPersonCreateCheckCurrent = false
+        settingsPersonCreateSaveDisabled = true
+        settingsPersonCreateName = ""
+        settingsPersonCreateNote = ""
+        settingsPersonCreateReference = ""
+        settingsPersonCreateError = nil
+        settingsPersonCreateReadError = nil
+    }
+
+    func setSettingsPersonCreateName(_ value: String) {
+        guard settingsPersonCreateInputEnabled,
+              !value.utf8.elementsEqual(settingsPersonCreateName.utf8) else { return }
+        settingsPersonCreateName = value
+        settingsPersonCreateError = nil
+        settingsPersonCreateReadError = nil
+        scheduleSettingsPersonCreateCheck()
+    }
+
+    func setSettingsPersonCreateNote(_ value: String) {
+        guard settingsPersonCreateInputEnabled else { return }
+        settingsPersonCreateNote = value
+        settingsPersonCreateError = nil
+    }
+
+    func setSettingsPersonCreateReference(_ value: String) {
+        guard settingsPersonCreateInputEnabled else { return }
+        settingsPersonCreateReference = value
+        settingsPersonCreateError = nil
+    }
+
+    private func scheduleSettingsPersonCreateCheck() {
+        settingsPersonCreateNameGeneration += 1
+        let generation = settingsPersonCreateNameGeneration
+        settingsPersonCreateCheckCurrent = false
+        settingsPersonCreateSaveDisabled = true
+        settingsPersonCreateChecking = true
+        Task {
+            do { try await Task.sleep(nanoseconds: 120_000_000) } catch { return }
+            guard generation == settingsPersonCreateNameGeneration,
+                  settingsPersonCreatePresented, settingsPersonCreateRequest == nil, !busy, !retryNeeded else { return }
+            do { try await readSettingsPersonCreateCheck(generation: generation) }
+            catch {
+                guard generation == settingsPersonCreateNameGeneration, settingsPersonCreatePresented,
+                      settingsPersonCreateRequest == nil else { return }
+                settingsPersonCreateChecking = false
+                settingsPersonCreateReadError = error.localizedDescription
+            }
+        }
+    }
+
+    private func readSettingsPersonCreateCheck(generation: Int) async throws {
+        let name = settingsPersonCreateName
+        let check = try await query("menuRead", ["managePersonCreateCheck", try json(["name": name])])
+        guard generation == settingsPersonCreateNameGeneration, settingsPersonCreatePresented,
+              settingsPersonCreateRequest == nil else { return }
+        guard check.count == 3, check["nameTaken"] is Bool, let disabled = check["saveDisabled"] as? Bool,
+              check["message"] is NSNull || check["message"] is String else { throw CocoaError(.coderReadCorrupt) }
+        settingsPersonCreateSaveDisabled = disabled
+        settingsPersonCreateCheckCurrent = true
+        settingsPersonCreateChecking = false
+        settingsPersonCreateReadError = nil
+    }
+
+    func saveSettingsPersonCreate() async {
+        guard settingsPersonCreateCanSave else { return }
+        let id = UUID().uuidString.lowercased()
+        let name = settingsPersonCreateName
+        let note = settingsPersonCreateNote
+        let reference = settingsPersonCreateReference
+        settingsPersonCreateNameGeneration += 1
+        settingsPersonCreateChecking = false
+        busy = true
+        defer { finishOperation() }
+        let request: String
+        do {
+            let resolved = try await query("managePersonCreateResolve", [try json(["requestId": id, "name": name])])
+            guard resolved.count == 3, resolved["taken"] is Bool, resolved["normalizedName"] is String,
+                  !resolved.text("expectedPersonId").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            let expected = resolved.text("expectedPersonId")
+            request = try json(["requestId": id, "name": name, "note": note,
+                                "referenceLink": reference, "expectedPersonId": expected])
+            settingsPersonCreateRequest = request
+            settingsPersonCreateExpectedID = expected
+        } catch {
+            settingsPersonCreateCheckCurrent = false
+            settingsPersonCreateReadError = error.localizedDescription
+            return
+        }
+        do {
+            let result = try await query("managePersonCreate", [request])
+            try acknowledgeSettingsPersonCreate(result)
+        } catch { await handleSettingsPersonCreateWriteError(error); return }
+        await refreshSettingsPersonCreation()
+    }
+
+    private func acknowledgeSettingsPersonCreate(_ result: CoreObject) throws {
+        guard settingsPersonCreateRequest != nil, let expected = settingsPersonCreateExpectedID,
+              result.count == 2, result["created"] is Bool, result.text("id") == expected else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        settingsPersonCreateRequest = nil
+        settingsPersonCreateExpectedID = nil
+        settingsPersonCreateAcknowledged = true
+        settingsPersonCreateAwaitingRefresh = true
+        settingsPersonCreateError = nil
+        settingsPersonCreateReadError = nil
+        retryNeeded = false
+        error = nil
+    }
+
+    private func handleSettingsPersonCreateWriteError(_ failure: Error) async {
+        settingsPersonCreateError = failure.localizedDescription
+        if settingsPersonCreateRequest != nil && isDefiniteRejection(failure) {
+            settingsPersonCreateRequest = nil
+            settingsPersonCreateExpectedID = nil
+            settingsPersonCreateCheckCurrent = false
+            settingsPersonCreateAwaitingRefresh = true
+            retryNeeded = false
+            error = nil
+            await refreshSettingsPersonCreation()
+        } else {
+            retryNeeded = settingsPersonCreateRequest != nil
+            error = failure.localizedDescription
+        }
+    }
+
+    private func refreshSettingsPersonCreation() async {
+        guard settingsPersonCreatePresented, selectedSurface == .settings, settingsManagePresented,
+              settingsPersonCreateRequest == nil else { return }
+        do {
+            try await readManageSettings()
+            if settingsPersonCreateAcknowledged { dismissSettingsPersonCreate() }
+            else {
+                settingsPersonCreateNameGeneration += 1
+                try await readSettingsPersonCreateCheck(generation: settingsPersonCreateNameGeneration)
+                settingsPersonCreateAwaitingRefresh = false
+            }
+            settingsPersonCreateReadError = nil
+            error = nil
+        } catch {
+            settingsPersonCreateReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    func retrySettingsPersonCreateRead() async {
+        guard settingsPersonCreatePresented, !busy, !retryNeeded, settingsPersonCreateRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        if settingsPersonCreateAwaitingRefresh { await refreshSettingsPersonCreation() }
+        else {
+            settingsPersonCreateNameGeneration += 1
+            do {
+                try await readSettingsPersonCreateCheck(generation: settingsPersonCreateNameGeneration)
+                error = nil
+            } catch { settingsPersonCreateReadError = error.localizedDescription }
+        }
+    }
+
     func openSettingsAreaCreate() async {
-        guard ready, selectedSurface == .settings, settingsManagePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
+        guard ready, selectedSurface == .settings, settingsManagePresented, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !busy, !retryNeeded, manageReadError == nil, !unassignedAreaColorActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
@@ -5965,7 +6193,7 @@ final class CoreModel: ObservableObject {
     func openSettingsAreaEdit(index: Int) async {
         guard ready, selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
               manageReadError == nil, !settingsAreaEditActive, !settingsAreaDeleteActive,
-              !settingsAreaCreatePresented, !unassignedAreaColorActive,
+              !settingsPersonCreatePresented, !settingsAreaCreatePresented, !unassignedAreaColorActive,
               !somedaySectionDeleteActive, !somedaySectionOrderActive,
               somedaySectionRenameIndex == nil, managedAreas.indices.contains(index) else { return }
         let row = managedAreas[index]
@@ -6196,7 +6424,7 @@ final class CoreModel: ObservableObject {
 
     func openSettingsAreaDelete(index: Int) async {
         guard ready, selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
-              manageReadError == nil, !settingsAreaDeleteActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              manageReadError == nil, !settingsAreaDeleteActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !unassignedAreaColorActive, !somedaySectionDeleteActive, !somedaySectionOrderActive,
               somedaySectionRenameIndex == nil, managedAreas.indices.contains(index) else { return }
         let id = managedAreas[index].text("id")
@@ -6392,7 +6620,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openBoard() async {
-        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
         morePresented = false
         selectedSurface = .board
         await refresh()
@@ -6686,7 +6914,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openCalendar() async {
-        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented else { return }
         morePresented = false
         selectedSurface = .calendar
@@ -7258,7 +7486,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openReview() async {
-        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !mindSweepPresented, !processInboxPresented else { return }
         morePresented = false
         selectedSurface = .review
@@ -7544,7 +7772,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openContexts() async {
-        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
         if selectedSurface != .contexts { contextsCaller = selectedSurface }
         morePresented = false
         selectedSurface = .contexts
@@ -7710,7 +7938,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openWaiting() async {
-        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
         if selectedSurface != .waiting { waitingCaller = selectedSurface }
         morePresented = false
         selectedSurface = .waiting
@@ -7724,7 +7952,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openSomeday() async {
-        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
         if selectedSurface != .someday { somedayCaller = selectedSurface }
         morePresented = false
         selectedSurface = .someday
@@ -8663,7 +8891,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openReference() async {
-        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
         if selectedSurface != .reference { referenceCaller = selectedSurface }
         morePresented = false
         selectedSurface = .reference
@@ -9077,7 +9305,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openTrash() async {
-        guard ready, !busy, !retryNeeded, !taskPresented, !capturePresented, !areaPickerPresented else { return }
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !taskPresented, !capturePresented, !areaPickerPresented else { return }
         if selectedSurface != .trash { trashCaller = selectedSurface }
         morePresented = false
         selectedSurface = .trash
@@ -9152,7 +9380,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openHistory() async {
-        guard ready, !busy, !retryNeeded, !taskPresented, !capturePresented else { return }
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !taskPresented, !capturePresented else { return }
         if selectedSurface != .history { historyCaller = selectedSurface }
         morePresented = false
         selectedSurface = .history
@@ -9656,7 +9884,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openProject(_ row: CoreObject, descriptionSourceID: String? = nil) async {
-        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               selectedSurface != .project, selectedSurface != .trash, !row.text("id").isEmpty else { return }
         if selectedSurface == .review {
             let entries = (reviewGuidePresented ? reviewGuide : reviewOverview).objects("items")
@@ -10660,7 +10888,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openSearch() {
-        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, selectedSurface != .search else { return }
         searchCaller = selectedSurface
         morePresented = false
@@ -10771,7 +10999,7 @@ final class CoreModel: ObservableObject {
     }
 
     func openAreaPicker() async {
-        guard ready, !busy, !retryNeeded, !capturePresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !taskPresented,
               !projectRenameEditing,
               !calendarComposerPresented, !mindSweepPresented else { return }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -10853,7 +11081,7 @@ final class CoreModel: ObservableObject {
 
     func openTask(_ id: String, descriptionSourceID: String? = nil) async {
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
-        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard ready, !settingsPersonCreatePresented, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !projectRenameEditing, selectedSurface != .trash else { return }
         if selectedSurface == .review {
             guard reviewActionsEnabled, reviewTaskIDs.contains(id) else { return }
@@ -12024,7 +12252,7 @@ final class CoreModel: ObservableObject {
 
     func openCapture() async {
         guard ready, !busy, !retryNeeded, !areaPickerPresented, !taskPresented,
-              !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive,
+              !unassignedAreaColorActive, !settingsPersonCreatePresented, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !projectRenameEditing,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented else { return }
         morePresented = false
@@ -13114,6 +13342,14 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = settingsPersonCreateRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("managePersonCreateRetryOutcome", [request]) }
+                try acknowledgeSettingsPersonCreate(result)
+                await refreshSettingsPersonCreation()
+                return
+            }
             if let request = areaCreateRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -13316,6 +13552,10 @@ final class CoreModel: ObservableObject {
             }
             if areaColorRequest != nil {
                 await handleAreaColorWriteError(error)
+                return
+            }
+            if settingsPersonCreateRequest != nil {
+                await handleSettingsPersonCreateWriteError(error)
                 return
             }
             if areaCreateRequest != nil {
@@ -14144,6 +14384,21 @@ final class CoreModel: ObservableObject {
             manageAreaDeleteTestRefusals -= 1
             throw SimulatedManageAreaRefusal()
         }
+        if method == "menuRead", args.first as? String == "manageSettings",
+           settingsPersonCreateAcknowledged, managePersonCreateTestReadFailures > 0 {
+            managePersonCreateTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "menuRead", args.first as? String == "managePersonCreateCheck",
+           settingsPersonCreatePresented, managePersonCreateOptionsTestReadFailures > 0 {
+            managePersonCreateOptionsTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "managePersonCreate", settingsPersonCreateRequest != nil,
+           managePersonCreateTestRefusals > 0 {
+            managePersonCreateTestRefusals -= 1
+            throw SimulatedManagePersonCreateRefusal()
+        }
         if method == "areaCreateOptions", settingsAreaCreatePresented,
            manageAreaOptionsTestReadFailures > 0 {
             manageAreaOptionsTestReadFailures -= 1
@@ -14245,7 +14500,8 @@ final class CoreModel: ObservableObject {
     private func isDefiniteRejection(_ error: Error) -> Bool {
         #if DEBUG && targetEnvironment(simulator)
         if error is SimulatedSomedayDeleteRefusal || error is SimulatedSomedayOrderRefusal
-            || error is SimulatedUnassignedColorRefusal || error is SimulatedManageAreaRefusal { return true }
+            || error is SimulatedUnassignedColorRefusal || error is SimulatedManageAreaRefusal
+            || error is SimulatedManagePersonCreateRefusal { return true }
         #endif
         return error is CoreHostRejection
     }

@@ -225,6 +225,16 @@ export type PreparedProjectTaskOrder = {
     result: { projectId: string; taskId: string; sectionId: string | null };
 };
 
+/** Frozen single-Person addition; restoring metadata never restores Tasks. */
+export type PreparedPersonCreate = {
+    kind: 'fresh' | 'restored';
+    scope: { person: Person | null };
+    effect: { person: { before: Person | null; after: Person } };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    updateAt: string;
+};
+
 /** Frozen final rows for a native Area create or legacy tombstone restoration. */
 export type PreparedAreaCreate = {
     kind: 'fresh' | 'restored';
@@ -588,6 +598,7 @@ export interface TaskStore {
     // People Actions
     /** Add a new managed person for delegated tasks */
     addPerson: (name: string, initialProps?: Partial<Person>) => Promise<Person | null>;
+    commitPreparedPersonCreate: (input: PreparedPersonCreate & { request: { requestId: string; name: string; note: string; referenceLink: string; expectedPersonId: string } }) => Promise<PreparedTaskEditResult>;
     /** Update managed person metadata */
     updatePerson: (id: string, updates: Partial<Person>) => Promise<StoreActionResult>;
     /** Rename a person and optionally update exact task assignments */

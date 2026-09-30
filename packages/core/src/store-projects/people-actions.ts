@@ -3,80 +3,111 @@ import {
     getNextDataChangeAt,
     nextRevision,
     persist,
+    replaceEntitiesInArray,
 } from '../store-helpers';
 import { logWarn } from '../logger';
 import { clearDerivedCache } from '../store-settings';
 import { getPersonNameKey, normalizePersonName, normalizePersonNote, normalizePersonReferenceLink } from '../people';
+import { taskEditValuesEqual } from '../json-value-equality';
+import { personToSqliteRow } from '../person-sync-schema';
+import { planManageEditorSave } from '../manage-settings-model';
+import type { PreparedTaskEditResult } from '../store-types';
 import { generateUUID as uuidv4 } from '../uuid';
 import type { PeopleActions, Person, ProjectActionContext } from './shared';
 import { actionFail, actionOk, mutateEntities } from './shared';
 
+export const resolvePersonAddition = (people: readonly Person[], name: string): Person | null => {
+    const key = getPersonNameKey(name);
+    const matches = (person: Person) => getPersonNameKey(person.name) === key;
+    return people.find((person) => !person.deletedAt && matches(person))
+        ?? people.find((person) => person.deletedAt && matches(person)) ?? null;
+};
+
+/** The RN addPerson policy, retaining arbitrary initialProps and omitted metadata. */
+export function planPersonAddition(people: readonly Person[], name: string, props: Partial<Person> | undefined,
+    id: string, deviceId: string, now: string):
+    { kind: 'live' | 'fresh' | 'restored'; before: Person | null; person: Person } | null {
+    const normalizedName = normalizePersonName(name);
+    if (!normalizedName) return null;
+    const before = resolvePersonAddition(people, normalizedName);
+    if (before && !before.deletedAt) return { kind: 'live', before, person: before };
+    const person: Person = before ? {
+        ...before, ...props, name: normalizedName, deletedAt: undefined,
+        note: Object.prototype.hasOwnProperty.call(props ?? {}, 'note') ? normalizePersonNote(props?.note) : before.note,
+        referenceLink: Object.prototype.hasOwnProperty.call(props ?? {}, 'referenceLink')
+            ? normalizePersonReferenceLink(props?.referenceLink) : before.referenceLink,
+        rev: nextRevision(before.rev), revBy: deviceId, updatedAt: now,
+    } : {
+        id, ...props, name: normalizedName,
+        note: normalizePersonNote(props?.note), referenceLink: normalizePersonReferenceLink(props?.referenceLink),
+        rev: 1, revBy: deviceId, createdAt: props?.createdAt ?? now, updatedAt: now,
+    };
+    return { kind: before ? 'restored' : 'fresh', before, person };
+}
+
+/** Reuse the Manage editor's omission of blank fields, especially on restoration. */
+export function personCreateProps(request: { name: string; note: string; referenceLink: string }): Partial<Person> | undefined {
+    const write = planManageEditorSave({ type: 'newPerson' }, { ...request, color: '' }, {})?.[0];
+    return write?.kind === 'addPerson' ? write.props : undefined;
+}
+
+export const samePersonAdditionRow = (left: Person, right: Person): boolean =>
+    taskEditValuesEqual(personToSqliteRow(left, left.updatedAt), personToSqliteRow(right, right.updatedAt));
+
 export const createPeopleActions = ({
     set,
-    get,
     debouncedSave,
 }: ProjectActionContext): PeopleActions => ({
     addPerson: async (name: string, initialProps?: Partial<Person>) => {
-        const trimmedName = normalizePersonName(name);
-        if (!trimmedName) return null;
-        const normalized = getPersonNameKey(trimmedName);
+        if (!normalizePersonName(name)) return null;
         const now = new Date().toISOString();
-        const changeAt = Date.now();
-        let createdPerson: Person | null = null;
-        let existingPersonId: string | null = null;
-        let shouldRestoreDeletedPerson = false;
-
+        let person: Person | null = null;
         set((state) => {
-            const existingActive = state._allPeople.find((person) => !person.deletedAt && getPersonNameKey(person.name) === normalized);
-            if (existingActive) {
-                existingPersonId = existingActive.id;
-                return state;
-            }
-            const existingDeleted = state._allPeople.find((person) => person.deletedAt && getPersonNameKey(person.name) === normalized);
-            if (existingDeleted) {
-                existingPersonId = existingDeleted.id;
-                shouldRestoreDeletedPerson = true;
-                return state;
-            }
-
-            const deviceState = ensureDeviceId(state.settings);
-            const newPerson: Person = {
-                id: uuidv4(),
-                ...initialProps,
-                name: trimmedName,
-                note: normalizePersonNote(initialProps?.note),
-                referenceLink: normalizePersonReferenceLink(initialProps?.referenceLink),
-                rev: 1,
-                revBy: deviceState.deviceId,
-                createdAt: initialProps?.createdAt ?? now,
-                updatedAt: now,
-            };
-            createdPerson = newPerson;
-            const newAllPeople = [...state._allPeople, newPerson];
-            persist(set, debouncedSave, state, {
-                people: newAllPeople,
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
-            });
-            return {
-                _allPeople: newAllPeople,
-                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
-            };
+            const live = resolvePersonAddition(state._allPeople, name);
+            if (live && !live.deletedAt) { person = live; return state; }
+            const device = ensureDeviceId(state.settings);
+            const planned = planPersonAddition(state._allPeople, name, initialProps, uuidv4(), device.deviceId, now);
+            if (!planned || planned.kind === 'live') return state;
+            const people = planned.before
+                ? replaceEntitiesInArray(state._allPeople, [planned.person])
+                : [...state._allPeople, planned.person];
+            // Retain the previous restore result when initialProps changes the row's ID.
+            person = planned.before && planned.before.id !== planned.person.id ? null : planned.person;
+            persist(set, debouncedSave, state, { people, ...(device.updated ? { settings: device.settings } : {}) });
+            return { _allPeople: people, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt),
+                ...(device.updated ? { settings: device.settings } : {}) };
         });
+        return person;
+    },
 
-        if (existingPersonId) {
-            if (shouldRestoreDeletedPerson) {
-                const result = await get().updatePerson(existingPersonId, {
-                    ...(initialProps ?? {}),
-                    name: trimmedName,
-                    deletedAt: undefined,
-                });
-                if (!result.success) return null;
+    commitPreparedPersonCreate: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Person conflicts with current data' };
+        set((state) => {
+            const { request, effect } = input;
+            const target = state._allPeople.find((person) => person.id === request.expectedPersonId);
+            if (target && (!input.deviceIdToInitialize || state.settings.deviceId === input.deviceIdToInitialize)
+                && samePersonAdditionRow(target, effect.person.after)) {
+                result = { success: true, id: target.id, outcome: 'replayed' };
+                return state;
             }
-            const resolved = get()._allPeople.find((person) => person.id === existingPersonId);
-            return resolved && !resolved.deletedAt ? resolved : null;
-        }
-        return createdPerson;
+            if ((input.kind === 'fresh' && target) || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)) return state;
+            const selected = resolvePersonAddition(state._allPeople, request.name);
+            if (selected ? !input.scope.person || selected.id !== request.expectedPersonId
+                || !samePersonAdditionRow(selected, input.scope.person) : input.scope.person !== null) return state;
+            const planned = planPersonAddition(state._allPeople, request.name, personCreateProps(request), request.requestId,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!planned || planned.kind !== input.kind || planned.person.id !== request.expectedPersonId
+                || !samePersonAdditionRow(planned.person, effect.person.after)) return state;
+            const people = planned.before
+                ? state._allPeople.map((person) => person.id === planned.before!.id ? planned.person : person)
+                : [...state._allPeople, planned.person];
+            const settings = input.deviceIdToInitialize ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { people, ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: planned.person.id, outcome: 'applied' };
+            return { _allPeople: people, settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
     },
 
     updatePerson: async (id: string, updates: Partial<Person>) => {
