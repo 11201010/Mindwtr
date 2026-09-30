@@ -50,11 +50,15 @@ class BytecodeCache(
     }
 
     /**
-     * Written whole under a temporary name, synced, renamed over the old file, then the directory synced. False on any
-     * failure, with no partial file left under the cache's name: the next start runs the source and tries again.
+     * Written whole under a temporary name of its own (created exclusively, so no other writer can share it), synced,
+     * renamed over the old file, then the directory synced. False on any failure, with no partial file left under the
+     * cache's name: the next start runs the source and tries again.
      */
     fun write(bundleHash: String, bytecode: ByteArray): Boolean {
-        val temporary = File(file.parentFile, "${file.name}.tmp")
+        val temporary = runCatching {
+            removeAbandonedTemporaryFiles()
+            File.createTempFile("${file.name}.", ".tmp", file.parentFile)
+        }.getOrElse { return false }
         return try {
             val header = ByteArrayOutputStream().also { bytes ->
                 DataOutputStream(bytes).use { out ->
@@ -79,8 +83,16 @@ class BytecodeCache(
         }
     }
 
+    /** A writer's temporary file left by a process that died mid-write (5 MB each); a live writer's is younger. */
+    private fun removeAbandonedTemporaryFiles() {
+        val cutoff = System.currentTimeMillis() - ABANDONED_AFTER_MS
+        file.parentFile?.listFiles { other -> other.name.startsWith("${file.name}.") && other.name.endsWith(".tmp") }
+            ?.filter { it.lastModified() < cutoff }?.forEach { it.delete() }
+    }
+
     companion object {
         private val MAGIC = "MWQJSBC1".toByteArray(Charsets.US_ASCII)
+        private const val ABANDONED_AFTER_MS = 10 * 60_000L
         /** Magic, bundle hash, the bytecode's length and hash; the engine version's UTF length comes on top. */
         private val HEADER_FIXED = MAGIC.size + 32L + 4 + 32
         private fun utfLength(text: String) = 2L + text.toByteArray(Charsets.UTF_8).size

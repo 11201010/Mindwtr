@@ -100,6 +100,38 @@ class BytecodeCacheTest {
         assertFalse(failing.write(bundle, bytecode))
     }
 
+    @Test fun anotherWritersTemporaryFileIsNeverShared() {
+        // Writer A is mid-write on a temporary file (its stream still open) when writer B writes and publishes. With one shared
+        // temporary name, B would truncate A's file, rename it into place, and A's later bytes would land in the published cache.
+        val other = File(folder.root, "core-host.qjsc.tmp")
+        java.io.FileOutputStream(other).use { writerA ->
+            writerA.write("A's first bytes".toByteArray())
+            assertTrue(cache().write(bundle, bytecode))
+            writerA.write(ByteArray(4096) { 1 })
+        }
+        assertArrayEquals(bytecode, cache().read(bundle).bytecode)
+        assertTrue(other.readBytes().copyOf(15).contentEquals("A's first bytes".toByteArray()))
+    }
+
+    @Test fun twoWritersAtOnceLeaveOneWholeCache() {
+        val second = ByteArray(20_000) { (it * 7).toByte() }
+        val writers = listOf(bytecode, second).map { payload -> Thread { repeat(20) { cache().write(bundle, payload) } } }
+        writers.forEach(Thread::start)
+        writers.forEach(Thread::join)
+        val read = cache().read(bundle)
+        assertEquals("hit", read.outcome)
+        assertTrue(read.bytecode!!.contentEquals(bytecode) || read.bytecode!!.contentEquals(second))
+        assertEquals(listOf("core-host.qjsc"), folder.root.list()!!.toList())
+    }
+
+    @Test fun aDeadWritersTemporaryFileIsRemovedAndALiveOnesIsKept() {
+        val abandoned = File(folder.root, "core-host.qjsc.123.tmp").apply { writeText("dead"); setLastModified(System.currentTimeMillis() - 3_600_000) }
+        val live = File(folder.root, "core-host.qjsc.456.tmp").apply { writeText("live") }
+        assertTrue(cache().write(bundle, bytecode))
+        assertFalse(abandoned.exists())
+        assertEquals("live", live.readText())
+    }
+
     @Test fun aNewWriteReplacesTheOldCache() {
         cache().write(otherBundle, bytecode)
         val next = ByteArray(5) { 7 }
