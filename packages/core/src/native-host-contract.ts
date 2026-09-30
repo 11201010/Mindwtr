@@ -3094,6 +3094,8 @@ export type NativeInboxProcessingView = ProcessInboxStepView & {
     taskId: string;
     progress: { processed: number; total: number; label: string };
     draft: ProcessInboxDraft;
+    /** The capture card's AI Clarify (requestInboxClarify) while AI is on, as React Native shows it; its busy label. */
+    aiClarify: { label: string; working: string } | null;
 };
 
 /** A step's result. `view` is null once the queue is done; the session has then ended. */
@@ -3255,6 +3257,7 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
             taskId: task.id,
             progress: { ...progress, label: formatProcessInboxProgressLabel(t, progress.processed, progress.total) },
             draft: entry.draft,
+            aiClarify: state.settings.ai?.enabled === true ? { label: t('taskEdit.aiClarify'), working: t('ai.working') } : null,
             ...buildProcessInboxStepView({
                 task,
                 draft: entry.draft,

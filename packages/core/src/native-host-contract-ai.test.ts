@@ -905,6 +905,17 @@ describe('native host contract: AI keys stay out of views, errors and logs', () 
         expect(view.draft).toMatchObject({ title: 'Call Sam', contexts: ['@calls'] });
     });
 
+    // Pass C1 native: RN's Process Inbox shows Clarify while AI is on (InboxCaptureCard's aiEnabled); the native view says so.
+    it('names Process Inbox\'s Clarify button while AI is on, and no button while it is off', async () => {
+        const tasks = [{ id: 'i1', title: 'Gift', status: 'inbox', tags: [], contexts: [], createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }] as Task[];
+        await seed({ tasks, settings: { ai: { enabled: true, provider: 'openai' } } });
+        const contract = await openHost(createDevice({}).host);
+        expect(value(contract.startInboxProcessing({})).view!.aiClarify).toEqual({ label: 'AI clarify', working: 'Working...' });
+        await seed({ tasks, settings: { ai: { enabled: false, provider: 'openai' } } });
+        const off = await openHost(createDevice({}).host);
+        expect(value(off.startInboxProcessing({})).view!.aiClarify).toBeNull();
+    });
+
     it('answers ACTION_FAILED without a bound AI host, and sends nothing', async () => {
         await seed({ settings: { ai: { enabled: true, provider: 'openai' } } });
         device.calls.length = 0;
