@@ -913,6 +913,12 @@ globalThis.MindwtrHost = {
             return unwrap(contract.probeAreaDeleteOutcome(JSON.parse(json)));
         });
     },
+    manageAreaDeleteRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeAreaDeleteOutcome(JSON.parse(json)));
+        });
+    },
     /** Private iOS preparation and commit; Swift owns the durable journal. */
     areaDeletePrepare(json: string): string {
         return submit(async () => {
@@ -924,6 +930,9 @@ globalThis.MindwtrHost = {
         return submit(async () => unwrap(contract.validatePreparedAreaDelete(JSON.parse(json))));
     },
     areaDeleteCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedAreaDelete(JSON.parse(json))));
+    },
+    manageAreaDeleteCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedAreaDelete(JSON.parse(json))));
     },
     taskListSortOptions(json: string): string {

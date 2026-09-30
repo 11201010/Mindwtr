@@ -10078,6 +10078,17 @@ final class CoreHostTests: XCTestCase {
                 "expected": row.filter { !["id", "projectCount", "canDelete"].contains($0.key) }]
     }
 
+    private func seedManageAreaDeleteRows() async throws {
+        try await seedAreaDeleteRows()
+        let at = recentAreaTestTime()
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("INSERT INTO projects (id, title, status, color, areaId, areaTitle, orderNum, tagIds, supportNotes, isSequential, isFocused, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["delete-live-project", "Live", "someday", "#22c55e", "delete-area", "Work", 2, "[]", "Keep **project notes**", 0, 0, at, at, 11]))
+        _ = try sqlite.execute("INSERT INTO tasks (id, title, status, projectId, tags, contexts, isFocusedToday, showFutureRecurrence, suppressMindwtrReminders, pushCount, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["delete-project-task", "Keep nested task", "next", "delete-live-project", "[]", "[]", 0, 0, 0, 0, at, at, 12]))
+        sqlite.close()
+    }
+
     private func seedProjectFocusRows(focusedOthers: Int = 1, targetStatus: String = "active",
                                       targetFocused: Bool = false, targetDeleted: Bool = false) async throws {
         let bootstrap = host()
@@ -13603,6 +13614,157 @@ final class CoreHostTests: XCTestCase {
             var forgedJournal: [String: Any] = ["version": 2, "method": method, "argumentsJSON": argumentsJSON]
             if let terminal { forgedJournal["terminal"] = terminal }
             let bytes = Data(try json(forgedJournal).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var sql = 0, cleanup = 0
+            blockedFaults.beforeSQL = { _ in sql += 1 }
+            blockedFaults.journalRemove = { cleanup += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(sql, 0); XCTAssertEqual(cleanup, 0)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes)
+            await blocked.close()
+        }
+    }
+
+    func testManageAreaDeleteDetachesLiveProjectsAndDirectTasksButKeepsDeletedAndUnrelatedRows() async throws {
+        try await seedManageAreaDeleteRows()
+        let faults = HostIOFaults()
+        var diagnostics: [String] = []
+        faults.commandDiagnostic = { diagnostics.append($0) }
+        let core = host(faults)
+        _ = try await core.start()
+        var request = try await areaDeleteRequest(core)
+        let live = try XCTUnwrap(projectRows("delete-live-project").first)
+        let deleted = try json(XCTUnwrap(projectRows("delete-old-project").first))
+        let other = try json(XCTUnwrap(projectRows("delete-other-project").first))
+        let nested = try json(storedTask("delete-project-task"))
+        let direct = try storedTask("delete-direct")
+        let trashed = try storedTask("delete-trashed")
+        let unrelated = try json(storedTask("delete-unrelated"))
+        await expectFailure { _ = try await core.call("areaDelete", argumentsJSON: json([json(request)])) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        request["detachProjects"] = true
+        let result = try object(await core.call("manageAreaDelete", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(result["areaId"] as? String, "delete-area")
+        XCTAssertNotNil(try areaRows("delete-area").first?["deletedAt"] as? String)
+        let saved = try XCTUnwrap(projectRows("delete-live-project").first)
+        XCTAssertTrue(saved["areaId"] is NSNull)
+        XCTAssertTrue(saved["areaTitle"] is NSNull)
+        XCTAssertEqual(saved["rev"] as? Int, (live["rev"] as? Int ?? 0) + 1)
+        let projectChanges: Set<String> = ["areaId", "areaTitle", "rev", "revBy", "updatedAt"]
+        XCTAssertEqual(try json(saved.filter { !projectChanges.contains($0.key) }),
+                       try json(live.filter { !projectChanges.contains($0.key) }))
+        for (id, before) in [("delete-direct", direct), ("delete-trashed", trashed)] {
+            let after = try storedTask(id)
+            XCTAssertTrue(after["areaId"] is NSNull)
+            XCTAssertEqual(after["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
+            let taskChanges: Set<String> = ["areaId", "rev", "revBy", "updatedAt"]
+            XCTAssertEqual(try json(after.filter { !taskChanges.contains($0.key) }),
+                           try json(before.filter { !taskChanges.contains($0.key) }))
+        }
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("delete-old-project").first)), deleted)
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("delete-other-project").first)), other)
+        XCTAssertEqual(try json(storedTask("delete-project-task")), nested)
+        XCTAssertEqual(try json(storedTask("delete-unrelated")), unrelated)
+        XCTAssertEqual(diagnostics.filter { $0 == "manageAreaDeleteApplied" }.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testManageAreaDeleteExactUUIDSurvivesTwoFailuresAndColdRecovery() async throws {
+        try await seedManageAreaDeleteRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        var request = try await areaDeleteRequest(writer)
+        request["detachProjects"] = true
+        let beforeSQLite = try SQLiteBridge(url: database)
+        let before = try areaColorTableSnapshot(beforeSQLite)
+        beforeSQLite.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Manage Area deletion failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("manageAreaDelete", argumentsJSON: json([json(request)])) }
+        let pending = try object(String(contentsOf: journal))
+        XCTAssertEqual(pending["method"] as? String, "manageAreaDeleteCommit")
+        let frozenArguments = try XCTUnwrap(pending["argumentsJSON"] as? String)
+        let arguments = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(frozenArguments.utf8)) as? [String])
+        let envelope = try object(XCTUnwrap(arguments.first))
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        let preparedRequest = try XCTUnwrap(prepared["request"] as? [String: Any])
+        XCTAssertEqual(preparedRequest["requestId"] as? String, request["requestId"] as? String)
+        let updateAt = try XCTUnwrap(prepared["updateAt"] as? String)
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        let retriedArguments = try XCTUnwrap(object(String(contentsOf: journal))["argumentsJSON"] as? String)
+        XCTAssertEqual(Data(retriedArguments.utf8), Data(frozenArguments.utf8))
+        let unchanged = try SQLiteBridge(url: database)
+        XCTAssertEqual(try areaColorTableSnapshot(unchanged), before)
+        unchanged.close()
+        await writer.close()
+        let replay = host()
+        let startup = try object(await replay.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "manageAreaDeleteCommit")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["areaId"] as? String, "delete-area")
+        XCTAssertEqual(try XCTUnwrap(areaRows("delete-area").first)["updatedAt"] as? String, updateAt)
+        let project = try XCTUnwrap(projectRows("delete-live-project").first)
+        XCTAssertTrue(project["areaId"] is NSNull)
+        XCTAssertEqual(project["updatedAt"] as? String, updateAt)
+        for id in ["delete-direct", "delete-trashed"] {
+            let task = try storedTask(id)
+            XCTAssertTrue(task["areaId"] is NSNull)
+            XCTAssertEqual(task["updatedAt"] as? String, updateAt)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await expectFailure("STALE_REVISION") {
+            _ = try await replay.call("manageAreaDeleteRetryOutcome", argumentsJSON: json([json(request)]))
+        }
+        await replay.close()
+    }
+
+    func testManageAreaDeleteRejectsWrongModeAndForgedJournalBeforeSQL() async throws {
+        try await seedManageAreaDeleteRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        var request = try await areaDeleteRequest(writer)
+        request["detachProjects"] = true
+        for bad in [false as Any, "true" as Any, NSNull()] {
+            var malformed = request
+            malformed["detachProjects"] = bad
+            await expectFailure("INVALID_INPUT") { _ = try await writer.call("manageAreaDelete", argumentsJSON: json([json(malformed)])) }
+        }
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pending Manage Area deletion") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("manageAreaDelete", argumentsJSON: json([json(request)])) }
+        let pending = try object(String(contentsOf: journal))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(pending["argumentsJSON"] as? String).utf8)) as? [String])
+        let original = try object(XCTUnwrap(args.first))
+        await writer.close()
+        for kind in ["legacy-method", "missing-mode", "forged-effect"] {
+            var journalValue = pending
+            var envelope = original
+            if kind == "legacy-method" { journalValue["method"] = "areaDeleteCommit" }
+            if kind == "missing-mode" {
+                var changed = request
+                changed.removeValue(forKey: "detachProjects")
+                envelope["request"] = changed
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                prepared["request"] = changed
+                envelope["prepared"] = prepared
+            }
+            if kind == "forged-effect" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                var projects = try XCTUnwrap(effect["projects"] as? [[String: Any]])
+                var first = try XCTUnwrap(projects.first)
+                var after = try XCTUnwrap(first["after"] as? [String: Any])
+                after["title"] = "Forged"
+                first["after"] = after
+                projects[0] = first
+                effect["projects"] = projects
+                prepared["effect"] = effect
+                envelope["prepared"] = prepared
+            }
+            if kind != "legacy-method" { journalValue["argumentsJSON"] = try json([json(envelope)]) }
+            let bytes = Data(try json(journalValue).utf8)
             try bytes.write(to: journal)
             let blockedFaults = HostIOFaults()
             var sql = 0, cleanup = 0

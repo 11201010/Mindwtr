@@ -7,11 +7,13 @@ import { areaDeleteEffect, sameAreaAdditionRow, selectAreaDeleteScope } from './
 import type { PreparedAreaDelete } from './store-types';
 import { taskEditValuesEqual } from './store-tasks';
 import { taskToSqliteRow } from './task-sync-schema';
-import type { Area, Task } from './types';
+import { projectToSqliteRow } from './project-sync-schema';
+import type { Area, Project, Task } from './types';
 
 export type NativeAreaDeleteToken = { name: string; color: string | null; order: number;
     rev: number | null; revBy: string | null; updatedAt: string };
-export type NativeAreaDeleteRequest = { requestId: string; areaId: string; expected: NativeAreaDeleteToken };
+export type NativeAreaDeleteRequest = { requestId: string; areaId: string; expected: NativeAreaDeleteToken;
+    detachProjects?: true };
 export type NativeAreaDeleteResult = { areaId: string };
 export type NativePreparedAreaDelete = PreparedAreaDelete & { version: 1; request: NativeAreaDeleteRequest;
     result: NativeAreaDeleteResult };
@@ -45,7 +47,8 @@ const detach = <T>(value: unknown): T | null => {
 
 const readRequest = (value: unknown): NativeAreaDeleteRequest | null => {
     const input = detach<Record<string, unknown>>(value);
-    if (!input || !exact(input, ['requestId', 'areaId', 'expected'])
+    if (!input || !exact(input, input.detachProjects === true
+        ? ['requestId', 'areaId', 'expected', 'detachProjects'] : ['requestId', 'areaId', 'expected'])
         || typeof input.requestId !== 'string' || !UUID.test(input.requestId)
         || typeof input.areaId !== 'string' || !input.areaId || input.areaId.length > 500
         || !record(input.expected) || !exact(input.expected, ['name', 'color', 'order', 'rev', 'revBy', 'updatedAt']))
@@ -84,6 +87,20 @@ const validTask = (value: unknown, areaId: string): value is Task => {
     catch { return false; }
 };
 
+const validProject = (value: unknown, areaId: string): value is Project => {
+    if (!record(value) || typeof value.id !== 'string' || !value.id || value.id.length > 500
+        || typeof value.title !== 'string' || value.title.length > 100_000
+        || !['active', 'someday', 'waiting', 'archived'].includes(String(value.status))
+        || typeof value.color !== 'string' || typeof value.order !== 'number' || !Number.isFinite(value.order)
+        || !Array.isArray(value.tagIds) || !value.tagIds.every((item) => typeof item === 'string')
+        || value.areaId !== areaId || value.deletedAt !== undefined
+        || !iso(value.createdAt) || !iso(value.updatedAt)
+        || (value.rev !== undefined && !(typeof value.rev === 'number' && Number.isSafeInteger(value.rev) && value.rev >= 0))
+        || (value.revBy !== undefined && typeof value.revBy !== 'string')) return false;
+    try { projectToSqliteRow(value as unknown as Project); return true; }
+    catch { return false; }
+};
+
 /** Pure cold-journal validation before SQLite opens. */
 const readPrepared = (value: unknown): NativePreparedAreaDelete | null => {
     const envelope = detach<Record<string, unknown>>(value);
@@ -94,10 +111,12 @@ const readPrepared = (value: unknown): NativePreparedAreaDelete | null => {
         'deviceIdToInitialize', 'updateAt', 'result']) || raw.version !== 1 || !same(raw.request, request)
         || !record(raw.scope) || !exact(raw.scope, ['area', 'tasks', 'liveProjects'])
         || !record(raw.scope.area) || !Array.isArray(raw.scope.tasks)
-        || !Array.isArray(raw.scope.liveProjects) || raw.scope.liveProjects.length !== 0
-        || !record(raw.effect) || !exact(raw.effect, ['area', 'tasks'])
+        || !Array.isArray(raw.scope.liveProjects) || (!request.detachProjects && raw.scope.liveProjects.length !== 0)
+        || !record(raw.effect) || !exact(raw.effect, request.detachProjects
+            ? ['area', 'tasks', 'projects'] : ['area', 'tasks'])
         || !record(raw.effect.area) || !exact(raw.effect.area, ['before', 'after'])
         || !Array.isArray(raw.effect.tasks)
+        || (request.detachProjects && !Array.isArray(raw.effect.projects))
         || !(raw.deviceIdBefore === null || typeof raw.deviceIdBefore === 'string' && Boolean(raw.deviceIdBefore))
         || (raw.deviceIdBefore === null
             ? typeof raw.deviceIdToInitialize !== 'string' || !UUID.test(raw.deviceIdToInitialize)
@@ -110,9 +129,13 @@ const readPrepared = (value: unknown): NativePreparedAreaDelete | null => {
         if (!validArea(scope.area) || scope.area.id !== request.areaId
             || !same(token(scope.area), request.expected)
             || scope.tasks.some((task) => !validTask(task, request.areaId))
+            || scope.liveProjects.some((project) => !validProject(project, request.areaId))
             || new Set(scope.tasks.map((task) => task.id)).size !== scope.tasks.length
-            || prepared.effect.tasks.length !== scope.tasks.length) return null;
-        const effect = areaDeleteEffect(scope, prepared.deviceIdBefore ?? prepared.deviceIdToInitialize!, prepared.updateAt);
+            || new Set(scope.liveProjects.map((project) => project.id)).size !== scope.liveProjects.length
+            || prepared.effect.tasks.length !== scope.tasks.length
+            || (request.detachProjects && prepared.effect.projects?.length !== scope.liveProjects.length)) return null;
+        const effect = areaDeleteEffect(scope, prepared.deviceIdBefore ?? prepared.deviceIdToInitialize!,
+            prepared.updateAt, request.detachProjects);
         return same(effect, prepared.effect)
             && !sameAreaAdditionRow.area(effect.area.before, effect.area.after) ? prepared : null;
     } catch { return null; }
@@ -150,13 +173,13 @@ export function createAreaDeleteMethods(deps: {
             const state = useTaskStore.getState();
             const scope = selectAreaDeleteScope(state._allAreas, state._allProjects, state._allTasks, request.areaId);
             if (!scope || scope.area.deletedAt || !same(token(scope.area), request.expected)
-                || scope.liveProjects.length !== 0
-                || countLiveProjectsByArea(state._allProjects).has(request.areaId))
+                || (!request.detachProjects && (scope.liveProjects.length !== 0
+                    || countLiveProjectsByArea(state._allProjects).has(request.areaId))))
                 return fail('STALE_REVISION', 'Area changed or is in use; refresh before deleting');
             const device = ensureDeviceId(state.settings);
             const updateAt = new Date().toISOString();
             const prepared: NativePreparedAreaDelete = { version: 1, request, scope,
-                effect: areaDeleteEffect(scope, device.deviceId, updateAt),
+                effect: areaDeleteEffect(scope, device.deviceId, updateAt, request.detachProjects),
                 deviceIdBefore: state.settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null,
                 updateAt, result: { areaId: request.areaId } };

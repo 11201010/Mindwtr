@@ -36,10 +36,12 @@ export function selectAreaDeleteScope(areas: Area[], projects: Project[], tasks:
 }
 
 export function areaDeleteEffect(scope: PreparedAreaDelete['scope'], deviceId: string,
-    now: string): PreparedAreaDelete['effect'] {
-    const planned = planAreaDeletion(scope.area, [], scope.tasks, deviceId, now);
+    now: string, detachProjects = false): PreparedAreaDelete['effect'] {
+    const planned = planAreaDeletion(scope.area, detachProjects ? scope.liveProjects : [], scope.tasks, deviceId, now);
     return { area: { before: scope.area, after: planned.area },
-        tasks: scope.tasks.map((before, index) => ({ before, after: planned.tasks[index] })) };
+        tasks: scope.tasks.map((before, index) => ({ before, after: planned.tasks[index] })),
+        ...(detachProjects ? { projects: scope.liveProjects.map((before, index) =>
+            ({ before, after: planned.projects[index] })) } : {}) };
 }
 
 /** Preserve the direct store action's historical partial-ID and unknown-ID behavior. */
@@ -581,9 +583,14 @@ export const createAreaActions = ({
             const { scope, effect, request } = input;
             const target = state._allAreas.find((row) => row.id === request.areaId);
             const currentTasksById = new Map(state._allTasks.map((task) => [task.id, task]));
+            const currentProjectsById = new Map(state._allProjects.map((project) => [project.id, project]));
             const completeAfter = target && (!input.deviceIdToInitialize
                 || state.settings.deviceId === input.deviceIdToInitialize)
                 && sameAreaAdditionRow.area(target, effect.area.after)
+                && (effect.projects ?? []).every(({ after }) => {
+                    const current = currentProjectsById.get(after.id);
+                    return current && sameAreaAdditionRow.project(current, after);
+                })
                 && effect.tasks.every(({ after }) => {
                     const current = currentTasksById.get(after.id);
                     return current && sameAreaAdditionRow.task(current, after);
@@ -595,27 +602,38 @@ export const createAreaActions = ({
             if (!target || target.deletedAt || (state.settings.deviceId ?? null) !== input.deviceIdBefore
                 || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
                 || !sameAreaAdditionRow.area(target, scope.area)
-                || countLiveProjectsByArea(state._allProjects).has(request.areaId)) return state;
+                || (!request.detachProjects && countLiveProjectsByArea(state._allProjects).has(request.areaId))) return state;
+            const linkedProjects = state._allProjects.filter((project) =>
+                project.areaId === request.areaId && !project.deletedAt);
+            const beforeProjects = new Map(scope.liveProjects.map((project) => [project.id, project]));
+            if (linkedProjects.length !== scope.liveProjects.length || linkedProjects.some((project) => {
+                const before = beforeProjects.get(project.id);
+                return !before || !sameAreaAdditionRow.project(project, before);
+            })) return state;
             const linkedTasks = state._allTasks.filter((task) => task.areaId === request.areaId);
             const beforeTasks = new Map(scope.tasks.map((task) => [task.id, task]));
             if (linkedTasks.length !== scope.tasks.length || linkedTasks.some((task) => {
                 const before = beforeTasks.get(task.id);
                 return !before || !sameAreaAdditionRow.task(task, before);
             })) return state;
-            const planned = areaDeleteEffect({ area: target, tasks: linkedTasks, liveProjects: [] },
-                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            const planned = areaDeleteEffect({ area: target, tasks: linkedTasks, liveProjects: linkedProjects },
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt, request.detachProjects);
             if (!taskEditValuesEqual(planned, effect)) return state;
             const nextAreas = state._allAreas.map((row) => row.id === request.areaId ? planned.area.after : row)
                 .sort((left, right) => left.order - right.order);
             const changedTasks = new Map(planned.tasks.map(({ after }) => [after.id, after]));
             const nextTasks = state._allTasks.map((task) => changedTasks.get(task.id) ?? task);
+            const changedProjects = new Map((planned.projects ?? []).map(({ after }) => [after.id, after]));
+            const nextProjects = state._allProjects.map((project) => changedProjects.get(project.id) ?? project);
             const settings = input.deviceIdToInitialize
                 ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
             clearDerivedCache();
             persist(set, debouncedSave, state, { areas: nextAreas, tasks: nextTasks,
+                ...(request.detachProjects ? { projects: nextProjects } : {}),
                 ...(settings !== state.settings ? { settings } : {}) });
             result = { success: true, id: request.areaId, outcome: 'applied' };
-            return { _allAreas: nextAreas, _allTasks: nextTasks, settings,
+            return { _allAreas: nextAreas, _allTasks: nextTasks,
+                ...(request.detachProjects ? { _allProjects: nextProjects } : {}), settings,
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
         });
         return result;

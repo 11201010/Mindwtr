@@ -273,10 +273,11 @@ export type PreparedAreaOrder = {
     updateAt: string;
 };
 
-/** Frozen native manager Area tombstone and every directly linked Task detach. */
+/** Frozen native Area tombstone and directly linked detach rows. */
 export type PreparedAreaDelete = {
     scope: { area: Area; tasks: Task[]; liveProjects: Project[] };
-    effect: { area: { before: Area; after: Area }; tasks: Array<{ before: Task; after: Task }> };
+    effect: { area: { before: Area; after: Area }; tasks: Array<{ before: Task; after: Task }>;
+        projects?: Array<{ before: Project; after: Project }> };
     deviceIdBefore: string | null;
     deviceIdToInitialize: string | null;
     updateAt: string;
@@ -537,7 +538,8 @@ export interface TaskStore {
     commitPreparedAreaRename: (input: PreparedAreaRename & { request: { requestId: string; areaId: string; name: string };
         result: { id: string; areaId: string; name: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaOrder: (input: PreparedAreaOrder & { request: { requestId: string; intent: AreaOrderIntent; expectedAreas: unknown[] }; result: { orderedIds: string[] } }) => Promise<PreparedTaskEditResult>;
-    commitPreparedAreaDelete: (input: PreparedAreaDelete & { request: { requestId: string; areaId: string }; result: { areaId: string } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedAreaDelete: (input: PreparedAreaDelete & { request: { requestId: string; areaId: string;
+        detachProjects?: true }; result: { areaId: string } }) => Promise<PreparedTaskEditResult>;
     /** Update a project */
     updateProject: (id: string, updates: Partial<Project>) => Promise<StoreActionResult>;
     /** Archive a project as cancelled and cancel its unfinished child tasks */

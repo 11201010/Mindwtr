@@ -4031,6 +4031,208 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task89OpenManageAreas(_ app: XCUIApplication, search: Bool = false) {
+        task83OpenManage(app, search: search, ensureOpen: false)
+        let toggle = app.buttons["manage-section-toggle-areas"]
+        revealPagedElement(app, toggle, in: app.scrollViews["manage-someday-scroll"])
+        boardEnabled(toggle)
+        if toggle.value as? String == "collapsed" { toggle.tap() }
+        boardEnabled(app.buttons["manage-back"])
+    }
+
+    private func task89Area(_ app: XCUIApplication, index: Int, title: String) -> XCUIElement {
+        let trash = app.buttons["manage-area-delete-\(index)"]
+        revealPagedElement(app, trash, in: app.scrollViews["manage-someday-scroll"],
+            more: "manage-areas-more", ready: app.buttons["manage-back"])
+        let name = app.staticTexts["manage-area-name-\(index)"]
+        XCTAssertTrue(name.exists)
+        XCTAssertEqual(name.label, title)
+        XCTAssertEqual(trash.label, "Delete: " + title)
+        XCTAssertGreaterThanOrEqual(trash.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(trash.frame.height, 44 - 0.001)
+        return trash
+    }
+
+    private func task89Alert(_ app: XCUIApplication, index: Int, title: String) -> XCUIElement {
+        task89Area(app, index: index, title: title).tap()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        XCTAssertTrue(alert.staticTexts["Delete this area? Projects and tasks in this area will be kept and moved to unassigned."].exists)
+        boardEnabled(task84AlertButton(alert, id: "manage-area-delete-cancel", label: "Cancel"))
+        boardEnabled(task84AlertButton(alert, id: "manage-area-delete-confirm", label: "Delete"))
+        return alert
+    }
+
+    private func task89Cancel(_ alert: XCUIElement) {
+        task84AlertButton(alert, id: "manage-area-delete-cancel", label: "Cancel").tap()
+    }
+
+    private func task89Confirm(_ alert: XCUIElement) {
+        task84AlertButton(alert, id: "manage-area-delete-confirm", label: "Delete").tap()
+    }
+
+    func testManageAreaDeleteCancelAndCommit() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "28824621-db32-440f-bc7b-4c45548e3433"]
+        app.launch(); task89OpenManageAreas(app, search: true)
+        task89Cancel(task89Alert(app, index: 0, title: "Task89 Delete normal"))
+        task89Area(app, index: 0, title: "Task89 Delete normal")
+        task89Confirm(task89Alert(app, index: 0, title: "Task89 Delete normal"))
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        XCTAssertFalse(app.staticTexts["manage-area-name-0"].label == "Task89 Delete normal")
+        app.terminate(); app.launch(); task89OpenManageAreas(app)
+        XCTAssertFalse(app.staticTexts["manage-area-name-0"].label == "Task89 Delete normal")
+        app.terminate()
+    }
+
+    func testManageAreaDeleteLargestText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "04bb5e1d-96d4-4ada-9369-4d04fccc986c"]
+        app.launch(); task89OpenManageAreas(app)
+        let alert = task89Alert(app, index: 0, title: "Task89 Delete largest")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Largest Manage Area Delete confirmation"; shot.lifetime = .keepAlways; add(shot)
+        let messageScroll = alert.scrollViews.firstMatch
+        XCTAssertTrue(messageScroll.exists)
+        messageScroll.swipeUp()
+        let end = XCTAttachment(screenshot: app.screenshot())
+        end.name = "Largest Manage Area Delete message end"; end.lifetime = .keepAlways; add(end)
+        for button in [task84AlertButton(alert, id: "manage-area-delete-cancel", label: "Cancel"),
+                       task84AlertButton(alert, id: "manage-area-delete-confirm", label: "Delete")] {
+            XCTAssertTrue(button.isHittable)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        }
+        task89Confirm(alert)
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        app.terminate()
+    }
+
+    func testManageAreaDeleteLastPagedArea() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "f9ca7344-6a2a-46e2-b404-ff27faaf6eac"]
+        app.launch(); task89OpenManageAreas(app)
+        task89Confirm(task89Alert(app, index: 105, title: "Task89 Delete paging"))
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        XCTAssertFalse(app.buttons["manage-area-delete-105"].exists)
+        app.terminate(); app.launch(); task89OpenManageAreas(app)
+        XCTAssertFalse(app.buttons["manage-area-delete-105"].exists)
+        app.terminate()
+    }
+
+    func testManageAreaDeletePostAckReadRetryOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "82135806-45e4-48fc-84b2-26359945b680",
+                               "--native-manage-area-delete-read-failure"]
+        app.launch(); task89OpenManageAreas(app)
+        task89Confirm(task89Alert(app, index: 0, title: "Task89 Delete readfailure"))
+        let failure = app.staticTexts["manage-area-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        for attempt in 0..<2 {
+            boardTap(app, "manage-area-delete-retry")
+            if attempt == 0 {
+                XCTAssertTrue(failure.waitForExistence(timeout: 20))
+                boardEnabled(app.buttons["manage-area-delete-retry"], timeout: 20)
+            }
+        }
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        XCTAssertFalse(failure.exists)
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", "82135806-45e4-48fc-84b2-26359945b680"]
+        app.launch(); task89OpenManageAreas(app)
+        XCTAssertFalse(app.staticTexts["manage-area-name-0"].label == "Task89 Delete readfailure")
+        app.terminate()
+    }
+
+    /// Run before the paired cold test while the isolated SQLite trigger rejects Area removal.
+    func testManageAreaDeleteFailedSaveKeepsExactRequest() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "78ae764e-dc61-4bd5-99a6-f9546d509f24"]
+        app.launch(); task89OpenManageAreas(app)
+        task89Confirm(task89Alert(app, index: 0, title: "Task89 Delete savefailure"))
+        let failure = app.staticTexts["manage-area-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-area-delete-0"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-section-toggle-areas"].isEnabled)
+            boardTap(app, "manage-area-delete-retry")
+            boardEnabled(app.buttons["manage-area-delete-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    /// Root disarms only the failure trigger, preserving this library's pending journal.
+    func testManageAreaDeleteColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "78ae764e-dc61-4bd5-99a6-f9546d509f24"]
+        app.launch()
+        XCTAssertTrue(app.buttons["manage-back"].waitForExistence(timeout: 30))
+        task89OpenManageAreas(app)
+        XCTAssertFalse(app.staticTexts["manage-area-name-0"].label == "Task89 Delete savefailure")
+        XCTAssertFalse(app.staticTexts["manage-area-delete-error"].exists)
+        app.terminate(); app.launch(); task89OpenManageAreas(app)
+        XCTAssertFalse(app.staticTexts["manage-area-name-0"].label == "Task89 Delete savefailure")
+        app.terminate()
+    }
+
+    func testManageAreaDeleteOptionsReadRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "31a508b7-641f-4d34-99aa-8d22ae254aa3",
+                               "--native-manage-area-delete-options-failure"]
+        app.launch(); task89OpenManageAreas(app)
+        boardTap(app, "manage-area-delete-0")
+        let failure = app.staticTexts["manage-area-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        XCTAssertFalse(app.buttons["manage-area-delete-0"].isEnabled)
+        boardTap(app, "manage-area-delete-error-cancel")
+        boardEnabled(app.buttons["manage-back"])
+        task89Area(app, index: 0, title: "Task89 Delete optionsfailure")
+        app.terminate(); app.launch(); task89OpenManageAreas(app)
+        boardTap(app, "manage-area-delete-0")
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        boardTap(app, "manage-area-delete-retry")
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        task89Cancel(alert)
+        task89Area(app, index: 0, title: "Task89 Delete optionsfailure")
+        task89Confirm(task89Alert(app, index: 0, title: "Task89 Delete optionsfailure"))
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        app.terminate()
+    }
+
+    func testManageAreaDeleteDefiniteRefusalFreshConfirmation() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "5bbb4ffd-fdef-4b2e-ab4c-5c27a39f6263",
+                               "--native-manage-area-delete-refusal"]
+        app.launch(); task89OpenManageAreas(app)
+        task89Confirm(task89Alert(app, index: 0, title: "Task89 Delete refusal"))
+        let failure = app.staticTexts["manage-area-delete-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        boardTap(app, "manage-area-delete-retry")
+        let fresh = app.alerts.firstMatch
+        XCTAssertTrue(fresh.waitForExistence(timeout: 10))
+        task89Cancel(fresh)
+        task89Area(app, index: 0, title: "Task89 Delete refusal")
+        task89Confirm(task89Alert(app, index: 0, title: "Task89 Delete refusal"))
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        app.terminate()
+    }
+
     private func task85Arrow(_ app: XCUIApplication, index: Int, up: Bool) -> XCUIElement {
         let arrow = app.buttons.matching(identifier: "manage-someday-\(up ? "up" : "down")-\(index)").firstMatch
         // A boundary arrow is intentionally disabled; reveal its row via an enabled sibling.

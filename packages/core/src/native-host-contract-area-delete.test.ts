@@ -103,6 +103,100 @@ describe('prepared native Area delete', () => {
         expect(saves()).toBe(0);
     });
 
+    it('Settings mode detaches live Projects and direct Tasks, then replays the exact frozen result after reload', async () => {
+        const live = project('live', { notes: 'Keep project metadata' });
+        const deleted = project('deleted', { deletedAt: now });
+        const linked = task('linked');
+        const trashed = task('trashed', { deletedAt: now });
+        const unrelated = project('other', { areaId: 'other', areaTitle: 'Other' });
+        const first = await open({ areas: [area(), area('other', { name: 'Other', order: 1 })],
+            projects: [live, deleted, unrelated],
+            tasks: [linked, trashed, task('other', { areaId: 'other' })] });
+        const legacy = first.request();
+        expect(first.methods.prepareAreaDelete(legacy)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        const request = { ...legacy, detachProjects: true as const };
+        const plan = first.methods.prepareAreaDelete(request);
+        if (!plan.ok) throw new Error(JSON.stringify(plan));
+        expect(plan.value.prepared.scope.liveProjects).toEqual([live]);
+        expect(plan.value.prepared.effect.projects).toHaveLength(1);
+        const envelope = { request, prepared: plan.value.prepared };
+        expect(Object.hasOwn(envelope.prepared.effect, 'projects')).toBe(true);
+        expect(first.methods.validatePreparedAreaDelete(envelope)).toMatchObject({ ok: true });
+        expect(await first.methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: true });
+        const saved = structuredClone(first.data());
+        expect(saved.areas[0]).toEqual(plan.value.prepared.effect.area.after);
+        expect(saved.projects[0]).toEqual(plan.value.prepared.effect.projects![0].after);
+        expect(saved.projects[1]).toEqual(deleted);
+        expect(saved.projects[2]).toEqual(unrelated);
+        expect(saved.tasks.slice(0, 2)).toEqual(plan.value.prepared.effect.tasks.map((row) => row.after));
+        expect(saved.tasks[2].areaId).toBe('other');
+        const second = await open(saved);
+        const before = second.saves();
+        expect(await second.methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: true });
+        expect(second.saves()).toBe(before);
+        useTaskStore.setState({ _allProjects: useTaskStore.getState()._allProjects.map((row) => row.id === 'live'
+            ? { ...row, title: 'Later edit', rev: (row.rev ?? 0) + 1 } : row) });
+        expect(await second.methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+    });
+
+    it('Settings mode rejects changed membership and forged mode/effects before persistence', async () => {
+        const live = project('live');
+        const linked = task('linked');
+        const { methods, request: getRequest, saves } = await open({ projects: [live], tasks: [linked] });
+        const request = { ...getRequest(), detachProjects: true as const };
+        const plan = methods.prepareAreaDelete(request);
+        if (!plan.ok) throw new Error(JSON.stringify(plan));
+        const envelope = { request, prepared: plan.value.prepared };
+        for (const bad of [
+            { ...request, detachProjects: false },
+            { ...request, detachProjects: 'true' },
+            { ...request, extra: true },
+        ]) expect(methods.prepareAreaDelete(bad as never)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        const forged = structuredClone(envelope);
+        forged.prepared.effect.projects![0].after.title = 'Forged';
+        expect(methods.validatePreparedAreaDelete(forged)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        const omitted = structuredClone(envelope);
+        delete omitted.prepared.effect.projects;
+        expect(methods.validatePreparedAreaDelete(omitted)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        expect(methods.validatePreparedAreaDelete({ ...envelope, request: getRequest() }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        for (const projects of [[{ ...live, title: 'Edited' }], [live, project('added')]]) {
+            useTaskStore.setState({ _allProjects: projects });
+            expect(await methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: false,
+                error: { code: 'STALE_REVISION' } });
+        }
+        useTaskStore.setState({ _allProjects: [live], _allTasks: [linked, task('added')] });
+        expect(await methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        useTaskStore.setState({ _allTasks: [{ ...linked, title: 'Edited' }] });
+        expect(await methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(saves()).toBe(0);
+    });
+
+    it('keeps empty Settings project effects distinct from legacy envelopes', async () => {
+        const { methods, request: getRequest } = await open({ tasks: [task('linked')] });
+        const legacy = methods.prepareAreaDelete(getRequest());
+        const manageRequest = { ...getRequest(), detachProjects: true as const };
+        const manage = methods.prepareAreaDelete(manageRequest);
+        if (!legacy.ok || !manage.ok) throw new Error('Area delete preparation failed');
+        expect(Object.hasOwn(legacy.value.prepared.effect, 'projects')).toBe(false);
+        expect(manage.value.prepared.effect.projects).toEqual([]);
+        const forged = structuredClone(legacy.value.prepared);
+        forged.effect.projects = [];
+        expect(methods.validatePreparedAreaDelete({ request: getRequest(), prepared: forged }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(methods.validatePreparedAreaDelete({ request: manageRequest, prepared: legacy.value.prepared }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(methods.validatePreparedAreaDelete({ request: getRequest(), prepared: manage.value.prepared }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
     it('detaches direct and trashed Tasks, preserving rich metadata and unrelated rows', async () => {
         const linked = task('linked');
         const trashed = task('trashed', { deletedAt: now });

@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-manage-area-delete`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Manage Area deleted` with `outcome=confirmed` after durable persistence and journal cleanup. Delete an Area from Settings → Manage, then relaunch: its live Projects and directly assigned Tasks remain under Unassigned; deleted Projects and unrelated rows stay unchanged. Failed saves retain the original prepared request for Retry. No Area names, identifiers, or task content are logged.
+
 - **`v1.3.4/ios-manage-area-create`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Manage Area created` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. Create an Area from Settings → Manage and relaunch; fresh creation adds only that Area, while restoring a matching deleted Area uses the shared restoration plan. Cancel and live-name duplicates write nothing. Failed saves retain the original prepared request and Area ID through Retry and cold recovery. No names, identifiers or colors are logged.
 
 - **`v1.3.4/ios-unassigned-area-color`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS unassigned area color saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. Change the unassigned-area color in Settings → Manage → Areas and relaunch; only that appearance preference and its settings timestamp may change. Cancel and unchanged colors write nothing. Failed saves retain the original request for Retry and cold recovery; changed settings are refused. No colors, identifiers or settings content are logged.

@@ -8,6 +8,8 @@ struct SettingsScreen: View {
     @FocusState private var areaNameFocused: Bool
     @State private var deleteConfirmPresented = false
     @State private var deleteConfirmAnswered = false
+    @State private var areaDeleteConfirmPresented = false
+    @State private var areaDeleteConfirmAnswered = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,7 +27,8 @@ struct SettingsScreen: View {
                 .disabled(model.busy || model.retryNeeded || model.somedaySectionRenamePending
                           || model.somedaySectionRenameAwaitingRefresh
                           || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
-                          || model.somedaySectionOrderActive || model.unassignedAreaColorActive)
+                          || model.somedaySectionOrderActive || model.unassignedAreaColorActive
+                          || model.settingsAreaDeleteActive)
                 .accessibilityLabel(model.label("common.back"))
                 .accessibilityIdentifier(model.settingsManagePresented ? "manage-back" : "settings-back")
                 Text(model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
@@ -60,6 +63,27 @@ struct SettingsScreen: View {
             // Defer implicit-cancel cleanup so that action can retain frozen Options.
             DispatchQueue.main.async {
                 if !deleteConfirmAnswered && !deleteConfirmPresented { model.cancelSomedaySectionDelete() }
+            }
+        }
+        .alert(model.settingsAreaDeleteOptions.object("text").text("title"),
+               isPresented: $areaDeleteConfirmPresented) {
+            Button(model.settingsAreaDeleteOptions.object("text").text("cancelLabel"), role: .cancel) {
+                areaDeleteConfirmAnswered = true
+                model.cancelSettingsAreaDelete()
+            }
+            .accessibilityIdentifier("manage-area-delete-cancel")
+            Button(model.settingsAreaDeleteOptions.object("text").text("confirmLabel"), role: .destructive) {
+                areaDeleteConfirmAnswered = true
+                Task { await model.confirmSettingsAreaDelete() }
+            }
+            .accessibilityIdentifier("manage-area-delete-confirm")
+        } message: {
+            Text(model.settingsAreaDeleteOptions.object("text").text("message"))
+        }
+        .onChange(of: areaDeleteConfirmPresented) { presented in
+            guard !presented else { return }
+            DispatchQueue.main.async {
+                if !areaDeleteConfirmAnswered && !areaDeleteConfirmPresented { model.cancelSettingsAreaDelete() }
             }
         }
         .sheet(isPresented: Binding(
@@ -145,6 +169,19 @@ struct SettingsScreen: View {
                                retryID: "manage-unassigned-color-retry") {
                         Task { await model.retryUnassignedAreaColor() }
                     }
+                } else if let failure = model.settingsAreaDeleteError {
+                    VStack(alignment: .leading, spacing: 4) {
+                        errorBlock(failure, id: "manage-area-delete-error", retryID: "manage-area-delete-retry") {
+                            Task {
+                                await model.retrySettingsAreaDelete()
+                                presentAreaDeleteConfirmationIfReady()
+                            }
+                        }
+                        if model.settingsAreaDeleteCanCancel {
+                            Button(model.label("common.cancel")) { model.cancelSettingsAreaDelete() }
+                                .frame(minHeight: 44).accessibilityIdentifier("manage-area-delete-error-cancel")
+                        }
+                    }
                 } else if let failure = model.somedaySectionOrderError {
                     errorBlock(failure, id: "manage-someday-order-error",
                                retryID: "manage-someday-order-retry") {
@@ -189,7 +226,8 @@ struct SettingsScreen: View {
                                                       || model.somedaySectionRenameReadPending
                                                       || model.somedaySectionDeleteActive
                                                       || model.somedaySectionOrderActive
-                                                      || model.unassignedAreaColorActive)
+                                                      || model.unassignedAreaColorActive
+                                                      || model.settingsAreaDeleteActive)
                         .opacity((someday || areas) ? 1 : 0.55)
                         .accessibilityValue(section.flag("open") ? "expanded" : "collapsed")
                         .accessibilityIdentifier("manage-section-toggle-" + (someday ? "someday-sections" : section.text("key")))
@@ -211,7 +249,8 @@ struct SettingsScreen: View {
                                 .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
                                           || model.unassignedAreaColorActive
                                           || model.somedaySectionRenameIndex != nil
-                                          || model.somedaySectionDeleteActive || model.somedaySectionOrderActive)
+                                          || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
+                                          || model.settingsAreaDeleteActive)
                                 .accessibilityIdentifier("manage-areas-more")
                             }
                             newAreaRow
@@ -234,7 +273,8 @@ struct SettingsScreen: View {
                                               || model.somedaySectionRenameIndex != nil
                                               || model.somedaySectionDeleteActive
                                               || model.somedaySectionOrderActive
-                                              || model.unassignedAreaColorActive)
+                                              || model.unassignedAreaColorActive
+                                              || model.settingsAreaDeleteActive)
                                     .accessibilityIdentifier("manage-someday-more")
                                 }
                             }
@@ -268,7 +308,8 @@ struct SettingsScreen: View {
             .buttonStyle(.plain)
             .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
                       || model.unassignedAreaColorActive || model.somedaySectionRenameIndex != nil
-                      || model.somedaySectionDeleteActive || model.somedaySectionOrderActive)
+                      || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
+                      || model.settingsAreaDeleteActive)
             .accessibilityLabel(model.label("common.edit") + ": " + row.text("label"))
             .accessibilityIdentifier("manage-unassigned-color")
         }
@@ -289,11 +330,22 @@ struct SettingsScreen: View {
             }
             .disabled(true).accessibilityLabel(model.label("common.edit") + ": " + row.text("name"))
             .accessibilityIdentifier("manage-area-edit-\(index)")
-            Button {} label: {
-                Image(systemName: "trash").font(.system(size: 18)).foregroundStyle(palette.secondary)
-                    .frame(width: 44, height: 44)
+            Button {
+                Task {
+                    await model.openSettingsAreaDelete(index: index)
+                    presentAreaDeleteConfirmationIfReady()
+                }
+            } label: {
+                Image(systemName: "trash").font(.system(size: 18)).foregroundStyle(palette.danger)
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
             }
-            .disabled(true).accessibilityIdentifier("manage-area-delete-\(index)")
+            .buttonStyle(.plain)
+            .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
+                      || model.settingsAreaDeleteActive || model.settingsAreaCreatePresented
+                      || model.unassignedAreaColorActive || model.somedaySectionDeleteActive
+                      || model.somedaySectionOrderActive || model.somedaySectionRenameIndex != nil)
+            .accessibilityLabel(model.label("common.delete") + ": " + row.text("name"))
+            .accessibilityIdentifier("manage-area-delete-\(index)")
         }
         .padding(.horizontal, 12).frame(minHeight: 52)
         .accessibilityElement(children: .contain)
@@ -315,7 +367,7 @@ struct SettingsScreen: View {
                 .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
                           || model.settingsAreaCreatePresented || model.unassignedAreaColorActive
                           || model.somedaySectionRenameIndex != nil || model.somedaySectionDeleteActive
-                          || model.somedaySectionOrderActive)
+                          || model.somedaySectionOrderActive || model.settingsAreaDeleteActive)
                 .frame(minWidth: 86, minHeight: 44)
                 .accessibilityLabel(row.text("label"))
                 .accessibilityIdentifier("manage-area-add")
@@ -562,6 +614,12 @@ struct SettingsScreen: View {
         guard model.somedaySectionDeleteCanConfirm else { return }
         deleteConfirmAnswered = false
         deleteConfirmPresented = true
+    }
+
+    private func presentAreaDeleteConfirmationIfReady() {
+        guard model.settingsAreaDeleteCanConfirm else { return }
+        areaDeleteConfirmAnswered = false
+        areaDeleteConfirmPresented = true
     }
 
     private func errorBlock(_ failure: String, id: String,
