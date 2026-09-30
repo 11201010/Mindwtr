@@ -11,6 +11,15 @@
     "observations": [
      "foss: the local provider and Whisper only, step 0: two writes (the local provider's defaults, then Whisper on top of them) instead of three, the second of which had put the stored Gemini provider back."
     ]
+   },
+   {
+    "base": "0a144aa5f",
+    "command": "cd apps/mobile && MINDWTR_CAPTURE_AI_SETTINGS=1 TZ=UTC bunx vitest run components/settings/ai-settings-screen.parity.test.tsx, with the React Native fix that lists a provider's models only after this device agreed to it (review C1 3); every other observation matched the frozen one",
+    "observations": [
+     "assistant: models, pickers and the OpenAI panel, and speech: cloud providers: their devices now hold a consent record (inputs only; observations unchanged).",
+     "assistant: a key and an endpoint saved while it is off list no models before consent: new scenario, no model list asked.",
+     "assistant: an unreadable consent record asks again, step 0: the screen reads the consent record when it opens, so its warning comes then too."
+    ]
    }
   ]
  },
@@ -247,7 +256,11 @@
   {
    "name": "assistant: models, pickers and the OpenAI panel",
    "settings": "base",
-   "device": {},
+   "device": {
+    "storage": {
+     "mindwtr-ai-provider-consent-v1": "{\"openai\":true}"
+    }
+   },
    "actions": [
     [
      "press",
@@ -297,6 +310,27 @@
      "type",
      3,
      ""
+    ]
+   ]
+  },
+  {
+   "name": "assistant: a key and an endpoint saved while it is off list no models before consent",
+   "settings": "base",
+   "device": {},
+   "actions": [
+    [
+     "press",
+     "k:settings.ai"
+    ],
+    [
+     "type",
+     2,
+     "http://localhost:1234/v1"
+    ],
+    [
+     "type",
+     3,
+     "sk-typed-2"
     ]
    ]
   },
@@ -472,6 +506,9 @@
    "name": "speech: cloud providers",
    "settings": "speech",
    "device": {
+    "storage": {
+     "mindwtr-ai-provider-consent-v1": "{\"openai\":true,\"gemini\":true}"
+    },
     "secrets": {
      "mindwtr-ai-key_openai": "sk-speech"
     },
@@ -4077,7 +4114,12 @@
     "writes": [],
     "device": [],
     "toasts": [],
-    "calls": [],
+    "calls": [
+     [
+      "logWarn",
+      "Failed to load AI consent state"
+     ]
+    ],
     "alerts": []
    },
    {
@@ -5923,6 +5965,407 @@
       }
      ]
     ],
+    "alerts": []
+   }
+  ],
+  "assistant: a key and an endpoint saved while it is off list no models before consent": [
+   {
+    "texts": [
+     "AI assistant",
+     "AI assistant",
+     "Optional help for clarifying and breaking down tasks.",
+     "▸",
+     "Speech to text",
+     "Transcribe voice captures and map them into task fields.",
+     "▸"
+    ],
+    "controls": [
+     [
+      "AI assistant|Optional help for clarifying and breaking down tasks.|▸",
+      false
+     ],
+     [
+      "Speech to text|Transcribe voice captures and map them into task fields.|▸",
+      false
+     ]
+    ],
+    "switches": [],
+    "inputs": [],
+    "writes": [],
+    "device": [],
+    "toasts": [],
+    "calls": [],
+    "alerts": []
+   },
+   {
+    "texts": [
+     "AI assistant",
+     "AI assistant",
+     "Optional help for clarifying and breaking down tasks.",
+     "▾",
+     "Enable AI assistant",
+     "When enabled, task text is sent directly to OpenAI using your API key.",
+     "Provider",
+     "OpenAI",
+     "OpenAI",
+     "Gemini",
+     "Anthropic (Claude)",
+     "Model",
+     "Suggestions",
+     "Copilot model",
+     "Used for fast autocomplete suggestions.",
+     "Suggestions",
+     "Reasoning effort",
+     "Used by GPT-5 models.",
+     "Low",
+     "Medium",
+     "High",
+     "Custom OpenAI-compatible base URL",
+     "Leave blank for official OpenAI. Set this for local or third-party OpenAI-compatible APIs such as llama.cpp, Ollama, LM Studio, GLM, or vLLM.",
+     "Extra request parameters",
+     "Optional JSON object merged into OpenAI-compatible requests.",
+     "▸",
+     "API key",
+     "Stored locally on this device. Never synced. Official OpenAI requires a key. Custom OpenAI-compatible endpoints may also require one; leave it blank only if your endpoint allows unauthenticated requests.",
+     "Advanced",
+     "▸",
+     "Speech to text",
+     "Transcribe voice captures and map them into task fields.",
+     "▸"
+    ],
+    "controls": [
+     [
+      "AI assistant|Optional help for clarifying and breaking down tasks.|▾",
+      false
+     ],
+     [
+      "OpenAI",
+      true
+     ],
+     [
+      "Gemini",
+      false
+     ],
+     [
+      "Anthropic (Claude)",
+      false
+     ],
+     [
+      "Suggestions",
+      false
+     ],
+     [
+      "Suggestions",
+      false
+     ],
+     [
+      "Low",
+      true
+     ],
+     [
+      "Medium",
+      false
+     ],
+     [
+      "High",
+      false
+     ],
+     [
+      "Extra request parameters|Optional JSON object merged into OpenAI-compatible requests.|▸",
+      false
+     ],
+     [
+      "Advanced",
+      false
+     ],
+     [
+      "Speech to text|Transcribe voice captures and map them into task fields.|▸",
+      false
+     ]
+    ],
+    "switches": [
+     false
+    ],
+    "inputs": [
+     [
+      "gpt-5.6",
+      "gpt-5.6-terra",
+      false
+     ],
+     [
+      "gpt-5.6",
+      "gpt-5.6-luna",
+      false
+     ],
+     [
+      "http://localhost:11434/v1",
+      "",
+      false
+     ],
+     [
+      "Paste your API key",
+      "",
+      true
+     ]
+    ],
+    "writes": [],
+    "device": [],
+    "toasts": [],
+    "calls": [],
+    "alerts": []
+   },
+   {
+    "texts": [
+     "AI assistant",
+     "AI assistant",
+     "Optional help for clarifying and breaking down tasks.",
+     "▾",
+     "Enable AI assistant",
+     "When enabled, task text is sent directly to OpenAI using your API key.",
+     "Provider",
+     "OpenAI",
+     "OpenAI",
+     "Gemini",
+     "Anthropic (Claude)",
+     "Model",
+     "Suggestions",
+     "Copilot model",
+     "Used for fast autocomplete suggestions.",
+     "Suggestions",
+     "Reasoning effort",
+     "Used by GPT-5 models.",
+     "Low",
+     "Medium",
+     "High",
+     "Custom OpenAI-compatible base URL",
+     "Leave blank for official OpenAI. Set this for local or third-party OpenAI-compatible APIs such as llama.cpp, Ollama, LM Studio, GLM, or vLLM.",
+     "Extra request parameters",
+     "Optional JSON object merged into OpenAI-compatible requests.",
+     "▸",
+     "API key",
+     "Stored locally on this device. Never synced. Official OpenAI requires a key. Custom OpenAI-compatible endpoints may also require one; leave it blank only if your endpoint allows unauthenticated requests.",
+     "Advanced",
+     "▸",
+     "Speech to text",
+     "Transcribe voice captures and map them into task fields.",
+     "▸"
+    ],
+    "controls": [
+     [
+      "AI assistant|Optional help for clarifying and breaking down tasks.|▾",
+      false
+     ],
+     [
+      "OpenAI",
+      true
+     ],
+     [
+      "Gemini",
+      false
+     ],
+     [
+      "Anthropic (Claude)",
+      false
+     ],
+     [
+      "Suggestions",
+      false
+     ],
+     [
+      "Suggestions",
+      false
+     ],
+     [
+      "Low",
+      true
+     ],
+     [
+      "Medium",
+      false
+     ],
+     [
+      "High",
+      false
+     ],
+     [
+      "Extra request parameters|Optional JSON object merged into OpenAI-compatible requests.|▸",
+      false
+     ],
+     [
+      "Advanced",
+      false
+     ],
+     [
+      "Speech to text|Transcribe voice captures and map them into task fields.|▸",
+      false
+     ]
+    ],
+    "switches": [
+     false
+    ],
+    "inputs": [
+     [
+      "gpt-5.6",
+      "gpt-5.6-terra",
+      false
+     ],
+     [
+      "gpt-5.6",
+      "gpt-5.6-luna",
+      false
+     ],
+     [
+      "http://localhost:11434/v1",
+      "http://localhost:1234/v1",
+      false
+     ],
+     [
+      "Paste your API key",
+      "",
+      true
+     ]
+    ],
+    "writes": [
+     [
+      "updateSettings",
+      {
+       "ai": {
+        "baseUrl": "http://localhost:1234/v1"
+       }
+      }
+     ]
+    ],
+    "device": [],
+    "toasts": [],
+    "calls": [],
+    "alerts": []
+   },
+   {
+    "texts": [
+     "AI assistant",
+     "AI assistant",
+     "Optional help for clarifying and breaking down tasks.",
+     "▾",
+     "Enable AI assistant",
+     "When enabled, task text is sent directly to OpenAI using your API key.",
+     "Provider",
+     "OpenAI",
+     "OpenAI",
+     "Gemini",
+     "Anthropic (Claude)",
+     "Model",
+     "Suggestions",
+     "Copilot model",
+     "Used for fast autocomplete suggestions.",
+     "Suggestions",
+     "Reasoning effort",
+     "Used by GPT-5 models.",
+     "Low",
+     "Medium",
+     "High",
+     "Custom OpenAI-compatible base URL",
+     "Leave blank for official OpenAI. Set this for local or third-party OpenAI-compatible APIs such as llama.cpp, Ollama, LM Studio, GLM, or vLLM.",
+     "Extra request parameters",
+     "Optional JSON object merged into OpenAI-compatible requests.",
+     "▸",
+     "API key",
+     "Stored locally on this device. Never synced. Official OpenAI requires a key. Custom OpenAI-compatible endpoints may also require one; leave it blank only if your endpoint allows unauthenticated requests.",
+     "Advanced",
+     "▸",
+     "Speech to text",
+     "Transcribe voice captures and map them into task fields.",
+     "▸"
+    ],
+    "controls": [
+     [
+      "AI assistant|Optional help for clarifying and breaking down tasks.|▾",
+      false
+     ],
+     [
+      "OpenAI",
+      true
+     ],
+     [
+      "Gemini",
+      false
+     ],
+     [
+      "Anthropic (Claude)",
+      false
+     ],
+     [
+      "Suggestions",
+      false
+     ],
+     [
+      "Suggestions",
+      false
+     ],
+     [
+      "Low",
+      true
+     ],
+     [
+      "Medium",
+      false
+     ],
+     [
+      "High",
+      false
+     ],
+     [
+      "Extra request parameters|Optional JSON object merged into OpenAI-compatible requests.|▸",
+      false
+     ],
+     [
+      "Advanced",
+      false
+     ],
+     [
+      "Speech to text|Transcribe voice captures and map them into task fields.|▸",
+      false
+     ]
+    ],
+    "switches": [
+     false
+    ],
+    "inputs": [
+     [
+      "gpt-5.6",
+      "gpt-5.6-terra",
+      false
+     ],
+     [
+      "gpt-5.6",
+      "gpt-5.6-luna",
+      false
+     ],
+     [
+      "http://localhost:11434/v1",
+      "http://localhost:1234/v1",
+      false
+     ],
+     [
+      "Paste your API key",
+      "••••••••••",
+      true
+     ]
+    ],
+    "writes": [],
+    "device": [
+     [
+      "setSecret",
+      "mindwtr-ai-key_openai",
+      "sk-typed-2",
+      "whenUnlockedThisDeviceOnly"
+     ],
+     [
+      "removeItem",
+      "mindwtr-ai-key:openai"
+     ]
+    ],
+    "toasts": [],
+    "calls": [],
     "alerts": []
    }
   ],

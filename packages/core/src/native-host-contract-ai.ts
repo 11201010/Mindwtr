@@ -67,6 +67,7 @@ import {
 } from './ai-config';
 import {
     AI_MODEL_FETCH_DEBOUNCE_MS,
+    canDiscoverAIModels,
     canFetchAIChatModels,
     createAISettingsTranslator,
     getAIConsentPrompt,
@@ -357,6 +358,8 @@ type Visit = {
     whisper: { modelId: string; exists: boolean; size: number } | null;
     /** The extra parameters' error, shown until a Save stores or the stored parameters change. */
     extraBody: { error: string; stored: string } | null;
+    /** This device's consent record, read when the screen opens (as React Native reads it on mount); null until then. */
+    consent: Record<string, boolean> | null;
 };
 
 const readChange = (value: unknown): NativeAISettingChange | null => {
@@ -498,11 +501,15 @@ export function createAIMethods(deps: AIDeps) {
         const state = resolveAISettingsScreenState(settings(), isFossBuild);
         const assistantKey = visit?.keys.assistant?.provider === state.aiProvider ? visit.keys.assistant.value : '';
         const speechKey = visit?.keys.speech?.provider === state.speechProvider ? visit.keys.speech.value : '';
-        const assistant = canFetchAIChatModels({ isFossBuild, provider: state.aiProvider, apiKey: assistantKey.trim(), baseUrl: state.aiBaseUrl.trim() })
+        const consent = visit?.consent ?? null;
+        const agreed = (provider: string) => consent !== null
+            && canDiscoverAIModels({ provider, consent, aiEnabled: state.aiEnabled, aiProvider: state.aiProvider });
+        const assistant = agreed(state.aiProvider)
+            && canFetchAIChatModels({ isFossBuild, provider: state.aiProvider, apiKey: assistantKey.trim(), baseUrl: state.aiBaseUrl.trim() })
             ? { provider: state.aiProvider, apiKey: assistantKey.trim(), baseUrl: state.aiBaseUrl.trim(), kind: 'chat' as const }
             : null;
         const speechKind = getSpeechModelListKind({ provider: state.speechProvider, apiKey: speechKey.trim(), baseUrl: state.speechBaseUrl.trim() });
-        const speech = speechKind && state.speechProvider !== 'whisper'
+        const speech = speechKind && state.speechProvider !== 'whisper' && agreed(state.speechProvider)
             ? { provider: state.speechProvider as AIProviderId, apiKey: speechKey.trim(), baseUrl: state.speechBaseUrl.trim(), kind: speechKind }
             : null;
         return {
@@ -868,7 +875,7 @@ export function createAIMethods(deps: AIDeps) {
                 return fail('INVALID_INPUT', 'A request UUID is required');
             }
             const { isFossBuild } = host.platform;
-            visit = { keys: { assistant: null, speech: null }, models: { assistant: null, speech: null }, whisper: null, extraBody: null };
+            visit = { keys: { assistant: null, speech: null }, models: { assistant: null, speech: null }, whisper: null, extraBody: null, consent: null };
             const opened = visit;
             try {
                 const corrected = await receipts.run<{ changed: boolean }>(input.requestId, JSON.stringify(['openAISettings']), async () => {
@@ -888,6 +895,8 @@ export function createAIMethods(deps: AIDeps) {
                 });
                 if (!corrected.ok) return corrected;
                 if (visit !== opened) return fail('ACTION_FAILED', 'Settings › AI was closed or opened again');
+                // A model list asks only a provider this device agreed to (canDiscoverAIModels, review C1 3).
+                opened.consent = await readAIProviderConsent(host.storage, warn(host));
                 await loadKeys(host, isFossBuild);
                 // Answered from its receipt: the model file's state is still read (a move is stored on the next open).
                 if (!opened.whisper) await whisperPathFix(host, isFossBuild);
@@ -933,6 +942,7 @@ export function createAIMethods(deps: AIDeps) {
                 if (plan.consentFor) {
                     if (consented) {
                         await recordAIProviderConsent(host.storage, plan.consentFor, warn(host));
+                        if (visit?.consent) visit.consent = { ...visit.consent, [plan.consentFor]: true };
                     } else {
                         const agreed = await readAIProviderConsent(host.storage, warn(host));
                         if (!agreed[plan.consentFor]) {
