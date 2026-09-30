@@ -3034,7 +3034,7 @@ assert.deepEqual(ready.events.slice(ready.events.lastIndexOf('activate')), ['act
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual(ready.receiptScope, ['appLock']);
+assert.deepEqual([...ready.receiptScope], ['appLock'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);
