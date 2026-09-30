@@ -54,7 +54,7 @@
  */
 import { createAIProvider } from './ai/ai-service';
 import { fetchProviderModelsCached, mergeModelOptions } from './ai/model-list';
-import type { AIProviderConfig, AIProviderId, AIReasoningEffort, AudioCaptureMode, AudioFieldStrategy, CopilotResponse } from './ai/types';
+import type { AIProviderConfig, AIProviderId, AIRequestOptions, AIReasoningEffort, AudioCaptureMode, AudioFieldStrategy, CopilotResponse } from './ai/types';
 import {
     AI_REQUEST_TIMEOUT_OPTIONS,
     buildAIConfig,
@@ -396,6 +396,19 @@ const readChange = (value: unknown): NativeAISettingChange | null => {
             return null;
     }
 };
+
+/**
+ * [fetcher] that also stops when [signal] aborts (the host no longer wants the answer: an input change, a close, a timeout),
+ * whatever signal the request brings of its own.
+ */
+const abortable = (fetcher: typeof fetch, signal: AbortSignal | undefined): typeof fetch => (!signal ? fetcher : ((url, init = {}) => {
+    const stop = new AbortController();
+    const forward = () => stop.abort(signal.aborted ? signal.reason : init.signal?.reason);
+    if (signal.aborted || init.signal?.aborted) forward();
+    signal.addEventListener('abort', forward, { once: true });
+    init.signal?.addEventListener('abort', forward, { once: true });
+    return fetcher(url, { ...init, signal: stop.signal });
+}) as typeof fetch);
 
 export function createAIMethods(deps: AIDeps) {
     const receipts = createNativeRequestReceipts({ save: deps.save });
@@ -1020,7 +1033,7 @@ export function createAIMethods(deps: AIDeps) {
         },
 
         /** A model list the view asked for (`request`): the provider's own list; a failure keeps the built-in one. */
-        async loadAIModels(input: { list: 'assistant' | 'speech'; request: string }): Promise<NativeHostResult<NativeAISettings>> {
+        async loadAIModels(input: { list: 'assistant' | 'speech'; request: string }, options: AIRequestOptions = {}): Promise<NativeHostResult<NativeAISettings>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const host = bound.value;
@@ -1035,7 +1048,7 @@ export function createAIMethods(deps: AIDeps) {
                 opened.models[input.list] = slot;
                 try {
                     slot.models = await fetchProviderModelsCached(wanted.provider, {
-                        apiKey: wanted.apiKey, baseUrl: wanted.baseUrl, kind: wanted.kind, ...(host.fetch ? { fetchImpl: host.fetch } : {}),
+                        apiKey: wanted.apiKey, baseUrl: wanted.baseUrl, kind: wanted.kind, fetchImpl: abortable(host.fetch ?? globalThis.fetch, options.signal),
                     });
                 } catch {
                     // The built-in list stays; nothing to tell the user.
@@ -1096,7 +1109,7 @@ export function createAIMethods(deps: AIDeps) {
          * needs is missing, the text is under 4 characters, the answer holds nothing to show, or the
          * request failed.
          */
-        async requestTaskEditorCopilot(input: { id: string; draft: TaskDraft }): Promise<NativeHostResult<{ text: string | null; suggestion: NativeAICopilotSuggestion | null }>> {
+        async requestTaskEditorCopilot(input: { id: string; draft: TaskDraft }, options: AIRequestOptions = {}): Promise<NativeHostResult<{ text: string | null; suggestion: NativeAICopilotSuggestion | null }>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const found = editorTask(input);
@@ -1109,7 +1122,7 @@ export function createAIMethods(deps: AIDeps) {
             try {
                 const ai = text ? await providerFor(bound.value, true) : null;
                 if (!text || ai?.gate !== 'ready') return { ok: true, value: { text, suggestion: null } };
-                const answer = await createAIProvider(ai.build()).predictMetadata({ title: text, contexts, tags });
+                const answer = await createAIProvider(ai.build()).predictMetadata({ title: text, contexts, tags }, options);
                 const kept = keepTaskCopilotSuggestion(answer, resolveFeatureFlags(settings()).timeEstimates);
                 return { ok: true, value: { text, suggestion: kept ? { ...kept, language: deps.language() } : null } };
             } catch {
@@ -1122,7 +1135,7 @@ export function createAIMethods(deps: AIDeps) {
          * (send the answer back as its setSuggestion edit). Null when AI is off, a key the provider
          * needs is missing, the answer holds nothing to show, or the request failed.
          */
-        async requestAICopilot(input: { request: { title: string; contexts: string[]; tags: string[] } }): Promise<NativeHostResult<{ suggestion: CopilotResponse | null }>> {
+        async requestAICopilot(input: { request: { title: string; contexts: string[]; tags: string[] } }, options: AIRequestOptions = {}): Promise<NativeHostResult<{ suggestion: CopilotResponse | null }>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const request = isObjectRecord(input) && isObjectRecord(input.request) ? input.request : null;
@@ -1133,7 +1146,7 @@ export function createAIMethods(deps: AIDeps) {
             try {
                 const ai = await providerFor(bound.value, true);
                 if (ai.gate !== 'ready') return { ok: true, value: { suggestion: null } };
-                const answer = await createAIProvider(ai.build()).predictMetadata({ title: request.title, contexts: request.contexts, tags: request.tags });
+                const answer = await createAIProvider(ai.build()).predictMetadata({ title: request.title, contexts: request.contexts, tags: request.tags }, options);
                 return { ok: true, value: { suggestion: keepTaskCopilotSuggestion(answer, resolveFeatureFlags(settings()).timeEstimates) } };
             } catch {
                 return { ok: true, value: { suggestion: null } };
@@ -1141,7 +1154,7 @@ export function createAIMethods(deps: AIDeps) {
         },
 
         /** Clarify: a dialog whose buttons carry an editTaskDraft edit (Cancel carries none), or an alert. */
-        async requestTaskEditorClarify(input: { id: string; draft: TaskDraft }): Promise<NativeHostResult<NativeAIActionAnswer<NativeTaskDraftEdit>>> {
+        async requestTaskEditorClarify(input: { id: string; draft: TaskDraft }, options: AIRequestOptions = {}): Promise<NativeHostResult<NativeAIActionAnswer<NativeTaskDraftEdit>>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const host = bound.value;
@@ -1159,7 +1172,7 @@ export function createAIMethods(deps: AIDeps) {
                 sent = ai.sent;
                 const response = await createAIProvider(ai.build()).clarifyTask(buildTaskClarifyInput({
                     title, tasks: useTaskStore.getState().tasks, task, merged: mergedTask(task, draft), projectContext: projectContext(task, draft),
-                }));
+                }), options);
                 const dialog = getAIClarifyDialog(response, deps.t());
                 return {
                     ok: true,
@@ -1185,7 +1198,7 @@ export function createAIMethods(deps: AIDeps) {
         },
 
         /** Break down: a dialog whose "Add steps" carries the draft and checklist to show, or an alert. */
-        async requestTaskEditorBreakdown(input: { id: string; draft: TaskDraft; checklist: ChecklistItem[] }): Promise<NativeHostResult<NativeAIActionAnswer<NativeAIBreakdownApply>>> {
+        async requestTaskEditorBreakdown(input: { id: string; draft: TaskDraft; checklist: ChecklistItem[] }, options: AIRequestOptions = {}): Promise<NativeHostResult<NativeAIActionAnswer<NativeAIBreakdownApply>>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const host = bound.value;
@@ -1207,7 +1220,7 @@ export function createAIMethods(deps: AIDeps) {
                 sent = ai.sent;
                 const response = await createAIProvider(ai.build()).breakDownTask(buildTaskBreakdownInput({
                     title, description: draft.description, projectContext: projectContext(task, draft),
-                }));
+                }), options);
                 const steps = getTaskBreakdownSteps(response);
                 if (steps.length === 0) return { ok: true, value: { kind: 'none' } };
                 const dialog = getTaskBreakdownDialog(steps, deps.t());
@@ -1238,7 +1251,7 @@ export function createAIMethods(deps: AIDeps) {
          * to send, one by one, through getInboxProcessingStep; or a toast (AI off, a missing key:
          * its action opens Settings › AI) or an alert.
          */
-        async requestInboxClarify(input: { sessionId: string; taskId: string; step: string }): Promise<NativeHostResult<NativeAIActionAnswer<ProcessInboxDraftEdit[]>>> {
+        async requestInboxClarify(input: { sessionId: string; taskId: string; step: string }, options: AIRequestOptions = {}): Promise<NativeHostResult<NativeAIActionAnswer<ProcessInboxDraftEdit[]>>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const host = bound.value;
@@ -1272,7 +1285,7 @@ export function createAIMethods(deps: AIDeps) {
                     task,
                     contextPool: getProcessInboxTokenPools(useTaskStore.getState().tasks).contexts,
                     selectedContexts: draft.contexts,
-                }));
+                }), options);
                 const dialog = getAIClarifyDialog(response, t);
                 return {
                     ok: true,
@@ -1301,7 +1314,7 @@ export function createAIMethods(deps: AIDeps) {
          * null `suggestions` or `selectedIds` keeps what it shows. Apply sends the chosen suggestions
          * to runReviewAction's applySuggestions.
          */
-        async requestWeeklyReviewAnalysis(): Promise<NativeHostResult<NativeWeeklyReviewAnalysis>> {
+        async requestWeeklyReviewAnalysis(options: AIRequestOptions = {}): Promise<NativeHostResult<NativeWeeklyReviewAnalysis>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const host = bound.value;
@@ -1319,7 +1332,7 @@ export function createAIMethods(deps: AIDeps) {
                 const { weekStart } = getWeeklyReviewSettings(state.settings);
                 const { staleItems } = getWeeklyReviewBuckets(state.tasks, state.projects, { weekStart });
                 if (staleItems.length === 0) return { ok: true, value: { error: null, suggestions: [], selectedIds: [] } };
-                const response = await createAIProvider(ai.build()).analyzeReview({ items: staleItems });
+                const response = await createAIProvider(ai.build()).analyzeReview({ items: staleItems }, options);
                 const analysis = readWeeklyReviewAnalysis(response, staleItems);
                 const labels = getWeeklyReviewLabels(t);
                 // The revisions of the snapshot the provider was sent (read before the await): a task changed since is refused.

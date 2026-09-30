@@ -24,6 +24,9 @@ import { generateUUID } from './uuid';
 const device = vi.hoisted(() => ({
     queues: {} as Record<string, unknown[]>,
     calls: [] as unknown[][],
+    /** The abort signal each provider call and model list was given (review C1 5), apart from `calls`. */
+    signals: [] as (AbortSignal | undefined)[],
+    modelFetch: null as null | ((url: string, init: RequestInit) => Promise<unknown>),
 }));
 
 /**
@@ -48,17 +51,22 @@ vi.mock('./ai/ai-service', () => ({
             }, input]);
             return answer(method, `No ${method} answer queued`);
         };
+        const signalled = (method: string) => (input: unknown, options?: { signal?: AbortSignal }) => {
+            device.signals.push(options?.signal);
+            return record(method, input);
+        };
         return {
-            predictMetadata: (input: unknown) => record('predictMetadata', input),
-            clarifyTask: (input: unknown) => record('clarifyTask', input),
-            breakDownTask: (input: unknown) => record('breakDownTask', input),
-            analyzeReview: (input: unknown) => record('analyzeReview', input),
+            predictMetadata: signalled('predictMetadata'),
+            clarifyTask: signalled('clarifyTask'),
+            breakDownTask: signalled('breakDownTask'),
+            analyzeReview: signalled('analyzeReview'),
         };
     },
 }));
 vi.mock('./ai/model-list', async (importOriginal) => ({
     ...(await importOriginal<typeof import('./ai/model-list')>()),
-    fetchProviderModelsCached: async (provider: string, options: { apiKey: string; baseUrl: string; kind: string }) => {
+    fetchProviderModelsCached: async (provider: string, options: { apiKey: string; baseUrl: string; kind: string; fetchImpl?: (url: string, init: RequestInit) => Promise<unknown> }) => {
+        device.modelFetch = options.fetchImpl ?? null;
         device.calls.push(['fetchModels', provider, { apiKey: options.apiKey, baseUrl: options.baseUrl, kind: options.kind }]);
         return answer('models', 'offline');
     },
@@ -898,6 +906,31 @@ describe('native host contract: AI keys stay out of views, errors and logs', () 
         });
         expect(applied).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         expect(useTaskStore.getState()._tasksById.get('s1')!.status).toBe('next');
+    });
+
+    // Review C1 5: the host's signal (an input change, a close, a timeout) reaches every provider call and model list.
+    it('hands the caller\'s abort signal to each provider call and to the model list\'s fetch', async () => {
+        const tasks = [{ id: 't1', title: 'Plan the trip', status: 'next', contexts: [], tags: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }] as Task[];
+        await seed({ tasks, settings: { ai: { enabled: true, provider: 'openai', baseUrl: 'http://local/v1' } } });
+        const dev = createDevice({ queues: { clarifyTask: [{ error: 'x' }], breakDownTask: [{ error: 'x' }], predictMetadata: [{ error: 'x' }, { error: 'x' }], analyzeReview: [{ error: 'x' }], models: [{ value: [] }] } });
+        const seen: RequestInit[] = [];
+        dev.host.fetch = (async (_url: string, init: RequestInit) => { seen.push(init); return new Response('{}'); }) as typeof fetch;
+        const contract = await openHost(dev.host);
+        const draft = createTaskDraft(useTaskStore.getState()._tasksById.get('t1')!);
+        const signal = new AbortController().signal;
+        device.signals.length = 0;
+        await contract.requestTaskEditorClarify({ id: 't1', draft }, { signal });
+        await contract.requestTaskEditorBreakdown({ id: 't1', draft, checklist: [] }, { signal });
+        await contract.requestTaskEditorCopilot({ id: 't1', draft }, { signal });
+        await contract.requestAICopilot({ request: { title: 'Plan the trip', contexts: [], tags: [] } }, { signal });
+        await contract.requestWeeklyReviewAnalysis({ signal });
+        expect(device.signals).toEqual([signal, signal, signal, signal, signal]);
+        const view = value(await contract.openAISettings({ requestId: generateUUID() }));
+        const aborting = new AbortController();
+        value(await contract.loadAIModels({ list: 'assistant', request: view.modelLists.assistant.request! }, { signal: aborting.signal }));
+        await device.modelFetch!('http://local/v1/models', {});
+        aborting.abort();
+        expect(seen[0].signal?.aborted).toBe(true);
     });
 
     it('answers an unreadable keystore with an alert, and the screen shows no key', async () => {
