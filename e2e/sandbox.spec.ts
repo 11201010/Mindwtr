@@ -1,13 +1,19 @@
 import { test, expect, type Page } from '@playwright/test';
 import { dismissOnboarding, seedAppData } from './seed';
 
+const switchWorkspace = async (page: Page, click: () => Promise<void>) => {
+    // Each switch reloads the page after pending personal saves finish. Wait for
+    // that reload before checking the new workspace; the old DOM is not proof.
+    await Promise.all([page.waitForEvent('load', { timeout: 30_000 }), click()]);
+};
+
 const openSandbox = async (page: Page) => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.getByRole('button', { name: /^Data\b/ }).click();
     await page.locator('[data-open-sandbox]').click();
     await expect(page.getByRole('dialog')).toContainText('record a bug or give a demo');
-    await page.locator('[data-sandbox-confirm-enter]').click();
-    await expect(page.locator('[data-sandbox-banner]')).toContainText('Sandbox · Sample data');
+    await switchWorkspace(page, () => page.locator('[data-sandbox-confirm-enter]').click());
+    await expect(page.locator('[data-sandbox-banner]')).toContainText('Sandbox · Sample data', { timeout: 15_000 });
 };
 
 const personalEntities = (page: Page) => page.evaluate(() => {
@@ -55,23 +61,61 @@ test('sandbox editing, reset and exit preserve the personal workspace', async ({
     expect(await personalEntities(page)).toEqual(before);
     await page.screenshot({ path: testInfo.outputPath('sandbox-desktop.png'), fullPage: true });
 
-    await page.locator('[data-sandbox-reset]').click();
-    await expect(page.locator('[data-sandbox-banner]')).toBeVisible();
+    await switchWorkspace(page, () => page.locator('[data-sandbox-reset]').click());
+    await expect(page.locator('[data-sandbox-banner]')).toBeVisible({ timeout: 15_000 });
     await openInbox(page);
     await expect(page.locator('[data-task-id]', { hasText: addedTitle })).toHaveCount(0);
     await expect(page.locator('[data-task-id]').first()).toBeVisible();
     expect(await personalEntities(page)).toEqual(before);
 
-    await page.locator('[data-sandbox-exit]').click();
-    await expect(page.locator('[data-sandbox-banner]')).toHaveCount(0);
+    await switchWorkspace(page, () => page.locator('[data-sandbox-exit]').click());
+    await expect(page.locator('[data-sandbox-banner]')).toHaveCount(0, { timeout: 15_000 });
     await openInbox(page);
     await expect(page.locator('[data-task-id="personal-sentinel"]')).toContainText('Personal workspace sentinel 1196');
     expect(await personalEntities(page)).toEqual(before);
 
     await openSandbox(page);
     await page.reload();
-    await expect(page.locator('[data-sandbox-banner]')).toHaveCount(0);
+    await expect(page.locator('[data-sandbox-banner]')).toHaveCount(0, { timeout: 15_000 });
     await openInbox(page);
     await expect(page.locator('[data-task-id="personal-sentinel"]')).toBeVisible();
     expect(await personalEntities(page)).toEqual(before);
+});
+
+test.describe('delayed sandbox boot', () => {
+    // The web service worker serves navigations before Playwright routing;
+    // block it here so the delayed document request is deterministic.
+    test.use({ serviceWorkers: 'block' });
+
+    test('waits for the reloaded workspace without changing personal data', async ({ page }) => {
+        test.setTimeout(60_000);
+        await dismissOnboarding(page);
+        await seedAppData(page, {
+            tasks: [{ id: 'personal-delayed', title: 'Personal delayed sentinel', status: 'inbox' }],
+        });
+        await page.goto('/');
+        await openInbox(page);
+        await expect(page.locator('[data-task-id="personal-delayed"]')).toBeVisible();
+        const before = await personalEntities(page);
+
+        let delayedBoot = false;
+        await page.route('**/*', async (route) => {
+            if (!delayedBoot && route.request().isNavigationRequest()) {
+                delayedBoot = true;
+                await new Promise((resolve) => setTimeout(resolve, 6_000));
+            }
+            await route.continue();
+        });
+        await openSandbox(page);
+        await page.unroute('**/*');
+        expect(delayedBoot).toBe(true);
+        await openInbox(page);
+        await expect(page.locator('[data-task-id="personal-delayed"]')).toHaveCount(0);
+        expect(await personalEntities(page)).toEqual(before);
+
+        await switchWorkspace(page, () => page.locator('[data-sandbox-exit]').click());
+        await openInbox(page);
+        await expect(page.locator('[data-task-id="personal-delayed"]')).toBeVisible();
+        expect(await personalEntities(page)).toEqual(before);
+    });
 });
