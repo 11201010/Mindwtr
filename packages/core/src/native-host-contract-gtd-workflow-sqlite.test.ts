@@ -7,7 +7,7 @@ import type { NativeGtdWorkflowRequest } from './native-host-contract-gtd-workfl
 import { NativeReceiptSqliteAdapter, resetNativeRequestReceipts } from './native-request-receipts';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { SqliteClient } from './sqlite-adapter';
-import type { AppData, Task } from './types';
+import type { AppData, Area, Task } from './types';
 
 const require = createRequire(import.meta.url);
 type Statement = { run: (...params: unknown[]) => unknown; all: (...params: unknown[]) => unknown[];
@@ -41,12 +41,12 @@ afterEach(async () => {
     for (const dir of directories.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-async function open(path: string, seed = false) {
+async function open(path: string, seed = false, seedData = initial()) {
     await flushPendingSave(); resetForTests(); resetNativeRequestReceipts();
     const db = new DatabaseSync(path); databases.push(db);
     const fault = { commits: 0 };
     const client = clientOf(db, fault);
-    if (seed) await new NativeReceiptSqliteAdapter(client).saveData(initial());
+    if (seed) await new NativeReceiptSqliteAdapter(client).saveData(seedData);
     const adapter = new NativeReceiptSqliteAdapter(client, { rejectConcurrentWrites: true });
     setStorageAdapter(adapter);
     useTaskStore.setState({ _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
@@ -84,6 +84,16 @@ async function planInbox(host: ReturnType<typeof createNativeHostContract>,
     const options = await host.getGtdInboxOptions({});
     if (!options.ok) throw new Error(JSON.stringify(options));
     const request: NativeGtdWorkflowRequest = { requestId: ID, edit, expected: options.value.expected[edit.type] };
+    const prepared = await host.prepareGtdWorkflow(request);
+    if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+    return { request, prepared: prepared.value.prepared };
+}
+
+async function planArea(host: ReturnType<typeof createNativeHostContract>, value: string) {
+    const options = await host.getGtdCaptureAreaOptions({ offset: 0, limit: 50 });
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID, edit: { type: 'defaultArea', value },
+        expected: options.value.expected };
     const prepared = await host.prepareGtdWorkflow(request);
     if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
     return { request, prepared: prepared.value.prepared };
@@ -164,6 +174,76 @@ describe('GTD workflow SQLite recovery', () => {
             error: { code: 'STALE_REVISION' } });
         expect((await afterAba.adapter.getData()).settings.gtd?.defaultScheduleTime).toBeUndefined();
     });
+});
+
+describe('GTD Capture Default Area paired SQLite recovery', () => {
+    it('keeps nine raw tables through two failed COMMITs, saves the pair once, and cold-replays its exact receipt', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-area-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const area: Area = { id: 'area-work', name: 'Private work name', order: 0,
+            createdAt: AT, updatedAt: AT, rev: 1, revBy: 'gtd-device' };
+        const seed = initial(); seed.areas = [area];
+        seed.settings.gtd = { ...seed.settings.gtd, pomodoro: { legacy: 'keep' } as never };
+        const first = await open(path, true, seed);
+        const before = nineTables(first.db);
+        const beforeSettings = (await first.adapter.getData()).settings;
+        const envelope = await planArea(first.host, area.id);
+        expect(envelope.prepared.version).toBe(1);
+        expect(JSON.stringify(envelope)).not.toContain(area.name);
+        first.fault.commits = 10;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            expect(await first.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'SAVE_FAILED' } });
+            expect(nineTables(first.db)).toEqual(before);
+        }
+        first.fault.commits = 0;
+        expect(await first.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const after = nineTables(first.db);
+        for (const table of tables.filter((table) => table !== 'settings')) expect(after[table]).toEqual(before[table]);
+        const saved = await first.adapter.getData();
+        expect(saved.settings.gtd).toEqual({ ...beforeSettings.gtd,
+            defaultAreaMode: 'fixed', defaultAreaId: area.id });
+        expect(saved.settings.syncPreferencesUpdatedAt?.gtd).toBe(envelope.prepared.after.stamp);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        expect(nineTables(cold.db)).toEqual(after);
+        const changedModeOnly = await cold.adapter.getData();
+        changedModeOnly.settings.gtd = { ...changedModeOnly.settings.gtd, defaultAreaMode: 'active' };
+        await cold.adapter.saveData(changedModeOnly);
+        cold.db.close(); databases.splice(databases.indexOf(cold.db), 1);
+        const modeHost = await open(path);
+        expect(await modeHost.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        const changedIdOnly = await modeHost.adapter.getData();
+        changedIdOnly.settings.gtd = { ...changedIdOnly.settings.gtd,
+            defaultAreaMode: 'fixed', defaultAreaId: 'area-other' };
+        await modeHost.adapter.saveData(changedIdOnly);
+        modeHost.db.close(); databases.splice(databases.indexOf(modeHost.db), 1);
+        const idHost = await open(path);
+        expect(await idHost.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+
+        const independent = await idHost.adapter.getData();
+        independent.settings.gtd = { ...independent.settings.gtd,
+            defaultAreaMode: 'active', defaultAreaId: null };
+        independent.settings.syncPreferencesUpdatedAt = { ...independent.settings.syncPreferencesUpdatedAt,
+            gtd: '2026-10-01T00:00:00.000Z' };
+        await idHost.adapter.saveData(independent);
+        idHost.db.close(); databases.splice(databases.indexOf(idHost.db), 1);
+        const changed = await open(path);
+        expect(await changed.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        const aba = await changed.adapter.getData();
+        aba.settings.gtd = { ...aba.settings.gtd, defaultAreaMode: 'fixed', defaultAreaId: area.id };
+        await changed.adapter.saveData(aba);
+        changed.db.close(); databases.splice(databases.indexOf(changed.db), 1);
+        const reopened = await open(path);
+        expect(await reopened.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+    }, 20_000);
 });
 
 describe('GTD Review variants retain the v1 SQLite recovery contract', () => {

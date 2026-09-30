@@ -3,15 +3,18 @@ import { createNativeHostContract } from './native-host-contract';
 import { canStarNewCapture } from './focus-star';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import { getProcessInboxDefaultScheduleTime } from './process-inbox-model';
+import { createQuickCaptureOptions, resolveQuickCaptureDefaultAreaId } from './quick-capture-model';
 import type { GtdWorkflowEdit, NativeGtdWorkflowRequest } from './native-host-contract-gtd-workflow';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
-import type { AppData, Task } from './types';
+import type { AppData, Area, Task } from './types';
 import { generateUUID } from './uuid';
 
 const ID = '00000000-0000-4000-8000-000000000103';
 const AT = '2026-09-01T00:00:00.000Z';
 const terminal: Task = { id: 'gtd-terminal', title: 'Terminal', status: 'done', tags: [], contexts: [],
     focusOrder: 9, deletedAt: AT, createdAt: AT, updatedAt: AT, rev: 7 };
+const workArea: Area = { id: 'area-work', name: 'Work', order: 0, createdAt: AT, updatedAt: AT, rev: 1, revBy: 'gtd-device' };
+const homeArea: Area = { id: 'area-home', name: 'Home', order: 1, createdAt: AT, updatedAt: AT };
 const initial = (): AppData => ({ tasks: [terminal], projects: [], sections: [], areas: [], people: [],
     settings: { deviceId: 'gtd-device', gtd: { focusGroupBy: 'project', legacySibling: { marker: 103 } },
         syncPreferencesUpdatedAt: { gtd: AT, appearance: AT },
@@ -72,6 +75,17 @@ async function plannedInbox(env: Awaited<ReturnType<typeof open>>,
     const options = await env.host.getGtdInboxOptions({});
     if (!options.ok) throw new Error(JSON.stringify(options));
     const request: NativeGtdWorkflowRequest = { requestId: ID, edit, expected: options.value.expected[edit.type] };
+    const plan = await env.host.prepareGtdWorkflow(request);
+    if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+    return { options: options.value, request, prepared: plan.value.prepared,
+        envelope: { request, prepared: plan.value.prepared } };
+}
+
+async function plannedArea(env: Awaited<ReturnType<typeof open>>, value: string) {
+    const options = await env.host.getGtdCaptureAreaOptions({ offset: 0, limit: 50 });
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID, edit: { type: 'defaultArea', value },
+        expected: options.value.expected };
     const plan = await env.host.prepareGtdWorkflow(request);
     if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
     return { options: options.value, request, prepared: plan.value.prepared,
@@ -240,6 +254,155 @@ describe('prepared GTD workflow defaults', () => {
         expect(env.saves()).toBe(0);
         expect(env.host.probeGtdWorkflowOutcome(envelope.request)).toMatchObject({ ok: false,
             error: { code: 'STALE_REVISION' } });
+    });
+});
+
+describe('GTD Capture Default Area in the v1 workflow journal', () => {
+    it('pages shared choices with an Area-sensitive revision and a coherent saved pair witness', async () => {
+        const start = initial(); start.areas = [homeArea, workArea];
+        const env = await open(start);
+        const first = await env.host.getGtdCaptureAreaOptions({ offset: 0, limit: 2 });
+        if (!first.ok) throw new Error(JSON.stringify(first));
+        expect(first.value).toMatchObject({ offset: 0, total: 4,
+            expected: { modePresent: false, mode: null, idPresent: false, id: null, stampPresent: true, stamp: AT },
+            capture: { defaultArea: { value: expect.any(String), options: [
+                { value: '', edit: { type: 'defaultArea', value: '' } },
+                { value: '__active-area__', edit: { type: 'defaultArea', value: '__active-area__' } }] } } });
+        const next = await env.host.getGtdCaptureAreaOptions({ offset: 2, limit: 2, revision: first.value.revision });
+        expect(next).toMatchObject({ ok: true, value: { offset: 2, total: 4,
+            expected: first.value.expected, capture: { defaultArea: { options: [
+                { value: 'area-work' }, { value: 'area-home' }] } } } });
+        expect(await env.host.getGtdCaptureAreaOptions({ offset: 2, limit: 2 })).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        env.changeSaved((data) => ({ ...data, areas: data.areas.map((area) => area.id === 'area-home'
+            ? { ...area, order: -1, updatedAt: '2026-09-02T00:00:00.000Z' } : area) }));
+        expect(await env.host.getGtdCaptureAreaOptions({ offset: 2, limit: 2, revision: first.value.revision }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    });
+
+    it('writes only the raw pair/stamp, cold-replays, and changes a fresh Quick Capture default', async () => {
+        const start = initial(); start.areas = [workArea, homeArea];
+        start.settings.gtd = { ...start.settings.gtd, taskEditor: { order: 'bad-legacy' } as never };
+        const env = await open(start);
+        const beforeDraft = env.host.openQuickCapture();
+        expect(beforeDraft).toMatchObject({ ok: true, value: { options: { areaId: null } } });
+        const { envelope, prepared } = await plannedArea(env, 'area-work');
+        expect(prepared.targetArea).toEqual({ id: 'area-work', createdAt: AT, updatedAt: AT,
+            revPresent: true, rev: 1, revByPresent: true, revBy: 'gtd-device' });
+        expect(Object.keys(prepared.request.expected).sort()).toEqual([
+            'modePresent', 'mode', 'idPresent', 'id', 'stampPresent', 'stamp'].sort());
+        expect(env.host.validatePreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(JSON.stringify(envelope)).not.toContain('bad-legacy');
+        expect(JSON.stringify(envelope)).not.toContain('Work');
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(env.saves()).toBe(1);
+        expect(env.data().settings.gtd).toEqual({ ...start.settings.gtd,
+            defaultAreaMode: 'fixed', defaultAreaId: 'area-work' });
+        expect(env.data().settings.syncPreferencesUpdatedAt?.gtd).toBe(prepared.after.stamp);
+        expect(env.data().tasks).toEqual(start.tasks);
+        expect(beforeDraft).toMatchObject({ ok: true, value: { options: { areaId: null } } });
+        expect(env.host.openQuickCapture()).toMatchObject({ ok: true, value: { options: { areaId: 'area-work' } } });
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+        expect(cold.host.openQuickCapture()).toMatchObject({ ok: true, value: { options: { areaId: 'area-work' } } });
+    });
+
+    it('uses Active filter only for a fresh capture and explicitly clears a stale fixed Area', async () => {
+        const start = initial(); start.areas = [workArea, homeArea];
+        start.settings.filters = { areaId: 'area-home' };
+        const env = await open(start);
+        const active = await plannedArea(env, '__active-area__');
+        expect(active.prepared.targetArea).toBeNull();
+        expect(await env.host.commitPreparedGtdWorkflow(active.envelope)).toMatchObject({ ok: true });
+        expect(env.data().settings.gtd).toMatchObject({ defaultAreaMode: 'active', defaultAreaId: null });
+        expect(env.host.openQuickCapture()).toMatchObject({ ok: true, value: { options: { areaId: 'area-home' } } });
+        const cold = await env.reopen();
+        expect(cold.host.openQuickCapture()).toMatchObject({ ok: true, value: { options: { areaId: 'area-home' } } });
+
+        const gone = initial(); gone.areas = [{ ...workArea, deletedAt: AT }];
+        gone.settings.gtd = { ...gone.settings.gtd, defaultAreaMode: 'fixed', defaultAreaId: 'area-work' };
+        const missing = await open(gone);
+        const page = await missing.host.getGtdCaptureAreaOptions({ offset: 0, limit: 10 });
+        expect(page).toMatchObject({ ok: true, value: { expected: { modePresent: true, mode: 'fixed',
+            idPresent: true, id: 'area-work' }, capture: { defaultArea: { options: [
+                { value: '', selected: true }, { value: '__active-area__', selected: false }] } } } });
+        const clear = await plannedArea(missing, '');
+        expect(await missing.host.commitPreparedGtdWorkflow(clear.envelope)).toMatchObject({ ok: true });
+        expect(missing.data().settings.gtd).toMatchObject({ defaultAreaMode: 'none', defaultAreaId: null });
+    });
+
+    it('refuses forged plans, stale selected Areas, and independent same-destination pair writes', async () => {
+        const start = initial(); start.areas = [workArea, homeArea];
+        const env = await open(start);
+        const { envelope } = await plannedArea(env, 'area-work');
+        for (const change of [
+            (copy: typeof envelope) => { copy.prepared.targetArea = null; },
+            (copy: typeof envelope) => { copy.prepared.targetArea = { ...copy.prepared.targetArea!, id: 'area-home' }; },
+            (copy: typeof envelope) => { copy.prepared.after.stamp = AT; },
+            (copy: typeof envelope) => { copy.prepared.result.changed = false; },
+            (copy: typeof envelope) => { delete copy.prepared.targetArea; },
+        ]) {
+            const forged = structuredClone(envelope); change(forged);
+            expect(env.host.validatePreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        }
+        env.changeSaved((data) => ({ ...data, areas: data.areas.map((area) => area.id === 'area-work'
+            ? { ...area, updatedAt: '2026-09-02T00:00:00.000Z', rev: 2 } : area) }));
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(env.saves()).toBe(0);
+        env.changeSaved((data) => ({ ...data, areas: start.areas,
+            settings: { ...data.settings, gtd: { ...data.settings.gtd,
+                defaultAreaMode: 'fixed', defaultAreaId: 'area-work' },
+                syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                    gtd: '2026-09-03T00:00:00.000Z' } } }));
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(cold.saves()).toBe(0);
+    });
+
+    it('keeps raw absence/null/unknown distinct and ignores malformed unrelated GTD siblings', async () => {
+        const start = initial(); start.areas = [workArea];
+        start.settings.gtd = { ...start.settings.gtd, defaultAreaMode: 'legacy-unknown' as never,
+            defaultAreaId: null, pomodoro: 7 as never };
+        const env = await open(start);
+        const options = await env.host.getGtdCaptureAreaOptions({ offset: 0, limit: 10 });
+        expect(options).toMatchObject({ ok: true, value: { expected: { modePresent: true,
+            mode: 'legacy-unknown', idPresent: true, id: null } } });
+        const plan = await plannedArea(env, 'area-work');
+        expect(await env.host.commitPreparedGtdWorkflow(plan.envelope)).toMatchObject({ ok: true });
+        expect(env.data().settings.gtd?.pomodoro).toBe(7);
+        for (const bad of [{ defaultAreaMode: {} }, { defaultAreaId: 9 }, { defaultAreaId: [] }]) {
+            const malformed = initial(); malformed.settings.gtd = { ...malformed.settings.gtd, ...bad } as never;
+            const other = await open(malformed);
+            expect(await other.host.getGtdCaptureAreaOptions({ offset: 0, limit: 10 })).toMatchObject({
+                ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        const storedNone = initial(); storedNone.settings.gtd = { defaultAreaMode: 'none', defaultAreaId: null };
+        const none = await open(storedNone);
+        const read = await none.host.getGtdCaptureAreaOptions({ offset: 0, limit: 10 });
+        if (!read.ok) throw new Error(JSON.stringify(read));
+        expect(await none.host.prepareGtdWorkflow({ requestId: ID, edit: { type: 'defaultArea', value: '' },
+            expected: read.value.expected })).toMatchObject({ ok: true,
+                value: { kind: 'noop', result: { type: 'defaultArea', value: '', changed: false } } });
+    });
+
+    it('resolves Active from live/All/None filters without overriding an explicit capture preset', async () => {
+        for (const [filter, expected] of [
+            ['area-work', 'area-work'], ['__all__', null], ['__none__', null],
+        ] as const) {
+            const start = initial(); start.areas = [workArea, homeArea];
+            start.settings.gtd = { ...start.settings.gtd, defaultAreaMode: 'active', defaultAreaId: null };
+            start.settings.filters = { areaId: filter };
+            const env = await open(start);
+            expect(env.host.openQuickCapture()).toMatchObject({ ok: true, value: { options: { areaId: expected } } });
+            const resolved = resolveQuickCaptureDefaultAreaId(env.data().settings, env.data().areas);
+            expect(resolved).toBe(expected);
+            expect(createQuickCaptureOptions({ projects: [], defaultAreaId: resolved,
+                initialProps: { areaId: 'area-home' } }).areaId).toBe('area-home');
+        }
     });
 });
 

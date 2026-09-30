@@ -4,7 +4,7 @@ import { markCoreStartupPhase, measureCoreStartupPhase } from './startup-profile
 import { normalizeTaskForLoad } from './task-status';
 import { normalizeProjectLifecycleFields } from './project-status';
 import type { StorageAdapter } from './storage';
-import type { AppData, AppSettings, SavedFilter } from './types';
+import type { AppData, AppSettings, Area, SavedFilter } from './types';
 import type { DerivedCache, TaskStore } from './store-types';
 import type { FocusControlState } from './focus-controls';
 import { buildFocusControlsModel } from './focus-controls';
@@ -35,7 +35,7 @@ import { buildLoadContext, runAutoArchive, runLoadMigrations } from './store-loa
 import { createSeedGettingStartedAction } from './getting-started-seed';
 import { beginNotifyProfile, endNotifyProfile, profilerNow, recordDerivedStateRebuild, type NotifyProfile } from './store-notify-profiler';
 import { buildGeneralSettingsUpdate } from './general-settings-model';
-import { buildGtdSettingsUpdate, isGtdSettingStored } from './gtd-settings-model';
+import { buildGtdSettingsUpdate, GTD_DEFAULT_AREA_ACTIVE_OPTION, isGtdSettingStored } from './gtd-settings-model';
 import { generalPreferenceWitness } from './general-preference-witness';
 import { taskEditValuesEqual } from './json-value-equality';
 
@@ -100,13 +100,30 @@ export const appLockWitness = (settings: AppSettings): AppLockWitness | null => 
 export type GtdWorkflowDirectType = 'defaultScheduleTime' | 'focusTaskLimit' | 'defaultProjectFlowMode';
 export type GtdWorkflowReviewType = 'dailyReviewFocusStep' | 'weeklyReviewContextStep';
 export type GtdWorkflowInboxType = 'inboxTwoMinute' | 'inboxProjectFirst' | 'inboxContextStep' | 'inboxSchedule';
-export type GtdWorkflowType = GtdWorkflowDirectType | GtdWorkflowReviewType | GtdWorkflowInboxType;
+export type GtdWorkflowType = GtdWorkflowDirectType | GtdWorkflowReviewType | GtdWorkflowInboxType | 'defaultArea';
 export type GtdWorkflowDirectWitness = { present: boolean; value: string | number | null;
     stampPresent: boolean; stamp: string | null };
 export type GtdWorkflowReviewWitness = { parentPresent: boolean; present: boolean; value: boolean | null;
     stampPresent: boolean; stamp: string | null };
 export type GtdWorkflowInboxWitness = GtdWorkflowReviewWitness;
-export type GtdWorkflowWitness = GtdWorkflowDirectWitness | GtdWorkflowReviewWitness | GtdWorkflowInboxWitness;
+export type GtdWorkflowAreaWitness = { modePresent: boolean; mode: string | null;
+    idPresent: boolean; id: string | null; stampPresent: boolean; stamp: string | null };
+export type GtdWorkflowTargetArea = { id: string; createdAt: string; updatedAt: string;
+    revPresent: boolean; rev: number | null; revByPresent: boolean; revBy: string | null };
+export type GtdWorkflowWitness = GtdWorkflowDirectWitness | GtdWorkflowReviewWitness | GtdWorkflowInboxWitness | GtdWorkflowAreaWitness;
+/** The selected saved Area's identity and revision, without its name or other fields. */
+export const gtdWorkflowTargetArea = (area: Area | undefined): GtdWorkflowTargetArea | null => {
+    if (!area || area.deletedAt || typeof area.id !== 'string' || !area.id || area.id.length > 500
+        || typeof area.createdAt !== 'string' || area.createdAt.length > 500
+        || typeof area.updatedAt !== 'string' || area.updatedAt.length > 500) return null;
+    const revPresent = owns(area, 'rev') && area.rev !== undefined;
+    const revByPresent = owns(area, 'revBy') && area.revBy !== undefined;
+    if (revPresent && (!Number.isSafeInteger(area.rev) || (area.rev ?? -1) < 0)
+        || revByPresent && (typeof area.revBy !== 'string' || area.revBy.length > 500)) return null;
+    return { id: area.id, createdAt: area.createdAt, updatedAt: area.updatedAt,
+        revPresent, rev: revPresent ? area.rev! : null,
+        revByPresent, revBy: revByPresent ? area.revBy! : null };
+};
 export const gtdWorkflowNestedPath = (type: GtdWorkflowReviewType | GtdWorkflowInboxType) => {
     switch (type) {
         case 'dailyReviewFocusStep': return { parent: 'dailyReview' as const, field: 'includeFocusStep' as const };
@@ -125,6 +142,7 @@ const boundedRawGtdValue = (type: GtdWorkflowDirectType, value: unknown): value 
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowDirectType): GtdWorkflowDirectWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowReviewType): GtdWorkflowReviewWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowInboxType): GtdWorkflowInboxWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: 'defaultArea'): GtdWorkflowAreaWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null {
     const group = settings.gtd;
@@ -135,6 +153,17 @@ export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType)
     const stamp = stampPresent ? stamps?.gtd : null;
     if (stampPresent && !(typeof stamp === 'string' && stamp.length <= 40
         && Number.isFinite(Date.parse(stamp)) && new Date(stamp).toISOString() === stamp)) return null;
+    if (type === 'defaultArea') {
+        const modePresent = group !== undefined && owns(group, 'defaultAreaMode') && group.defaultAreaMode !== undefined;
+        const idPresent = group !== undefined && owns(group, 'defaultAreaId') && group.defaultAreaId !== undefined;
+        const mode = modePresent ? group?.defaultAreaMode : null;
+        const id = idPresent ? group?.defaultAreaId : null;
+        if (modePresent && !(mode === null || typeof mode === 'string' && mode.length <= 500)
+            || idPresent && !(id === null || typeof id === 'string' && id.length <= 500)) return null;
+        return { modePresent, mode: modePresent ? mode as string | null : null,
+            idPresent, id: idPresent ? id as string | null : null,
+            stampPresent, stamp: stampPresent ? stamp! : null };
+    }
     if (type === 'dailyReviewFocusStep' || type === 'weeklyReviewContextStep'
         || type === 'inboxTwoMinute' || type === 'inboxProjectFirst'
         || type === 'inboxContextStep' || type === 'inboxSchedule') {
@@ -835,7 +864,15 @@ export const createSettingsActions = ({
             const { edit, expected } = input.request;
             const current = gtdWorkflowWitness(durable.settings, edit.type);
             if (!current) return memory;
-            const after = current.present && taskEditValuesEqual(current.value, input.after.value)
+            const update = buildGtdSettingsUpdate(durable.settings, edit);
+            if (!update) return memory;
+            const target = update.gtd;
+            const after = (edit.type === 'defaultArea'
+                ? (current as GtdWorkflowAreaWitness).modePresent && (current as GtdWorkflowAreaWitness).idPresent
+                    && taskEditValuesEqual((current as GtdWorkflowAreaWitness).mode, target?.defaultAreaMode)
+                    && taskEditValuesEqual((current as GtdWorkflowAreaWitness).id, target?.defaultAreaId)
+                : (current as GtdWorkflowDirectWitness | GtdWorkflowReviewWitness).present
+                    && taskEditValuesEqual((current as GtdWorkflowDirectWitness | GtdWorkflowReviewWitness).value, input.after.value))
                 && current.stampPresent && current.stamp === input.after.stamp
                 && (durable.settings.deviceId ?? null)
                     === (input.deviceIdBefore ?? input.deviceIdToInitialize);
@@ -846,15 +883,23 @@ export const createSettingsActions = ({
             if (!taskEditValuesEqual(current, expected)
                 || (durable.settings.deviceId ?? null) !== input.deviceIdBefore) return memory;
             if (isGtdSettingStored(durable.settings, edit)) return memory;
-            const update = buildGtdSettingsUpdate(durable.settings, edit);
-            if (!update || input.after.stamp !== timestampAtLeastAfter(input.preparedAt, expected.stamp ?? undefined))
+            if (edit.type === 'defaultArea' && (edit.value === '' || edit.value === GTD_DEFAULT_AREA_ACTIVE_OPTION
+                ? input.targetArea !== null
+                : !input.targetArea || !taskEditValuesEqual(input.targetArea,
+                    gtdWorkflowTargetArea(durable.areas.find((area) => area.id === edit.value))))) return memory;
+            if (input.after.stamp !== timestampAtLeastAfter(input.preparedAt, expected.stamp ?? undefined))
                 return memory;
             const settings: AppData['settings'] = { ...durable.settings, ...update,
                 syncPreferencesUpdatedAt: { ...(durable.settings.syncPreferencesUpdatedAt ?? {}),
                     gtd: input.after.stamp },
                 ...(input.deviceIdToInitialize ? { deviceId: input.deviceIdToInitialize } : {}) };
             const fresh = gtdWorkflowWitness(settings, edit.type);
-            if (!fresh || !fresh.present || !taskEditValuesEqual(fresh.value, input.after.value)
+            if (!fresh || !(edit.type === 'defaultArea'
+                ? (fresh as GtdWorkflowAreaWitness).modePresent && (fresh as GtdWorkflowAreaWitness).idPresent
+                    && taskEditValuesEqual((fresh as GtdWorkflowAreaWitness).mode, target?.defaultAreaMode)
+                    && taskEditValuesEqual((fresh as GtdWorkflowAreaWitness).id, target?.defaultAreaId)
+                : (fresh as GtdWorkflowDirectWitness | GtdWorkflowReviewWitness).present
+                    && taskEditValuesEqual((fresh as GtdWorkflowDirectWitness | GtdWorkflowReviewWitness).value, input.after.value))
                 || !fresh.stampPresent || fresh.stamp !== input.after.stamp) return memory;
             const freshTasks = durable.tasks.map((row) => normalizeTaskForLoad(row));
             const freshProjects = durable.projects.map(normalizeProjectLifecycleFields);

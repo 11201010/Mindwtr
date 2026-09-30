@@ -1,35 +1,42 @@
 import { normalizeClockTimeInput } from './date';
 import { FOCUS_TASK_LIMIT_OPTIONS } from './focus-utils';
-import { buildGtdSettingsModel, buildGtdSettingsUpdate, isGtdSettingStored,
+import { buildGtdSettingsModel, buildGtdSettingsUpdate, GTD_DEFAULT_AREA_ACTIVE_OPTION, isGtdSettingStored,
     type GtdSettingsEdit, type GtdSettingsModel } from './gtd-settings-model';
 import { taskEditValuesEqual } from './json-value-equality';
+import { compareAreasByOrder } from './task-utils';
+import { revisionsToken } from './native-request-receipts';
 import { readAreaDurableData, createAreaSaveGuard } from './native-host-contract-area-durable';
 import type { NativeHostResult } from './native-host-contract';
 import { detach, exact, record } from './native-host-contract-project-shared';
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { useTaskStore } from './store';
 import { gtdWorkflowNestedPath, gtdWorkflowWitness, timestampAtLeastAfter,
+    gtdWorkflowTargetArea,
     type GtdWorkflowType, type GtdWorkflowDirectType, type GtdWorkflowReviewType, type GtdWorkflowInboxType,
     type GtdWorkflowWitness, type GtdWorkflowDirectWitness,
-    type GtdWorkflowReviewWitness, type GtdWorkflowInboxWitness } from './store-settings';
+    type GtdWorkflowReviewWitness, type GtdWorkflowInboxWitness,
+    type GtdWorkflowAreaWitness, type GtdWorkflowTargetArea } from './store-settings';
 import { ensureDeviceId } from './store-helpers';
-import type { AppData, AppSettings } from './types';
+import type { AppData, AppSettings, Area } from './types';
 
 export type { GtdWorkflowType, GtdWorkflowWitness } from './store-settings';
 export type GtdWorkflowEdit = Extract<GtdSettingsEdit,
-    { type: GtdWorkflowDirectType }> | { type: GtdWorkflowReviewType | GtdWorkflowInboxType; value: boolean };
+    { type: GtdWorkflowDirectType | 'defaultArea' }> | { type: GtdWorkflowReviewType | GtdWorkflowInboxType; value: boolean };
 export type NativeGtdWorkflowRequest = { requestId: string; edit: GtdWorkflowEdit;
     expected: GtdWorkflowWitness };
 export type NativeGtdWorkflowResult = { type: GtdWorkflowType; value: string | number | boolean; changed: boolean };
 export type NativePreparedGtdWorkflow = { version: 1; request: NativeGtdWorkflowRequest;
     preparedAt: string; deviceIdBefore: string | null; deviceIdToInitialize: string | null;
-    after: { value: string | number | boolean; stamp: string }; result: NativeGtdWorkflowResult };
+    after: { value: string | number | boolean; stamp: string }; result: NativeGtdWorkflowResult;
+    targetArea?: GtdWorkflowTargetArea | null };
 export type NativeGtdWorkflowOptions = { hub: GtdSettingsModel['hub'];
     expected: Record<GtdWorkflowDirectType, GtdWorkflowDirectWitness> };
 export type NativeGtdReviewOptions = { review: GtdSettingsModel['review'];
     expected: Record<GtdWorkflowReviewType, GtdWorkflowReviewWitness> };
 export type NativeGtdInboxOptions = { inbox: GtdSettingsModel['inbox'];
     expected: Record<GtdWorkflowInboxType, GtdWorkflowInboxWitness> };
+export type NativeGtdCaptureAreaOptions = { capture: Pick<GtdSettingsModel['capture'], 'title' | 'description' | 'defaultArea'>;
+    expected: GtdWorkflowAreaWitness; offset: number; total: number; revision: string };
 export type NativeGtdWorkflowPreparation = { kind: 'noop'; result: NativeGtdWorkflowResult }
     | { kind: 'prepared'; prepared: NativePreparedGtdWorkflow };
 export type NativeGtdWorkflowDraft = { valid: true; value: string } | { valid: false; value: null };
@@ -61,6 +68,8 @@ const validEdit = (value: unknown): value is GtdWorkflowEdit => {
             return FOCUS_TASK_LIMIT_OPTIONS.includes(value.value as never);
         case 'defaultProjectFlowMode':
             return value.value === 'parallel' || value.value === 'sequential';
+        case 'defaultArea':
+            return bounded(value.value);
         case 'dailyReviewFocusStep':
         case 'weeklyReviewContextStep':
         case 'inboxTwoMinute':
@@ -73,16 +82,31 @@ const validEdit = (value: unknown): value is GtdWorkflowEdit => {
 };
 
 const validWitness = (value: unknown, type: GtdWorkflowType): value is GtdWorkflowWitness =>
-    record(value) && exact(value, isNested(type)
+    record(value) && exact(value, type === 'defaultArea'
+        ? ['modePresent', 'mode', 'idPresent', 'id', 'stampPresent', 'stamp'] : isNested(type)
         ? ['parentPresent', 'present', 'value', 'stampPresent', 'stamp']
         : ['present', 'value', 'stampPresent', 'stamp'])
-    && typeof value.present === 'boolean' && typeof value.stampPresent === 'boolean'
+    && typeof value.stampPresent === 'boolean'
+    && (type === 'defaultArea'
+        ? typeof value.modePresent === 'boolean' && typeof value.idPresent === 'boolean'
+            && (value.modePresent ? value.mode === null || bounded(value.mode) : value.mode === null)
+            && (value.idPresent ? value.id === null || bounded(value.id) : value.id === null)
+        : typeof value.present === 'boolean'
     && (!isNested(type) || typeof value.parentPresent === 'boolean'
         && (value.parentPresent || !value.present))
     && (value.present ? isNested(type) ? typeof value.value === 'boolean' : type === 'focusTaskLimit'
         ? typeof value.value === 'number' && Number.isSafeInteger(value.value) && Math.abs(value.value) <= 1_000_000
-        : bounded(value.value) : value.value === null)
+        : bounded(value.value) : value.value === null))
     && (value.stampPresent ? iso(value.stamp) : value.stamp === null);
+
+const validTargetArea = (value: unknown): value is GtdWorkflowTargetArea => record(value)
+    && exact(value, ['id', 'createdAt', 'updatedAt', 'revPresent', 'rev', 'revByPresent', 'revBy'])
+    && bounded(value.id) && value.id.length > 0
+    && bounded(value.createdAt) && value.createdAt.length > 0
+    && bounded(value.updatedAt) && value.updatedAt.length > 0
+    && typeof value.revPresent === 'boolean' && typeof value.revByPresent === 'boolean'
+    && (value.revPresent ? typeof value.rev === 'number' && Number.isSafeInteger(value.rev) && value.rev >= 0 : value.rev === null)
+    && (value.revByPresent ? bounded(value.revBy) : value.revBy === null);
 
 const readRequest = (input: unknown): NativeGtdWorkflowRequest | null => {
     if (!isNativeJsonWithinBytes(input, 8192)) return null;
@@ -96,12 +120,19 @@ const readRequest = (input: unknown): NativeGtdWorkflowRequest | null => {
 const plannedStamp = (preparedAt: string, witness: GtdWorkflowWitness) =>
     timestampAtLeastAfter(preparedAt, witness.stamp ?? undefined);
 const settingsByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): AppSettings => {
+    if (edit.type === 'defaultArea') {
+        const pair = witness as GtdWorkflowAreaWitness;
+        return { gtd: { ...(pair.modePresent ? { defaultAreaMode: pair.mode } : {}),
+            ...(pair.idPresent ? { defaultAreaId: pair.id } : {}) } } as AppSettings;
+    }
     if (isNested(edit.type)) {
         const { field, parent } = gtdWorkflowNestedPath(edit.type);
-        return { gtd: { [parent]: (witness as GtdWorkflowReviewWitness).parentPresent
-            ? (witness.present ? { [field]: witness.value } : {}) : undefined } } as AppSettings;
+        const nested = witness as GtdWorkflowReviewWitness;
+        return { gtd: { [parent]: nested.parentPresent
+            ? (nested.present ? { [field]: nested.value } : {}) : undefined } } as AppSettings;
     }
-    return { gtd: witness.present ? { [edit.type]: witness.value } : {} } as AppSettings;
+    const direct = witness as GtdWorkflowDirectWitness;
+    return { gtd: direct.present ? { [edit.type]: direct.value } : {} } as AppSettings;
 };
 const storedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): boolean =>
     isGtdSettingStored(settingsByWitness(edit, witness), edit);
@@ -124,8 +155,9 @@ const readPrepared = (input: unknown): NativePreparedGtdWorkflow | null => {
     if (!envelope || !exact(envelope, ['request', 'prepared']) || !record(envelope.prepared)) return null;
     const request = readRequest(envelope.request);
     const prepared = envelope.prepared;
-    if (!request || !exact(prepared, ['version', 'request', 'preparedAt', 'deviceIdBefore',
-        'deviceIdToInitialize', 'after', 'result']) || prepared.version !== 1
+    if (!request || !exact(prepared, request.edit.type === 'defaultArea'
+        ? ['version', 'request', 'preparedAt', 'deviceIdBefore', 'deviceIdToInitialize', 'after', 'result', 'targetArea']
+        : ['version', 'request', 'preparedAt', 'deviceIdBefore', 'deviceIdToInitialize', 'after', 'result']) || prepared.version !== 1
         || !same(prepared.request, request) || !iso(prepared.preparedAt)
         || !(prepared.deviceIdBefore === null || bounded(prepared.deviceIdBefore) && Boolean(prepared.deviceIdBefore))
         || (prepared.deviceIdBefore === null ? !UUID.test(String(prepared.deviceIdToInitialize))
@@ -136,7 +168,11 @@ const readPrepared = (input: unknown): NativePreparedGtdWorkflow | null => {
         || !record(prepared.result) || !exact(prepared.result, ['type', 'value', 'changed'])
         || !same(prepared.result, { type: request.edit.type, value: request.edit.value, changed: true })
         || storedByWitness(request.edit, request.expected)
-        || !nestedOfferedByWitness(request.edit, request.expected)) return null;
+        || !nestedOfferedByWitness(request.edit, request.expected)
+        || request.edit.type === 'defaultArea' && (request.edit.value === ''
+            || request.edit.value === GTD_DEFAULT_AREA_ACTIVE_OPTION
+            ? prepared.targetArea !== null
+            : !validTargetArea(prepared.targetArea) || prepared.targetArea.id !== request.edit.value)) return null;
     return prepared as NativePreparedGtdWorkflow;
 };
 
@@ -175,7 +211,48 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
         return buildGtdSettingsModel({ settings: display, areas: [],
             taskOpenMode: 'automatic', t: deps.t() }).inbox;
     };
+    const captureFor = (data: AppData): GtdSettingsModel['capture'] => {
+        const gtd = data.settings.gtd;
+        const display = { gtd: { defaultAreaMode: gtd?.defaultAreaMode,
+            defaultAreaId: gtd?.defaultAreaId } } as AppSettings;
+        return buildGtdSettingsModel({ settings: display, areas: data.areas ?? [],
+            taskOpenMode: 'automatic', t: deps.t() }).capture;
+    };
+    const orderedLiveAreas = (data: AppData): Area[] => [...(data.areas ?? [])]
+        .filter((area) => !area.deletedAt).sort(compareAreasByOrder);
+    const areaRevision = (areas: readonly Area[]): string => revisionsToken(areas.map((area) =>
+        JSON.stringify([area.id, area.name, area.order, area.createdAt, area.updatedAt, area.rev ?? null, area.revBy ?? null])));
     return {
+        async getGtdCaptureAreaOptions(input: unknown): Promise<NativeHostResult<NativeGtdCaptureAreaOptions>> {
+            const ready = deps.readiness(); if (!ready.ok) return ready;
+            if (!record(input) || !exact(input, input.revision === undefined
+                ? ['offset', 'limit'] : ['offset', 'limit', 'revision'])
+                || !Number.isSafeInteger(input.offset) || (input.offset as number) < 0
+                || !Number.isSafeInteger(input.limit) || (input.limit as number) < 1 || (input.limit as number) > 100
+                || (input.offset as number) > 0 && (!bounded(input.revision, 100) || !input.revision)
+                || input.revision !== undefined && (!bounded(input.revision, 100) || !input.revision)
+                || !isNativeJsonWithinBytes(input, 8192))
+                return fail('INVALID_INPUT', 'A bounded GTD Capture area page is required');
+            const read = await readAreaDurableData(); if (!read.ok) return read;
+            const snapshot = read.value.authority.snapshot;
+            const expected = gtdWorkflowWitness(snapshot.settings, 'defaultArea');
+            if (!expected) return fail('INVALID_INPUT', 'Saved Default Area has an unsupported value');
+            const areas = orderedLiveAreas(snapshot);
+            if (areas.some((area) => !gtdWorkflowTargetArea(area) || !bounded(area.name)))
+                return fail('INVALID_INPUT', 'Saved Area choices have an unsupported value');
+            const revision = areaRevision(areas);
+            if (input.revision !== undefined && input.revision !== revision)
+                return fail('STALE_REVISION', 'Area choices changed; reopen Default Area');
+            const capture = captureFor(snapshot);
+            const options = capture.defaultArea.options;
+            const offset = input.offset as number;
+            const limit = input.limit as number;
+            const value = { capture: { title: capture.title, description: capture.description,
+                defaultArea: { ...capture.defaultArea, options: options.slice(offset, offset + limit) } },
+                expected, offset, total: options.length, revision };
+            return isNativeJsonWithinBytes(value, 262_144) ? { ok: true, value }
+                : fail('INVALID_INPUT', 'GTD Capture area page exceeds the bounded response');
+        },
         async getGtdWorkflowOptions(input: unknown): Promise<NativeHostResult<NativeGtdWorkflowOptions>> {
             const ready = deps.readiness(); if (!ready.ok) return ready;
             if (!record(input) || !exact(input, [])) return fail('INVALID_INPUT', 'GTD options take an empty object');
@@ -243,6 +320,20 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             if (!current || !same(current, request.expected)
                 || (settings.deviceId ?? null) !== (read.value.authority.state.settings.deviceId ?? null))
                 return fail('STALE_REVISION', 'GTD workflow default changed; refresh GTD');
+            let targetArea: GtdWorkflowTargetArea | null = null;
+            if (request.edit.type === 'defaultArea') {
+                const selected = request.edit.value;
+                const areas = orderedLiveAreas(read.value.authority.snapshot);
+                if (areas.some((area) => !gtdWorkflowTargetArea(area) || !bounded(area.name)))
+                    return fail('INVALID_INPUT', 'Saved Area choices have an unsupported value');
+                const capture = captureFor(read.value.authority.snapshot);
+                if (!capture.defaultArea.options.some((option) => same(option.edit, request.edit)))
+                    return fail('INVALID_INPUT', 'GTD Capture area choice is unavailable');
+                if (selected !== '' && selected !== GTD_DEFAULT_AREA_ACTIVE_OPTION) {
+                    targetArea = gtdWorkflowTargetArea(areas.find((area) => area.id === selected));
+                    if (!targetArea) return fail('STALE_REVISION', 'Selected Area changed; refresh Capture');
+                }
+            }
             if (isGtdSettingStored(settings, request.edit))
                 return { ok: true, value: { kind: 'noop', result: resultFor(request.edit, false) } };
             if (isReview(request.edit.type)) {
@@ -273,7 +364,8 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
                 deviceIdBefore: settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null,
                 after: { value: request.edit.value, stamp: plannedStamp(preparedAt, request.expected) },
-                result: resultFor(request.edit, true) };
+                result: resultFor(request.edit, true),
+                ...(request.edit.type === 'defaultArea' ? { targetArea } : {}) };
             const frozen = detach<NativePreparedGtdWorkflow>(prepared);
             return frozen && readPrepared({ request, prepared: frozen })
                 ? { ok: true, value: { kind: 'prepared', prepared: frozen } }

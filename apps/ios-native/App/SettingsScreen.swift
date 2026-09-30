@@ -41,15 +41,16 @@ struct SettingsScreen: View {
                           || (model.settingsGtdPresented ? model.gtdWorkflowPending : model.generalPreferenceActive) || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
                           || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
                 .accessibilityLabel(model.label("common.back"))
-                .accessibilityIdentifier(model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
-                Text(model.settingsGtdInboxPresented ? (model.gtdInbox.text("title").isEmpty ? model.label("settings.inboxProcessing") : model.gtdInbox.text("title")) : model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
+                .accessibilityIdentifier(model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
+                Text(model.settingsGtdCapturePresented ? (model.gtdCapture.text("title").isEmpty ? model.label("settings.captureSettings") : model.gtdCapture.text("title")) : model.settingsGtdInboxPresented ? (model.gtdInbox.text("title").isEmpty ? model.label("settings.inboxProcessing") : model.gtdInbox.text("title")) : model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
                     .rnFont(20, .bold).foregroundStyle(palette.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
             }
             .padding(.horizontal, 12).padding(.vertical, 5)
             .background(palette.card)
-            if model.settingsGtdInboxPresented { gtdInboxContent }
+            if model.settingsGtdCapturePresented { gtdCaptureContent }
+            else if model.settingsGtdInboxPresented { gtdInboxContent }
             else if model.settingsGtdReviewPresented { gtdReviewContent }
             else if model.settingsGtdPresented { gtdContent }
             else if model.settingsGeneralPresented { generalContent }
@@ -171,6 +172,10 @@ struct SettingsScreen: View {
             get: { model.generalPreferencePicker != nil },
             set: { if !$0 && !model.appLock.concealed { model.closeGeneralPreferencePicker() } }
         )) { generalPreferenceSheet }
+        .sheet(isPresented: Binding(
+            get: { model.gtdCaptureAreaPicker },
+            set: { if !$0 && !model.appLock.concealed { model.closeGtdCaptureAreaPicker() } }
+        )) { gtdCaptureAreaSheet }
         .accessibilityAction(.escape) {
             if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
             else if model.settingsGeneralPresented { model.closeGeneralSettings() }
@@ -291,6 +296,68 @@ struct SettingsScreen: View {
         }.accessibilityIdentifier("gtd-inbox-scroll")
     }
 
+    private var gtdCaptureContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(model.gtdCapture.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                let row = model.gtdCapture.object("defaultArea")
+                VStack(alignment: .leading, spacing: 12) {
+                    generalSettingLabel(row, description: "description")
+                    Button { model.openGtdCaptureAreaPicker() } label: {
+                        HStack {
+                            Text(row.text("value")).rnFont(16).foregroundStyle(palette.text)
+                                .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: "chevron.right").foregroundStyle(palette.secondary).accessibilityHidden(true)
+                        }.padding(12).frame(minHeight: 48).contentShape(Rectangle())
+                    }.buttonStyle(.plain).background(palette.bg, in: RoundedRectangle(cornerRadius: 10))
+                        .disabled(!model.gtdWorkflowEnabled)
+                        .accessibilityLabel(row.text("accessibilityLabel"))
+                        .accessibilityIdentifier("gtd-default-area")
+                }.padding(14).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                if !model.gtdCaptureAreaPicker { gtdFeedback }
+            }.padding(16).padding(.bottom, 24)
+        }.accessibilityIdentifier("gtd-capture-scroll")
+    }
+
+    private var gtdCaptureAreaSheet: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text(model.gtdCapture.object("defaultArea").text("pickerTitle")).rnFont(20, .bold).foregroundStyle(palette.text)
+                    .accessibilityAddTraits(.isHeader).frame(maxWidth: .infinity, alignment: .leading)
+                Button { model.closeGtdCaptureAreaPicker() } label: {
+                    Text(model.label("common.cancel")).rnFont(15).frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                }.buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.gtdWorkflowPending)
+                    .accessibilityIdentifier("gtd-area-cancel")
+            }.padding(.horizontal, 16).padding(.top, 20)
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(model.gtdCaptureAreaOptions.indices, id: \.self) { index in
+                        let option = model.gtdCaptureAreaOptions[index]
+                        Button { Task { await model.chooseGtdCaptureArea(option.object("edit")) } } label: {
+                            HStack {
+                                Text(option.text("label")).rnFont(16).foregroundStyle(palette.text)
+                                    .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                                if option.flag("selected") { Image(systemName: "checkmark").foregroundStyle(palette.tint).accessibilityHidden(true) }
+                            }.padding(14).frame(minHeight: 48).contentShape(Rectangle())
+                        }.buttonStyle(.plain).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                            .disabled(!model.gtdWorkflowEnabled)
+                            .accessibilityAddTraits(option.flag("selected") ? .isSelected : [])
+                            .accessibilityIdentifier("gtd-area-option-" + option.text("value"))
+                    }
+                    if model.gtdCaptureAreaOptions.count < model.gtdCaptureAreaTotal {
+                        Button(model.label("common.more")) { Task { await model.loadMoreGtdCaptureAreas() } }
+                            .rnFont(16).frame(maxWidth: .infinity, minHeight: 48).disabled(!model.gtdWorkflowEnabled)
+                            .accessibilityIdentifier("gtd-area-more")
+                    }
+                    gtdFeedback
+                }.padding(.horizontal, 16).padding(.bottom, 24)
+            }.accessibilityIdentifier("gtd-area-scroll")
+        }.background(palette.bg)
+            .presentationDetents([.large]).presentationDragIndicator(.visible)
+            .interactiveDismissDisabled(model.busy || model.retryNeeded || model.gtdWorkflowPending)
+    }
+
     private func gtdToggle(_ row: CoreObject) -> some View {
         Toggle(isOn: Binding(get: { row.flag("value") }, set: { _ in
             Task { await model.chooseGtdWorkflow(row.object("edit")) }
@@ -316,7 +383,7 @@ struct SettingsScreen: View {
         return VStack(spacing: 0) {
             if divider { palette.border.frame(height: 0.5) }
             Button {
-                if ["review", "inbox"].contains(field) { Task { await model.openGtdSubpage(field); gtdTimeFocused = false } }
+                if ["review", "inbox", "capture"].contains(field) { Task { await model.openGtdSubpage(field); gtdTimeFocused = false } }
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -326,8 +393,8 @@ struct SettingsScreen: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: "chevron.right").foregroundStyle(palette.secondary).accessibilityHidden(true)
                 }.padding(14).frame(minHeight: 48)
-            }.buttonStyle(.plain).disabled(!["review", "inbox"].contains(field) || !model.gtdWorkflowEnabled)
-                .opacity(["review", "inbox"].contains(field) ? 1 : 0.55).accessibilityIdentifier("gtd-" + field)
+            }.buttonStyle(.plain).disabled(!["review", "inbox", "capture"].contains(field) || !model.gtdWorkflowEnabled)
+                .opacity(["review", "inbox", "capture"].contains(field) ? 1 : 0.55).accessibilityIdentifier("gtd-" + field)
         }
     }
 

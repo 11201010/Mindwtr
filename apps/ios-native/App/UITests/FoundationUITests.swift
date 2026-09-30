@@ -13003,4 +13003,121 @@ final class FoundationUITests: XCTestCase {
         app.terminate(); app.launch(); process(true); app.terminate()
     }
 
+    private func task106Open(_ app: XCUIApplication) {
+        if !app.buttons["gtd-capture-back"].exists {
+            task103Open(app)
+            revealPagedElement(app, app.buttons["gtd-capture"], in: app.scrollViews["gtd-scroll"])
+            boardTap(app, "gtd-capture")
+        }
+        boardEnabled(app.buttons["gtd-capture-back"], timeout: 30)
+    }
+
+    private func task106Pick(_ app: XCUIApplication, _ value: String) {
+        boardTap(app, "gtd-default-area")
+        let option = app.buttons["gtd-area-option-" + value]
+        revealPagedElement(app, option, in: app.scrollViews["gtd-area-scroll"], more: "gtd-area-more", ready: app.buttons["gtd-area-cancel"])
+        boardTap(app, "gtd-area-option-" + value)
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["gtd-area-cancel"])
+        waitForExpectations(timeout: 30)
+        boardEnabled(app.buttons["gtd-default-area"])
+    }
+
+    private func task106Root(_ app: XCUIApplication) {
+        if app.buttons["gtd-capture-back"].exists { boardTap(app, "gtd-capture-back") }
+        if app.buttons["gtd-back"].exists { boardTap(app, "gtd-back") }
+        if app.buttons["settings-back"].exists { boardTap(app, "settings-back") }
+        boardEnabled(app.buttons["capture-open"])
+    }
+
+    private func task106Capture(_ app: XCUIApplication, area: String) {
+        task106Root(app); boardTap(app, "capture-open")
+        XCTAssertTrue(app.staticTexts["capture-area"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["capture-area"].label.contains(area))
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Capture effective area"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "capture-close"); boardEnabled(app.buttons["tab-menu"])
+    }
+
+    private func task106Normal(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task103Open(app)
+        let input = app.textFields["gtd-defaultScheduleTime"]
+        revealPagedElement(app, input, in: app.scrollViews["gtd-scroll"])
+        replaceTextView(input, with: "930", tapOffset: CGVector(dx: 0.5, dy: 0.5))
+        task106Open(app); task106Pick(app, "capture106-area-a")
+        XCTAssertTrue(app.buttons["gtd-default-area"].label.contains("Capture area A"))
+        task106Pick(app, "capture106-area-a") // Stored same choice is a no-op.
+        boardTap(app, "gtd-default-area")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Capture default area choices"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "gtd-area-cancel")
+        app.terminate(); app.launch(); task106Capture(app, area: "Capture area A")
+        task106Open(app); task106Pick(app, "")
+        task106Capture(app, area: "Capture area A") // Closing preserves the existing capture draft.
+        app.terminate(); app.launch(); task106Capture(app, area: "No Area")
+        task106Open(app); task106Pick(app, "__active-area__"); task106Pick(app, "")
+        boardTap(app, "gtd-capture-back"); boardEnabled(app.buttons["gtd-back"])
+        XCTAssertEqual(input.value as? String, "09:30")
+        let focus = task103Option(app, "focusTaskLimit", "3"); focus.tap()
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: focus)
+        waitForExpectations(timeout: 20)
+        app.terminate()
+    }
+
+    func testGtdCaptureAreaNormal() { task106Normal("a7d86d92-d0d7-4684-8813-bb35d555d4e8") }
+    func testGtdCaptureAreaLargest() { task106Normal("e490e41c-6e13-4f3f-a068-b130ed363493") }
+
+    func testGtdCaptureAreaAcknowledgedReadRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "a5816c8c-03f7-4782-80d5-dd375f2b4cba", "--native-gtd-workflow-read-failure"]
+        app.launch(); task106Open(app); boardTap(app, "gtd-default-area"); boardTap(app, "gtd-area-option-capture106-area-a")
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-area-cancel"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-area-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-area-cancel"], timeout: 30); boardTap(app, "gtd-area-cancel")
+        XCTAssertTrue(app.buttons["gtd-default-area"].label.contains("Capture area A")); app.terminate()
+    }
+
+    func testGtdCaptureAreaRefusalCorrection() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "ed0e5a60-2da9-4012-913f-dd54fc9b536c", "--native-gtd-workflow-refusal"]
+        app.launch(); task106Open(app); boardTap(app, "gtd-default-area"); boardTap(app, "gtd-area-option-capture106-area-a")
+        XCTAssertTrue(app.staticTexts["gtd-error"].waitForExistence(timeout: 20))
+        boardEnabled(app.buttons["gtd-area-option-capture106-area-a"]); boardTap(app, "gtd-area-option-capture106-area-a")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["gtd-area-cancel"])
+        waitForExpectations(timeout: 30)
+        XCTAssertTrue(app.buttons["gtd-default-area"].label.contains("Capture area A")); app.terminate()
+    }
+
+    func testGtdCaptureAreaFailedSaveExactRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "5b7a691f-5c9d-4fbe-bf34-6af380a79f25"]
+        app.launch(); task106Open(app); boardTap(app, "gtd-default-area"); boardTap(app, "gtd-area-option-capture106-area-a")
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-area-cancel"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-area-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-retry"], timeout: 30); app.terminate()
+    }
+
+    func testGtdCaptureAreaColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "5b7a691f-5c9d-4fbe-bf34-6af380a79f25"]
+        app.launch(); boardEnabled(app.buttons["gtd-capture-back"], timeout: 30)
+        XCTAssertTrue(app.buttons["gtd-default-area"].label.contains("Capture area A"))
+        XCTAssertFalse(app.buttons["gtd-retry"].exists); app.terminate()
+    }
+
+    func testGtdCaptureAreaPaging() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "cec846cb-b1f6-48b8-a099-fc4386b1c260"]
+        app.launch(); task106Open(app); task106Pick(app, "capture106-extra-102")
+        XCTAssertTrue(app.buttons["gtd-default-area"].label.contains("Capture extra 102"))
+        app.terminate(); app.launch(); task106Capture(app, area: "Capture extra 102"); app.terminate()
+    }
+
+    func testGtdCaptureAreaLargestLayout() { task106Normal("110f8bc2-4ec4-4702-b4aa-431d01bb1074") }
+
 }

@@ -73,6 +73,13 @@ struct CaptureSheet: View {
                 .padding(.top, 8).accessibilityIdentifier("capture-preview")
             }
 
+            Text(model.capture.object("area").text("label")).rnFont(12, .bold)
+                .padding(.horizontal, 12).frame(minHeight: 40)
+                .background(palette.filter, in: Capsule()).overlay(Capsule().stroke(palette.border, lineWidth: 1))
+                .accessibilityLabel(model.capture.object("area").text("accessibilityLabel"))
+                .accessibilityIdentifier("capture-area")
+                .fixedSize(horizontal: false, vertical: true).padding(.top, 10)
+
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { captureControls }
                 VStack(alignment: .leading, spacing: 8) { captureControls }

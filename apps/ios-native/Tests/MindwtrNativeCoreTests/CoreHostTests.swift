@@ -13088,6 +13088,7 @@ final class CoreHostTests: XCTestCase {
     }
 
     private func exerciseGeneralPreferenceRecovery(type: String, value: Any, workflow: Bool = false) async throws {
+        let capturing = type == "defaultArea"
         let method = workflow ? "gtdWorkflow" : "generalPreference"
         let inboxFields = ["inboxTwoMinute": "twoMinuteEnabled", "inboxProjectFirst": "projectFirst", "inboxContextStep": "contextStepEnabled", "inboxSchedule": "scheduleEnabled"]
         let inboxing = inboxFields[type] != nil
@@ -13107,7 +13108,10 @@ final class CoreHostTests: XCTestCase {
             var gtd = settings["gtd"] as? [String: Any] ?? [:]
             gtd["defaultScheduleTime"] = ""; gtd["focusTaskLimit"] = 5; gtd["defaultProjectFlowMode"] = "parallel"
             gtd["unknown103"] = ["retained": true]
-            if inboxing {
+            if capturing {
+                gtd["defaultAreaMode"] = value as? String == "" ? "active" : "none"
+                gtd["defaultAreaId"] = NSNull()
+            } else if inboxing {
                 gtd["inboxProcessing"] = ["twoMinuteEnabled": true, "projectFirst": false, "contextStepEnabled": true, "scheduleEnabled": false, "retained105": "inbox"]
             } else if nestedParent != nil {
                 gtd["dailyReview"] = ["includeFocusStep": true, "retained104": "daily"]
@@ -13121,14 +13125,17 @@ final class CoreHostTests: XCTestCase {
         try writeCalendarPreferenceSettings(settings)
         let setup = try SQLiteBridge(url: database)
         _ = try setup.execute("INSERT INTO tasks (id,title,status,contexts,tags,createdAt,updatedAt,completedAt,focusOrder,rev,revBy,isFocusedToday,pushCount,showFutureRecurrence,suppressMindwtrReminders) VALUES ('general97-raw','Retained','done','[]','[]',?,?,?,9,4,'legacy',0,0,0,0)", parametersJSON: json([at,at,at]))
+        if capturing, let areaID = value as? String, !areaID.isEmpty, areaID != "__active-area__" {
+            _ = try setup.execute("INSERT INTO areas (id,name,orderNum,createdAt,updatedAt,rev) VALUES (?,?,0,?,?,1)", parametersJSON: json([areaID,"Capture area",at,at]))
+        }
         let original = try nineTableSnapshot(setup); setup.close()
         let faults = HostIOFaults(), writer = host(faults, bundleURL: clock)
         _ = try await writer.start()
         if type == "calendarSystem" { _ = try await writer.call("language", argumentsJSON: json(["fa", "en-US"])) }
-        let options = try object(await writer.call(inboxing ? "gtdInboxOptions" : nestedParent == nil ? method + "Options" : "gtdReviewOptions", argumentsJSON: json(["{}"])))
+        let options = try object(await writer.call(capturing ? "gtdCaptureAreaOptions" : inboxing ? "gtdInboxOptions" : nestedParent == nil ? method + "Options" : "gtdReviewOptions", argumentsJSON: json([capturing ? json(["offset": 0, "limit": 50]) : "{}"])))
         let expected = try XCTUnwrap(options["expected"] as? [String: Any])
-        XCTAssertNotNil(options[inboxing ? "inbox" : nestedParent != nil ? "review" : workflow ? "hub" : "model"])
-        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": ["type": type, "value": value], "expected": try XCTUnwrap(expected[type])]
+        XCTAssertNotNil(options[capturing ? "capture" : inboxing ? "inbox" : nestedParent != nil ? "review" : workflow ? "hub" : "model"])
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": ["type": type, "value": value], "expected": capturing ? expected : try XCTUnwrap(expected[type])]
         faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected General COMMIT failure") } }
         await expectFailure("SAVE_FAILED") { _ = try await writer.call(method, argumentsJSON: json([json(request)])) }
         let frozen = try Data(contentsOf: journal), saved = try object(String(decoding: frozen, as: UTF8.self))
@@ -13152,7 +13159,11 @@ final class CoreHostTests: XCTestCase {
         let group = workflow ? "gtd" : nestedAppearance || type == "theme" ? "appearance" : "language"
         func applyGtd(_ settings: inout [String: Any]) throws {
             var gtd = try XCTUnwrap(settings["gtd"] as? [String: Any])
-            if let nestedParent {
+            if capturing {
+                let choice = try XCTUnwrap(value as? String)
+                gtd["defaultAreaMode"] = choice.isEmpty ? "none" : choice == "__active-area__" ? "active" : "fixed"
+                gtd["defaultAreaId"] = choice.isEmpty || choice == "__active-area__" ? NSNull() : value
+            } else if let nestedParent {
                 var parent = try XCTUnwrap(gtd[nestedParent] as? [String: Any])
                 parent[nestedField] = value; gtd[nestedParent] = parent
             } else { gtd[type] = value }
@@ -13224,7 +13235,7 @@ final class CoreHostTests: XCTestCase {
                 statements += 1
                 if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
             }
-            replayFaults.commandDiagnostic = { if $0 == (inboxing ? "gtdInboxApplied" : nestedParent == nil ? method + "Applied" : "gtdReviewApplied") { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
+            replayFaults.commandDiagnostic = { if $0 == (capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : nestedParent == nil ? method + "Applied" : "gtdReviewApplied") { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
             let recovered = host(replayFaults, bundleURL: clock)
             if scenario != "unrelated" {
                 await expectFailure(scenario == "forged" ? "INVALID_INPUT" : "STALE_REVISION") { _ = try await recovered.start() }
@@ -13241,6 +13252,54 @@ final class CoreHostTests: XCTestCase {
             }
             await recovered.close()
         }
+    }
+
+    func testGtdCaptureAreaNoneRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "defaultArea", value: "", workflow: true) }
+    func testGtdCaptureAreaActiveRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "defaultArea", value: "__active-area__", workflow: true) }
+    func testGtdCaptureAreaFixedRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "defaultArea", value: "0e74e178-d9da-40e3-a9f2-3b2e4823d191", workflow: true) }
+
+    func testGtdCaptureAreaBoundaryAndPagedRead() async throws {
+        let bootstrap = host(); _ = try await bootstrap.start(); await bootstrap.close()
+        let stamp = "2026-09-30T12:00:00.000Z"
+        let setup = try SQLiteBridge(url: database)
+        for index in 0..<103 {
+            _ = try setup.execute("INSERT INTO areas (id,name,orderNum,createdAt,updatedAt,rev) VALUES (?,?,?,?,?,1)",
+                                  parametersJSON: json(["capture106-\(index)", "Capture area \(index)", index, stamp, stamp]))
+        }
+        let before = try nineTableSnapshot(setup); setup.close()
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let first = try object(await core.call("gtdCaptureAreaOptions", argumentsJSON: json([json(["offset": 0, "limit": 50])])))
+        let revision = try XCTUnwrap(first["revision"] as? String), expected = try XCTUnwrap(first["expected"] as? [String: Any])
+        XCTAssertEqual(first["total"] as? Int, 105)
+        func options(_ page: [String: Any]) throws -> [[String: Any]] {
+            let capture = try XCTUnwrap(page["capture"] as? [String: Any]), area = try XCTUnwrap(capture["defaultArea"] as? [String: Any])
+            return try XCTUnwrap(area["options"] as? [[String: Any]])
+        }
+        XCTAssertEqual(try options(first).count, 50)
+        let second = try object(await core.call("gtdCaptureAreaOptions", argumentsJSON: json([json(["offset": 50, "limit": 50, "revision": revision])])))
+        let third = try object(await core.call("gtdCaptureAreaOptions", argumentsJSON: json([json(["offset": 100, "limit": 50, "revision": revision])])))
+        let choices = try options(first) + options(second) + options(third)
+        XCTAssertEqual(Set(choices.compactMap { $0["value"] as? String }).count, 105)
+        var statements = 0, journals = 0
+        faults.beforeSQL = { _ in statements += 1 }; faults.journalWrite = { journals += 1 }
+        let malformedPages: [[String: Any]] = [["offset": 1, "limit": 50], ["offset": true, "limit": 50], ["offset": 0, "limit": 101], ["offset": 0, "limit": 50, "revision": NSNull()]]
+        for input in malformedPages {
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("gtdCaptureAreaOptions", argumentsJSON: json([json(input)])) }
+        }
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": ["type": "defaultArea", "value": "__active-area__"], "expected": expected]
+        var number = request; number["edit"] = ["type": "defaultArea", "value": 0]
+        var missing = expected; missing.removeValue(forKey: "idPresent")
+        var badPresence = request; badPresence["expected"] = missing
+        var impossible = expected; impossible["modePresent"] = false; impossible["mode"] = "fixed"
+        var badAbsent = request; badAbsent["expected"] = impossible
+        for input in [number, badPresence, badAbsent] {
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("gtdWorkflow", argumentsJSON: json([json(input)])) }
+        }
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journals, 0); faults.beforeSQL = nil
+        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), before)
+        _ = try check.execute("UPDATE areas SET name='Changed area',rev=2 WHERE id='capture106-0'"); check.close()
+        await expectFailure("STALE_REVISION") { _ = try await core.call("gtdCaptureAreaOptions", argumentsJSON: json([json(["offset": 50, "limit": 50, "revision": revision])])) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); await core.close()
     }
 
     func testGtdInboxTwoMinuteRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "inboxTwoMinute", value: false, workflow: true) }

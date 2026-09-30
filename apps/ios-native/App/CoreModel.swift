@@ -249,6 +249,12 @@ final class CoreModel: ObservableObject {
     @Published private(set) var gtdReview: CoreObject = [:]
     @Published private(set) var settingsGtdInboxPresented = false
     @Published private(set) var gtdInbox: CoreObject = [:]
+    @Published private(set) var settingsGtdCapturePresented = false
+    @Published private(set) var gtdCapture: CoreObject = [:]
+    @Published private(set) var gtdCaptureAreaPicker = false
+    @Published private(set) var gtdCaptureAreaOptions: [CoreObject] = []
+    @Published private(set) var gtdCaptureAreaTotal = 0
+    private var gtdCaptureAreaRevision = ""
     @Published private(set) var gtdWorkflow: CoreObject = [:]
     @Published private(set) var gtdWorkflowError: String?
     @Published private(set) var gtdWorkflowReadError: String?
@@ -258,10 +264,10 @@ final class CoreModel: ObservableObject {
     private var gtdWorkflowRequest: String?
     private var gtdWorkflowEdit: CoreObject = [:]
     var gtdWorkflowPending: Bool { gtdWorkflowRequest != nil || gtdWorkflowAwaitingRefresh }
-    var gtdWorkflowDraftDirty: Bool { settingsGtdPresented && !settingsGtdReviewPresented && !settingsGtdInboxPresented && gtdScheduleDraft != gtdWorkflow.object("defaultScheduleTime").text("value") }
+    var gtdWorkflowDraftDirty: Bool { settingsGtdPresented && !settingsGtdReviewPresented && !settingsGtdInboxPresented && !settingsGtdCapturePresented && gtdScheduleDraft != gtdWorkflow.object("defaultScheduleTime").text("value") }
     var gtdWorkflowEnabled: Bool {
         ready && selectedSurface == .settings && settingsGtdPresented && !busy && !retryNeeded
-            && !gtdWorkflowPending && gtdWorkflowReadError == nil && !(settingsGtdInboxPresented ? gtdInbox : settingsGtdReviewPresented ? gtdReview : gtdWorkflow).isEmpty
+            && !gtdWorkflowPending && gtdWorkflowReadError == nil && !(settingsGtdCapturePresented ? gtdCapture : settingsGtdInboxPresented ? gtdInbox : settingsGtdReviewPresented ? gtdReview : gtdWorkflow).isEmpty
     }
     @Published private(set) var settingsGeneralPresented = false
     @Published private(set) var generalSettings: CoreObject = [:]
@@ -1855,6 +1861,7 @@ final class CoreModel: ObservableObject {
                 settingsGtdPresented = true
                 settingsGtdReviewPresented = ["dailyReviewFocusStep", "weeklyReviewContextStep"].contains(recovery.object("result").text("type"))
                 settingsGtdInboxPresented = ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"].contains(recovery.object("result").text("type"))
+                settingsGtdCapturePresented = recovery.object("result").text("type") == "defaultArea"
             } else if ["generalPreferenceCommit", "appLockCommit"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsGeneralPresented = true
@@ -1981,6 +1988,8 @@ final class CoreModel: ObservableObject {
         settingsGtdPresented = false
         settingsGtdReviewPresented = false
         settingsGtdInboxPresented = false
+        settingsGtdCapturePresented = false
+        gtdCaptureAreaPicker = false
         generalPreferencePicker = nil
         selectedSurface = .settings
         busy = true
@@ -2037,6 +2046,8 @@ final class CoreModel: ObservableObject {
         settingsGtdPresented = true
         settingsGtdReviewPresented = false
         settingsGtdInboxPresented = false
+        settingsGtdCapturePresented = false
+        gtdCaptureAreaPicker = false
         gtdWorkflowError = nil
         busy = true
         defer { finishOperation() }
@@ -2045,8 +2056,8 @@ final class CoreModel: ObservableObject {
     }
 
     func openGtdSubpage(_ page: String) async {
-        guard ["review", "inbox"].contains(page), gtdWorkflowEnabled,
-              !settingsGtdReviewPresented, !settingsGtdInboxPresented else { return }
+        guard ["review", "inbox", "capture"].contains(page), gtdWorkflowEnabled,
+              !settingsGtdReviewPresented, !settingsGtdInboxPresented, !settingsGtdCapturePresented else { return }
         if gtdWorkflowDraftDirty {
             await commitGtdScheduleDraft()
             guard gtdWorkflowError == nil else { return }
@@ -2054,6 +2065,7 @@ final class CoreModel: ObservableObject {
         guard gtdWorkflowEnabled, !gtdWorkflowDraftDirty else { return }
         settingsGtdReviewPresented = page == "review"
         settingsGtdInboxPresented = page == "inbox"
+        settingsGtdCapturePresented = page == "capture"
         gtdWorkflowError = nil
         busy = true
         defer { finishOperation() }
@@ -2063,9 +2075,12 @@ final class CoreModel: ObservableObject {
 
     func closeGtdSettings() async {
         guard settingsGtdPresented, !busy, !retryNeeded, !gtdWorkflowPending else { return }
-        if settingsGtdReviewPresented || settingsGtdInboxPresented {
+        if gtdCaptureAreaPicker { closeGtdCaptureAreaPicker(); return }
+        if settingsGtdReviewPresented || settingsGtdInboxPresented || settingsGtdCapturePresented {
             settingsGtdReviewPresented = false
             settingsGtdInboxPresented = false
+            settingsGtdCapturePresented = false
+            gtdCaptureAreaPicker = false
             gtdWorkflowError = nil
             busy = true
             defer { finishOperation() }
@@ -2083,6 +2098,19 @@ final class CoreModel: ObservableObject {
     }
 
     private func readGtdSettings() async throws {
+        if settingsGtdCapturePresented {
+            let options = try await query("gtdCaptureAreaOptions", [try json(["offset": 0, "limit": 50])])
+            let capture = options.object("capture")
+            guard !capture.text("title").isEmpty, options.number("offset") == 0 else { throw CocoaError(.coderReadCorrupt) }
+            gtdCapture = capture
+            gtdCaptureAreaOptions = capture.object("defaultArea").objects("options")
+            gtdCaptureAreaTotal = options.number("total")
+            gtdCaptureAreaRevision = options.text("revision")
+            gtdWorkflowExpected = ["defaultArea": options.object("expected")]
+            gtdWorkflowReadError = nil
+            gtdWorkflowAwaitingRefresh = false
+            return
+        }
         let reviewing = settingsGtdReviewPresented, inboxing = settingsGtdInboxPresented
         let options = try await query(inboxing ? "gtdInboxOptions" : reviewing ? "gtdReviewOptions" : "gtdWorkflowOptions", ["{}"])
         let contentKey = inboxing ? "inbox" : reviewing ? "review" : "hub"
@@ -2099,6 +2127,37 @@ final class CoreModel: ObservableObject {
         gtdWorkflowExpected = expected
         gtdWorkflowReadError = nil
         gtdWorkflowAwaitingRefresh = false
+    }
+
+    func openGtdCaptureAreaPicker() {
+        guard gtdWorkflowEnabled, settingsGtdCapturePresented else { return }
+        gtdCaptureAreaPicker = true
+    }
+
+    func closeGtdCaptureAreaPicker() {
+        guard !busy, !retryNeeded, !gtdWorkflowPending else { return }
+        gtdCaptureAreaPicker = false
+    }
+
+    func loadMoreGtdCaptureAreas() async {
+        guard gtdWorkflowEnabled, gtdCaptureAreaPicker, gtdCaptureAreaOptions.count < gtdCaptureAreaTotal else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let offset = gtdCaptureAreaOptions.count
+            let options = try await query("gtdCaptureAreaOptions", [try json(["offset": offset, "limit": 50, "revision": gtdCaptureAreaRevision])])
+            guard options.number("offset") == offset, options.number("total") == gtdCaptureAreaTotal,
+                  options.text("revision") == gtdCaptureAreaRevision,
+                  try json(options.object("expected")) == json(gtdWorkflowExpected.object("defaultArea")) else { throw CocoaError(.coderReadCorrupt) }
+            let rows = options.object("capture").object("defaultArea").objects("options")
+            guard !rows.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            gtdCaptureAreaOptions += rows
+        } catch { gtdWorkflowReadError = error.localizedDescription }
+    }
+
+    func chooseGtdCaptureArea(_ edit: CoreObject) async {
+        await chooseGtdWorkflow(edit)
+        if !gtdWorkflowPending && gtdWorkflowError == nil && gtdWorkflowReadError == nil { gtdCaptureAreaPicker = false }
     }
 
     func setGtdScheduleDraft(_ value: String) {
@@ -2383,7 +2442,7 @@ final class CoreModel: ObservableObject {
                     "taskEdit.details", "projects.statusLabel", "projects.projectTypeLabel", "projects.sequentialScope",
                     "projects.sequentialAcrossSections", "projects.sequentialWithinSections",
                     "projects.projectTypeHelpText", "projects.sequentialScopeHelpText",
-                    "projects.sectionsLabel", "projects.addSection", "projects.sectionPlaceholder", "projects.deleteSectionConfirm", "settings.manage", "settings.general", "settings.gtd", "settings.reviewSettings", "settings.inboxProcessing", "taskEdit.tagsLabel", "taskEdit.startDateLabel", "taskEdit.dueDateLabel",
+                    "projects.sectionsLabel", "projects.addSection", "projects.sectionPlaceholder", "projects.deleteSectionConfirm", "settings.manage", "settings.general", "settings.gtd", "settings.reviewSettings", "settings.inboxProcessing", "settings.captureSettings", "taskEdit.tagsLabel", "taskEdit.startDateLabel", "taskEdit.dueDateLabel",
                     "projects.reviewAt", "common.none",
                     "project.notes",
                     "areas.manage", "areas.nameExists", "projects.manageAreas", "projects.changeColor", "projects.colorNone",
@@ -15611,7 +15670,7 @@ final class CoreModel: ObservableObject {
             generalPreferenceThemeTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
-        if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions"].contains(method), gtdWorkflowAwaitingRefresh, gtdWorkflowTestReadFailures > 0 {
+        if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions"].contains(method), gtdWorkflowAwaitingRefresh, gtdWorkflowTestReadFailures > 0 {
             gtdWorkflowTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
