@@ -13087,7 +13087,7 @@ final class CoreHostTests: XCTestCase {
         await core.close()
     }
 
-    private func exerciseGeneralPreferenceRecovery(type: String, value: Any, workflow: Bool = false) async throws {
+    private func exerciseGeneralPreferenceRecovery(type: String, value: Any, workflow: Bool = false, section: String? = nil) async throws {
         let parsing = ["quickAddAutoClean", "naturalLanguageDates"].contains(type)
         let capturing = type == "defaultArea"
         let method = workflow ? "gtdWorkflow" : "generalPreference"
@@ -13109,7 +13109,9 @@ final class CoreHostTests: XCTestCase {
             var gtd = settings["gtd"] as? [String: Any] ?? [:]
             gtd["defaultScheduleTime"] = ""; gtd["focusTaskLimit"] = 5; gtd["defaultProjectFlowMode"] = "parallel"
             gtd["unknown103"] = ["retained": true]
-            if parsing {
+            if let section {
+                gtd["taskEditor"] = ["retained108": "editor", "sectionOpen": [section: !(value as? Bool ?? false), "retained108": "section"]]
+            } else if parsing {
                 if type == "quickAddAutoClean" { settings[type] = !(value as? Bool ?? false) }
                 else { gtd[type] = !(value as? Bool ?? false) }
             } else if capturing {
@@ -13127,6 +13129,10 @@ final class CoreHostTests: XCTestCase {
         }
         settings["unrelated97"] = ["credential": "general97-private-fixture", "url": "https://example.invalid/private-fixture"]
         try writeCalendarPreferenceSettings(settings)
+        if section != nil {
+            // Complete the existing task-editor settings migration before the raw-row write oracle.
+            let migrated = host(bundleURL: clock); _ = try await migrated.start(); await migrated.close()
+        }
         let setup = try SQLiteBridge(url: database)
         _ = try setup.execute("INSERT INTO tasks (id,title,status,contexts,tags,createdAt,updatedAt,completedAt,focusOrder,rev,revBy,isFocusedToday,pushCount,showFutureRecurrence,suppressMindwtrReminders) VALUES ('general97-raw','Retained','done','[]','[]',?,?,?,9,4,'legacy',0,0,0,0)", parametersJSON: json([at,at,at]))
         if capturing, let areaID = value as? String, !areaID.isEmpty, areaID != "__active-area__" {
@@ -13136,10 +13142,12 @@ final class CoreHostTests: XCTestCase {
         let faults = HostIOFaults(), writer = host(faults, bundleURL: clock)
         _ = try await writer.start()
         if type == "calendarSystem" { _ = try await writer.call("language", argumentsJSON: json(["fa", "en-US"])) }
-        let options = try object(await writer.call(parsing ? "gtdCaptureParseOptions" : capturing ? "gtdCaptureAreaOptions" : inboxing ? "gtdInboxOptions" : nestedParent == nil ? method + "Options" : "gtdReviewOptions", argumentsJSON: json([capturing ? json(["offset": 0, "limit": 50]) : "{}"])))
+        let options = try object(await writer.call(section != nil ? "gtdTaskEditorOpenOptions" : parsing ? "gtdCaptureParseOptions" : capturing ? "gtdCaptureAreaOptions" : inboxing ? "gtdInboxOptions" : nestedParent == nil ? method + "Options" : "gtdReviewOptions", argumentsJSON: json([capturing ? json(["offset": 0, "limit": 50]) : "{}"])))
         let expected = try XCTUnwrap(options["expected"] as? [String: Any])
-        XCTAssertNotNil(options[parsing || capturing ? "capture" : inboxing ? "inbox" : nestedParent != nil ? "review" : workflow ? "hub" : "model"])
-        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": ["type": type, "value": value], "expected": capturing ? expected : try XCTUnwrap(expected[type])]
+        XCTAssertNotNil(options[section != nil ? "taskEditor" : parsing || capturing ? "capture" : inboxing ? "inbox" : nestedParent != nil ? "review" : workflow ? "hub" : "model"])
+        var edit: [String: Any] = ["type": type, "value": value]
+        if let section { edit["section"] = section }
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": edit, "expected": capturing ? expected : try XCTUnwrap(expected[section ?? type])]
         faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected General COMMIT failure") } }
         await expectFailure("SAVE_FAILED") { _ = try await writer.call(method, argumentsJSON: json([json(request)])) }
         let frozen = try Data(contentsOf: journal), saved = try object(String(decoding: frozen, as: UTF8.self))
@@ -13164,7 +13172,12 @@ final class CoreHostTests: XCTestCase {
         func applyGtd(_ settings: inout [String: Any]) throws {
             if type == "quickAddAutoClean" { settings[type] = value; return }
             var gtd = try XCTUnwrap(settings["gtd"] as? [String: Any])
-            if capturing {
+            if let section {
+                var editor = try XCTUnwrap(gtd["taskEditor"] as? [String: Any])
+                var sections = try XCTUnwrap(editor["sectionOpen"] as? [String: Any])
+                if value as? Bool == true { sections[section] = true } else { sections.removeValue(forKey: section) }
+                editor["sectionOpen"] = sections; gtd["taskEditor"] = editor
+            } else if capturing {
                 let choice = try XCTUnwrap(value as? String)
                 gtd["defaultAreaMode"] = choice.isEmpty ? "none" : choice == "__active-area__" ? "active" : "fixed"
                 gtd["defaultAreaId"] = choice.isEmpty || choice == "__active-area__" ? NSNull() : value
@@ -13240,7 +13253,7 @@ final class CoreHostTests: XCTestCase {
                 statements += 1
                 if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
             }
-            replayFaults.commandDiagnostic = { if $0 == (parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : nestedParent == nil ? method + "Applied" : "gtdReviewApplied") { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
+            replayFaults.commandDiagnostic = { if $0 == (section != nil ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : nestedParent == nil ? method + "Applied" : "gtdReviewApplied") { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
             let recovered = host(replayFaults, bundleURL: clock)
             if scenario != "unrelated" {
                 await expectFailure(scenario == "forged" ? "INVALID_INPUT" : "STALE_REVISION") { _ = try await recovered.start() }
@@ -13258,6 +13271,41 @@ final class CoreHostTests: XCTestCase {
             await recovered.close()
         }
     }
+
+    func testGtdTaskEditorSectionBoundary() async throws {
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let options = try object(await core.call("gtdTaskEditorOpenOptions", argumentsJSON: json(["{}"])))
+        let editor = try XCTUnwrap(options["taskEditor"] as? [String: Any])
+        let groups = try XCTUnwrap(editor["groups"] as? [[String: Any]])
+        let expected = try XCTUnwrap(options["expected"] as? [String: Any])
+        XCTAssertEqual(Set(groups.compactMap { $0["id"] as? String }), Set(["scheduling", "organization", "details"]))
+        var statements = 0, journals = 0
+        faults.beforeSQL = { _ in statements += 1 }; faults.journalWrite = { journals += 1 }
+        for group in groups {
+            let section = try XCTUnwrap(group["id"] as? String)
+            let row = try XCTUnwrap(group["defaultOpen"] as? [String: Any])
+            let witness = try XCTUnwrap(expected[section] as? [String: Any])
+            let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": try XCTUnwrap(row["edit"]), "expected": witness]
+            for edit: [String: Any] in [
+                ["type": "taskEditorSectionOpen", "section": section, "value": 1],
+                ["type": "taskEditorSectionOpen", "section": "basic", "value": true],
+                ["type": "taskEditorSectionOpen", "value": true]
+            ] {
+                var invalid = request; invalid["edit"] = edit
+                await expectFailure("INVALID_INPUT") { _ = try await core.call("gtdWorkflow", argumentsJSON: json([json(invalid)])) }
+            }
+            var impossible = witness; impossible["taskEditorPresent"] = false; impossible["sectionOpenPresent"] = true
+            var invalid = request; invalid["expected"] = impossible
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("gtdWorkflow", argumentsJSON: json([json(invalid)])) }
+        }
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("gtdTaskEditorOpenOptions", argumentsJSON: json([json(["extra": true])])) }
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journals, 0)
+        await core.close()
+    }
+
+    func testGtdTaskEditorSchedulingRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "taskEditorSectionOpen", value: true, workflow: true, section: "scheduling") }
+    func testGtdTaskEditorOrganizationRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "taskEditorSectionOpen", value: true, workflow: true, section: "organization") }
+    func testGtdTaskEditorDetailsDeleteRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "taskEditorSectionOpen", value: false, workflow: true, section: "details") }
 
     func testGtdCaptureParseAutoCleanRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "quickAddAutoClean", value: true, workflow: true) }
     func testGtdCaptureParseNaturalDatesRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "naturalLanguageDates", value: false, workflow: true) }

@@ -101,8 +101,9 @@ export type GtdWorkflowDirectType = 'defaultScheduleTime' | 'focusTaskLimit' | '
 export type GtdWorkflowReviewType = 'dailyReviewFocusStep' | 'weeklyReviewContextStep';
 export type GtdWorkflowInboxType = 'inboxTwoMinute' | 'inboxProjectFirst' | 'inboxContextStep' | 'inboxSchedule';
 export type GtdWorkflowCaptureParseType = 'quickAddAutoClean' | 'naturalLanguageDates';
+export type GtdWorkflowTaskEditorSection = 'scheduling' | 'organization' | 'details';
 export type GtdWorkflowType = GtdWorkflowDirectType | GtdWorkflowReviewType | GtdWorkflowInboxType
-    | GtdWorkflowCaptureParseType | 'defaultArea';
+    | GtdWorkflowCaptureParseType | 'defaultArea' | 'taskEditorSectionOpen';
 export type GtdWorkflowDirectWitness = { present: boolean; value: string | number | null;
     stampPresent: boolean; stamp: string | null };
 export type GtdWorkflowCaptureParseWitness = { present: boolean; value: boolean | null;
@@ -112,10 +113,17 @@ export type GtdWorkflowReviewWitness = { parentPresent: boolean; present: boolea
 export type GtdWorkflowInboxWitness = GtdWorkflowReviewWitness;
 export type GtdWorkflowAreaWitness = { modePresent: boolean; mode: string | null;
     idPresent: boolean; id: string | null; stampPresent: boolean; stamp: string | null };
+export type GtdWorkflowTaskEditorSelected = { taskEditorPresent: boolean; sectionOpenPresent: boolean;
+    present: boolean; value: boolean | null };
+export type GtdWorkflowTaskEditorWitness = GtdWorkflowTaskEditorSelected & { stampPresent: boolean; stamp: string | null };
 export type GtdWorkflowTargetArea = { id: string; createdAt: string; updatedAt: string;
     revPresent: boolean; rev: number | null; revByPresent: boolean; revBy: string | null };
 export type GtdWorkflowWitness = GtdWorkflowDirectWitness | GtdWorkflowCaptureParseWitness
-    | GtdWorkflowReviewWitness | GtdWorkflowInboxWitness | GtdWorkflowAreaWitness;
+    | GtdWorkflowReviewWitness | GtdWorkflowInboxWitness | GtdWorkflowAreaWitness | GtdWorkflowTaskEditorWitness;
+export const gtdWorkflowTaskEditorSelected = (witness: GtdWorkflowTaskEditorWitness): GtdWorkflowTaskEditorSelected => ({
+    taskEditorPresent: witness.taskEditorPresent, sectionOpenPresent: witness.sectionOpenPresent,
+    present: witness.present, value: witness.value,
+});
 /** The selected saved Area's identity and revision, without its name or other fields. */
 export const gtdWorkflowTargetArea = (area: Area | undefined): GtdWorkflowTargetArea | null => {
     if (!area || area.deletedAt || typeof area.id !== 'string' || !area.id || area.id.length > 500
@@ -149,8 +157,9 @@ export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowRevie
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowInboxType): GtdWorkflowInboxWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowCaptureParseType): GtdWorkflowCaptureParseWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: 'defaultArea'): GtdWorkflowAreaWitness | null;
-export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null;
-export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType): GtdWorkflowWitness | null {
+export function gtdWorkflowWitness(settings: AppSettings, type: 'taskEditorSectionOpen', section: GtdWorkflowTaskEditorSection): GtdWorkflowTaskEditorWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType, section?: GtdWorkflowTaskEditorSection): GtdWorkflowWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType, section?: GtdWorkflowTaskEditorSection): GtdWorkflowWitness | null {
     const group = settings.gtd;
     const stamps = settings.syncPreferencesUpdatedAt;
     if (type !== 'quickAddAutoClean' && group !== undefined && (!group || typeof group !== 'object' || Array.isArray(group))
@@ -178,6 +187,20 @@ export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType)
             ? settings.quickAddAutoClean : group?.naturalLanguageDates : null;
         if (present && typeof value !== 'boolean') return null;
         return { present, value: present ? value as boolean : null,
+            stampPresent, stamp: stampPresent ? stamp! : null };
+    }
+    if (type === 'taskEditorSectionOpen') {
+        if (!section) return null;
+        const taskEditorPresent = group !== undefined && owns(group, 'taskEditor') && group.taskEditor !== undefined;
+        const taskEditor = taskEditorPresent ? group?.taskEditor as Record<string, unknown> : undefined;
+        if (taskEditorPresent && (!taskEditor || typeof taskEditor !== 'object' || Array.isArray(taskEditor))) return null;
+        const sectionOpenPresent = taskEditorPresent && owns(taskEditor!, 'sectionOpen') && taskEditor?.sectionOpen !== undefined;
+        const sectionOpen = sectionOpenPresent ? taskEditor?.sectionOpen as Record<string, unknown> : undefined;
+        if (sectionOpenPresent && (!sectionOpen || typeof sectionOpen !== 'object' || Array.isArray(sectionOpen))) return null;
+        const present = sectionOpenPresent && owns(sectionOpen!, section) && sectionOpen?.[section] !== undefined;
+        const value = present ? sectionOpen?.[section] : null;
+        if (present && typeof value !== 'boolean') return null;
+        return { taskEditorPresent, sectionOpenPresent, present, value: present ? value as boolean : null,
             stampPresent, stamp: stampPresent ? stamp! : null };
     }
     if (type === 'dailyReviewFocusStep' || type === 'weeklyReviewContextStep'
@@ -878,12 +901,16 @@ export const createSettingsActions = ({
                 || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
             const durable = authority.snapshot;
             const { edit, expected } = input.request;
-            const current = gtdWorkflowWitness(durable.settings, edit.type);
+            const current = gtdWorkflowWitness(durable.settings, edit.type,
+                edit.type === 'taskEditorSectionOpen' ? edit.section : undefined);
             if (!current) return memory;
             const update = buildGtdSettingsUpdate(durable.settings, edit);
             if (!update) return memory;
             const target = update.gtd;
-            const after = (edit.type === 'defaultArea'
+            const after = (edit.type === 'taskEditorSectionOpen'
+                ? !!input.after.selected && taskEditValuesEqual(
+                    gtdWorkflowTaskEditorSelected(current as GtdWorkflowTaskEditorWitness), input.after.selected)
+                : edit.type === 'defaultArea'
                 ? (current as GtdWorkflowAreaWitness).modePresent && (current as GtdWorkflowAreaWitness).idPresent
                     && taskEditValuesEqual((current as GtdWorkflowAreaWitness).mode, target?.defaultAreaMode)
                     && taskEditValuesEqual((current as GtdWorkflowAreaWitness).id, target?.defaultAreaId)
@@ -909,8 +936,12 @@ export const createSettingsActions = ({
                 syncPreferencesUpdatedAt: { ...(durable.settings.syncPreferencesUpdatedAt ?? {}),
                     gtd: input.after.stamp },
                 ...(input.deviceIdToInitialize ? { deviceId: input.deviceIdToInitialize } : {}) };
-            const fresh = gtdWorkflowWitness(settings, edit.type);
-            if (!fresh || !(edit.type === 'defaultArea'
+            const fresh = gtdWorkflowWitness(settings, edit.type,
+                edit.type === 'taskEditorSectionOpen' ? edit.section : undefined);
+            if (!fresh || !(edit.type === 'taskEditorSectionOpen'
+                ? !!input.after.selected && taskEditValuesEqual(
+                    gtdWorkflowTaskEditorSelected(fresh as GtdWorkflowTaskEditorWitness), input.after.selected)
+                : edit.type === 'defaultArea'
                 ? (fresh as GtdWorkflowAreaWitness).modePresent && (fresh as GtdWorkflowAreaWitness).idPresent
                     && taskEditValuesEqual((fresh as GtdWorkflowAreaWitness).mode, target?.defaultAreaMode)
                     && taskEditValuesEqual((fresh as GtdWorkflowAreaWitness).id, target?.defaultAreaId)

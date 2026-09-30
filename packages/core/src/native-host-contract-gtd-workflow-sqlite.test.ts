@@ -109,6 +109,17 @@ async function planCaptureParse(host: ReturnType<typeof createNativeHostContract
     return { request, prepared: prepared.value.prepared };
 }
 
+async function planEditorSection(host: ReturnType<typeof createNativeHostContract>,
+    section: 'scheduling' | 'organization' | 'details', value: boolean) {
+    const options = await host.getGtdTaskEditorOpenOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID,
+        edit: { type: 'taskEditorSectionOpen', section, value }, expected: options.value.expected[section] };
+    const prepared = await host.prepareGtdWorkflow(request);
+    if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+    return { request, prepared: prepared.value.prepared };
+}
+
 const tables = ['tasks', 'projects', 'areas', 'people', 'sections', 'settings', 'saved_filters',
     'schema_migrations', 'calendar_sync'] as const;
 const nineTables = (db: Database) => Object.fromEntries(tables.map((table) =>
@@ -449,4 +460,107 @@ describe('GTD Inbox variants retain the v1 SQLite recovery contract', () => {
             error: { code: 'STALE_REVISION' } });
         expect(nineTables(afterAba.db)).toEqual(beforeRefusal);
     });
+});
+
+describe('GTD Task Editor section defaults retain the v1 SQLite recovery contract', () => {
+    it('retries two failed COMMITs from raw rows, then cold-replays only the selected section and stamp', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-editor-open-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const first = await open(path, true);
+        const before = nineTables(first.db);
+        const envelope = await planEditorSection(first.host, 'scheduling', true);
+        expect(envelope.prepared).toMatchObject({ version: 1, after: { selected: {
+            taskEditorPresent: true, sectionOpenPresent: true, present: true, value: true } },
+        result: { type: 'taskEditorSectionOpen', section: 'scheduling', value: true, changed: true } });
+        first.fault.commits = 10;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            expect(await first.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'SAVE_FAILED' } });
+            expect(nineTables(first.db)).toEqual(before);
+        }
+        first.fault.commits = 0;
+        expect(await first.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const saved = nineTables(first.db);
+        for (const table of tables.filter((name) => name !== 'settings')) expect(saved[table]).toEqual(before[table]);
+        const settings = (await first.adapter.getData()).settings;
+        expect(settings.gtd?.taskEditor?.sectionOpen).toEqual({ scheduling: true });
+        expect(settings.gtd?.legacySibling).toBe('keep');
+        expect(settings.syncPreferencesUpdatedAt?.gtd).toBe(envelope.prepared.after.stamp);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        expect(nineTables(cold.db)).toEqual(saved);
+    }, 20_000);
+
+    it('requires both parent/map receipt bits after a default-false deletion', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-editor-open-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd,
+            taskEditor: { sectionOpen: { details: true, organization: true } } };
+        const first = await open(path, true, start);
+        const envelope = await planEditorSection(first.host, 'details', false);
+        expect(envelope.prepared.after.selected).toEqual({ taskEditorPresent: true,
+            sectionOpenPresent: true, present: false, value: null });
+        expect(await first.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const saved = await first.adapter.getData();
+        expect(saved.settings.gtd?.taskEditor?.sectionOpen).toEqual({ organization: true });
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const noMap = await cold.adapter.getData();
+        noMap.settings.gtd!.taskEditor = {};
+        await cold.adapter.saveData(noMap);
+        cold.db.close(); databases.splice(databases.indexOf(cold.db), 1);
+        const mapMissing = await open(path);
+        const beforeMap = nineTables(mapMissing.db);
+        expect(await mapMissing.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(mapMissing.db)).toEqual(beforeMap);
+        const noParent = await mapMissing.adapter.getData();
+        delete noParent.settings.gtd!.taskEditor;
+        await mapMissing.adapter.saveData(noParent);
+        mapMissing.db.close(); databases.splice(databases.indexOf(mapMissing.db), 1);
+        const parentMissing = await open(path);
+        const beforeParent = nineTables(parentMissing.db);
+        expect(await parentMissing.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(parentMissing.db)).toEqual(beforeParent);
+    }, 20_000);
+
+    it('cold-refuses independent same-target writes and parent/group ABA', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-editor-open-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const first = await open(path, true);
+        const envelope = await planEditorSection(first.host, 'organization', true);
+        const independent = await first.adapter.getData();
+        independent.settings.gtd = { ...independent.settings.gtd,
+            taskEditor: { sectionOpen: { organization: true } } };
+        independent.settings.syncPreferencesUpdatedAt = { ...independent.settings.syncPreferencesUpdatedAt,
+            gtd: '2026-09-02T00:00:00.000Z' };
+        await first.adapter.saveData(independent);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        const sameTarget = nineTables(cold.db);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(cold.db)).toEqual(sameTarget);
+        const changed = await cold.adapter.getData();
+        changed.settings.gtd!.taskEditor = { sectionOpen: { organization: false } };
+        changed.settings.syncPreferencesUpdatedAt!.gtd = '2026-09-03T00:00:00.000Z';
+        await cold.adapter.saveData(changed);
+        const restored = await cold.adapter.getData();
+        delete restored.settings.gtd!.taskEditor;
+        restored.settings.syncPreferencesUpdatedAt!.gtd = '2026-09-04T00:00:00.000Z';
+        await cold.adapter.saveData(restored);
+        cold.db.close(); databases.splice(databases.indexOf(cold.db), 1);
+        const afterAba = await open(path);
+        const beforeRefusal = nineTables(afterAba.db);
+        expect(await afterAba.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(afterAba.db)).toEqual(beforeRefusal);
+    }, 20_000);
 });

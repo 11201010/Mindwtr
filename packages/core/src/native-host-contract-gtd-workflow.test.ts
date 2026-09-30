@@ -104,9 +104,132 @@ async function plannedCaptureParse(env: Awaited<ReturnType<typeof open>>,
         envelope: { request, prepared: plan.value.prepared } };
 }
 
+type EditorSection = 'scheduling' | 'organization' | 'details';
+async function plannedEditorSection(env: Awaited<ReturnType<typeof open>>, section: EditorSection, value: boolean) {
+    const options = await env.host.getGtdTaskEditorOpenOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID,
+        edit: { type: 'taskEditorSectionOpen', section, value }, expected: options.value.expected[section] };
+    const plan = await env.host.prepareGtdWorkflow(request);
+    if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+    return { options: options.value, request, prepared: plan.value.prepared,
+        envelope: { request, prepared: plan.value.prepared } };
+}
+
 afterEach(async () => { vi.useRealTimers(); await flushPendingSave(); resetForTests(); });
 
 describe('prepared GTD workflow defaults', () => {
+    it.each(['scheduling', 'organization', 'details'] as const)('uses the shared $section section default and a selected-key receipt', async (section) => {
+        const start = initial();
+        start.tasks.push({ id: 'editor-empty', title: 'Empty editor', status: 'next', tags: [], contexts: [],
+            createdAt: AT, updatedAt: AT });
+        const env = await open(start);
+        const { options, envelope, prepared } = await plannedEditorSection(env, section, true);
+        expect(Object.keys(options.expected).sort()).toEqual(['scheduling', 'organization', 'details'].sort());
+        expect(options.expected[section]).toEqual({ taskEditorPresent: false, sectionOpenPresent: false,
+            present: false, value: null, stampPresent: true, stamp: AT });
+        const row = options.taskEditor.groups.find((group) => group.id === section);
+        expect(row?.defaultOpen).toMatchObject({ value: false,
+            edit: { type: 'taskEditorSectionOpen', section, value: true } });
+        expect(prepared.after).toMatchObject({ value: true,
+            selected: { taskEditorPresent: true, sectionOpenPresent: true, present: true, value: true } });
+        expect(prepared.result).toEqual({ type: 'taskEditorSectionOpen', section, value: true, changed: true });
+        expect(env.host.validatePreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(JSON.stringify(envelope)).not.toContain('private-value');
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(env.data().settings.gtd?.taskEditor?.sectionOpen?.[section]).toBe(true);
+        expect(env.data().settings.gtd).toMatchObject({ focusGroupBy: 'project', legacySibling: { marker: 103 } });
+        expect(env.data().tasks).toEqual(start.tasks);
+        const editor = env.host.getTaskEditorModel({ id: 'editor-empty' });
+        if (!editor.ok) throw new Error(JSON.stringify(editor));
+        expect(editor.value.layout.sections.find((group) => group.id === section)?.open).toBe(true);
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+    });
+
+    it('deletes the selected default key via the shared update while retaining sibling layout', async () => {
+        const start = initial();
+        start.settings.gtd = { ...start.settings.gtd, taskEditor: { sectionOpen: { scheduling: true,
+            organization: true, legacy: 'keep' } } as never };
+        const env = await open(start);
+        const { envelope, prepared } = await plannedEditorSection(env, 'scheduling', false);
+        expect(prepared.after.selected).toEqual({ taskEditorPresent: true, sectionOpenPresent: true,
+            present: false, value: null });
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(env.data().settings.gtd?.taskEditor?.sectionOpen).toEqual({ organization: true, legacy: 'keep' });
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+    });
+
+    it('rejects unoffered and forged section plans without saving', async () => {
+        const env = await open(initial());
+        const options = await env.host.getGtdTaskEditorOpenOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        const request: NativeGtdWorkflowRequest = { requestId: ID,
+            edit: { type: 'taskEditorSectionOpen', section: 'details', value: false },
+            expected: options.value.expected.details };
+        expect(await env.host.prepareGtdWorkflow(request)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        const { envelope } = await plannedEditorSection(env, 'details', true);
+        const wrongSection = structuredClone(envelope); wrongSection.prepared.result = {
+            type: 'taskEditorSectionOpen', section: 'scheduling', value: true, changed: true };
+        expect(env.host.validatePreparedGtdWorkflow(wrongSection)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        const wrongParent = structuredClone(envelope); wrongParent.prepared.after.selected!.taskEditorPresent = false;
+        expect(env.host.validatePreparedGtdWorkflow(wrongParent)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        const wrongMap = structuredClone(envelope); wrongMap.prepared.after.selected!.sectionOpenPresent = false;
+        expect(env.host.validatePreparedGtdWorkflow(wrongMap)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        const wrongKey = structuredClone(envelope); wrongKey.prepared.after.selected!.present = false;
+        expect(env.host.validatePreparedGtdWorkflow(wrongKey)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        expect(env.saves()).toBe(0);
+    });
+
+    it('keeps shared exact no-op behavior and refuses malformed relevant raw section values', async () => {
+        const empty = initial(); empty.settings.gtd = { ...empty.settings.gtd,
+            taskEditor: { sectionOpen: {} } };
+        const env = await open(empty);
+        const options = await env.host.getGtdTaskEditorOpenOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(await env.host.prepareGtdWorkflow({ requestId: ID,
+            edit: { type: 'taskEditorSectionOpen', section: 'details', value: false },
+            expected: options.value.expected.details })).toMatchObject({ ok: true,
+            value: { kind: 'noop', result: { type: 'taskEditorSectionOpen', section: 'details', value: false, changed: false } } });
+        expect(env.saves()).toBe(0);
+        for (const bad of [
+            { taskEditor: 'bad-parent' },
+            { taskEditor: { sectionOpen: 'bad-map' } },
+            { taskEditor: { sectionOpen: { details: 'false' } } },
+        ]) {
+            const start = initial(); start.settings.gtd = { ...start.settings.gtd, ...bad } as never;
+            const malformed = await open(start);
+            expect(await malformed.host.getGtdTaskEditorOpenOptions({})).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+            expect(malformed.saves()).toBe(0);
+        }
+        const unrelated = initial(); unrelated.settings.gtd = { ...unrelated.settings.gtd,
+            taskEditor: { order: 'bad-legacy-order', sectionOpen: { details: false } } as never };
+        const preserved = await open(unrelated);
+        const { envelope } = await plannedEditorSection(preserved, 'details', true);
+        expect(await preserved.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: true });
+        expect(preserved.data().settings.gtd?.taskEditor).toMatchObject({ order: 'bad-legacy-order',
+            sectionOpen: { details: true } });
+    });
+
+    it('opens a filled Details section despite its closed default without writing a Task', async () => {
+        const start = initial(); start.tasks.push({ id: 'editor-filled', title: 'Filled editor', status: 'next',
+            description: 'Already has content', tags: [], contexts: [], createdAt: AT, updatedAt: AT });
+        const env = await open(start);
+        const editor = env.host.getTaskEditorModel({ id: 'editor-filled' });
+        if (!editor.ok) throw new Error(JSON.stringify(editor));
+        expect(editor.value.layout.sections.find((group) => group.id === 'details')).toMatchObject({ open: true });
+        expect(env.saves()).toBe(0);
+        expect(env.data().tasks).toEqual(start.tasks);
+    });
     it.each([
         { type: 'defaultScheduleTime', value: '09:30' },
         { type: 'focusTaskLimit', value: 5 },

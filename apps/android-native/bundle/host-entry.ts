@@ -1100,6 +1100,9 @@ globalThis.MindwtrHost = {
     gtdInboxOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.getGtdInboxOptions(JSON.parse(json))); });
     },
+    gtdTaskEditorOpenOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.getGtdTaskEditorOpenOptions(JSON.parse(json))); });
+    },
     gtdCaptureParseOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.getGtdCaptureParseOptions(JSON.parse(json))); });
     },
