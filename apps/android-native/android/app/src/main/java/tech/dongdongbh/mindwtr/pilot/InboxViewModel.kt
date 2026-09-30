@@ -712,6 +712,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     }
 
     fun closeEditor() {
+        ai.cancelEditor()
         inFlight = null
         editRefusal = null
         taskView = null
@@ -1528,6 +1529,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** RN's close: the session ends in core (nothing is written), and the Inbox shows again. */
     fun closeProcessing() {
         val current = processing ?: return
+        ai.cancelInbox()
         keepProcessing(null)
         stepInFlight = null
         background(emptyList(), { runtime -> runCatching { runtime.endInboxProcessing(current.sessionId) } }) { _, _ -> }

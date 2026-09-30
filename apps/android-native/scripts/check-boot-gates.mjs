@@ -878,7 +878,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.deepEqual(called(table('AI_REQUESTS')).filter((name) => coreWrites.includes(name) || unwiredWrites.includes(name)), [], 'no AI request calls a core write');
     assert.deepEqual(called(table('AI_REQUESTS')).sort(), ['loadAIModels', 'requestAICopilot', 'requestInboxClarify', 'requestTaskEditorBreakdown',
         'requestTaskEditorClarify', 'requestTaskEditorCopilot', 'requestWeeklyReviewAnalysis'], 'AI_REQUESTS are core\'s AI requests');
-    assert.match(host, /aiRequest\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*const request = AI_REQUESTS\[name\];[\s\S]{0,120}?return unwrap\(await request\(JSON\.parse\(json\) as never\)\);/);
+    assert.match(host, /aiRequest\(name: string, json: string\): string \{\s*return submit\(async \(signal\) => \{\s*requireSaved\(\);\s*const request = AI_REQUESTS\[name\];[\s\S]{0,120}?const answer = await request\(JSON\.parse\(json\) as never, signal\);\s*if \(signal\.aborted\) throw new Error\('The AI request was cancelled'\);\s*return unwrap\(answer\);/);
+    // Each AI request hands the operation's signal to core (review C1 5).
+    assert.equal(table('AI_REQUESTS').match(/\{ signal \}/g).length, 7, 'every AI request passes its signal');
     // Settings › AI (AISettings.kt) keeps a key and a base URL in memory only: no saved state, no saveable Compose state, no log
     // line with a typed value; a key or base URL goes only through its unjournaled command, never the Menu tab's send(). A consent
     // reset exists only behind the debug-only property.
@@ -963,10 +965,13 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // The long call path (CoreHost.callLong: Settings › Sync's commands and the AI's requests, which never hold the engine) takes
         // only an unjournaled write or a read, so no journaled write can skip the journal through it.
         assert.match(journalKt, /fun unjournaled\(method: String, args: List<Any\?>\): Boolean = method in WRITES && key\(method, args\) in UNJOURNALED/);
-        assert.match(coreHost, /private fun callLong\(method: String, vararg args: Any\?\): JSONObject \{\s+require\(method !in WriteJournal\.WRITES \|\| WriteJournal\.unjournaled\(method, args\.toList\(\)\)\)/);
+        assert.match(coreHost, /private fun callLong\(method: String, vararg args: Any\?, handle: LongCall = LongCall\(\)\): JSONObject \{\s+require\(method !in WriteJournal\.WRITES \|\| WriteJournal\.unjournaled\(method, args\.toList\(\)\)\)/);
         assert.deepEqual([...coreHost.matchAll(/\bcallLong\("(\w+)"/g)].map((m) => m[1]), ['menuCommand', 'aiRequest'], 'only Settings › Sync\'s commands and the AI\'s requests take the long path');
         assert.match(coreHost, /fun syncCommand\(name: String, json: String\): JSONObject = callLong\("menuCommand", name, json\)/);
-        assert.match(coreHost, /fun aiRequest\(name: String, json: String\): JSONObject = callLong\("aiRequest", name, json\)/);
+        assert.match(coreHost, /fun aiRequest\(name: String, json: String, handle: LongCall = LongCall\(\)\): JSONObject = callLong\("aiRequest", name, json, handle = handle\)/);
+        // Review C1 5: a cancelled or timed-out AI request aborts its JS operation (the provider's fetch) through the host's abort.
+        assert.match(coreHost, /fun cancel\(handle: LongCall\) \{[\s\S]{0,400}?abortLong\(handle\)/);
+        assert.match(coreHost, /private fun abortLong\(handle: LongCall\) \{[\s\S]{0,200}?call\("abort", id\)/);
         assert(!writes.includes('aiRequest'), 'an AI request is no journaled write');
         // The Kotlin screens' unjournaled commands are the unjournaled set: Settings › Sync's, and Settings › AI's key and base URL.
         const syncCommands = [.../val SYNC_COMMANDS = setOf\(([^)]*)\)/.exec(source('SyncSettings.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
@@ -1002,7 +1007,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(callAsyncFn, /if \(entry != null\) \{\s+checkNotNull\(sqlite\)\.failCommits = debugFault\("fail_commit"\) == "1"\s+debugDelay\("delay_before_ms"\)\s+journalStop\(stop, "before", entry\)\s+\}/);
     assert.equal(coreHost.match(/\banswer\(/g).length, 3, 'answer(): its definition, callAsync and replayJournal');
     assert.equal(coreHost.match(/\bcall\(method, \*args\)/g).length, 2, 'answer() and callLong (an unjournaled command only) start host methods');
-    assert.deepEqual([...new Set([...coreHost.matchAll(/\bcall\("(\w+)"/g)].map((m) => m[1]))].sort(), ['cancel', 'poll'], 'the engine\'s own calls: cancel and poll');
+    assert.deepEqual([...new Set([...coreHost.matchAll(/\bcall\("(\w+)"/g)].map((m) => m[1]))].sort(), ['abort', 'cancel', 'poll'], 'the engine\'s own calls: abort (a long call no longer wanted), cancel and poll');
     assert.equal(coreHost.match(/journalStop\(stop, /g).length, 2, 'the stop hooks run for a first send only, never for a replay');
     assert.match(coreHost, /val stop = if \(entry != null\) debugFault\("journal_stop"\) else ""/, 'the stop hook is debug-only');
     // Drop and keep: SAVE_FAILED keeps an entry, every other reply drops it; no reply (a throw) leaves it.
@@ -1109,7 +1114,7 @@ assert.match(model, /if \(inFlight != null \|\| current == null \|\| runtime == 
 assert.match(model, /val ticket = current\.session to next\.seq/);
 assert.match(model, /val now = editor\?\.takeIf \{ it\.session == ticket\.first && it\.pending\.firstOrNull\(\)\?\.seq == ticket\.second \}/);
 assert.match(editorUi, /val session: String = UUID\.randomUUID\(\)\.toString\(\)/);
-assert.match(model, /fun closeEditor\(\) \{\s+inFlight = null/);
+assert.match(model, /fun closeEditor\(\) \{\s+ai\.cancelEditor\(\)\s+inFlight = null/);
 // Pending edits are in the draft file before dispatch; each reply's draft and the removal of its edit are one write;
 // a restore sends them again in order.
 assert.match(model, /keepEditor\(current\.queued\(edit\.toString\(\), field\)\)\s+pumpEdits\(\)/);
@@ -2812,6 +2817,11 @@ export function createNativeHostContract() {
       globalThis.focusInputs.push(JSON.stringify(input));
       return globalThis.focusWindowResult;
     },
+    // An AI request that waits until its caller's signal aborts it (review C1 5: MindwtrHost.abort).
+    requestTaskEditorClarify(input, options) {
+      globalThis.aiInputs.push(JSON.stringify(input));
+      return new Promise((_resolve, reject) => { options.signal.addEventListener('abort', () => reject(options.signal.reason)); });
+    },
     getTaskEditorModel(input) {
       globalThis.editorInputs.push(JSON.stringify(input));
       return { ok: true, value: { version: 1, id: input.id } };
@@ -2952,7 +2962,7 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         snapshotResult: { ok: true, value: { fileName: 'data.2026-09-24T10-00-00.000.snapshot.json', contents: '{}' } }, editorInputs: [], updateInputs: [], focusInputs: [],
         // host-polyfills.js gives QuickJS these; the harness runs host-entry alone.
         AbortController, setTimeout,
-        languageInputs: [], projectInputs: [], settings: undefined, persistenceStatus: null,
+        languageInputs: [], projectInputs: [], settings: undefined, persistenceStatus: null, aiInputs: [],
         settingsReadFailure: false, afterLanguage: null, newInputs: [], menuInputs: [],
         menuReadResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Someday changed; restart paging from offset zero' } },
         menuCommandResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
@@ -3483,6 +3493,21 @@ assert.equal(brokenStorage.activationCount, 0);
     assert.deepEqual(fetches, ['GET http://127.0.0.1:18765/slow/deadline-drain', 'PUT http://127.0.0.1:18765/dav/after-drain.json',
         'Native Android net deadline drain events=["signal","fetch:AbortError","write:AbortError"]']);
     assert.equal(deadlineState.cancelled, 'The host operation timed out');
+}
+// Review C1 5: MindwtrHost.abort, as CoreHost.cancel(LongCall) calls it, aborts one AI request's signal: its provider call
+// stops and the operation answers at once; no other host call is refused (unlike cancel, which drains everything).
+{
+    const ai = makeState(0);
+    assert.equal((await poll(ai, ai.MindwtrHost.boot())).ok, true);
+    let refused = false;
+    ai.__cancelHostCalls = () => { refused = true; };
+    const id = ai.MindwtrHost.aiRequest('requestTaskEditorClarify', '{"id":"t"}');
+    await new Promise((resolveTick) => setImmediate(resolveTick));
+    assert.equal(ai.MindwtrHost.poll(id), null, 'the request waits on its provider');
+    assert.deepEqual([...ai.aiInputs], ['{"id":"t"}']);
+    assert.equal(ai.MindwtrHost.abort(id), null);
+    assert.deepEqual(await poll(ai, id), { ok: false, error: 'The AI request was cancelled' });
+    assert.equal(refused, false, 'abort refuses no other host call');
 }
 // Review 6: check-net-device.mjs cleans up once, whether it ends, is interrupted (Ctrl-C) or is terminated, and a signal
 // exits with 128 + its number. A failing step (the phone gone) does not stop the steps after it.

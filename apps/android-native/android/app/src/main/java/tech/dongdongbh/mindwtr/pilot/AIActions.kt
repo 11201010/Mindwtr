@@ -49,6 +49,7 @@ import androidx.compose.ui.window.Dialog
 import org.json.JSONArray
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
+import java.util.concurrent.CancellationException
 
 /*
  * RN's AI actions on core's contract (native-host-contract-ai.ts): the task editor's copilot chips, Clarify and Break down
@@ -66,6 +67,21 @@ data class ReviewAnalysis(val ran: Boolean = false, val error: String? = null, v
 
 class AIActionsModel(private val shell: InboxViewModel) {
     private val main = Handler(Looper.getMainLooper())
+    /** The requests each scope still wants: a newer one, an input change or a close cancels a request (its provider call stops). */
+    private val calls = AIRequestSlots<CoreHost.LongCall> { call -> shell.coreHost()?.cancel(call) }
+
+    /** One AI request off the engine in [scope]; [answered] gets its result, unless a newer call, an input change or a close cancelled it. */
+    private fun ask(scope: String, name: String, input: JSONObject, answered: (Result<JSONObject>) -> Unit) {
+        val runtime = shell.coreHost() ?: return
+        val handle = CoreHost.LongCall()
+        calls.start(scope, handle)
+        Thread({
+            val result = runCatching { runtime.aiRequest(name, input.toString(), handle) }
+            val wanted = calls.wanted(scope, handle)
+            calls.finished(scope, handle)
+            shell.ui { if (wanted) answered(result) }
+        }, "mindwtr-ai-$scope").start()
+    }
 
     /** The action waiting on the provider ("editor", "inbox", "review"): its button shows RN's spinner and "Working...". */
     var working by mutableStateOf<String?>(null); private set
@@ -88,17 +104,21 @@ class AIActionsModel(private val shell: InboxViewModel) {
     fun readEditor() {
         val editor = shell.editor ?: return
         if (editor.readOnly) { editorAI = null; return }
-        if (session != editor.session) { session = editor.session; suggestion = null; applied = JSONObject().put("tags", JSONArray()); asked = null; editorAI = null }
+        if (session != editor.session) {
+            cancelEditor()
+            session = editor.session; suggestion = null; applied = JSONObject().put("tags", JSONArray()); asked = null; editorAI = null
+        }
         val input = JSONObject().put("id", editor.id).put("draft", JSONObject(draftJson(editor.fullDraft())))
             .put("copilot", JSONObject().put("suggestion", suggestion ?: JSONObject.NULL).put("applied", applied))
         shell.background(emptyList(), { runtime -> runtime.menuRead("taskEditorAI", input.toString()) }) { view, _ ->
             if (shell.editor?.session != editor.session) return@background
             editorAI = view
             val request = view.getJSONObject("copilot").optJSONObject("request")
-            if (request == null) { asked = null; if (suggestion != null) { suggestion = null; readEditor() }; return@background }
+            if (request == null) { asked = null; calls.cancel("copilot"); if (suggestion != null) { suggestion = null; readEditor() }; return@background }
             val text = request.getString("text")
             if (text == asked) return@background
             asked = text
+            calls.cancel("copilot")
             main.postDelayed({ askCopilot(editor.session, text) }, request.getLong("delayMs"))
         }
     }
@@ -106,17 +126,20 @@ class AIActionsModel(private val shell: InboxViewModel) {
     /** The copilot for [text], once typing paused on it: an answer for text the editor no longer shows is dropped. */
     private fun askCopilot(forSession: String, text: String) {
         val editor = shell.editor?.takeIf { it.session == forSession && asked == text } ?: return
-        val runtime = shell.coreHost() ?: return
         val input = JSONObject().put("id", editor.id).put("draft", JSONObject(draftJson(editor.fullDraft())))
-        Thread({
-            val reply = runCatching { runtime.aiRequest("requestTaskEditorCopilot", input.toString()) }
-                .onFailure { Log.w(CoreHost.TAG, "AI copilot failed code=${it.message?.substringBefore(':')}") }.getOrNull()
-            shell.ui {
-                if (reply == null || shell.editor?.session != forSession || asked != text || reply.menuText("text") != text) return@ui
-                suggestion = reply.optJSONObject("suggestion")
-                readEditor()
-            }
-        }, "mindwtr-ai-copilot").start()
+        ask("copilot", "requestTaskEditorCopilot", input) { result ->
+            result.exceptionOrNull()?.let { if (it !is CancellationException) Log.w(CoreHost.TAG, "AI copilot failed code=${it.message?.substringBefore(':')}") }
+            val reply = result.getOrNull() ?: return@ask
+            if (shell.editor?.session != forSession || asked != text || reply.menuText("text") != text) return@ask
+            suggestion = reply.optJSONObject("suggestion")
+            readEditor()
+        }
+    }
+
+    /** The editor closed: its copilot and its Clarify or Break down stop. */
+    fun cancelEditor() {
+        calls.cancel("copilot", "editor")
+        if (working == "editor") working = null
     }
 
     /** A chip (or Apply all): core's draft edit, and the applied parts it leaves. */
@@ -129,8 +152,9 @@ class AIActionsModel(private val shell: InboxViewModel) {
     /** RN's Clarify: core's dialog, whose buttons edit the draft (a new title, or the suggestion's title, estimate and context). */
     fun clarify() {
         val editor = shell.editor ?: return
-        request("editor", "requestTaskEditorClarify", JSONObject().put("id", editor.id).put("draft", JSONObject(draftJson(editor.fullDraft())))) { apply ->
-            if (shell.editor?.session == editor.session) shell.applyAIEdit(apply as JSONObject)
+        val fits = { shell.editor?.session == editor.session }
+        request("editor", "requestTaskEditorClarify", JSONObject().put("id", editor.id).put("draft", JSONObject(draftJson(editor.fullDraft()))), fits) { apply ->
+            if (fits()) shell.applyAIEdit(apply as JSONObject)
         }
     }
 
@@ -138,22 +162,34 @@ class AIActionsModel(private val shell: InboxViewModel) {
     fun breakdown() {
         val editor = shell.editor ?: return
         val input = JSONObject().put("id", editor.id).put("draft", JSONObject(draftJson(editor.fullDraft()))).put("checklist", JSONArray(editor.checklistNow))
-        request("editor", "requestTaskEditorBreakdown", input) { apply ->
+        val fits = { shell.editor?.session == editor.session }
+        request("editor", "requestTaskEditorBreakdown", input, fits) { apply ->
             val steps = apply as JSONObject
-            if (shell.editor?.session == editor.session) shell.addAISteps(steps.getJSONArray("checklist").toString(), steps.optJSONObject("edit"))
+            if (fits()) shell.addAISteps(steps.getJSONArray("checklist").toString(), steps.optJSONObject("edit"))
         }
     }
 
     // ---- Process Inbox ----
 
-    /** Process Inbox's Clarify on the step shown: core's dialog, whose buttons are step edits sent in order. */
+    /**
+     * Process Inbox's Clarify on the step shown: core's dialog, whose buttons are step edits sent in order. The answer shows
+     * and applies only on the session and step it was asked on (a Process Inbox opened again is a new session).
+     */
     fun inboxClarify(flow: InboxProcessing) {
+        val asked = InboxStepKey.of(flow)
+        val fits = { InboxStepKey.of(shell.processing) == asked }
         val input = JSONObject().put("sessionId", flow.sessionId).put("taskId", flow.taskId).put("step", flow.step)
-        request("inbox", "requestInboxClarify", input) { apply ->
+        request("inbox", "requestInboxClarify", input, fits) { apply ->
             val edits = apply as JSONArray
-            if (shell.processing?.taskId != flow.taskId) return@request
+            if (!fits()) return@request
             for (index in 0 until edits.length()) shell.editStep(JSONObject().put("edit", edits.getJSONObject(index)))
         }
+    }
+
+    /** Process Inbox closed: its Clarify stops, and an answer on screen for it closes. */
+    fun cancelInbox() {
+        calls.cancel("inbox")
+        if (working == "inbox") working = null
     }
 
     // ---- The Weekly Review ----
@@ -162,22 +198,18 @@ class AIActionsModel(private val shell: InboxViewModel) {
 
     /** RN's Run analysis on the stale step: core's suggestions (the actionable ones chosen), or its error line. */
     fun runAnalysis() {
-        val runtime = shell.coreHost() ?: return
-        if (working != null) return
+        if (working != null || shell.coreHost() == null) return
         review = review.copy(ran = true, error = null)
         working = "review"
-        Thread({
-            val result = runCatching { runtime.aiRequest("requestWeeklyReviewAnalysis", "{}") }
-            shell.ui {
-                working = null
-                result.onSuccess { reply ->
-                    var next = review.copy(error = reply.menuText("error"))
-                    reply.optJSONArray("suggestions")?.let { list -> next = next.copy(suggestions = List(list.length()) { list.getJSONObject(it) }) }
-                    reply.optJSONArray("selectedIds")?.let { ids -> next = next.copy(selected = List(ids.length()) { ids.getString(it) }.toSet()) }
-                    review = next
-                }.onFailure { review = review.copy(error = it.message.orEmpty().substringAfter(": ")) }
-            }
-        }, "mindwtr-ai-review").start()
+        ask("review", "requestWeeklyReviewAnalysis", JSONObject()) { result ->
+            working = null
+            result.onSuccess { reply ->
+                var next = review.copy(error = reply.menuText("error"))
+                reply.optJSONArray("suggestions")?.let { list -> next = next.copy(suggestions = List(list.length()) { list.getJSONObject(it) }) }
+                reply.optJSONArray("selectedIds")?.let { ids -> next = next.copy(selected = List(ids.length()) { ids.getString(it) }.toSet()) }
+                review = next
+            }.onFailure { if (it !is CancellationException) review = review.copy(error = it.message.orEmpty().substringAfter(": ")) }
+        }
     }
 
     fun toggleSuggestion(id: String) { review = review.copy(selected = if (id in review.selected) review.selected - id else review.selected + id) }
@@ -192,52 +224,53 @@ class AIActionsModel(private val shell: InboxViewModel) {
     }
 
     /** RN's review modal state goes with it. */
-    fun leaveReview() { review = ReviewAnalysis(); if (working == "review") working = null }
+    fun leaveReview() { calls.cancel("review"); review = ReviewAnalysis(); if (working == "review") working = null }
 
     // ---- The capture screen ----
 
-    /** The capture screen's question last asked (core's `copilot.request`, as JSON text). */
+    /** The capture screen's question last asked: its screen session with core's `copilot.request` (captureCopilotKey). */
     private var captureAsked: String? = null
 
     /** Core's capture view asks the copilot ([request]); once typing paused, requestAICopilot, and its answer as setSuggestion. */
     fun captureCopilot(session: String, request: JSONObject?) {
-        val key = request?.toString()
+        val key = captureCopilotKey(session, request?.toString())
         if (key == captureAsked) return
         captureAsked = key
+        calls.cancel("capture")
         if (request == null) return
         main.postDelayed({
-            val modal = shell.captureModal.open?.takeIf { it.session == session && captureAsked == key } ?: return@postDelayed
-            val runtime = shell.coreHost() ?: return@postDelayed
-            Thread({
-                val reply = runCatching { runtime.aiRequest("requestAICopilot", JSONObject().put("request", request).toString()) }
-                    .onFailure { Log.w(CoreHost.TAG, "AI copilot failed code=${it.message?.substringBefore(':')}") }.getOrNull()
-                shell.ui {
-                    if (reply == null || shell.captureModal.open?.session != modal.session || captureAsked != key) return@ui
-                    // No suggestion: an empty one, which core keeps as none.
-                    shell.captureModal.edit(JSONObject().put("type", "setSuggestion").put("title", request.getString("title"))
-                        .put("suggestion", reply.optJSONObject("suggestion") ?: JSONObject()))
-                }
-            }, "mindwtr-ai-capture").start()
+            if (shell.captureModal.open?.session != session || captureAsked != key) return@postDelayed
+            ask("capture", "requestAICopilot", JSONObject().put("request", request)) { result ->
+                result.exceptionOrNull()?.let { if (it !is CancellationException) Log.w(CoreHost.TAG, "AI copilot failed code=${it.message?.substringBefore(':')}") }
+                val reply = result.getOrNull() ?: return@ask
+                if (shell.captureModal.open?.session != session || captureAsked != key) return@ask
+                // No suggestion: an empty one, which core keeps as none.
+                shell.captureModal.edit(JSONObject().put("type", "setSuggestion").put("title", request.getString("title"))
+                    .put("suggestion", reply.optJSONObject("suggestion") ?: JSONObject()))
+            }
         }, CAPTURE_COPILOT_DELAY_MS)
     }
 
+    /** The capture screen closed: its copilot stops. */
+    fun cancelCapture() { calls.cancel("capture"); captureAsked = null }
+
     // ---- Answers ----
 
-    /** One AI request off the engine; its answer is shown, and a button's `apply` goes to [apply]. */
-    private fun request(action: String, name: String, input: JSONObject, apply: (Any) -> Unit) {
-        val runtime = shell.coreHost() ?: return
-        if (working != null) return
+    /**
+     * One AI action (Clarify, Break down, Process Inbox's Clarify) in [action]'s scope; its answer is shown while [fits] (its
+     * editor or step is still on screen), and a button's `apply` goes to [apply]. A cancelled one shows nothing.
+     */
+    private fun request(action: String, name: String, input: JSONObject, fits: () -> Boolean, apply: (Any) -> Unit) {
+        if (working != null || shell.coreHost() == null) return
         working = action
-        Thread({
-            val result = runCatching { runtime.aiRequest(name, input.toString()) }
-            shell.ui {
-                working = null
-                result.onSuccess { show(it, apply) }.onFailure { failure ->
-                    Log.w(CoreHost.TAG, "AI request failed request=$name code=${failure.message?.substringBefore(':')}")
-                    shell.showToast(null, failure.message.orEmpty().substringAfter(": "), "error")
-                }
+        ask(action, name, input) { result ->
+            if (working == action) working = null
+            result.onSuccess { if (fits()) show(it, apply) }.onFailure { failure ->
+                if (failure is CancellationException) return@onFailure
+                Log.w(CoreHost.TAG, "AI request failed request=$name code=${failure.message?.substringBefore(':')}")
+                shell.showToast(null, failure.message.orEmpty().substringAfter(": "), "error")
             }
-        }, "mindwtr-ai-$action").start()
+        }
     }
 
     /** Core's answer: nothing, RN's alert, RN's toast (its Open goes to Settings › AI), or RN's AIResponseModal. */

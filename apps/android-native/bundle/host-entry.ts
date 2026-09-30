@@ -563,16 +563,16 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
 /**
  * The AI's requests (native-host-contract-ai.ts): each waits on the provider (up to RN's 5 min request timeout), so
  * CoreHost.aiRequest waits for it without holding the engine. None writes: an answer is a dialog whose buttons apply through the
- * screen's own edits and commands.
+ * screen's own edits and commands. The operation's signal goes down to the provider call: MindwtrHost.abort stops it.
  */
-const AI_REQUESTS: Record<string, (input: never) => Promise<Reply>> = {
-    loadAIModels: (input) => contract.loadAIModels(input),
-    requestTaskEditorCopilot: (input) => contract.requestTaskEditorCopilot(input),
-    requestAICopilot: (input) => contract.requestAICopilot(input),
-    requestTaskEditorClarify: (input) => contract.requestTaskEditorClarify(input),
-    requestTaskEditorBreakdown: (input) => contract.requestTaskEditorBreakdown(input),
-    requestInboxClarify: (input) => contract.requestInboxClarify(input),
-    requestWeeklyReviewAnalysis: () => contract.requestWeeklyReviewAnalysis(),
+const AI_REQUESTS: Record<string, (input: never, signal: AbortSignal) => Promise<Reply>> = {
+    loadAIModels: (input, signal) => contract.loadAIModels(input, { signal }),
+    requestTaskEditorCopilot: (input, signal) => contract.requestTaskEditorCopilot(input, { signal }),
+    requestAICopilot: (input, signal) => contract.requestAICopilot(input, { signal }),
+    requestTaskEditorClarify: (input, signal) => contract.requestTaskEditorClarify(input, { signal }),
+    requestTaskEditorBreakdown: (input, signal) => contract.requestTaskEditorBreakdown(input, { signal }),
+    requestInboxClarify: (input, signal) => contract.requestInboxClarify(input, { signal }),
+    requestWeeklyReviewAnalysis: (_input, signal) => contract.requestWeeklyReviewAnalysis({ signal }),
 };
 /** The Menu tab's commands, by their diagnostic operation: each passes Kotlin's input (its request or capture UUID included) unchanged. */
 const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
@@ -2093,12 +2093,22 @@ globalThis.MindwtrHost = {
     },
     /** `name` is one of AI_REQUESTS; `json` is that request's input. It writes nothing. */
     aiRequest(name: string, json: string): string {
-        return submit(async () => {
+        return submit(async (signal) => {
             requireSaved();
             const request = AI_REQUESTS[name];
             if (!request) throw new Error(`INVALID_INPUT: no AI request ${name}`);
-            return unwrap(await request(JSON.parse(json) as never));
+            const answer = await request(JSON.parse(json) as never, signal);
+            if (signal.aborted) throw new Error('The AI request was cancelled');
+            return unwrap(answer);
         });
+    },
+    /**
+     * Operation `idText` is no longer wanted (CoreHost.cancel: an AI request whose input changed, whose screen closed, or whose
+     * caller stopped waiting): its signal fires, so its provider call stops. Unlike cancel, no other host call is refused.
+     */
+    abort(idText: string): null {
+        pending.get(Number(idText))?.controller.abort(Object.assign(new Error('The AI request was cancelled'), { name: 'AbortError' }));
+        return null;
     },
     /** Debug builds only: runNetCheck against check-net-device.mjs's server on `port`. */
     netCheck(port: string): string {
