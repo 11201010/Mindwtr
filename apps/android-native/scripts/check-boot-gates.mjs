@@ -2477,6 +2477,19 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         assert.match(gradle, /val verifyBundle = [^\n]*verify-bundle\.mjs[\s\S]{0,300}?tasks\.withType<com\.android\.build\.gradle\.tasks\.MergeSourceSetFolders>\(\)\.configureEach \{\s+if \(name\.startsWith\("merge"\) && name\.endsWith\("Assets"\) && !name\.contains\("Test"\)\) \{[\s\S]{0,300}?commandLine\("node", verifyBundle, outputDir\.get\(\)\.asFile\.resolve\("core-host\.js"\)\.path\)\s*\}\.result\.get\(\)\.assertNormalExitValue\(\)/, 'every variant\'s merged assets are verified and a mismatch fails the build');
         assert.match(buildBundle, /renameSync\(/, 'the bundle is written under a temporary name and renamed into place');
     }
+    // Module instrumentation (build-bundle.mjs --trace-modules) is a measurement build's only: its own output, merged only
+    // into the benchmarkTrace variant. The bundle every other variant ships has no module hook, and no environment variable
+    // can turn one on.
+    {
+        const shipped = readFileSync(resolve(app, 'android/app/src/main/assets/core-host.js'), 'utf8');
+        assert(!shipped.includes('__mwTraceModule') && !/__MINDWTR_STARTUP_PROFILING__\s*=\s*(true|!0)/.test(shipped), 'the shipped bundle has no module hooks');
+        const buildBundle = readFileSync(resolve(app, 'scripts/build-bundle.mjs'), 'utf8');
+        assert.doesNotMatch(buildBundle, /process\.env/, 'no environment variable changes the bundle');
+        assert.equal(gradle.match(/--trace-modules/g)?.length, 1, 'one Gradle task builds the traced bundle');
+        assert.match(gradle, /val buildTracedCoreBundle by tasks\.registering\(Exec::class\) \{[\s\S]{0,300}?"--trace-modules", "--out", tracedBundle\.get\(\)\.asFile\.path/);
+        assert.equal(gradle.match(/tracedBundleAssets/g)?.length, 3, 'the traced bundle is declared once, written once, and merged once');
+        assert.match(gradle, /getByName\("benchmarkTrace"\)\.assets\.srcDir\(tracedBundleAssets\)/, 'only benchmarkTrace merges it');
+    }
     // RN's shortcuts from RN's own builder: the same ids, capabilities, labels and links, on the build's scheme; Add task opens
     // the capture popup through RN's system capture link until the widget pass brings QuickCaptureActivity.
     const { createRequire } = await import('node:module');

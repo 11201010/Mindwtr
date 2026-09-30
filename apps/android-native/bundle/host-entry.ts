@@ -2503,7 +2503,5 @@ globalThis.MindwtrHost = {
 if (globalThis.__mindwtrIntlCheck === true) {
     try { runIntlCheck(); } catch (error) { native().log(`Native Android intl check failed: ${error instanceof Error ? error.message : String(error)}`); }
 }
-// Closes the bundle's init section, opened at the end of host-polyfills.js (and first the last module's section, in a
-// build made with MINDWTR_TRACE_MODULES=1; see build-bundle.mjs).
-(globalThis.__mwTraceModule as ((name: string) => void) | undefined)?.('');
+// Closes the bundle's init section, opened at the end of host-polyfills.js.
 native().trace?.('');

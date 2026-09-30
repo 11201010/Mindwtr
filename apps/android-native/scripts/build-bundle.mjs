@@ -1,15 +1,18 @@
 import { build } from 'esbuild';
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const outfile = resolve(app, 'android/app/src/main/assets/core-host.js');
-// MINDWTR_TRACE_MODULES=1 (startup measurement builds only): a trace section per module while the bundle initializes, so a
-// Perfetto trace shows which modules' top-level code costs the most, and core's startup phases log their durations. The step function closes one module's section and
-// opens the next; the end of host-entry.ts closes the last and turns it off, so a module loaded later (a locale) traces nothing.
-const traceModules = process.env.MINDWTR_TRACE_MODULES === '1';
+// node build-bundle.mjs [--trace-modules] [--out <file>]. --trace-modules is for startup measurement only (Gradle's
+// buildTracedCoreBundle, merged only into the benchmarkTrace variant): a trace section per module while the bundle
+// initializes, so a Perfetto trace shows which modules' top-level code costs the most, and core's startup phases log their
+// durations. The step function closes one module's section and opens the next; the end of host-entry.ts closes the last and
+// turns it off, so a module loaded later (a locale) traces nothing.
+const option = (name) => { const at = process.argv.indexOf(name); return at < 0 ? undefined : process.argv[at + 1]; };
+const traceModules = process.argv.includes('--trace-modules');
+const outfile = resolve(option('--out') ?? resolve(app, 'android/app/src/main/assets/core-host.js'));
 const repo = resolve(app, '../..');
 const moduleTrace = {
     name: 'module-trace',
@@ -19,7 +22,9 @@ const moduleTrace = {
             const name = relative(repo, args.path).replace(/^.*node_modules\//, 'npm:');
             const marker = `globalThis.__mwTraceModule && globalThis.__mwTraceModule(${JSON.stringify(`mod:${name}`.slice(0, 120))});\n`;
             const loader = args.path.endsWith('.tsx') ? 'tsx' : args.path.endsWith('.ts') ? 'ts' : 'js';
-            return { contents: marker + readFileSync(args.path, 'utf8'), loader, resolveDir: dirname(args.path) };
+            // host-entry.ts closes the bundle init's section last; after it, the step function ends and turns itself off.
+            const end = args.path.endsWith('bundle/host-entry.ts') ? "\nglobalThis.__mwTraceModule && globalThis.__mwTraceModule('');\n" : '';
+            return { contents: marker + readFileSync(args.path, 'utf8') + end, loader, resolveDir: dirname(args.path) };
         });
     },
 };
@@ -52,6 +57,7 @@ const result = await build({
 // file, written under a name of its own and renamed into place, so a bundle and a hash from two builds can never pair up
 // (verify-bundle.mjs checks every variant's packaged copy).
 const body = result.outputFiles[0].contents;
+mkdirSync(dirname(outfile), { recursive: true });
 const temporary = `${outfile}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
 writeFileSync(temporary, Buffer.concat([Buffer.from(`//mindwtr-bundle-sha256:${createHash('sha256').update(body).digest('hex')}\n`), body]), { flag: 'wx' });
 renameSync(temporary, outfile);

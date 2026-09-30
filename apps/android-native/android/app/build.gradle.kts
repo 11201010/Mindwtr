@@ -4,11 +4,14 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Where Gradle's buildTracedCoreBundle writes the module-traced bundle (benchmarkTrace's assets).
+val tracedBundleAssets = layout.buildDirectory.dir("generated/traced-bundle/assets")
+
 // The app's link scheme by build type (D6): the development build has its own, so RN's app on the same phone keeps
 // mindwtr:// links; the upgrade harness keeps its RN build's scheme; a release keeps RN's. The manifest's link filter, the
 // shortcuts (scripts/build-shortcuts.mjs), and BuildConfig.URL_SCHEME (the scheme core reads links for) use it.
 val urlSchemes = mapOf("debug" to "mindwtr-native-dev", "upgradetest" to "mindwtr-upgradetest", "release" to "mindwtr") +
-    mapOf("benchmark" to "mindwtr-native-bench", "benchmarkSeed" to "mindwtr-native-bench")
+    mapOf("benchmark" to "mindwtr-native-bench", "benchmarkSeed" to "mindwtr-native-bench", "benchmarkTrace" to "mindwtr-native-bench")
 fun com.android.build.api.dsl.ApplicationBuildType.urlScheme() {
     val scheme = urlSchemes.getValue(name)
     buildConfigField("String", "URL_SCHEME", "\"$scheme\"")
@@ -60,6 +63,11 @@ android {
             isMinifyEnabled = false
             urlScheme()
         }
+        // The benchmark build with the module-traced bundle (buildTracedCoreBundle below): startup measurement only.
+        create("benchmarkTrace") {
+            initWith(getByName("benchmark"))
+            urlScheme()
+        }
     }
 
     // RN's app shortcuts, generated per build type (buildShortcuts below).
@@ -69,6 +77,8 @@ android {
         getByName("main").java.srcDir(layout.buildDirectory.dir("generated/rnKotlin/main/java"))
         getByName("test").java.srcDir(layout.buildDirectory.dir("generated/rnKotlin/test/java"))
     }
+    // Its core-host.js replaces main's in benchmarkTrace only (a build type's assets win over main's).
+    sourceSets { getByName("benchmarkTrace").assets.srcDir(tracedBundleAssets) }
 
     // BuildConfig.DEBUG gates the lifecycle check's fault hooks.
     buildFeatures { compose = true; buildConfig = true }
@@ -122,8 +132,6 @@ val buildCoreBundle by tasks.registering(Exec::class) {
         workingDir.resolve("package.json"),
         workingDir.resolve("packages/core/package.json"),
     )
-    // A startup measurement build's per-module trace sections (build-bundle.mjs); unset for every other build.
-    inputs.property("traceModules", System.getenv("MINDWTR_TRACE_MODULES") ?: "")
     outputs.file("src/main/assets/core-host.js")
 }
 // Every variant's merged assets: the bundle's hash line must be the SHA-256 of its body (verify-bundle.mjs), or the build
@@ -136,6 +144,14 @@ tasks.withType<com.android.build.gradle.tasks.MergeSourceSetFolders>().configure
             execs.exec { commandLine("node", verifyBundle, outputDir.get().asFile.resolve("core-host.js").path) }.result.get().assertNormalExitValue()
         }
     }
+}
+// The module-traced bundle, for benchmarkTrace alone: its own output, never src/main/assets.
+val buildTracedCoreBundle by tasks.registering(Exec::class) {
+    workingDir = rootProject.projectDir.resolve("../../..")
+    val tracedBundle = tracedBundleAssets.map { it.file("core-host.js") }
+    commandLine("node", "apps/android-native/scripts/build-bundle.mjs", "--trace-modules", "--out", tracedBundle.get().asFile.path)
+    inputs.files(buildCoreBundle.map { it.inputs.files })
+    outputs.file(tracedBundle)
 }
 val buildShortcuts by tasks.registering(Exec::class) {
     workingDir = rootProject.projectDir.resolve("../../..")
@@ -160,3 +176,4 @@ val rnCaptureIntent by tasks.registering(Sync::class) {
     into(layout.buildDirectory.dir("generated/rnKotlin"))
 }
 tasks.named("preBuild") { dependsOn(buildCoreBundle, buildShortcuts, rnCaptureIntent) }
+tasks.matching { it.name == "preBenchmarkTraceBuild" }.configureEach { dependsOn(buildTracedCoreBundle) }
