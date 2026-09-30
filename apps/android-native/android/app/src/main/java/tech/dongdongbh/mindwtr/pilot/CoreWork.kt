@@ -37,7 +37,15 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
          * (Android 12+). Debug builds only: `debug.mindwtr.native.core_work_delay_ms` holds it back that long, so
          * check-runner-device.mjs can run it through JobScheduler (`cmd jobscheduler run -f`).
          */
-        fun enqueue(context: Context, job: String, input: Map<String, String> = emptyMap()) {
+        fun enqueue(context: Context, job: String, input: Map<String, String> = emptyMap()) = enqueue(context, job, input, ExistingWorkPolicy.REPLACE)
+
+        /**
+         * A drain that did not finish, retried as the ingest job (ProcessCoreHost.recovered). KEEP: a drain job already waiting or
+         * running (this boot may be its own) retries with its back-off instead.
+         */
+        fun retryDrain(context: Context) = enqueue(context, CoreJob.INGEST, emptyMap(), ExistingWorkPolicy.KEEP)
+
+        private fun enqueue(context: Context, job: String, input: Map<String, String>, policy: ExistingWorkPolicy) {
             val delayMs = debugProperty("core_work_delay_ms").toLongOrNull() ?: 0L
             val request = OneTimeWorkRequest.Builder(CoreWork::class.java)
                 .setInputData(Data.Builder().putAll(input + (JOB to job)).build())
@@ -47,7 +55,7 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
                 }
                 .build()
             val work = WorkManager.getInstance(context)
-            if (job == CoreJob.INGEST) work.enqueueUniqueWork(INGEST_WORK, ExistingWorkPolicy.REPLACE, request) else work.enqueue(request)
+            if (job == CoreJob.INGEST) work.enqueueUniqueWork(INGEST_WORK, policy, request) else work.enqueue(request)
         }
     }
 
@@ -65,8 +73,8 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
                 val language = app.getSharedPreferences(DEVICE_PREFS, Context.MODE_PRIVATE).getString(LANGUAGE_KEY, null)
                 val host = ProcessCoreHost.get(app, language).also { booted = it }
                 object : CoreJob.Calls {
-                    override fun recover() = ProcessCoreHost.recover(app, host)
-                    override fun drain() = ProcessCoreHost.drain(host, ProcessCoreHost.queue(app))
+                    override fun recover() = ProcessCoreHost.recover(host)
+                    override fun drain() = ProcessCoreHost.recovered(app, host)
                     override fun contextAutomation(json: String) = host.contextAutomation(json)
                 }
             },

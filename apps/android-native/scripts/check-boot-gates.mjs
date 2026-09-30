@@ -1037,7 +1037,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) recovered\(app, runtime\)\s+return runtime/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/syncStart\(/g).length, 1, 'one start of the triggers, in startSync');
     assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 1, 'startSync only in recovered, after the drain');
-    assert.equal([activity, model, owner, menuModel].join('\n').match(/recovered\(app, runtime\)|ProcessCoreHost\.recovered\(getApplication\(\), runtime\)/g).length, 3, 'recovered after the boot replay, the owed retry and CoreWork\'s recovery');
+    assert.equal([activity, model, owner, menuModel].join('\n').match(/recovered\(app, runtime\)|ProcessCoreHost\.recovered\(getApplication\(\), runtime\)/g).length, 2, 'recovered after the boot replay and the owed retry (CoreWork\'s is checked with the runner)');
     // Core's receipts are pruned once per boot, and only after a replay that left nothing: never before the replay, never while an
     // entry that may need its receipt is left.
     assert.match(coreHost, /fun pruneReceipts\(\): JSONObject = callAsync\("pruneReceipts"\)/);
@@ -1261,13 +1261,16 @@ assert.match(labelsKt, /if \(logged\.add\(name\)\) Log\.w\(/, 'a missing key is 
 assert.equal(kotlinFiles.join('\n').match(/Labels\.load\(/g).length, 1);
 assert.match(owner, /runtime\.language\(stored \?: "", Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
 assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) recovered\(app, runtime\)\s+return runtime/);
-// After a finished replay (the boot's, the owed retry's, CoreWork's recovery): the queue drain, then sync; an owed drain holds sync back.
-assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost\): Boolean \{\s+if \(!drain\(runtime, queue\(app\)\) && failure != null\) return false\s+startSync\(app, runtime\)\s+return true\s+\}/);
+// After a finished replay (the boot's, the owed retry's, CoreWork's): the queue drain, then sync (StartOrder, StartOrderTest). Any
+// drain that did not finish becomes the screens' owed journal retry, holds sync back, and CoreWork retries it.
+assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\)\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+startSync = \{ startSync\(app, runtime\) \},\s+\)/);
+assert.match(source('StartOrder.kt'), /Drain\.Done -> \{\s+startSync\(\)\s+return true\s+\}\s+Drain\.Waiting -> retryLater\(\)\s+is Drain\.Failed -> \{\s+owe\(result\.message\)\s+retryLater\(\)\s+\}/);
+assert.match(source('CoreWork.kt'), /fun retryDrain\(context: Context\) = enqueue\(context, CoreJob\.INGEST, emptyMap\(\), ExistingWorkPolicy\.KEEP\)/, 'a retry never cancels a running drain');
 // The queue drain (RN's startup drain; CoreWork's ingest job too): after the journal replay, before any screen, entry point or
 // sync gets the host; never while a save is owed; a failed save becomes the journal's owed retry, which drains again.
 assert.match(owner, /fun queue\(app: Application\) = File\(app\.filesDir, PendingCaptureWriter\.DIRECTORY\)/, 'the queue is RN\'s writer\'s folder');
-assert.match(owner, /fun drain\(runtime: CoreHost, queue: File\): Boolean \{\s+if \(failure != null\) return false\s+if \(queue\.list\(\)\.isNullOrEmpty\(\)\) return true\s+return try \{\s+val ingested = runtime\.ingestPendingCaptures\(UUID\.randomUUID\(\)\.toString\(\)\)/);
-assert.match(owner, /if \(message\.startsWith\("SAVE_FAILED"\)\) recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\)\s+false/);
+assert.match(owner, /private fun drain\(runtime: CoreHost, queue: File\): StartOrder\.Drain \{\s+if \(failure != null\) return StartOrder\.Drain\.Waiting\s+if \(queue\.list\(\)\.isNullOrEmpty\(\)\) return StartOrder\.Drain\.Done\s+return try \{\s+val ingested = runtime\.ingestPendingCaptures\(UUID\.randomUUID\(\)\.toString\(\)\)/);
+assert.match(owner, /\.put\("error", message\.substringBefore\(':'\)\)\)\s+StartOrder\.Drain\.Failed\(message\)/);
 // The runner's lines go through core's logger (logcat, and RN's diagnostics log file), their fields in context; a failure's code only.
 assert.match(owner, /runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "drained"\)\.put\("ingested", ingested\)\)/);
 assert.match(owner, /runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "failed"\)\.put\("error", message\.substringBefore\(':'\)\)\)/);
@@ -2833,7 +2836,8 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // Every job recovers first, as the boot orders it: an owed journal replay, then the drain; a job runs only on finished state.
     const coreJob = source('CoreJob.kt');
     assert.match(coreJob, /val host = boot\(\)\s+if \(!host\.recover\(\) \|\| !host\.drain\(\)\) Outcome\.Retry/);
-    assert.match(owner, /fun recover\(app: Application, runtime: CoreHost\): Boolean \{\s+val owed = failure \?: return true\s+if \(owed\.action\.kind != "journal"\) return false\s+runtime\.replayJournal\(\)\.owed\?\.let \{ return false \}\s+clearFailure\(owed\.action\)\s+return recovered\(app, runtime\)\s+\}/);
+    assert.match(owner, /fun recover\(runtime: CoreHost\): Boolean \{\s+val owed = failure \?: return true\s+if \(owed\.action\.kind != "journal"\) return false\s+runtime\.replayJournal\(\)\.owed\?\.let \{ return false \}\s+clearFailure\(owed\.action\)\s+return true\s+\}/);
+    assert.match(source('CoreWork.kt'), /override fun recover\(\) = ProcessCoreHost\.recover\(host\)\s+override fun drain\(\) = ProcessCoreHost\.recovered\(app, host\)/, 'CoreWork drains through the start order');
     // A drain's owed save (an item stored but not saved or recorded) holds a screen's newer edits back until its replay.
     assert.match(model, /if \(failedAction == null\) ProcessCoreHost\.failure\?\.takeIf \{ it\.action\.kind == "journal" \}\?\.let \{ owed ->\s+failedAction = owed\.action\s+error = owed\.error\s+\}\s+if \(busy \|\| runtime == null/);
     // CoreWork: WorkManager at RN's version, in the app's process; expedited on Android 12+; a debug build's delay only.
@@ -2842,7 +2846,8 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const coreWork = source('CoreWork.kt');
     assert.match(coreWork, /val delayMs = debugProperty\("core_work_delay_ms"\)\.toLongOrNull\(\) \?: 0L/);
     assert.match(coreWork, /else if \(Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S\) setExpedited\(OutOfQuotaPolicy\.RUN_AS_NON_EXPEDITED_WORK_REQUEST\)/);
-    assert.match(coreWork, /work\.enqueueUniqueWork\(INGEST_WORK, ExistingWorkPolicy\.REPLACE, request\)/, 'a new drain request never waits behind a back-off');
+    assert.match(coreWork, /fun enqueue\(context: Context, job: String, input: Map<String, String> = emptyMap\(\)\) = enqueue\(context, job, input, ExistingWorkPolicy\.REPLACE\)/, 'a new drain request never waits behind a back-off');
+    assert.match(coreWork, /work\.enqueueUniqueWork\(INGEST_WORK, policy, request\)/);
     assert.match(coreWork, /val host = ProcessCoreHost\.get\(app, language\)/, 'the job runs on this process\'s one host');
     // The queue's paths: RN's writer's folder is core's.
     const pendingTs = readFileSync(resolve(app, '../../packages/core/src/pending-captures.ts'), 'utf8');

@@ -22,7 +22,7 @@ internal object CoreJob {
     interface Calls {
         /** ProcessCoreHost.recover on this host: an owed journal replay sent again; false while anything stays owed. */
         fun recover(): Boolean
-        /** ProcessCoreHost.drain on this host; false while the queue must wait (an owed save's retry comes first). */
+        /** ProcessCoreHost.recovered on this host (the drain, then sync); false while the queue must wait or the drain failed. */
         fun drain(): Boolean
         /** Core's runContextAutomation with [json] (`{ action, context }`): `{ notification }`, null for none. */
         fun contextAutomation(json: String): JSONObject

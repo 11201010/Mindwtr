@@ -180,14 +180,16 @@ internal object ProcessCoreHost {
     }
 
     /**
-     * After a replay that left nothing owed (the boot's, or the owed journal retry's): the queue drain, then sync, in the boot's
-     * order. False while the drain left a save owed: sync waits for that retry too.
+     * After a replay that left nothing owed (the boot's, the owed journal retry's, CoreWork's): the queue drain, then sync, in the
+     * boot's order (StartOrder). A drain that did not finish becomes the screens' owed "journal" retry, so no screen edits until
+     * it goes through, sync waits, and CoreWork retries it with its back-off. True once drained.
      */
-    fun recovered(app: Application, runtime: CoreHost): Boolean {
-        if (!drain(runtime, queue(app)) && failure != null) return false
-        startSync(app, runtime)
-        return true
-    }
+    fun recovered(app: Application, runtime: CoreHost): Boolean = StartOrder.afterReplay(
+        drain = { drain(runtime, queue(app)) },
+        owe = { message -> recordFailure(PendingFailure(FailedAction("journal", ""), message, null)) },
+        retryLater = { runCatching { CoreWork.retryDrain(app) }.onFailure { Log.w(CoreHost.TAG, "Native Android drain retry not queued", it) } },
+        startSync = { startSync(app, runtime) },
+    )
 
     /** MainActivity resumed ("active") or paused ("background"): core's triggers sync on resume and on leaving. */
     fun appState(state: String) {
@@ -199,37 +201,34 @@ internal object ProcessCoreHost {
 
     /**
      * CoreWork's recovery before its job: an owed journal replay (the boot's or a drain's, kind "journal") sent again, as the
-     * screens' Try again sends it, then the drain and sync it held back (recovered). True once nothing is owed. False while that
-     * replay or the drain still owes a save, or while a screen's own command is owed: only that screen's exact retry recovers it
-     * (the job retries later).
+     * screens' Try again sends it; CoreJob then drains (recovered). True once nothing is owed. False while that replay still
+     * stops, or while a screen's own command is owed: only that screen's exact retry recovers it (the job retries later).
      */
-    fun recover(app: Application, runtime: CoreHost): Boolean {
+    fun recover(runtime: CoreHost): Boolean {
         val owed = failure ?: return true
         if (owed.action.kind != "journal") return false
         runtime.replayJournal().owed?.let { return false }
         clearFailure(owed.action)
-        return recovered(app, runtime)
+        return true
     }
 
     /**
-     * One drain of the pending-captures queue (core's ingestPendingCaptures, a journaled write): at every boot, after the journal
-     * replay and before this boot hands the host to any screen, entry point or sync; and as CoreWork's ingest job. False when the
-     * queue must wait: while a save is owed (its retry comes first), or when the drain failed. A failed save is the screens' owed
-     * retry, kind "journal": the journal keeps the drain's request, and its replay drains again. An empty [queue] folder needs
-     * no drain, so a start with nothing queued journals nothing.
+     * One drain of the pending-captures queue (core's ingestPendingCaptures, a journaled write), through [recovered] only: at
+     * every boot after the journal replay, before any screen, entry point or sync gets the host; after the owed retry; and as
+     * CoreWork's job. It waits while another retry is owed. SAVE_FAILED keeps the drain's journal entry, whose replay drains
+     * again. An empty [queue] folder needs no drain, so a start with nothing queued journals nothing.
      */
-    fun drain(runtime: CoreHost, queue: File): Boolean {
-        if (failure != null) return false
-        if (queue.list().isNullOrEmpty()) return true
+    private fun drain(runtime: CoreHost, queue: File): StartOrder.Drain {
+        if (failure != null) return StartOrder.Drain.Waiting
+        if (queue.list().isNullOrEmpty()) return StartOrder.Drain.Done
         return try {
             val ingested = runtime.ingestPendingCaptures(UUID.randomUUID().toString()).optInt("ingested")
             runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "drained").put("ingested", ingested))
-            true
+            StartOrder.Drain.Done
         } catch (error: Throwable) {
             val message = error.message ?: error.javaClass.simpleName
             runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "failed").put("error", message.substringBefore(':')))
-            if (message.startsWith("SAVE_FAILED")) recordFailure(PendingFailure(FailedAction("journal", ""), message, null))
-            false
+            StartOrder.Drain.Failed(message)
         }
     }
 
