@@ -117,7 +117,9 @@ describe('ingestPendingCaptures', () => {
         for (const name of Object.keys(queueItems)) queue.failDelete.add(name);
         const request = requestId();
 
-        expect(value(await host.ingestPendingCaptures({ requestId: request, queue: queue.port, lastApplied: record() }))).toEqual({ ingested: 0 });
+        // Every file stays for a later drain: a failure the next run retries, not a success.
+        expect(await host.ingestPendingCaptures({ requestId: request, queue: queue.port, lastApplied: record() }))
+            .toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
         expect(queue.stored.size).toBe(6);
 
         await reloadStore();
@@ -143,7 +145,8 @@ describe('ingestPendingCaptures', () => {
 
         const first = host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: record() });
         await vi.advanceTimersByTimeAsync(30_000);
-        expect(value(await first)).toEqual({ ingested: 0 });
+        // Stored but not saved: owed (the journal keeps the request), never a success.
+        expect(await first).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         expect(queue.port.delete).not.toHaveBeenCalled();
         expect(useTaskStore.getState().persistenceFailure).not.toBeNull();
 
@@ -155,6 +158,65 @@ describe('ingestPendingCaptures', () => {
         expect(useTaskStore.getState().persistenceFailure).toBeNull();
         expect(useTaskStore.getState()._allTasks.filter((entry) => entry.id === CAPTURE_ID)).toHaveLength(1);
     }, 15_000);
+
+    it('owes a check-off whose applied-command record did not reach the disk; its replay records it, so a reopen stays open', async () => {
+        const host = await openScreenHost({ data: { tasks: [task('open')] }, record: {}, log: [] });
+        // Tapped a minute ago: an older completion would be archived by the reload's auto-archive.
+        const checkOff = { kind: 'complete', id: 'c9', taskId: 'open', createdAt: new Date(Date.now() - 60_000).toISOString(), source: 'android-widget' };
+        const queue = fakeQueue({ 'c.json': checkOff });
+        let failRecord = true;
+        const flaky: PendingCaptureRecordPort = {
+            read: async () => deviceRecord,
+            write: async (next) => { if (failRecord) throw new Error('disk full'); deviceRecord = next; },
+        };
+        const request = requestId();
+
+        // The check-off is stored and saved, but its record is not on disk: a retryable failure, never a success.
+        expect(await host.ingestPendingCaptures({ requestId: request, queue: queue.port, lastApplied: flaky }))
+            .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(queue.stored.has('c.json')).toBe(true);
+        expect(deviceRecord).toBeNull();
+
+        // The journal kept the request: its replay after a restart writes the record and removes the file.
+        failRecord = false;
+        await reloadStore();
+        const restarted = await restartScreenHost();
+        expect(value(await restarted.ingestPendingCaptures({ requestId: request, queue: queue.port, lastApplied: flaky }))).toEqual({ ingested: 1 });
+        expect(queue.stored.size).toBe(0);
+        expect(JSON.parse(deviceRecord!).open).toMatchObject({ id: 'c9' });
+
+        // Reopened after the recovery, the task stays open through the next restart's drain.
+        await useTaskStore.getState().updateTask('open', { status: 'next' });
+        await reloadStore();
+        const again = await restartScreenHost();
+        expect(value(await again.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: flaky }))).toEqual({ ingested: 0 });
+        expect(useTaskStore.getState()._allTasks.find((entry) => entry.id === 'open')?.status).toBe('next');
+    });
+
+    it('answers a retryable failure while a queued item stays after a failed read, write or delete', async () => {
+        const host = await openScreenHost({ data: { tasks: [task('open')] }, record: {}, log: [] });
+        const unreadable: PendingCaptureRecordPort = { read: async () => { throw new Error('locked'); }, write: async () => undefined };
+        const queue = fakeQueue({ 'c.json': queueItems['c.json'] });
+        expect(await host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: unreadable }))
+            .toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        expect(useTaskStore.getState()._allTasks.find((entry) => entry.id === 'open')?.status).toBe('next');
+
+        const unlisted = fakeQueue({});
+        vi.mocked(unlisted.port.list).mockRejectedValueOnce(new Error('io'));
+        expect(await host.ingestPendingCaptures({ requestId: requestId(), queue: unlisted.port, lastApplied: record() }))
+            .toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+
+        const refused = fakeQueue({ 'c.json': queueItems['c.json'] });
+        const updateTask = vi.spyOn(useTaskStore.getState(), 'updateTask');
+        useTaskStore.setState({ updateTask: async () => ({ success: false, error: 'refused' }) } as never);
+        expect(await host.ingestPendingCaptures({ requestId: requestId(), queue: refused.port, lastApplied: record() }))
+            .toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        useTaskStore.setState({ updateTask: updateTask.getMockImplementation() ?? updateTask } as never);
+        expect(refused.stored.has('c.json')).toBe(true);
+
+        expect(value(await host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: record() }))).toEqual({ ingested: 1 });
+        expect(queue.stored.size).toBe(0);
+    });
 
     it('reads nothing during a workspace switch', async () => {
         const host = await openScreenHost({ data: {}, record: {}, log: [] });

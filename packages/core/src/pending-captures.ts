@@ -315,6 +315,12 @@ export type PendingCaptureDrainDeps = PendingCaptureStoreDeps & {
     log: PendingCaptureLog;
     /** Without it every `audio` item stays in the queue untouched. */
     audio?: PendingCaptureAudioPort;
+    /**
+     * Told of each capture, check-off or defer a failure keeps queued: `owed` once its store write landed but its save or its
+     * applied-command record did not finish (a later change to that task must wait for the retry, or the retry's write would
+     * undo it); `queued` when nothing of it landed or only its file delete failed (a later drain is enough).
+     */
+    onUnfinished?: (state: 'owed' | 'queued') => void;
 };
 
 const WATCH_CAPTURE_RELEASE_CHECK = 'v1.3.0/watch-capture';
@@ -480,6 +486,7 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
         lastApplied,
         log,
         audio,
+        onUnfinished,
     } = deps;
 
     // A +Project a capture makes is named by the capture: a replay finds it,
@@ -501,6 +508,7 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
         names = listed;
     } catch (error) {
         void log.error(error, { scope: 'shortcuts', extra: { message: 'Failed to read pending captures' } });
+        onUnfinished?.('queued');
         return 0;
     }
 
@@ -510,6 +518,7 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
             entries.push({ capture: parsePendingCapture(await queue.read(name)), name });
         } catch (error) {
             void log.error(error, { scope: 'shortcuts', extra: { message: 'Failed to read pending capture', name } });
+            onUnfinished?.('queued');
         }
     }
 
@@ -600,15 +609,21 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
 
         if (capture.kind === 'complete') {
             const record = await (appliedRecord ??= readLastApplied());
-            if (!record) continue;
+            if (!record) { onUnfinished?.('queued'); continue; }
             const skip = skipOf(capture, record);
             const outcome = skip ?? await applyPendingCompletion(capture, { updateTask, tasks, getTasks });
-            if (!outcome) continue;
+            if (!outcome) { onUnfinished?.('queued'); continue; }
             try {
                 await flushPendingSave?.();
                 if (outcome === 'completed' || outcome === 'already-done') await remember(capture, record);
+            } catch {
+                onUnfinished?.('owed');
+                continue;
+            }
+            try {
                 await queue.delete(name);
             } catch {
+                onUnfinished?.('queued');
                 continue;
             }
             ingested += 1;
@@ -635,15 +650,21 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
 
         if (capture.kind === 'defer') {
             const record = await (appliedRecord ??= readLastApplied());
-            if (!record) continue;
+            if (!record) { onUnfinished?.('queued'); continue; }
             const skip = skipOf(capture, record);
             const outcome = skip ?? await applyPendingDefer(capture, { updateTask, tasks, getTasks });
-            if (!outcome) continue;
+            if (!outcome) { onUnfinished?.('queued'); continue; }
             try {
                 await flushPendingSave?.();
                 if (outcome === 'deferred' || outcome === 'already-deferred') await remember(capture, record);
+            } catch {
+                onUnfinished?.('owed');
+                continue;
+            }
+            try {
                 await queue.delete(name);
             } catch {
+                onUnfinished?.('queued');
                 continue;
             }
             ingested += 1;
@@ -899,15 +920,24 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
             if (
                 isFailedResult(result)
                 || (captureId && resultId(result)?.toLowerCase() !== captureId)
-            ) continue;
+            ) {
+                onUnfinished?.('queued');
+                continue;
+            }
         }
 
         // Delete only after the store write resolved; a crash in between at
         // worst re-ingests one capture.
         try {
             await flushPendingSave?.();
+        } catch {
+            onUnfinished?.('owed');
+            continue;
+        }
+        try {
             await queue.delete(name);
         } catch {
+            onUnfinished?.('queued');
             continue;
         }
         ingested += 1;
