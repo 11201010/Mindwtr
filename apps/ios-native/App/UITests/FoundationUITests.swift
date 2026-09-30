@@ -13120,6 +13120,148 @@ final class FoundationUITests: XCTestCase {
 
     func testGtdCaptureAreaLargestLayout() { task106Normal("110f8bc2-4ec4-4702-b4aa-431d01bb1074") }
 
+    private func task109Pick(_ app: XCUIApplication, _ value: String) {
+        let option = app.buttons["gtd-taskEditorPreset-" + value]
+        let scroll = app.scrollViews["gtd-taskEditor-scroll"]
+        // LazyVGrid drops off-screen buttons; presets are above the section controls.
+        for _ in 0..<8 where !option.exists { scroll.swipeDown() }
+        revealPagedElement(app, option, in: scroll)
+        boardEnabled(option); option.tap()
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: option)
+        waitForExpectations(timeout: 30)
+    }
+
+    private func task109Normal(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task103Open(app)
+        let input = app.textFields["gtd-defaultScheduleTime"]
+        revealPagedElement(app, input, in: app.scrollViews["gtd-scroll"])
+        replaceTextView(input, with: "930", tapOffset: CGVector(dx: 0.5, dy: 0.5))
+        task108Open(app); task109Pick(app, "simple")
+        app.terminate(); app.launch(); task108Open(app)
+        XCTAssertTrue(app.buttons["gtd-taskEditorPreset-simple"].isSelected)
+        task109Pick(app, "full")
+        for section in ["scheduling", "organization"] {
+            let control = app.switches["gtd-taskEditorSectionOpen-" + section]
+            revealPagedElement(app, control, in: app.scrollViews["gtd-taskEditor-scroll"])
+            XCTAssertEqual(control.value as? String, "1")
+        }
+        task108Toggle(app, "details", on: true)
+        revealPagedElement(app, app.staticTexts["gtd-taskEditorPreset-custom"], in: app.scrollViews["gtd-taskEditor-scroll"])
+        XCTAssertTrue(app.staticTexts["gtd-taskEditorPreset-custom"].exists)
+        task109Pick(app, "standard")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task Editor presets"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "gtd-taskEditor-back"); boardEnabled(app.buttons["gtd-back"])
+        XCTAssertEqual(input.value as? String, "09:30")
+        let focus = task103Option(app, "focusTaskLimit", "3"); focus.tap()
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: focus); waitForExpectations(timeout: 20)
+        app.terminate()
+    }
+
+    func testGtdTaskEditorPresetNormal() { task109Normal("b50fc57b-cdd5-4397-bddc-c5a1902cda2a") }
+    func testGtdTaskEditorPresetLargest() { task109Normal("eea89165-c5bd-42fc-82df-b201fec540e9") }
+
+    func testGtdTaskEditorPresetAcknowledgedReadRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "5d171291-87a6-44be-83e9-760caa8601b4", "--native-gtd-workflow-read-failure"]
+        app.launch(); task108Open(app)
+        task109RevealSimple(app).tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-taskEditor-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-taskEditor-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-taskEditor-back"], timeout: 30)
+        XCTAssertTrue(app.buttons["gtd-taskEditorPreset-simple"].isSelected)
+        app.terminate()
+    }
+
+    private func task109RevealSimple(_ app: XCUIApplication) -> XCUIElement {
+        let control = app.buttons["gtd-taskEditorPreset-simple"]
+        revealPagedElement(app, control, in: app.scrollViews["gtd-taskEditor-scroll"])
+        boardEnabled(control); return control
+    }
+
+    func testGtdTaskEditorPresetRefusalCorrection() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "fd0f32f5-ca2b-4a46-be0f-8775c14eb2ac", "--native-gtd-workflow-refusal"]
+        app.launch(); task108Open(app); task109RevealSimple(app).tap()
+        XCTAssertTrue(app.staticTexts["gtd-error"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["gtd-taskEditorPreset-simple"].isSelected)
+        task109Pick(app, "simple")
+        app.terminate()
+    }
+
+    func testGtdTaskEditorPresetFailedSaveExactRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "38b5b61c-020c-47a8-b2e7-d949e9fa4ace"]
+        app.launch(); task108Open(app); task109RevealSimple(app).tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-taskEditor-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-taskEditor-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-retry"], timeout: 30); app.terminate()
+    }
+
+    func testGtdTaskEditorPresetColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "38b5b61c-020c-47a8-b2e7-d949e9fa4ace"]
+        app.launch(); boardEnabled(app.buttons["gtd-taskEditor-back"], timeout: 30)
+        XCTAssertTrue(app.buttons["gtd-taskEditorPreset-simple"].isSelected)
+        XCTAssertFalse(app.buttons["gtd-retry"].exists); app.terminate()
+    }
+
+    func testGtdTaskEditorPresetConsumer() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "0edd49e6-9007-4288-b36c-1d4f9f80aad1"]
+        app.launch()
+        for preset in ["simple", "standard", "full"] {
+            task108Open(app); task109Pick(app, preset)
+            boardTap(app, "gtd-taskEditor-back"); boardTap(app, "gtd-back"); boardTap(app, "settings-back")
+            boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+            let input = app.textFields["search-input"]; boardEnabled(input); input.tap(); input.typeText("Task109 empty editor")
+            boardTap(app, "search-task-task109-empty"); boardTap(app, "task-mode-edit")
+            let scroll = app.scrollViews["task-editor-scroll"]
+            if preset == "simple" {
+                for section in ["scheduling", "organization", "details"] { XCTAssertFalse(app.buttons["task-editor-section-" + section].exists) }
+                XCTAssertFalse(app.textFields["task-editor-tags"].exists)
+                XCTAssertFalse(app.textViews["task-editor-note"].exists)
+            } else {
+                for (section, field) in [("scheduling", "task-editor-startTime"), ("organization", "task-editor-tags"), ("details", "task-editor-note")] {
+                    let header = app.buttons["task-editor-section-" + section]
+                    revealPagedElement(app, header, in: scroll)
+                    if header.value as? String == "Expand" { header.tap() }
+                    let control = app.descendants(matching: .any).matching(identifier: field).firstMatch
+                    revealPagedElement(app, control, in: scroll); XCTAssertTrue(control.exists)
+                }
+                let priority = app.buttons["task-editor-priority-urgent"]
+                if preset == "full" { revealPagedElement(app, priority, in: scroll); XCTAssertTrue(priority.exists) }
+                else { XCTAssertFalse(priority.exists) }
+            }
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task Editor preset " + preset; shot.lifetime = .keepAlways; add(shot)
+            boardTap(app, "task-view-close"); XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+            app.terminate(); app.launch()
+        }
+        app.terminate()
+    }
+
+    func testGtdTaskEditorPresetUnsupportedLayoutKeepsSections() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "7a5055cd-6b83-4efe-94cf-c56c604d70b4"]
+        app.launch(); task108Open(app)
+        XCTAssertTrue(app.staticTexts["gtd-taskEditorPreset-error"].exists)
+        XCTAssertFalse(app.buttons["gtd-taskEditorPreset-simple"].exists)
+        task108Toggle(app, "scheduling", on: true)
+        XCTAssertTrue(app.staticTexts["gtd-taskEditorPreset-error"].exists)
+        boardEnabled(app.buttons["gtd-taskEditor-back"])
+        app.terminate(); app.launch(); task108Open(app)
+        XCTAssertEqual(app.switches["gtd-taskEditorSectionOpen-scheduling"].value as? String, "1")
+        task108Toggle(app, "scheduling", on: false)
+        app.terminate()
+    }
+
     private func task108Open(_ app: XCUIApplication) {
         if !app.buttons["gtd-taskEditor-back"].exists {
             task103Open(app)

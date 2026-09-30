@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-gtd-editor-presets`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Task Editor preset saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup for a layout preset. Failed saves retain the request; acknowledged read retries must not emit another saved line. No layout values or library content are logged.
+
 - **`v1.3.4/ios-gtd-editor-sections`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Task Editor sections saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup for a section-opening default. Failed saves retain their request; acknowledged read retries must not emit another saved line. No preference values or library content are logged.
 
 - **`v1.3.4/ios-gtd-review`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS GTD Review saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup for the Daily focus or Weekly contexts switch. Failed saves retain the request; acknowledged read retries must not emit a second saved line. No preference value, identifiers, timestamps or library content are logged.

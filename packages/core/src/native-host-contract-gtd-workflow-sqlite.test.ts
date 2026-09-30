@@ -120,6 +120,16 @@ async function planEditorSection(host: ReturnType<typeof createNativeHostContrac
     return { request, prepared: prepared.value.prepared };
 }
 
+async function planPreset(host: ReturnType<typeof createNativeHostContract>, value: 'simple' | 'standard' | 'full') {
+    const options = await host.getGtdTaskEditorPresetOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID,
+        edit: { type: 'taskEditorPreset', value }, expected: options.value.expected };
+    const prepared = await host.prepareGtdWorkflow(request);
+    if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+    return { request, prepared: prepared.value.prepared };
+}
+
 const tables = ['tasks', 'projects', 'areas', 'people', 'sections', 'settings', 'saved_filters',
     'schema_migrations', 'calendar_sync'] as const;
 const nineTables = (db: Database) => Object.fromEntries(tables.map((table) =>
@@ -562,5 +572,90 @@ describe('GTD Task Editor section defaults retain the v1 SQLite recovery contrac
         expect(await afterAba.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
             error: { code: 'STALE_REVISION' } });
         expect(nineTables(afterAba.db)).toEqual(beforeRefusal);
+    }, 20_000);
+});
+
+describe('GTD Task Editor presets use the composite v1 receipt', () => {
+    it('retries failed raw saves and cold-replays all four layout fields without task changes', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-editor-preset-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const seed = initial(); seed.settings.features = { priorities: false, timeEstimates: true };
+        const first = await open(path, true, seed);
+        const before = nineTables(first.db);
+        const envelope = await planPreset(first.host, 'full');
+        first.fault.commits = 10;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            expect(await first.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'SAVE_FAILED' } });
+            expect(nineTables(first.db)).toEqual(before);
+        }
+        first.fault.commits = 0;
+        expect(await first.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const saved = nineTables(first.db);
+        for (const table of tables.filter((name) => name !== 'settings')) expect(saved[table]).toEqual(before[table]);
+        const settings = (await first.adapter.getData()).settings;
+        expect(settings.gtd?.taskEditor).toMatchObject({
+            order: envelope.prepared.after.selected?.order.value,
+            hidden: envelope.prepared.after.selected?.hidden.value,
+            sections: envelope.prepared.after.selected?.sections.value,
+            sectionOpen: envelope.prepared.after.selected?.sectionOpen.value });
+        expect(settings.features).toEqual(seed.settings.features);
+        expect(settings.syncPreferencesUpdatedAt?.gtd).toBe(envelope.prepared.after.stamp);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        expect(nineTables(cold.db)).toEqual(saved);
+    }, 20_000);
+
+    it('cold-refuses a one-field receipt mismatch, feature change, and same-target recreation', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-editor-preset-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const first = await open(path, true);
+        const envelope = await planPreset(first.host, 'simple');
+        expect(await first.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const landed = await first.adapter.getData();
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        for (const field of ['order', 'hidden', 'sections', 'sectionOpen'] as const) {
+            const alter = await open(path);
+            const wrong = structuredClone(landed);
+            const editor = wrong.settings.gtd!.taskEditor!;
+            if (field === 'order') editor.order = [...(editor.order ?? [])].reverse();
+            if (field === 'hidden') editor.hidden = (editor.hidden ?? []).slice(1);
+            if (field === 'sections') editor.sections = { description: 'details' };
+            if (field === 'sectionOpen') editor.sectionOpen = { scheduling: true };
+            await alter.adapter.saveData(wrong);
+            alter.db.close(); databases.splice(databases.indexOf(alter.db), 1);
+            const cold = await open(path);
+            const beforeField = nineTables(cold.db);
+            expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'STALE_REVISION' } });
+            expect(nineTables(cold.db)).toEqual(beforeField);
+            await cold.adapter.saveData(landed);
+            cold.db.close(); databases.splice(databases.indexOf(cold.db), 1);
+        }
+        const featureHost = await open(path);
+        const feature = await featureHost.adapter.getData();
+        feature.settings.gtd = landed.settings.gtd;
+        feature.settings.features = { priorities: false };
+        await featureHost.adapter.saveData(feature);
+        featureHost.db.close(); databases.splice(databases.indexOf(featureHost.db), 1);
+        const changedFeature = await open(path);
+        const beforeFeature = nineTables(changedFeature.db);
+        expect(await changedFeature.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(changedFeature.db)).toEqual(beforeFeature);
+        const independent = await changedFeature.adapter.getData();
+        independent.settings.features = landed.settings.features;
+        independent.settings.syncPreferencesUpdatedAt!.gtd = '2026-09-02T00:00:00.000Z';
+        await changedFeature.adapter.saveData(independent);
+        changedFeature.db.close(); databases.splice(databases.indexOf(changedFeature.db), 1);
+        const sameTarget = await open(path);
+        const beforeSame = nineTables(sameTarget.db);
+        expect(await sameTarget.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(sameTarget.db)).toEqual(beforeSame);
     }, 20_000);
 });
