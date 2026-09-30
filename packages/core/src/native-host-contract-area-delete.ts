@@ -3,6 +3,7 @@ import { countLiveProjectsByArea } from './area-project-usage';
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { ensureDeviceId } from './store-helpers';
 import { useTaskStore } from './store';
+import { createAreaSaveGuard, readAreaDurableData } from './native-host-contract-area-durable';
 import { areaDeleteEffect, sameAreaAdditionRow, selectAreaDeleteScope } from './store-projects/area-actions';
 import type { PreparedAreaDelete } from './store-types';
 import { taskEditValuesEqual } from './store-tasks';
@@ -147,6 +148,7 @@ export function createAreaDeleteMethods(deps: {
     revision: () => string;
     sortedAreas: () => Area[];
 }) {
+    const saves = createAreaSaveGuard(deps.save);
     return {
         getAreaDeleteOptions(): NativeHostResult<{ revision: string;
             areas: Array<{ id: string } & NativeAreaDeleteToken & { projectCount: number; canDelete: boolean }> }> {
@@ -165,19 +167,25 @@ export function createAreaDeleteMethods(deps: {
             return readRequest(input) ? fail('STALE_REVISION', 'Area delete outcome is unknown; refresh before deleting again')
                 : fail('INVALID_INPUT', 'A bounded Area delete request is required');
         },
-        prepareAreaDelete(input: NativeAreaDeleteRequest): NativeHostResult<{ prepared: NativePreparedAreaDelete }> {
+        async prepareAreaDelete(input: NativeAreaDeleteRequest): Promise<NativeHostResult<{ prepared: NativePreparedAreaDelete }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const request = readRequest(input);
             if (!request) return fail('INVALID_INPUT', 'A bounded Area delete request is required');
-            const state = useTaskStore.getState();
+            const updateAt = new Date().toISOString();
+            const read = await readAreaDurableData();
+            if (!read.ok) return read;
+            const snapshot = read.value.authority.snapshot;
+            const state = { _allAreas: snapshot.areas ?? [], _allProjects: snapshot.projects,
+                _allSections: snapshot.sections ?? [], _allTasks: snapshot.tasks, settings: snapshot.settings };
+            if ((state.settings.deviceId ?? null) !== (read.value.authority.state.settings.deviceId ?? null))
+                return fail('STALE_REVISION', 'Area device changed while reading saved data');
             const scope = selectAreaDeleteScope(state._allAreas, state._allProjects, state._allTasks, request.areaId);
             if (!scope || scope.area.deletedAt || !same(token(scope.area), request.expected)
                 || (!request.detachProjects && (scope.liveProjects.length !== 0
                     || countLiveProjectsByArea(state._allProjects).has(request.areaId))))
                 return fail('STALE_REVISION', 'Area changed or is in use; refresh before deleting');
             const device = ensureDeviceId(state.settings);
-            const updateAt = new Date().toISOString();
             const prepared: NativePreparedAreaDelete = { version: 1, request, scope,
                 effect: areaDeleteEffect(scope, device.deviceId, updateAt, request.detachProjects),
                 deviceIdBefore: state.settings.deviceId ?? null,
@@ -199,12 +207,13 @@ export function createAreaDeleteMethods(deps: {
             if (!ready.ok) return ready;
             const prepared = readPrepared(input);
             if (!prepared) return fail('INVALID_INPUT', 'Prepared Area delete request or journal does not match');
-            const applied = await useTaskStore.getState().commitPreparedAreaDelete(prepared);
+            const read = await readAreaDurableData(true);
+            if (!read.ok) return read;
+            if (!saves.mayApply(prepared, read.value.adapter))
+                return fail('SAVE_FAILED', 'Area operation has an unresolved persistence failure');
+            const applied = await useTaskStore.getState().commitPreparedAreaDelete(prepared, read.value.authority);
             if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Area delete conflicts with current data');
-            try {
-                if (useTaskStore.getState().persistenceFailure) await useTaskStore.getState().retryPersistence();
-            } catch (error) { return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error)); }
-            const saved = await deps.save();
+            const saved = await saves.finish(prepared, read.value.adapter, applied.outcome === 'replayed', read.value.authority.saveBoundary);
             return saved.ok ? { ok: true, value: prepared.result } : saved;
         },
     };

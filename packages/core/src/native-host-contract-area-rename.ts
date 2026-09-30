@@ -3,6 +3,7 @@ import type { NativeAreaOrderToken } from './native-host-contract-area-order';
 import { detach, exact, iso, record } from './native-host-contract-project-shared';
 import { ensureDeviceId } from './store-helpers';
 import { useTaskStore } from './store';
+import { createAreaSaveGuard, readAreaDurableData } from './native-host-contract-area-durable';
 import { AREA_SYNC_FIELD_SCHEMA, areaToSqliteRow } from './area-sync-schema';
 import { PROJECT_SYNC_FIELD_SCHEMA, projectToSqliteRow } from './project-sync-schema';
 import { TASK_SYNC_FIELD_SCHEMA, taskToSqliteRow } from './task-sync-schema';
@@ -152,6 +153,7 @@ export function createAreaRenameMethods(deps: {
     readiness: () => NativeHostResult<null>;
     save: () => Promise<NativeHostResult<null>>;
 }) {
+    const saves = createAreaSaveGuard(deps.save);
     return {
         probeAreaRenameOutcome(input: NativeAreaRenameRequest): NativeHostResult<NativeAreaRenameResult> {
             const ready = deps.readiness();
@@ -161,12 +163,19 @@ export function createAreaRenameMethods(deps: {
                 : fail('INVALID_INPUT', 'A bounded Area rename request is required');
         },
 
-        prepareAreaRename(input: NativeAreaRenameRequest): NativeHostResult<NativeAreaRenamePreparation> {
+        async prepareAreaRename(input: NativeAreaRenameRequest): Promise<NativeHostResult<NativeAreaRenamePreparation>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const request = readRequest(input);
             if (!request) return fail('INVALID_INPUT', 'A bounded Area rename request is required');
-            const state = useTaskStore.getState();
+            const updateAt = new Date().toISOString();
+            const read = await readAreaDurableData();
+            if (!read.ok) return read;
+            const snapshot = read.value.authority.snapshot;
+            const state = { _allAreas: snapshot.areas ?? [], _allProjects: snapshot.projects,
+                _allSections: snapshot.sections ?? [], _allTasks: snapshot.tasks, settings: snapshot.settings };
+            if ((state.settings.deviceId ?? null) !== (read.value.authority.state.settings.deviceId ?? null))
+                return fail('STALE_REVISION', 'Area device changed while reading saved data');
             const source = state._allAreas.find((row) => row.id === request.areaId);
             if (!source || source.deletedAt || !same(token(source), request.expected))
                 return fail('STALE_REVISION', 'Area changed; refresh before renaming');
@@ -174,7 +183,6 @@ export function createAreaRenameMethods(deps: {
             if (!name || request.manageColor === undefined && name === source.name) return { ok: true, value: { kind: 'noop',
                 result: { id: source.id, areaId: source.id, name: source.name } } };
             const device = ensureDeviceId(state.settings);
-            const updateAt = new Date().toISOString();
             const rows = { areas: state._allAreas, projects: state._allProjects, tasks: state._allTasks };
             const planned = planAreaEditorSave(rows, request.areaId, request.name, request.manageColor,
                 device.deviceId, updateAt);
@@ -208,13 +216,14 @@ export function createAreaRenameMethods(deps: {
             if (!ready.ok) return ready;
             const prepared = readPrepared(input);
             if (!prepared) return fail('INVALID_INPUT', 'Prepared Area rename request or journal does not match');
-            const applied = await useTaskStore.getState().commitPreparedAreaRename(prepared);
+            const read = await readAreaDurableData(true);
+            if (!read.ok) return read;
+            if (!saves.mayApply(prepared, read.value.adapter))
+                return fail('SAVE_FAILED', 'Area operation has an unresolved persistence failure');
+            const applied = await useTaskStore.getState().commitPreparedAreaRename(prepared, read.value.authority);
             if (!applied.success)
                 return fail('STALE_REVISION', applied.error ?? 'Prepared Area rename conflicts with current data');
-            try {
-                if (useTaskStore.getState().persistenceFailure) await useTaskStore.getState().retryPersistence();
-            } catch (error) { return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error)); }
-            const saved = await deps.save();
+            const saved = await saves.finish(prepared, read.value.adapter, applied.outcome === 'replayed', read.value.authority.saveBoundary);
             return saved.ok ? { ok: true, value: prepared.result } : saved;
         },
     };

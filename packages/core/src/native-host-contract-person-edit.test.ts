@@ -68,6 +68,71 @@ const withTimes = (frozen: Awaited<ReturnType<typeof freeze>>, first = updateAt,
 afterEach(async () => { await flushPendingSave(); resetForTests(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('prepared native Person edit', () => {
+    it('projects newly observed durable metadata on renamed Tasks while retaining raw terminal focus on disk', async () => {
+        const legacy = { ...tasks()[1], createdAt: updateAt, updatedAt: updateAt,
+            focusOrder: 9, description: 'Original description' };
+        const env = await open({ tasks: [legacy] });
+        useTaskStore.setState({ _allTasks: [normalizeTaskForLoad(legacy)] });
+        const fresh = { ...legacy, description: 'New durable description',
+            checklist: [{ id: 'new-check', title: 'New durable check', isCompleted: true }], rev: (legacy.rev ?? 0) + 1 };
+        env.setData({ tasks: [fresh] });
+        const frozen = await freeze(env.methods, request(person(), { name: 'Morgan Lee' }));
+        expect(frozen.prepared.scope.tasks).toEqual([fresh]);
+        expect(await env.methods.commitPreparedPersonEdit(frozen)).toMatchObject({ ok: true });
+        const after = frozen.prepared.effect.tasks[0].after;
+        expect(env.data().tasks).toEqual([after]); expect(after.focusOrder).toBe(9);
+        expect(useTaskStore.getState()._allTasks).toEqual([{ ...normalizeTaskForLoad(fresh),
+            assignedTo: after.assignedTo, updatedAt: after.updatedAt, rev: after.rev, revBy: after.revBy }]);
+        expect(useTaskStore.getState()._allTasks[0].focusOrder).toBeUndefined();
+    });
+
+    it.each(['synchronous', 'microtask'])('cannot own a %s subscriber Task intent coalesced with its failed save', async (timing) => {
+        let failing = false;
+        const task: Task = { id: 'unrelated', title: 'Task', description: 'Original', status: 'next', tags: [], contexts: [],
+            createdAt: updateAt, updatedAt: updateAt, rev: 1, revBy: 'person-device' };
+        const env = await open({ tasks: [task] }, () => failing);
+        const frozen = await freeze(env.methods, request(person(), { note: 'Metadata change' }));
+        const before = structuredClone(env.data()); let armed = true;
+        let foreignWrite: Promise<unknown> | undefined;
+        const unsubscribe = useTaskStore.subscribe((current, previous) => {
+            if (!armed || current._allPeople === previous._allPeople) return;
+            armed = false;
+            const edit = () => { foreignWrite = useTaskStore.getState().updateTask('unrelated', { description: 'Foreign coalesced intent' }); };
+            if (timing === 'microtask') queueMicrotask(edit); else edit();
+        });
+        failing = true;
+        try { expect(await env.methods.commitPreparedPersonEdit(frozen)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } }); }
+        finally { unsubscribe(); }
+        expect(await foreignWrite).toMatchObject({ success: true }); expect(armed).toBe(false);
+        const failed = useTaskStore.getState(); const memory = structuredClone(failed._allTasks);
+        const status = getPersistenceStatus();
+        expect(failed.persistenceFailure).not.toBeNull(); expect(memory[0].description).toBe('Foreign coalesced intent');
+        expect(env.data()).toEqual(before); expect(env.saves()).toBe(0);
+        failing = false;
+        for (let retry = 0; retry < 2; retry++) {
+            expect(await env.methods.commitPreparedPersonEdit(frozen)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+            expect(useTaskStore.getState()._allTasks).toEqual(memory);
+            expect(useTaskStore.getState().persistenceFailure).toBe(failed.persistenceFailure);
+            expect(useTaskStore.getState().lastDataChangeAt).toBe(failed.lastDataChangeAt);
+            expect(getPersistenceStatus()).toEqual(status);
+            expect(env.data()).toEqual(before); expect(env.saves()).toBe(0);
+        }
+    }, 15_000);
+
+    it('preserves raw archived Project focus on disk and its normal lifecycle projection in memory', async () => {
+        const project = { id: 'archived-project', title: 'Archived', status: 'archived' as const, isFocused: true,
+            color: '#3b82f6', order: 0, tagIds: [], createdAt: updateAt, updatedAt: updateAt };
+        const env = await open({ projects: [project] });
+        env.setData({ projects: [project], settings: env.matureSettings });
+        await useTaskStore.getState().fetchData({ throwOnError: true }); await flushPendingSave();
+        expect(env.saves()).toBe(0); expect(env.data().projects[0].isFocused).toBe(true);
+        expect(useTaskStore.getState()._allProjects[0].isFocused).toBe(false);
+        const frozen = await freeze(env.methods, request(person(), { note: 'Metadata change' }));
+        expect(await env.methods.commitPreparedPersonEdit(frozen)).toMatchObject({ ok: true });
+        expect(env.data().projects).toEqual([project]);
+        expect(useTaskStore.getState()._allProjects[0].isFocused).toBe(false);
+    });
+
     it('durable-before refuses a foreign failed Task write without losing its memory intent or clearing its failure', async () => {
         let failing = false;
         const task: Task = { id: 'live', title: 'Task', description: 'Original', status: 'next', tags: [], contexts: [],

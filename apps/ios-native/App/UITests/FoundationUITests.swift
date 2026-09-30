@@ -4152,7 +4152,7 @@ final class FoundationUITests: XCTestCase {
     func testManageAreaDeleteFailedSaveKeepsExactRequest() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--native-ui-test-library", "78ae764e-dc61-4bd5-99a6-f9546d509f24"]
+        app.launchArguments = ["--native-ui-test-library", "eebcb659-97f5-48e5-89e6-5117387c5a32"]
         app.launch(); task89OpenManageAreas(app)
         task89Confirm(task89Alert(app, index: 0, title: "Task89 Delete savefailure"))
         let failure = app.staticTexts["manage-area-delete-error"]
@@ -4172,7 +4172,7 @@ final class FoundationUITests: XCTestCase {
     func testManageAreaDeleteColdRecovery() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--native-ui-test-library", "78ae764e-dc61-4bd5-99a6-f9546d509f24"]
+        app.launchArguments = ["--native-ui-test-library", "eebcb659-97f5-48e5-89e6-5117387c5a32"]
         app.launch()
         XCTAssertTrue(app.buttons["manage-back"].waitForExistence(timeout: 30))
         task89OpenManageAreas(app)
@@ -4650,7 +4650,7 @@ final class FoundationUITests: XCTestCase {
     func testManageAreaEditCancelNoOpAndCombined() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--native-ui-test-library", "46613c08-79bf-4006-bd11-2f1c54bcd579"]
+        app.launchArguments = ["--native-ui-test-library", "2ec6cf66-bb09-4fa3-8e39-ff42897ab2cf"]
         app.launch(); task89OpenManageAreas(app, search: true)
         let original = "Task90 Area normal"
         let input = task90OpenEdit(app, index: 0, name: original)
@@ -4693,7 +4693,7 @@ final class FoundationUITests: XCTestCase {
     func testManageAreaEditCollision() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--native-ui-test-library", "40e3e4b8-3b17-43a1-84bf-8ec9fe51a348"]
+        app.launchArguments = ["--native-ui-test-library", "0401e440-5ade-4bad-a5f5-b3072b2a62a8"]
         app.launch(); task89OpenManageAreas(app)
         let initial = "Task90 Area collision"
         let input = task90OpenEdit(app, index: 0, name: initial)
@@ -4785,7 +4785,7 @@ final class FoundationUITests: XCTestCase {
     func testManageAreaEditFailedSaveKeepsExactRequest() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--native-ui-test-library", "e332e9fa-8ba0-465a-a690-87974bff32c5"]
+        app.launchArguments = ["--native-ui-test-library", "92a14b7c-2b8e-4c94-9799-dcf4874b7f4b"]
         app.launch(); task89OpenManageAreas(app)
         let input = task90OpenEdit(app, index: 0, name: "Task90 Area savefailure")
         task90ReplaceName(app, input, with: "Task90 Edited savefailure")
@@ -4806,7 +4806,7 @@ final class FoundationUITests: XCTestCase {
     func testManageAreaEditColdRecovery() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--native-ui-test-library", "e332e9fa-8ba0-465a-a690-87974bff32c5"]
+        app.launchArguments = ["--native-ui-test-library", "92a14b7c-2b8e-4c94-9799-dcf4874b7f4b"]
         app.launch()
         XCTAssertTrue(app.buttons["manage-back"].waitForExistence(timeout: 30))
         task89OpenManageAreas(app)
@@ -11210,7 +11210,7 @@ final class FoundationUITests: XCTestCase {
     func testManageAreaCreateNormal() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--native-ui-test-library", "197ec83f-be55-4f59-8ca9-f18cfeaa4bce"]
+        app.launchArguments = ["--native-ui-test-library", "d9df4646-04ca-430c-acb0-31c051e5acec"]
         app.launch(); task87OpenAreas(app, search: true)
         task86OpenColorEditor(app); task86SelectGreen(app)
         boardTap(app, "manage-unassigned-color-cancel")
@@ -11308,7 +11308,7 @@ final class FoundationUITests: XCTestCase {
     func testManageAreaCreateSaveFailure() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--native-ui-test-library", "05a9a2a2-e535-481d-ba7b-a570c507a683"]
+        app.launchArguments = ["--native-ui-test-library", "7c52e350-6dec-4e3a-95f6-914cb48e5e83"]
         app.launch(); task87OpenAreas(app)
         task87Save(app, name: "Native Manage Retry 87")
         let failure = app.staticTexts["manage-area-create-error"]
@@ -11329,7 +11329,7 @@ final class FoundationUITests: XCTestCase {
     func testManageAreaCreateColdRecovery() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--native-ui-test-library", "05a9a2a2-e535-481d-ba7b-a570c507a683"]
+        app.launchArguments = ["--native-ui-test-library", "7c52e350-6dec-4e3a-95f6-914cb48e5e83"]
         app.launch(); task87OpenAreas(app)
         XCTAssertTrue(app.staticTexts["Native Manage Retry 87"].waitForExistence(timeout: 20))
         XCTAssertFalse(app.buttons["manage-area-create-save"].exists)

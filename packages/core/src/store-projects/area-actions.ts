@@ -7,7 +7,11 @@ import { logInfo, logWarn } from '../logger';
 import { clearDerivedCache } from '../store-settings';
 import { generateUUID as uuidv4 } from '../uuid';
 import { taskEditValuesEqual } from '../json-value-equality';
-import type { PreparedAreaColor, PreparedAreaCreate, PreparedAreaDelete, PreparedAreaOrder, PreparedTaskEditResult } from '../store-types';
+import { normalizeTaskForLoad } from '../task-status';
+import { normalizeProjectLifecycleFields } from '../project-status';
+import { getPersistenceStatus } from '../store';
+import type { AppData } from '../types';
+import type { PreparedAreaAuthority, TaskStore, PreparedAreaColor, PreparedAreaCreate, PreparedAreaDelete, PreparedAreaOrder, PreparedTaskEditResult } from '../store-types';
 import type { Area, AreaActions, Project, ProjectActionContext, Section, Task } from './shared';
 import { actionFail, actionOk, mutateEntities } from './shared';
 
@@ -190,10 +194,55 @@ export function areaAdditionEffect(scope: PreparedAreaCreate['scope'], planned: 
 
 export { sameAreaAdditionRow } from '../area-rename';
 
+const areaAuthorityMatches = (state: TaskStore, authority: PreparedAreaAuthority) => {
+    const before = authority.state;
+    return state._allTasks === before._allTasks && state._allAreas === before._allAreas
+        && state._allProjects === before._allProjects && state._allSections === before._allSections
+        && state._allPeople === before._allPeople && state.settings === before.settings
+        && state.lastDataChangeAt === before.lastDataChangeAt;
+};
+const areaDurableState = (state: TaskStore, data: AppData): TaskStore => ({ ...state,
+    _allTasks: data.tasks, _allProjects: data.projects, _allSections: data.sections ?? [],
+    _allAreas: data.areas ?? [], _allPeople: data.people ?? [], settings: data.settings });
+
+/** Apply only the Area policy changes to the current Task display projection. */
+const areaMemoryTasks = (memory: Task[], durable: Task[], effects: Array<{ before: Task; after: Task }>): Task[] => {
+    const existing = new Map(memory.map((row) => [row.id, row]));
+    const changes = new Map(effects.map((pair) => [pair.before.id, pair]));
+    const fields = ['areaId', 'deletedAt', 'purgedAt', 'sectionId', 'updatedAt', 'rev', 'revBy'] as const;
+    return durable.map((row) => {
+        const current = existing.get(row.id);
+        const pair = changes.get(row.id);
+        if (!current) return normalizeTaskForLoad(row);
+        if (!pair) return sameAreaAdditionRow.task(current, row) ? current : normalizeTaskForLoad(row);
+        const freshBefore = normalizeTaskForLoad(pair.before);
+        const projected = { ...(sameAreaAdditionRow.task(current, freshBefore) ? current : freshBefore) };
+        for (const field of fields) {
+            if (taskEditValuesEqual(pair.before[field], pair.after[field])) continue;
+            if (pair.after[field] === undefined) delete projected[field];
+            else Object.assign(projected, { [field]: pair.after[field] });
+        }
+        return projected;
+    });
+};
+
 export const createAreaActions = ({
     set,
     debouncedSave,
-}: ProjectActionContext): AreaActions => ({
+}: ProjectActionContext): AreaActions => {
+    const persistPreparedArea = (memory: TaskStore, durable: AppData, next: AppData,
+        effects: Array<{ before: Task; after: Task }>, authority: PreparedAreaAuthority): Partial<TaskStore> => {
+        persist(set, debouncedSave, areaDurableState(memory, durable), next);
+        const taskReference = areaMemoryTasks(memory._allTasks, next.tasks, effects);
+        const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+        // Capture the intended write before Zustand notifies synchronous or microtask subscribers.
+        authority.saveBoundary = { taskReference, lastDataChangeAt,
+            generation: getPersistenceStatus().generation, failure: memory.persistenceFailure };
+        return { _allAreas: next.areas ?? [], _allProjects: next.projects.map(normalizeProjectLifecycleFields), _allSections: next.sections ?? [],
+            _allPeople: next.people ?? [], _allTasks: taskReference,
+            settings: next.settings, lastDataChangeAt };
+    };
+    return ({
     addArea: async (name: string, initialProps?: Partial<Area>) => {
         if (typeof name !== 'string' || !name.trim()) return null;
         const changeAt = Date.now();
@@ -228,9 +277,12 @@ export const createAreaActions = ({
         return area;
     },
 
-    commitPreparedAreaCreate: async (input): Promise<PreparedTaskEditResult> => {
+    commitPreparedAreaCreate: async (input, authority): Promise<PreparedTaskEditResult> => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Area conflicts with current data' };
-        set((state) => {
+        set((memory) => {
+            if (!areaAuthorityMatches(memory, authority)) return memory;
+            const durable = authority.snapshot;
+            const state = areaDurableState(memory, durable);
             const rows = { areas: state._allAreas, projects: state._allProjects,
                 sections: state._allSections, tasks: state._allTasks };
             const { effect, request } = input;
@@ -250,30 +302,24 @@ export const createAreaActions = ({
                     return current && sameAreaAdditionRow.task(current, row);
                 });
             // A complete persisted effect is the receipt, even after mutable inputs changed.
-            if (after) { result = { success: true, id: target!.id, outcome: 'replayed' }; return state; }
+            if (after) { result = { success: true, id: target!.id, outcome: 'replayed' }; return memory; }
             if ((input.kind === 'fresh' && target) || (state.settings.deviceId ?? null) !== input.deviceIdBefore
-                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)) return state;
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)) return memory;
             const orderMax = rows.areas.reduce((max, area) => Math.max(max, Number.isFinite(area.order) ? area.order : -1), -1);
-            if (orderMax !== input.orderMax) return state;
+            if (orderMax !== input.orderMax) return memory;
             const selected = input.kind === 'restored' ? rows.areas.find((area) => area.id === request.expectedAreaId) ?? null : null;
             const scope = selectAreaAdditionScope(rows, selected);
-            if (!taskEditValuesEqual(scope, input.scope)) return state;
+            if (!taskEditValuesEqual(scope, input.scope)) return memory;
             const planned = planAreaAddition(rows, request.name, { color: request.color }, request.requestId,
                 input.deviceIdBefore ?? input.deviceIdToInitialize!, input.restoreAt, input.updateAt);
             if (!planned || planned.kind !== input.kind || planned.area.id !== request.expectedAreaId
-                || !taskEditValuesEqual(areaAdditionEffect(scope, planned.rows, request.expectedAreaId), effect)) return state;
+                || !taskEditValuesEqual(areaAdditionEffect(scope, planned.rows, request.expectedAreaId), effect)) return memory;
             const settings = input.deviceIdToInitialize
                 ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
             if (planned.kind === 'restored') clearDerivedCache();
-            persist(set, debouncedSave, state, { areas: planned.rows.areas,
-                ...(planned.kind === 'restored' ? { projects: planned.rows.projects,
-                    sections: planned.rows.sections, tasks: planned.rows.tasks } : {}),
-                ...(settings !== state.settings ? { settings } : {}) });
             result = { success: true, id: planned.area.id, outcome: 'applied' };
-            return { _allAreas: planned.rows.areas,
-                ...(planned.kind === 'restored' ? { _allProjects: planned.rows.projects,
-                    _allSections: planned.rows.sections, _allTasks: planned.rows.tasks } : {}),
-                settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+            return persistPreparedArea(memory, durable, { ...durable, areas: planned.rows.areas,
+                projects: planned.rows.projects, sections: planned.rows.sections, tasks: planned.rows.tasks, settings }, effect.tasks, authority);
         });
         return result;
     },
@@ -321,10 +367,13 @@ export const createAreaActions = ({
         return result;
     },
 
-    commitPreparedAreaRename: async (input): Promise<PreparedTaskEditResult> => {
+    commitPreparedAreaRename: async (input, authority): Promise<PreparedTaskEditResult> => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
             error: 'Prepared Area rename conflicts with current data' };
-        set((state) => {
+        set((memory) => {
+            if (!areaAuthorityMatches(memory, authority)) return memory;
+            const durable = authority.snapshot;
+            const state = areaDurableState(memory, durable);
             const { effect, request, scope } = input;
             const areasById = new Map(state._allAreas.map((row) => [row.id, row]));
             const projectsById = new Map(state._allProjects.map((row) => [row.id, row]));
@@ -345,40 +394,34 @@ export const createAreaActions = ({
                 });
             if (completeAfter) {
                 result = { success: true, id: request.areaId, outcome: 'replayed' };
-                return state;
+                return memory;
             }
             if ((state.settings.deviceId ?? null) !== input.deviceIdBefore
                 || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null))
-                return state;
+                return memory;
             const liveAreas = state._allAreas.filter((row) => !row.deletedAt);
             if (liveAreas.length !== scope.areas.length || liveAreas.some((row, index) =>
-                !sameAreaAdditionRow.area(row, scope.areas[index]))) return state;
+                !sameAreaAdditionRow.area(row, scope.areas[index]))) return memory;
             const planned = planAreaEditorSave({ areas: state._allAreas, projects: state._allProjects,
                 tasks: state._allTasks }, request.areaId, request.name, request.manageColor,
                 input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
-            if (!planned || !taskEditValuesEqual(planned.result, input.result)) return state;
+            if (!planned || !taskEditValuesEqual(planned.result, input.result)) return memory;
             const currentScope = selectAreaRenameScope({ areas: state._allAreas,
                 projects: state._allProjects, tasks: state._allTasks }, request.areaId, planned.result.areaId);
             const sameRows = <T>(current: T[], frozen: T[], same: (left: T, right: T) => boolean) =>
                 current.length === frozen.length && current.every((row, index) => same(row, frozen[index]));
             if (!sameRows(currentScope.projects, scope.projects, sameAreaAdditionRow.project)
-                || !sameRows(currentScope.tasks, scope.tasks, sameAreaAdditionRow.task)) return state;
+                || !sameRows(currentScope.tasks, scope.tasks, sameAreaAdditionRow.task)) return memory;
             const replanned = areaRenameEffect(currentScope, request.areaId, request.name,
                 input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt, request.manageColor);
             if (!replanned || !taskEditValuesEqual(replanned.effect, effect)
-                || !taskEditValuesEqual(replanned.result, input.result)) return state;
+                || !taskEditValuesEqual(replanned.result, input.result)) return memory;
             const settings = input.deviceIdToInitialize
                 ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
             if (planned.merged) clearDerivedCache();
-            persist(set, debouncedSave, state, { areas: planned.areas,
-                ...(effect.projects.length ? { projects: planned.projects } : {}),
-                ...(effect.tasks.length ? { tasks: planned.tasks } : {}),
-                ...(settings !== state.settings ? { settings } : {}) });
             result = { success: true, id: request.areaId, outcome: 'applied' };
-            return { _allAreas: planned.areas,
-                ...(effect.projects.length ? { _allProjects: planned.projects } : {}),
-                ...(effect.tasks.length ? { _allTasks: planned.tasks } : {}),
-                settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+            return persistPreparedArea(memory, durable, { ...durable, areas: planned.areas,
+                projects: planned.projects, tasks: planned.tasks, settings }, effect.tasks, authority);
         });
         return result;
     },
@@ -556,10 +599,13 @@ export const createAreaActions = ({
         return actionOk();
     },
 
-    commitPreparedAreaDelete: async (input): Promise<PreparedTaskEditResult> => {
+    commitPreparedAreaDelete: async (input, authority): Promise<PreparedTaskEditResult> => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
             error: 'Prepared Area delete conflicts with current data' };
-        set((state) => {
+        set((memory) => {
+            if (!areaAuthorityMatches(memory, authority)) return memory;
+            const durable = authority.snapshot;
+            const state = areaDurableState(memory, durable);
             const { scope, effect, request } = input;
             const target = state._allAreas.find((row) => row.id === request.areaId);
             const currentTasksById = new Map(state._allTasks.map((task) => [task.id, task]));
@@ -577,28 +623,28 @@ export const createAreaActions = ({
                 });
             if (completeAfter) {
                 result = { success: true, id: request.areaId, outcome: 'replayed' };
-                return state;
+                return memory;
             }
             if (!target || target.deletedAt || (state.settings.deviceId ?? null) !== input.deviceIdBefore
                 || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
                 || !sameAreaAdditionRow.area(target, scope.area)
-                || (!request.detachProjects && countLiveProjectsByArea(state._allProjects).has(request.areaId))) return state;
+                || (!request.detachProjects && countLiveProjectsByArea(state._allProjects).has(request.areaId))) return memory;
             const linkedProjects = state._allProjects.filter((project) =>
                 project.areaId === request.areaId && !project.deletedAt);
             const beforeProjects = new Map(scope.liveProjects.map((project) => [project.id, project]));
             if (linkedProjects.length !== scope.liveProjects.length || linkedProjects.some((project) => {
                 const before = beforeProjects.get(project.id);
                 return !before || !sameAreaAdditionRow.project(project, before);
-            })) return state;
+            })) return memory;
             const linkedTasks = state._allTasks.filter((task) => task.areaId === request.areaId);
             const beforeTasks = new Map(scope.tasks.map((task) => [task.id, task]));
             if (linkedTasks.length !== scope.tasks.length || linkedTasks.some((task) => {
                 const before = beforeTasks.get(task.id);
                 return !before || !sameAreaAdditionRow.task(task, before);
-            })) return state;
+            })) return memory;
             const planned = areaDeleteEffect({ area: target, tasks: linkedTasks, liveProjects: linkedProjects },
                 input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt, request.detachProjects);
-            if (!taskEditValuesEqual(planned, effect)) return state;
+            if (!taskEditValuesEqual(planned, effect)) return memory;
             const nextAreas = state._allAreas.map((row) => row.id === request.areaId ? planned.area.after : row)
                 .sort((left, right) => left.order - right.order);
             const changedTasks = new Map(planned.tasks.map(({ after }) => [after.id, after]));
@@ -608,13 +654,9 @@ export const createAreaActions = ({
             const settings = input.deviceIdToInitialize
                 ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
             clearDerivedCache();
-            persist(set, debouncedSave, state, { areas: nextAreas, tasks: nextTasks,
-                ...(request.detachProjects ? { projects: nextProjects } : {}),
-                ...(settings !== state.settings ? { settings } : {}) });
             result = { success: true, id: request.areaId, outcome: 'applied' };
-            return { _allAreas: nextAreas, _allTasks: nextTasks,
-                ...(request.detachProjects ? { _allProjects: nextProjects } : {}), settings,
-                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+            return persistPreparedArea(memory, durable, { ...durable, areas: nextAreas,
+                projects: nextProjects, tasks: nextTasks, settings }, effect.tasks, authority);
         });
         return result;
     },
@@ -799,3 +841,4 @@ export const createAreaActions = ({
         });
     },
 });
+};

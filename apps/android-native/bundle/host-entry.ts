@@ -832,7 +832,7 @@ globalThis.MindwtrHost = {
     areaCreatePrepare(json: string): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(contract.prepareAreaCreate(JSON.parse(json)));
+            return unwrap(await contract.prepareAreaCreate(JSON.parse(json)));
         });
     },
     areaCreateValidate(json: string): string {
@@ -945,7 +945,7 @@ globalThis.MindwtrHost = {
     areaRenamePrepare(json: string): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(contract.prepareAreaRename(JSON.parse(json)));
+            return unwrap(await contract.prepareAreaRename(JSON.parse(json)));
         });
     },
     areaRenameValidate(json: string): string {
@@ -1010,7 +1010,7 @@ globalThis.MindwtrHost = {
     areaDeletePrepare(json: string): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(contract.prepareAreaDelete(JSON.parse(json)));
+            return unwrap(await contract.prepareAreaDelete(JSON.parse(json)));
         });
     },
     areaDeleteValidate(json: string): string {

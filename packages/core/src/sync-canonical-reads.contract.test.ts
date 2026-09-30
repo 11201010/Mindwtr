@@ -825,6 +825,7 @@ describe('canonical local reads contract', () => {
             mutate: (control: MutationControl) => Promise<unknown>,
         ): Promise<{ storeFields: string[]; readFields: string[] }> => {
             let saved: AppData | null = null;
+            let durable = structuredClone(settled);
             let verifyPersisted: ((written: AppData) => void) | null = null;
             resetForTests();
             // resetForTests only clears module timers (store.ts); the zustand
@@ -838,9 +839,10 @@ describe('canonical local reads contract', () => {
                 lastDataChangeAt: 0,
             } as never);
             setStorageAdapter({
-                getData: async () => structuredClone(settled),
+                getData: async () => structuredClone(durable),
                 saveData: async (data: AppData) => {
                     saved = structuredClone(data);
+                    durable = structuredClone(data);
                 },
             });
             await (useTaskStore.getState() as unknown as {
@@ -933,7 +935,7 @@ describe('canonical local reads contract', () => {
                 const request = { requestId: 'a41285b2-c665-4a18-9764-38e321191cde',
                     name: 'Contract prepared area', color: '#3b82f6',
                     expectedAreaId: 'a41285b2-c665-4a18-9764-38e321191cde' };
-                const planned = nativeValue(host.prepareAreaCreate(request));
+                const planned = nativeValue(await host.prepareAreaCreate(request));
                 expect(planned.kind).toBe('prepared');
                 if (planned.kind !== 'prepared') return;
                 control.expectPersisted((written) => {
@@ -974,7 +976,7 @@ describe('canonical local reads contract', () => {
                 if (!selected) return;
                 const request = { requestId: '2bf1993a-20c8-4eae-b747-51db55db67cf',
                     areaId, name: 'Contract prepared Area rename', expected: selected };
-                const planned = nativeValue(host.prepareAreaRename(request));
+                const planned = nativeValue(await host.prepareAreaRename(request));
                 expect(planned.kind).toBe('prepared');
                 if (planned.kind !== 'prepared') return;
                 control.expectPersisted((written) => {
@@ -1023,7 +1025,7 @@ describe('canonical local reads contract', () => {
                 const { id, projectCount: _projectCount, canDelete: _canDelete, ...expected } = selected;
                 const request = { requestId: '81ef3845-e5d8-4966-9a4a-95bb1096c83f',
                     areaId: id, expected };
-                const planned = nativeValue(host.prepareAreaDelete(request));
+                const planned = nativeValue(await host.prepareAreaDelete(request));
                 control.expectPersisted((written) => {
                     expect(written.areas.find((entry) => entry.id === id))
                         .toEqual(planned.prepared.effect.area.after);
@@ -1671,7 +1673,7 @@ describe('canonical local reads contract', () => {
             control.resetBaseline();
             const request = { requestId: '1a7fe74c-2403-414a-8160-9dc33458b76f',
                 name: settled.areas[0].name, color: '#ef4444', expectedAreaId: areaId };
-            const planned = nativeValue(host.prepareAreaCreate(request));
+            const planned = nativeValue(await host.prepareAreaCreate(request));
             expect(planned.kind).toBe('prepared');
             if (planned.kind !== 'prepared') return;
             expect(planned.prepared.kind).toBe('restored');

@@ -27,20 +27,35 @@ const task = (id: string, overrides: Partial<Task> = {}): Task => ({
     ...TASK_SYNC_SCHEMA_FIXTURE, id, title: id, createdAt: now, updatedAt: now, ...overrides,
 });
 
-async function open(initial: Partial<AppData> = {}, fail?: () => boolean) {
+// These mutations model a saved sync/other-writer change, rather than a UI-only projection.
+let updateSavedData: (() => void) | undefined;
+const setSavedState: typeof useTaskStore.setState = (...args) => {
+    useTaskStore.setState(...args); updateSavedData?.();
+};
+
+async function open(initial: Partial<AppData> = {}, fail?: () => boolean, recoveryLoad = false) {
     await flushPendingSave();
     resetForTests();
     let data: AppData = { tasks: [], projects: [], sections: [], areas: [], people: [],
         settings: { deviceId: 'area-device' }, ...initial };
     let saves = 0;
+    let bootstrapping = true;
     setStorageAdapter({ getData: async () => data, saveData: async (next) => {
-        if (fail?.()) throw new Error('disk unavailable');
+        if (!bootstrapping && fail?.()) throw new Error('disk unavailable');
         data = structuredClone(next);
         saves++;
     } });
     useTaskStore.setState({ _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
         settings: {}, error: null, persistenceFailure: null, isLoading: false, lastDataChangeAt: 0 } as never);
-    await useTaskStore.getState().fetchData({ throwOnError: true });
+    await useTaskStore.getState().fetchData({ throwOnError: true, recoveryLoad });
+    await flushPendingSave();
+    bootstrapping = false; saves = 0;
+    updateSavedData = () => {
+        const state = useTaskStore.getState();
+        data = { ...data, tasks: structuredClone(state._allTasks), projects: structuredClone(state._allProjects),
+            sections: structuredClone(state._allSections), areas: structuredClone(state._allAreas),
+            people: structuredClone(state._allPeople), settings: structuredClone(state.settings) };
+    };
     const methods = createAreaCreateMethods({
         readiness: () => ({ ok: true, value: null }),
         save: async () => {
@@ -66,7 +81,7 @@ describe('prepared native Area create', () => {
         expect(options.value.colors).not.toContain('#94a3b8');
 
         const input = request({ color: '#94a3b8' });
-        const plan = methods.prepareAreaCreate(input);
+        const plan = await methods.prepareAreaCreate(input);
         expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared', prepared: {
             kind: 'fresh', effect: { area: { after: { id: requestId, color: '#94a3b8' } } },
         } } });
@@ -91,7 +106,7 @@ describe('prepared native Area create', () => {
         const child = project('linked', { areaId: old.id, deletedAt: now, rev: 2 });
         const { methods, data } = await open({ areas: [old], projects: [child] });
         const input = request({ color: '#94a3b8', expectedAreaId: old.id });
-        const plan = methods.prepareAreaCreate(input);
+        const plan = await methods.prepareAreaCreate(input);
         if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
         expect(plan.value.prepared.kind).toBe('restored');
         expect(plan.value.prepared.effect.area.after).toMatchObject({ id: old.id, color: '#94a3b8' });
@@ -112,7 +127,7 @@ describe('prepared native Area create', () => {
         expect(replay.data()).toEqual(saved);
 
         const custom = request({ color: '#123456', expectedAreaId: old.id });
-        expect(replay.methods.prepareAreaCreate(custom)).toMatchObject({ ok: false,
+        expect(await replay.methods.prepareAreaCreate(custom)).toMatchObject({ ok: false,
             error: { code: 'INVALID_INPUT' } });
         expect(replay.methods.probeAreaCreateOutcome(custom)).toMatchObject({ ok: false,
             error: { code: 'INVALID_INPUT' } });
@@ -131,7 +146,7 @@ describe('prepared native Area create', () => {
         expect(methods.resolveAreaCreateName({ requestId, name: ' Work ' })).toMatchObject({
             ok: true, value: { expectedAreaId: requestId, taken: false },
         });
-        const prepared = methods.prepareAreaCreate(request({ name: ' Work ' }));
+        const prepared = await methods.prepareAreaCreate(request({ name: ' Work ' }));
         expect(prepared).toMatchObject({ ok: true, value: { kind: 'prepared', prepared: {
             kind: 'fresh', effect: { area: { after: { id: requestId, name: 'Work', order: 2.5, rev: 1 } } },
         } } });
@@ -153,9 +168,9 @@ describe('prepared native Area create', () => {
         });
         const input = request({ name: ' work ', expectedAreaId: existing.id });
         const before = saves();
-        expect(methods.prepareAreaCreate(input)).toEqual({ ok: true, value: { kind: 'existing',
+        expect(await methods.prepareAreaCreate(input)).toEqual({ ok: true, value: { kind: 'existing',
             result: { id: existing.id, created: false } } });
-        useTaskStore.setState({ _allAreas: [{ ...existing, name: 'WORK', color: '#ef4444', rev: 4 }] });
+        setSavedState({ _allAreas: [{ ...existing, name: 'WORK', color: '#ef4444', rev: 4 }] });
         expect(methods.probeAreaCreateOutcome(input)).toEqual({ ok: true,
             value: { id: existing.id, created: false } });
         expect(saves()).toBe(before);
@@ -175,7 +190,7 @@ describe('prepared native Area create', () => {
         const { methods, data } = await open({ areas: [old], projects: [restoredProject, independentlyDeleted, unrelated],
             sections: [restoredSection], tasks: [direct, linked] });
         const input = request({ name: ' work ', expectedAreaId: old.id, color: '#ef4444' });
-        const plan = methods.prepareAreaCreate(input);
+        const plan = await methods.prepareAreaCreate(input);
         if (!plan.ok || plan.value.kind !== 'prepared') return;
         expect(plan.value.prepared.kind).toBe('restored');
         expect(plan.value.prepared.effect.area.after).toMatchObject({ id: old.id,
@@ -197,7 +212,7 @@ describe('prepared native Area create', () => {
         const merged = mergeAppData(data(), data(), { nowIso: now });
         expect(mergeAppData(merged, data(), { nowIso: now })).toEqual(merged);
         const savedSnapshot = structuredClone(data());
-        const reloaded = await open(savedSnapshot);
+        const reloaded = await open(savedSnapshot, undefined, true);
         expect(reloaded.data()).toEqual(savedSnapshot);
         expect(reloaded.data().areas[0].id).toBe(old.id);
         expect(useTaskStore.getState()._allTasks.filter((row) => row.id === direct.id || row.id === linked.id)
@@ -209,7 +224,7 @@ describe('prepared native Area create', () => {
         const old = area('area-work', 'Work', { deletedAt, rev: 3, color: '#22c55e' });
         const child = project('linked', { areaId: old.id, deletedAt, rev: 4 });
         const { methods } = await open({ areas: [old], projects: [child] });
-        const plan = methods.prepareAreaCreate(request({ expectedAreaId: old.id, name: ' work ', color: '#ef4444' }));
+        const plan = await methods.prepareAreaCreate(request({ expectedAreaId: old.id, name: ' work ', color: '#ef4444' }));
         if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
         const rn = await useTaskStore.getState().addArea(' work ', { color: '#ef4444' });
         expect(rn).toMatchObject({ id: plan.value.prepared.effect.area.after.id,
@@ -227,16 +242,16 @@ describe('prepared native Area create', () => {
         const child = project('linked', { areaId: old.id, deletedAt, rev: 2 });
         const { methods, saves } = await open({ areas: [old], projects: [child] });
         const input = request({ expectedAreaId: old.id });
-        const plan = methods.prepareAreaCreate(input);
+        const plan = await methods.prepareAreaCreate(input);
         if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
         const frozen = { request: input, prepared: plan.value.prepared };
         expect(await methods.commitPreparedAreaCreate(frozen)).toMatchObject({ ok: true });
         const count = saves();
-        useTaskStore.setState((state) => ({ settings: { ...state.settings, deviceId: 'changed-device' },
+        setSavedState((state) => ({ settings: { ...state.settings, deviceId: 'changed-device' },
             _allAreas: [...state._allAreas, area('new-high-order', 'Other', { order: 42 })] }));
         expect(await methods.commitPreparedAreaCreate(frozen)).toMatchObject({ ok: true });
         expect(saves()).toBe(count);
-        useTaskStore.setState((state) => ({ _allProjects: state._allProjects.map((row) => row.id === child.id
+        setSavedState((state) => ({ _allProjects: state._allProjects.map((row) => row.id === child.id
             ? { ...row, color: '#000000' } : row) }));
         expect(await methods.commitPreparedAreaCreate(frozen)).toMatchObject({ ok: false,
             error: { code: 'STALE_REVISION' } });
@@ -249,9 +264,9 @@ describe('prepared native Area create', () => {
         const child = project('linked', { areaId: old.id, deletedAt });
         const { methods, data } = await open({ areas: [old], projects: [child] });
         const input = request({ expectedAreaId: old.id });
-        const plan = methods.prepareAreaCreate(input);
+        const plan = await methods.prepareAreaCreate(input);
         if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
-        useTaskStore.setState((state) => ({ _allProjects: state._allProjects.map((row) =>
+        setSavedState((state) => ({ _allProjects: state._allProjects.map((row) =>
             Object.fromEntries(Object.entries(row).reverse()) as Project) }));
         expect(await methods.commitPreparedAreaCreate({ request: input, prepared: plan.value.prepared }))
             .toMatchObject({ ok: true, value: { id: old.id, created: true } });
@@ -272,7 +287,7 @@ describe('prepared native Area create', () => {
         const attachmentText = projectToSqliteRow(child)[attachmentIndex];
         const { methods, data, saves } = await open({ areas: [old], projects: [child] });
         const input = request({ expectedAreaId: old.id });
-        const plan = methods.prepareAreaCreate(input);
+        const plan = await methods.prepareAreaCreate(input);
         if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
         const sortKeys = (value: unknown): unknown => Array.isArray(value) ? value.map(sortKeys)
             : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value)
@@ -297,9 +312,9 @@ describe('prepared native Area create', () => {
 
     it('requires the initialized device ID in the full after-state receipt', async () => {
         const { methods, saves } = await open();
-        useTaskStore.setState((state) => ({ settings: { ...state.settings, deviceId: undefined } }));
+        setSavedState((state) => ({ settings: { ...state.settings, deviceId: undefined } }));
         const input = request();
-        const plan = methods.prepareAreaCreate(input);
+        const plan = await methods.prepareAreaCreate(input);
         if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
         const frozen = { request: input, prepared: plan.value.prepared };
         expect(plan.value.prepared.deviceIdBefore).toBeNull();
@@ -308,12 +323,12 @@ describe('prepared native Area create', () => {
         expect(await methods.commitPreparedAreaCreate(frozen)).toMatchObject({ ok: true });
         const count = saves();
         for (const deviceId of [undefined, 'different-device']) {
-            useTaskStore.setState((state) => ({ settings: { ...state.settings, deviceId } }));
+            setSavedState((state) => ({ settings: { ...state.settings, deviceId } }));
             expect(await methods.commitPreparedAreaCreate(frozen)).toMatchObject({ ok: false,
                 error: { code: 'STALE_REVISION' } });
             expect(saves()).toBe(count);
         }
-        useTaskStore.setState((state) => ({ settings: { ...state.settings, deviceId: initialized! } }));
+        setSavedState((state) => ({ settings: { ...state.settings, deviceId: initialized! } }));
         expect(await methods.commitPreparedAreaCreate(frozen)).toMatchObject({ ok: true });
         expect(saves()).toBe(count);
     });
@@ -323,14 +338,14 @@ describe('prepared native Area create', () => {
         const old = area('area-work', 'Work', { deletedAt });
         const { methods, saves } = await open({ areas: [old] });
         const input = request({ expectedAreaId: old.id });
-        const plan = methods.prepareAreaCreate(input);
+        const plan = await methods.prepareAreaCreate(input);
         if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
         const before = saves();
-        useTaskStore.setState({ _allProjects: [project('new-child', { areaId: old.id, deletedAt })] });
+        setSavedState({ _allProjects: [project('new-child', { areaId: old.id, deletedAt })] });
         expect(await methods.commitPreparedAreaCreate({ request: input, prepared: plan.value.prepared }))
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         expect(saves()).toBe(before);
-        useTaskStore.setState({ _allProjects: [], _allAreas: [{ ...old, name: 'Renamed' }] });
+        setSavedState({ _allProjects: [], _allAreas: [{ ...old, name: 'Renamed' }] });
         expect(await methods.commitPreparedAreaCreate({ request: input, prepared: plan.value.prepared }))
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         expect(saves()).toBe(before);
@@ -343,16 +358,16 @@ describe('prepared native Area create', () => {
             const resolved = methods.resolveAreaCreateName({ requestId, name: input.name });
             expect(resolved).toMatchObject({ ok: true, value: { expectedAreaId: requestId } });
             if (change === 'name') {
-                useTaskStore.setState({ _allAreas: [area('other-id', 'Work', { deletedAt: now })] });
-                expect(methods.prepareAreaCreate(input)).toMatchObject({ ok: false,
+                setSavedState({ _allAreas: [area('other-id', 'Work', { deletedAt: now })] });
+                expect(await methods.prepareAreaCreate(input)).toMatchObject({ ok: false,
                     error: { code: 'STALE_REVISION' } });
                 continue;
             }
-            const plan = methods.prepareAreaCreate(input);
+            const plan = await methods.prepareAreaCreate(input);
             if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
-            if (change === 'order') useTaskStore.setState({ _allAreas: [area('new-order', 'Other', { order: 2.5 })] });
-            if (change === 'device') useTaskStore.setState((state) => ({ settings: { ...state.settings, deviceId: 'another' } }));
-            if (change === 'id') useTaskStore.setState({ _allAreas: [area(requestId, 'Other')] });
+            if (change === 'order') setSavedState({ _allAreas: [area('new-order', 'Other', { order: 2.5 })] });
+            if (change === 'device') setSavedState((state) => ({ settings: { ...state.settings, deviceId: 'another' } }));
+            if (change === 'id') setSavedState({ _allAreas: [area(requestId, 'Other')] });
             const before = saves();
             expect(await methods.commitPreparedAreaCreate({ request: input, prepared: plan.value.prepared }))
                 .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
@@ -369,7 +384,7 @@ describe('prepared native Area create', () => {
             [{ ...old, deletedAt: now }], [], [{ ...old, name: 'Renamed' }],
             [{ ...old, name: 'Renamed' }, area('other', 'Work')],
         ]) {
-            useTaskStore.setState({ _allAreas: areas });
+            setSavedState({ _allAreas: areas });
             expect(methods.probeAreaCreateOutcome(input)).toMatchObject({ ok: false,
                 error: { code: 'STALE_REVISION' } });
         }
@@ -383,7 +398,7 @@ describe('prepared native Area create', () => {
         let failSave = false;
         const { methods, data } = await open({ areas: [old], projects: [child] }, () => failSave);
         const input = request({ expectedAreaId: old.id });
-        const plan = methods.prepareAreaCreate(input);
+        const plan = await methods.prepareAreaCreate(input);
         if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
         const frozen = { request: input, prepared: plan.value.prepared };
         const before = structuredClone(data());
@@ -408,7 +423,7 @@ describe('prepared native Area create', () => {
         const child = project('linked', { areaId: old.id, deletedAt });
         const { methods, saves } = await open({ areas: [old], projects: [child] });
         const input = request({ expectedAreaId: old.id });
-        const plan = methods.prepareAreaCreate(input);
+        const plan = await methods.prepareAreaCreate(input);
         if (!plan.ok || plan.value.kind !== 'prepared') throw new Error('prepare failed');
         const before = saves();
         const corruptions = [
@@ -439,7 +454,7 @@ describe('prepared native Area create', () => {
         const { methods, saves } = await open({ areas: [old], projects: children });
         const input = request({ expectedAreaId: old.id });
         const before = saves();
-        expect(methods.prepareAreaCreate(input)).toMatchObject({ ok: false,
+        expect(await methods.prepareAreaCreate(input)).toMatchObject({ ok: false,
             error: { code: 'INVALID_INPUT' } });
         expect(saves()).toBe(before);
         expect(useTaskStore.getState()._allAreas[0].deletedAt).toBe(deletedAt);

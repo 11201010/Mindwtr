@@ -13019,6 +13019,171 @@ final class CoreHostTests: XCTestCase {
         }
     }
 
+    private enum AreaDurableCase: String {
+        case rename, merge, delete, restore, fresh
+        var method: String { self == .delete ? "manageAreaDelete" : [.restore, .fresh].contains(self) ? "manageAreaCreate" : "manageAreaEdit" }
+        var diagnostic: String { self == .delete ? "manageAreaDeleteApplied" : [.restore, .fresh].contains(self) ? "manageAreaCreateApplied" : "manageAreaEditApplied" }
+    }
+
+    private func seedAreaDurableRows(_ mode: AreaDurableCase, clock: URL, at: String) async throws {
+        // Complete ordinary load maintenance at the operation clock BEFORE
+        // introducing the legacy SQL-only terminal focus fields.
+        let bootstrap = host(bundleURL: clock)
+        _ = try await bootstrap.start(); await bootstrap.close()
+        let sqlite = try SQLiteBridge(url: database)
+        for (id, name, order) in [("durable-source", "Work", 0), ("durable-other", "Other", 1)] {
+            if mode == .fresh && id == "durable-source" { continue }
+            _ = try sqlite.execute("INSERT INTO areas (id, name, color, icon, orderNum, createdAt, updatedAt, deletedAt, rev, revBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   parametersJSON: json([id, name, "#10b981", "legacy-icon", order, at, at, mode == .restore && id == "durable-source" ? at as Any : NSNull(), 3, "legacy-writer"]))
+        }
+        for (id, status, area) in [("durable-done", "done", "durable-source"), ("durable-archive", "archived", "durable-source"), ("durable-unrelated", "done", "durable-other")] {
+            _ = try sqlite.execute("INSERT INTO tasks (id, title, status, areaId, description, priority, tags, contexts, checklist, createdAt, updatedAt, completedAt, deletedAt, focusOrder, rev, revBy, isFocusedToday, pushCount, showFutureRecurrence, suppressMindwtrReminders) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   parametersJSON: json([id, id, status, mode == .fresh ? "durable-other" : area, "Full stored metadata", "high", "[\"tag\"]", "[]", "[{\"id\":\"item\",\"title\":\"Checklist\",\"isCompleted\":false}]", at, at, at, mode == .restore && area == "durable-source" ? at as Any : NSNull(), 9, 4, "legacy-writer", 0, 0, 0, 0]))
+        }
+        sqlite.close()
+    }
+
+    private func assertAreaDurableTables(_ before: [String], _ after: [String], mode: AreaDurableCase,
+                                         request: [String: Any], at: String, writer: String) throws {
+        var expected = before
+        var areas = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[2].utf8)) as? [[String: Any]])
+        if mode == .fresh {
+            areas.append(["id": try XCTUnwrap(request["requestId"]), "name": "Work", "color": "#10b981", "icon": NSNull(), "orderNum": 2,
+                          "createdAt": at, "updatedAt": at, "deletedAt": NSNull(), "projectArchivedAt": NSNull(),
+                          "deletedAtBeforeProjectArchive": NSNull(), "rev": 1, "revBy": writer])
+        } else {
+            let index = try XCTUnwrap(areas.firstIndex { $0["id"] as? String == "durable-source" })
+            areas[index]["updatedAt"] = at; areas[index]["revBy"] = writer
+            areas[index]["rev"] = mode == .restore ? 5 : 4
+            if mode == .rename { areas[index]["name"] = "Renamed Work" }
+            if mode == .merge || mode == .delete { areas[index]["deletedAt"] = at }
+            if mode == .restore { areas[index]["deletedAt"] = NSNull() }
+            if mode == .merge {
+                let destination = try XCTUnwrap(areas.firstIndex { $0["id"] as? String == "durable-other" })
+                areas[destination]["updatedAt"] = at; areas[destination]["revBy"] = writer
+                areas[destination]["rev"] = 4
+            }
+        }
+        expected[2] = try json(areas)
+        var changed: Set<String> = []
+        if [.merge, .delete, .restore].contains(mode) {
+            var tasks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[0].utf8)) as? [[String: Any]])
+            for index in tasks.indices where tasks[index]["areaId"] as? String == "durable-source" {
+                changed.insert(try XCTUnwrap(tasks[index]["id"] as? String))
+                tasks[index]["updatedAt"] = at; tasks[index]["rev"] = 5; tasks[index]["revBy"] = writer
+                if mode == .merge { tasks[index]["areaId"] = "durable-other" }
+                if mode == .delete { tasks[index]["areaId"] = NSNull() }
+                if mode == .restore { tasks[index]["deletedAt"] = NSNull(); tasks[index]["purgedAt"] = NSNull(); tasks[index]["sectionId"] = NSNull() }
+            }
+            expected[0] = try json(tasks)
+        }
+        XCTAssertEqual(try personEditSemanticTables(after, changedTaskIDs: changed),
+                       try personEditSemanticTables(expected, changedTaskIDs: changed), mode.rawValue)
+    }
+
+    private func exerciseAreaDurableRecovery(_ mode: AreaDurableCase) async throws {
+        let at = "2026-10-01T12:00:00.000Z", clock = try dateBundle(at: "2026-10-01T12:00:00.000Z")
+        try await seedAreaDurableRows(mode, clock: clock, at: at)
+        let faults = HostIOFaults(), writer = host(faults, bundleURL: clock)
+        let initial = try SQLiteBridge(url: database), originalTables = try nineTableSnapshot(initial); initial.close()
+        _ = try await writer.start()
+        let loaded = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(loaded), originalTables, "Normal load must not persist its display projection")
+        loaded.close()
+        let request: [String: Any]
+        if [.restore, .fresh].contains(mode) {
+            request = areaCreateRequest(name: "Work", color: "#10b981", expectedID: mode == .restore ? "durable-source" : nil)
+        } else if mode == .delete {
+            var value = try await areaDeleteRequest(writer, areaID: "durable-source")
+            value["detachProjects"] = true; request = value
+        } else {
+            request = try await manageAreaEditRequest(writer, areaID: "durable-source", name: mode == .merge ? "Other" : "Renamed Work", color: "#10b981")
+        }
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Area durable COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call(mode.method, argumentsJSON: json([json(request)])) }
+        let frozen = try Data(contentsOf: journal), saved = try object(String(decoding: frozen, as: UTF8.self))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        let prepared = try XCTUnwrap(object(XCTUnwrap(args.first))["prepared"] as? [String: Any])
+        XCTAssertEqual(saved["method"] as? String, mode.method + "Commit")
+        XCTAssertEqual(try json(XCTUnwrap(prepared["request"])), try json(request))
+        XCTAssertEqual(prepared["updateAt"] as? String, at)
+        if [.restore, .fresh].contains(mode) { XCTAssertEqual(prepared["restoreAt"] as? String, at) }
+        let scope = try XCTUnwrap(prepared["scope"] as? [String: Any])
+        let tasks = try XCTUnwrap(scope["tasks"] as? [[String: Any]])
+        XCTAssertEqual(Set(tasks.compactMap { $0["id"] as? String }), mode == .fresh ? Set<String>() : Set(["durable-done", "durable-archive"]))
+        for row in tasks { XCTAssertEqual(row["focusOrder"] as? Int, 9, "Frozen raw scope \(mode.rawValue)") }
+        let effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        for pair in try XCTUnwrap(effect["tasks"] as? [[String: Any]]) {
+            XCTAssertEqual((pair["before"] as? [String: Any])?["focusOrder"] as? Int, 9)
+            XCTAssertEqual((pair["after"] as? [String: Any])?["focusOrder"] as? Int, 9)
+        }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        try assertJournalContentUnchanged(frozen)
+        let snapshot = try SQLiteBridge(url: database), baselineTables = try nineTableSnapshot(snapshot)
+        XCTAssertEqual(baselineTables, originalTables, "Both failed attempts must roll back all nine tables")
+        let baselineURL = directory.appendingPathComponent("area-durable-\(mode.rawValue)-baseline.sqlite")
+        try snapshot.prepareRecovery(at: baselineURL); snapshot.close()
+        let baseline = try Data(contentsOf: baselineURL)
+        let device = try XCTUnwrap(prepared["deviceIdBefore"] as? String ?? prepared["deviceIdToInitialize"] as? String)
+        faults.beforeSQL = nil
+        let pendingResult = try await writer.retryPending()
+        let sameHost = try object(XCTUnwrap(pendingResult))
+        XCTAssertEqual(try json(sameHost), try json(XCTUnwrap(prepared["result"])))
+        let successful = try SQLiteBridge(url: database)
+        try assertAreaDurableTables(baselineTables, nineTableSnapshot(successful), mode: mode, request: request, at: at, writer: device)
+        successful.close()
+        for id in ["durable-done", "durable-archive", "durable-unrelated"] { XCTAssertEqual(try storedTask(id)["focusOrder"] as? Int, 9) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await writer.close()
+        for changed in mode == .fresh ? [false] : [true, false] {
+            // The last-close WAL is intentionally retained; backup bytes are a
+            // standalone database and must never be combined with old sidecars.
+            for suffix in ["-wal", "-shm"] {
+                let sidecar = URL(fileURLWithPath: database.path + suffix)
+                if FileManager.default.fileExists(atPath: sidecar.path) { try FileManager.default.removeItem(at: sidecar) }
+            }
+            try baseline.write(to: database); try frozen.write(to: journal)
+            let edit = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(edit), baselineTables)
+            if changed { _ = try edit.execute("UPDATE tasks SET focusOrder = 10 WHERE id = 'durable-done'") }
+            else { _ = try edit.execute("UPDATE tasks SET description = 'Intervening unrelated durable edit', rev = rev + 1 WHERE id = 'durable-unrelated'") }
+            let before = try nineTableSnapshot(edit); edit.close()
+            let replayFaults = HostIOFaults(); var writes = 0, diagnostics = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
+            }
+            replayFaults.commandDiagnostic = { event in
+                if event == mode.diagnostic { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) }
+            }
+            let reopened = host(replayFaults, bundleURL: clock)
+            if changed {
+                await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+                let check = try SQLiteBridge(url: database)
+                XCTAssertEqual(try nineTableSnapshot(check), before); check.close()
+                XCTAssertEqual(writes, 0); XCTAssertEqual(diagnostics, 0)
+                try assertJournalContentUnchanged(frozen)
+                XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
+            } else {
+                let startup = try object(await reopened.start()), recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+                XCTAssertEqual(recovery["method"] as? String, mode.method + "Commit")
+                XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(XCTUnwrap(prepared["result"])))
+                let check = try SQLiteBridge(url: database)
+                try assertAreaDurableTables(before, nineTableSnapshot(check), mode: mode, request: request, at: at, writer: device)
+                check.close()
+                for id in ["durable-done", "durable-archive", "durable-unrelated"] { XCTAssertEqual(try storedTask(id)["focusOrder"] as? Int, 9) }
+                XCTAssertEqual(diagnostics, 1)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            }
+            await reopened.close()
+        }
+    }
+
+    func testAreaDurableRecoveryRenamePreservesRawTerminalRows() async throws { try await exerciseAreaDurableRecovery(.rename) }
+    func testAreaDurableRecoveryMergePreservesRawTerminalRows() async throws { try await exerciseAreaDurableRecovery(.merge) }
+    func testAreaDurableRecoveryDeletePreservesRawTerminalRows() async throws { try await exerciseAreaDurableRecovery(.delete) }
+    func testAreaDurableRecoveryRestorationPreservesRawTerminalRows() async throws { try await exerciseAreaDurableRecovery(.restore) }
+    func testAreaDurableRecoveryFreshCreatePreservesUnrelatedRawRows() async throws { try await exerciseAreaDurableRecovery(.fresh) }
+
     func testManagePersonEditLegacyTerminalFocusOrderColdPreservesRawRowsAndConflictsRefuse() async throws {
         try await seedPersonEditRows()
         // Prime one-time/day-gated load maintenance on the same clock as the

@@ -9,6 +9,13 @@ import type { AreaOrderIntent } from './area-ordering';
 import type { ProjectTaskOrderAnchor, ProjectTaskOrderIdentity } from './project-task-reorder';
 import type { FocusControlState } from './focus-controls';
 
+/** Per-call saved authority for the three prepared Area commands; never journaled. */
+export type PreparedNativeSaveBoundary = { taskReference: Task[]; lastDataChangeAt: number;
+    generation: number; failure: TaskStore['persistenceFailure'] };
+export type PreparedAreaAuthority = { snapshot: AppData; state: Pick<TaskStore,
+    '_allTasks' | '_allProjects' | '_allSections' | '_allAreas' | '_allPeople' | 'settings' | 'lastDataChangeAt'>;
+    saveBoundary?: PreparedNativeSaveBoundary };
+
 export type StoreActionResult = {
     success: boolean;
     error?: string;
@@ -564,13 +571,13 @@ export interface TaskStore {
         projectId: string; sectionId: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionOrder: (input: PreparedProjectSectionOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectTaskOrder: (input: PreparedProjectTaskOrder) => Promise<PreparedTaskEditResult>;
-    commitPreparedAreaCreate: (input: PreparedAreaCreate & { request: { requestId: string; name: string; color: string; expectedAreaId: string } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedAreaCreate: (input: PreparedAreaCreate & { request: { requestId: string; name: string; color: string; expectedAreaId: string } }, authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaColor: (input: PreparedAreaColor & { request: { requestId: string; areaId: string; color: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaRename: (input: PreparedAreaRename & { request: { requestId: string; areaId: string; name: string; manageColor?: string };
-        result: { id: string; areaId: string; name: string } }) => Promise<PreparedTaskEditResult>;
+        result: { id: string; areaId: string; name: string } }, authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaOrder: (input: PreparedAreaOrder & { request: { requestId: string; intent: AreaOrderIntent; expectedAreas: unknown[] }; result: { orderedIds: string[] } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaDelete: (input: PreparedAreaDelete & { request: { requestId: string; areaId: string;
-        detachProjects?: true }; result: { areaId: string } }) => Promise<PreparedTaskEditResult>;
+        detachProjects?: true }; result: { areaId: string } }, authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Update a project */
     updateProject: (id: string, updates: Partial<Project>) => Promise<StoreActionResult>;
     /** Archive a project as cancelled and cancel its unfinished child tasks */
@@ -621,7 +628,7 @@ export interface TaskStore {
     addPerson: (name: string, initialProps?: Partial<Person>) => Promise<Person | null>;
     commitPreparedPersonCreate: (input: PreparedPersonCreate & { request: { requestId: string; name: string; note: string; referenceLink: string; expectedPersonId: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedPersonEdit: (input: PreparedPersonEdit, authority: {
-        snapshot: AppData; taskReference: Task[]; lastDataChangeAt: number;
+        snapshot: AppData; taskReference: Task[]; lastDataChangeAt: number; saveBoundary?: PreparedNativeSaveBoundary;
     }) => Promise<PreparedTaskEditResult>;
     commitPreparedPersonDelete: (input: PreparedPersonDelete & { request: { requestId: string; personId: string; expected: Person } }) => Promise<PreparedTaskEditResult>;
     /** Update managed person metadata */

@@ -7,7 +7,7 @@ import { personPersistedSnapshot, samePersonAdditionRow } from './store-projects
 import { planPersonEditorSave, selectPersonRenameDestination, selectPersonRenameTasks, type PersonEditResult } from './person-edit';
 import { taskEditValuesEqual } from './json-value-equality';
 import { TASK_SYNC_FIELD_SCHEMA, taskToSqliteRow } from './task-sync-schema';
-import type { PreparedPersonEdit } from './store-types';
+import type { PreparedPersonEdit, TaskStore } from './store-types';
 import type { Person, Task } from './types';
 
 export type NativePersonEditRequest = PreparedPersonEdit['request'];
@@ -225,11 +225,16 @@ export function createPersonEditMethods(deps: {
                 return fail('STALE_REVISION', 'Person data changed while reading saved data');
             if (current.persistenceFailure && !ownsFailure(prepared, adapter, current))
                 return fail('SAVE_FAILED', 'Person edit has an unresolved persistence failure');
-            const applied = await current.commitPreparedPersonEdit(prepared, { snapshot,
-                taskReference: state._allTasks, lastDataChangeAt: state.lastDataChangeAt });
+            const authority: Parameters<TaskStore['commitPreparedPersonEdit']>[1] = { snapshot,
+                taskReference: state._allTasks, lastDataChangeAt: state.lastDataChangeAt };
+            const applied = await current.commitPreparedPersonEdit(prepared, authority);
             if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Person edit conflicts with current data');
             const savingState = useTaskStore.getState();
             const savingStatus = getPersistenceStatus();
+            const boundary = authority.saveBoundary;
+            const ownWrite = boundary && getStorageAdapter() === adapter
+                && boundary.taskReference === savingState._allTasks && boundary.lastDataChangeAt === savingState.lastDataChangeAt
+                && boundary.generation === savingStatus.generation && boundary.failure === savingState.persistenceFailure;
             if (applied.outcome === 'replayed' && savingState.persistenceFailure) {
                 if (!ownsFailure(prepared, adapter, savingState))
                     return fail('SAVE_FAILED', 'Person edit has an unresolved persistence failure');
@@ -241,7 +246,7 @@ export function createPersonEditMethods(deps: {
             const saved = await deps.save();
             const afterSave = useTaskStore.getState();
             const afterStatus = getPersistenceStatus();
-            if (!saved.ok && saved.error.code === 'SAVE_FAILED' && afterSave.persistenceFailure
+            if (ownWrite && !saved.ok && saved.error.code === 'SAVE_FAILED' && afterSave.persistenceFailure
                 && afterSave.persistenceFailure !== savingState.persistenceFailure && getStorageAdapter() === adapter
                 && afterStatus.generation === savingStatus.generation
                 && afterSave.lastDataChangeAt === savingState.lastDataChangeAt && afterSave._allTasks === savingState._allTasks) {

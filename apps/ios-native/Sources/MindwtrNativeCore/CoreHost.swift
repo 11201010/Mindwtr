@@ -2252,6 +2252,10 @@ private final class Engine: @unchecked Sendable {
 #endif
             NSLog("Native iOS Project Section order saved releaseCheck=v1.3.3/native-ios-project-section-order outcome=applied")
         }
+        if ["areaCreateCommit", "manageAreaCreateCommit", "areaRenameCommit", "manageAreaEditCommit",
+            "areaDeleteCommit", "manageAreaDeleteCommit"].contains(command.method), case .success = terminal {
+            NSLog("Native iOS Area durable recovery confirmed releaseCheck=v1.3.4/ios-area-durable-recovery outcome=confirmed")
+        }
         if command.method == "areaCreateCommit", case .success = terminal {
 #if DEBUG
             faults?.commandDiagnostic?("areaCreateApplied")

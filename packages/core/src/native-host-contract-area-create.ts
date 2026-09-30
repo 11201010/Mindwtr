@@ -3,6 +3,7 @@ import { AREA_PRESET_COLORS, DEFAULT_AREA_COLOR } from './color-constants';
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { ensureDeviceId } from './store-helpers';
 import { useTaskStore } from './store';
+import { createAreaSaveGuard, readAreaDurableData } from './native-host-contract-area-durable';
 import { areaAdditionEffect, planAreaAddition, selectAreaAdditionScope } from './store-projects/area-actions';
 import type { PreparedAreaCreate } from './store-types';
 import { taskEditValuesEqual } from './store-tasks';
@@ -113,6 +114,7 @@ export function createAreaCreateMethods(deps: {
     revision: () => string;
     sortedAreas: () => Area[];
 }) {
+    const saves = createAreaSaveGuard(deps.save);
     return {
         getAreaCreateOptions(): NativeHostResult<{ revision: string; defaultColor: string; colors: string[];
             areas: Array<{ id: string; name: string; color: string | null }> }> {
@@ -151,12 +153,20 @@ export function createAreaCreateMethods(deps: {
                 : fail('STALE_REVISION', 'Area changed; refresh before saving again');
         },
 
-        prepareAreaCreate(input: NativeAreaCreateRequest): NativeHostResult<NativeAreaCreatePreparation> {
+        async prepareAreaCreate(input: NativeAreaCreateRequest): Promise<NativeHostResult<NativeAreaCreatePreparation>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const request = readRequest(input);
             if (!request) return fail('INVALID_INPUT', 'A bounded Area name, supported color, and lowercase UUID are required');
-            const state = useTaskStore.getState();
+            const restoreAt = new Date().toISOString();
+            const updateAt = new Date().toISOString();
+            const read = await readAreaDurableData();
+            if (!read.ok) return read;
+            const snapshot = read.value.authority.snapshot;
+            const state = { _allAreas: snapshot.areas ?? [], _allProjects: snapshot.projects,
+                _allSections: snapshot.sections ?? [], _allTasks: snapshot.tasks, settings: snapshot.settings };
+            if ((state.settings.deviceId ?? null) !== (read.value.authority.state.settings.deviceId ?? null))
+                return fail('STALE_REVISION', 'Area device changed while reading saved data');
             const selected = resolution(state._allAreas, request.name);
             if (selected?.id !== request.expectedAreaId && (selected || request.expectedAreaId !== request.requestId))
                 return fail('STALE_REVISION', 'Area name resolution changed');
@@ -166,8 +176,6 @@ export function createAreaCreateMethods(deps: {
             const rows = { areas: state._allAreas, projects: state._allProjects,
                 sections: state._allSections, tasks: state._allTasks };
             const scope = selectAreaAdditionScope(rows, selected);
-            const restoreAt = new Date().toISOString();
-            const updateAt = new Date().toISOString();
             const planned = planAreaAddition(rows, request.name, { color: request.color }, request.requestId,
                 device.deviceId, restoreAt, updateAt);
             if (!planned || planned.kind === 'live' || planned.area.id !== request.expectedAreaId)
@@ -195,12 +203,13 @@ export function createAreaCreateMethods(deps: {
             if (!ready.ok) return ready;
             const prepared = readPrepared(input);
             if (!prepared) return fail('INVALID_INPUT', 'Prepared Area request or journal does not match');
-            const applied = await useTaskStore.getState().commitPreparedAreaCreate(prepared);
+            const read = await readAreaDurableData(true);
+            if (!read.ok) return read;
+            if (!saves.mayApply(prepared, read.value.adapter))
+                return fail('SAVE_FAILED', 'Area operation has an unresolved persistence failure');
+            const applied = await useTaskStore.getState().commitPreparedAreaCreate(prepared, read.value.authority);
             if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Area conflicts with current data');
-            try {
-                if (useTaskStore.getState().persistenceFailure) await useTaskStore.getState().retryPersistence();
-            } catch (error) { return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error)); }
-            const saved = await deps.save();
+            const saved = await saves.finish(prepared, read.value.adapter, applied.outcome === 'replayed', read.value.authority.saveBoundary);
             return saved.ok ? { ok: true, value: prepared.result } : saved;
         },
     };

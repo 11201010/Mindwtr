@@ -14,6 +14,8 @@ import { planManageEditorSave } from '../manage-settings-model';
 import { planPersonMetadataUpdates, planPersonRename, planPersonEditorSave, selectPersonRenameDestination, selectPersonRenameTasks } from '../person-edit';
 import { sameAreaAdditionRow } from '../area-rename';
 import { normalizeTaskForLoad } from '../task-status';
+import { normalizeProjectLifecycleFields } from '../project-status';
+import { getPersistenceStatus } from '../store';
 import type { PreparedPersonDelete, PreparedTaskEditResult } from '../store-types';
 import { generateUUID as uuidv4 } from '../uuid';
 import type { PeopleActions, Person, ProjectActionContext } from './shared';
@@ -196,19 +198,26 @@ export const createPeopleActions = ({
             // Changed Tasks keep that existing UI projection except for rename policy fields.
             const memoryTasks = tasks.map((row) => {
                 const existing = state._allTasks.find((candidate) => candidate.id === row.id);
-                const renamed = effect.tasks.find(({ after }) => after.id === row.id)?.after;
-                return existing && renamed ? { ...existing, assignedTo: renamed.assignedTo,
-                    updatedAt: renamed.updatedAt, rev: renamed.rev, revBy: renamed.revBy }
-                    : existing && sameAreaAdditionRow.task(existing, row) ? existing : normalizeTaskForLoad(row);
+                const pair = effect.tasks.find(({ after }) => after.id === row.id);
+                if (existing && pair) {
+                    const freshBefore = normalizeTaskForLoad(pair.before);
+                    const base = sameAreaAdditionRow.task(existing, freshBefore) ? existing : freshBefore;
+                    return { ...base, assignedTo: pair.after.assignedTo, updatedAt: pair.after.updatedAt,
+                        rev: pair.after.rev, revBy: pair.after.revBy };
+                }
+                return existing && sameAreaAdditionRow.task(existing, row) ? existing : normalizeTaskForLoad(row);
             });
             clearDerivedCache();
             persist(set, debouncedSave, { ...state, _allTasks: durable.tasks, _allPeople: durablePeople,
                 _allProjects: durable.projects, _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [],
                 settings: durable.settings }, { ...durable, people, tasks, settings });
+            const lastDataChangeAt = getNextDataChangeAt(state.lastDataChangeAt);
+            authority.saveBoundary = { taskReference: memoryTasks, lastDataChangeAt,
+                generation: getPersistenceStatus().generation, failure: state.persistenceFailure };
             result = { success: true, id: source.id, outcome: 'applied' };
             return { _allPeople: people, _allTasks: memoryTasks,
-                _allProjects: durable.projects, _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [], settings,
-                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+                _allProjects: durable.projects.map(normalizeProjectLifecycleFields), _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [], settings,
+                lastDataChangeAt };
         });
         return result;
     },
