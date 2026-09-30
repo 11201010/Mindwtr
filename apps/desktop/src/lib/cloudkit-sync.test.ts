@@ -219,6 +219,35 @@ describe("desktop CloudKit transport", () => {
     expect(localStorage.getItem(CHANGE_TOKEN_KEY)).toBe("token-after-write");
   });
 
+  it("skips the fetch step only for the first save of a type a full read found empty (#1278)", async () => {
+    invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "cloudkit_fetch_all_records") {
+        return args?.recordType === RECORD_TYPES.task ? [] : fullFetchRecords[String(args?.recordType)] ?? [];
+      }
+      if (command === "cloudkit_fetch_changes") return emptyChanges("token");
+      if (command === "cloudkit_save_records") return { conflictIDs: [], savedCount: 1 };
+      throw new Error(`Unexpected CloudKit command: ${command}`);
+    });
+    const data = {
+      tasks: [{ id: "task-1" }],
+      projects: [{ id: "project-1" }],
+      sections: [],
+      areas: [],
+      people: [],
+      settings: {},
+    } as unknown as AppData;
+    const assumeNewFor = (recordType: string) => invoke.mock.calls
+      .filter(([command, args]) => command === "cloudkit_save_records" && args?.recordType === recordType)
+      .map(([, args]) => args?.assumeNew);
+
+    await readRemoteCloudKit();
+    await writeRemoteCloudKit(data);
+    await writeRemoteCloudKit(data);
+
+    expect(assumeNewFor(RECORD_TYPES.task)).toEqual([true, false]);
+    expect(assumeNewFor(RECORD_TYPES.project)).toEqual([false, false]);
+  });
+
   it.each([
     "attachment-record-not-found",
     "attachment-asset-missing",

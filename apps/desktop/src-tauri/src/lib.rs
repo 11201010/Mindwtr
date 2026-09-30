@@ -653,6 +653,7 @@ unsafe extern "C" {
     fn mindwtr_cloudkit_save_records(
         record_type: *const c_char,
         records_json: *const c_char,
+        assume_new: bool,
     ) -> *mut c_char;
     fn mindwtr_cloudkit_save_attachment_asset(
         record_name: *const c_char,

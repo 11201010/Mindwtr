@@ -165,6 +165,7 @@ export const ensureCloudKitReady = async (): Promise<void> => {
 
 export const readRemoteCloudKit = async (): Promise<AppData | null> => {
     if (!isCloudKitAvailable()) return null;
+    remoteEmptyRecordTypes.clear();
 
     try {
         const changeToken = localStorage.getItem(CLOUDKIT_CHANGE_TOKEN_KEY);
@@ -214,6 +215,24 @@ export const readRemoteCloudKit = async (): Promise<AppData | null> => {
 // Write Remote (for SyncCycleIO.writeRemote)
 // ---------------------------------------------------------------------------
 
+// Record types the last full read found empty. The next save of such a type
+// skips its fetch-by-ID step (every lookup would answer "unknown item" and
+// only spend request budget, #1278). Used once: after that save, records
+// may exist, so later saves fetch them again.
+const remoteEmptyRecordTypes = new Set<string>();
+
+const saveRecordsOfType = async (
+    recordType: string,
+    records: unknown[],
+): Promise<{ conflictIDs: string[]; savedCount?: number }> => {
+    const assumeNew = remoteEmptyRecordTypes.delete(recordType);
+    return await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
+        recordType,
+        recordsJson: JSON.stringify(records),
+        assumeNew,
+    });
+};
+
 export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
     if (!isCloudKitAvailable()) return;
 
@@ -228,42 +247,27 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
 
         if (allTasks.length > 0) {
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
-                    recordType: RECORD_TYPES.task,
-                    recordsJson: JSON.stringify(allTasks),
-                }),
+                await saveRecordsOfType(RECORD_TYPES.task, allTasks),
             );
         }
         if (allProjects.length > 0) {
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
-                    recordType: RECORD_TYPES.project,
-                    recordsJson: JSON.stringify(allProjects),
-                }),
+                await saveRecordsOfType(RECORD_TYPES.project, allProjects),
             );
         }
         if (allSections.length > 0) {
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
-                    recordType: RECORD_TYPES.section,
-                    recordsJson: JSON.stringify(allSections),
-                }),
+                await saveRecordsOfType(RECORD_TYPES.section, allSections),
             );
         }
         if (allAreas.length > 0) {
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
-                    recordType: RECORD_TYPES.area,
-                    recordsJson: JSON.stringify(allAreas),
-                }),
+                await saveRecordsOfType(RECORD_TYPES.area, allAreas),
             );
         }
         if (allPeople.length > 0) {
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
-                    recordType: RECORD_TYPES.person,
-                    recordsJson: JSON.stringify(allPeople),
-                }),
+                await saveRecordsOfType(RECORD_TYPES.person, allPeople),
             );
         }
 
@@ -277,10 +281,7 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
                 },
             ];
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
-                    recordType: RECORD_TYPES.settings,
-                    recordsJson: JSON.stringify(settingsRecord),
-                }),
+                await saveRecordsOfType(RECORD_TYPES.settings, settingsRecord),
             );
         }
 
@@ -423,6 +424,14 @@ async function fullFetch(): Promise<AppData> {
             recordType: RECORD_TYPES.settings,
         }),
     ]);
+
+    const fetchedByType: Array<[string, unknown]> = [
+        [RECORD_TYPES.task, tasks], [RECORD_TYPES.project, projects], [RECORD_TYPES.section, sections],
+        [RECORD_TYPES.area, areas], [RECORD_TYPES.person, people], [RECORD_TYPES.settings, settingsRecords],
+    ];
+    for (const [recordType, records] of fetchedByType) {
+        if (Array.isArray(records) && records.length === 0) remoteEmptyRecordTypes.add(recordType);
+    }
 
     // Extract settings from the single settings record
     let settings: Record<string, unknown> = {};

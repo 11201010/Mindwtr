@@ -32,6 +32,8 @@ static const NSInteger kBatchSize      = 400;
 // Smaller saves keep each request light and let a refused upload resume
 // from the records that already landed (#1278).
 static const NSInteger kSaveBatchSize  = 100;
+static const NSInteger kMinSaveBatchSize = 25;
+static const double    kMaxInlineRetryWaitSec = 120;
 static const int64_t   kTimeoutSec     = 60;
 
 // ---------------------------------------------------------------------------
@@ -987,7 +989,47 @@ char *mindwtr_cloudkit_fetch_attachment_asset(const char *record_name_cstr,
     }
 }
 
-char *mindwtr_cloudkit_save_records(const char *record_type_cstr, const char *records_json_cstr) {
+static NSNumber *ck_longest_retry_after(NSArray<NSError *> *errors) {
+    NSNumber *longest = nil;
+    for (NSError *candidate in errors) {
+        NSNumber *delay = ck_retry_after_seconds(candidate);
+        if (delay && (!longest || delay.doubleValue > longest.doubleValue)) longest = delay;
+    }
+    return longest;
+}
+
+// Waits out CloudKit's retry interval inside the call, bounded per call so a
+// long refusal still returns to the sync cycle's own cooldown (#1278).
+static BOOL ck_wait_for_retry(NSNumber *delay, double *waitedSec) {
+    if (!delay || delay.doubleValue <= 0) return NO;
+    if (*waitedSec + delay.doubleValue > kMaxInlineRetryWaitSec) return NO;
+    [NSThread sleepForTimeInterval:delay.doubleValue];
+    *waitedSec += delay.doubleValue;
+    return YES;
+}
+
+// Which step was refused and how big it was, so a log tells request size,
+// server budget and the local daemon apart (#1278). No record content.
+static NSString *ck_step_detail(NSString *step, NSUInteger batchNumber, NSUInteger batchRecords,
+                                NSUInteger batchBytes, NSUInteger elapsedMs, double waitedSec) {
+    return [NSString stringWithFormat:@"[step=%@ batch=%lu records=%lu bytes=%lu ms=%lu waited=%.0f]",
+            step, (unsigned long)batchNumber, (unsigned long)batchRecords, (unsigned long)batchBytes,
+            (unsigned long)elapsedMs, waitedSec];
+}
+
+static NSString *ck_failure_message(NSArray<NSError *> *errors, NSString *fallback) {
+    NSError *primary = errors.firstObject;
+    for (NSError *candidate in errors) {
+        if (primary.code == CKErrorBatchRequestFailed && candidate.code != CKErrorBatchRequestFailed) {
+            primary = candidate;
+        }
+    }
+    NSString *message = primary.localizedDescription ?: fallback;
+    NSNumber *retryAfter = ck_longest_retry_after(errors);
+    return retryAfter ? [NSString stringWithFormat:@"%@ [retryAfter=%@]", message, retryAfter] : message;
+}
+
+char *mindwtr_cloudkit_save_records(const char *record_type_cstr, const char *records_json_cstr, bool assume_new) {
     @autoreleasepool {
         if (!record_type_cstr || !records_json_cstr) {
             return ck_copy_json(@{@"conflictIDs": @[]});
@@ -1003,27 +1045,48 @@ char *mindwtr_cloudkit_save_records(const char *record_type_cstr, const char *re
             return ck_copy_json(@{@"conflictIDs": @[]});
         }
 
-        // Step 1: Collect record IDs.
+        // Step 1: Collect record IDs and each record's JSON size (for diagnostics).
         NSMutableArray<CKRecordID *> *recordIDs = [NSMutableArray array];
+        NSMutableDictionary<NSString *, NSNumber *> *bytesByID = [NSMutableDictionary dictionary];
         for (NSDictionary *json in jsonRecords) {
             NSString *rid = json[@"id"];
             if ([rid isKindOfClass:[NSString class]] && rid.length > 0) {
                 [recordIDs addObject:[[CKRecordID alloc] initWithRecordName:rid zoneID:_ckZoneID]];
+                NSData *encoded = [NSJSONSerialization isValidJSONObject:json]
+                    ? [NSJSONSerialization dataWithJSONObject:json options:0 error:nil] : nil;
+                bytesByID[rid] = @(encoded.length);
             }
         }
+        double waitedSec = 0;
 
         // Step 2: Fetch existing records in batches.
         // Mirrors iOS: unknownItem is silently skipped (new records), but real
         // fetch errors abort the save — otherwise missing records are treated as
         // brand-new CKRecords, dropping server system fields (changeTag).
+        // Skipped when the caller's full read just found no records of this type:
+        // every lookup would answer unknownItem and only spend request budget.
         NSMutableDictionary<CKRecordID *, CKRecord *> *existingByID = [NSMutableDictionary dictionary];
-        for (NSUInteger i = 0; i < recordIDs.count; i += kBatchSize) {
+        for (NSUInteger i = 0; !assume_new && i < recordIDs.count; i += kBatchSize) {
             NSUInteger end = MIN(i + kBatchSize, recordIDs.count);
-            NSArray *batch = [recordIDs subarrayWithRange:NSMakeRange(i, end - i)];
+            NSArray<CKRecordID *> *batch = [recordIDs subarrayWithRange:NSMakeRange(i, end - i)];
+            NSUInteger batchBytes = 0;
+            for (CKRecordID *rid in batch) batchBytes += bytesByID[rid.recordName].unsignedIntegerValue;
             NSError *fetchError = nil;
+            NSDate *started = [NSDate date];
             NSDictionary *fetched = ck_fetch_records_by_id(batch, &fetchError);
+            if (!fetched && ck_wait_for_retry(ck_retry_after_seconds(fetchError), &waitedSec)) {
+                fetchError = nil;
+                started = [NSDate date];
+                fetched = ck_fetch_records_by_id(batch, &fetchError);
+            }
             if (!fetched) {
-                return ck_error_json(fetchError);
+                NSUInteger ms = (NSUInteger)([[NSDate date] timeIntervalSinceDate:started] * 1000);
+                NSString *message = fetchError ? ck_failure_message(@[fetchError], @"fetch-failed") : @"fetch-failed";
+                return ck_copy_json(@{
+                    @"error": [NSString stringWithFormat:@"%@ %@", message,
+                               ck_step_detail(@"fetch", i / kBatchSize + 1, batch.count, batchBytes, ms, waitedSec)],
+                    @"errorCode": @(fetchError.code),
+                });
             }
             [existingByID addEntriesFromDictionary:fetched];
         }
@@ -1048,16 +1111,26 @@ char *mindwtr_cloudkit_save_records(const char *record_type_cstr, const char *re
             }
         }
 
-        if (recordsToSave.count == 0) return ck_copy_json(@{@"conflictIDs": @[]});
+        if (recordsToSave.count == 0) return ck_copy_json(@{@"conflictIDs": @[], @"savedCount": @0});
 
-        // Step 4: Save in batches, collecting conflicts.
+        // Step 4: Save in batches, collecting conflicts. A refused batch is
+        // retried once after CloudKit's interval, then halved on each further
+        // refusal down to kMinSaveBatchSize; the call gives up when the bounded
+        // wait runs out, and the next sync resumes from the saved records.
         NSMutableArray<NSString *> *conflictIDs = [NSMutableArray array];
         NSMutableArray<NSError *> *nonConflictErrors = [NSMutableArray array];
+        NSString *failedStep = nil;
 
         NSUInteger savedCount = 0;
-        for (NSUInteger i = 0; i < recordsToSave.count; i += kSaveBatchSize) {
-            NSUInteger end = MIN(i + kSaveBatchSize, recordsToSave.count);
+        NSUInteger batchSize = kSaveBatchSize;
+        NSUInteger batchNumber = 1;
+        BOOL retriedThisBatch = NO;
+        NSUInteger i = 0;
+        while (i < recordsToSave.count) {
+            NSUInteger end = MIN(i + batchSize, recordsToSave.count);
             NSArray<CKRecord *> *batch = [recordsToSave subarrayWithRange:NSMakeRange(i, end - i)];
+            NSUInteger batchBytes = 0;
+            for (CKRecord *record in batch) batchBytes += bytesByID[record.recordID.recordName].unsignedIntegerValue;
 
             CKModifyRecordsOperation *saveOp =
                 [[CKModifyRecordsOperation alloc] initWithRecordsToSave:batch recordIDsToDelete:nil];
@@ -1092,40 +1165,49 @@ char *mindwtr_cloudkit_save_records(const char *record_type_cstr, const char *re
                 dispatch_semaphore_signal(sem);
             };
 
+            NSDate *started = [NSDate date];
             [_ckPrivateDB addOperation:saveOp];
             long waited = dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, kTimeoutSec * NSEC_PER_SEC));
+            NSUInteger ms = (NSUInteger)([[NSDate date] timeIntervalSinceDate:started] * 1000);
             if (waited != 0) {
                 [saveOp cancel];
-                return ck_copy_json(@{@"error": @"save-timeout"});
+                return ck_copy_json(@{@"error": [NSString stringWithFormat:@"save-timeout %@ [saved=%lu/%lu]",
+                    ck_step_detail(@"save", batchNumber, batch.count, batchBytes, ms, waitedSec),
+                    (unsigned long)savedCount, (unsigned long)recordsToSave.count]});
             }
 
+            if (batchErrors.count == 0) {
+                [conflictIDs addObjectsFromArray:batchConflicts];
+                savedCount += batch.count - batchConflicts.count;
+                i = end;
+                batchNumber += 1;
+                retriedThisBatch = NO;
+                continue;
+            }
+
+            NSNumber *delay = ck_longest_retry_after(batchErrors);
+            if (!retriedThisBatch && ck_wait_for_retry(delay, &waitedSec)) {
+                retriedThisBatch = YES;
+                continue;
+            }
+            if (retriedThisBatch && batchSize > kMinSaveBatchSize && ck_wait_for_retry(delay, &waitedSec)) {
+                batchSize = MAX(kMinSaveBatchSize, batchSize / 2);
+                continue;
+            }
+
+            // Stop at the first batch still refused, as iOS does: sending the
+            // rest while CloudKit asks us to wait only prolongs the refusal.
             [conflictIDs addObjectsFromArray:batchConflicts];
             [nonConflictErrors addObjectsFromArray:batchErrors];
-            // Stop at the first refused batch, as iOS does: sending the rest
-            // while CloudKit asks us to wait only prolongs the refusal (#1278).
-            if (batchErrors.count > 0) break;
-            savedCount += batch.count - batchConflicts.count;
+            failedStep = ck_step_detail(@"save", batchNumber, batch.count, batchBytes, ms, waitedSec);
+            break;
         }
 
         if (nonConflictErrors.count > 0) {
             NSMutableDictionary *result = [NSMutableDictionary dictionary];
-            NSError *primary = nonConflictErrors.firstObject;
-            NSNumber *retryAfter = nil;
-            for (NSError *candidate in nonConflictErrors) {
-                NSNumber *candidateDelay = ck_retry_after_seconds(candidate);
-                if (candidateDelay && (!retryAfter || candidateDelay.doubleValue > retryAfter.doubleValue)) {
-                    retryAfter = candidateDelay;
-                }
-                if (primary.code == CKErrorBatchRequestFailed && candidate.code != CKErrorBatchRequestFailed) {
-                    primary = candidate;
-                }
-            }
-            NSString *message = primary.localizedDescription ?: @"save-failed";
-            result[@"error"] = retryAfter
-                ? [NSString stringWithFormat:@"%@ [retryAfter=%@] [saved=%lu/%lu]", message, retryAfter,
-                   (unsigned long)savedCount, (unsigned long)recordsToSave.count]
-                : [NSString stringWithFormat:@"%@ [saved=%lu/%lu]", message,
-                   (unsigned long)savedCount, (unsigned long)recordsToSave.count];
+            result[@"error"] = [NSString stringWithFormat:@"%@ %@ [saved=%lu/%lu]",
+                ck_failure_message(nonConflictErrors, @"save-failed"), failedStep,
+                (unsigned long)savedCount, (unsigned long)recordsToSave.count];
             result[@"errorCount"] = @(nonConflictErrors.count);
             result[@"conflictIDs"] = conflictIDs;
             return ck_copy_json(result);

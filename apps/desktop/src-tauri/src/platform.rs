@@ -573,6 +573,7 @@ pub(crate) async fn cloudkit_fetch_changes(change_token: Option<String>) -> Resu
 pub(crate) async fn cloudkit_save_records(
     record_type: String,
     records_json: String,
+    assume_new: Option<bool>,
 ) -> Result<Value, String> {
     #[cfg(target_os = "macos")]
     {
@@ -582,7 +583,7 @@ pub(crate) async fn cloudkit_save_records(
             let c_json = CString::new(records_json.as_str())
                 .map_err(|e| format!("Invalid records JSON: {e}"))?;
             parse_cloudkit_json(unsafe {
-                mindwtr_cloudkit_save_records(c_type.as_ptr(), c_json.as_ptr())
+                mindwtr_cloudkit_save_records(c_type.as_ptr(), c_json.as_ptr(), assume_new.unwrap_or(false))
             })
         })
         .await
@@ -591,7 +592,7 @@ pub(crate) async fn cloudkit_save_records(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (record_type, records_json);
+        let _ = (record_type, records_json, assume_new);
         Err("CloudKit is not available on this platform".to_string())
     }
 }

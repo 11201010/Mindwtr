@@ -332,13 +332,27 @@ final class CloudKitSyncManager {
         if recordsToSave.isEmpty { return [] }
 
         // Step 3: Save in batches, collecting conflicts AND non-conflict errors separately.
-        var conflictIDs: [String] = []
-        var nonConflictErrors: [Error] = []
         // The zone is atomic: one refused request fails every record in it. Smaller
         // saves keep each request light and let a refused upload resume from the
-        // records that already landed (#1278).
-        let saveBatchSize = 100
-        for batchStart in stride(from: 0, to: recordsToSave.count, by: saveBatchSize) {
+        // records that already landed (#1278). A refused batch is retried once after
+        // CloudKit's interval, then halved on each further refusal; waits stay short
+        // because iOS may end a background sync early.
+        var conflictIDs: [String] = []
+        var nonConflictErrors: [Error] = []
+        var saveBatchSize = 100
+        let minSaveBatchSize = 25
+        let maxInlineWaitSeconds = 20.0
+        var waitedSeconds = 0.0
+        var retriedThisBatch = false
+        var batchStart = 0
+        func waitForRetry(_ errors: [Error]) async -> Bool {
+            let delay = errors.compactMap { ($0 as? CKError)?.retryAfterSeconds }.max() ?? 0
+            guard delay > 0, waitedSeconds + delay <= maxInlineWaitSeconds else { return false }
+            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return false }
+            waitedSeconds += delay
+            return true
+        }
+        while batchStart < recordsToSave.count {
             let batchEnd = min(batchStart + saveBatchSize, recordsToSave.count)
             let batch = Array(recordsToSave[batchStart..<batchEnd])
 
@@ -350,45 +364,70 @@ final class CloudKitSyncManager {
             // Serialize per-record callbacks — CloudKit dispatches on arbitrary queues.
             let cbQueue = DispatchQueue(label: "tech.dongdongbh.mindwtr.savecb")
 
-            let (batchConflicts, batchErrors) = try await withCheckedThrowingContinuation {
-                (continuation: CheckedContinuation<([String], [Error]), Error>) in
-                var conflicts: [String] = []
-                var perRecordErrors: [Error] = []
+            var operationError: Error?
+            var batchConflicts: [String] = []
+            var batchErrors: [Error] = []
+            do {
+                (batchConflicts, batchErrors) = try await withCheckedThrowingContinuation {
+                    (continuation: CheckedContinuation<([String], [Error]), Error>) in
+                    var conflicts: [String] = []
+                    var perRecordErrors: [Error] = []
 
-                op.perRecordSaveBlock = { recordID, result in
-                    cbQueue.sync {
-                        if case .failure(let error) = result {
-                            if let ckError = error as? CKError,
-                               ckError.code == .serverRecordChanged {
-                                conflicts.append(recordID.recordName)
-                            } else {
-                                perRecordErrors.append(error)
+                    op.perRecordSaveBlock = { recordID, result in
+                        cbQueue.sync {
+                            if case .failure(let error) = result {
+                                if let ckError = error as? CKError,
+                                   ckError.code == .serverRecordChanged {
+                                    conflicts.append(recordID.recordName)
+                                } else {
+                                    perRecordErrors.append(error)
+                                }
                             }
                         }
                     }
-                }
-                op.modifyRecordsResultBlock = { result in
-                    cbQueue.sync {
-                        switch result {
-                        case .success:
-                            continuation.resume(returning: (conflicts, perRecordErrors))
-                        case .failure(let error):
-                            if let ckError = error as? CKError,
-                               ckError.code == .partialFailure {
-                                // Partial failure: per-record callbacks already captured details
+                    op.modifyRecordsResultBlock = { result in
+                        cbQueue.sync {
+                            switch result {
+                            case .success:
                                 continuation.resume(returning: (conflicts, perRecordErrors))
-                            } else {
-                                continuation.resume(throwing: error)
+                            case .failure(let error):
+                                if let ckError = error as? CKError,
+                                   ckError.code == .partialFailure {
+                                    // Partial failure: per-record callbacks already captured details
+                                    continuation.resume(returning: (conflicts, perRecordErrors))
+                                } else {
+                                    continuation.resume(throwing: error)
+                                }
                             }
                         }
                     }
+                    privateDB.add(op)
                 }
-                privateDB.add(op)
+            } catch {
+                operationError = error
+                batchErrors = [error]
             }
+
+            if batchErrors.isEmpty {
+                conflictIDs.append(contentsOf: batchConflicts)
+                batchStart = batchEnd
+                retriedThisBatch = false
+                continue
+            }
+            if !retriedThisBatch, await waitForRetry(batchErrors) {
+                retriedThisBatch = true
+                continue
+            }
+            if retriedThisBatch, saveBatchSize > minSaveBatchSize, await waitForRetry(batchErrors) {
+                saveBatchSize = max(minSaveBatchSize, saveBatchSize / 2)
+                continue
+            }
+            // A whole-operation refusal keeps its original error for the sync layer.
+            if let operationError { throw operationError }
             conflictIDs.append(contentsOf: batchConflicts)
             nonConflictErrors.append(contentsOf: batchErrors)
             // Stop at the first refused batch; the next sync resumes from here.
-            if !batchErrors.isEmpty { break }
+            break
         }
 
         // If there were non-conflict per-record errors, log them and throw
