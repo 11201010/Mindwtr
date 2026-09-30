@@ -166,131 +166,278 @@ struct SettingsScreen: View {
     }
 
     private var manageContent: some View {
-        ScrollView {
-            LazyVStack(spacing: 16) {
-                if let failure = model.unassignedAreaColorError, model.unassignedAreaColorOptions.isEmpty {
-                    errorBlock(failure, id: "manage-unassigned-color-error",
-                               retryID: "manage-unassigned-color-retry") {
-                        Task { await model.retryUnassignedAreaColor() }
+        ScrollViewReader { scroll in
+            ScrollView {
+                LazyVStack(spacing: 16) {
+                    if let failure = model.managePersonReferenceError {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(failure).rnFont(13).foregroundStyle(palette.danger)
+                                .accessibilityIdentifier("manage-person-reference-error")
+                            Button { model.dismissManagedPersonReferenceError() } label: {
+                                Text(model.label("common.close")).rnFont(14, .semibold)
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+                            .accessibilityIdentifier("manage-person-reference-error-close")
+                        }
                     }
-                } else if let failure = model.settingsAreaDeleteError {
-                    VStack(alignment: .leading, spacing: 4) {
-                        errorBlock(failure, id: "manage-area-delete-error", retryID: "manage-area-delete-retry") {
+                    if let failure = model.unassignedAreaColorError, model.unassignedAreaColorOptions.isEmpty {
+                        errorBlock(failure, id: "manage-unassigned-color-error",
+                                   retryID: "manage-unassigned-color-retry") {
+                            Task { await model.retryUnassignedAreaColor() }
+                        }
+                    } else if let failure = model.settingsAreaDeleteError {
+                        VStack(alignment: .leading, spacing: 4) {
+                            errorBlock(failure, id: "manage-area-delete-error", retryID: "manage-area-delete-retry") {
+                                Task {
+                                    await model.retrySettingsAreaDelete()
+                                    presentAreaDeleteConfirmationIfReady()
+                                }
+                            }
+                            if model.settingsAreaDeleteCanCancel {
+                                Button(model.label("common.cancel")) { model.cancelSettingsAreaDelete() }
+                                    .frame(minHeight: 44).accessibilityIdentifier("manage-area-delete-error-cancel")
+                            }
+                        }
+                    } else if let failure = model.somedaySectionOrderError {
+                        errorBlock(failure, id: "manage-someday-order-error",
+                                   retryID: "manage-someday-order-retry") {
+                            Task { await model.retrySomedaySectionOrder() }
+                        }
+                    } else if let failure = model.somedaySectionDeleteError {
+                        errorBlock(failure, id: "manage-someday-delete-error",
+                                   retryID: "manage-someday-delete-retry") {
                             Task {
-                                await model.retrySettingsAreaDelete()
-                                presentAreaDeleteConfirmationIfReady()
+                                await model.retrySomedaySectionDelete()
+                                presentSomedayDeleteConfirmationIfReady()
                             }
                         }
-                        if model.settingsAreaDeleteCanCancel {
-                            Button(model.label("common.cancel")) { model.cancelSettingsAreaDelete() }
-                                .frame(minHeight: 44).accessibilityIdentifier("manage-area-delete-error-cancel")
-                        }
-                    }
-                } else if let failure = model.somedaySectionOrderError {
-                    errorBlock(failure, id: "manage-someday-order-error",
-                               retryID: "manage-someday-order-retry") {
-                        Task { await model.retrySomedaySectionOrder() }
-                    }
-                } else if let failure = model.somedaySectionDeleteError {
-                    errorBlock(failure, id: "manage-someday-delete-error",
-                               retryID: "manage-someday-delete-retry") {
-                        Task {
-                            await model.retrySomedaySectionDelete()
-                            presentSomedayDeleteConfirmationIfReady()
-                        }
-                    }
-                } else if let failure = model.somedaySectionRenameError ?? model.manageReadError {
-                    errorBlock(failure, id: "manage-someday-error") {
-                        Task {
-                            if model.somedaySectionRenameIndex != nil || model.somedaySectionRenameReadPending {
-                                await model.retrySomedaySectionRename()
-                            }
-                            else { await model.retryManageSettingsRead() }
-                        }
-                    }
-                }
-                ForEach(model.manageSettings.objects("sections").indices, id: \.self) { index in
-                    let section = model.manageSettings.objects("sections")[index]
-                    let someday = section.text("key") == "somedaySections"
-                    let areas = section.text("key") == "areas"
-                    VStack(spacing: 1) {
-                        Button { if someday || areas { Task { await model.toggleManageSection(section.text("key")) } } } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: section.flag("open") ? "chevron.down" : "chevron.right")
-                                    .font(.system(size: 14)).foregroundStyle(palette.secondary).accessibilityHidden(true)
-                                Text(section.text("title")).rnFont(15, .semibold)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                Text(String(section.number("count"))).rnFont(13).foregroundStyle(palette.secondary)
-                            }
-                            .foregroundStyle(palette.text).padding(.horizontal, 16)
-                            .frame(minHeight: 52).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain).disabled(!(someday || areas) || model.busy || model.retryNeeded
-                                                      || model.somedaySectionRenameIndex != nil
-                                                      || model.somedaySectionRenameReadPending
-                                                      || model.somedaySectionDeleteActive
-                                                      || model.somedaySectionOrderActive
-                                                      || model.unassignedAreaColorActive
-                                                      || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
-                        .opacity((someday || areas) ? 1 : 0.55)
-                        .accessibilityValue(section.flag("open") ? "expanded" : "collapsed")
-                        .accessibilityIdentifier("manage-section-toggle-" + (someday ? "someday-sections" : section.text("key")))
-                        if areas && section.flag("open") {
-                            unassignedAreaRow
-                            if model.managedAreasTotal == 0,
-                               let empty = model.manageSettings.object("areas")["empty"] as? String {
-                                Text(empty).rnFont(14).foregroundStyle(palette.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading).padding(16)
-                            }
-                            ForEach(model.managedAreas.indices, id: \.self) { rowIndex in
-                                areaRow(model.managedAreas[rowIndex], index: rowIndex)
-                            }
-                            if model.managedAreas.count < model.managedAreasTotal {
-                                Button(model.label("common.more")) {
-                                    Task { await model.loadMoreManagedAreas() }
+                    } else if let failure = model.somedaySectionRenameError ?? model.manageReadError {
+                        errorBlock(failure, id: "manage-someday-error") {
+                            Task {
+                                if model.somedaySectionRenameIndex != nil || model.somedaySectionRenameReadPending {
+                                    await model.retrySomedaySectionRename()
                                 }
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                                .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
-                                          || model.unassignedAreaColorActive
-                                          || model.somedaySectionRenameIndex != nil
-                                          || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
-                                          || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
-                                .accessibilityIdentifier("manage-areas-more")
+                                else { await model.retryManageSettingsRead() }
                             }
-                            newAreaRow
                         }
-                        if someday && section.flag("open") {
-                            if model.managedSomedayTotal == 0 {
-                                Text(model.manageSettings.object("somedaySections").text("emptyHint"))
-                                    .rnFont(14).foregroundStyle(palette.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading).padding(16)
-                            } else {
-                                ForEach(model.managedSomedaySections.indices, id: \.self) { rowIndex in
-                                    somedayRow(index: rowIndex)
+                    }
+                    ForEach(model.manageSettings.objects("sections").indices, id: \.self) { index in
+                        let section = model.manageSettings.objects("sections")[index]
+                        let someday = section.text("key") == "somedaySections"
+                        let areas = section.text("key") == "areas"
+                        let inventory = ["people", "contexts", "tags"].contains(section.text("key"))
+                        VStack(spacing: 1) {
+                            Button { Task { await model.toggleManageSection(section.text("key")) } } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: section.flag("open") ? "chevron.down" : "chevron.right")
+                                        .font(.system(size: 14)).foregroundStyle(palette.secondary).accessibilityHidden(true)
+                                    Text(section.text("title")).rnFont(15, .semibold)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Text(String(section.number("count"))).rnFont(13).foregroundStyle(palette.secondary)
                                 }
-                                if model.managedSomedaySections.count < model.managedSomedayTotal {
+                                .foregroundStyle(palette.text).padding(.horizontal, 16)
+                                .frame(minHeight: 52).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).disabled(!(someday || areas || inventory)
+                                                          || (inventory && !model.manageInventoryActionsEnabled)
+                                                          || model.busy || model.retryNeeded || model.manageReadError != nil
+                                                          || model.somedaySectionRenameIndex != nil
+                                                          || model.somedaySectionRenameReadPending
+                                                          || model.somedaySectionDeleteActive
+                                                          || model.somedaySectionOrderActive
+                                                          || model.unassignedAreaColorActive
+                                                          || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                            .opacity((someday || areas || inventory) ? 1 : 0.55)
+                            .accessibilityValue(section.flag("open") ? "expanded" : "collapsed")
+                            .accessibilityIdentifier("manage-section-toggle-" + (someday ? "someday-sections" : section.text("key")))
+                            if inventory && section.flag("open") {
+                                inventoryContent(section.text("key"))
+                            }
+                            if areas && section.flag("open") {
+                                unassignedAreaRow
+                                if model.managedAreasTotal == 0,
+                                   let empty = model.manageSettings.object("areas")["empty"] as? String {
+                                    Text(empty).rnFont(14).foregroundStyle(palette.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                                }
+                                ForEach(model.managedAreas.indices, id: \.self) { rowIndex in
+                                    areaRow(model.managedAreas[rowIndex], index: rowIndex)
+                                }
+                                if model.managedAreas.count < model.managedAreasTotal {
                                     Button(model.label("common.more")) {
-                                        Task { await model.loadMoreManagedSomedaySections() }
+                                        Task { await model.loadMoreManagedAreas() }
                                     }
                                     .frame(maxWidth: .infinity, minHeight: 44)
                                     .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
-                                              || model.somedaySectionRenameIndex != nil
-                                              || model.somedaySectionDeleteActive
-                                              || model.somedaySectionOrderActive
                                               || model.unassignedAreaColorActive
+                                              || model.somedaySectionRenameIndex != nil
+                                              || model.somedaySectionDeleteActive || model.somedaySectionOrderActive
                                               || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
-                                    .accessibilityIdentifier("manage-someday-more")
+                                    .accessibilityIdentifier("manage-areas-more")
+                                }
+                                newAreaRow
+                            }
+                            if someday && section.flag("open") {
+                                if model.managedSomedayTotal == 0 {
+                                    Text(model.manageSettings.object("somedaySections").text("emptyHint"))
+                                        .rnFont(14).foregroundStyle(palette.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                                } else {
+                                    ForEach(model.managedSomedaySections.indices, id: \.self) { rowIndex in
+                                        somedayRow(index: rowIndex)
+                                    }
+                                    if model.managedSomedaySections.count < model.managedSomedayTotal {
+                                        Button(model.label("common.more")) {
+                                            Task { await model.loadMoreManagedSomedaySections() }
+                                        }
+                                        .frame(maxWidth: .infinity, minHeight: 44)
+                                        .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
+                                                  || model.somedaySectionRenameIndex != nil
+                                                  || model.somedaySectionDeleteActive
+                                                  || model.somedaySectionOrderActive
+                                                  || model.unassignedAreaColorActive
+                                                  || model.settingsAreaDeleteActive || model.settingsAreaEditActive)
+                                        .accessibilityIdentifier("manage-someday-more")
+                                    }
                                 }
                             }
                         }
+                        .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                        .id(section.text("key"))
+                        .onChange(of: section.flag("open")) { open in
+                            // Settle the scroll position after a large list shrinks to its heading.
+                            if !open { scroll.scrollTo(section.text("key"), anchor: .top) }
+                        }
                     }
-                    .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                    if model.busy { ProgressView().padding(12) }
                 }
-                if model.busy { ProgressView().padding(12) }
+                .padding(16)
             }
-            .padding(16)
+            .accessibilityIdentifier("manage-someday-scroll")
         }
-        .accessibilityIdentifier("manage-someday-scroll")
+    }
+
+    private func inventoryContent(_ key: String) -> some View {
+        let rows = model.managedInventoryRows[key] ?? []
+        return Group {
+            if model.managedInventoryTotal(key) == 0,
+               let empty = model.manageSettings.object(key)["empty"] as? String {
+                Text(empty).rnFont(14).foregroundStyle(palette.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                    .accessibilityIdentifier("manage-\(key)-empty")
+            }
+            ForEach(rows.indices, id: \.self) { index in
+                if key == "people" { personRow(rows[index], index: index) }
+                else { inventoryValueRow(rows[index], key: key, index: index) }
+            }
+            if rows.count < model.managedInventoryTotal(key) {
+                Button { Task { await model.loadMoreManagedInventory(key) } } label: {
+                    Text(model.label("common.more")).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }
+                .disabled(!model.manageInventoryActionsEnabled)
+                .accessibilityIdentifier("manage-\(key)-more")
+            }
+            if key == "people" {
+                let newPerson = model.manageSettings.object("people").object("newPerson")
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(newPerson.text("label")).rnFont(15, .semibold).foregroundStyle(palette.text)
+                        Text(newPerson.text("hint")).rnFont(12).foregroundStyle(palette.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {} label: {
+                        Image(systemName: "plus").font(.system(size: 18))
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(true).opacity(0.45)
+                    .accessibilityLabel(newPerson.text("addLabel"))
+                    .accessibilityIdentifier("manage-person-add")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 56)
+            }
+        }
+    }
+
+    private func personRow(_ row: CoreObject, index: Int) -> some View {
+        let copy = model.manageSettings.object("people").object("text")
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .trailing, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+        return layout {
+            HStack(spacing: 12) {
+                Text(row.text("initial")).rnFont(14, .bold).foregroundStyle(palette.text)
+                    .frame(width: 34, height: 34)
+                    .background(palette.bg, in: Circle())
+                    .overlay(Circle().stroke(palette.border, lineWidth: 1)).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(row.text("name")).rnFont(15).foregroundStyle(palette.text)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .accessibilityIdentifier("manage-person-name-\(index)")
+                    if let detail = row["detail"] as? String, !detail.isEmpty {
+                        Text(detail).rnFont(12).foregroundStyle(palette.secondary)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack(spacing: 4) {
+                Button { Task { await model.openManagedPersonSearch(index: index) } } label: {
+                    Text(row.text("countLabel")).rnFont(13).foregroundStyle(palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 4).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.manageInventoryActionsEnabled)
+                .accessibilityLabel(row.text("countAccessibilityLabel"))
+                .accessibilityHint(copy.text("countHint"))
+                .accessibilityIdentifier("manage-person-review-\(index)")
+                if let reference = row["referenceLink"] as? String, !reference.isEmpty {
+                    Button { Task { await model.openManagedPersonReference(index: index) } } label: {
+                        Image(systemName: "arrow.up.right.square").font(.system(size: 18))
+                            .foregroundStyle(palette.secondary).frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.manageInventoryActionsEnabled)
+                    .accessibilityLabel(copy.text("openReference"))
+                    .accessibilityIdentifier("manage-person-reference-\(index)")
+                }
+                disabledInventoryAction("pencil", label: copy.text("editLabel"))
+                disabledInventoryAction("trash", label: copy.text("deleteLabel"))
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 56)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(row.text("name"))
+        .accessibilityIdentifier("manage-person-row-\(index)")
+    }
+
+    private func inventoryValueRow(_ row: CoreObject, key: String, index: Int) -> some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .trailing, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+        return layout {
+            Text(row.text("value")).rnFont(15).foregroundStyle(palette.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+            HStack(spacing: 4) {
+                disabledInventoryAction("pencil", label: model.label("common.edit"))
+                disabledInventoryAction("trash", label: model.label("common.delete"))
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 52)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(row.text("value"))
+        .accessibilityIdentifier("manage-\(key == "contexts" ? "context" : "tag")-row-\(index)")
+    }
+
+    private func disabledInventoryAction(_ symbol: String, label: String) -> some View {
+        Button {} label: {
+            Image(systemName: symbol).font(.system(size: 18))
+                .foregroundStyle(symbol == "trash" ? palette.danger : palette.secondary)
+                .frame(width: 44, height: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(true).opacity(0.45).accessibilityLabel(label)
     }
 
     private var unassignedAreaRow: some View {

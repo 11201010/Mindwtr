@@ -5145,6 +5145,152 @@ final class CoreHostTests: XCTestCase {
         }
     }
 
+    func testManageInventoryPagesPeopleSearchAndReadOnlyRows() async throws {
+        let bootstrap = host()
+        _ = try await bootstrap.start()
+        await bootstrap.close()
+        let at = recentAreaTestTime()
+        let sqlite = try SQLiteBridge(url: database)
+        let labels = (0..<127).map { String(format: "%03d", $0) }
+        let links = ["https://example.com/reference", "obsidian://open?vault=Work", "javascript:alert(1)",
+                     "file:///private/reference", "not a URL", "tel:123"]
+        for index in (0..<127).reversed() {
+            _ = try sqlite.execute("INSERT INTO people (id, name, note, referenceLink, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                   parametersJSON: json([String(format: "00000000-0000-4000-8000-%012d", index), "Person \(labels[index])",
+                                                         index == 0 ? "Delegation note" as Any : NSNull(),
+                                                         index < links.count ? links[index] as Any : NSNull(), at, at, 1]))
+            var contexts = ["@Context \(labels[index])"]
+            var tags = ["#Tag \(labels[index])"]
+            if index < 4 { contexts.append("@Person 000") }
+            if index == 0 {
+                contexts += ["@café", "@cafe\u{0301}"]
+                tags += ["#café", "#cafe\u{0301}"]
+            }
+            _ = try sqlite.execute("INSERT INTO tasks (id, title, status, assignedTo, tags, contexts, isFocusedToday, showFutureRecurrence, suppressMindwtrReminders, pushCount, createdAt, updatedAt, completedAt, deletedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   parametersJSON: json([String(format: "00000000-0000-4000-9000-%012d", index), "Inventory task \(labels[index])",
+                                                         index == 1 ? "done" : index == 2 ? "reference" : "next",
+                                                         index < 2 || index == 3 ? "Person 000" as Any : NSNull(),
+                                                         json(tags), json(contexts), 0, 0, 0, 0, at, at,
+                                                         index == 1 ? at as Any : NSNull(), index == 3 ? at as Any : NSNull(), 1]))
+        }
+        _ = try sqlite.execute("INSERT INTO people (id, name, createdAt, updatedAt, deletedAt, rev) VALUES (?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["00000000-0000-4000-8000-000000000127", "Deleted inventory person", at, at, at, 1]))
+        sqlite.close()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let reader = try SQLiteBridge(url: database)
+        defer { reader.close() }
+        let before = try nineTableSnapshot(reader)
+        var writes = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let manage = try object(await core.call("menuRead", argumentsJSON: json(["manageSettings", "{}"])))
+        let revision = try XCTUnwrap(manage["revision"] as? String)
+        var inventories: [String: [[String: Any]]] = [:]
+        for (alias, list) in [("managePeople", "people"), ("manageContexts", "contexts"), ("manageTags", "tags")] {
+            let window = try XCTUnwrap((manage[list] as? [String: Any])?["rows"] as? [String: Any])
+            let first = try XCTUnwrap(window["items"] as? [[String: Any]])
+            XCTAssertEqual(first.count, 100)
+            let total = try XCTUnwrap(window["total"] as? Int)
+            XCTAssertGreaterThan(total, 125)
+            var items: [[String: Any]] = []
+            for offset in stride(from: 0, to: total, by: 100) {
+                let page = try object(await core.call("menuRead", argumentsJSON: json([alias, json(["offset": offset, "limit": 100, "revision": revision])])))
+                XCTAssertEqual(page["list"] as? String, list)
+                XCTAssertEqual(page["revision"] as? String, revision)
+                XCTAssertEqual(page["total"] as? Int, total)
+                items += try XCTUnwrap(page["items"] as? [[String: Any]])
+            }
+            XCTAssertEqual(try json(Array(items.prefix(100))), try json(first))
+            XCTAssertEqual(items.count, total)
+            let more = try object(await core.call("menuRead", argumentsJSON: json([alias, json(["offset": 100, "limit": 25, "revision": revision])])))
+            XCTAssertEqual(try json(XCTUnwrap(more["items"])), try json(Array(items[100..<125])))
+            let tail = try object(await core.call("menuRead", argumentsJSON: json([alias, json(["offset": 125, "limit": 25, "revision": revision])])))
+            XCTAssertEqual(try json(XCTUnwrap(tail["items"])), try json(Array(items.dropFirst(125))))
+            inventories[list] = items
+        }
+        let people = try XCTUnwrap(inventories["people"])
+        XCTAssertEqual(people.compactMap { $0["name"] as? String }, labels.map { "Person \($0)" })
+        let person = try XCTUnwrap(people.first)
+        XCTAssertEqual(person["taskCount"] as? Int, 3)
+        XCTAssertEqual(person["initial"] as? String, "P")
+        XCTAssertEqual(person["detail"] as? String, "Delegation note")
+        XCTAssertEqual(person["countLabel"] as? String, "3 tasks")
+        XCTAssertEqual(person["countAccessibilityLabel"] as? String, "Person 000: 3 tasks")
+        XCTAssertEqual(person["searchQuery"] as? String, "person:\"Person 000\"")
+        for index in [0, 1, 5] { XCTAssertEqual(people[index]["referenceLink"] as? String, links[index]) }
+        for index in [2, 3, 4, 6] { XCTAssertTrue(people[index]["referenceLink"] is NSNull) }
+        for (list, prefix) in [("contexts", "@"), ("tags", "#")] {
+            let values = try XCTUnwrap(inventories[list]).compactMap { $0["value"] as? String }
+            let numberedPrefix = prefix + (list == "contexts" ? "Context " : "Tag ")
+            // The deleted task's tokens are excluded; raw Unicode spellings stay distinct.
+            XCTAssertEqual(values.filter { $0.hasPrefix(numberedPrefix) }, labels.filter { $0 != "003" }.map { numberedPrefix + $0 })
+            for spelling in [prefix + "café", prefix + "cafe\u{0301}"] {
+                XCTAssertEqual(values.filter { Array($0.utf8) == Array(spelling.utf8) }.count, 1)
+            }
+        }
+        let query = try XCTUnwrap(person["searchQuery"] as? String)
+        let initial = try object(await core.call("search", argumentsJSON: json([json(["query": query, "filters": NSNull(), "limit": 100])])))
+        var filters = try XCTUnwrap(initial["defaultFilters"] as? [String: Any])
+        filters["includeCompleted"] = true
+        let search = try object(await core.call("search", argumentsJSON: json([json(["query": query, "filters": filters, "limit": 100])])))
+        XCTAssertEqual(search["query"] as? String, query)
+        XCTAssertEqual(Set((search["tasks"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }),
+                       Set((0..<3).map { String(format: "00000000-0000-4000-9000-%012d", $0) }))
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try nineTableSnapshot(reader), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testManageInventoryRejectsMalformedAndStalePages() async throws {
+        let core = host()
+        _ = try await core.start()
+        let manage = try object(await core.call("menuRead", argumentsJSON: json(["manageSettings", "{}"])))
+        let revision = try XCTUnwrap(manage["revision"] as? String)
+        let reader = try SQLiteBridge(url: database)
+        defer { reader.close() }
+        let before = try nineTableSnapshot(reader)
+        let aliases = ["manageAreas", "managePeople", "manageContexts", "manageTags"]
+        for alias in aliases {
+            let valid: [String: Any] = ["offset": 0, "limit": 25, "revision": revision]
+            for (field, value) in [("offset", -1), ("offset", 0.5), ("offset", true), ("offset", "0"),
+                                   ("offset", 9_007_199_254_740_992), ("limit", 0), ("limit", 101),
+                                   ("limit", 1.5), ("limit", true), ("limit", "25"), ("revision", NSNull()),
+                                   ("revision", 1), ("revision", String(repeating: "r", count: 501)),
+                                   ("list", "people")] as [(String, Any)] {
+                var malformed = valid
+                malformed[field] = value
+                await expectFailure("Unsupported native Manage \(alias.dropFirst(6)) page") {
+                    _ = try await core.call("menuRead", argumentsJSON: json([alias, json(malformed)]))
+                }
+            }
+            for field in valid.keys {
+                var missing = valid
+                missing.removeValue(forKey: field)
+                await expectFailure("Unsupported native Manage \(alias.dropFirst(6)) page") {
+                    _ = try await core.call("menuRead", argumentsJSON: json([alias, json(missing)]))
+                }
+            }
+        }
+        await expectFailure("Unsupported native menu read") {
+            _ = try await core.call("menuRead", argumentsJSON: json(["manageList", json(["list": "people", "offset": 0, "limit": 25, "revision": revision])]))
+        }
+        XCTAssertEqual(try nineTableSnapshot(reader), before)
+        _ = try await core.call("captureSubmit", argumentsJSON: capture(core, title: "Intervening inventory change"))
+        let changed = try nineTableSnapshot(reader)
+        let fresh = try object(await core.call("menuRead", argumentsJSON: json(["manageSettings", "{}"])))
+        XCTAssertNotEqual(fresh["revision"] as? String, revision)
+        for alias in aliases {
+            await expectFailure("STALE_REVISION") {
+                _ = try await core.call("menuRead", argumentsJSON: json([alias, json(["offset": 0, "limit": 25, "revision": revision])]))
+            }
+        }
+        XCTAssertEqual(try nineTableSnapshot(reader), changed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
     private func taskListSortOptions(_ core: CoreHost) async throws -> [String: Any] {
         try object(await core.call("taskListSortOptions", argumentsJSON: json(["{}"])))
     }

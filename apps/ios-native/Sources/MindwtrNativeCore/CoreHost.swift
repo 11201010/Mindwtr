@@ -664,12 +664,13 @@ private final class Engine: @unchecked Sendable {
                 }
             }
             let value: String
-            if method == "menuRead", args.first as? String == "manageAreas" {
+            if method == "menuRead", let name = args.first as? String,
+               let list = ["manageAreas": "areas", "managePeople": "people", "manageContexts": "contexts", "manageTags": "tags"][name] {
                 guard let page = args[1] as? String,
                       var input = try NativeJSON.jsonObject(with: Data(page.utf8)) as? [String: Any] else {
-                    throw HostFailure("Unsupported native Manage Areas page")
+                    throw HostFailure("Unsupported native Manage \(name.dropFirst(6)) page")
                 }
-                input["list"] = "areas"
+                input["list"] = list
                 let encoded = String(decoding: try JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]), as: UTF8.self)
                 value = try invoke("menuRead", arguments: ["manageList", encoded])
             } else {
@@ -5028,7 +5029,7 @@ private final class Engine: @unchecked Sendable {
             }
         }
         if method == "menuRead" {
-            guard let name = args[0] as? String, ["more", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "manageSettings", "manageAreas", "somedaySections"].contains(name),
+            guard let name = args[0] as? String, ["more", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "somedaySections"].contains(name),
                   let json = args[1] as? String,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
@@ -5049,13 +5050,13 @@ private final class Engine: @unchecked Sendable {
                     throw HostFailure("Unsupported native Manage Settings input")
                 }
             }
-            if name == "manageAreas" {
+            if ["manageAreas", "managePeople", "manageContexts", "manageTags"].contains(name) {
                 guard json.utf8.count <= 4_096, Set(input.keys) == Set(["offset", "limit", "revision"]),
                       Self.isInteger(input["offset"]), Self.isInteger(input["limit"]),
                       let offset = input["offset"] as? NSNumber, (0...9_007_199_254_740_991).contains(offset.doubleValue),
                       let limit = input["limit"] as? NSNumber, (1...100).contains(limit.doubleValue),
                       let revision = input["revision"] as? String, revision.utf8.count <= 500 else {
-                    throw HostFailure("Unsupported native Manage Areas page")
+                    throw HostFailure("Unsupported native Manage \(name.dropFirst(6)) page")
                 }
             }
             if name == "somedaySections" {

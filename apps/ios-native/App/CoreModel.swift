@@ -119,6 +119,8 @@ final class CoreModel: ObservableObject {
     @Published private(set) var managedSomedayTotal = 0
     @Published private(set) var managedAreas: [CoreObject] = []
     @Published private(set) var managedAreasTotal = 0
+    @Published private(set) var managedInventoryRows: [String: [CoreObject]] = [:]
+    @Published private(set) var managePersonReferenceError: String?
     @Published private(set) var settingsAreaDeleteOptions: CoreObject = [:]
     @Published private(set) var settingsAreaDeleteError: String?
     @Published private(set) var settingsAreaDeleteAwaitingRefresh = false
@@ -426,6 +428,8 @@ final class CoreModel: ObservableObject {
     private var settingsSearchTask: Task<Void, Never>?
     private var managedSomedayDepth = 25
     private var managedAreasDepth = 100
+    private var managedInventoryDepths = ["people": 100, "contexts": 100, "tags": 100]
+    private var managePendingInventoryDepths: [String: Int]?
     private var managePendingCandidate: String?
     private var settingsManageRequested = false
     private var unassignedAreaColorOpening = false
@@ -565,6 +569,7 @@ final class CoreModel: ObservableObject {
     private var somedayRenameTestReadFailures = 0
     private var somedayRenameOptionsTestReadFailures = 0
     private var manageToggleTestReadFailures = 0
+    private var manageInventoryTestReadFailures = 0
     private var somedayDeleteTestReadFailures = 0
     private var somedayDeleteOptionsTestReadFailures = 0
     private var somedayDeleteTestRefusals = 0
@@ -1482,6 +1487,7 @@ final class CoreModel: ObservableObject {
                     somedayRenameTestReadFailures = arguments.contains("--native-someday-rename-read-failure") ? 2 : 0
                     somedayRenameOptionsTestReadFailures = arguments.contains("--native-someday-rename-options-failure") ? 1 : 0
                     manageToggleTestReadFailures = arguments.contains("--native-manage-toggle-read-failure") ? 1 : 0
+                    manageInventoryTestReadFailures = arguments.contains("--native-manage-inventory-read-failure") ? 1 : 0
                     somedayDeleteTestReadFailures = arguments.contains("--native-someday-delete-read-failure") ? 2 : 0
                     somedayDeleteOptionsTestReadFailures = arguments.contains("--native-someday-delete-options-failure") ? 1 : 0
                     somedayDeleteTestRefusals = arguments.contains("--native-someday-delete-refusal") ? 1 : 0
@@ -1722,7 +1728,7 @@ final class CoreModel: ObservableObject {
         guard ready, !retryNeeded, !capturePresented, !taskPresented, !taskStatusMenuPresented, !calendarItemPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
               !projectRenameEditing, somedaySectionRenameIndex == nil,
-              somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil,
+              somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil, managePendingInventoryDepths == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
               !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
@@ -1742,7 +1748,7 @@ final class CoreModel: ObservableObject {
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
               !projectRenameEditing, !somedaySectionCreatePending, !somedaySectionCreateAwaitingRefresh,
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
-              managePendingCandidate == nil,
+              managePendingCandidate == nil, managePendingInventoryDepths == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive, !unassignedAreaColorActive,
               !settingsAreaCreatePresented, !settingsAreaEditActive,
@@ -1762,7 +1768,7 @@ final class CoreModel: ObservableObject {
         guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
               !projectRenameEditing, somedaySectionRenameIndex == nil,
-              somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil,
+              somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil, managePendingInventoryDepths == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive, !settingsAreaDeleteActive,
               !unassignedAreaColorActive, !settingsAreaCreatePresented, !settingsAreaEditActive else { return }
@@ -1866,7 +1872,9 @@ final class CoreModel: ObservableObject {
         settingsManagePresented = false
         settingsManageRequested = false
         managePendingCandidate = nil
+        managePendingInventoryDepths = nil
         manageReadError = nil
+        managePersonReferenceError = nil
     }
 
     private func readManageSettings(openSections candidate: String? = nil) async throws {
@@ -1884,12 +1892,21 @@ final class CoreModel: ObservableObject {
         let areaPages: (rows: [CoreObject], total: Int)
         if areasOpen { areaPages = try await readManagedAreaPages(next, depth: managedAreasDepth) }
         else { areaPages = ([], 0) }
+        let depths = managePendingInventoryDepths ?? managedInventoryDepths
+        var inventoryRows: [String: [CoreObject]] = [:]
+        for key in ["people", "contexts", "tags"] {
+            if next.objects("sections").first(where: { $0.text("key") == key })?.flag("open") == true {
+                inventoryRows[key] = try await readManagedListPages(next, key: key, depth: depths[key] ?? 100).rows
+            }
+        }
         // Publish and persist together only after all required reads succeed.
         manageSettings = next
         managedSomedaySections = pages.rows
         managedSomedayTotal = pages.total
         managedAreas = areaPages.rows
         managedAreasTotal = areaPages.total
+        managedInventoryRows = inventoryRows
+        managedInventoryDepths = depths
         if let write = next.object("openSectionsRestore")["value"] as? String,
            next.object("openSectionsRestore").text("key") == manageOpenSectionsKey {
             preferenceDefaults.set(write, forKey: manageOpenSectionsPreference)
@@ -1897,6 +1914,7 @@ final class CoreModel: ObservableObject {
             preferenceDefaults.set(candidate, forKey: manageOpenSectionsPreference)
         }
         managePendingCandidate = nil
+        managePendingInventoryDepths = nil
         manageReadError = nil
     }
 
@@ -1923,17 +1941,30 @@ final class CoreModel: ObservableObject {
     }
 
     private func readManagedAreaPages(_ manage: CoreObject, depth: Int) async throws -> (rows: [CoreObject], total: Int) {
-        let window = manage.object("areas").object("rows")
+        try await readManagedListPages(manage, key: "areas", depth: depth)
+    }
+
+    private func readManagedListPages(_ manage: CoreObject, key: String, depth: Int) async throws -> (rows: [CoreObject], total: Int) {
+        guard let alias = ["areas": "manageAreas", "people": "managePeople", "contexts": "manageContexts", "tags": "manageTags"][key] else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        #if DEBUG && targetEnvironment(simulator)
+        if key != "areas", manageInventoryTestReadFailures > 0 {
+            manageInventoryTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        #endif
+        let window = manage.object(key).object("rows")
         guard let total = window["total"] as? Int, total >= 0,
-              total == manage.objects("sections").first(where: { $0.text("key") == "areas" })?.number("count"),
+              total == manage.objects("sections").first(where: { $0.text("key") == key })?.number("count"),
               let first = window["items"] as? [CoreObject], first.count <= 100,
               first.count <= total, (total == 0 || !first.isEmpty),
               !manage.text("revision").isEmpty else { throw CocoaError(.coderReadCorrupt) }
         var rows = first
         while rows.count < min(depth, total) {
-            let page = try await query("menuRead", ["manageAreas", try json(["offset": rows.count, "limit": 25,
+            let page = try await query("menuRead", [alias, try json(["offset": rows.count, "limit": 25,
                                                                                "revision": manage.text("revision")])])
-            guard page.text("list") == "areas", page.text("revision") == manage.text("revision"),
+            guard page.text("list") == key, page.text("revision") == manage.text("revision"),
                   page["total"] as? Int == total, let items = page["items"] as? [CoreObject],
                   !items.isEmpty, items.count <= 25, rows.count + items.count <= total else {
                 throw CocoaError(.coderReadCorrupt)
@@ -1943,7 +1974,78 @@ final class CoreModel: ObservableObject {
         return (rows, total)
     }
 
+    var manageInventoryActionsEnabled: Bool {
+        ready && selectedSurface == .settings && settingsManagePresented && !busy && !retryNeeded
+            && manageReadError == nil && managePersonReferenceError == nil
+            && managePendingCandidate == nil && managePendingInventoryDepths == nil
+            && !capturePresented && !areaPickerPresented && !taskPresented && !morePresented
+            && !taskStatusMenuPresented && !calendarItemPresented && !calendarComposerPresented
+            && !mindSweepPresented && !processInboxPresented && !projectRenameEditing
+            && !settingsAreaCreatePresented && !settingsAreaEditActive && !settingsAreaDeleteActive
+            && !unassignedAreaColorActive && !somedaySectionRenameReadPending && somedaySectionRenameIndex == nil
+            && !somedaySectionRenamePending && !somedaySectionRenameAwaitingRefresh
+            && !somedaySectionDeleteActive && !somedaySectionOrderActive
+            && somedaySectionRenameError == nil && somedaySectionDeleteError == nil
+            && somedaySectionOrderError == nil && unassignedAreaColorError == nil
+            && settingsAreaDeleteError == nil
+    }
+
+    func managedInventoryTotal(_ key: String) -> Int {
+        manageSettings.object(key).object("rows").number("total")
+    }
+
+    func loadMoreManagedInventory(_ key: String) async {
+        guard manageInventoryActionsEnabled, let depth = managedInventoryDepths[key],
+              manageSettings.objects("sections").first(where: { $0.text("key") == key })?.flag("open") == true,
+              (managedInventoryRows[key] ?? []).count < managedInventoryTotal(key) else { return }
+        var depths = managedInventoryDepths
+        depths[key] = min(depth + 25, managedInventoryTotal(key))
+        managePendingInventoryDepths = depths
+        busy = true
+        defer { finishOperation() }
+        do { try await readManageSettings() }
+        catch { manageReadError = error.localizedDescription }
+    }
+
+    func openManagedPersonSearch(index: Int) async {
+        guard manageInventoryActionsEnabled, let rows = managedInventoryRows["people"], rows.indices.contains(index),
+              let text = rows[index]["searchQuery"] as? String, !text.isEmpty else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let defaults = try await query("search", [try json(["query": "", "filters": NSNull(), "limit": 1])])
+            var filters = defaults.object("defaultFilters")
+            guard !filters.isEmpty, filters["includeCompleted"] is Bool else { throw CocoaError(.coderReadCorrupt) }
+            filters["includeCompleted"] = true
+            searchCaller = .settings
+            selectedSurface = .search
+            searchQuery = text
+            searchFilters = filters
+            searchView = [:]
+            requestSearch(delay: 0)
+        } catch { manageReadError = error.localizedDescription }
+    }
+
+    func openManagedPersonReference(index: Int) async {
+        guard manageInventoryActionsEnabled, let rows = managedInventoryRows["people"], rows.indices.contains(index),
+              let link = rows[index]["referenceLink"] as? String, !link.isEmpty else { return }
+        let failure = manageSettings.object("people").object("text").text("openReferenceFailed")
+        guard let url = URL(string: link) else { managePersonReferenceError = failure; return }
+        busy = true
+        defer { finishOperation() }
+        let opened = await withCheckedContinuation { continuation in
+            UIApplication.shared.open(url, options: [:]) { continuation.resume(returning: $0) }
+        }
+        if !opened { managePersonReferenceError = failure }
+    }
+
+    func dismissManagedPersonReferenceError() {
+        guard selectedSurface == .settings, !busy, !retryNeeded else { return }
+        managePersonReferenceError = nil
+    }
+
     func toggleManageSection(_ key: String) async {
+        if ["people", "contexts", "tags"].contains(key) { guard manageInventoryActionsEnabled else { return } }
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
               manageReadError == nil, !settingsAreaCreatePresented, !settingsAreaEditActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
@@ -13947,7 +14049,10 @@ final class CoreModel: ObservableObject {
         case .someday: await readSomeday()
         case .settings:
             try await readSettingsMenu()
-            if settingsManagePresented { try await readManageSettings() }
+            if settingsManagePresented {
+                do { try await readManageSettings() }
+                catch { manageReadError = error.localizedDescription; throw error }
+            }
         case .reference: await readReference()
         case .history: await readHistory()
         case .trash: await readTrash()

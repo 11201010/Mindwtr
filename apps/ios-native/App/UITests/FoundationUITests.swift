@@ -4233,6 +4233,147 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+
+    private func task91Section(_ app: XCUIApplication, _ name: String, open: Bool) {
+        let toggle = app.buttons["manage-section-toggle-" + name]
+        revealPagedElement(app, toggle, in: app.scrollViews["manage-someday-scroll"])
+        boardEnabled(toggle)
+        if (toggle.value as? String == "expanded") != open {
+            let before = XCTAttachment(screenshot: app.screenshot())
+            before.name = "Manage " + name + " before disclosure"
+            before.lifetime = .keepAlways
+            add(before)
+            toggle.tap()
+        }
+        expectation(for: NSPredicate(format: "value == %@", open ? "expanded" : "collapsed"), evaluatedWith: toggle)
+        waitForExpectations(timeout: 10)
+        boardEnabled(app.buttons["manage-back"])
+    }
+
+    private func task91PersonSearch(_ app: XCUIApplication, index: Int, completed: Bool) {
+        let review = app.buttons["manage-person-review-\(index)"]
+        revealPagedElement(app, review, in: app.scrollViews["manage-someday-scroll"],
+                           more: "manage-people-more", ready: app.buttons["manage-back"])
+        boardEnabled(review)
+        XCTAssertGreaterThanOrEqual(review.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(review.frame.height, 44 - 0.001)
+        if completed { XCTAssertTrue(review.label.contains("2")) }
+        review.tap()
+        let suffix = String(format: "%03d", index)
+        let query = app.textFields["search-input"]
+        XCTAssertTrue(query.waitForExistence(timeout: 10))
+        XCTAssertEqual(query.value as? String, "person:\"Task91 Person " + suffix + "\"")
+        XCTAssertTrue(app.buttons["search-task-task91-task-" + suffix].waitForExistence(timeout: 15))
+        if completed {
+            XCTAssertTrue(app.buttons["search-task-task91-completed"].waitForExistence(timeout: 10))
+            XCTAssertFalse(app.buttons["search-task-task91-deleted"].exists)
+        }
+        boardTap(app, "search-close")
+        boardEnabled(app.buttons["manage-back"])
+        XCTAssertEqual(app.buttons["manage-section-toggle-people"].value as? String, "expanded")
+    }
+
+    func testManageInventoryNormal() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "488df458-0586-487a-b13e-15d7a105a628"]
+        app.launch(); task83OpenManage(app, search: true, ensureOpen: false)
+        task91Section(app, "people", open: true)
+        XCTAssertEqual(app.staticTexts["manage-person-name-0"].label, "Task91 Person 000")
+        XCTAssertTrue(app.buttons["manage-person-reference-0"].exists)
+        XCTAssertFalse(app.buttons["manage-person-reference-1"].exists)
+        task91PersonSearch(app, index: 0, completed: true)
+        task91Section(app, "people", open: false)
+        for (section, row, value) in [("contexts", "manage-context-row-0", "@Task91 Person 000"),
+                                      ("tags", "manage-tag-row-0", "#task91-000")] {
+            task91Section(app, section, open: true)
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", value)).firstMatch.exists)
+            XCTAssertTrue(app.descendants(matching: .any)[row].exists)
+            task91Section(app, section, open: false)
+        }
+        task91Section(app, "tags", open: true)
+        boardTap(app, "manage-back")
+        XCTAssertEqual(app.textFields["settings-search"].value as? String, "Manage")
+        app.terminate(); app.launch(); task83OpenManage(app, ensureOpen: false)
+        XCTAssertEqual(app.buttons["manage-section-toggle-tags"].value as? String, "expanded")
+        XCTAssertEqual(app.buttons["manage-section-toggle-people"].value as? String, "collapsed")
+        app.terminate()
+    }
+
+    func testManageInventoryLargest() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "f8a0ffa2-e2a5-47a7-85b1-5f3b1b7847b8"]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        task91Section(app, "people", open: true)
+        let review = app.buttons["manage-person-review-0"]
+        revealPagedElement(app, review, in: app.scrollViews["manage-someday-scroll"])
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Largest Manage People inventory"; shot.lifetime = .keepAlways; add(shot)
+        task91PersonSearch(app, index: 0, completed: true)
+        task91Section(app, "people", open: false)
+        task91Section(app, "contexts", open: true)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", "@Task91 Person 000")).firstMatch.exists)
+        app.terminate()
+    }
+
+    func testManageInventoryPaging() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "e85794f8-4427-4de0-9447-8fead6d10dfb"]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        task91Section(app, "people", open: true)
+        task91PersonSearch(app, index: 105, completed: false)
+        XCTAssertTrue(app.buttons["manage-person-review-105"].exists)
+        task91Section(app, "people", open: false)
+        for (section, identifier, value) in [("contexts", "manage-context-row-105", "@Task91 Person 105"),
+                                             ("tags", "manage-tag-row-105", "#task91-105")] {
+            task91Section(app, section, open: true)
+            let row = app.descendants(matching: .any)[identifier]
+            revealPagedElement(app, row, in: app.scrollViews["manage-someday-scroll"],
+                               more: "manage-" + section + "-more", ready: app.buttons["manage-back"])
+            XCTAssertTrue(row.exists)
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", value)).firstMatch.exists)
+            task91Section(app, section, open: false)
+        }
+        app.terminate()
+    }
+
+    func testManageInventoryReadFailure() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "c0dd17ee-0584-4519-9c0a-4dcb02a2a756", "--native-manage-inventory-read-failure"]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        let people = app.buttons["manage-section-toggle-people"]
+        revealPagedElement(app, people, in: app.scrollViews["manage-someday-scroll"])
+        boardEnabled(people); people.tap()
+        XCTAssertTrue(app.staticTexts["manage-someday-error"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons["manage-section-toggle-people"].value as? String, "collapsed")
+        boardTap(app, "manage-someday-retry")
+        boardEnabled(app.buttons["manage-person-review-0"])
+        XCTAssertEqual(app.buttons["manage-section-toggle-people"].value as? String, "expanded")
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", "c0dd17ee-0584-4519-9c0a-4dcb02a2a756"]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        XCTAssertEqual(app.buttons["manage-section-toggle-people"].value as? String, "expanded")
+        XCTAssertTrue(app.buttons["manage-person-review-0"].exists)
+        app.terminate()
+    }
+
+    func testManageInventoryEmpty() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "09010796-6f5f-4f7f-95e6-d46b03949ce7"]
+        app.launch(); task83OpenManage(app, ensureOpen: false)
+        for section in ["people", "contexts", "tags"] {
+            task91Section(app, section, open: true)
+            XCTAssertTrue(app.staticTexts["manage-" + section + "-empty"].exists)
+            XCTAssertFalse(app.buttons["manage-" + section + "-more"].exists)
+            XCTAssertFalse(app.buttons["manage-person-review-0"].exists)
+            task91Section(app, section, open: false)
+        }
+        app.terminate()
+    }
+
     private func task90OpenEdit(_ app: XCUIApplication, index: Int, name: String) -> XCUIElement {
         task89Area(app, index: index, title: name)
         let button = app.buttons["manage-area-edit-\(index)"]
