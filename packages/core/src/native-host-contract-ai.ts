@@ -111,7 +111,7 @@ import { applyCaptureModalCopilotParts } from './capture-modal-model';
 import type { Language } from './i18n/i18n-types';
 import { NATIVE_HOST_CONTRACT_VERSION, type NativeHostResult, type NativeInboxProcessingView, type NativeTaskDraftEdit } from './native-host-contract';
 import { fail, isObjectRecord, isText } from './native-host-contract-menu-views';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
+import { createNativeRequestReceipts, runStoreWrite, settleWrite, taskRevisionOf } from './native-request-receipts';
 import { getProcessInboxTokenPools, type ProcessInboxDraftEdit } from './process-inbox-model';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { getWeeklyReviewBuckets } from './review-utils';
@@ -324,8 +324,11 @@ export type NativeAIBreakdownApply = { checklist: ChecklistItem[]; edit: NativeT
 export type NativeWeeklyReviewAnalysis = {
     /** The error line (null clears it). */
     error: string | null;
-    /** The suggestions to show, or null: keep the ones shown. */
-    suggestions: { id: string; action: string; reason: string; title: string; meta: string; actionable: boolean }[] | null;
+    /**
+     * The suggestions to show, or null: keep the ones shown. `taskRevision` is the suggestion's task as the analysis read it
+     * (null for an item that is no live task): send it in applySuggestions' taskRevisions.
+     */
+    suggestions: { id: string; action: string; reason: string; title: string; meta: string; actionable: boolean; taskRevision: string | null }[] | null;
     /** The suggestions chosen at first (null: keep the choice). Apply sends the chosen ones to runReviewAction's applySuggestions. */
     selectedIds: string[] | null;
 };
@@ -1295,6 +1298,7 @@ export function createAIMethods(deps: AIDeps) {
                 const response = await createAIProvider(ai.build()).analyzeReview({ items: staleItems });
                 const analysis = readWeeklyReviewAnalysis(response, staleItems);
                 const labels = getWeeklyReviewLabels(t);
+                const liveTasks = useTaskStore.getState()._tasksById;
                 return {
                     ok: true,
                     value: {
@@ -1306,6 +1310,7 @@ export function createAIMethods(deps: AIDeps) {
                             title: suggestion.title,
                             meta: `${getReviewSuggestionActionLabel(suggestion.action, labels)} · ${suggestion.reason}`,
                             actionable: isActionableReviewSuggestion(suggestion),
+                            taskRevision: ((task) => (task && !task.deletedAt ? taskRevisionOf(task) : null))(liveTasks.get(suggestion.id)),
                         })),
                         selectedIds: analysis.selectedIds,
                     },

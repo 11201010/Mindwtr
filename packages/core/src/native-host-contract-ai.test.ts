@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract, NATIVE_AI_UNJOURNALED_COMMANDS, type NativeAIHost, type NativeHostResult } from './native-host-contract';
 import type { NativeAIActionAnswer, NativeAISettingChange, NativeAISettings, NativeAICopilotApplied, NativeAICopilotSuggestion } from './native-host-contract-ai';
-import { NATIVE_UNJOURNALED_COMMANDS, taskRevisionOf } from './native-request-receipts';
+import { NATIVE_UNJOURNALED_COMMANDS } from './native-request-receipts';
 import { openSqliteHost } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createTaskDraft, type TaskDraft } from './task-draft';
@@ -541,7 +541,7 @@ async function replayActions(scenario: ActionsScenario, strings: Record<string, 
         return observations;
     }
 
-    const review = { error: null as string | null, ran: false, suggestions: [] as { id: string; action: string; reason: string; title: string }[], selected: new Set<string>() };
+    const review = { error: null as string | null, ran: false, suggestions: [] as { id: string; action: string; reason: string; title: string; taskRevision: string | null }[], selected: new Set<string>() };
     const observe = () => normalize({
         error: review.error,
         loading: false,
@@ -564,8 +564,8 @@ async function replayActions(scenario: ActionsScenario, strings: Record<string, 
             else review.selected.add(id);
         } else if (kind === 'apply') {
             const chosen = review.suggestions.filter((entry) => review.selected.has(entry.id));
-            const byId = useTaskStore.getState()._tasksById;
-            const taskRevisions = Object.fromEntries(chosen.filter((entry) => byId.has(entry.id)).map((entry) => [entry.id, taskRevisionOf(byId.get(entry.id)!)]));
+            // Each suggestion's task at the revision the analysis read it (a native host keeps no other copy of the stale tasks).
+            const taskRevisions = Object.fromEntries(chosen.flatMap((entry) => (entry.taskRevision ? [[entry.id, entry.taskRevision]] : [])));
             value(await contract.runReviewAction({
                 requestId: generateUUID(),
                 action: { type: 'applySuggestions', suggestions: chosen.map(({ id, action, reason }) => ({ id, action: action as never, reason })), taskRevisions },
