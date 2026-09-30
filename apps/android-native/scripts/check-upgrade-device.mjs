@@ -43,7 +43,7 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync 
 import { basename, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, inboxCount, tab, tagged, withDescription } from './device.mjs';
+import { bootFailure, box, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, inboxCount, tab, tagged, withDescription } from './device.mjs';
 import { serveWebdav, webdavDocument } from './sync-harness.mjs';
 
 const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6'];
@@ -735,22 +735,47 @@ const scenarioSync = async () => {
         openLink('mindwtr-upgradetest://settings?settingsScreen=sync');
         let nodes = await waitFor('RN Settings > Sync', (current) => current.some((node) => node.text === RN_WEBDAV), 60_000);
         await tap(nodes.find((node) => node.text === RN_WEBDAV));
-        nodes = await waitFor('RN\'s WebDAV form', (current) => current.filter((node) => node.class === 'android.widget.EditText').length >= 3, 20_000);
+        // The URL and username fields; the password field and Save can sit below the fold (run 2026-09-30).
+        nodes = await waitFor('RN\'s WebDAV form', (current) => current.filter((node) => node.class === 'android.widget.EditText').length >= 2, 20_000);
         const inputs = () => screen().then((current) => current.filter((node) => node.class === 'android.widget.EditText'));
-        const typeInto = async (index, text) => {
-            await tap((await inputs())[index]);
+        const hideKeyboard = async () => { if (/mInputShown=true/.test(sh('dumpsys input_method'))) { sh('input keyevent KEYCODE_BACK'); await sleep(600); } };
+        // The keyboard goes down after each field: while it shows, RN's ScrollView spends the next tap on closing it, and the
+        // text would go to the field before.
+        const typeInto = async (input, text) => {
+            await tap(input);
             requireAppFront();
             sh(`input text '${text}'`);
             await sleep(500);
+            await hideKeyboard();
         };
-        await typeInto(0, url);
+        /** Scrolls RN's form down until [find] sees what it needs, whole enough to tap (not cut by the header). */
+        const reveal = async (what, find) => {
+            const shown = (current) => current.filter((node) => { const [, top, , bottom] = box(node); return bottom - top >= 40; });
+            let current = await screen();
+            // Short slow drags: RN's ScrollView flings a long one past a whole field.
+            for (let step = 0; step < 12 && !find(shown(current)); step += 1) {
+                requireAppFront();
+                sh('input swipe 540 1000 540 600 900'); // above a keyboard that may still show
+                await sleep(700);
+                current = await screen();
+            }
+            return find(shown(current)) ?? fail(`no ${what} in RN's WebDAV form`);
+        };
+        await typeInto((await inputs())[0], url);
         const insecure = (await screen()).find((node) => node.class === 'android.widget.Switch');
         if (insecure?.checked !== 'true') await tap(insecure ?? fail('no Allow insecure switch in RN\'s WebDAV form'));
-        await typeInto(1, user);
-        await typeInto(2, password);
-        if (/mInputShown=true/.test(sh('dumpsys input_method'))) { sh('input keyevent KEYCODE_BACK'); await sleep(600); }
-        nodes = await screen();
-        await tap(nodes.find((node) => node.text === RN_SAVE_WEBDAV) ?? fail(`no "${RN_SAVE_WEBDAV}" in RN's form`));
+        await typeInto((await inputs())[1], user);
+        await hideKeyboard();
+        // The password field: RN's secure text field.
+        await typeInto(await reveal('password field', (current) => current.find((node) => node.class === 'android.widget.EditText' && node.password === 'true')), password);
+        await hideKeyboard();
+        // A tap while the password field still holds focus can only blur it (RN's ScrollView keeps no taps then): tap Save
+        // again when nothing reached the server.
+        const requestsBefore = dav.state.requests.length;
+        for (let attempt = 0; attempt < 2 && dav.state.requests.length === requestsBefore; attempt += 1) {
+            await tap(await reveal(`"${RN_SAVE_WEBDAV}"`, (current) => current.find((node) => node.text === RN_SAVE_WEBDAV)));
+            for (const deadline = Date.now() + 10_000; Date.now() < deadline && dav.state.requests.length === requestsBefore;) await sleep(500);
+        }
         await until('RN\'s first sync into the local folder', () => webdavDocument(dav, folder) !== null, 60_000);
         await sleep(2_000);
         await stopApp();
@@ -777,7 +802,8 @@ const scenarioSync = async () => {
         }
         await tap(row ?? fail('no Sync row in native Settings'));
         nodes = await waitFor('native Settings > Sync with RN\'s WebDAV form', (current) => Boolean(tagged(current, 'sync-url')), 30_000);
-        check(tagged(nodes, 'sync-backend-webdav')?.selected === 'true', '(6) the native Sync screen shows RN\'s backend (WebDAV chosen)');
+        // Compose reports a selected button chip as checked.
+        check(tagged(nodes, 'sync-backend-webdav')?.checked === 'true', '(6) the native Sync screen shows RN\'s backend (WebDAV chosen)');
         check(tagged(nodes, 'sync-url')?.text === url, `(6) it shows RN's URL (${tagged(nodes, 'sync-url')?.text})`);
         let now = nodes;
         for (let step = 0; step < 6 && !tagged(now, 'sync-now'); step += 1) now = await device.swipe(now, 'down');
