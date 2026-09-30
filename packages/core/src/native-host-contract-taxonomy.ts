@@ -105,7 +105,9 @@ const validProject = (value: unknown): value is Project => {
         || (value.attachments !== undefined && !attachments(value.attachments))
         || (value.isFocused !== undefined && typeof value.isFocused !== 'boolean')
         || (value.isSequential !== undefined && typeof value.isSequential !== 'boolean')
-        || (value.sequentialScope !== undefined && !['project', 'section'].includes(String(value.sequentialScope)))) return false;
+        || (value.sequentialScope !== undefined && !['project', 'section'].includes(String(value.sequentialScope)))
+        || (value.viewSectionIds !== undefined && !(record(value.viewSectionIds)
+            && Object.values(value.viewSectionIds).every((sectionId) => typeof sectionId === 'string')))) return false;
     try { projectToSqliteRow(value as unknown as Project); return true; } catch { return false; }
 };
 

@@ -39,6 +39,8 @@ export const validProject = (value: unknown, projectId: string): value is Projec
         || (value.isSequential !== undefined && typeof value.isSequential !== 'boolean')
         || (value.sequentialScope !== undefined && !['project', 'section'].includes(String(value.sequentialScope)))
         || (value.taskSortBy !== undefined && typeof value.taskSortBy !== 'string')
+        || (value.viewSectionIds !== undefined && !(record(value.viewSectionIds)
+            && Object.values(value.viewSectionIds).every((sectionId) => typeof sectionId === 'string')))
         || (value.rev !== undefined && !(typeof value.rev === 'number'
             && Number.isSafeInteger(value.rev) && value.rev >= 0))
         || optionalStrings.some((key) => value[key] !== undefined && typeof value[key] !== 'string')

@@ -97,6 +97,7 @@ const projectColumnValues = (project: Project): Record<string, unknown> => ({
     updatedAt: project.updatedAt,
     deletedAt: project.deletedAt ?? null,
     purgedAt: project.purgedAt ?? null,
+    viewSectionIds: toJson(project.viewSectionIds),
 });
 
 export const projectToSqliteRow = (project: Project): unknown[] =>
@@ -133,5 +134,6 @@ export const projectFromSqliteRow = (row: Record<string, unknown>): Project => {
         updatedAt: String(row.updatedAt ?? ''),
         deletedAt: fromOptional(row.deletedAt as string | null),
         purgedAt: fromOptional(row.purgedAt as string | null),
+        viewSectionIds: fromJson<unknown>(row.viewSectionIds, undefined) as Project['viewSectionIds'],
     };
 };

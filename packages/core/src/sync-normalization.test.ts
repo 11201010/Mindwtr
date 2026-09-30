@@ -232,6 +232,51 @@ describe('sync normalization', () => {
         expect(mergeAppData(forward, incoming, { nowIso: NOW }).tasks[0]).toEqual(forward.tasks[0]);
     });
 
+    it('preserves project viewSectionIds when merging with an old-client project that lacks the field (#1319)', () => {
+        const localProject: Project = {
+            ...createMockProject('project-view-section', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+            title: 'Local title',
+            status: 'someday',
+            rev: 1,
+            revBy: 'new-client',
+            viewSectionIds: { someday: 'travel', future: 'kept' } as Project['viewSectionIds'],
+        };
+        const { viewSectionIds: _omitted, ...oldClientProject } = {
+            ...localProject,
+            title: 'Updated by old client',
+            rev: 2,
+            revBy: 'old-client',
+            updatedAt: '2026-01-01T00:01:00.000Z',
+        };
+        // data.json round trip: the payload a peer reads back from the synced file.
+        const local = JSON.parse(JSON.stringify(mockAppData([], [localProject]))) as AppData;
+        const incoming = JSON.parse(JSON.stringify(mockAppData([], [oldClientProject as Project]))) as AppData;
+
+        const forward = mergeAppDataWithStats(local, incoming, { nowIso: NOW });
+        const reverse = mergeAppData(incoming, local, { nowIso: NOW });
+
+        expect(forward.data.projects[0]).toMatchObject({
+            title: 'Updated by old client',
+            viewSectionIds: { someday: 'travel', future: 'kept' },
+        });
+        expect(reverse.projects[0]).toEqual(forward.data.projects[0]);
+        const again = mergeAppDataWithStats(forward.data, JSON.parse(JSON.stringify(forward.data)) as AppData, { nowIso: NOW });
+        expect(again.stats.projects.conflicts).toBe(0);
+        expect(again.data.projects[0]).toEqual(forward.data.projects[0]);
+    });
+
+    it('keeps an intentional project section clear ({}) over an older assignment (#1319)', () => {
+        const base: Project = {
+            ...createMockProject('project-clear', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+            status: 'someday',
+            rev: 1,
+            viewSectionIds: { someday: 'travel' },
+        };
+        const cleared: Project = { ...base, rev: 2, updatedAt: '2026-01-01T00:01:00.000Z', viewSectionIds: {} };
+        const merged = mergeAppData(mockAppData([], [base]), mockAppData([], [cleared]), { nowIso: NOW });
+        expect(merged.projects[0].viewSectionIds).toEqual({});
+    });
+
     it('stamps purged-content compaction once so a legacy peer cannot republish the full tombstone', () => {
         const purgedAt = '2025-12-31T23:00:00.000Z';
         const full = mockAppData(

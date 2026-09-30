@@ -3,6 +3,7 @@ import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from
 import type { StorageAdapter } from '../storage';
 import type { AppData } from '../types';
 import { buildNewProject, projectAreaSelection } from './project-actions';
+import { buildProjectViewSectionUpdate } from '../view-sections';
 
 const BASE_NOW = '2026-06-14T12:00:00.000Z';
 
@@ -400,6 +401,38 @@ describe('project actions', () => {
         expect(latestSavedData().projects.find((row) => row.id === moving.id)).toEqual(cleared);
         expect([inBeta.id, noArea.id].map((id) =>
             useTaskStore.getState()._allProjects.find((row) => row.id === id))).toEqual(otherBefore);
+    });
+
+    it('places a Someday project in a view section with a stamped rev, keeping it across reactivation (#1319)', async () => {
+        const { addProject, addTask, updateProject } = useTaskStore.getState();
+        const project = await addProject('Trip', '#3b82f6', { status: 'someday' });
+        if (!project) throw new Error('Project setup failed');
+        await addTask('Pack', { projectId: project.id, status: 'next' });
+        const before = useTaskStore.getState()._allProjects.find((row) => row.id === project.id)!;
+        const tasksBefore = structuredClone(useTaskStore.getState()._allTasks);
+
+        const update = buildProjectViewSectionUpdate(before, 'someday', 'travel');
+        expect(update).toEqual({ viewSectionIds: { someday: 'travel' } });
+        expect(await updateProject(project.id, update!)).toEqual({ success: true });
+        await flushPendingSave();
+        const placed = useTaskStore.getState()._allProjects.find((row) => row.id === project.id)!;
+        expect(placed.viewSectionIds).toEqual({ someday: 'travel' });
+        expect(placed.rev).toBe((before.rev ?? 0) + 1);
+        expect(placed.revBy).toBeTruthy();
+        expect(latestSavedData().projects.find((row) => row.id === project.id)).toEqual(placed);
+        // The section is the project's own; its tasks are never written.
+        expect(useTaskStore.getState()._allTasks).toEqual(tasksBefore);
+        expect(buildProjectViewSectionUpdate(placed, 'someday', 'travel')).toBeNull();
+
+        expect(await updateProject(project.id, { status: 'active' })).toEqual({ success: true });
+        expect(useTaskStore.getState()._allProjects.find((row) => row.id === project.id)?.viewSectionIds)
+            .toEqual({ someday: 'travel' });
+        expect(await updateProject(project.id, { status: 'someday' })).toEqual({ success: true });
+        const reparked = useTaskStore.getState()._allProjects.find((row) => row.id === project.id)!;
+        expect(reparked.viewSectionIds).toEqual({ someday: 'travel' });
+
+        expect(await updateProject(project.id, buildProjectViewSectionUpdate(reparked, 'someday')!)).toEqual({ success: true });
+        expect(useTaskStore.getState()._allProjects.find((row) => row.id === project.id)?.viewSectionIds).toEqual({});
     });
 
     it('does not treat an omitted Area patch or a same-Area selection as a move', async () => {

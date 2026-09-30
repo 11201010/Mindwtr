@@ -5975,7 +5975,7 @@ mod tests {
         // Cloud-writable in the schema, but the local API project routes do not implement them
         // yet. This is a known gap, not a decision: adding one to the allowlist is a deliberate
         // change and must move the name out of this list.
-        const NOT_IMPLEMENTED: [&str; 7] = [
+        const NOT_IMPLEMENTED: [&str; 8] = [
             "tagIds",
             "taskSortBy",
             "isFocused",
@@ -5983,6 +5983,7 @@ mod tests {
             "dueDate",
             "reviewAt",
             "startDate",
+            "viewSectionIds",
         ];
 
         let schema: Value = serde_json::from_str(include_str!(

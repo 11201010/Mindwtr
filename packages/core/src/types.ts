@@ -99,6 +99,7 @@ export interface Project {
     cancelledAt?: string; // ISO datetime with timezone when the project was cancelled. Cancelled projects are archived.
     areaId?: string;
     areaTitle?: string;
+    viewSectionIds?: ViewSectionIds; // Same shape and semantics as Task.viewSectionIds; groups a deferred project in a view (#1319)
     rev?: number; // Monotonic revision counter for sync conflict resolution
     revBy?: string; // Device identifier that issued the revision
     createdAt: string;

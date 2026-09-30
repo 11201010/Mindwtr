@@ -101,14 +101,14 @@ function validateTaskRecurrence(value: Record<string, unknown>): string | null {
     return null;
 }
 
-function validateTaskViewSectionIds(value: Record<string, unknown>): string | null {
+function validateViewSectionIds(value: Record<string, unknown>, entity: 'task' | 'project'): string | null {
     if (!hasOwnField(value, 'viewSectionIds')) return null;
     const ids = value.viewSectionIds;
     if (ids === undefined || ids === null) return null;
-    if (!isRecord(ids)) return 'Invalid task viewSectionIds';
+    if (!isRecord(ids)) return `Invalid ${entity} viewSectionIds`;
     return Object.values(ids).every((sectionId) => typeof sectionId === 'string')
         ? null
-        : 'Invalid task viewSectionIds';
+        : `Invalid ${entity} viewSectionIds`;
 }
 
 function validateCancellationTimestamp(value: Record<string, unknown>, entity: 'task' | 'project'): string | null {
@@ -177,7 +177,7 @@ function validateTaskPropValues(value: Record<string, unknown>): string | null {
         ?? validateTaskTimeSpentMinutes(value)
         ?? validateTaskRelativeStartOffset(value)
         ?? validateTaskRecurrence(value)
-        ?? validateTaskViewSectionIds(value);
+        ?? validateViewSectionIds(value, 'task');
 }
 
 function validateProjectPropValues(value: Record<string, unknown>): string | null {
@@ -185,6 +185,8 @@ function validateProjectPropValues(value: Record<string, unknown>): string | nul
     if (cancellationError) return cancellationError;
     const attachmentsError = validateAttachments(value, 'project');
     if (attachmentsError) return attachmentsError;
+    const viewSectionIdsError = validateViewSectionIds(value, 'project');
+    if (viewSectionIdsError) return viewSectionIdsError;
     if (!hasOwnField(value, 'taskSortBy')) return null;
     const taskSortBy = value.taskSortBy;
     if (taskSortBy === undefined || taskSortBy === null) return null;

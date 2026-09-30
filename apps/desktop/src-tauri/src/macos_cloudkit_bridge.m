@@ -241,6 +241,7 @@ static const MWFieldSpec kProjectFields[] = {
     {"cancelledAt",  "cancelledAt",  MWFieldKindDate},
     {"areaId",       "areaId",       MWFieldKindString},
     {"areaTitle",    "areaTitle",    MWFieldKindString},
+    {"viewSectionIds", "viewSectionIds", MWFieldKindJsonString},
     {"rev",          "rev",          MWFieldKindInt},
     {"revBy",        "revBy",        MWFieldKindString},
     {"createdAt",    "createdAt",    MWFieldKindDate},

@@ -115,6 +115,19 @@ describe('sync signatures', () => {
         expect(set75).not.toBe(undef);
   });
 
+    it('covers project viewSectionIds in the project signature, canonically (#1319)', () => {
+        const project = (updates: Partial<Project> = {}): Project => ({
+            id: 'p', title: 'P', status: 'someday', color: '#6B7280', order: 0, tagIds: [],
+            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...updates,
+        });
+        const signature = (value: Project) => toComparableSignature(normalizeProjectForContentComparison(value));
+        const missing = signature(project());
+        expect(signature(project({ viewSectionIds: {} }))).toBe(missing);
+        expect(signature(project({ viewSectionIds: { someday: 'travel' } }))).not.toBe(missing);
+        expect(signature(project({ viewSectionIds: { someday: 'travel', waiting: 'x' } })))
+            .toBe(signature(project({ viewSectionIds: { waiting: 'x', someday: 'travel' } })));
+    });
+
     it('canonicalizes viewSectionIds key order and treats empty or invalid maps as missing', () => {
         const missing = toComparableSignature(normalizeTaskForContentComparison(task()));
         const empty = toComparableSignature(normalizeTaskForContentComparison(task({ viewSectionIds: {} })));

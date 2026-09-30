@@ -1,5 +1,5 @@
 import { baseTextCollator } from './task-utils';
-import type { Task, ViewSectionDefinition, ViewSectionIds, ViewSectionScope } from './types';
+import type { Project, Task, ViewSectionDefinition, ViewSectionIds, ViewSectionScope } from './types';
 
 export function sortViewSectionDefinitions(
     definitions: readonly ViewSectionDefinition[] | undefined,
@@ -19,7 +19,7 @@ export function sortViewSectionDefinitions(
 }
 
 export function resolveTaskViewSection(
-    task: Pick<Task, 'viewSectionIds'>,
+    task: { viewSectionIds?: ViewSectionIds },
     scope: ViewSectionScope,
     definitions: readonly ViewSectionDefinition[] | undefined,
 ): ViewSectionDefinition | undefined {
@@ -99,7 +99,47 @@ export interface ViewSectionTaskGroup {
     id: string;
     title: string;
     tasks: Task[];
+    /** Deferred projects placed in this section; drawn before the tasks (#1319). */
+    projects?: Project[];
     muted?: boolean;
+}
+
+/**
+ * The project update that places one project in a view section, or null when it
+ * is already there. Uses the task field's semantics: other scopes are kept and a
+ * clear writes {} (see setTaskViewSectionId). Save it with updateProject, which
+ * stamps rev/revBy/updatedAt. The project's own tasks are never touched.
+ */
+export function buildProjectViewSectionUpdate(
+    project: Pick<Project, 'viewSectionIds'>,
+    scope: ViewSectionScope,
+    sectionId?: string,
+): Pick<Project, 'viewSectionIds'> | null {
+    const destination = sectionId || undefined;
+    if ((project.viewSectionIds?.[scope] || undefined) === destination) return null;
+    return { viewSectionIds: setTaskViewSectionId(project.viewSectionIds, scope, destination) };
+}
+
+/**
+ * Projects keyed by the group id groupTasksByViewSection gives their section.
+ * A project with no section, or with an id no definition has, goes to the
+ * "No section" key so it never disappears. Input order is kept.
+ */
+export function groupProjectsByViewSection(
+    projects: readonly Project[],
+    scope: ViewSectionScope,
+    definitions: readonly ViewSectionDefinition[] | undefined,
+): Map<string, Project[]> {
+    const knownIds = new Set(sortViewSectionDefinitions(definitions).map((definition) => definition.id));
+    const grouped = new Map<string, Project[]>();
+    for (const project of projects) {
+        const storedId = project.viewSectionIds?.[scope];
+        const key = `view-section:${scope}:${typeof storedId === 'string' && knownIds.has(storedId) ? storedId : ''}`;
+        const list = grouped.get(key) ?? [];
+        list.push(project);
+        grouped.set(key, list);
+    }
+    return grouped;
 }
 
 export function groupTasksByViewSection(

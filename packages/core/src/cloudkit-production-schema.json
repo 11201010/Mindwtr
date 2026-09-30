@@ -76,7 +76,9 @@
     "startDateText",
     "cancelledAt"
    ],
-   "pendingProduction": []
+   "pendingProduction": [
+    "viewSectionIds"
+   ]
   },
   "MindwtrSection": {
    "deployed": [

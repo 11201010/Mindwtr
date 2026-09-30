@@ -208,6 +208,28 @@ describeSqlite('SqliteAdapter', () => {
             .toEqual({ waiting: 'new-people' });
     });
 
+    it('persists project viewSectionIds across reopen, including an intentional clear (#1319)', async () => {
+        const createdAt = '2026-09-15T10:00:00.000Z';
+        const base = { title: 'P', status: 'someday' as const, color: '#6B7280', order: 0, tagIds: [], createdAt, updatedAt: createdAt, rev: 1 };
+        await adapter.saveData({
+            tasks: [],
+            projects: [
+                { ...base, id: 'assigned', viewSectionIds: { someday: 'travel', waiting: 'later' } },
+                { ...base, id: 'cleared', viewSectionIds: {} },
+                { ...base, id: 'never' },
+            ],
+            sections: [], areas: [], settings: {},
+        });
+        db.close();
+        db = new RuntimeDatabase!(databasePath);
+        adapter = new SqliteAdapter(createClient(db));
+        const reopened = await adapter.getData();
+        const byId = new Map(reopened.projects.map((project) => [project.id, project]));
+        expect(byId.get('assigned')?.viewSectionIds).toEqual({ someday: 'travel', waiting: 'later' });
+        expect(byId.get('cleared')?.viewSectionIds).toEqual({});
+        expect(byId.get('never')?.viewSectionIds).toBeUndefined();
+    });
+
     it('round-trips tasks, projects, areas, people, and settings', async () => {
         const now = new Date().toISOString();
         const archivedAt = '2026-05-12T09:00:00.000Z';

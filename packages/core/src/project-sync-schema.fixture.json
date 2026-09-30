@@ -24,7 +24,8 @@
         { "name": "deletedAt", "nullability": "optional", "cloudSynced": true, "cloudWrite": "patch", "sqliteColumn": "deletedAt", "sqliteOrder": 20, "sqliteType": "TEXT" },
         { "name": "purgedAt", "nullability": "optional", "cloudSynced": true, "cloudWrite": "patch", "sqliteColumn": "purgedAt", "sqliteOrder": 21, "sqliteType": "TEXT" },
         { "name": "startDate", "nullability": "optional", "cloudSynced": true, "cloudWrite": "create-patch", "sqliteColumn": "startDate", "sqliteOrder": 22, "sqliteType": "TEXT" },
-        { "name": "cancelledAt", "nullability": "optional", "cloudSynced": true, "cloudWrite": "create-patch", "sqliteColumn": "cancelledAt", "sqliteOrder": 23, "sqliteType": "TEXT" }
+        { "name": "cancelledAt", "nullability": "optional", "cloudSynced": true, "cloudWrite": "create-patch", "sqliteColumn": "cancelledAt", "sqliteOrder": 23, "sqliteType": "TEXT" },
+        { "name": "viewSectionIds", "nullability": "optional", "cloudSynced": true, "cloudWrite": "create-patch", "sqliteColumn": "viewSectionIds", "sqliteOrder": 24, "sqliteType": "TEXT" }
     ],
     "fixture": {
         "id": "project-schema-fixture",
@@ -57,6 +58,7 @@
         "deletedAt": "2026-07-14T11:30:00.000Z",
         "purgedAt": "2026-07-14T11:45:00.000Z",
         "startDate": "2026-07-10T09:00:00.000Z",
-        "cancelledAt": "2026-07-14T11:15:00.000Z"
+        "cancelledAt": "2026-07-14T11:15:00.000Z",
+        "viewSectionIds": { "someday": "view-section-schema" }
     }
 }

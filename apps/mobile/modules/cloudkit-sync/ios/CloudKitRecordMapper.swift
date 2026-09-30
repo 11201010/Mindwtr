@@ -173,6 +173,7 @@ enum CloudKitRecordMapper {
         FieldSpec(jsKey: "cancelledAt", ckKey: "cancelledAt", kind: .date),
         FieldSpec(jsKey: "areaId", ckKey: "areaId", kind: .string),
         FieldSpec(jsKey: "areaTitle", ckKey: "areaTitle", kind: .string),
+        FieldSpec(jsKey: "viewSectionIds", ckKey: "viewSectionIds", kind: .jsonString),
         FieldSpec(jsKey: "rev", ckKey: "rev", kind: .int),
         FieldSpec(jsKey: "revBy", ckKey: "revBy", kind: .string),
         FieldSpec(jsKey: "createdAt", ckKey: "createdAt", kind: .date),

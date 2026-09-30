@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS projects (
   deletedAt TEXT,
   purgedAt TEXT,
   startDate TEXT,
-  cancelledAt TEXT
+  cancelledAt TEXT,
+  viewSectionIds TEXT
 );
 
 CREATE TABLE IF NOT EXISTS areas (

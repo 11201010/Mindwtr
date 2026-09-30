@@ -153,6 +153,7 @@ export const normalizeProjectForContentComparison = (project: Project): Record<s
             : undefined,
         taskSortBy: normalizeProjectTaskSortBy(project.taskSortBy),
         isFocused: project.isFocused ? true : undefined,
+        viewSectionIds: canonicalizeStringMapForComparison(project.viewSectionIds),
     };
     if (project.status === 'active') delete comparable.status;
     if (project.color === '#6B7280') delete comparable.color;

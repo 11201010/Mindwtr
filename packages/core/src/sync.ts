@@ -1082,6 +1082,14 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData, options
     };
 
     let unchangedAttachmentCopiesSkipped = 0;
+    // A winner from an older client that never carried viewSectionIds must not
+    // erase the peer's assignment; presence (even {}) is an intentional value.
+    const keepViewSectionIdsFromPeer = <T extends Task | Project>(winner: T, other: T): T => (
+        Object.prototype.hasOwnProperty.call(winner, 'viewSectionIds')
+            || !Object.prototype.hasOwnProperty.call(other, 'viewSectionIds')
+            ? winner
+            : { ...winner, viewSectionIds: other.viewSectionIds }
+    );
     const withMergedAttachments = <T extends Task | Project>(winner: T, attachments: Attachment[] | undefined): T => {
         // In the common no-attachment case there is no patch to apply. Keep
         // the normalized winner instead of copying its full optional schema.
@@ -1102,12 +1110,10 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData, options
                     localTask.purgedAt ? undefined : localTask.attachments,
                     incomingTask.purgedAt ? undefined : incomingTask.attachments,
                 );
-            const otherTask = winner === localTask ? incomingTask : localTask;
-            const winnerWithForwardCompatibleViewSections = Object.prototype.hasOwnProperty.call(winner, 'viewSectionIds')
-                ? winner
-                : Object.prototype.hasOwnProperty.call(otherTask, 'viewSectionIds')
-                    ? { ...winner, viewSectionIds: otherTask.viewSectionIds }
-                    : winner;
+            const winnerWithForwardCompatibleViewSections = keepViewSectionIdsFromPeer(
+                winner,
+                winner === localTask ? incomingTask : localTask,
+            );
             return repairTaskRecurrenceSeriesIdentity(
                 localTask,
                 incomingTask,
@@ -1136,7 +1142,10 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData, options
             return preserveProjectCancellationFromStrippedPeer(
                 localProject,
                 incomingProject,
-                withMergedAttachments(winner, attachments),
+                withMergedAttachments(
+                    keepViewSectionIdsFromPeer(winner, winner === localProject ? incomingProject : localProject),
+                    attachments,
+                ),
             );
         },
         normalizeProjectForContentComparison,

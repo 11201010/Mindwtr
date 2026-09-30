@@ -37,10 +37,11 @@ const SNAPSHOT_RETENTION_RECENT_COUNT: usize = 2;
 const SQLITE_BUSY_TIMEOUT_MS: u64 = 5_000;
 const STORAGE_RETRY_ATTEMPTS: usize = 4;
 const STORAGE_RETRY_BASE_DELAY_MS: u64 = 120;
-// Version 9 drops the nine snake_case task indexes that duplicated camelCase ones. Increment this
+// Version 10 adds projects.viewSectionIds (#1319). Version 9 dropped the nine snake_case task
+// indexes that duplicated camelCase ones. Increment this
 // whenever SQLITE_SCHEMA or an ensure_* migration changes; otherwise the warm schema-state fast
 // path can incorrectly skip the migration on an existing database.
-const STORAGE_SCHEMA_VERSION: i64 = 9;
+const STORAGE_SCHEMA_VERSION: i64 = 10;
 const STORAGE_SCHEMA_STATE_TABLE: &str = "storage_schema_state";
 // Version 4 adds assignedTo to the desktop-native FTS schema and forces one
 // content rebuild after the corrected triggers are installed.
@@ -137,7 +138,8 @@ CREATE TABLE IF NOT EXISTS projects (
   deletedAt TEXT,
   purgedAt TEXT,
   startDate TEXT,
-  cancelledAt TEXT
+  cancelledAt TEXT,
+  viewSectionIds TEXT
 );
 
 CREATE TABLE IF NOT EXISTS areas (
@@ -546,6 +548,7 @@ fn initialize_sqlite_schema(conn: &mut Connection) -> Result<i64, String> {
         ensure_projects_due_date_column(&transaction)?;
         ensure_column(&transaction, "projects", "startDate", "TEXT")?;
         ensure_column(&transaction, "projects", "cancelledAt", "TEXT")?;
+        ensure_column(&transaction, "projects", "viewSectionIds", "TEXT")?;
         ensure_projects_purged_at_column(&transaction)?;
         ensure_projects_area_order_index(&transaction)?;
         ensure_sync_revision_columns(&transaction)?;
@@ -2189,6 +2192,12 @@ fn row_to_project_value(row: &rusqlite::Row<'_>) -> Result<Value, rusqlite::Erro
             map.insert("cancelledAt".to_string(), Value::String(v));
         }
     }
+    if let Ok(val) = row.get::<_, Option<String>>("viewSectionIds") {
+        let view_section_ids_val = parse_json_value(val);
+        if !view_section_ids_val.is_null() {
+            map.insert("viewSectionIds".to_string(), view_section_ids_val);
+        }
+    }
     if let Ok(val) = row.get::<_, Option<String>>("areaId") {
         if let Some(v) = val {
             map.insert("areaId".to_string(), Value::String(v));
@@ -3393,8 +3402,9 @@ fn replace_prepared_data_in_transaction(
     for project in projects {
         let tag_ids_json = json_str_or_default(project.get("tagIds"), "[]");
         let attachments_json = json_str(project.get("attachments"));
+        let view_section_ids_json = json_str(project.get("viewSectionIds"));
         execute_insert(
-            "INSERT OR REPLACE INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, startDate, cancelledAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            "INSERT OR REPLACE INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, startDate, cancelledAt, viewSectionIds) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             params![
                 project.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
                 project.get("title").and_then(|v| v.as_str()).unwrap_or_default(),
@@ -3420,6 +3430,7 @@ fn replace_prepared_data_in_transaction(
                 project.get("purgedAt").and_then(|v| v.as_str()),
                 project.get("startDate").and_then(|v| v.as_str()),
                 project.get("cancelledAt").and_then(|v| v.as_str()),
+                view_section_ids_json,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -4840,11 +4851,12 @@ fn replace_project_row(conn: &Connection, project: &Value) -> Result<(), String>
         .ok_or_else(|| "Project id is required".to_string())?;
     let tag_ids_json = json_str_or_default(project.get("tagIds"), "[]");
     let attachments_json = json_str(project.get("attachments"));
+    let view_section_ids_json = json_str(project.get("viewSectionIds"));
     let normalized_rev = normalized_revision_for_storage(project.get("rev"));
     let normalized_rev_by = normalized_rev_by(project.get("revBy"));
     conn.execute(
-        "INSERT INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, startDate, cancelledAt)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+        "INSERT INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, startDate, cancelledAt, viewSectionIds)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
          ON CONFLICT(id) DO UPDATE SET
            title=excluded.title, status=excluded.status, color=excluded.color, orderNum=excluded.orderNum,
            tagIds=excluded.tagIds, isSequential=excluded.isSequential, sequentialScope=excluded.sequentialScope,
@@ -4852,7 +4864,8 @@ fn replace_project_row(conn: &Connection, project: &Value) -> Result<(), String>
            attachments=excluded.attachments, dueDate=excluded.dueDate, reviewAt=excluded.reviewAt,
            areaId=excluded.areaId, areaTitle=excluded.areaTitle, rev=excluded.rev, revBy=excluded.revBy,
            createdAt=excluded.createdAt, updatedAt=excluded.updatedAt, deletedAt=excluded.deletedAt,
-           purgedAt=excluded.purgedAt, startDate=excluded.startDate, cancelledAt=excluded.cancelledAt",
+           purgedAt=excluded.purgedAt, startDate=excluded.startDate, cancelledAt=excluded.cancelledAt,
+           viewSectionIds=excluded.viewSectionIds",
         params![
             project.get("id").and_then(Value::as_str).unwrap_or_default(),
             project.get("title").and_then(Value::as_str).unwrap_or_default(),
@@ -4893,6 +4906,7 @@ fn replace_project_row(conn: &Connection, project: &Value) -> Result<(), String>
             project.get("purgedAt").and_then(Value::as_str),
             project.get("startDate").and_then(Value::as_str),
             project.get("cancelledAt").and_then(Value::as_str),
+            view_section_ids_json,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -6785,7 +6799,7 @@ mod tests {
         let db_path = temp.path().join("version-six-projects.sqlite");
         let conn = Connection::open(&db_path).expect("open legacy database");
         let version_six_schema = SQLITE_SCHEMA.replace(
-            "  purgedAt TEXT,\n  startDate TEXT,\n  cancelledAt TEXT\n);",
+            "  purgedAt TEXT,\n  startDate TEXT,\n  cancelledAt TEXT,\n  viewSectionIds TEXT\n);",
             "  purgedAt TEXT,\n  cancelledAt TEXT\n);",
         );
         assert_ne!(
@@ -6812,6 +6826,47 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_open_migrates_version_nine_projects_table_missing_view_section_ids() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("version-nine-projects.sqlite");
+        let conn = Connection::open(&db_path).expect("open legacy database");
+        let version_nine_schema = SQLITE_SCHEMA.replace(
+            "  cancelledAt TEXT,\n  viewSectionIds TEXT\n);",
+            "  cancelledAt TEXT\n);",
+        );
+        assert_ne!(
+            version_nine_schema, SQLITE_SCHEMA,
+            "fixture must omit projects.viewSectionIds"
+        );
+        conn.execute_batch(&version_nine_schema)
+            .expect("create version nine schema");
+        conn.execute(
+            "INSERT INTO projects (id, title, status, color, createdAt, updatedAt) VALUES ('kept-project', 'Keep project', 'someday', '#6B7280', '2026-09-01', '2026-09-01')",
+            [],
+        )
+        .expect("seed legacy project");
+        let schema_generation = sqlite_schema_generation(&conn).expect("read legacy generation");
+        conn.execute(
+            "INSERT INTO storage_schema_state (id, storage_version, schema_generation) VALUES (1, 9, ?1)",
+            params![schema_generation],
+        )
+        .expect("record version nine schema state");
+        drop(conn);
+
+        let reopened = open_sqlite_path(&db_path).expect("migrate version nine database");
+
+        assert!(has_column(&reopened, "projects", "viewSectionIds").expect("inspect project columns"));
+        let kept: String = reopened
+            .query_row("SELECT title FROM projects WHERE id = 'kept-project'", [], |row| row.get(0))
+            .expect("legacy project survives");
+        assert_eq!(kept, "Keep project");
+        let state = stored_sqlite_schema_state(&reopened)
+            .expect("read migrated state")
+            .expect("migrated state row");
+        assert_eq!(state.storage_version, STORAGE_SCHEMA_VERSION);
+    }
+
+    #[test]
     fn sqlite_open_migrates_version_seven_tables_missing_cancellation_timestamps() {
         let temp = tempfile::tempdir().expect("tempdir");
         let db_path = temp.path().join("version-seven-cancellation.sqlite");
@@ -6822,7 +6877,7 @@ mod tests {
                 "  completedAt TEXT,\n",
             )
             .replace(
-                "  startDate TEXT,\n  cancelledAt TEXT\n);",
+                "  startDate TEXT,\n  cancelledAt TEXT,\n  viewSectionIds TEXT\n);",
                 "  startDate TEXT\n);",
             );
         assert_ne!(
@@ -7533,6 +7588,10 @@ mod tests {
             "taskSortBy": "due",
             "isFocused": true,
             "supportNotes": "Project notes",
+            "viewSectionIds": {
+                "someday": "someday-travel",
+                "future-scope": "future-heading"
+            },
             "attachments": [{
                 "id": "project-attachment-1",
                 "kind": "file",
@@ -7668,6 +7727,7 @@ mod tests {
             "cancelledAt",
             "areaId",
             "areaTitle",
+            "viewSectionIds",
             "rev",
             "revBy",
             "createdAt",
