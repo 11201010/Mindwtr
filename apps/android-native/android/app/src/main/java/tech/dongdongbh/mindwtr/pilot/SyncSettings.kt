@@ -95,6 +95,8 @@ class SyncSettingsModel(private val menu: MenuModel) {
         val visits: ExecutorService = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-sync-visits") }
         /** The encryption card's light actions in the order sent: a passphrase field's text never overtakes an earlier keystroke. */
         val light: ExecutorService = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-sync-light") }
+        /** Backend chips in tap order, as RN sends each choice: Off tapped during a slow WebDAV choice is the one that stays. */
+        val choices: ExecutorService = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-sync-choices") }
     }
     private val shell get() = menu.shell
     private val settings get() = menu.settings
@@ -109,7 +111,7 @@ class SyncSettingsModel(private val menu: MenuModel) {
     var snapshotsOpen by mutableStateOf(false); private set
     /** How many commands run now (each its own thread, as RN's run side by side); core's view shows each control's spinner. */
     var running by mutableStateOf(0); private set
-    /** The commands running, by name: a second tap before core's view disables the control sends nothing. Main thread. */
+    /** The commands running, by key (a name, a backend choice): a second identical tap before core's view disables the control sends nothing. Main thread. */
     private val inFlight = HashSet<String>()
     /** The panel the form last followed (RN's form takes a stored value again whenever it changes). */
     private var followed: JSONObject? = null
@@ -204,7 +206,8 @@ class SyncSettingsModel(private val menu: MenuModel) {
     // ---- Commands: each tap sends core's command with a new request UUID ----
 
     /** A backend chip (core's option): a complete target activates through its first sync. */
-    fun select(option: String) = run("selectSyncBackend", JSONObject().put("requestId", uuid()).put("option", option))
+    fun select(option: String) =
+        run("selectSyncBackend", JSONObject().put("requestId", uuid()).put("option", option), key = "selectSyncBackend:$option", ordered = choices)
 
     /** The form's Save: core proves the settings with a sync, then stores them. [revision] is the view's configRevision. */
     fun save(view: JSONObject) = formFields()?.let { (name, fields) ->
@@ -257,16 +260,18 @@ class SyncSettingsModel(private val menu: MenuModel) {
 
     /**
      * Sends a screen command off the main thread, in order. A [light] one (a field's text, opening a flow) is not the command
-     * running; the screen reads core's view again after each.
+     * running; the screen reads core's view again after each. [key] names a pending command a repeat tap drops, and an
+     * [ordered] one waits behind the earlier ones sent there.
      */
-    private fun run(name: String, input: JSONObject, light: Boolean = false, done: (JSONObject) -> Unit = {}) {
+    private fun run(name: String, input: JSONObject, light: Boolean = false, key: String = name, ordered: ExecutorService? = null,
+                    done: (JSONObject) -> Unit = {}) {
         val runtime = shell.coreHost() ?: return
-        if (!light && !inFlight.add(name)) return
+        if (!light && !inFlight.add(key)) return
         if (!light) running += 1
         val work = Runnable {
             val result = runCatching { runtime.syncCommand(name, input.toString()) }
             shell.ui {
-                if (!light) { inFlight.remove(name); running -= 1 }
+                if (!light) { inFlight.remove(key); running -= 1 }
                 result.onSuccess { reply -> toasts(name, reply); done(reply) }
                 result.exceptionOrNull()?.let { error ->
                     Log.w(CoreHost.TAG, "Sync screen command failed command=$name code=${error.message?.substringBefore(':')}")
@@ -276,7 +281,11 @@ class SyncSettingsModel(private val menu: MenuModel) {
                 settings.refresh()
             }
         }
-        if (light) SyncSettingsModel.light.execute(work) else Thread(work, "mindwtr-sync-$name").start()
+        when {
+            light -> SyncSettingsModel.light.execute(work)
+            ordered != null -> ordered.execute(work)
+            else -> Thread(work, "mindwtr-sync-$name").start()
+        }
     }
 
     /**

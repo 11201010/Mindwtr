@@ -939,6 +939,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // The Kotlin screen's command set is the unjournaled set.
         const syncCommands = [.../val SYNC_COMMANDS = setOf\(([^)]*)\)/.exec(source('SyncSettings.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]).sort();
         assert.deepEqual(syncCommands, [...(kotlin[1] ?? '').matchAll(/"(\w+)"/g)].map((m) => m[1]).sort(), 'SyncSettings.kt SYNC_COMMANDS is WriteJournal.UNJOURNALED');
+        // Review S3 4: each backend choice goes, in tap order; only the same choice still pending is dropped.
+        assert.match(source('SyncSettings.kt'), /run\("selectSyncBackend", [^\n]*key = "selectSyncBackend:\$option", ordered = choices\)/);
+        assert.match(source('SyncSettings.kt'), /if \(!light && !inFlight\.add\(key\)\) return/);
     }
     // Sync's engine work between host calls: a host-call answer wakes the idle pump, and the next timer schedules it; neither
     // runs after the host stopped or closed.

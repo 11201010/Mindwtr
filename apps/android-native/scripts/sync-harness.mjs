@@ -22,12 +22,13 @@ export const serveWebdav = ({ port, username, password }) => new Promise((ready)
     const files = new Map();
     let version = 0;
     // `requests`: every request as it arrived; `authorized`: only those that carried the folder's user and password.
-    const state = { files, requests: [], authorized: [], failWrites: 0, down: false };
+    // `delayMs`: every answer waits that long (a slow server).
+    const state = { files, requests: [], authorized: [], failWrites: 0, down: false, delayMs: 0 };
     const authorized = (req) => req.headers.authorization === `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
     const server = createServer((req, res) => {
         const chunks = [];
         req.on('data', (chunk) => chunks.push(chunk));
-        req.on('end', () => {
+        req.on('end', () => setTimeout(() => {
             const body = Buffer.concat(chunks);
             const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
             state.requests.push(`${req.method} ${path}`);
@@ -81,7 +82,7 @@ export const serveWebdav = ({ port, username, password }) => new Promise((ready)
                 default:
                     return answer(405);
             }
-        });
+        }, state.delayMs));
     });
     server.listen(port, '127.0.0.1', () => ready({ server, state, close: () => new Promise((done) => server.close(done)) }));
 });

@@ -416,11 +416,21 @@ try {
     await second.syncNow('selfhosted', { ...cloudFields, token: null });
     check((await second.titles()).includes(titles.offline), '(6) the cloud back, Sync now uploaded the capture made while it was stopped');
 
-    // (7) Off again.
+    // (7) Off again, tapped while a choice of the saved WebDAV backend still waits on a slow server (review S3 4): RN sends
+    // each choice, so both run, in tap order, and Off is what stays.
     nodes = await openSync();
-    await runCommand('sync-backend-off', 'selectSyncBackend', 'Off');
+    const choicesBefore = commands('selectSyncBackend');
+    dav.state.delayMs = 2_000;
+    await hideKeyboard();
+    const webdavChip = await reveal((current) => tagged(current, 'sync-backend-webdav'), 'the WebDAV chip');
+    // Off sits in the same row of chips.
+    const offChip = tagged(await screen(), 'sync-backend-off') ?? fail('no Off chip beside WebDAV');
+    await tap(webdavChip);
+    await tap(offChip);
+    await until('both backend choices to answer', () => commands('selectSyncBackend') >= choicesBefore + 2, 240_000, 1_000);
+    dav.state.delayMs = 0;
     await until('Off stored', () => rkStorage().keys['@mindwtr_sync_backend'] === 'off', 15_000, 1_000);
-    check(true, '(7) Sync is Off again and RKStorage holds "off"');
+    check(true, '(7) Off tapped during a slow WebDAV choice is not dropped: both choices answered, and RKStorage holds "off"');
     await toTabs();
     console.log('Sync device check passed');
 } catch (error) {
