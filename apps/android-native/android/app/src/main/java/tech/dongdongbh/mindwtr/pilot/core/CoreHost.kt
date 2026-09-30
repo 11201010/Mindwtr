@@ -199,7 +199,7 @@ class CoreHost(
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
                 val outcome = runCatching {
                     val bytes = bundle.bytes()
-                    check(BytecodeCache.sha256(bytes).contentEquals(BytecodeCache.hex(bundle.hash))) { "the bundle does not match its key" }
+                    check(BytecodeCache.bodyMatches(bytes, bundle.hash)) { "the bundle does not match its key" }
                     val compiler = QuickJSContext.create()
                     val compiled = try { compiler.compile(String(bytes, Charsets.UTF_8), "core-host.js") } finally { compiler.destroy() }
                     if (cache.write(bundle.hash, compiled)) "written bytes=${compiled.size}" else "write-failed"
@@ -821,7 +821,7 @@ internal inline fun <T> traced(name: String, work: () -> T): T {
 }
 
 /**
- * The JS host's bundle: [hash] is the SHA-256 of its exact bytes, written beside it at build time (build-bundle.mjs; "" when
+ * The JS host's bundle: [hash] is the SHA-256 of its body, from its own first line (BytecodeCache.bundleKey; "" when
  * missing, which turns the cache off), [cache] its compiled form (null: the source runs every start), and [bytes] reads it.
  * The source is read only when it runs or is compiled.
  */

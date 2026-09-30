@@ -121,10 +121,10 @@ internal object ProcessCoreHost {
 
     /**
      * The bundle and its bytecode cache in the code cache directory (Android empties it on an app update; the key guards
-     * every other case). Its build-time hash comes from the asset beside it; a missing one turns the cache off.
+     * every other case). Its key is the hash line the bundle carries (read from its start only); none turns the cache off.
      */
     private fun coreBundle(app: Application): CoreBundle {
-        val hash = runCatching { app.assets.open("core-host.js.sha256").bufferedReader().use { it.readText().trim() } }.getOrDefault("")
+        val hash = runCatching { app.assets.open("core-host.js").use(BytecodeCache::bundleKey) }.getOrDefault("")
         val cache = BytecodeCache(File(app.codeCacheDir, "core-host.qjsc"), BuildConfig.QUICKJS_WRAPPER)
         return CoreBundle(hash, cache) { traced("boot:bundleRead") { app.assets.open("core-host.js").use { it.readBytes() } } }
     }

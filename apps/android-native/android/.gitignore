@@ -4,4 +4,4 @@ local.properties
 .gradle/
 build/
 app/build/
-app/src/main/assets/*.sha256
+app/src/main/assets/*.tmp

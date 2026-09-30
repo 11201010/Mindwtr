@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import vm from 'node:vm';
 import { build } from 'esbuild';
@@ -2447,14 +2448,34 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
     assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
     assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, rnCaptureIntent\) \}/);
-    // The bytecode cache's keys (BytecodeCache.kt): the engine version is the QuickJS dependency's, and the bundle's hash
-    // asset is the SHA-256 of the bundle's exact bytes, both written by build-bundle.mjs.
+    // The bytecode cache's keys (BytecodeCache.kt): the engine version is the QuickJS dependency's, and the bundle carries the
+    // SHA-256 of its own body in its first line, written with it in one file (build-bundle.mjs), so a bundle and a hash from
+    // two builds cannot pair up. Every variant's merged assets are checked by verify-bundle.mjs before packaging.
     assert.equal(/buildConfigField\("String", "QUICKJS_WRAPPER", "\\"([^"\\]+)\\""\)/.exec(gradle)?.[1],
         /implementation\("wang\.harlon\.quickjs:wrapper-android:([^"]+)"\)/.exec(gradle)?.[1], 'the cache key names the QuickJS wrapper in use');
     {
-        const assets = resolve(app, 'android/app/src/main/assets');
-        const bundleHash = createHash('sha256').update(readFileSync(resolve(assets, 'core-host.js'))).digest('hex');
-        assert.equal(readFileSync(resolve(assets, 'core-host.js.sha256'), 'utf8').trim(), bundleHash, 'the bundle hash asset is the bundle\'s SHA-256');
+        const verifier = resolve(app, 'scripts/verify-bundle.mjs');
+        const buildBundle = readFileSync(resolve(app, 'scripts/build-bundle.mjs'), 'utf8');
+        const verifies = (file) => spawnSync(process.execPath, [verifier, file], { encoding: 'utf8' }).status === 0;
+        const bundlePath = resolve(app, 'android/app/src/main/assets/core-host.js');
+        const bundle = readFileSync(bundlePath);
+        const newline = bundle.indexOf(10);
+        assert.match(bundle.subarray(0, newline).toString('utf8'), /^\/\/mindwtr-bundle-sha256:[0-9a-f]{64}$/, 'the bundle starts with its hash line');
+        assert(verifies(bundlePath), 'the built bundle matches its own hash line');
+        const scratch = mkdtempSync(resolve(tmpdir(), 'bundle-pair-'));
+        try {
+            const write = (name, bytes) => { writeFileSync(resolve(scratch, name), bytes); return resolve(scratch, name); };
+            // A body from another build under this hash line, a changed byte, no hash line, and no file all fail the check.
+            assert(!verifies(write('other-body.js', Buffer.concat([bundle.subarray(0, newline + 1), Buffer.from('globalThis.other = 1;')]))), 'another body under the hash line fails');
+            const changed = Buffer.from(bundle); changed[changed.length - 2] ^= 1;
+            assert(!verifies(write('changed.js', changed)), 'a changed byte fails');
+            assert(!verifies(write('no-header.js', bundle.subarray(newline + 1))), 'a bundle without its hash line fails');
+            assert(!verifies(resolve(scratch, 'missing.js')), 'a missing bundle fails');
+        } finally {
+            rmSync(scratch, { recursive: true, force: true });
+        }
+        assert.match(gradle, /val verifyBundle = [^\n]*verify-bundle\.mjs[\s\S]{0,300}?tasks\.withType<com\.android\.build\.gradle\.tasks\.MergeSourceSetFolders>\(\)\.configureEach \{\s+if \(name\.startsWith\("merge"\) && name\.endsWith\("Assets"\) && !name\.contains\("Test"\)\) \{[\s\S]{0,300}?commandLine\("node", verifyBundle, outputDir\.get\(\)\.asFile\.resolve\("core-host\.js"\)\.path\)\s*\}\.result\.get\(\)\.assertNormalExitValue\(\)/, 'every variant\'s merged assets are verified and a mismatch fails the build');
+        assert.match(buildBundle, /renameSync\(/, 'the bundle is written under a temporary name and renamed into place');
     }
     // RN's shortcuts from RN's own builder: the same ids, capabilities, labels and links, on the build's scheme; Add task opens
     // the capture popup through RN's system capture link until the widget pass brings QuickCaptureActivity.

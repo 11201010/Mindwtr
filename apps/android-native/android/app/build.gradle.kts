@@ -124,7 +124,18 @@ val buildCoreBundle by tasks.registering(Exec::class) {
     )
     // A startup measurement build's per-module trace sections (build-bundle.mjs); unset for every other build.
     inputs.property("traceModules", System.getenv("MINDWTR_TRACE_MODULES") ?: "")
-    outputs.files("src/main/assets/core-host.js", "src/main/assets/core-host.js.sha256")
+    outputs.file("src/main/assets/core-host.js")
+}
+// Every variant's merged assets: the bundle's hash line must be the SHA-256 of its body (verify-bundle.mjs), or the build
+// fails, so the bytecode cache's key always belongs to the bundle that ships.
+val verifyBundle = rootProject.projectDir.resolve("../scripts/verify-bundle.mjs").path
+tasks.withType<com.android.build.gradle.tasks.MergeSourceSetFolders>().configureEach {
+    if (name.startsWith("merge") && name.endsWith("Assets") && !name.contains("Test")) {
+        val execs = providers
+        doLast {
+            execs.exec { commandLine("node", verifyBundle, outputDir.get().asFile.resolve("core-host.js").path) }.result.get().assertNormalExitValue()
+        }
+    }
 }
 val buildShortcuts by tasks.registering(Exec::class) {
     workingDir = rootProject.projectDir.resolve("../../..")

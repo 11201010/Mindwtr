@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
-import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,9 +36,10 @@ const traceBanner = `(function (g) {
     };
 }(globalThis));
 `;
-await build({
+const result = await build({
     entryPoints: [resolve(app, 'bundle/host-entry.ts')],
     outfile,
+    write: false,
     bundle: true,
     format: 'iife',
     target: 'es2020',
@@ -47,5 +48,11 @@ await build({
     banner: { js: readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8') + (traceModules ? traceBanner : '') },
     plugins: traceModules ? [moduleTrace] : [],
 });
-// The SHA-256 of the exact bundle bytes: the key of the app's bytecode cache (BytecodeCache.kt), written with the bundle.
-writeFileSync(`${outfile}.sha256`, `${createHash('sha256').update(readFileSync(outfile)).digest('hex')}\n`);
+// The bundle's first line is the SHA-256 of the rest: the key of the app's bytecode cache (BytecodeCache.kt). Both go in one
+// file, written under a name of its own and renamed into place, so a bundle and a hash from two builds can never pair up
+// (verify-bundle.mjs checks every variant's packaged copy).
+const body = result.outputFiles[0].contents;
+const temporary = `${outfile}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+writeFileSync(temporary, Buffer.concat([Buffer.from(`//mindwtr-bundle-sha256:${createHash('sha256').update(body).digest('hex')}\n`), body]), { flag: 'wx' });
+renameSync(temporary, outfile);
+rmSync(`${outfile}.sha256`, { force: true }); // the old separate hash file

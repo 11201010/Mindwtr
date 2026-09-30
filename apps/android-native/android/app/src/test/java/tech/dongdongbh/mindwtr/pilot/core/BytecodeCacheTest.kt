@@ -146,6 +146,27 @@ class BytecodeCacheTest {
         assertFalse(cache().write("", bytecode))
     }
 
+    private fun bundleFile(body: String, hashOf: String = body) =
+        ("//mindwtr-bundle-sha256:" + BytecodeCache.sha256(hashOf.toByteArray()).joinToString("") { "%02x".format(it) } + "\n" + body).toByteArray()
+
+    @Test fun theBundleKeyIsItsOwnHashLine() {
+        val file = bundleFile("globalThis.x = 1;")
+        val key = BytecodeCache.bundleKey(file.inputStream())
+        assertEquals(BytecodeCache.sha256("globalThis.x = 1;".toByteArray()).joinToString("") { "%02x".format(it) }, key)
+        assertTrue(BytecodeCache.bodyMatches(file, key))
+    }
+
+    @Test fun aBodyFromAnotherBuildDoesNotMatchTheKey() {
+        val file = bundleFile("globalThis.x = 2;", hashOf = "globalThis.x = 1;")
+        assertFalse(BytecodeCache.bodyMatches(file, BytecodeCache.bundleKey(file.inputStream())))
+    }
+
+    @Test fun aBundleWithoutAHashLineHasNoKey() {
+        assertEquals("", BytecodeCache.bundleKey("globalThis.x = 1;".toByteArray().inputStream()))
+        assertEquals("", BytecodeCache.bundleKey("//mindwtr-bundle-sha256:xyz\nglobalThis.x = 1;".toByteArray().inputStream()))
+        assertFalse(BytecodeCache.bodyMatches("globalThis.x = 1;".toByteArray(), bundle))
+    }
+
     private fun assertMiss(outcome: String, read: BytecodeCache.Read) {
         assertEquals(outcome, read.outcome)
         assertNull(read.bytecode)

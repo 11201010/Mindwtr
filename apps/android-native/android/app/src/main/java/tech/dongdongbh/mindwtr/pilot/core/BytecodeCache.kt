@@ -6,12 +6,13 @@ import java.io.DataOutputStream
 import java.io.EOFException
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.security.MessageDigest
 
 /**
  * The bundle compiled to QuickJS bytecode, so a start skips parsing the 7 MB source (about 400 ms on the S23).
  *
- * One file, keyed by the SHA-256 of the exact bundle bytes (build-bundle.mjs writes it beside the bundle) and by the QuickJS
+ * One file, keyed by the SHA-256 of the bundle's exact body (from the bundle's own first line, [bundleKey]) and by the QuickJS
  * wrapper version, with the bytecode's own SHA-256 in its header. [read] returns bytecode only when all three match and the
  * file is whole; anything else (no file, another bundle, another engine, a damaged or short file, an IO error) returns null
  * with the reason, and the caller runs the source. A stale cache never runs.
@@ -98,6 +99,30 @@ class BytecodeCache(
         private fun utfLength(text: String) = 2L + text.toByteArray(Charsets.UTF_8).size
 
         fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
+
+        /** The bundle's first line (build-bundle.mjs writes it with the bundle, in one file): the SHA-256 of the rest. */
+        private val KEY_LINE = "//mindwtr-bundle-sha256:".toByteArray(Charsets.US_ASCII)
+
+        /** The key in the bundle's first line, read from [bundle]'s start only; "" when it has none (the cache is then off). */
+        fun bundleKey(bundle: InputStream): String {
+            val head = ByteArray(KEY_LINE.size + 65)
+            var read = 0
+            while (read < head.size) {
+                val count = bundle.read(head, read, head.size - read)
+                if (count < 0) return ""
+                read += count
+            }
+            if (!head.copyOf(KEY_LINE.size).contentEquals(KEY_LINE) || head.last() != '\n'.code.toByte()) return ""
+            return String(head, KEY_LINE.size, 64, Charsets.US_ASCII).takeIf { key -> runCatching { hex(key) }.isSuccess }.orEmpty()
+        }
+
+        /** Whether the SHA-256 of everything after [bundle]'s first line is [key]: the check before bytecode is compiled from it. */
+        fun bodyMatches(bundle: ByteArray, key: String): Boolean {
+            val newline = bundle.indexOf('\n'.code.toByte())
+            if (newline < 0) return false
+            val digest = MessageDigest.getInstance("SHA-256").apply { update(bundle, newline + 1, bundle.size - newline - 1) }.digest()
+            return runCatching { digest.contentEquals(hex(key)) }.getOrDefault(false)
+        }
 
         /** A 64-character hex SHA-256; anything else is refused (the caller's key is broken, so nothing may match). */
         fun hex(text: String): ByteArray {
