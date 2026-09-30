@@ -482,12 +482,14 @@ try {
             await sleep(3000);
             const [otherAfter] = stored(title(1));
             check(otherAfter.status === other.status && otherAfter.rev === other.rev, '(6) Mark Done on another task wrote nothing while the drain is owed');
-            // Back out of the search one step at a time (the keyboard first): a Back sent while it closes would leave the app.
-            for (let step = 0; step < 4 && inSearch(await screen()); step += 1) {
-                requireAppFront();
+            // While a retry is owed, the search screen's Back is off (SearchScreen's BackHandler), so Back leaves the app, as for any
+            // owed command there; the app then reopens on the tabs with the owed retry.
+            for (let step = 0; step < 4 && front().includes(`${PKG}/`) && inSearch(await screen()); step += 1) {
                 sh('input keyevent KEYCODE_BACK');
                 await sleep(1500);
             }
+            if (!front().includes(`${PKG}/`)) device.launch(ACTIVITY);
+            requireAppFront();
             await toTabs();
             await waitFor('the owed retry on the tabs', (current) => Boolean(owedRetry(current)), 10_000);
             check(true, '(6) the screen offers the owed retry');
