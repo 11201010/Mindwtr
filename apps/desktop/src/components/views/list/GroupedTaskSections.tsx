@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { Virtualizer } from '@tanstack/react-virtual';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
-import type { Task } from '@mindwtr/core';
+import type { Project, Task } from '@mindwtr/core';
 import { cn } from '../../../lib/utils';
 import type { TaskGroup } from './next-grouping';
 
@@ -14,6 +14,8 @@ type GroupedTaskSectionsProps = {
     getSectionDomId?: (group: TaskGroup, index: number) => string | undefined;
     onAddTaskToGroup?: (group: TaskGroup) => void;
     addTaskLabel?: (group: TaskGroup) => string | undefined;
+    /** Draws a group's projects (TaskGroup.projects) above its tasks. */
+    renderProject?: (project: Project) => ReactNode;
 };
 
 type GroupedTaskListProps = GroupedTaskSectionsProps & {
@@ -199,6 +201,19 @@ export function GroupedTaskSectionHeader({
 const SECTION_CARD = 'border-x border-border/40 bg-card/30';
 const SECTION_HEADER_CARD = 'border border-border/40 bg-card/30';
 
+function GroupProjects({ group, renderProject, className }: {
+    group: TaskGroup;
+    renderProject?: (project: Project) => ReactNode;
+    className?: string;
+}) {
+    if (!renderProject || !group.projects?.length) return null;
+    return (
+        <div className={cn('space-y-2 p-2', className)}>
+            {group.projects.map((project) => <div key={project.id}>{renderProject(project)}</div>)}
+        </div>
+    );
+}
+
 /**
  * A desktop task list, grouped or flat, virtualized or not. The three shapes
  * share one card contract, so they live in one component: below the
@@ -217,6 +232,7 @@ export function GroupedTaskList({
     getSectionDomId,
     onAddTaskToGroup,
     addTaskLabel,
+    renderProject,
     flatRowClassName = 'pb-1.5',
 }: GroupedTaskListProps) {
     const isGrouping = Boolean(virtualRows);
@@ -257,6 +273,13 @@ export function GroupedTaskList({
                                         row.collapsed ? 'rounded-md' : 'rounded-t-md',
                                     )}
                                 />
+                                {!row.collapsed && (
+                                    <GroupProjects
+                                        group={row.group}
+                                        renderProject={renderProject}
+                                        className={cn(SECTION_CARD, row.group.tasks.length === 0 && 'rounded-b-md border-b border-border/40')}
+                                    />
+                                )}
                             </div>
                         );
                     }
@@ -299,6 +322,7 @@ export function GroupedTaskList({
                 getSectionDomId={getSectionDomId}
                 onAddTaskToGroup={onAddTaskToGroup}
                 addTaskLabel={addTaskLabel}
+                renderProject={renderProject}
             />
         );
     }
@@ -323,6 +347,7 @@ export function GroupedTaskSections({
     getSectionDomId,
     onAddTaskToGroup,
     addTaskLabel,
+    renderProject,
 }: GroupedTaskSectionsProps) {
     const collapsible = Boolean(onToggleGroup);
     return (
@@ -342,6 +367,7 @@ export function GroupedTaskSections({
                         />
                         {!collapsed && (
                             <div id={controlsId} className="divide-y divide-border/30">
+                                <GroupProjects group={group} renderProject={renderProject} />
                                 {group.tasks.map((task) => renderTask(task, group))}
                             </div>
                         )}

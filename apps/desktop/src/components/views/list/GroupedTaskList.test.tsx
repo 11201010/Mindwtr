@@ -1,7 +1,7 @@
 import { render, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { Virtualizer } from '@tanstack/react-virtual';
-import type { Task } from '@mindwtr/core';
+import type { Project, Task } from '@mindwtr/core';
 import { buildGroupedVirtualRows, GroupedTaskList } from './GroupedTaskSections';
 import type { TaskGroup } from './next-grouping';
 import { buildSectionDomId } from './useTaskGroupCollapse';
@@ -160,6 +160,37 @@ describe('GroupedTaskList', () => {
             .toEqual(virtualRows.map((_row, index) => String(index)));
 
         view.unmount();
+    });
+
+    it('draws a group\'s projects above its tasks, virtualized or not, and hides them when collapsed (#1319)', () => {
+        const project = { id: 'p1', title: 'Trip', status: 'someday', color: '#000', order: 0, tagIds: [],
+            createdAt: '2026-05-01T00:00:00.000Z', updatedAt: '2026-05-01T00:00:00.000Z' } as Project;
+        const withProjects: TaskGroup[] = [
+            { ...groups[0], projects: [project] },
+            { id: 'only', title: 'Only projects', tasks: [], projects: [project] },
+        ];
+        for (const virtualized of [false, true]) {
+            for (const collapsed of [new Set<string>(), new Set(['@home'])]) {
+                const virtualRows = buildGroupedVirtualRows(withProjects, collapsed, getSectionDomId);
+                const view = render(
+                    <GroupedTaskList
+                        groups={withProjects}
+                        tasks={withProjects.flatMap((group) => group.tasks)}
+                        virtualRows={virtualRows}
+                        virtualizer={virtualized ? fakeVirtualizer(virtualRows.length) : null}
+                        collapsedGroupIds={collapsed}
+                        onToggleGroup={() => {}}
+                        getSectionDomId={getSectionDomId}
+                        renderProject={(item) => <div data-project-id={item.id}>{item.title}</div>}
+                        renderTask={(item) => <div key={item.id} data-task-id={item.id}>{item.title}</div>}
+                    />,
+                );
+                const order = Array.from(view.container.querySelectorAll('[data-project-id], [data-task-id]'))
+                    .map((node) => node.getAttribute('data-project-id') ?? node.getAttribute('data-task-id'));
+                expect(order).toEqual(collapsed.size ? ['p1'] : ['p1', 't1', 't2', 'p1']);
+                view.unmount();
+            }
+        }
     });
 
     it('renders a flat list without cards when there is no grouping', () => {

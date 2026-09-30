@@ -56,6 +56,8 @@ export interface TaskGroup {
     id: string;
     title: string;
     tasks: Task[];
+    /** Parked projects shown above the tasks (Someday sections, #1319). */
+    projects?: Project[];
     muted?: boolean;
     dotColor?: string;
 }

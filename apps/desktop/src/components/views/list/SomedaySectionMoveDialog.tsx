@@ -11,6 +11,8 @@ import {
 type Props = {
     sections: readonly ViewSectionDefinition[];
     selectedCount: number;
+    /** Replaces the "N selected" line, e.g. with a project's title. */
+    description?: string;
     initialSectionId?: string;
     t: (key: string) => string;
     onCreateSection: (title: string) => Promise<string | null>;
@@ -22,6 +24,7 @@ type Props = {
 export function SomedaySectionMoveDialog({
     sections,
     selectedCount,
+    description,
     initialSectionId,
     t,
     onCreateSection,
@@ -77,7 +80,7 @@ export function SomedaySectionMoveDialog({
         >
             <DialogHeader className="space-y-1 px-5 pt-5 pb-4">
                 <h3 id={titleId} className="text-lg font-semibold tracking-tight">{moveLabel}</h3>
-                <p id={descriptionId} className="text-sm text-muted-foreground">{selectedCount} {t('bulk.selected')}</p>
+                <p id={descriptionId} className="text-sm text-muted-foreground">{description ?? `${selectedCount} ${t('bulk.selected')}`}</p>
             </DialogHeader>
             <DialogBody className="space-y-2 px-5 pb-5">
                 <label htmlFor={pickerId} className="block text-sm font-medium">

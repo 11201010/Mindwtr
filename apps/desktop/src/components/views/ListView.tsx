@@ -1,7 +1,8 @@
 import React, { memo, useState, useMemo, useDeferredValue, useEffect, useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Folder, HelpCircle, Sparkles } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, HelpCircle, Sparkles } from 'lucide-react';
 import { buildProjectOrderMap,
+    buildProjectViewSectionUpdate,
     buildQuickAddParseOptions,
     buildQuickAddPreviewEntries,
     compareAreasByOrder,
@@ -15,6 +16,7 @@ import { buildProjectOrderMap,
     getQuickAddProjectInitialProps,
     getTaskMetadataFilterVisibility,
     getWaitingPerson,
+    groupProjectsByViewSection,
     hasActiveFilterCriteria,
     isTaskInActiveProject,
     isReferenceInVisibleProject,
@@ -27,6 +29,7 @@ import { buildProjectOrderMap,
     formatQuickAddHelp,
     resolveFeatureFlags,
     resolveTaskGroupByForFeatures,
+    selectDeferredProjects,
     sortViewSectionDefinitions,
     shallow,
     shouldShowTaskForStart,
@@ -39,7 +42,7 @@ import { buildProjectOrderMap,
     baseTextCollator,
     formatI18nTemplate,
 } from '@mindwtr/core';
-import type { FilterCriteria, Task, TaskStatus } from '@mindwtr/core';
+import type { FilterCriteria, Project, Task, TaskStatus } from '@mindwtr/core';
 import type { BulkOrganizeTaskUpdateInput } from '@mindwtr/core';
 import type { TaskSortBy } from '@mindwtr/core';
 import { ErrorBoundary } from '../ErrorBoundary';
@@ -53,6 +56,7 @@ import { ListQuickAdd } from './list/ListQuickAdd';
 import { QuickAddPreview } from '../QuickAddPreview';
 import { PromptModal } from '../PromptModal';
 import { SomedaySectionMoveDialog } from './list/SomedaySectionMoveDialog';
+import { DeferredProjectRow } from './list/DeferredProjectRow';
 import { TokenPickerModal } from '../TokenPickerModal';
 import { InboxProcessor } from './InboxProcessor';
 import { MindSweepModal, MindSweepTrigger } from '../MindSweepModal';
@@ -76,7 +80,7 @@ import {
     undoSomedaySectionMove,
     type SomedaySectionMove,
 } from '../../lib/someday-section-move';
-import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToValue, isTaskVisibleInArea, isTaskVisibleInInbox, projectMatchesAreaFilterSelection, taskMatchesAreaFilterSelection } from '@mindwtr/core';
+import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToValue, isTaskVisibleInArea, isTaskVisibleInInbox, taskMatchesAreaFilterSelection } from '@mindwtr/core';
 import { useAreaVisibility } from '../../hooks/useVisibleTaskContext';
 import { sortDoneTasksForListView } from './list/done-sort';
 import { DONE_TASK_LIST_SORT_OPTIONS, LIST_END_GAP, VIEW_FILTER_INPUT } from './list/list-toolbar';
@@ -215,6 +219,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
     const [quickAddSyntaxOpen, setQuickAddSyntaxOpen] = useState(false);
     const [mindSweepOpen, setMindSweepOpen] = useState(false);
     const [somedayMoveTargetIds, setSomedayMoveTargetIds] = useState<string[] | null>(null);
+    const [somedayMoveProjectId, setSomedayMoveProjectId] = useState<string | null>(null);
     const [newSomedaySectionOpen, setNewSomedaySectionOpen] = useState(false);
     const [newSomedaySectionBusy, setNewSomedaySectionBusy] = useState(false);
     const [newSomedaySectionError, setNewSomedaySectionError] = useState<string | null>(null);
@@ -669,6 +674,14 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         () => sortViewSectionDefinitions(settings?.gtd?.viewSections?.someday),
         [settings?.gtd?.viewSections?.someday],
     );
+    const showDeferredProjects = statusFilter === 'someday' || statusFilter === 'waiting';
+    const deferredProjects = useMemo(() => (showDeferredProjects
+        ? selectDeferredProjects(projects, statusFilter as 'someday' | 'waiting', resolvedAreaFilter, areaById)
+        : []), [areaById, projects, resolvedAreaFilter, showDeferredProjects, statusFilter]);
+    // Grouped by Someday section, parked projects sit in their section instead of the top block (#1319).
+    const deferredProjectsInGroups = statusFilter === 'someday'
+        && activeGroupBy === 'viewSection'
+        && somedaySectionDefinitions.length > 0;
     const groupedTasks = useMemo(() => {
         if (!isListGrouping) return [] as TaskGroup[];
         const groups = groupTasks(activeGroupBy, {
@@ -681,16 +694,26 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         });
         if (statusFilter !== 'someday' || activeGroupBy !== 'viewSection') return groups;
         const byId = new Map(groups.map((group) => [group.id, group]));
-        const sectionGroups = somedaySectionDefinitions.map((section) => (
+        const projectsByGroupId = deferredProjectsInGroups
+            ? groupProjectsByViewSection(deferredProjects, 'someday', somedaySectionDefinitions)
+            : new Map<string, Project[]>();
+        const withProjects = (group: TaskGroup): TaskGroup => {
+            const groupProjects = projectsByGroupId.get(group.id);
+            return groupProjects ? { ...group, projects: groupProjects } : group;
+        };
+        const sectionGroups = somedaySectionDefinitions.map((section) => withProjects(
             byId.get(`view-section:someday:${section.id}`) ?? {
                 id: `view-section:someday:${section.id}`,
                 title: section.title,
                 tasks: [],
             }
         ));
-        const noSectionGroup = byId.get(SOMEDAY_NO_SECTION_GROUP_ID);
-        return noSectionGroup ? [...sectionGroups, noSectionGroup] : sectionGroups;
-    }, [activeGroupBy, areas, completedGroupingDayKey, filteredTasks, isListGrouping, projectMap, settings?.gtd?.viewSections?.someday, settings?.theme, somedaySectionDefinitions, statusFilter, t]);
+        const noSectionGroup = byId.get(SOMEDAY_NO_SECTION_GROUP_ID)
+            ?? (projectsByGroupId.has(SOMEDAY_NO_SECTION_GROUP_ID)
+                ? { id: SOMEDAY_NO_SECTION_GROUP_ID, title: tFallback(t, 'viewSections.noSection', 'No section'), tasks: [], muted: true }
+                : undefined);
+        return noSectionGroup ? [...sectionGroups, withProjects(noSectionGroup)] : sectionGroups;
+    }, [activeGroupBy, areas, completedGroupingDayKey, deferredProjects, deferredProjectsInGroups, filteredTasks, isListGrouping, projectMap, settings?.gtd?.viewSections?.someday, settings?.theme, somedaySectionDefinitions, statusFilter, t]);
     const {
         collapsedGroupIds,
         getSectionDomId,
@@ -738,14 +761,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         if (collapsedGroup) toggleGroup(collapsedGroup.id);
     }, [collapsedGroupIds, groupedTasks, highlightTaskId, isListGrouping, toggleGroup, visibleTasks]);
 
-    const showDeferredProjects = statusFilter === 'someday' || statusFilter === 'waiting';
-    const deferredProjects = showDeferredProjects
-        ? [...projects]
-            .filter((project) => !project.deletedAt && project.status === statusFilter)
-            .filter((project) => projectMatchesAreaFilterSelection(project, resolvedAreaFilter, areaById))
-            .sort((a, b) => (a.order - b.order) || a.title.localeCompare(b.title))
-        : [];
-    const showDeferredProjectSection = showDeferredProjects && deferredProjects.length > 0;
+    const showDeferredProjectSection = showDeferredProjects && deferredProjects.length > 0 && !deferredProjectsInGroups;
     const showEmptyState = filteredTasks.length === 0
         && !showDeferredProjectSection
         && !(statusFilter === 'someday' && activeGroupBy === 'viewSection' && somedaySectionDefinitions.length > 0);
@@ -760,6 +776,28 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                 showToast(tFallback(t, 'projects.reactivateFailed', 'Failed to reactivate project'), 'error');
             });
     }, [showToast, t, updateProject]);
+    const handleApplySomedayProjectMove = useCallback(async (sectionId: string | undefined) => {
+        const project = useTaskStore.getState().projects.find((candidate) => candidate.id === somedayMoveProjectId);
+        if (!project) throw new Error('Someday project no longer exists');
+        const update = buildProjectViewSectionUpdate(project, 'someday', sectionId);
+        if (update) {
+            const result = await updateProject(project.id, update);
+            if (result && typeof result === 'object' && 'success' in result && result.success === false) {
+                throw new Error(result.error || 'Could not move the project to the section');
+            }
+        }
+        setSomedayMoveProjectId(null);
+    }, [somedayMoveProjectId, updateProject]);
+    const renderSectionProject = useCallback((project: Project) => (
+        <DeferredProjectRow
+            project={project}
+            area={project.areaId ? areaById.get(project.areaId) : undefined}
+            t={t}
+            onOpen={handleOpenProject}
+            onReactivate={handleReactivateProject}
+            onMoveToSection={readOnly ? undefined : setSomedayMoveProjectId}
+        />
+    ), [areaById, handleOpenProject, handleReactivateProject, readOnly, t]);
     const virtualRowCount = groupedVirtualRows?.length ?? filteredTasks.length;
     const shouldVirtualize = virtualRowCount > LIST_VIRTUALIZATION_THRESHOLD;
     const rowVirtualizer = useVirtualizer({
@@ -1325,41 +1363,16 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                                 {tFallback(t, 'projects.title', 'Projects')} ({deferredProjects.length})
                             </button>
                             {!collapsedProjectLists[statusFilter] && <div className="mt-3 space-y-2">
-                                {deferredProjects.map((project) => {
-                                    const projectArea = project.areaId ? areaById.get(project.areaId) : undefined;
-                                    return (
-                                        <div
-                                            key={project.id}
-                                            className="flex w-full items-center justify-between gap-3 rounded-md border border-border/60 bg-background px-3 py-2"
-                                        >
-                                            <button
-                                                type="button"
-                                                onClick={() => handleOpenProject(project.id)}
-                                                className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-primary"
-                                                aria-label={`${tFallback(t, 'projects.title', 'Project')}: ${project.title}`}
-                                            >
-                                                <Folder className="h-4 w-4 shrink-0" style={{ color: project.color }} />
-                                                <span className="truncate text-sm font-medium text-foreground">{project.title}</span>
-                                                {projectArea && (
-                                                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                                                        <span
-                                                            className="h-2 w-2 rounded-full"
-                                                            style={{ backgroundColor: projectArea.color || DEFAULT_AREA_COLOR }}
-                                                        />
-                                                        {projectArea.name}
-                                                    </span>
-                                                )}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleReactivateProject(project.id)}
-                                                className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                                            >
-                                                {t('projects.reactivate')}
-                                            </button>
-                                        </div>
-                                    );
-                                })}
+                                {deferredProjects.map((project) => (
+                                    <DeferredProjectRow
+                                        key={project.id}
+                                        project={project}
+                                        area={project.areaId ? areaById.get(project.areaId) : undefined}
+                                        t={t}
+                                        onOpen={handleOpenProject}
+                                        onReactivate={handleReactivateProject}
+                                    />
+                                ))}
                             </div>}
                         </div>
                     )}
@@ -1590,6 +1603,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                             }
                             : undefined}
                         addTaskLabel={getSomedayAddTaskLabel}
+                        renderProject={deferredProjectsInGroups ? renderSectionProject : undefined}
                         flatRowClassName={densityMode === 'condensed'
                             ? 'pb-0.5'
                             : densityMode === 'compact'
@@ -1665,6 +1679,19 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                 onCreateSection={createSomedaySection}
                 onApply={handleApplySomedayMove}
                 onCancel={() => setSomedayMoveTargetIds(null)}
+            />
+        )}
+        {somedayMoveProjectId && (
+            <SomedaySectionMoveDialog
+                key={`project:${somedayMoveProjectId}`}
+                sections={somedaySectionDefinitions}
+                selectedCount={1}
+                description={projects.find((project) => project.id === somedayMoveProjectId)?.title}
+                initialSectionId={projects.find((project) => project.id === somedayMoveProjectId)?.viewSectionIds?.someday}
+                t={t}
+                onCreateSection={createSomedaySection}
+                onApply={handleApplySomedayProjectMove}
+                onCancel={() => setSomedayMoveProjectId(null)}
             />
         )}
         <PromptModal

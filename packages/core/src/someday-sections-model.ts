@@ -115,8 +115,9 @@ export function moveSomedaySection(
 }
 
 /**
- * The definitions without one section. Tasks keep their stored assignment and
- * show under "No section" until they move; nothing about the task is deleted.
+ * The definitions without one section. Tasks and parked projects keep their
+ * stored assignment and show under "No section" until they move; nothing about
+ * them is deleted.
  */
 export function removeSomedaySection(stored: readonly ViewSectionDefinition[] | undefined, id: string): ViewSectionDefinition[] {
     return (stored ?? []).filter((section) => section?.id !== id);

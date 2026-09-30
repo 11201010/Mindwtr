@@ -1,6 +1,6 @@
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useTaskStore, type Task, type ViewSectionDefinition } from '@mindwtr/core';
+import { useTaskStore, type Project, type Task, type ViewSectionDefinition } from '@mindwtr/core';
 import { LanguageProvider } from '../../contexts/language-context';
 import { KeybindingProvider } from '../../contexts/keybinding-context';
 import { useUiStore } from '../../store/ui-store';
@@ -162,6 +162,70 @@ describe('desktop Someday section actions', () => {
         } finally {
             window.removeEventListener('mindwtr:quick-add', event);
         }
+    });
+
+    describe('parked projects in sections (#1319)', () => {
+        const project = (id: string, order: number, viewSectionIds?: Project['viewSectionIds']): Project => ({
+            id, title: `Project ${id}`, status: 'someday', color: '#6B7280', order, tagIds: [], createdAt: now, updatedAt: now,
+            ...(viewSectionIds ? { viewSectionIds } : {}),
+        });
+        const seedProjects = (projects: Project[]) => {
+            const updateProject = vi.fn(async (id: string, updates: Partial<Project>) => {
+                useTaskStore.setState((state) => {
+                    const next = state.projects.map((item) => (item.id === id ? { ...item, ...updates } : item));
+                    return { projects: next, _allProjects: next };
+                });
+                return { success: true };
+            });
+            useTaskStore.setState({ projects, _allProjects: projects, updateProject });
+            return updateProject;
+        };
+        const groupOf = (view: ReturnType<typeof renderSomeday>, title: string) => {
+            const header = view.getByText(title, { selector: 'span.truncate' });
+            return header.closest('div.rounded-md') as HTMLElement;
+        };
+
+        it('draws each parked project in its section, before the tasks, with no top block', () => {
+            seed([{ ...task('a'), viewSectionIds: { someday: 'books' } }]);
+            seedProjects([project('trip', 0, { someday: 'books' }), project('loose', 1), project('gone', 2, { someday: 'deleted' })]);
+            useUiStore.setState((state) => ({ listOptions: { ...state.listOptions, somedayGroupBy: 'viewSection' } }));
+            const view = renderSomeday();
+
+            const books = groupOf(view, 'Books');
+            const order = Array.from(books.querySelectorAll('[aria-label^="Project"], [data-task-id]'))
+                .map((node) => node.getAttribute('data-task-id') ?? node.getAttribute('aria-label'));
+            expect(order).toEqual(['Projects: Project trip', 'a']);
+            const noSection = groupOf(view, 'No section');
+            expect(within(noSection).getByRole('button', { name: 'Projects: Project loose' })).toBeInTheDocument();
+            expect(within(noSection).getByRole('button', { name: 'Projects: Project gone' })).toBeInTheDocument();
+            expect(view.queryByRole('button', { name: /^Projects \(/ })).toBeNull();
+            expect(view.getAllByRole('button', { name: /^Projects: / })).toHaveLength(3);
+        });
+
+        it('keeps the top block in other groupings', () => {
+            seed([task('a')]);
+            seedProjects([project('trip', 0, { someday: 'books' })]);
+            const view = renderSomeday();
+            expect(view.getByRole('button', { name: 'Projects (1)' })).toBeInTheDocument();
+            expect(view.queryByRole('button', { name: 'Move to section…' })).toBeNull();
+        });
+
+        it('moves a project to another section through Move to section', async () => {
+            seed([]);
+            const updateProject = seedProjects([project('trip', 0, { someday: 'books', waiting: 'w' })]);
+            useUiStore.setState((state) => ({ listOptions: { ...state.listOptions, somedayGroupBy: 'viewSection' } }));
+            const view = renderSomeday();
+            fireEvent.click(within(groupOf(view, 'Books')).getByRole('button', { name: 'Move to section…' }));
+            const dialog = await view.findByRole('dialog', { name: 'Move to section…' });
+            expect(within(dialog).getByText('Project trip')).toBeInTheDocument();
+            const picker = within(dialog).getByRole('combobox');
+            expect(picker).toHaveValue('books');
+            fireEvent.change(picker, { target: { value: 'empty' } });
+            fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+            await waitFor(() => expect(updateProject).toHaveBeenCalledWith('trip', { viewSectionIds: { someday: 'empty', waiting: 'w' } }));
+            await waitFor(() => expect(view.queryByRole('dialog')).toBeNull());
+            expect(within(groupOf(view, 'Empty ideas')).getByRole('button', { name: 'Projects: Project trip' })).toBeInTheDocument();
+        });
     });
 
     it('creates a section from the Someday list action', async () => {
