@@ -137,6 +137,20 @@ for (const init of ['?token=1&a=2&token=3', '']) {
     assert.equal(JSON.stringify([...mine.entries()]), JSON.stringify([...theirs.entries()]), `entries() of ${init}`);
     assert.equal(JSON.stringify([...mine]), JSON.stringify([...theirs]), `iterating ${init}`);
 }
+// Review S3 2 and 3: userinfo ends at the authority's LAST "@" (its password at the first ":"), and set() replaces the first
+// pair and drops every later one, as WHATWG: core's sanitizer then removes a whole password and every repeated token.
+for (const text of ['https://alice:p@ss@nas.local/dav', 'https://alice:a:b@nas.local:8443/dav?x=1', 'https://bob@nas.local/', 'https://nas.local/a@b']) {
+    // WHATWG percent-encodes an "@" inside userinfo; the polyfill keeps it as typed: compared decoded.
+    const parts = (url) => [decodeURIComponent(url.username), decodeURIComponent(url.password), url.host, url.pathname, url.search];
+    assert.deepEqual(parts(new consoleState.URL(text)), parts(new URL(text)), text);
+}
+for (const [init, key] of [['?token=first&a=1&token=second', 'token'], ['?a=1', 'token'], ['?a=1&a=2&a=3', 'a']]) {
+    const mine = new consoleState.URLSearchParams(init);
+    const theirs = new URLSearchParams(init);
+    mine.set(key, 'redacted');
+    theirs.set(key, 'redacted');
+    assert.equal(mine.toString(), theirs.toString(), `set(${key}) on ${init}`);
+}
 // fetch and the secret calls (HostIo.kt): the polyfill hands each call to the bridge and settles it only when the pump
 // takes the host's answer (ioNext), as timers fire. A stand-in bridge answers here.
 {
@@ -3372,6 +3386,12 @@ assert.equal(brokenStorage.activationCount, 0);
     log.coreLogger({ level: 'warn', message: 'forced token=secret-value', scope: 'diagnostics', force: true });
     await tick();
     assert.deepEqual(lines().map(({ ts: _ts, ...line }) => line), [{ level: 'warn', scope: 'diagnostics', message: 'forced token=[redacted]' }]);
+    // Review S3 2 and 3 through the real bundle: core's sanitizer on the polyfill's URL.
+    log.coreLogger({ level: 'warn', message: 'GET https://alice:p@ss@nas.local/dav failed; GET https://nas.local/dav?token=first&token=second failed', scope: 'sync', force: true });
+    await tick();
+    const sanitized = lines().at(-1).message;
+    assert.match(sanitized, /nas\.local\/dav failed/);
+    for (const secret of ['alice', 'p@ss', 'ss@', 'first', 'second']) assert(!sanitized.includes(secret), `the sanitized line keeps "${secret}": ${sanitized}`);
     log.settings = { diagnostics: { loggingEnabled: true } };
     log.coreLogger({ level: 'info', message: 'Native Android task command', category: 'storage', context: { operation: 'complete', password: 'p' } });
     await tick();
@@ -3379,7 +3399,7 @@ assert.equal(brokenStorage.activationCount, 0);
     assert.deepEqual(Object.keys(last), ['ts', 'level', 'scope', 'message', 'context']);
     assert.deepEqual({ ...last, ts: '' }, { ts: '', level: 'info', scope: 'core', message: 'Native Android task command', context: { operation: 'complete', password: '[redacted]', category: 'storage' } });
     assert.match(last.ts, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
-    assert.equal(log.logOps.filter((op) => op === 'append').length, 2, 'one append per line');
+    assert.equal(log.logOps.filter((op) => op === 'append').length, 3, 'one append per line');
     assert.equal(log.logOps.filter((op) => op === 'write').length, 0, 'no rewrite under the size cap');
     assert.deepEqual(await poll(log, log.MindwtrHost.logShare()), { ok: true, value: { path: 'files/logs/mindwtr.log' } });
     assert.deepEqual(await poll(log, log.MindwtrHost.logClear()), { ok: true, value: {} });

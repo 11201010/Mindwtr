@@ -351,7 +351,8 @@
     // WHATWG URL parser; the report says so. A non-special scheme without "//"
     // (mailto:, tel:) has no host: its path is the rest, as the platform parses it.
     if (typeof global.URL !== 'function') {
-        var URL_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?:([^@/]*)@)?([^:/?#]*)(?::(\d+))?([^?#]*)(\?[^#]*)?(#.*)?$/;
+        // Userinfo runs to the authority's LAST "@" (WHATWG): a password may hold an "@", and a log must never keep part of it.
+        var URL_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?:([^/?#]*)@)?([^:/?#]*)(?::(\d+))?([^?#]*)(\?[^#]*)?(#.*)?$/;
         var OPAQUE_URL_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):([^?#]*)(\?[^#]*)?(#.*)?$/;
         var SPECIAL_SCHEMES = ['http', 'https', 'ws', 'wss', 'ftp', 'file'];
         global.URL = function URL(input, base) {
@@ -378,9 +379,11 @@
             }
             if (!parts) throw new TypeError('Invalid URL: ' + input);
             this.protocol = parts[1].toLowerCase() + ':';
-            var credentials = (parts[2] || '').split(':');
-            this.username = credentials[0] || '';
-            this.password = credentials[1] || '';
+            // The password is everything after the first ":" of the userinfo.
+            var credentials = parts[2] || '';
+            var colon = credentials.indexOf(':');
+            this.username = colon < 0 ? credentials : credentials.slice(0, colon);
+            this.password = colon < 0 ? '' : credentials.slice(colon + 1);
             this.hostname = parts[3] || '';
             this.port = parts[4] || '';
             this.host = this.hostname + (this.port ? ':' + this.port : '');
@@ -423,11 +426,17 @@
             return null;
         };
         global.URLSearchParams.prototype.has = function (key) { return this.get(key) !== null; };
+        // WHATWG: the first pair named [key] takes the value and every later one goes (core's sanitizer redacts a repeated token).
         global.URLSearchParams.prototype.set = function (key, value) {
-            for (var i = 0; i < this._pairs.length; i += 1) {
-                if (this._pairs[i][0] === key) { this._pairs[i][1] = String(value); return; }
-            }
-            this._pairs.push([key, String(value)]);
+            var found = false;
+            this._pairs = this._pairs.filter(function (pair) {
+                if (pair[0] !== key) return true;
+                if (found) return false;
+                found = true;
+                pair[1] = String(value);
+                return true;
+            });
+            if (!found) this._pairs.push([key, String(value)]);
         };
         global.URLSearchParams.prototype.append = function (key, value) { this._pairs.push([key, String(value)]); };
         global.URLSearchParams.prototype.delete = function (key) {
