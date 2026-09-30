@@ -1820,7 +1820,10 @@ final class CoreModel: ObservableObject {
                 // The durable data recovered, but the in-memory queue did not.
                 selectedSurface = .inbox
             }
-            _ = try await query("language", [storedLanguage, Locale.preferredLanguages.first ?? Locale.current.identifier])
+            let resolvedLanguage = try await query("language", [storedLanguage, Locale.preferredLanguages.first ?? Locale.current.identifier])
+            guard let uiLanguage = resolvedLanguage["language"] as? String, !uiLanguage.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            // Keep UI language selection while supplying the actual regional locale to shared policy.
+            _ = try await query("language", [uiLanguage, Locale.current.identifier])
             let keys = ["tab.next", "tab.inbox", "tab.review", "tab.menu", "nav.addTask", "search.title",
                         "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading",
                         "task.aria.changeStatus", "task.aria.changeStatusHint", "quickAdd.audioRecord",
@@ -2033,7 +2036,8 @@ final class CoreModel: ObservableObject {
     }
 
     func openGeneralPreferencePicker(_ type: String) {
-        guard generalPreferenceEnabled, ["weekStart", "dateFormat", "timeFormat", "quickAccessView"].contains(type) else { return }
+        guard generalPreferenceEnabled, ["weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem"].contains(type) else { return }
+        guard type != "calendarSystem" || generalSettings.object("regional")["calendarSystem"] is CoreObject else { return }
         generalPreferencePicker = type
         generalPreferenceError = nil
     }
@@ -2048,7 +2052,7 @@ final class CoreModel: ObservableObject {
         let model = options.object("model")
         let expected = options.object("expected")
         guard !model.text("title").isEmpty, model["appearance"] is CoreObject, model["regional"] is CoreObject,
-              Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView"]) else {
+              Set(expected.keys) == Set(["showTaskAge", "weekStart", "dateFormat", "timeFormat", "quickAccessView", "calendarSystem"]) else {
             throw CocoaError(.coderReadCorrupt)
         }
         generalSettings = model

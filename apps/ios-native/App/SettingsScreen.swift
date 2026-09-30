@@ -224,7 +224,7 @@ struct SettingsScreen: View {
                         ForEach(["weekStart", "dateFormat", "calendarSystem", "timeFormat"], id: \.self) { type in
                             if let row = regional[type] as? CoreObject {
                                 palette.border.frame(height: 0.5)
-                                generalSettingRow(row, type: type, enabled: type != "calendarSystem")
+                                generalSettingRow(row, type: type, enabled: true)
                             }
                         }
                     }

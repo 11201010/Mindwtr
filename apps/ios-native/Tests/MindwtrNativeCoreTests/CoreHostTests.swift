@@ -13043,7 +13043,7 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(unchanged["changed"] as? Bool, false)
         XCTAssertEqual(writes, 0); XCTAssertEqual(journalWrites, 0)
         var extra = noop; extra["secret"] = "must-not-enter-journal"
-        var wrong = noop; wrong["edit"] = ["type": "calendarSystem", "value": "jalali"]
+        var wrong = noop; wrong["edit"] = ["type": "appLock", "value": true]
         var wrongBool = noop; wrongBool["edit"] = ["type": "showTaskAge", "value": 1]
         var badUUID = noop; badUUID["requestId"] = UUID().uuidString.uppercased()
         var badWitness = noop; badWitness["expected"] = ["present": false, "value": "system", "stampPresent": false, "stamp": NSNull()]
@@ -13054,6 +13054,36 @@ final class CoreHostTests: XCTestCase {
         await expectFailure("unavailable") { _ = try await core.call("generalPreferenceCommit", argumentsJSON: json([json(noop)])) }
         XCTAssertEqual(sql, 0); XCTAssertEqual(journalWrites, 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    func testGeneralPreferenceCalendarLocaleGate() async throws {
+        let faults = HostIOFaults(), core = host(faults)
+        _ = try await core.start()
+        _ = try await core.call("language", argumentsJSON: json(["en", "en-US"]))
+        let hidden = try object(await core.call("generalPreferenceOptions", argumentsJSON: json(["{}"])))
+        let model = try XCTUnwrap(hidden["model"] as? [String: Any])
+        XCTAssertTrue((model["regional"] as? [String: Any])?["calendarSystem"] is NSNull)
+        let expected = try XCTUnwrap(hidden["expected"] as? [String: Any])
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+            "edit": ["type": "calendarSystem", "value": "jalali"], "expected": try XCTUnwrap(expected["calendarSystem"])]
+        var writes = 0, journalWrites = 0
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE ") || $0.hasPrefix("INSERT ") { writes += 1 } }
+        faults.journalWrite = { journalWrites += 1 }
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("generalPreference", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journalWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        for (language, locale) in [("en", "fa_IR"), ("fa", "en_US")] {
+            _ = try await core.call("language", argumentsJSON: json([language, locale]))
+            let shown = try object(await core.call("generalPreferenceOptions", argumentsJSON: json(["{}"])))
+            let shownModel = try XCTUnwrap(shown["model"] as? [String: Any])
+            let picker = try XCTUnwrap((shownModel["regional"] as? [String: Any])?["calendarSystem"] as? [String: Any])
+            let options = try XCTUnwrap(picker["options"] as? [[String: Any]])
+            XCTAssertEqual(options.compactMap { $0["value"] as? String }, ["gregorian", "jalali"])
+        }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journalWrites, 0)
         await core.close()
     }
 
@@ -13075,6 +13105,7 @@ final class CoreHostTests: XCTestCase {
         let original = try nineTableSnapshot(setup); setup.close()
         let faults = HostIOFaults(), writer = host(faults, bundleURL: clock)
         _ = try await writer.start()
+        if type == "calendarSystem" { _ = try await writer.call("language", argumentsJSON: json(["fa", "en-US"])) }
         let options = try object(await writer.call("generalPreferenceOptions", argumentsJSON: json(["{}"])))
         let expected = try XCTUnwrap(options["expected"] as? [String: Any])
         XCTAssertNotNil(options["model"])
@@ -13187,6 +13218,10 @@ final class CoreHostTests: XCTestCase {
 
     func testGeneralPreferenceQuickAccessRecovery() async throws {
         try await exerciseGeneralPreferenceRecovery(type: "quickAccessView", value: "contexts")
+    }
+
+    func testGeneralPreferenceCalendarSystemRecovery() async throws {
+        try await exerciseGeneralPreferenceRecovery(type: "calendarSystem", value: "jalali")
     }
 
     private func exerciseTaxonomyRecovery(kind: String, action: String) async throws {

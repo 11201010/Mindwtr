@@ -84,7 +84,7 @@ describe('prepared General preferences', () => {
         const options = await env.host.getGeneralPreferenceOptions({});
         if (!options.ok) throw new Error(JSON.stringify(options));
         expect(Object.keys(options.value.expected).sort()).toEqual([
-            'showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat'].sort());
+            'showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat', 'calendarSystem'].sort());
         expect(options.value.expected.quickAccessView).toMatchObject({ present: false, value: null,
             stampPresent: true, stamp: AT });
         expect(options.value.model.appearance.quickAccess.options.map((row) => row.value))
@@ -103,6 +103,115 @@ describe('prepared General preferences', () => {
         const current = await cold.host.getGeneralPreferenceOptions({});
         if (!current.ok) throw new Error(JSON.stringify(current));
         expect(current.value.model.appearance.quickAccess.options.find((row) => row.selected)?.value).toBe(value);
+    });
+
+    it.each([
+        { storedLanguage: 'fa', systemLocale: 'en-US' },
+        { storedLanguage: 'en', systemLocale: 'fa-IR' },
+    ])('offers both Calendar systems for $storedLanguage language and $systemLocale locale', async (locale) => {
+        const start = initial();
+        start.tasks.push({ id: 'timed', title: 'Timed', status: 'next', tags: [], contexts: [],
+            dueDate: '2026-09-30T15:30:00.000Z', createdAt: AT, updatedAt: AT });
+        const env = await open(start);
+        expect(await env.host.setLanguage(locale)).toMatchObject({ ok: true });
+        const options = await env.host.getGeneralPreferenceOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        const picker = options.value.model.regional.calendarSystem;
+        expect(picker?.options.map((row) => row.value)).toEqual(['gregorian', 'jalali']);
+        expect(options.value.expected.calendarSystem).toMatchObject({ present: true, value: 'gregorian',
+            stampPresent: true, stamp: AT });
+        const dueLabel = () => {
+            const view = env.host.getTaskView({ id: 'timed' });
+            if (!view.ok) throw new Error(JSON.stringify(view));
+            const row = view.value.rows.find((item) => item.type === 'field' && item.field === 'dueDate');
+            if (!row || row.type !== 'field') throw new Error('Due date row missing');
+            return row.value;
+        };
+        const before = dueLabel();
+        const { envelope, prepared } = await planned(env, { type: 'calendarSystem', value: 'jalali' });
+        expect(prepared.version).toBe(1);
+        expect(env.host.validatePreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(dueLabel()).not.toBe(before);
+        expect(env.data().tasks).toEqual(start.tasks);
+        expect(env.data().settings.calendarSystem).toBe('jalali');
+        expect(env.data().settings.syncPreferencesUpdatedAt?.language).toBe(prepared.after.stamp);
+        expect(env.data().settings.appearance).toEqual(start.settings.appearance);
+    });
+
+    it('hides Calendar system in English, refuses a stale offer, and cold-replays an accepted edit after locale change', async () => {
+        const env = await open(initial());
+        const english = await env.host.getGeneralPreferenceOptions({});
+        if (!english.ok) throw new Error(JSON.stringify(english));
+        expect(english.value.model.regional.calendarSystem).toBeNull();
+        const hiddenRequest: NativeGeneralPreferenceRequest = { requestId: ID,
+            edit: { type: 'calendarSystem', value: 'jalali' }, expected: english.value.expected.calendarSystem };
+        expect(await env.host.prepareGeneralPreference(hiddenRequest)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        expect(await env.host.setLanguage({ storedLanguage: 'fa', systemLocale: 'en-US' })).toMatchObject({ ok: true });
+        const accepted = await planned(env, { type: 'calendarSystem', value: 'jalali' });
+        expect(await env.host.setLanguage({ storedLanguage: 'en', systemLocale: 'en-US' })).toMatchObject({ ok: true });
+        expect(await env.host.prepareGeneralPreference(accepted.request)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        expect(env.host.validatePreparedGeneralPreference(accepted.envelope)).toEqual({ ok: true, value: accepted.prepared.result });
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGeneralPreference(accepted.envelope)).toEqual({ ok: true,
+            value: accepted.prepared.result });
+        expect(cold.data().settings.calendarSystem).toBe('jalali');
+        expect(cold.data().settings.syncPreferencesUpdatedAt?.language).toBe(accepted.prepared.after.stamp);
+        expect(await cold.host.commitPreparedGeneralPreference(accepted.envelope)).toEqual({ ok: true,
+            value: accepted.prepared.result });
+        expect(cold.saves()).toBe(1);
+    });
+
+    it('pins unknown or absent raw Calendar system, preserves siblings, and no-ops an exact stored choice', async () => {
+        const start = initial();
+        start.settings = { ...start.settings, calendarSystem: 'legacy-calendar',
+            timeFormat: '24h', weekStart: 'saturday' } as typeof start.settings;
+        const env = await open(start);
+        expect(await env.host.setLanguage({ storedLanguage: 'fa', systemLocale: 'en-US' })).toMatchObject({ ok: true });
+        const options = await env.host.getGeneralPreferenceOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(options.value.expected.calendarSystem).toMatchObject({ present: true, value: 'legacy-calendar' });
+        expect(env.data().settings.calendarSystem).toBe('legacy-calendar');
+        const { envelope } = await planned(env, { type: 'calendarSystem', value: 'gregorian' });
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: true });
+        expect(env.data().settings).toMatchObject({ calendarSystem: 'gregorian', timeFormat: '24h',
+            weekStart: 'saturday' });
+        const fresh = await env.host.getGeneralPreferenceOptions({});
+        if (!fresh.ok) throw new Error(JSON.stringify(fresh));
+        const noop = await env.host.prepareGeneralPreference({ requestId: ID,
+            edit: { type: 'calendarSystem', value: 'gregorian' }, expected: fresh.value.expected.calendarSystem });
+        expect(noop).toMatchObject({ ok: true, value: { kind: 'noop', result: { changed: false } } });
+        const absent = initial(); absent.settings.calendarSystem = undefined;
+        const other = await open(absent);
+        expect(await other.host.setLanguage({ storedLanguage: 'fa', systemLocale: 'en-US' })).toMatchObject({ ok: true });
+        const absentOptions = await other.host.getGeneralPreferenceOptions({});
+        if (!absentOptions.ok) throw new Error(JSON.stringify(absentOptions));
+        expect(absentOptions.value.expected.calendarSystem).toMatchObject({ present: false, value: null });
+        const absentWrite = await planned(other, { type: 'calendarSystem', value: 'gregorian' });
+        expect(await other.host.commitPreparedGeneralPreference(absentWrite.envelope)).toMatchObject({ ok: true,
+            value: { changed: true } });
+    });
+
+    it('refuses Calendar field and language-stamp conflicts including an independent same target', async () => {
+        const env = await open(initial());
+        expect(await env.host.setLanguage({ storedLanguage: 'fa', systemLocale: 'en-US' })).toMatchObject({ ok: true });
+        const { envelope } = await planned(env, { type: 'calendarSystem', value: 'jalali' });
+        env.changeSaved((data) => ({ ...data, settings: { ...data.settings, calendarSystem: 'jalali',
+            syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                language: '2026-09-02T00:00:00.000Z' } } }));
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        env.changeSaved((data) => ({ ...data, settings: { ...data.settings, calendarSystem: 'gregorian',
+            syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                language: '2026-09-02T00:00:00.000Z' } } }));
+        expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(env.saves()).toBe(0);
+        const bad = { ...envelope.request, expected: { ...envelope.request.expected, value: 1 } };
+        expect(await env.host.prepareGeneralPreference(bad as never)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
     });
 
     it('treats own undefined Quick Access and appearance stamp as JSON-durable absence', async () => {
@@ -280,31 +389,45 @@ describe('prepared General preferences', () => {
             error: { code: 'INVALID_INPUT' } });
         expect(env.host.probeGeneralPreferenceOutcome(request)).toMatchObject({ ok: false,
             error: { code: 'STALE_REVISION' } });
-        const invalid = { ...request, edit: { type: 'calendarSystem', value: 'jalali' } };
+        const invalid = { ...request, edit: { type: 'language', value: 'fa' } };
         expect(await env.host.prepareGeneralPreference(invalid as never)).toMatchObject({ ok: false,
             error: { code: 'INVALID_INPUT' } });
     });
 
-    it('retries the exact request after a failed save without changing the prepared time', async () => {
+    it.each([
+        { type: 'quickAccessView', value: 'contexts', group: 'appearance' },
+        { type: 'calendarSystem', value: 'jalali', group: 'language' },
+    ] as const)('retries frozen $type after a failed save even when locale changes', async ({ type, value, group }) => {
         let failing = false;
         const env = await open(initial(), () => failing);
-        const { envelope } = await planned(env, { type: 'quickAccessView', value: 'contexts' });
+        if (type === 'calendarSystem')
+            expect(await env.host.setLanguage({ storedLanguage: 'fa', systemLocale: 'en-US' })).toMatchObject({ ok: true });
+        const { envelope } = await planned(env, { type, value });
         failing = true;
         expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: false,
             error: { code: 'SAVE_FAILED' } });
+        if (type === 'calendarSystem')
+            expect(await env.host.setLanguage({ storedLanguage: 'en', systemLocale: 'en-US' })).toMatchObject({ ok: true });
         failing = false;
         expect(await env.host.commitPreparedGeneralPreference(envelope)).toMatchObject({ ok: true });
-        expect(env.data().settings.syncPreferencesUpdatedAt?.appearance).toBe(envelope.prepared.after.stamp);
+        expect(env.data().settings.syncPreferencesUpdatedAt?.[group]).toBe(envelope.prepared.after.stamp);
         expect(env.data().tasks).toEqual(initial().tasks);
     });
 
-    it.each(['synchronous', 'microtask'])('does not claim a %s foreign failed Task save', async (timing) => {
+    it.each([
+        { timing: 'synchronous', type: 'quickAccessView', value: 'contexts' },
+        { timing: 'microtask', type: 'quickAccessView', value: 'contexts' },
+        { timing: 'synchronous', type: 'calendarSystem', value: 'jalali' },
+        { timing: 'microtask', type: 'calendarSystem', value: 'jalali' },
+    ] as const)('does not claim a $timing foreign failed Task save for $type', async ({ timing, type, value }) => {
         let failing = false;
         const start = initial();
         start.tasks.push({ id: 'foreign', title: 'Foreign', status: 'next', contexts: [], tags: [],
             description: 'before', createdAt: AT, updatedAt: AT });
         const env = await open(start, () => failing);
-        const { envelope } = await planned(env, { type: 'quickAccessView', value: 'contexts' });
+        if (type === 'calendarSystem')
+            expect(await env.host.setLanguage({ storedLanguage: 'fa', systemLocale: 'en-US' })).toMatchObject({ ok: true });
+        const { envelope } = await planned(env, { type, value });
         const before = structuredClone(env.data());
         let armed = true;
         let foreign: Promise<unknown> | undefined;

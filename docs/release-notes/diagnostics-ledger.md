@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-calendar-system`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Calendar system saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. With a Persian language or regional locale, choose Gregorian or Jalali in Settings → General → Regional formats. Failed saves retain the original request; an already accepted request can recover after relaunch in another locale. No selected values, dates, identifiers or library content are logged.
+
 - **`v1.3.4/ios-quick-access`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Quick Access saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. Change Quick Access in Settings → General; the chosen destination becomes the quick tab and leaves the More menu. Failed saves retain the original request through Retry and relaunch; acknowledged menu refresh failures retry reads only. No setting values, identifiers or library content are logged.
 
 - **`v1.3.4/ios-general-preference`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS General preference saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. Change Show Task Age or week/date/time format in Settings → General; failed saves retain the exact request through Retry and relaunch. No setting values, identifiers or library content are logged.

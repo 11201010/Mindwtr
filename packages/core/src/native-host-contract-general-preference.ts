@@ -27,12 +27,13 @@ export type NativeGeneralPreferencePreparation = { kind: 'noop'; result: NativeG
     | { kind: 'prepared'; prepared: NativePreparedGeneralPreference };
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const TYPES: GeneralPreferenceType[] = ['showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat'];
+const TYPES: GeneralPreferenceType[] = ['showTaskAge', 'quickAccessView', 'weekStart', 'dateFormat', 'timeFormat', 'calendarSystem'];
 const VALUES: Record<Exclude<GeneralPreferenceType, 'showTaskAge'>, readonly string[]> = {
     quickAccessView: MOBILE_QUICK_ACCESS_VIEW_OPTIONS,
     weekStart: ['system', 'sunday', 'monday', 'saturday'],
     dateFormat: ['system', 'dmy', 'mdy', 'ymd'],
     timeFormat: ['system', '12h', '24h'],
+    calendarSystem: ['gregorian', 'jalali'],
 };
 const same = taskEditValuesEqual;
 const bounded = (value: unknown, max = 500): value is string => typeof value === 'string' && value.length <= max;
@@ -53,7 +54,8 @@ const validWitness = (value: unknown, type: GeneralPreferenceType): value is Gen
     record(value) && exact(value, ['present', 'value', 'stampPresent', 'stamp'])
     && typeof value.present === 'boolean' && typeof value.stampPresent === 'boolean'
     && (value.present ? type === 'showTaskAge' ? typeof value.value === 'boolean'
-        : bounded(value.value) || type !== 'quickAccessView' && legacyGeneralPreferenceNumber(value.value)
+        : bounded(value.value) || type !== 'quickAccessView' && type !== 'calendarSystem'
+            && legacyGeneralPreferenceNumber(value.value)
         : value.value === null)
     && (value.stampPresent ? iso(value.stamp) : value.stamp === null);
 
@@ -130,6 +132,11 @@ export function createGeneralPreferenceMethods(deps: { readiness: () => NativeHo
             if (!current || !same(current, request.expected)
                 || (settings.deviceId ?? null) !== (read.value.authority.state.settings.deviceId ?? null))
                 return fail('STALE_REVISION', 'General preference changed; refresh General');
+            if (request.edit.type === 'calendarSystem') {
+                const picker = deps.model(settings).regional.calendarSystem;
+                if (!picker || !picker.options.some((option) => same(option.edit, request.edit)))
+                    return fail('INVALID_INPUT', 'Calendar system choice is unavailable');
+            }
             // The shared RN helper distinguishes an absent raw key from an explicit default.
             if (isGeneralSettingStored(settings, request.edit))
                 return { ok: true, value: { kind: 'noop', result: resultFor(request.edit, false) } };

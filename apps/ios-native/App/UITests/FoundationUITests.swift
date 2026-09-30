@@ -4836,6 +4836,104 @@ final class FoundationUITests: XCTestCase {
         boardTap(app, "general-picker-cancel"); app.terminate()
     }
 
+    private func task99Arguments(_ library: String, language: String = "fa", locale: String = "fa_IR") -> [String] {
+        ["--native-ui-test-library", library, "-AppleLanguages", "(\(language))", "-AppleLocale", locale]
+    }
+
+    private func task99Normal(_ library: String) {
+        let app = XCUIApplication(); app.launchArguments = task99Arguments(library)
+        app.launch(); boardTap(app, "tab-calendar")
+        let heading = app.staticTexts["calendar-period-title"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 10))
+        let gregorian = heading.label
+        XCTAssertFalse(gregorian.isEmpty)
+        task97Open(app); task97Picker(app, "calendarSystem")
+        XCTAssertTrue(app.buttons["general-option-gregorian"].isSelected)
+        boardTap(app, "general-picker-cancel")
+        for value in ["jalali", "gregorian", "jalali"] {
+            task97Picker(app, "calendarSystem"); task97Choose(app, value)
+            task97Picker(app, "calendarSystem")
+            XCTAssertTrue(app.buttons["general-option-" + value].isSelected)
+            task97Choose(app, value)
+            boardTap(app, "general-back"); boardTap(app, "settings-back")
+            XCTAssertTrue(heading.waitForExistence(timeout: 10))
+            if value == "gregorian" { XCTAssertEqual(heading.label, gregorian) }
+            else { XCTAssertNotEqual(heading.label, gregorian) }
+            task97Open(app)
+        }
+        task97Picker(app, "calendarSystem")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Calendar system picker"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "general-picker-cancel")
+        app.terminate(); app.launch(); task97Open(app); task97Picker(app, "calendarSystem")
+        XCTAssertTrue(app.buttons["general-option-jalali"].isSelected)
+        boardTap(app, "general-picker-cancel"); app.terminate()
+    }
+
+    func testGeneralCalendarSystemNormal() { task99Normal("b1a6a835-1667-4f2b-842a-b868dfc0492d") }
+    func testGeneralCalendarSystemLargest() { task99Normal("b0bda884-b0c3-4346-9f5a-45bd701c3bd9") }
+
+    func testGeneralCalendarSystemPersianPreferredLanguage() {
+        let app = XCUIApplication(); app.launchArguments = task99Arguments("9d6a141b-c209-4311-80db-6eb1b0aa73fd", language: "fa", locale: "en_US")
+        app.launch(); task97Open(app); task97Picker(app, "calendarSystem")
+        XCTAssertTrue(app.buttons["general-option-gregorian"].isSelected)
+        XCTAssertTrue(app.buttons["general-option-jalali"].exists)
+        boardTap(app, "general-picker-cancel"); app.terminate()
+    }
+
+    func testGeneralCalendarSystemHidden() {
+        let app = XCUIApplication(); app.launchArguments = task99Arguments("26745e41-f3de-40ca-9d20-c47b7ca2ba2e", language: "en", locale: "en_US")
+        app.launch(); task97Open(app); task97Picker(app, "dateFormat")
+        boardTap(app, "general-picker-cancel")
+        XCTAssertFalse(app.buttons["general-calendarSystem"].exists)
+        app.terminate()
+    }
+
+    func testGeneralCalendarSystemReadFailure() {
+        let app = XCUIApplication(); app.launchArguments = task99Arguments("c49cceff-f37b-4afa-8568-3b87d8895f99") + ["--native-general-preference-read-failure"]
+        app.launch(); task97Open(app); task97Picker(app, "calendarSystem"); task97Choose(app, "jalali", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["general-picker-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["general-option-jalali"].isEnabled)
+            let retry = app.buttons["general-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews.containing(.button, identifier: "general-option-jalali").firstMatch)
+            boardTap(app, "general-retry")
+        }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["general-picker-cancel"])
+        waitForExpectations(timeout: 20); app.terminate()
+    }
+
+    func testGeneralCalendarSystemRefusal() {
+        let app = XCUIApplication(); app.launchArguments = task99Arguments("55e5cf8b-ad8f-4b84-a12b-b8b5a7c27563") + ["--native-general-preference-refusal"]
+        app.launch(); task97Open(app); task97Picker(app, "calendarSystem"); task97Choose(app, "jalali", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        boardEnabled(app.buttons["general-option-jalali"])
+        task97Choose(app, "jalali"); app.terminate()
+    }
+
+    func testGeneralCalendarSystemFailedSave() {
+        let app = XCUIApplication(); app.launchArguments = task99Arguments("5f99f737-58d8-4b00-879b-45f65ae69a30")
+        app.launch(); task97Open(app); task97Picker(app, "calendarSystem"); task97Choose(app, "jalali", closes: false)
+        XCTAssertTrue(app.staticTexts["general-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["general-picker-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["general-option-jalali"].isEnabled)
+            let retry = app.buttons["general-retry"]
+            revealPagedElement(app, retry, in: app.scrollViews.containing(.button, identifier: "general-option-jalali").firstMatch)
+            boardTap(app, "general-retry"); boardEnabled(retry, timeout: 20)
+        }
+        app.terminate()
+    }
+
+    func testGeneralCalendarSystemColdRecoveryAfterLocaleChange() {
+        let app = XCUIApplication(); app.launchArguments = task99Arguments("5f99f737-58d8-4b00-879b-45f65ae69a30", language: "en", locale: "en_US")
+        app.launch(); task97Open(app); task97Picker(app, "dateFormat")
+        boardTap(app, "general-picker-cancel")
+        XCTAssertFalse(app.buttons["general-calendarSystem"].exists)
+        XCTAssertFalse(app.staticTexts["general-error"].exists)
+        app.terminate()
+    }
+
     private func task96Open(_ app: XCUIApplication, kind: String, deleting: Bool = false) {
         task91Section(app, kind == "context" ? "contexts" : "tags", open: true)
         let action = deleting ? "delete" : "edit"

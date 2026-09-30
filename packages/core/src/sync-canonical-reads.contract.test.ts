@@ -1056,16 +1056,18 @@ describe('canonical local reads contract', () => {
             },
             commitPreparedGeneralPreference: async (control) => {
                 const host = await nativeHost(control);
+                nativeValue(await host.setLanguage({ storedLanguage: 'fa', systemLocale: 'en-US' }));
                 const options = nativeValue(await host.getGeneralPreferenceOptions({}));
                 const request = { requestId: '97a7fe31-4444-4000-8000-000000000097',
-                    edit: { type: 'quickAccessView' as const, value: 'contexts' as const },
-                    expected: options.expected.quickAccessView };
+                    edit: { type: 'calendarSystem' as const,
+                        value: options.expected.calendarSystem.value === 'jalali' ? 'gregorian' as const : 'jalali' as const },
+                    expected: options.expected.calendarSystem };
                 const planned = nativeValue(await host.prepareGeneralPreference(request));
                 expect(planned.kind).toBe('prepared');
                 if (planned.kind !== 'prepared') return;
                 control.expectPersisted((written) => {
-                    expect(written.settings.appearance?.mobileQuickAccessView).toBe(request.edit.value);
-                    expect(written.settings.syncPreferencesUpdatedAt?.appearance).toBe(planned.prepared.after.stamp);
+                    expect(written.settings.calendarSystem).toBe(request.edit.value);
+                    expect(written.settings.syncPreferencesUpdatedAt?.language).toBe(planned.prepared.after.stamp);
                     expect(written.tasks).toHaveLength(settled.tasks.length);
                 });
                 expect(nativeValue(await host.commitPreparedGeneralPreference({ request, prepared: planned.prepared })))

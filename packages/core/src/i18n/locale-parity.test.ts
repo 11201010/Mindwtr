@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { SUPPORTED_LANGUAGES } from './i18n-constants';
 import { describe, expect, it } from 'vitest';
 import { arOverrides } from './locales/ar';
 import { csOverrides } from './locales/cs';
@@ -82,6 +84,13 @@ const pomodoroAlertSettingsKeys = [
 ] as const;
 
 describe('locale parity', () => {
+    it('declares the shared translations to the native iOS locale resolver', () => {
+        const plist = readFileSync(new URL('../../../../apps/ios-native/App/Info.plist', import.meta.url), 'utf8');
+        const localizations = plist.match(/<key>CFBundleLocalizations<\/key>\s*<array>([\s\S]*?)<\/array>/)?.[1] ?? '';
+        const declared = [...localizations.matchAll(/<string>([^<]+)<\/string>/g)].map((match) => match[1]);
+        expect(declared.sort()).toEqual(SUPPORTED_LANGUAGES.map((code) => code === 'zh' ? 'zh-Hans' : code).sort());
+    });
+
     it.each(locales)('keeps simplified navigation and controls translated in %s', (lang) => {
         for (const key of [
             'nav.history', 'task.dates', 'task.moveTo', 'task.destination',
