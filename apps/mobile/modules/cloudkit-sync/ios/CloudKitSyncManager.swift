@@ -334,7 +334,10 @@ final class CloudKitSyncManager {
         // Step 3: Save in batches, collecting conflicts AND non-conflict errors separately.
         var conflictIDs: [String] = []
         var nonConflictErrors: [Error] = []
-        let saveBatchSize = 400
+        // The zone is atomic: one refused request fails every record in it. Smaller
+        // saves keep each request light and let a refused upload resume from the
+        // records that already landed (#1278).
+        let saveBatchSize = 100
         for batchStart in stride(from: 0, to: recordsToSave.count, by: saveBatchSize) {
             let batchEnd = min(batchStart + saveBatchSize, recordsToSave.count)
             let batch = Array(recordsToSave[batchStart..<batchEnd])
@@ -384,6 +387,8 @@ final class CloudKitSyncManager {
             }
             conflictIDs.append(contentsOf: batchConflicts)
             nonConflictErrors.append(contentsOf: batchErrors)
+            // Stop at the first refused batch; the next sync resumes from here.
+            if !batchErrors.isEmpty { break }
         }
 
         // If there were non-conflict per-record errors, log them and throw

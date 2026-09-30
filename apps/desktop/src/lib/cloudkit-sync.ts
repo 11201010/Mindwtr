@@ -224,11 +224,11 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
         const allAreas = Array.isArray(data.areas) ? data.areas : [];
         const allPeople = Array.isArray(data.people) ? data.people : [];
 
-        const saveResults: { conflictIDs: string[] }[] = [];
+        const saveResults: { conflictIDs: string[]; savedCount?: number }[] = [];
 
         if (allTasks.length > 0) {
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
+                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.task,
                     recordsJson: JSON.stringify(allTasks),
                 }),
@@ -236,7 +236,7 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
         }
         if (allProjects.length > 0) {
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
+                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.project,
                     recordsJson: JSON.stringify(allProjects),
                 }),
@@ -244,7 +244,7 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
         }
         if (allSections.length > 0) {
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
+                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.section,
                     recordsJson: JSON.stringify(allSections),
                 }),
@@ -252,7 +252,7 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
         }
         if (allAreas.length > 0) {
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
+                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.area,
                     recordsJson: JSON.stringify(allAreas),
                 }),
@@ -260,7 +260,7 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
         }
         if (allPeople.length > 0) {
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
+                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.person,
                     recordsJson: JSON.stringify(allPeople),
                 }),
@@ -277,7 +277,7 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
                 },
             ];
             saveResults.push(
-                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
+                await invokeNative<{ conflictIDs: string[]; savedCount?: number }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.settings,
                     recordsJson: JSON.stringify(settingsRecord),
                 }),
@@ -285,6 +285,14 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
         }
 
         const allConflicts = saveResults.flatMap((r) => r.conflictIDs ?? []);
+        const savedCount = saveResults.reduce((sum, r) => sum + (r.savedCount ?? 0), 0);
+        if (savedCount > 0) {
+            void logInfo('CloudKit records saved in small batches', {
+                scope: 'cloudkit',
+                force: true,
+                extra: { releaseCheck: 'v1.3.4/cloudkit-small-save-batches', savedCount },
+            });
+        }
 
         if (allConflicts.length > 0) {
             void logWarn(`CloudKit save had ${allConflicts.length} conflicts (will resolve on next sync)`, {

@@ -28,6 +28,10 @@ static NSString *const kZoneName       = @"MindwtrZone";
 static NSString *const kSubscriptionID = @"MindwtrZoneSubscription";
 static NSString *const kAttachmentNotFoundErrorCode = @"ERR_CLOUDKIT_ATTACHMENT_NOT_FOUND";
 static const NSInteger kBatchSize      = 400;
+// Saves go to an atomic zone: one refused request fails every record in it.
+// Smaller saves keep each request light and let a refused upload resume
+// from the records that already landed (#1278).
+static const NSInteger kSaveBatchSize  = 100;
 static const int64_t   kTimeoutSec     = 60;
 
 // ---------------------------------------------------------------------------
@@ -1050,8 +1054,9 @@ char *mindwtr_cloudkit_save_records(const char *record_type_cstr, const char *re
         NSMutableArray<NSString *> *conflictIDs = [NSMutableArray array];
         NSMutableArray<NSError *> *nonConflictErrors = [NSMutableArray array];
 
-        for (NSUInteger i = 0; i < recordsToSave.count; i += kBatchSize) {
-            NSUInteger end = MIN(i + kBatchSize, recordsToSave.count);
+        NSUInteger savedCount = 0;
+        for (NSUInteger i = 0; i < recordsToSave.count; i += kSaveBatchSize) {
+            NSUInteger end = MIN(i + kSaveBatchSize, recordsToSave.count);
             NSArray<CKRecord *> *batch = [recordsToSave subarrayWithRange:NSMakeRange(i, end - i)];
 
             CKModifyRecordsOperation *saveOp =
@@ -1096,6 +1101,10 @@ char *mindwtr_cloudkit_save_records(const char *record_type_cstr, const char *re
 
             [conflictIDs addObjectsFromArray:batchConflicts];
             [nonConflictErrors addObjectsFromArray:batchErrors];
+            // Stop at the first refused batch, as iOS does: sending the rest
+            // while CloudKit asks us to wait only prolongs the refusal (#1278).
+            if (batchErrors.count > 0) break;
+            savedCount += batch.count - batchConflicts.count;
         }
 
         if (nonConflictErrors.count > 0) {
@@ -1113,14 +1122,16 @@ char *mindwtr_cloudkit_save_records(const char *record_type_cstr, const char *re
             }
             NSString *message = primary.localizedDescription ?: @"save-failed";
             result[@"error"] = retryAfter
-                ? [NSString stringWithFormat:@"%@ [retryAfter=%@]", message, retryAfter]
-                : message;
+                ? [NSString stringWithFormat:@"%@ [retryAfter=%@] [saved=%lu/%lu]", message, retryAfter,
+                   (unsigned long)savedCount, (unsigned long)recordsToSave.count]
+                : [NSString stringWithFormat:@"%@ [saved=%lu/%lu]", message,
+                   (unsigned long)savedCount, (unsigned long)recordsToSave.count];
             result[@"errorCount"] = @(nonConflictErrors.count);
             result[@"conflictIDs"] = conflictIDs;
             return ck_copy_json(result);
         }
 
-        return ck_copy_json(@{@"conflictIDs": conflictIDs});
+        return ck_copy_json(@{@"conflictIDs": conflictIDs, @"savedCount": @(savedCount)});
     }
 }
 

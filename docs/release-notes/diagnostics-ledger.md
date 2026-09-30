@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/cloudkit-small-save-batches`** — `apps/desktop/src/lib/cloudkit-sync.ts` (native side `apps/desktop/src-tauri/src/macos_cloudkit_bridge.m`; iOS mirror `apps/mobile/modules/cloudkit-sync/ios/CloudKitSyncManager.swift`). `CloudKit records saved in small batches` with `savedCount` after a Mac iCloud upload saves records. Saves now go in batches of 100 and stop at the first refused batch; a refusal shows `[saved=N/M]` after the CloudKit error, and the next sync resumes from the records already saved (#1278). No task content is logged.
+
 - **`v1.3.4/ios-manage-area-delete`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Manage Area deleted` with `outcome=confirmed` after durable persistence and journal cleanup. Delete an Area from Settings → Manage, then relaunch: its live Projects and directly assigned Tasks remain under Unassigned; deleted Projects and unrelated rows stay unchanged. Failed saves retain the original prepared request for Retry. No Area names, identifiers, or task content are logged.
 
 - **`v1.3.4/ios-manage-area-create`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Manage Area created` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. Create an Area from Settings → Manage and relaunch; fresh creation adds only that Area, while restoring a matching deleted Area uses the shared restoration plan. Cancel and live-name duplicates write nothing. Failed saves retain the original prepared request and Area ID through Retry and cold recovery. No names, identifiers or colors are logged.
