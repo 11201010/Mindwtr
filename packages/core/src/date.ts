@@ -71,8 +71,8 @@ const DATE_LOCALE_BY_LANGUAGE: Record<Language, Locale> = {
 const LOCALE_TAG_BY_LANGUAGE: Record<Language, string> = {
     en: 'en-US',
     vi: 'vi-VN',
-    zh: 'zh-CN',
-    'zh-Hant': 'zh-TW',
+    zh: 'zh-Hans-CN',
+    'zh-Hant': 'zh-Hant-TW',
     es: 'es-ES',
     hi: 'hi-IN',
     ar: 'ar',

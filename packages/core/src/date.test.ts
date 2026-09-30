@@ -206,6 +206,17 @@ describe('date utils', () => {
         expect(resolveDateLocaleTag({ language: 'nl', dateFormat: 'system' })).toBe('nl-NL');
     });
 
+    it.each([
+        ['zh', 'zh-Hans-CN'],
+        ['zh-Hant', 'zh-Hant-TW'],
+    ])('resolves explicit Chinese script tags for %s on language-based Intl paths', (language, tag) => {
+        expect([
+            resolveDateLocaleTag({ language, dateFormat: 'dmy', systemLocale: 'en-US' }),
+            resolveDateLocaleTag({ language, dateFormat: 'ymd' }),
+            resolveDateLocaleTag({ language, dateFormat: 'system' }),
+        ]).toEqual([tag, tag, tag]);
+    });
+
     // One rule for "does this locale write the day first", so a headless caller
     // (the widget payload, built with no app configured) cannot disagree with
     // the app. Note en-ZA: this repo calls it day-first, CLDR does not.
