@@ -316,9 +316,9 @@ export type PendingCaptureDrainDeps = PendingCaptureStoreDeps & {
     /** Without it every `audio` item stays in the queue untouched. */
     audio?: PendingCaptureAudioPort;
     /**
-     * Told of each capture, check-off or defer a failure keeps queued: `owed` once its store write landed but its save or its
-     * applied-command record did not finish (a later change to that task must wait for the retry, or the retry's write would
-     * undo it); `queued` when nothing of it landed or only its file delete failed (a later drain is enough).
+     * Told of each capture, check-off or defer a failure left unfinished: `owed` once its store write landed but its save, its
+     * applied-command record or its file delete did not finish (a later change to that task must wait for the retry);
+     * `queued` when nothing of it landed (a later drain is enough).
      */
     onUnfinished?: (state: 'owed' | 'queued') => void;
 };
@@ -615,15 +615,23 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
             if (!outcome) { onUnfinished?.('queued'); continue; }
             try {
                 await flushPendingSave?.();
-                if (outcome === 'completed' || outcome === 'already-done') await remember(capture, record);
             } catch {
                 onUnfinished?.('owed');
                 continue;
             }
+            // A record that did not reach the disk still removes the file: kept, it would apply again after the user changed
+            // the task (only a process death between the save and the delete leaves it, and the next start drains first).
+            const recorded = outcome === 'completed' || outcome === 'already-done'
+                ? await remember(capture, record).then(() => true, () => false)
+                : true;
             try {
                 await queue.delete(name);
             } catch {
-                onUnfinished?.('queued');
+                onUnfinished?.('owed');
+                continue;
+            }
+            if (!recorded) {
+                onUnfinished?.('owed');
                 continue;
             }
             ingested += 1;
@@ -656,15 +664,23 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
             if (!outcome) { onUnfinished?.('queued'); continue; }
             try {
                 await flushPendingSave?.();
-                if (outcome === 'deferred' || outcome === 'already-deferred') await remember(capture, record);
             } catch {
                 onUnfinished?.('owed');
                 continue;
             }
+            // A record that did not reach the disk still removes the file: kept, it would apply again after the user changed
+            // the task (only a process death between the save and the delete leaves it, and the next start drains first).
+            const recorded = outcome === 'deferred' || outcome === 'already-deferred'
+                ? await remember(capture, record).then(() => true, () => false)
+                : true;
             try {
                 await queue.delete(name);
             } catch {
-                onUnfinished?.('queued');
+                onUnfinished?.('owed');
+                continue;
+            }
+            if (!recorded) {
+                onUnfinished?.('owed');
                 continue;
             }
             ingested += 1;
@@ -930,14 +946,9 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
         // worst re-ingests one capture.
         try {
             await flushPendingSave?.();
-        } catch {
-            onUnfinished?.('owed');
-            continue;
-        }
-        try {
             await queue.delete(name);
         } catch {
-            onUnfinished?.('queued');
+            onUnfinished?.('owed');
             continue;
         }
         ingested += 1;

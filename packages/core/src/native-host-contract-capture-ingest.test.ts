@@ -117,9 +117,9 @@ describe('ingestPendingCaptures', () => {
         for (const name of Object.keys(queueItems)) queue.failDelete.add(name);
         const request = requestId();
 
-        // Every file stays for a later drain: a failure the next run retries, not a success.
+        // Stored, but every file stays: owed (the journal keeps the request), not a success.
         expect(await host.ingestPendingCaptures({ requestId: request, queue: queue.port, lastApplied: record() }))
-            .toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+            .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         expect(queue.stored.size).toBe(6);
 
         await reloadStore();
@@ -159,7 +159,7 @@ describe('ingestPendingCaptures', () => {
         expect(useTaskStore.getState()._allTasks.filter((entry) => entry.id === CAPTURE_ID)).toHaveLength(1);
     }, 15_000);
 
-    it('owes a check-off whose applied-command record did not reach the disk; its replay records it, so a reopen stays open', async () => {
+    it('owes a check-off whose applied-command record did not reach the disk, removes its file, so a reopen stays open', async () => {
         const host = await openScreenHost({ data: { tasks: [task('open')] }, record: {}, log: [] });
         // Tapped a minute ago: an older completion would be archived by the reload's auto-archive.
         const checkOff = { kind: 'complete', id: 'c9', taskId: 'open', createdAt: new Date(Date.now() - 60_000).toISOString(), source: 'android-widget' };
@@ -171,19 +171,18 @@ describe('ingestPendingCaptures', () => {
         };
         const request = requestId();
 
-        // The check-off is stored and saved, but its record is not on disk: a retryable failure, never a success.
+        // The check-off is stored and saved, but its record is not on disk: a retryable failure, never a success. Its file goes
+        // anyway, so nothing can apply it again.
         expect(await host.ingestPendingCaptures({ requestId: request, queue: queue.port, lastApplied: flaky }))
             .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
-        expect(queue.stored.has('c.json')).toBe(true);
+        expect(queue.stored.has('c.json')).toBe(false);
         expect(deviceRecord).toBeNull();
 
-        // The journal kept the request: its replay after a restart writes the record and removes the file.
+        // The journal kept the request: its replay after a restart finds nothing left.
         failRecord = false;
         await reloadStore();
         const restarted = await restartScreenHost();
-        expect(value(await restarted.ingestPendingCaptures({ requestId: request, queue: queue.port, lastApplied: flaky }))).toEqual({ ingested: 1 });
-        expect(queue.stored.size).toBe(0);
-        expect(JSON.parse(deviceRecord!).open).toMatchObject({ id: 'c9' });
+        expect(value(await restarted.ingestPendingCaptures({ requestId: request, queue: queue.port, lastApplied: flaky }))).toEqual({ ingested: 0 });
 
         // Reopened after the recovery, the task stays open through the next restart's drain.
         await useTaskStore.getState().updateTask('open', { status: 'next' });
@@ -193,7 +192,7 @@ describe('ingestPendingCaptures', () => {
         expect(useTaskStore.getState()._allTasks.find((entry) => entry.id === 'open')?.status).toBe('next');
     });
 
-    it('answers a retryable failure while a queued item stays after a failed read, write or delete', async () => {
+    it('answers a retryable failure while a queued item stays after a failed read or a refused write', async () => {
         const host = await openScreenHost({ data: { tasks: [task('open')] }, record: {}, log: [] });
         const unreadable: PendingCaptureRecordPort = { read: async () => { throw new Error('locked'); }, write: async () => undefined };
         const queue = fakeQueue({ 'c.json': queueItems['c.json'] });
@@ -215,6 +214,35 @@ describe('ingestPendingCaptures', () => {
         expect(refused.stored.has('c.json')).toBe(true);
 
         expect(value(await host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: record() }))).toEqual({ ingested: 1 });
+        expect(queue.stored.size).toBe(0);
+    });
+
+    it('never lets a later item\'s throw hide an earlier item that landed unfinished', async () => {
+        const host = await openScreenHost({ data: { tasks: [task('open')] }, record: {}, log: [] });
+        // A: a check-off that lands, but its record write fails. B: a capture whose store write throws.
+        const checkOff = { kind: 'complete', id: 'a1', taskId: 'open', createdAt: new Date(Date.now() - 60_000).toISOString(), source: 'android-widget' };
+        const queue = fakeQueue({ 'a.json': checkOff, [`b-${CAPTURE_ID}.json`]: { kind: 'text', id: CAPTURE_ID, title: 'B', source: 'android-capture-intent' } });
+        let failRecord = true;
+        const flaky: PendingCaptureRecordPort = {
+            read: async () => deviceRecord,
+            write: async (next) => { if (failRecord) throw new Error('disk full'); deviceRecord = next; },
+        };
+        const { addTask } = useTaskStore.getState();
+        useTaskStore.setState({ addTask: async () => { throw new Error('store write failed'); } } as never);
+        try {
+            expect(await host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: flaky }))
+                .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        } finally {
+            useTaskStore.setState({ addTask });
+        }
+        expect(useTaskStore.getState()._allTasks.find((entry) => entry.id === 'open')?.status).toBe('done');
+
+        // The user reopens A (after the owed retry, on the native host); a fresh drain keeps it open and stores B.
+        failRecord = false;
+        await useTaskStore.getState().updateTask('open', { status: 'next' });
+        expect(value(await host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: flaky }))).toEqual({ ingested: 1 });
+        expect(useTaskStore.getState()._allTasks.find((entry) => entry.id === 'open')?.status).toBe('next');
+        expect(useTaskStore.getState()._allTasks.filter((entry) => entry.id === CAPTURE_ID)).toHaveLength(1);
         expect(queue.stored.size).toBe(0);
     });
 

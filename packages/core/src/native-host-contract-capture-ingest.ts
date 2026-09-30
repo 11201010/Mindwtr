@@ -88,9 +88,10 @@ export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
          * queue untouched. A file is deleted only after its write is durable.
          * `ingested` counts the items stored and removed. A capture, check-off or
          * defer a failure keeps queued fails the call, so the caller drains again:
-         * SAVE_FAILED once its store write landed but its save or its lastApplied
-         * write did not finish (owed: a later edit of that task must wait for the
-         * retry), ACTION_FAILED when nothing of it landed or only its delete failed.
+         * SAVE_FAILED once its store write landed but its save, its lastApplied
+         * write or its delete did not finish (owed: a later edit of that task must
+         * wait for the retry), whatever later items do; ACTION_FAILED when nothing
+         * of it landed. A record that did not reach the disk still removes the file.
          *
          * Every call drains again, so a replay after a restart is safe: a capture is
          * created under its own UUID and a replay finds that task; a check-off or
@@ -134,15 +135,18 @@ export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
                 });
             });
             drainChain = run.catch(() => undefined);
-            let ingested: number;
+            let ingested = 0;
+            let thrown: unknown;
             try {
                 ingested = await run;
             } catch (error) {
-                return fail('ACTION_FAILED', error instanceof Error ? error.message : String(error));
+                thrown = error;
             }
-            // An item stored but not saved or not recorded is owed (SAVE_FAILED: the journal keeps this request and newer edits
-            // wait for its replay); one a failure left queued needs only a later drain.
-            if (unfinished.owed > 0) return fail('SAVE_FAILED', `${unfinished.owed} queued item(s) stored but not yet saved or recorded`);
+            // Every item's state is settled before the answer, and a later item's throw never hides an earlier one: an item
+            // stored but not saved, recorded or removed is owed (SAVE_FAILED: the journal keeps this request and newer edits wait
+            // for its replay); a throw or an item a failure left queued needs a later drain.
+            if (unfinished.owed > 0) return fail('SAVE_FAILED', `${unfinished.owed} queued item(s) stored but not yet saved, recorded or removed`);
+            if (thrown !== undefined) return fail('ACTION_FAILED', thrown instanceof Error ? thrown.message : String(thrown));
             if (unfinished.queued > 0) return fail('ACTION_FAILED', `${unfinished.queued} queued item(s) left for a later drain`);
             return { ok: true, value: { ingested } };
         },
