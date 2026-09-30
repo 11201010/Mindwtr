@@ -122,6 +122,8 @@ interface ListViewProps {
 const EMPTY_PRIORITIES: TaskPriority[] = [];
 const EMPTY_ESTIMATES: TimeEstimate[] = [];
 const NEXT_WARNING_THRESHOLD = 15;
+// Core's groupTasksByViewSection id for the No section group (a bare prefix, so a section named "none" cannot collide).
+const SOMEDAY_NO_SECTION_GROUP_ID = 'view-section:someday:';
 // Reference kept its own key from when it was the only collapsible list (#734);
 // every other status gets its own, so collapsing Someday does not fold Next.
 const getListViewStateStorageKey = (statusFilter: string) => (
@@ -686,7 +688,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                 tasks: [],
             }
         ));
-        const noSectionGroup = byId.get('view-section:someday:none');
+        const noSectionGroup = byId.get(SOMEDAY_NO_SECTION_GROUP_ID);
         return noSectionGroup ? [...sectionGroups, noSectionGroup] : sectionGroups;
     }, [activeGroupBy, areas, completedGroupingDayKey, filteredTasks, isListGrouping, projectMap, settings?.gtd?.viewSections?.someday, settings?.theme, somedaySectionDefinitions, statusFilter, t]);
     const {
@@ -935,7 +937,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
     const handleAddTaskToSomedaySection = useCallback((group: TaskGroup) => {
         if (statusFilter !== 'someday' || activeGroupBy !== 'viewSection') return;
         const prefix = 'view-section:someday:';
-        if (!group.id.startsWith(prefix) || group.id === `${prefix}none`) return;
+        if (!group.id.startsWith(prefix) || group.id === SOMEDAY_NO_SECTION_GROUP_ID) return;
         const sectionId = group.id.slice(prefix.length);
         const latest = sortViewSectionDefinitions(useTaskStore.getState().settings?.gtd?.viewSections?.someday);
         if (!latest.some((section) => section.id === sectionId)) return;
@@ -944,7 +946,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         }));
     }, [activeGroupBy, statusFilter]);
     const getSomedayAddTaskLabel = useCallback((group: TaskGroup) => (
-        group.id === 'view-section:someday:none'
+        group.id === SOMEDAY_NO_SECTION_GROUP_ID
             ? undefined
             : formatI18nTemplate(tFallback(t, 'viewSections.addTask', 'Add task to {section}'), { section: group.title })
     ), [t]);
@@ -1584,7 +1586,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                         getSectionDomId={getSectionDomId}
                         onAddTaskToGroup={statusFilter === 'someday' && activeGroupBy === 'viewSection'
                             ? (group) => {
-                                if (group.id !== 'view-section:someday:none') handleAddTaskToSomedaySection(group);
+                                if (group.id !== SOMEDAY_NO_SECTION_GROUP_ID) handleAddTaskToSomedaySection(group);
                             }
                             : undefined}
                         addTaskLabel={getSomedayAddTaskLabel}
