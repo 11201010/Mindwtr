@@ -3186,6 +3186,7 @@ dependencies = [
  "cc",
  "cpal",
  "dirs 5.0.1",
+ "dunce",
  "fontdb",
  "fs2",
  "hound",

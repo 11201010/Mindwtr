@@ -14091,7 +14091,19 @@ fn release_sync_lock(sync_lock: &SyncFileLock) {
 }
 
 fn normalize_lease_sync_dir(sync_dir: &Path) -> PathBuf {
-    fs::canonicalize(sync_dir).unwrap_or_else(|_| sync_dir.to_path_buf())
+    let Ok(canonical) = fs::canonicalize(sync_dir) else {
+        return sync_dir.to_path_buf();
+    };
+    // Windows canonicalizes to the verbatim `\\?\C:\...` form, but the app
+    // builds attachment targets as `C:\...`; the two never compared equal, so
+    // every File Sync attachment upload was refused at generation-reserve.
+    let simplified = dunce::simplified(&canonical);
+    if simplified != canonical.as_path() {
+        log::info!(
+            "File Sync root taken without the Windows verbatim prefix extra.releaseCheck=v1.3.4/file-sync-windows-root"
+        );
+    }
+    simplified.to_path_buf()
 }
 
 fn acquire_file_sync_lease_for_dir(

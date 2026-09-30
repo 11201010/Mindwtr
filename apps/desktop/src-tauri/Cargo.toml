@@ -24,6 +24,9 @@ serde = { version = "1.0", features = ["derive"] }
 # transitively (see Cargo.lock) so promoting it to a direct dependency adds no
 # new package to the lockfile, only a new edge to an already-resolved one.
 toml = "0.8"
+# Already resolved transitively (see Cargo.lock); used to turn Windows'
+# canonical `\\?\C:\...` paths back into the `C:\...` form the app builds.
+dunce = "1"
 log = "0.4"
 fs2 = "0.4"
 tauri = { version = "2", features = ["tray-icon", "image-png"] }

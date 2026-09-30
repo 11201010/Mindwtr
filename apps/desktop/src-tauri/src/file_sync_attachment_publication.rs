@@ -350,12 +350,33 @@ fn validate_journal_dir(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// NTFS is case-insensitive and Windows spells one folder as `C:\x`,
+/// `c:/x` or `\\?\C:\x`; compare them as the file system does.
+#[cfg(windows)]
+fn same_directory(left: &Path, right: &Path) -> bool {
+    let key = |path: &Path| {
+        dunce::simplified(path)
+            .to_string_lossy()
+            .replace('/', "\\")
+            .to_lowercase()
+    };
+    key(left) == key(right)
+}
+
+#[cfg(not(windows))]
+fn same_directory(left: &Path, right: &Path) -> bool {
+    left == right
+}
+
 fn validate_generation_target(sync_root: &Path, target_path: &Path) -> Result<(), String> {
     if !path_is_lexically_normal(sync_root) || !path_is_lexically_normal(target_path) {
         return Err("Attachment publication paths must be absolute and normalized".to_string());
     }
     let attachments_dir = sync_root.join(ATTACHMENTS_DIR_NAME);
-    if target_path.parent() != Some(attachments_dir.as_path()) {
+    if !target_path
+        .parent()
+        .is_some_and(|parent| same_directory(parent, &attachments_dir))
+    {
         return Err(
             "Attachment publication target must be a direct child of the leased attachments directory"
                 .to_string(),
@@ -1373,6 +1394,35 @@ mod tests {
 
     fn digest(bytes: &[u8]) -> String {
         format!("{:x}", Sha256::digest(bytes))
+    }
+
+    #[test]
+    fn generation_target_must_sit_directly_in_the_attachments_directory() {
+        let (_temp, _data_dir, sync_root, target) = fixture();
+        assert!(validate_generation_target(&sync_root, &target).is_ok());
+        let nested = sync_root
+            .join(ATTACHMENTS_DIR_NAME)
+            .join("nested")
+            .join(target.file_name().expect("target name"));
+        assert!(validate_generation_target(&sync_root, &nested).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_generation_target_matches_verbatim_and_differently_cased_roots() {
+        let name = format!("attachment-1.{}.txt", "a".repeat(64));
+        let target = PathBuf::from(format!(r"C:\Users\Roman\Sync\attachments\{name}"));
+        for root in [
+            r"\\?\C:\Users\Roman\Sync",
+            r"c:\users\roman\sync",
+            "C:/Users/Roman/Sync",
+        ] {
+            assert!(
+                validate_generation_target(Path::new(root), &target).is_ok(),
+                "root {root} must match"
+            );
+        }
+        assert!(validate_generation_target(Path::new(r"C:\Users\Roman\Other"), &target).is_err());
     }
 
     #[test]
