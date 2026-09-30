@@ -36,6 +36,7 @@ import { flushPendingSave, useTaskStore } from './store';
 import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
 import { performSyncCycle } from './sync';
 import { isSecretConfigKey } from './sync-secret-storage';
+import { redactSyncText } from './sync-settings-model';
 import { createWebdavSyncRateLimitController } from './sync-rate-limit';
 import type { WebdavCapabilityProofStore } from './webdav-capability-proof';
 import type { DropboxAccessTokenResolution, DropboxAuthTokens } from './dropbox-auth-tokens';
@@ -473,13 +474,38 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
   const syncConfigCache = new Map<string, { value: string | null; readAt: number }>();
   const dropboxSyncEnabled = !host.platform.isFossBuild;
 
+  // The WebDAV password and self-hosted token each cycle signed in with. A server can echo one in an error, so every sync
+  // text this service logs, returns or stores as status redacts them (redactSyncText), on top of the host's sanitizer.
+  const cycleSecrets = new Set<string>();
+  const rememberSecret = (secret: string | null | undefined): void => {
+    if (secret) cycleSecrets.add(secret);
+  };
+  const redact = (text: string): string => (cycleSecrets.size > 0 ? redactSyncText(text, [...cycleSecrets]) : text);
+  const redactExtra = (extra: Record<string, string> | undefined): Record<string, string> | undefined => (
+    extra && cycleSecrets.size > 0 ? Object.fromEntries(Object.entries(extra).map(([key, value]) => [key, redact(value)])) : extra
+  );
+  const redactError = (error: unknown): unknown => {
+    if (cycleSecrets.size === 0) return error;
+    if (!(error instanceof Error)) return redact(String(error));
+    const copy = Object.assign(Object.create(Object.getPrototypeOf(error)) as Error, error);
+    Object.defineProperty(copy, 'message', { value: redact(error.message), writable: true, configurable: true });
+    Object.defineProperty(copy, 'stack', { value: error.stack === undefined ? undefined : redact(error.stack), writable: true, configurable: true });
+    return copy;
+  };
+  const log: MobileSyncLogPort = {
+    info: (message, context) => host.log.info(redact(message), context && { ...context, extra: redactExtra(context.extra) }),
+    warn: (message, context) => host.log.warn(redact(message), context && { ...context, extra: redactExtra(context.extra) }),
+    syncError: (error, context) => host.log.syncError(redactError(error), { ...context, url: context.url === undefined ? undefined : redact(context.url) }),
+    sanitize: (message) => redact(host.log.sanitize(message)),
+  };
+
   const logSyncWarning = (message: string, error?: unknown) => {
-    const extra = error ? { error: host.log.sanitize(error instanceof Error ? error.message : String(error)) } : undefined;
-    void host.log.warn(message, { scope: 'sync', extra });
+    const extra = error ? { error: log.sanitize(error instanceof Error ? error.message : String(error)) } : undefined;
+    void log.warn(message, { scope: 'sync', extra });
   };
 
   const logSyncInfo = (message: string, extra?: Record<string, string>) => {
-    void host.log.info(message, { scope: 'sync', extra });
+    void log.info(message, { scope: 'sync', extra });
   };
 
   const resolveCloudProvider = (value: string | null): CloudProvider => (
@@ -1102,6 +1128,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           url: this.syncUrl,
           username: override.username.trim(),
         };
+        rememberSecret(this.webdavConfig.password);
         return;
       }
       const url = (await getCachedConfigValue(WEBDAV_URL_KEY))?.trim() ?? null;
@@ -1112,6 +1139,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       const allowInsecureHttp = (await getCachedConfigValue(WEBDAV_ALLOW_INSECURE_HTTP_KEY)) === 'true';
       const allowWeakFingerprint = (await getCachedConfigValue(WEBDAV_ALLOW_WEAK_FINGERPRINT_KEY)) !== 'false';
       this.webdavConfig = { url: this.syncUrl, username, password, allowInsecureHttp, allowWeakFingerprint };
+      rememberSecret(password);
     }
 
     private async resolveCloudBackendConfig(): Promise<void> {
@@ -1140,6 +1168,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           url: this.syncUrl,
           token: override?.token.trim() ?? '',
         };
+        rememberSecret(this.cloudConfig.token);
         return;
       }
       const storedCloudProvider = (await getCachedConfigValue(CLOUD_PROVIDER_KEY))?.trim() ?? null;
@@ -1161,6 +1190,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
         const token = (await getCachedConfigValue(CLOUD_TOKEN_KEY))?.trim() ?? '';
         const allowInsecureHttp = (await getCachedConfigValue(CLOUD_ALLOW_INSECURE_HTTP_KEY)) === 'true';
         this.cloudConfig = { url: this.syncUrl, token, allowInsecureHttp };
+        rememberSecret(token);
       }
     }
 
@@ -1279,19 +1309,19 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
         logInfo: (message, extra) => logSyncInfo(message, extra),
         logWarning: (message, error) => logSyncWarning(message, error),
         logWarningExtra: (message, extra) => {
-          void host.log.warn(message, { scope: 'sync', extra });
+          void log.warn(message, { scope: 'sync', extra });
         },
-        sanitizeLogMessage: (message) => host.log.sanitize(message),
+        sanitizeLogMessage: (message) => log.sanitize(message),
         logSyncError: (error, context) => {
           this.logEncryptionFailure(error, context.step);
-          return host.log.syncError(error, {
+          return log.syncError(error, {
             backend: context.backend,
             step: context.step,
             url: context.url,
           });
         },
         logMergeSummary: (mergeLog) => {
-          void host.log.info(
+          void log.info(
             mergeLog.message,
             {
               scope: 'sync',
@@ -1399,7 +1429,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
         SYNC_ENCRYPTION_LOG_EVENTS.error,
         buildSyncEncryptionErrorExtra({
           errorName: error instanceof Error ? error.name : 'unknown',
-          errorMessage: message,
+          errorMessage: redact(message),
           backend: this.backend,
           step,
           classification: classifySyncFailure(error),
@@ -1686,7 +1716,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
             invalidateFastSyncState: cleanupResult.shouldInvalidateFastSyncState,
           };
         },
-        formatErrorMessage: (error, backend) => formatSyncErrorMessage(error, backend),
+        formatErrorMessage: (error, backend) => redact(formatSyncErrorMessage(error, backend)),
         handleRunErrorBeforeRequeue: async (_error, context) => {
           if (this.requestAbortController.signal.aborted && activeMobileSyncAbortReason === 'lifecycle') {
             logSyncInfo('Sync aborted by app lifecycle transition', { backend: this.backend, step: context.step });
@@ -1777,7 +1807,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
               lastSyncHistory: mergedData.settings.lastSyncHistory,
             });
           }
-          void host.log.info('Sync status published to the store', {
+          void log.info('Sync status published to the store', {
             scope: 'sync',
             extra: {
               releaseCheck: 'v1.2.7/sync-status-published',
@@ -1839,7 +1869,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           this.ensureWebdavSyncNotRateLimited();
           // #1132 proof: React Native's URL class ignored pathname writes and resolved the
           // fence to the sync document itself. The basename below must never be data.json.
-          void host.log.info('WebDAV sync fence artifact resolved', {
+          void log.info('WebDAV sync fence artifact resolved', {
             scope: 'sync',
             extra: {
               releaseCheck: 'v1.2.7/fence-artifact',
@@ -2211,7 +2241,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           const restored = await restoreVerifiedRemoteEncryption(host.encryption.syncEncryptionLocalState, material, this.locationScope);
           await host.encryption.flushSyncEncryptionLocalState();
           if (restored) {
-            void host.log.info('Verified encrypted remote cleared stale plaintext state', {
+            void log.info('Verified encrypted remote cleared stale plaintext state', {
               scope: 'sync',
               extra: { releaseCheck: 'v1.3.3/encrypted-remote-recovery' },
             });
@@ -2233,7 +2263,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           // Plaintext cycle: the ladder degrades to the bounded legacy write
           // (packages/core/src/sync-backend-io.ts). Log the validator we actually
           // saw so the next report says what the server sent.
-          void host.log.info('WebDAV read returned no strong ETag; using the plaintext compatibility write', {
+          void log.info('WebDAV read returned no strong ETag; using the plaintext compatibility write', {
             scope: 'sync',
             extra: { etag: String(etag ?? 'none') },
           });

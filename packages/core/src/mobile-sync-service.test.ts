@@ -42,6 +42,7 @@ const createFakeHost = (options: FakeOptions = {}) => {
     removeItem: vi.fn(async (key: string) => { values.delete(key); }),
   };
   const logs: Array<{ level: string; message: string; extra?: Record<string, string> }> = [];
+  const syncErrors: string[] = [];
   const store = {
     lastDataChangeAt: 1,
     settings: {} as AppData['settings'],
@@ -84,7 +85,10 @@ const createFakeHost = (options: FakeOptions = {}) => {
     log: {
       info: (message, context) => { logs.push({ level: 'info', message, extra: context?.extra }); },
       warn: (message, context) => { logs.push({ level: 'warn', message, extra: context?.extra }); },
-      syncError: async () => null,
+      syncError: async (error, context) => {
+        syncErrors.push(`${error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error)} ${context.url ?? ''}`);
+        return null;
+      },
       sanitize: (message) => message,
     },
     externalCalendars: { load: async () => [], save: async () => undefined },
@@ -159,7 +163,7 @@ const createFakeHost = (options: FakeOptions = {}) => {
       createDropboxSyncRemoteMutationFencePort: vi.fn(() => ({}) as never),
     },
   };
-  return { host, values, logs, store, remote, fenceOwners, saved };
+  return { host, values, logs, syncErrors, store, remote, fenceOwners, saved };
 };
 
 const WEBDAV_VALUES = {
@@ -217,6 +221,23 @@ describe('mobile sync service behind fake ports', () => {
     expect(fake.host.storage.getItem).not.toHaveBeenCalledWith(WEBDAV_PASSWORD_KEY);
     const probeOptions = vi.mocked(fake.host.core!.probeWebdavSyncCompatibility!).mock.calls[0]?.[1];
     expect(probeOptions).toMatchObject({ username: 'alex', password: 'secret', timeoutMs: 30_000 });
+  });
+
+  it('keeps the stored password out of every log line, the result and the saved status when a server echoes it', async () => {
+    const password = 'p@ss';
+    const fake = createFakeHost({ values: WEBDAV_VALUES, secrets: { [WEBDAV_PASSWORD_KEY]: password } });
+    vi.mocked(fake.host.core!.webdavGetSyncDocument!).mockRejectedValue(
+      Object.assign(new Error(`403: Authentication rejected: ${password}`), { status: 403 }),
+    );
+    const service = createMobileSyncService(fake.host);
+
+    const result = await service.performMobileSync(undefined, { manual: true });
+
+    expect(result).toMatchObject({ success: false });
+    const text = JSON.stringify({ result, logs: fake.logs, syncErrors: fake.syncErrors, status: fake.values.get('@mindwtr_local_sync_status_v1') });
+    expect(fake.values.get('@mindwtr_local_sync_status_v1')).toContain('"lastSyncStatus":"error"');
+    expect(text).toContain('Authentication rejected');
+    expect(text).not.toContain(password);
   });
 
   it('skips a remote backend while the device is offline, without starting a cycle', async () => {

@@ -529,6 +529,17 @@ describe('mobile sync-service runtime', () => {
     );
   });
 
+  it('keeps the stored password out of the result and the error log when the server echoes it', async () => {
+    coreMocks.probeWebdavSyncCompatibility.mockRejectedValueOnce(new Error('403: Authentication rejected: pass'));
+
+    const result = await syncServiceModule.performMobileSync(undefined, { manual: true });
+
+    expect(result).toMatchObject({ success: false, error: expect.stringContaining('Authentication rejected: [redacted]') });
+    const logged = logMocks.logSyncError.mock.calls.map(([error]) => (error instanceof Error ? `${error.message} ${error.stack}` : String(error)));
+    expect(logged.join('\n')).toContain('Authentication rejected');
+    expect(logged.join('\n')).not.toContain('rejected: pass');
+  });
+
   it.each([false, true])(
     'performs no provider I/O while a persisted transition journal blocks sync (manual=%s)',
     async (manual) => {
