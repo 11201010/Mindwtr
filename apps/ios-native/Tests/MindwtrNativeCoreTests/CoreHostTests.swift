@@ -22576,4 +22576,60 @@ final class CoreHostTests: XCTestCase {
         await writer.close()
     }
 
+    func testProjectURLLinkBridgeListsAndOpensWithoutWrites() async throws {
+        try await seedProjectFocusRows()
+        let at = "2026-01-01T12:00:00.000Z"
+        let active: [[String: Any]] = [
+            ["id": "project-link", "kind": "link", "title": "Project source",
+             "uri": "https://example.com/project", "createdAt": at, "updatedAt": at],
+            ["id": "project-file", "kind": "file", "title": "Retained file",
+             "uri": "file:///retained.txt", "createdAt": at, "updatedAt": at],
+        ]
+        let archived: [[String: Any]] = [["id": "archived-link", "kind": "link", "title": "Archived source",
+                                        "uri": "https://example.com/archived", "createdAt": at, "updatedAt": at]]
+        let setup = try SQLiteBridge(url: database)
+        _ = try setup.execute("UPDATE projects SET attachments = ? WHERE id = ?",
+                              parametersJSON: json([json(active), "focus-target"]))
+        _ = try setup.execute("UPDATE projects SET status = 'archived', attachments = ? WHERE id = ?",
+                              parametersJSON: json([json(archived), "focus-other-0"]))
+        setup.close()
+
+        let writer = host()
+        _ = try await writer.start()
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        let list = try object(await writer.call("projectAttachmentList", argumentsJSON: json([json([
+            "projectId": "focus-target"])])))
+        let rows = try XCTUnwrap(list["rows"] as? [[String: Any]])
+        XCTAssertEqual(rows.compactMap { $0["id"] as? String }, ["project-link", "project-file"])
+        XCTAssertEqual(rows.compactMap { $0["kind"] as? String }, ["link", "file"])
+        XCTAssertEqual(list["canEdit"] as? Bool, true)
+        let opened = try object(await writer.call("projectAttachmentOpen", argumentsJSON: json([json([
+            "projectId": "focus-target", "attachmentId": "project-link"])])))
+        XCTAssertEqual(opened["status"] as? String, "available")
+        XCTAssertTrue(opened["message"] is NSNull)
+        XCTAssertTrue(opened["update"] is NSNull)
+        XCTAssertEqual((opened["open"] as? [String: Any])?["uri"] as? String, "https://example.com/project")
+        let archivedList = try object(await writer.call("projectAttachmentList", argumentsJSON: json([json([
+            "projectId": "focus-other-0"])])))
+        XCTAssertEqual(archivedList["canEdit"] as? Bool, false)
+        let archivedOpen = try object(await writer.call("projectAttachmentOpen", argumentsJSON: json([json([
+            "projectId": "focus-other-0", "attachmentId": "archived-link"])])))
+        XCTAssertEqual((archivedOpen["open"] as? [String: Any])?["uri"] as? String, "https://example.com/archived")
+        await expectFailure("Project attachment command failed") {
+            _ = try await writer.call("projectAttachmentOpen", argumentsJSON: json([json([
+                "projectId": "focus-target", "attachmentId": "project-file"])]))
+        }
+        await expectFailure("INVALID_INPUT") {
+            _ = try await writer.call("projectAttachmentList", argumentsJSON: json([json([
+                "projectId": "focus-target", "extra": "secret"])]))
+        }
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await writer.close()
+    }
+
 }

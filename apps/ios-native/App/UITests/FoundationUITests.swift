@@ -16,6 +16,98 @@ final class FoundationUITests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    func testProjectURLAttachmentsOpenAndColdRead() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8010d4e9-a4b9-46a9-8bdb-0e80f9490485"]
+        func projects() {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+            boardEnabled(app.textFields["projects-create-title"])
+        }
+        func tap(_ id: String) {
+            let element = app.buttons[id]
+            revealPagedElement(app, element, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+            boardEnabled(element); XCTAssertGreaterThanOrEqual(element.frame.height + 0.000001, 44)
+            element.tap()
+        }
+        func open(_ id: String) {
+            if id == "task121-archived" {
+                let closed = app.buttons["projects-section-archived"]
+                revealPagedElement(app, closed, in: app.scrollViews["projects-scroll"])
+                if closed.value as? String == "Expand" { closed.tap() }
+            }
+            let row = app.buttons["project-open-" + id]
+            revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+            boardEnabled(row); row.tap(); boardTap(app, "project-details-toggle")
+        }
+        func browser() {
+            let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+            XCTAssertTrue(safari.wait(for: .runningForeground, timeout: 20))
+            let shot = XCTAttachment(screenshot: safari.screenshot())
+            shot.name = "Project link opened in Safari"; shot.lifetime = .keepAlways; add(shot)
+            app.activate(); boardEnabled(app.buttons["project-back"], timeout: 20)
+        }
+        func dismiss(_ text: String) {
+            let alert = app.alerts.firstMatch
+            XCTAssertTrue(alert.waitForExistence(timeout: 15))
+            XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists)
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "Project link explanation"; shot.lifetime = .keepAlways; add(shot)
+            alert.buttons["project-attachment-open-dismiss"].firstMatch.tap()
+        }
+        app.launch(); projects()
+        for id in ["task121-active", "task121-archived"] {
+            open(id)
+            tap("project-attachment-open-task121-web"); browser()
+            tap("project-attachment-open-task121-desktop"); dismiss("another device")
+            tap("project-attachment-open-task121-unsupported"); dismiss("Could not open")
+            XCTAssertFalse(app.buttons["project-attachment-open-task121-file"].exists)
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "Project attachment cards " + id; shot.lifetime = .keepAlways; add(shot)
+            boardTap(app, "project-back")
+        }
+        open("task121-empty")
+        XCTAssertFalse(app.buttons["project-attachment-open-task121-web"].exists)
+        boardTap(app, "project-back")
+        app.terminate(); app.launch(); projects(); open("task121-active")
+        tap("project-attachment-open-task121-web"); browser()
+        boardTap(app, "project-back"); app.terminate()
+    }
+
+    func testProjectURLAttachmentFlushesNotesBeforeOpen() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "4b799f7a-3cac-4c05-b533-f06629e354bc"]
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        boardEnabled(app.buttons["project-open-task121-active"])
+        boardTap(app, "project-open-task121-active"); boardTap(app, "project-details-toggle")
+        func tap(_ id: String) {
+            let element = app.buttons[id]
+            revealPagedElement(app, element, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+            boardEnabled(element); element.tap()
+        }
+        tap("project-notes-toggle")
+        if app.buttons["project-notes-mode-edit"].isEnabled { tap("project-notes-mode-edit") }
+        let input = app.textViews["project-notes-input"]
+        boardEnabled(input); input.tap(); input.typeText("Task121 Notes before browser")
+        tap("project-attachment-open-task121-web")
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        XCTAssertTrue(safari.wait(for: .runningForeground, timeout: 20))
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        boardTap(app, "project-open-task121-active"); boardTap(app, "project-details-toggle")
+        tap("project-notes-toggle")
+        if app.buttons["project-notes-mode-preview"].exists && app.buttons["project-notes-mode-preview"].isEnabled {
+            tap("project-notes-mode-preview")
+        }
+        let text = app.staticTexts["Task121 Notes before browser"]
+        revealPagedElement(app, text, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+        XCTAssertTrue(text.exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Project Notes saved before browser handoff"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "project-back"); app.terminate()
+    }
+
     private func openTask120(_ library: String) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--native-ui-test-library", library]

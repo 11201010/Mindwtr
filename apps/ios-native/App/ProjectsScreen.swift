@@ -788,7 +788,7 @@ struct ProjectDetailScreen: View {
                         AppIcon(name: "chevron", size: 24).rotationEffect(.degrees(90)).foregroundStyle(palette.tint)
                             .frame(width: 44, height: 44).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectRenameEditing)
+                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectRenameEditing || model.projectAttachmentOpening)
                     .accessibilityLabel(model.label("common.back")).accessibilityIdentifier("project-back")
                     if model.projectRenameEditing {
                         TextField(model.label("taskEdit.titleLabel"), text: Binding(
@@ -1071,6 +1071,10 @@ struct ProjectDetailScreen: View {
         .onChange(of: notesFocused) { if !$0 { Task { await model.flushProjectNotesEdit() } } }
         .onChange(of: model.projectDatePicker.text("date")) { _ in updateProjectDateDraft() }
         .onChange(of: model.projectDatePicker.text("instant")) { _ in updateProjectDateDraft() }
+        .task(id: [model.projectHeader.text("id"), model.projectDetail.text("mutationRevision"),
+                   model.projectCurrent ? "current" : "stale", detailsExpanded ? "expanded" : "collapsed"]) {
+            if detailsExpanded && model.projectCurrent { await model.readProjectAttachments() }
+        }
         .task(id: model.projectDetail.text("mutationRevision")) {
             if model.projectDateField != nil && !model.projectDatePending && model.projectCurrent {
                 await model.retryProjectDateRead()
@@ -1102,6 +1106,15 @@ struct ProjectDetailScreen: View {
             .accessibilityIdentifier("project-notes-discard-confirm")
             Button(model.label("common.cancel"), role: .cancel) {}
         } message: { Text(model.label("taskEdit.discardChangesDesc")) }
+        .alert(model.label("attachments.title"), isPresented: Binding(
+            get: { model.projectAttachmentOpenError != nil },
+            set: { if !$0 { model.dismissProjectAttachmentOpenError() } })) {
+            Button(model.label("common.ok")) { model.dismissProjectAttachmentOpenError() }
+                .accessibilityIdentifier("project-attachment-open-dismiss")
+        } message: {
+            Text(model.projectAttachmentOpenError ?? "")
+                .accessibilityIdentifier("project-attachment-open-error")
+        }
         .sheet(isPresented: Binding(get: { model.projectDateField != nil },
                                     set: { if !$0 && !model.appLock.concealed { model.cancelProjectDate() } })) {
             projectDateSheet
@@ -1541,6 +1554,7 @@ struct ProjectDetailScreen: View {
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
                 projectNotesPanel
+                projectAttachmentsPanel
                 ProjectDatesMetadata(model: model, palette: palette, metadata: metadata) {
                     resignProjectNotesInput()
                 }
@@ -1725,7 +1739,119 @@ struct ProjectDetailScreen: View {
         Task { await model.saveProjectSection() }
     }
 
+    private var projectAttachmentsPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(model.label("attachments.title")).rnFont(15, .semibold)
+                .foregroundStyle(palette.text).accessibilityAddTraits(.isHeader)
+            if model.projectAttachmentScopeCurrent, let error = model.projectAttachmentError {
+                Text(error).rnFont(13).foregroundStyle(palette.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("project-attachments-error")
+                Button { Task { await model.readProjectAttachments() } } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint)
+                .disabled(model.busy || model.retryNeeded || model.projectAttachmentLoading)
+                .accessibilityIdentifier("project-attachments-retry")
+            } else if model.projectAttachmentScopeCurrent && model.projectAttachmentLoading {
+                ProgressView().frame(minHeight: 44)
+            }
+            if model.projectAttachmentsVisible {
+                ForEach(model.projectAttachmentRows.indices, id: \.self) { index in
+                    let entry = model.projectAttachmentRows[index]
+                    VStack(alignment: .leading, spacing: 4) {
+                        if entry.text("kind") == "link" {
+                            Button {
+                                model.openProjectAttachment(entry.text("id"))
+                                resignProjectNotesInput()
+                            } label: {
+                                Text(entry.text("title")).rnFont(14)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).foregroundStyle(palette.tint)
+                            .disabled(!model.projectViewOpenEnabled || model.projectAttachmentOpening
+                                || model.appLock.concealed || entry.flag("downloading"))
+                            .accessibilityLabel(entry.text("title"))
+                            .accessibilityIdentifier("project-attachment-open-" + entry.text("id"))
+                        } else {
+                            Text(entry.text("title")).rnFont(14).foregroundStyle(palette.text)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                        if entry.flag("downloading") || entry.flag("missing") {
+                            Text(model.label(entry.flag("downloading") ? "common.loading"
+                                : "attachments.missing"))
+                                .rnFont(12).foregroundStyle(palette.secondary)
+                        }
+                    }
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                    .accessibilityElement(children: .contain)
+                }
+            }
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("project-attachments")
+    }
+
     private var projectNotesPanel: some View {
+        ProjectNotesPanel(model: model, palette: palette, notesFocus: $notesFocused,
+                          discardNotesConfirm: $discardNotesConfirm, onResign: resignProjectNotesInput)
+    }
+
+    private func metadataRow(_ caption: String, value: String, id: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(model.label(caption)).rnFont(12, .semibold).foregroundStyle(palette.secondary)
+            Text(value).rnFont(14).foregroundStyle(palette.text).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("project-detail-meta-" + id)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func projectScopeChip(_ scope: String, metadata: CoreObject) -> some View {
+        let label = model.label(scope == "section" ? "projects.sequentialWithinSections" : "projects.sequentialAcrossSections")
+        let selected = metadata.text("sequentialScopeLabel") == label
+        return Button { resignProjectNotesInput(); Task { await model.setProjectScope(scope) } } label: {
+            Text(label).rnFont(14, selected ? .semibold : .regular)
+                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(selected ? palette.onTint : palette.text)
+                .padding(.horizontal, 12).frame(minHeight: 44)
+                .background(selected ? palette.tint : palette.card, in: Capsule())
+                .overlay(Capsule().stroke(selected ? palette.tint : palette.border, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!model.projectFlowInputEnabled)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityHint(model.label("projects.sequentialScopeHelpText"))
+        .accessibilityIdentifier("project-flow-scope-" + scope)
+    }
+
+    private func submitRename() {
+        guard model.projectRenameCanSave else { return }
+        renameFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { await model.saveProjectRename() }
+    }
+
+    private func resignProjectNotesInput() {
+        notesFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+}
+
+// Concrete boundaries keep the Notes view metadata shallow on iOS 17.
+private struct ProjectNotesPanel: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let notesFocus: FocusState<Bool>.Binding
+    @Binding var discardNotesConfirm: Bool
+    let onResign: () -> Void
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 AppIcon(name: "chevron", size: 16)
@@ -1737,7 +1863,7 @@ struct ProjectDetailScreen: View {
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
             .overlay {
-                Button { resignProjectNotesInput(); Task { await model.toggleProjectNotes() } } label: {
+                Button { onResign(); Task { await model.toggleProjectNotes() } } label: {
                     Color.clear.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).disabled(!model.projectActionsEnabled)
@@ -1749,7 +1875,7 @@ struct ProjectDetailScreen: View {
                 if !model.projectDetail.flag("readOnly") {
                     HStack(spacing: 8) {
                         Button {
-                            resignProjectNotesInput()
+                            onResign()
                             Task { await model.showProjectNotesEditor() }
                         } label: {
                             Text(model.label("markdown.edit")).rnFont(14, .semibold)
@@ -1762,7 +1888,7 @@ struct ProjectDetailScreen: View {
                         .disabled(!model.projectActionsEnabled || model.projectNotesEditMode)
                         .accessibilityIdentifier("project-notes-mode-edit")
                         Button {
-                            resignProjectNotesInput()
+                            onResign()
                             Task { await model.showProjectNotesPreview() }
                         } label: {
                             Text(model.label("markdown.preview")).rnFont(14, .semibold)
@@ -1813,114 +1939,99 @@ struct ProjectDetailScreen: View {
                         .accessibilityIdentifier("project-notes-discard")
                 }
                 if model.projectNotesEditMode {
-                    if model.projectNotesEditReady {
-                        ZStack(alignment: .topLeading) {
-                            if model.projectNotesDraft.isEmpty {
-                                Text(model.label("taskEdit.descriptionPlaceholder"))
-                                    .rnFont(14).foregroundStyle(palette.secondary).padding(.top, 8).padding(.leading, 5)
-                                    .accessibilityHidden(true)
-                            }
-                            TextEditor(text: Binding(get: { model.projectNotesDraft },
-                                                     set: { model.setProjectNotesDraft($0) }))
-                                .focused($notesFocused)
-                                .rnFont(15)
-                                .scrollContentBackground(.hidden)
-                                .frame(minHeight: 160)
-                                .disabled(!model.projectNotesEditInputEnabled)
-                                .environment(\.layoutDirection,
-                                    (model.projectNotesDraftDirection.isEmpty ? model.projectNotes.text("direction")
-                                        : model.projectNotesDraftDirection) == "rtl" ? .rightToLeft : .leftToRight)
-                                .task(id: [model.projectHeader.text("id"), model.projectHeader.text("title"),
-                                           model.projectNotesDraft, model.projectNotes.text("direction")]) {
-                                    await model.refreshProjectNotesDraftDirection()
-                                }
-                                .accessibilityIdentifier("project-notes-input")
-                        }
-                        .padding(8).background(palette.card, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
-                    } else if model.busy {
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 44)
-                    }
+                    ProjectNotesEditor(model: model, palette: palette, notesFocus: notesFocus)
                 } else {
-                    if let message = model.projectNotesError {
-                        Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("project-notes-error")
-                        Button { Task { await model.retryProjectNotes() } } label: {
-                            Text(model.label("common.retry")).rnFont(14, .semibold)
-                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain).disabled(!model.projectActionsEnabled)
-                        .accessibilityIdentifier("project-notes-retry")
-                    } else if model.projectNotesCurrent {
-                        let notes = model.projectNotes
-                        let blocks = notes.objects("blocks")
-                        if notes.number("total") == 0 {
-                            Text(model.label("common.none")).rnFont(14).foregroundStyle(palette.secondary)
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                .accessibilityIdentifier("project-notes-empty")
-                        } else {
-                            NativeMarkdownContent(blocks: blocks, labels: notes.object("markdownLabels"),
-                                                  strings: model.strings, palette: palette)
-                                .environment(\.layoutDirection, notes.text("direction") == "rtl" ? .rightToLeft : .leftToRight)
-                                .accessibilityElement(children: .contain)
-                                .accessibilityIdentifier("project-notes-content")
-                            if blocks.count < notes.number("total") {
-                                Button { Task { await model.loadMoreProjectNotes() } } label: {
-                                    Text(model.label("common.more")).rnFont(14, .semibold)
-                                        .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain).disabled(!model.projectActionsEnabled)
-                                .accessibilityIdentifier("project-notes-more")
-                            }
-                        }
-                    } else if model.busy {
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 44)
-                    }
+                    ProjectNotesPreview(model: model, palette: palette)
                 }
             }
         }
         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
         .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+        .onAppear { NSLog("Native iOS Project Notes panel rendered releaseCheck=v1.3.4/ios-project-notes-layout outcome=rendered") }
     }
+}
 
-    private func metadataRow(_ caption: String, value: String, id: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(model.label(caption)).rnFont(12, .semibold).foregroundStyle(palette.secondary)
-            Text(value).rnFont(14).foregroundStyle(palette.text).fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("project-detail-meta-" + id)
+private struct ProjectNotesEditor: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let notesFocus: FocusState<Bool>.Binding
+
+    var body: some View {
+        Group {
+            if model.projectNotesEditReady {
+                ZStack(alignment: .topLeading) {
+                    if model.projectNotesDraft.isEmpty {
+                        Text(model.label("taskEdit.descriptionPlaceholder"))
+                            .rnFont(14).foregroundStyle(palette.secondary).padding(.top, 8).padding(.leading, 5)
+                            .accessibilityHidden(true)
+                    }
+                    TextEditor(text: Binding(get: { model.projectNotesDraft },
+                                             set: { model.setProjectNotesDraft($0) }))
+                        .focused(notesFocus)
+                        .rnFont(15)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 160)
+                        .disabled(!model.projectNotesEditInputEnabled)
+                        .environment(\.layoutDirection,
+                            (model.projectNotesDraftDirection.isEmpty ? model.projectNotes.text("direction")
+                                : model.projectNotesDraftDirection) == "rtl" ? .rightToLeft : .leftToRight)
+                        .task(id: [model.projectHeader.text("id"), model.projectHeader.text("title"),
+                                   model.projectNotesDraft, model.projectNotes.text("direction")]) {
+                            await model.refreshProjectNotesDraftDirection()
+                        }
+                        .accessibilityIdentifier("project-notes-input")
+                }
+                .padding(8).background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+            } else if model.busy {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 44)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    private func projectScopeChip(_ scope: String, metadata: CoreObject) -> some View {
-        let label = model.label(scope == "section" ? "projects.sequentialWithinSections" : "projects.sequentialAcrossSections")
-        let selected = metadata.text("sequentialScopeLabel") == label
-        return Button { resignProjectNotesInput(); Task { await model.setProjectScope(scope) } } label: {
-            Text(label).rnFont(14, selected ? .semibold : .regular)
-                .fixedSize(horizontal: false, vertical: true)
-                .foregroundStyle(selected ? palette.onTint : palette.text)
-                .padding(.horizontal, 12).frame(minHeight: 44)
-                .background(selected ? palette.tint : palette.card, in: Capsule())
-                .overlay(Capsule().stroke(selected ? palette.tint : palette.border, lineWidth: 1))
-                .contentShape(Rectangle())
+private struct ProjectNotesPreview: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+
+    var body: some View {
+        Group {
+            if let message = model.projectNotesError {
+                Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("project-notes-error")
+                Button { Task { await model.retryProjectNotes() } } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.projectActionsEnabled)
+                .accessibilityIdentifier("project-notes-retry")
+            } else if model.projectNotesCurrent {
+                let notes = model.projectNotes
+                let blocks = notes.objects("blocks")
+                if notes.number("total") == 0 {
+                    Text(model.label("common.none")).rnFont(14).foregroundStyle(palette.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .accessibilityIdentifier("project-notes-empty")
+                } else {
+                    NativeMarkdownContent(blocks: blocks, labels: notes.object("markdownLabels"),
+                                          strings: model.strings, palette: palette)
+                        .environment(\.layoutDirection, notes.text("direction") == "rtl" ? .rightToLeft : .leftToRight)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("project-notes-content")
+                    if blocks.count < notes.number("total") {
+                        Button { Task { await model.loadMoreProjectNotes() } } label: {
+                            Text(model.label("common.more")).rnFont(14, .semibold)
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(!model.projectActionsEnabled)
+                        .accessibilityIdentifier("project-notes-more")
+                    }
+                }
+            } else if model.busy {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 44)
+            }
         }
-        .buttonStyle(.plain).disabled(!model.projectFlowInputEnabled)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityHint(model.label("projects.sequentialScopeHelpText"))
-        .accessibilityIdentifier("project-flow-scope-" + scope)
-    }
-
-    private func submitRename() {
-        guard model.projectRenameCanSave else { return }
-        renameFocused = false
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        Task { await model.saveProjectRename() }
-    }
-
-    private func resignProjectNotesInput() {
-        notesFocused = false
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }
 

@@ -188,7 +188,7 @@ private final class Engine: @unchecked Sendable {
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
         "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1,
         "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentOpen": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
-        "projects": 0, "projectDetail": 4, "projectNotes": 4, "projectCreateOptions": 0, "projectCreate": 1, "projectCreateRetryOutcome": 1,
+        "projects": 0, "projectDetail": 4, "projectNotes": 4, "projectAttachmentList": 1, "projectAttachmentOpen": 1, "projectCreateOptions": 0, "projectCreate": 1, "projectCreateRetryOutcome": 1,
         "projectSectionOptions": 1, "projectSectionCreate": 1, "projectSectionCreateRetryOutcome": 1,
         "projectSectionRenameOptions": 1, "projectSectionRename": 1, "projectSectionRenameRetryOutcome": 1,
         "projectSectionDeleteOptions": 1, "projectSectionDelete": 1, "projectSectionDeleteRetryOutcome": 1,
@@ -959,6 +959,9 @@ private final class Engine: @unchecked Sendable {
             } else {
                 do { value = try invoke(method, arguments: args) }
                 catch let failure as HostFailure {
+                    if ["projectAttachmentList", "projectAttachmentOpen"].contains(method) {
+                        throw HostFailure("Project attachment command failed")
+                    }
                     if ["taskAttachmentList", "taskAttachmentOpen", "taskAttachmentLinks", "taskAttachmentRemove"].contains(method) {
                         throw HostFailure("Attachment draft command failed")
                     }
@@ -5444,6 +5447,16 @@ private final class Engine: @unchecked Sendable {
                 guard (input["attachmentId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true else {
                     throw HostFailure("INVALID_INPUT: Attachment link target is malformed")
                 }
+            }
+        }
+        if ["projectAttachmentList", "projectAttachmentOpen"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(method == "projectAttachmentList" ? ["projectId"] : ["projectId", "attachmentId"]),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
+                  method == "projectAttachmentList" || (input["attachmentId"] as? String)
+                    .map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true else {
+                throw HostFailure("INVALID_INPUT: Project attachment request is malformed")
             }
         }
         if ["focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome"].contains(method) {

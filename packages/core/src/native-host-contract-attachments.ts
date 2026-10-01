@@ -302,7 +302,7 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
             && !deps.isReadOnly(task) && !isStatusListTaskReadOnly(task, state._allProjects));
     };
     const storedProject = (projectId: string): Project | undefined => useTaskStore.getState()._allProjects
-        .find((project) => project.id === projectId && !project.deletedAt);
+        .find((project) => project.id === projectId && !project.deletedAt && !project.purgedAt);
     const mutableProject = (projectId: string): Project | null => {
         const project = storedProject(projectId);
         return project && project.status !== 'archived' ? project : null;
@@ -615,16 +615,23 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
             const owner = readOwner(input.owner);
             if (!owner) return ownerError();
             if (input.urlOnly) {
-                if (owner.kind !== 'task') return fail('INVALID_INPUT', 'Task cannot open links');
-                const task = useTaskStore.getState()._tasksById.get(owner.taskId);
-                if (!task || task.deletedAt || task.purgedAt) return fail('INVALID_INPUT', 'Task cannot open links');
-                const attachment = owner.attachments.find((item) => item.id === input.attachmentId && !item.deletedAt);
-                if (attachment?.kind !== 'link' || task.attachments
-                    ?.some((item) => item.id === input.attachmentId && item.kind === 'file')) {
-                    return fail('INVALID_INPUT', 'Only a task link can be opened');
+                let attachment: Attachment | undefined;
+                if (owner.kind === 'task') {
+                    const task = useTaskStore.getState()._tasksById.get(owner.taskId);
+                    if (!task || task.deletedAt || task.purgedAt) return fail('INVALID_INPUT', 'Task cannot open links');
+                    attachment = owner.attachments.find((item) => item.id === input.attachmentId && !item.deletedAt);
+                    if (attachment?.kind !== 'link' || task.attachments
+                        ?.some((item) => item.id === input.attachmentId && item.kind === 'file')) {
+                        return fail('INVALID_INPUT', 'Only a task link can be opened');
+                    }
+                } else {
+                    const project = storedProject(owner.projectId);
+                    if (!project) return fail('STALE_REVISION', 'Project is unavailable; read the projects again');
+                    attachment = project.attachments?.find((item) => item.id === input.attachmentId && !item.deletedAt);
+                    if (attachment?.kind !== 'link') return fail('INVALID_INPUT', 'Only a project link can be opened');
                 }
                 const t = deps.t();
-                const plan = planAttachmentOpen(attachment, { audio: true, t });
+                const plan = planAttachmentOpen(attachment, { audio: owner.kind === 'task', t });
                 return { ok: true, value: {
                     status: 'available', message: null, update: null,
                     open: plan.kind === 'link' ? { ...plan, failedMessage: getAttachmentOpenLinkFailedMessage(t) } : plan,

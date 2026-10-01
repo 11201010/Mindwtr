@@ -274,6 +274,16 @@ const taskAttachmentInput = (json: string, fields: string[], optional: string[] 
         throw new Error('Invalid task link edit');
     return input as Record<string, unknown>;
 };
+const projectAttachmentInput = (json: string, withAttachmentId = false): { projectId: string; attachmentId?: string } => {
+    const input = json.length <= 2_000 ? editorJson(json) : null;
+    const fields = withAttachmentId ? ['projectId', 'attachmentId'] : ['projectId'];
+    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== fields.length
+        || fields.some((field) => {
+            const id = (input as Record<string, unknown>)[field];
+            return typeof id !== 'string' || !id || id.length > 500;
+        })) throw new Error('Invalid project attachment request');
+    return input as { projectId: string; attachmentId?: string };
+};
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
     | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
     | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting'
@@ -813,6 +823,20 @@ globalThis.MindwtrHost = {
             return unwrap(await contract.openAttachment({
                 ...input, urlOnly: true,
             } as Parameters<typeof contract.openAttachment>[0]));
+        });
+    },
+    projectAttachmentList(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            const { projectId } = projectAttachmentInput(json);
+            return unwrap(contract.getAttachmentList({ owner: { kind: 'project', projectId } }));
+        });
+    },
+    projectAttachmentOpen(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            const { projectId, attachmentId } = projectAttachmentInput(json, true);
+            return unwrap(await contract.openAttachment({ owner: { kind: 'project', projectId }, attachmentId: attachmentId!, urlOnly: true }));
         });
     },
     taskAttachmentLinks(json: string): string {

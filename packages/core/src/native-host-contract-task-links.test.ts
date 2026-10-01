@@ -113,6 +113,58 @@ describe('prepared Task URL draft', () => {
         expect(writes).not.toHaveBeenCalled();
     });
 
+    it('lists and opens stored Project links on active and archived Projects without a file host or writes', async () => {
+        const path = { ...link, id: 'path', title: 'Desktop report', uri: '/Users/alice/private/report.pdf' };
+        const project: Project = { id: 'project', title: 'Project', status: 'active', color: '#000000',
+            order: 0, tagIds: [], attachments: [file, link, path], createdAt: at, updatedAt: at };
+        durable.projects = [project];
+        await open();
+        writes.mockClear();
+        const owner = { kind: 'project' as const, projectId: project.id };
+        expect(unwrap(host.getAttachmentList({ owner })).rows.map((row) => [row.id, row.kind, row.title]))
+            .toEqual([['file', 'file', 'Report'], ['link', 'link', 'Old'], ['path', 'link', 'Desktop report']]);
+        expect(unwrap(await host.openAttachment({ owner, attachmentId: link.id, urlOnly: true }))).toEqual({
+            status: 'available', message: null, update: null,
+            open: { kind: 'link', uri: link.uri, failedMessage: 'Could not open this link.' },
+        });
+        expect(unwrap(await host.openAttachment({ owner, attachmentId: path.id, urlOnly: true })))
+            .toMatchObject({ open: { kind: 'alert', message: expect.stringContaining(path.uri) } });
+        useTaskStore.setState({ _allProjects: [{ ...project, status: 'archived' }] });
+        expect(unwrap(host.getAttachmentList({ owner })).canEdit).toBe(false);
+        expect(unwrap(await host.openAttachment({ owner, attachmentId: link.id, urlOnly: true })).open)
+            .toMatchObject({ kind: 'link', uri: link.uri });
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('refuses unavailable Projects and non-live or malformed Project URL targets without leaking credentials', async () => {
+        const privateLink = { ...link, uri: 'https://alice:secret@example.org/path?token=private' };
+        const removed = { ...privateLink, id: 'removed', deletedAt: later };
+        const project: Project = { id: 'project', title: 'Project', status: 'active', color: '#000000',
+            order: 0, tagIds: [], attachments: [file, privateLink, removed], createdAt: at, updatedAt: at };
+        durable.projects = [project];
+        await open();
+        writes.mockClear();
+        const owner = { kind: 'project' as const, projectId: project.id };
+        const check = async (result: Awaited<ReturnType<typeof host.openAttachment>>) => {
+            expect(result).toMatchObject({ ok: false });
+            expect(JSON.stringify(result)).not.toMatch(/alice|secret|private/);
+        };
+        await check(await host.openAttachment({ owner, attachmentId: file.id, urlOnly: true }));
+        await check(await host.openAttachment({ owner, attachmentId: removed.id, urlOnly: true }));
+        await check(await host.openAttachment({ owner, attachmentId: 'missing', urlOnly: true }));
+        await check(await host.openAttachment({ owner: { ...owner, attachments: [privateLink] } as never,
+            attachmentId: link.id, urlOnly: true }));
+        await check(await host.openAttachment({ owner, attachmentId: 'x'.repeat(501), urlOnly: true }));
+        useTaskStore.setState({ _allProjects: [{ ...project, attachments: [file] }] });
+        await check(await host.openAttachment({ owner, attachmentId: link.id, urlOnly: true }));
+        for (const candidate of [null, { ...project, deletedAt: later }, { ...project, purgedAt: later }]) {
+            useTaskStore.setState({ _allProjects: candidate ? [candidate] : [] });
+            await check(await host.openAttachment({ owner, attachmentId: link.id, urlOnly: true }));
+            expect(host.getAttachmentList({ owner })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        }
+        expect(writes).not.toHaveBeenCalled();
+    });
+
     it('uses the shared alert for a desktop file path and never returns it as an OS link', async () => {
         const path = { ...link, uri: 'C:\\Private\\report.pdf' };
         const result = unwrap(await host.openAttachment({ owner: owner([file, path]), attachmentId: path.id, urlOnly: true }));
