@@ -3339,7 +3339,8 @@ final class CoreHostTests: XCTestCase {
         for input in [["person": "", "offset": 1, "limit": 1] as [String: Any], ["offset": 0, "limit": 101], ["offset": true, "limit": 1], ["person": 7, "offset": 0, "limit": 1]] {
             await expectFailure("INVALID_INPUT") { _ = try await read("waiting", input) }
         }
-        for input in [["view": "more", "collection": "savedSearches"], ["view": "waiting", "collection": "tokens"], ["view": "someday", "collection": "people"], ["view": "archive", "collection": "tokens"], [:]] {
+        await expectFailure("INVALID_INPUT") { _ = try await read("collection", ["view": "more", "collection": "savedSearches"]) }
+        for input in [["view": "waiting", "collection": "tokens"], ["view": "someday", "collection": "people"], ["view": "archive", "collection": "tokens"], [:]] {
             await expectFailure("Unsupported native menu collection") { _ = try await read("collection", input) }
         }
         for name in ["waiting", "collection"] {
