@@ -553,7 +553,7 @@ try {
         const typedPart = bearer.length > 0 && next.startsWith(bearer);
         // At once after typing a write may not have landed yet (the key before); from 300 ms on, the field's text is stored.
         const allowed = typedPart || (waitMs === 0 && bearer === storedKey);
-        check(allowed, `(9) killed ${waitMs} ms after typing: the stored key is ${typedPart ? `${bearer.length} of the ${next.length} typed characters` : bearer === storedKey ? 'the one before' : 'another'}`);
+        check(allowed, `(9) killed ${waitMs} ms after typing: the stored key is ${typedPart ? `${bearer.length} of the ${next.length} typed characters` : bearer === storedKey ? 'the one before' : `another (${bearer.length} characters, ${[...bearer].filter((c) => c === '•').length} dots; a stub key)`}`);
         storedKey = bearer;
         journalClean(next);
     }

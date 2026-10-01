@@ -40,3 +40,12 @@ data class InboxStepKey(val sessionId: String, val taskId: String, val step: Str
 
 /** What the capture screen asked the copilot: its screen session with core's question, so a new screen with the same text asks again. */
 fun captureCopilotKey(session: String, request: String?): String? = request?.let { "$session\n$it" }
+
+/**
+ * A key field's text as the key ([current]: the key typed so far this focus, null before the first edit). The field starts with
+ * core's dots ([mask]), so the first edit starts the key over: the text typed after the dots, or, for any other edit, what was
+ * typed, dots left out. A keystroke that comes before the field shows the typed key still carries dots: they are left out too,
+ * so a key never holds core's dots.
+ */
+fun typedKey(current: String?, mask: String, text: String): String =
+    if (current == null && text.startsWith(mask)) text.removePrefix(mask) else text.replace("\u2022", "")

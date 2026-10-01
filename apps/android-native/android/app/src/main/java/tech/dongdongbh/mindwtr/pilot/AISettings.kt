@@ -82,9 +82,6 @@ import java.util.concurrent.Executors
  */
 val AI_COMMANDS = setOf("openAISettings", "setAIKey", "setAIEndpoint")
 
-/** Core's dot for a stored key (native-host-contract-ai.ts mask). */
-private const val KEY_DOT = "•"
-
 /** RN's picker Check (lucide at stroke 2.5). */
 private val PickerCheck = lucide("PickerCheck", "M20 6 9 17l-5-5", stroke = 2.5f)
 
@@ -234,17 +231,11 @@ class AISettingsModel(private val menu: MenuModel) {
     }
 
     /**
-     * A key field's text. RN's secure field starts with the stored key; here it starts with core's dots, so the first edit starts
-     * the key over: the text typed after the dots, or, for any other edit (a Backspace, a keystroke among the dots), what was typed,
-     * dots left out. A partial edit of the dots never becomes the key. setAIKey goes at once, in order, naming the provider shown.
+     * A key field's text. RN's secure field starts with the stored key; here it starts with core's dots, and [typedKey] keeps
+     * them out of the key. setAIKey goes at once, in order, naming the provider shown.
      */
     fun typeKey(field: String, provider: String, mask: String, text: String) {
-        val current = keys[field]
-        val next = when {
-            current != null -> text
-            text.startsWith(mask) -> text.removePrefix(mask)
-            else -> text.replace(KEY_DOT, "")
-        }
+        val next = typedKey(keys[field], mask, text)
         keys = keys + (field to next)
         screenWrite("setAIKey", JSONObject().put("field", field).put("provider", provider).put("value", next), keyField = field)
     }

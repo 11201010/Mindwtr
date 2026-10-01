@@ -49,4 +49,15 @@ class AIRulesTest {
         assertNotEquals(captureCopilotKey("one", """{"title":"Call"}"""), captureCopilotKey("two", """{"title":"Call"}"""))
         assertEquals(null, captureCopilotKey("one", null))
     }
+
+    @Test fun aKeyFieldNeverStoresCoresDots() {
+        val mask = "•••"
+        // The first edit starts the key over: the text typed after the dots, or the typed text without dots.
+        assertEquals("s", typedKey(null, mask, "•••s"))
+        assertEquals("x", typedKey(null, mask, "••x•"))
+        assertEquals("", typedKey(null, mask, "••"))
+        // Fast typing: the field still showed the dots when the next keystroke came (its text is the old dots and two letters).
+        assertEquals("sk", typedKey("s", mask, "•••sk"))
+        assertEquals("ske", typedKey("sk", mask, "ske"))
+    }
 }
