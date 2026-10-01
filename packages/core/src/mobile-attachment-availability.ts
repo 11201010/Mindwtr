@@ -5,8 +5,8 @@
 // `apps/mobile/lib/attachment-sync-availability.ts` so the native apps run the same rules.
 //
 // Data safety: a failed download never deletes local bytes, a target already on disk is used
-// only when its bytes prove they are the current remote generation, and a CloudKit not-found is
-// terminal (the attachment is marked unrecoverable).
+// only when its bytes prove they are the current remote generation, and a CloudKit not-found or a
+// WebDAV 404 is terminal (the attachment is marked unrecoverable).
 import type { Attachment } from './types';
 import { computeSha256Hex, isSha256Hex } from './attachment-hash';
 import { extractExtension, getBaseSyncUrl, getCloudBaseUrl } from './attachment-paths';
@@ -16,6 +16,7 @@ import { cloudGetFile } from './cloud';
 import { parseCloudKitAttachmentKey } from './cloudkit-attachments';
 import { downloadDropboxFile } from './dropbox';
 import { withRetry } from './retry-utils';
+import { getErrorStatus } from './sync-runtime-utils';
 import { isSandboxMode } from './sandbox';
 import { CLOUD_PROVIDER_DROPBOX } from './sync-client-helpers';
 import { CLOUD_PROVIDER_KEY, SYNC_BACKEND_KEY, SYNC_PATH_KEY, type SyncKeyValueStoragePort } from './sync-storage-keys';
@@ -468,14 +469,25 @@ export const createMobileAttachmentAvailability = (host: MobileAttachmentAvailab
         reportProgress(localAttachment.id, 'download', bytes.length, bytes.length, 'completed');
         return installedAttachment;
       } catch (error) {
+        // A 404 is terminal, as the sync pass treats it: the remote file is gone.
+        const terminalNotFound = getErrorStatus(error) === 404;
         reportProgress(
           localAttachment.id,
           'download',
           0,
           localAttachment.size ?? 0,
           'failed',
-          error instanceof Error ? error.message : String(error)
+          terminalNotFound
+            ? 'Attachment is no longer available'
+            : error instanceof Error ? error.message : String(error)
         );
+        if (terminalNotFound) {
+          markAttachmentUnrecoverable(localAttachment);
+          files.logAttachmentWarn(`WebDAV attachment ${localAttachment.id} is no longer available`, error, {
+            releaseCheck: 'v1.3.4/webdav-download-not-found',
+          });
+          return { availabilityStatus: 'unrecoverable', attachment: localAttachment };
+        }
         files.logAttachmentWarn(`Failed to download attachment ${localAttachment.id}`, error);
         return null;
       }

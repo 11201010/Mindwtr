@@ -19,16 +19,7 @@ export function buildProjectStatusPalette(tc: {
     };
 }
 
-export function resolveAttachmentValidationMessage(
-    error: string | undefined,
-    t: (key: string) => string,
-) {
-    if (error === 'file_too_large') return t('attachments.fileTooLarge');
-    if (error === 'mime_type_blocked' || error === 'mime_type_not_allowed') {
-        return t('attachments.invalidFileType');
-    }
-    return t('attachments.fileNotSupported');
-}
+export { resolveAttachmentValidationMessage } from '@mindwtr/core';
 
 export function buildProjectQuickCaptureReturnTo(projectId: string) {
     return `/projects-screen?projectId=${encodeURIComponent(projectId)}`;

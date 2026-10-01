@@ -6,6 +6,7 @@ import {
     collectFocusEligibilityTasks,
     getFocusStarBlockedText,
     generateUUID,
+    mergeTaskDraftAttachments,
     normalizeFocusTaskLimit,
     resolveTaskEditorFocusStar,
     type Attachment,
@@ -435,6 +436,23 @@ export function useTaskEditState({
             title: titleDraftRef.current,
             description: descriptionDraftRef.current,
         });
+        // The draft's attachments go over the task as stored now, not the copy the editor
+        // opened: a cloudKey, new content or removal sync recorded meanwhile stays.
+        // The list Save writes: the file cleanup after Save settles against it.
+        let savedAttachments = saveDraftState.attachments ?? currentTask.attachments;
+        const storedTask = updates?.attachments ? useTaskStore.getState()._tasksById?.get(currentTask.id) : undefined;
+        if (updates?.attachments && storedTask) {
+            const draftAttachments = updates.attachments;
+            const merged = mergeTaskDraftAttachments(storedTask.attachments ?? [], currentTask.attachments ?? [], draftAttachments);
+            updates = { ...updates, attachments: merged };
+            savedAttachments = merged;
+            if (JSON.stringify(merged) !== JSON.stringify(draftAttachments)) {
+                void logInfo('Editor attachment save kept a newer stored change', {
+                    scope: 'task-edit',
+                    extra: { releaseCheck: 'v1.3.4/editor-attachment-save-merge', outcome: 'merged' },
+                });
+            }
+        }
         if (mode === 'cancel') {
             if (!updates) return false;
             updates = {
@@ -538,7 +556,7 @@ export function useTaskEditState({
         }
         checklistDraftRef.current = '';
         clearTaskEditActivitySession();
-        settleCurrentAttachmentDraft(saveDraftState.attachments ?? currentTask.attachments);
+        settleCurrentAttachmentDraft(savedAttachments);
         onClose();
         return true;
     }, [

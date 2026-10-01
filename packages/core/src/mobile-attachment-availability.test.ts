@@ -113,10 +113,31 @@ describe('mobile attachment availability', () => {
 
   it('never deletes local bytes when a download fails', async () => {
     const { availability, memory, webdavGetFile } = setup({ storage: webdav });
-    webdavGetFile.mockRejectedValueOnce(Object.assign(new Error('Not found'), { status: 404 }));
+    webdavGetFile.mockRejectedValueOnce(Object.assign(new Error('Server error'), { status: 500 }));
 
     await expect(availability.ensureAttachmentAvailableDetailed(remoteAttachment())).resolves.toEqual({ status: 'unavailable' });
     expect(deletesOutsideScratch(memory.calls)).toEqual([]);
+  });
+
+  it('treats a WebDAV 404 as terminal, as the sync pass does: no second request, no Download, local bytes kept', async () => {
+    const { availability, memory, webdavGetFile, lines } = setup({ storage: webdav });
+    webdavGetFile.mockRejectedValueOnce(Object.assign(new Error('Not found'), { status: 404 }));
+    const requested = remoteAttachment({ fileHash: 'a'.repeat(64) });
+
+    const outcome = await availability.ensureAttachmentAvailableDetailed(requested);
+
+    expect(outcome).toMatchObject({
+      status: 'unrecoverable',
+      attachment: { cloudKey: undefined, fileHash: undefined, localStatus: 'missing', deletedAt: expect.any(String) },
+    });
+    expect(requested.cloudKey).toBe('attachments/att-1.txt');
+    expect(deletesOutsideScratch(memory.calls)).toEqual([]);
+    expect(lines).toContainEqual(expect.objectContaining({
+      level: 'warn', extra: expect.objectContaining({ releaseCheck: 'v1.3.4/webdav-download-not-found' }),
+    }));
+    if (outcome.status !== 'unrecoverable') throw new Error('Expected a terminal outcome');
+    await expect(availability.ensureAttachmentAvailableDetailed(outcome.attachment)).resolves.toEqual({ status: 'unavailable' });
+    expect(webdavGetFile).toHaveBeenCalledTimes(1);
   });
 
   it('uses a managed file already on disk only when it matches the remote hash', async () => {

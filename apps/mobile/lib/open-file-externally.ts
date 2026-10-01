@@ -1,37 +1,11 @@
 import { Platform } from 'react-native';
 import * as IntentLauncher from 'expo-intent-launcher';
+import { resolveAttachmentViewMimeType } from '@mindwtr/core';
 
 import { getContentUriAsync } from './file-system';
 
-// Extension fallback for attachments whose stored mimeType is missing — an
-// untyped VIEW intent makes Android show "no app can open this" even when a
-// viewer is installed. Common document/media types only; anything else goes
-// out as */* and lets the resolver decide.
-const MIME_BY_EXTENSION: Record<string, string> = {
-    pdf: 'application/pdf',
-    txt: 'text/plain',
-    md: 'text/markdown',
-    csv: 'text/csv',
-    doc: 'application/msword',
-    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    xls: 'application/vnd.ms-excel',
-    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    ppt: 'application/vnd.ms-powerpoint',
-    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    odt: 'application/vnd.oasis.opendocument.text',
-    ods: 'application/vnd.oasis.opendocument.spreadsheet',
-    epub: 'application/epub+zip',
-    zip: 'application/zip',
-    mp3: 'audio/mpeg',
-    mp4: 'video/mp4',
-};
-
-const resolveViewMimeType = (uri: string, mimeType?: string): string => {
-    const stored = mimeType?.trim();
-    if (stored) return stored;
-    const extension = uri.split('?')[0]?.split('.').pop()?.toLowerCase() ?? '';
-    return MIME_BY_EXTENSION[extension] ?? '*/*';
-};
+// The ACTION_VIEW MIME type (stored, else from the extension, else */*) is core's rule.
+const resolveViewMimeType = (uri: string, mimeType?: string): string => resolveAttachmentViewMimeType(uri, mimeType);
 
 /**
  * Opens a local file in an Android viewer app via ACTION_VIEW. The share sheet

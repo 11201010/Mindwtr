@@ -61,3 +61,19 @@ export function planAttachmentDraftSettlement({
 
     return Array.from(candidates.values());
 }
+
+/**
+ * Whether a live task or project attachment still points at `uri`. A settlement candidate
+ * whose file is in use (an attachment restored, or synced back, after the plan was made)
+ * must keep its bytes. Ask it immediately before the delete, after every await.
+ */
+export function isAttachmentFileInUse(
+    uri: string,
+    owners: Iterable<{ deletedAt?: string; attachments?: readonly Attachment[] }>,
+): boolean {
+    for (const owner of owners) {
+        if (owner.deletedAt) continue;
+        if (owner.attachments?.some((item) => !item.deletedAt && item.kind === 'file' && item.uri === uri)) return true;
+    }
+    return false;
+}

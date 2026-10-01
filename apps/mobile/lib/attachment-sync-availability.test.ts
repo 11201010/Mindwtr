@@ -839,6 +839,32 @@ describe('ensureAttachmentAvailable', () => {
     vi.mocked(getSyncEncryptionMaterial).mockResolvedValue(null);
   });
 
+  it('treats a WebDAV 404 as terminal: the row loses its Download button and a retry asks the server nothing', async () => {
+    asyncStorageMock.store.set('@mindwtr_sync_backend', 'webdav');
+    asyncStorageMock.store.set('@mindwtr_webdav_url', 'https://dav.example/data.json');
+    asyncStorageMock.store.set('@mindwtr_webdav_username', 'u');
+    asyncStorageMock.store.set('@mindwtr_webdav_password', 'p');
+    const core = await import('@mindwtr/core');
+    vi.mocked(core.webdavGetFile).mockRejectedValue(Object.assign(new Error('WebDAV GET failed (404)'), { status: 404 }));
+    const attachment = makeAttachment('dav-gone', { fileHash: sha256Hex(REMOTE_BYTES) });
+    expect(core.getAttachmentRowState(attachment).canDownload).toBe(true);
+
+    const result = await ensureAttachmentAvailableDetailed(attachment);
+
+    if (result.status !== 'unrecoverable') throw new Error(`Expected a terminal outcome, got ${result.status}`);
+    const patched = { ...attachment, ...getAttachmentUnrecoverablePatch(result.attachment) };
+    expect(core.getAttachmentRowState(patched)).toMatchObject({ canDownload: false });
+    expect(patched.deletedAt).toEqual(expect.any(String));
+    await expect(ensureAttachmentAvailableDetailed(patched)).resolves.toEqual({ status: 'unavailable' });
+    expect(core.webdavGetFile).toHaveBeenCalledTimes(1);
+    expect(fileSystemMock.deleteAsync).not.toHaveBeenCalledWith('file://document/attachments/dav-gone.txt', expect.anything());
+    const appLog = await import('./app-log');
+    expect(appLog.logWarn).toHaveBeenCalledWith(
+      'WebDAV attachment dav-gone is no longer available',
+      expect.objectContaining({ extra: expect.objectContaining({ releaseCheck: 'v1.3.4/webdav-download-not-found' }) }),
+    );
+  });
+
   it('falls back to WebDAV for any other backend that has a cloud key', async () => {
     asyncStorageMock.store.set('@mindwtr_sync_backend', 'webdav');
     asyncStorageMock.store.set('@mindwtr_webdav_url', 'https://dav.example/data.json');

@@ -144,6 +144,7 @@ type HarnessApi = {
   openAttachment: ReturnType<typeof useTaskEditAttachments>['openAttachment'];
   replaceAttachment: (attachment: Attachment) => void;
   retryAudioTranscription: ReturnType<typeof useTaskEditAttachments>['retryAudioTranscription'];
+  settleDraftAttachments: ReturnType<typeof useTaskEditAttachments>['settleDraftAttachments'];
 };
 
 function Harness({ expose, initial, taskId = 'task-1', canMutate = () => true }: {
@@ -182,6 +183,7 @@ function Harness({ expose, initial, taskId = 'task-1', canMutate = () => true }:
     openAttachment: hook.openAttachment,
     replaceAttachment: (attachment) => setAttachmentState([attachment]),
     retryAudioTranscription: hook.retryAudioTranscription,
+    settleDraftAttachments: hook.settleDraftAttachments,
   };
   return null;
 }
@@ -194,6 +196,27 @@ describe('useTaskEditAttachments download settlement', () => {
 
   afterEach(() => {
     useTaskStore.setState({ _allTasks: [] });
+  });
+
+  it('asks ownership immediately before each draft cleanup delete: a file a live attachment holds is kept', async () => {
+    const { deleteManagedAttachmentFile } = await import('../../lib/attachment-sync');
+    const local = makeAttachment(1, { uri: 'file://document/attachments/attachment-1.pdf', localStatus: 'available' });
+    const expose = React.createRef<HarnessApi | null>();
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<Harness expose={expose} initial={local} />); });
+    const removed = { ...local, deletedAt: '2026-08-28T00:00:00.000Z' };
+
+    act(() => {
+      expose.current!.settleDraftAttachments({ baselineAttachments: [local], draftAttachments: [removed], committedAttachments: [removed] });
+    });
+
+    expect(deleteManagedAttachmentFile).toHaveBeenCalledWith(local, { keep: expect.any(Function) });
+    const { keep } = vi.mocked(deleteManagedAttachmentFile).mock.calls[0]![1] as { keep: () => boolean };
+    expect(keep()).toBe(false);
+    // Restored (or synced back) before the delete runs: the bytes stay.
+    useTaskStore.setState({ _allTasks: [makeTask(local)] });
+    expect(keep()).toBe(true);
+    act(() => tree.unmount());
   });
 
   it('adds an entire link paste to the draft, rejects an invalid later line, and edits one id', () => {
