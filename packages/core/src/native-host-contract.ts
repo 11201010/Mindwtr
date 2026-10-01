@@ -260,6 +260,7 @@ import { createTaskChecklistSaveMethods } from './native-host-contract-task-chec
 import { createTaskFocusMethods } from './native-host-contract-task-focus';
 import { createFocusOrderMethods } from './native-host-contract-focus-order';
 import { createFocusSavedFilterMethods } from './native-host-contract-focus-saved-filter';
+import { createSavedSearchWriteMethods } from './native-host-contract-saved-search-write';
 import { createProjectCreateMethods } from './native-host-contract-project-create';
 import { createProjectFocusMethods } from './native-host-contract-project-focus';
 import { createProjectRenameMethods } from './native-host-contract-project-rename';
@@ -1705,6 +1706,7 @@ export function createNativeHostContract(options: {
             t: () => translate,
             formatDate: (value) => createDateFormatter(dateFormatting())(value, 'P', value),
         }),
+        ...createSavedSearchWriteMethods({ readiness, save }),
         // Settings: the menu, General and Manage: native-host-contract-settings.ts.
         ...createSettingsMethods({
             readiness,

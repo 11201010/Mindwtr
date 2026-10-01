@@ -17,6 +17,94 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testSavedSearchWriteNormal() { savedSearchWriteFlow(library: "0178bb87-1319-49f1-afec-40c38368d28d") }
+    func testSavedSearchWriteLargestText() { savedSearchWriteFlow(library: "b43325de-3d8f-432f-bb65-607ae71f5f7e") }
+
+    private func replaceSavedSearchName(_ field: XCUIElement, with name: String) {
+        // The dialog focuses its newly initialized field at the end. Avoid the OS's large-text selection menu.
+        let count = (field.value as? String ?? "").count
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count) + name)
+        XCTAssertEqual(field.value as? String, name)
+    }
+
+    private func beginSavedSearchWrite(_ app: XCUIApplication, name: String) {
+        boardTap(app, "search-open")
+        let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText("Task128")
+        boardTap(app, "search-save-open")
+        let field = app.textFields["saved-search-write-name"]; boardEnabled(field)
+        replaceSavedSearchName(field, with: name)
+        field.typeText("\n")
+    }
+
+    private func savedSearchWriteFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30)
+        beginSavedSearchWrite(app, name: "Task128 Saved")
+        boardEnabled(app.buttons["saved-search-back"])
+        XCTAssertEqual(app.staticTexts["saved-search-title"].label, "Task128 Saved")
+        for (query, title) in [("Task128 000", "Task128 Nested B"), ("Task128 001", "Task128 Nested C")] {
+            boardTap(app, "search-open")
+            let input = app.textFields["search-input"]; boardEnabled(input); input.tap(); input.typeText(query)
+            boardTap(app, "search-save-open")
+            let field = app.textFields["saved-search-write-name"]; boardEnabled(field)
+            replaceSavedSearchName(field, with: title); field.typeText("\n")
+            boardEnabled(app.buttons["saved-search-back"])
+            XCTAssertEqual(app.staticTexts["saved-search-title"].label, title)
+        }
+        for title in ["Task128 Nested B", "Task128 Saved"] {
+            boardTap(app, "saved-search-delete"); boardTap(app, "saved-search-write-confirm")
+            boardEnabled(app.buttons["search-close"]); boardTap(app, "search-close")
+            boardEnabled(app.buttons["saved-search-back"])
+            XCTAssertEqual(app.staticTexts["saved-search-title"].label, title)
+        }
+        boardTap(app, "task-title-task128-task"); boardTap(app, "task-mode-edit")
+        replaceProjectNotesText(app.textFields["task-editor-title"], with: "Discarded Task128")
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard")
+        boardTap(app, "saved-search-back"); boardEnabled(app.buttons["search-save-open"])
+        boardTap(app, "search-save-open")
+        let name = app.textFields["saved-search-write-name"]; boardEnabled(name)
+        replaceSavedSearchName(name, with: "Must not rename")
+        name.typeText("\n")
+        boardEnabled(app.buttons["saved-search-back"])
+        XCTAssertEqual(app.staticTexts["saved-search-title"].label, "Task128 Saved")
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu")
+        let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "menu-", "Task128 Saved")).firstMatch
+        boardEnabled(saved); saved.tap(); boardEnabled(app.buttons["saved-search-delete"])
+        boardTap(app, "saved-search-delete"); boardTap(app, "saved-search-write-cancel")
+        boardEnabled(app.buttons["saved-search-delete"]); boardTap(app, "saved-search-delete")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Saved search deletion"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "saved-search-write-confirm"); boardEnabled(app.buttons["tab-menu"])
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30); boardTap(app, "tab-menu")
+        XCTAssertFalse(saved.exists); app.terminate()
+    }
+
+    func testSavedSearchWriteFailureRetainsExactRequest() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "f7fb8d9a-4868-488b-b09c-b4fb1a9cfd6f"]
+        app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30)
+        beginSavedSearchWrite(app, name: "Task128 Recovered")
+        XCTAssertTrue(app.staticTexts["saved-search-write-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["saved-search-write-cancel"].isEnabled)
+            XCTAssertFalse(app.textFields["saved-search-write-name"].isEnabled)
+            XCTAssertEqual(app.textFields["saved-search-write-name"].value as? String, "Task128 Recovered")
+            boardTap(app, "saved-search-write-retry")
+            boardEnabled(app.buttons["saved-search-write-retry"])
+        }
+        app.terminate()
+    }
+
+    func testSavedSearchWriteColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "f7fb8d9a-4868-488b-b09c-b4fb1a9cfd6f"]
+        for _ in 0..<2 {
+            app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30); boardTap(app, "tab-menu")
+            let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "menu-", "Task128 Recovered")).firstMatch
+            boardEnabled(saved); saved.tap(); boardEnabled(app.buttons["saved-search-back"])
+            XCTAssertTrue(app.buttons["task-title-task128-task"].exists)
+            app.terminate()
+        }
+    }
+
     func testSavedSearchNavigationAndDiscard() {
         savedSearchNavigation(library: "2eadc8a3-4717-4e05-a4c0-ece40b254027")
     }

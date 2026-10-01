@@ -40,6 +40,7 @@ const DEVICE_LOCAL_TOP_LEVEL_KEYS = [
     'globalQuickAddShortcut',         // desktop shortcut registration is local runtime behaviour
     'window',                         // desktop window placement and tray behaviour
     'savedSearches',                  // device-local search shortcuts
+    'savedSearchesUpdatedAt',         // device-local search write ownership
     'sidebarCollapsed',               // per-device layout state
     'taskSortBy',                     // per-device list order
     'diagnostics',                    // per-device logging switch
@@ -145,6 +146,7 @@ const fullSettings = (): Settings => ({
     globalQuickAddShortcut: 'ctrl+alt+m',
     window: { decorations: false, closeBehavior: 'tray' },
     savedSearches: [{ id: 'search-1', name: 'Desk', query: '@desk' }],
+    savedSearchesUpdatedAt: OLDER,
     sidebarCollapsed: true,
     taskSortBy: 'due',
     diagnostics: { loggingEnabled: true },
@@ -250,6 +252,7 @@ describe('settings sync scope contract', () => {
             globalQuickAddShortcut: 'ctrl+shift+n',
             window: { decorations: true, closeBehavior: 'quit' },
             savedSearches: [{ id: 'search-2', name: 'Errands', query: '@errands' }],
+            savedSearchesUpdatedAt: NEWER,
             sidebarCollapsed: false,
             taskSortBy: 'title',
             diagnostics: { loggingEnabled: false },

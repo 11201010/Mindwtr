@@ -433,14 +433,35 @@ final class CoreModel: ObservableObject {
     @Published var expandedProjectSections: Set<String> = []
     @Published private(set) var contexts: CoreObject = [:]
     @Published private(set) var contextsSearchText = ""
+    @Published private(set) var savedSearchWriteOperation: CoreObject = [:]
+    @Published private(set) var savedSearchWriteDialog: CoreObject = [:]
+    @Published var savedSearchWriteName = ""
+    @Published private(set) var savedSearchWriteError: String?
+    private var savedSearchWriteOptions: CoreObject = [:]
+    private var savedSearchWriteRequest: String?
+    var savedSearchWritePresented: Bool { !savedSearchWriteOperation.isEmpty }
+    var savedSearchWriteCanConfirm: Bool {
+        !busy && !retryNeeded && savedSearchWriteRequest == nil && !savedSearchWriteOptions.isEmpty
+            && (savedSearchWriteOperation.text("type") != "save" || !savedSearchWriteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     @Published private(set) var savedSearch: CoreObject = [:]
     @Published private(set) var savedSearchCurrent = false
     @Published private(set) var savedSearchError: String?
+    private struct SavedSearchReturn {
+        let id: String
+        let caller: Surface
+        let depth: Int
+        let query: String
+        let filters: CoreObject
+        let searchCaller: Surface
+    }
+    private var savedSearchReturns: [SavedSearchReturn] = []
     private var savedSearchID = ""
     private var savedSearchCaller: Surface = .inbox
     private var savedSearchLoadedDepth = 50
     var savedSearchActionsEnabled: Bool {
-        ready && selectedSurface == .savedSearch && savedSearchCurrent && !busy && !retryNeeded
+        ready && selectedSurface == .savedSearch && savedSearchCurrent && !busy && !retryNeeded && !savedSearchWritePresented
             && !taskPresented && !capturePresented && !areaPickerPresented
     }
 
@@ -1124,7 +1145,7 @@ final class CoreModel: ObservableObject {
     var items: [CoreObject] { inbox.objects("items") }
     var searchCurrent: Bool { publishedSearchGeneration == searchGeneration && !searchLoading }
     var searchActionsEnabled: Bool {
-        ready && selectedSurface == .search && searchCurrent && !busy && !retryNeeded && !taskPresented
+        ready && selectedSurface == .search && searchCurrent && !busy && !retryNeeded && !taskPresented && !savedSearchWritePresented
     }
     var projectActionsEnabled: Bool {
         ready && selectedSurface == .project && projectCurrent && !busy && !retryNeeded && !taskPresented
@@ -2640,6 +2661,8 @@ final class CoreModel: ObservableObject {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
                 selectedSurface = .projects
+            } else if recovery.text("method") == "savedSearchCommit" {
+                selectedSurface = .inbox
             } else if recovery.text("method") == "focusSavedFilterCommit" {
                 selectedSurface = .focus
                 focusState = recovery.object("result").object("controls")
@@ -2718,7 +2741,7 @@ final class CoreModel: ObservableObject {
     }
 
     func refresh() async {
-        guard !appLock.concealed else { return }
+        guard !appLock.concealed, !savedSearchWritePresented else { return }
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
         guard ready, !retryNeeded, !capturePresented, !taskPresented, !taskStatusMenuPresented, !calendarItemPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
@@ -3314,7 +3337,7 @@ final class CoreModel: ObservableObject {
                     "taskEdit.startModeRelative", "taskEdit.recurrenceLabel", "recurrence.showFutureInCalendar",
                     "task.completedAtPromptTitle", "status.inbox", "status.next", "status.done", "status.reference",
                     "taskEdit.descriptionPlaceholder", "search.placeholder", "search.noResults", "search.searching",
-                    "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators",
+                    "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators", "search.saveSearch", "search.saveSearchPrompt", "search.savedSearches",
                     "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone",
                     "nav.projects", "nav.review", "nav.calendar", "nav.board", "nav.contexts", "common.back", "common.tasks",
                     "task.aria.openContext", "task.aria.openTag",
@@ -11370,6 +11393,115 @@ final class CoreModel: ObservableObject {
         }
     }
 
+    func openSavedSearchSave() async {
+        guard searchActionsEnabled, !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        savedSearchWriteOperation = ["type": "save", "query": searchQuery]
+        savedSearchWriteName = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        savedSearchWriteDialog = ["title": label("search.saveSearch"), "placeholder": label("search.saveSearchPrompt"),
+                                 "cancelLabel": label("common.cancel"), "saveLabel": label("common.save")]
+        await readSavedSearchWriteOptions()
+    }
+
+    func openSavedSearchDelete() async {
+        guard savedSearchActionsEnabled, !savedSearch.object("delete").isEmpty else { return }
+        savedSearchWriteOperation = ["type": "delete", "id": savedSearchID]
+        savedSearchWriteDialog = savedSearch.object("delete").object("confirm")
+        savedSearchWriteName = ""
+        await readSavedSearchWriteOptions()
+    }
+
+    func closeSavedSearchWrite() {
+        guard !busy, !retryNeeded, savedSearchWriteRequest == nil else { return }
+        savedSearchWriteOperation = [:]
+        savedSearchWriteDialog = [:]
+        savedSearchWriteOptions = [:]
+        savedSearchWriteName = ""
+        savedSearchWriteError = nil
+    }
+
+    private func readSavedSearchWriteOptions() async {
+        guard savedSearchWritePresented, !busy, !retryNeeded, savedSearchWriteRequest == nil else { return }
+        busy = true
+        savedSearchWriteOptions = [:]
+        savedSearchWriteError = nil
+        defer { finishOperation() }
+        do {
+            if savedSearchWriteOperation.text("type") == "delete" {
+                await readSavedSearch()
+                guard savedSearchCurrent, savedSearch.flag("found"), savedSearchID == savedSearchWriteOperation.text("id") else {
+                    throw CocoaError(.fileReadUnknown)
+                }
+                savedSearchWriteDialog = savedSearch.object("delete").object("confirm")
+            }
+            let options = try await query("savedSearchOptions", [try json(["operation": savedSearchWriteOperation])])
+            guard options.count == 1, !options.text("expected").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            savedSearchWriteOptions = options
+        } catch { savedSearchWriteError = label("settings.feedback.actionFailed") }
+    }
+
+    func confirmSavedSearchWrite() async {
+        guard savedSearchWriteCanConfirm else { return }
+        busy = true
+        savedSearchWriteError = nil
+        defer { finishOperation() }
+        do {
+            savedSearchWriteRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                "operation": savedSearchWriteOperation,
+                "name": savedSearchWriteOperation.text("type") == "save" ? savedSearchWriteName as Any : NSNull(),
+                "expected": savedSearchWriteOptions.text("expected")])
+            try acknowledgeSavedSearchWrite(await query("savedSearchWrite", [savedSearchWriteRequest!]))
+            try await readSelectedSurface()
+        } catch {
+            if savedSearchWriteRequest != nil { handleSavedSearchWriteError(error) }
+            else { self.error = error.localizedDescription }
+        }
+    }
+
+    private func acknowledgeSavedSearchWrite(_ result: CoreObject) throws {
+        guard let request = savedSearchWriteRequest,
+              let input = try NativeJSON.jsonObject(with: Data(request.utf8)) as? CoreObject,
+              result.count == 3, result["existing"] is Bool, result["changed"] is Bool,
+              !result.text("id").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        let operation = input.object("operation")
+        let saving = operation.text("type") == "save"
+        if !saving || !result.flag("existing") {
+            let expected = saving ? input.text("requestId") : operation.text("id")
+            guard result.text("id").utf8.elementsEqual(expected.utf8) else { throw CocoaError(.coderReadCorrupt) }
+        }
+        savedSearchWriteRequest = nil
+        retryNeeded = false
+        error = nil
+        savedSearchWriteOperation = [:]
+        savedSearchWriteDialog = [:]
+        savedSearchWriteOptions = [:]
+        savedSearchWriteName = ""
+        savedSearchWriteError = nil
+        if saving {
+            savedSearchCaller = .search
+            savedSearchID = result.text("id")
+            savedSearch = [:]
+            savedSearchCurrent = false
+            savedSearchLoadedDepth = pageSize
+            selectedSurface = .savedSearch
+        } else {
+            selectedSurface = savedSearchCaller
+        }
+    }
+
+    private func handleSavedSearchWriteError(_ failure: Error) {
+        if savedSearchWriteRequest != nil && isDefiniteRejection(failure) {
+            savedSearchWriteRequest = nil
+            savedSearchWriteOptions = [:]
+            retryNeeded = false
+        } else { retryNeeded = savedSearchWriteRequest != nil }
+        savedSearchWriteError = label("settings.feedback.actionFailed")
+    }
+
+    func retrySavedSearchWrite() async {
+        if retryNeeded { await retry() }
+        else { await readSavedSearchWriteOptions() }
+    }
+
     func openSavedSearch(_ item: CoreObject) async {
         guard ready, morePresented, !busy, !retryNeeded, !taskPresented, !capturePresented, !areaPickerPresented,
               moreMenu.object("savedSearches").objects("items").contains(where: {
@@ -11389,7 +11521,7 @@ final class CoreModel: ObservableObject {
     }
 
     func closeSavedSearch() async {
-        guard selectedSurface == .savedSearch, !busy, !retryNeeded, !taskPresented else { return }
+        guard !savedSearchWritePresented, selectedSurface == .savedSearch, !busy, !retryNeeded, !taskPresented else { return }
         selectedSurface = savedSearchCaller
         await refresh()
     }
@@ -13554,8 +13686,12 @@ final class CoreModel: ObservableObject {
     }
 
     func openSearch() {
-        guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+        guard !savedSearchWritePresented, ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !calendarComposerPresented, !mindSweepPresented, selectedSurface != .search else { return }
+        if selectedSurface == .savedSearch {
+            savedSearchReturns.append(SavedSearchReturn(id: savedSearchID, caller: savedSearchCaller,
+                depth: savedSearchLoadedDepth, query: searchQuery, filters: searchFilters, searchCaller: searchCaller))
+        } else { savedSearchReturns = [] }
         searchCaller = selectedSurface
         morePresented = false
         selectedSurface = .search
@@ -13566,8 +13702,18 @@ final class CoreModel: ObservableObject {
     }
 
     func closeSearch() async {
-        guard selectedSurface == .search, !busy, !retryNeeded, !taskPresented else { return }
+        guard !savedSearchWritePresented, selectedSurface == .search, !busy, !retryNeeded, !taskPresented else { return }
         selectedSurface = searchCaller
+        if selectedSurface == .savedSearch, let previous = savedSearchReturns.popLast() {
+            savedSearchID = previous.id
+            savedSearchCaller = previous.caller
+            savedSearchLoadedDepth = previous.depth
+            savedSearch = [:]
+            savedSearchCurrent = false
+            searchQuery = previous.query
+            searchFilters = previous.filters
+            searchCaller = previous.searchCaller
+        }
         invalidateSearch()
         searchLoading = false
         searchNeedsRead = false
@@ -13576,13 +13722,13 @@ final class CoreModel: ObservableObject {
     }
 
     func setSearchQuery(_ text: String) {
-        guard selectedSurface == .search, !retryNeeded, !taskPresented, text != searchQuery else { return }
+        guard !savedSearchWritePresented, selectedSurface == .search, !retryNeeded, !taskPresented, text != searchQuery else { return }
         searchQuery = text
         requestSearch()
     }
 
     func setSearchFilters(_ filters: CoreObject) {
-        guard selectedSurface == .search, !busy, !retryNeeded, !taskPresented, !filters.isEmpty else { return }
+        guard !savedSearchWritePresented, selectedSurface == .search, !busy, !retryNeeded, !taskPresented, !filters.isEmpty else { return }
         searchFilters = filters
         requestSearch()
     }
@@ -16627,6 +16773,14 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = savedSearchWriteRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("savedSearchRetryOutcome", [request]) }
+                try acknowledgeSavedSearchWrite(result)
+                try await readSelectedSurface()
+                return
+            }
             if let request = focusSavedFilterRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -16990,6 +17144,10 @@ final class CoreModel: ObservableObject {
             }
             if projectNotesWriteRequest != nil {
                 await handleProjectNotesWriteError(error)
+                return
+            }
+            if savedSearchWriteRequest != nil {
+                handleSavedSearchWriteError(error)
                 return
             }
             if focusSavedFilterRequest != nil {

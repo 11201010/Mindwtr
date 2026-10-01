@@ -21,6 +21,17 @@ struct SearchScreen: View {
                     Text(model.label("search.helpOperators")).rnFont(12).foregroundStyle(palette.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.top, 8)
                 }
+                if !model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button {
+                        inputFocused = false
+                        Task { await model.openSavedSearchSave() }
+                    } label: {
+                        Text(model.label("search.saveSearch")).rnFont(14, .semibold)
+                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.tint)
+                    .disabled(!model.searchActionsEnabled).accessibilityIdentifier("search-save-open")
+                }
                 activeChips
                 if model.searchLoading && !model.retryNeeded {
                     HStack(spacing: 8) {

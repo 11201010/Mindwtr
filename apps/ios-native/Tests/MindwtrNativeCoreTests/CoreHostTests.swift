@@ -22184,6 +22184,160 @@ final class CoreHostTests: XCTestCase {
         }
     }
 
+    private func savedSearchWriteRequest(_ core: CoreHost, operation: [String: Any], name: Any = NSNull()) async throws -> [String: Any] {
+        let options = try object(await core.call("savedSearchOptions", argumentsJSON: json([json(["operation": operation])])))
+        return ["requestId": UUID().uuidString.lowercased(), "operation": operation, "name": name,
+                "expected": try XCTUnwrap(options["expected"])]
+    }
+
+    private func savedSearchWriteEnvelope() throws -> [String: Any] {
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "savedSearchCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        return try object(XCTUnwrap(args.first))
+    }
+
+    func testSavedSearchWriteSaveDuplicateDeletePreservesOtherData() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        let sibling: [String: Any] = ["id": "sibling", "name": "Other", "query": "other", "future": ["raw": "e\u{301}"]]
+        settings["savedSearches"] = [sibling]
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults(); var diagnostics = 0
+        faults.commandDiagnostic = { if $0 == "savedSearchSaved" { diagnostics += 1 } }
+        let core = host(faults); _ = try await core.start()
+        let sqlite = try SQLiteBridge(url: database); let before = try nineTableSnapshot(sqlite); sqlite.close()
+        let operation: [String: Any] = ["type": "save", "query": "  preference  "]
+        let request = try await savedSearchWriteRequest(core, operation: operation, name: "  Saved e\u{301}  ")
+        await expectFailure("STALE_REVISION") { _ = try await core.call("savedSearchRetryOutcome", argumentsJSON: json([json(request)])) }
+        let created = try object(await core.call("savedSearchWrite", argumentsJSON: json([json(request)])))
+        let id = try XCTUnwrap(created["id"] as? String)
+        XCTAssertEqual(id, request["requestId"] as? String)
+        XCTAssertEqual(created["changed"] as? Bool, true)
+        let afterSave = try calendarPreferenceSettings()
+        let searches = try XCTUnwrap(afterSave["savedSearches"] as? [[String: Any]])
+        XCTAssertEqual(try json(searches[0]), try json(sibling))
+        XCTAssertEqual(searches.last?["name"] as? String, "Saved e\u{301}")
+        XCTAssertEqual(searches.last?["query"] as? String, "preference")
+        let duplicate = try await savedSearchWriteRequest(core, operation: operation, name: "Never rename")
+        let existing = try object(await core.call("savedSearchWrite", argumentsJSON: json([json(duplicate)])))
+        XCTAssertEqual(existing["id"] as? String, id); XCTAssertEqual(existing["existing"] as? Bool, true)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(afterSave))
+        let remove = try await savedSearchWriteRequest(core, operation: ["type": "delete", "id": id])
+        _ = try await core.call("savedSearchWrite", argumentsJSON: json([json(remove)]))
+        var final = try calendarPreferenceSettings()
+        XCTAssertEqual(try json(XCTUnwrap(final["savedSearches"])), try json([sibling]))
+        XCTAssertNotEqual(final["savedSearchesUpdatedAt"] as? String, afterSave["savedSearchesUpdatedAt"] as? String)
+        final.removeValue(forKey: "savedSearchesUpdatedAt")
+        XCTAssertEqual(try json(final), try json(settings))
+        let check = try SQLiteBridge(url: database); let after = try nineTableSnapshot(check); check.close()
+        for index in before.indices where index != 5 { XCTAssertEqual(before[index], after[index]) }
+        XCTAssertEqual(diagnostics, 2)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    func testSavedSearchWriteFailedSaveExactRetryAndColdRecovery() async throws {
+        for cold in [false, true] {
+            let parent = directory!; directory = parent.appendingPathComponent(cold ? "cold" : "retry")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedCalendarPreferenceTask()
+            let faults = HostIOFaults(); let writer = host(faults); _ = try await writer.start()
+            let request = try await savedSearchWriteRequest(writer, operation: ["type": "save", "query": "preference"], name: "Recovery")
+            let before = try json(calendarPreferenceSettings())
+            faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected saved search COMMIT failure") } }
+            await expectFailure("SAVE_FAILED") { _ = try await writer.call("savedSearchWrite", argumentsJSON: json([json(request)])) }
+            XCTAssertEqual(try json(calendarPreferenceSettings()), before)
+            let envelope = try savedSearchWriteEnvelope()
+            XCTAssertEqual(try json(XCTUnwrap(envelope["request"])), try json(request))
+            let expected = try XCTUnwrap((envelope["prepared"] as? [String: Any])?["result"])
+            if cold {
+                await writer.close()
+                let reopened = host(); let startup = try object(await reopened.start())
+                let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+                XCTAssertEqual(recovery["method"] as? String, "savedSearchCommit")
+                XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(expected))
+                await reopened.close()
+            } else {
+                faults.beforeSQL = nil
+                let retried = try await writer.retryPending()
+                XCTAssertEqual(try json(object(XCTUnwrap(retried))), try json(expected))
+                await writer.close()
+            }
+            let searches = try XCTUnwrap(calendarPreferenceSettings()["savedSearches"] as? [[String: Any]])
+            XCTAssertEqual(searches.filter { $0["id"] as? String == request["requestId"] as? String }.count, 1)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            directory = parent
+        }
+    }
+
+    func testSavedSearchWriteLostAcknowledgmentPreservesLaterUnrelatedSettings() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults(); let writer = host(faults); _ = try await writer.start()
+        let request = try await savedSearchWriteRequest(writer, operation: ["type": "save", "query": "preference"], name: "Saved")
+        var writes = 0
+        faults.journalWrite = { writes += 1; if writes == 2 { throw HostFailure("Injected saved search lost acknowledgment") } }
+        await expectFailure("lost acknowledgment") { _ = try await writer.call("savedSearchWrite", argumentsJSON: json([json(request)])) }
+        await writer.close()
+        var settings = try calendarPreferenceSettings(); settings["timeFormat"] = "24h"
+        try writeCalendarPreferenceSettings(settings)
+        let replayFaults = HostIOFaults(); var sqlWrites = 0
+        replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") { sqlWrites += 1 } }
+        let replay = host(replayFaults); _ = try await replay.start()
+        XCTAssertEqual(sqlWrites, 0)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await replay.close()
+    }
+
+    func testSavedSearchWriteColdReplayRefusesDeletedRenamedAndEqualListABA() async throws {
+        for kind in ["deleted", "renamed", "aba"] {
+            let parent = directory!; directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedCalendarPreferenceTask()
+            let faults = HostIOFaults(); let writer = host(faults); _ = try await writer.start()
+            let request = try await savedSearchWriteRequest(writer, operation: ["type": "save", "query": "preference"], name: "Saved")
+            var writes = 0
+            faults.journalWrite = { writes += 1; if writes == 2 { throw HostFailure("Injected saved search lost acknowledgment") } }
+            await expectFailure("lost acknowledgment") { _ = try await writer.call("savedSearchWrite", argumentsJSON: json([json(request)])) }
+            await writer.close()
+            var settings = try calendarPreferenceSettings()
+            var searches = try XCTUnwrap(settings["savedSearches"] as? [[String: Any]])
+            if kind == "deleted" { searches = [] }
+            if kind == "renamed" { searches[searches.count - 1]["name"] = "Later name" }
+            settings["savedSearches"] = searches
+            settings["savedSearchesUpdatedAt"] = "2040-01-01T00:00:00.000Z"
+            try writeCalendarPreferenceSettings(settings)
+            let replayFaults = HostIOFaults(); var sqlWrites = 0
+            replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") { sqlWrites += 1 } }
+            let replay = host(replayFaults)
+            await expectFailure("STALE_REVISION") { _ = try await replay.start() }
+            XCTAssertEqual(sqlWrites, 0, kind)
+            XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings), kind)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+            await replay.close(); directory = parent
+        }
+    }
+
+    func testSavedSearchWriteForgedJournalRejectedBeforeSQLite() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults(); let writer = host(faults); _ = try await writer.start()
+        let request = try await savedSearchWriteRequest(writer, operation: ["type": "save", "query": "preference"], name: "Saved")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected saved search COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("savedSearchWrite", argumentsJSON: json([json(request)])) }
+        var envelope = try savedSearchWriteEnvelope(); var saved = try object(String(contentsOf: journal))
+        await writer.close()
+        var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any]); prepared["preparedAt"] = "not-a-date"
+        envelope["prepared"] = prepared; saved["argumentsJSON"] = try json([json(envelope)])
+        let bytes = Data(try json(saved).utf8); try bytes.write(to: journal)
+        let databaseBytes = try Data(contentsOf: database)
+        let blockedFaults = HostIOFaults(); var sql = 0; blockedFaults.beforeSQL = { _ in sql += 1 }
+        let blocked = host(blockedFaults); await expectFailure { _ = try await blocked.start() }
+        XCTAssertEqual(sql, 0); XCTAssertEqual(try Data(contentsOf: database), databaseBytes)
+        XCTAssertEqual(try Data(contentsOf: journal), bytes)
+        await blocked.close()
+    }
+
     private func seedFocusSavedFilterTask() async throws {
         try await seedCalendarPreferenceTask()
         let sqlite = try SQLiteBridge(url: database)

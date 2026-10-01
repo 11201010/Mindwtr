@@ -5,7 +5,7 @@ import { normalizeTaskForLoad } from './task-status';
 import { normalizeProjectLifecycleFields } from './project-status';
 import type { StorageAdapter } from './storage';
 import type { AppData, AppSettings, Area, SavedFilter, TaskEditorFieldId, TaskEditorSectionId } from './types';
-import type { DerivedCache, TaskStore } from './store-types';
+import type { DerivedCache, SavedSearchWriteScope, TaskStore } from './store-types';
 import type { FocusControlState } from './focus-controls';
 import { buildFocusControlsModel } from './focus-controls';
 import {
@@ -313,6 +313,13 @@ export const focusSavedFilterToken = (value: unknown): string => JSON.stringify(
     return Object.fromEntries(Object.keys(item).sort().map((key) => [key, (item as Record<string, unknown>)[key]]));
 });
 
+export const savedSearchWriteScope = (settings: AppSettings): SavedSearchWriteScope => ({
+    savedSearchesPresent: owns(settings, 'savedSearches'),
+    savedSearches: settings.savedSearches ?? null,
+    stampPresent: owns(settings, 'savedSearchesUpdatedAt'),
+    stamp: settings.savedSearchesUpdatedAt ?? null,
+});
+
 export const focusSavedFilterCreation = (state: TaskStore, controls: FocusControlState) => {
     const model = buildFocusControlsModel({ state: controls, tasks: state.tasks, projects: state.projects,
         areas: state.areas, sections: state.sections, settings: state.settings, now: new Date(), t: (key) => key });
@@ -363,7 +370,7 @@ type SettingsActionContext = {
     getStorage: () => StorageAdapter;
 };
 
-type SettingsActions = Pick<TaskStore, 'fetchData' | 'seedGettingStarted' | 'updateSettings' | 'commitPreparedGeneralPreference' | 'commitPreparedGtdWorkflow' | 'commitPreparedAppLock' | 'retryPreparedAppLockSnapshot' | 'commitPreparedFocusSavedFilter' | 'persistSnapshot' | 'getDerivedState' | 'getFocusedCount' | 'setHighlightTask'>;
+type SettingsActions = Pick<TaskStore, 'fetchData' | 'seedGettingStarted' | 'updateSettings' | 'commitPreparedGeneralPreference' | 'commitPreparedGtdWorkflow' | 'commitPreparedAppLock' | 'retryPreparedAppLockSnapshot' | 'commitPreparedFocusSavedFilter' | 'commitPreparedSavedSearchWrite' | 'persistSnapshot' | 'getDerivedState' | 'getFocusedCount' | 'setHighlightTask'>;
 
 export const createSettingsActions = ({
     set,
@@ -837,6 +844,11 @@ export const createSettingsActions = ({
                 }
                 : updates;
             const nextSettings = mergeSettingsUpdates(deviceState.settings, preparedUpdates);
+            if (owns(updates, 'savedSearches')) {
+                nextSettings.savedSearchesUpdatedAt = timestampAtLeastAfter(
+                    nowIso, deviceState.settings.savedSearchesUpdatedAt,
+                );
+            }
             const nextSyncUpdatedAt = { ...(deviceState.settings.syncPreferencesUpdatedAt ?? {}) };
             let syncUpdated = false;
 
@@ -881,7 +893,8 @@ export const createSettingsActions = ({
             }
 
             const newSettings = syncUpdated ? { ...nextSettings, syncPreferencesUpdatedAt: nextSyncUpdatedAt } : nextSettings;
-            const shouldTrackChange = shouldTrackSettingsChange(state.settings, newSettings, updates);
+            const shouldTrackChange = owns(updates, 'savedSearches')
+                || shouldTrackSettingsChange(state.settings, newSettings, updates);
             if (retentionUpdate && newSettings.gtd?.archiveRetentionDays) {
                 const preview = getArchiveRetentionPreview({
                     tasks: state._allTasks, projects: state._allProjects, sections: state._allSections,
@@ -1137,6 +1150,29 @@ export const createSettingsActions = ({
             const syncPreferencesUpdatedAt = { ...(state.settings.syncPreferencesUpdatedAt ?? {}),
                 savedFilters: timestampAtLeastAfter(input.preparedAt, state.settings.syncPreferencesUpdatedAt?.savedFilters) };
             const settings = { ...state.settings, savedFilters, syncPreferencesUpdatedAt };
+            persist(set, debouncedSave, state, { settings });
+            result = { success: true, outcome: 'applied' };
+            return { settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedSavedSearchWrite: async (input) => {
+        let result: import('./store-types').PreparedTaskEditResult = {
+            success: false, reason: 'conflict', error: 'Prepared saved search conflicts with current data',
+        };
+        set((state) => {
+            const current = savedSearchWriteScope(state.settings);
+            if (focusSavedFilterToken(current) === focusSavedFilterToken(input.after)) {
+                result = { success: true, outcome: 'replayed' };
+                return state;
+            }
+            if (!state.settings.deviceId || !input.after.savedSearchesPresent
+                || !Array.isArray(input.after.savedSearches) || !input.after.stampPresent
+                || typeof input.after.stamp !== 'string'
+                || focusSavedFilterToken(current) !== focusSavedFilterToken(input.before)) return state;
+            const settings = { ...state.settings, savedSearches: input.after.savedSearches,
+                savedSearchesUpdatedAt: input.after.stamp };
             persist(set, debouncedSave, state, { settings });
             result = { success: true, outcome: 'applied' };
             return { settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };

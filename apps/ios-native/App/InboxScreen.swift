@@ -117,9 +117,9 @@ struct InboxScreen: View {
             // More's content, dismissal backdrop and visible tabs share one modal boundary.
             .accessibilityElement(children: .contain)
             .accessibilityAddTraits(model.morePresented ? .isModal : [])
-            .disabled(model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
+            .disabled(model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
                 && (model.reviewGuidePresented || model.reviewPickerPresented)))
-            .accessibilityHidden(model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
+            .accessibilityHidden(model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
                 || (model.selectedSurface == .review && (model.reviewGuidePresented || model.reviewPickerPresented)))
             if model.selectedSurface == .board && model.boardFiltersPresented {
                 BoardFiltersSheet(model: model, palette: palette)
@@ -129,6 +129,7 @@ struct InboxScreen: View {
                     .disabled(model.focusSavedFilterPresented).accessibilityHidden(model.focusSavedFilterPresented)
             }
             if model.focusSavedFilterPresented { FocusSavedFilterDialog(model: model, palette: palette) }
+            if model.savedSearchWritePresented { SavedSearchWriteDialog(model: model, palette: palette) }
             if model.selectedSurface == .review && model.reviewGuidePresented {
                 ReviewGuideScreen(model: model, palette: palette)
                     .disabled(model.mindSweepPresented || model.processInboxPresented)

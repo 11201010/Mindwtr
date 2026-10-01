@@ -1,6 +1,6 @@
 import type { ProjectTaskSummary } from './project-row-meta';
 import type { FocusStarAction } from './focus-star';
-import type { AppData, Area, FilterCriteria, FocusGroupBy, Person, Project, SavedFilter, Section, SortField, Task, TaskStatus } from './types';
+import type { AppData, Area, FilterCriteria, FocusGroupBy, Person, Project, SavedFilter, SavedSearch, Section, SortField, Task, TaskStatus } from './types';
 import type { TaskQueryOptions } from './storage';
 import type { TaskDateCoherenceIssue } from './task-date-coherence';
 import type { TaskTokenUsage } from './task-token-usage';
@@ -84,6 +84,17 @@ export type PreparedFocusSavedFilter = {
     preparedAt: string;
     result: FocusSavedFilterResult;
 };
+
+export type SavedSearchWriteOperation = { type: 'save'; query: string } | { type: 'delete'; id: string };
+export type SavedSearchWriteRequest = { requestId: string; operation: SavedSearchWriteOperation;
+    name: string | null; expected: string };
+export type SavedSearchWriteResult = { id: string; existing: boolean; changed: boolean };
+/** Null denotes absence; the booleans preserve the distinction from an empty collection. */
+export type SavedSearchWriteScope = { savedSearchesPresent: boolean; savedSearches: SavedSearch[] | null;
+    stampPresent: boolean; stamp: string | null };
+export type PreparedSavedSearchWrite = { version: 1; request: SavedSearchWriteRequest;
+    before: SavedSearchWriteScope; after: SavedSearchWriteScope; preparedAt: string;
+    result: SavedSearchWriteResult };
 
 /** One frozen project-only creation. The full project row is its durable receipt. */
 export type PreparedProjectCreate = {
@@ -528,6 +539,7 @@ export interface TaskStore {
     commitPreparedTaskFocus: (input: PreparedTaskFocus & { request: { taskId: string; focused: boolean } }) => Promise<PreparedTaskEditResult>;
     commitPreparedFocusOrder: (input: PreparedFocusOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedFocusSavedFilter: (input: PreparedFocusSavedFilter) => Promise<PreparedTaskEditResult>;
+    commitPreparedSavedSearchWrite: (input: PreparedSavedSearchWrite) => Promise<PreparedTaskEditResult>;
     /** Native validates the action-specific envelope before this atomic guarded write. */
     commitPreparedBoardTask: (input: PreparedBoardTask) => Promise<PreparedTaskEditResult>;
     commitPreparedCalendarTask: (input: PreparedCalendarTask) => Promise<PreparedTaskEditResult>;

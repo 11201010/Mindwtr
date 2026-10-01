@@ -575,6 +575,8 @@ export interface AppSettings extends NotificationSettings {
     window?: WindowSettings;
     ai?: AiSettings;
     savedSearches?: SavedSearch[];
+    /** Device-local saved-search collection revision; survives deletion to guard prepared writes. */
+    savedSearchesUpdatedAt?: string;
     savedFilters?: SavedFilter[];
     sidebarCollapsed?: boolean;
     taskSortBy?: TaskSortBy;

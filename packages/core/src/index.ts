@@ -38,6 +38,7 @@ export * from './sandbox';
 export * from './sandbox-data';
 export * from './store';
 export * from './native-host-contract';
+export * from './native-host-contract-saved-search-write';
 export * from './native-host-contract-attachments';
 export * from './native-host-contract-area-rename';
 export * from './native-host-contract-person-create';

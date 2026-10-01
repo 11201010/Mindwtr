@@ -159,6 +159,7 @@ private final class Engine: @unchecked Sendable {
     private var startupTaskFocusResult: String?
     private var startupFocusOrderResult: String?
     private var startupFocusSavedFilterResult: String?
+    private var startupSavedSearchResult: String?
     private var startupProjectRenameResult: String?
     private var startupProjectFlowResult: String?
     private var startupProjectTaskSortResult: String?
@@ -221,6 +222,7 @@ private final class Engine: @unchecked Sendable {
         "taskFocusOptions": 1, "taskFocusWrite": 1, "taskFocusRetryOutcome": 1,
         "focusOrderOptions": 1, "focusOrderWrite": 1, "focusOrderRetryOutcome": 1,
         "focusSavedFilterOptions": 1, "focusSavedFilterWrite": 1, "focusSavedFilterRetryOutcome": 1,
+        "savedSearchOptions": 1, "savedSearchWrite": 1, "savedSearchRetryOutcome": 1,
         "projectRenameOptions": 1, "projectRenameWrite": 1, "projectRenameRetryOutcome": 1,
         "projectFlowOptions": 1, "projectFlowWrite": 1, "projectFlowRetryOutcome": 1,
         "projectTaskSortOptions": 1, "projectTaskSortWrite": 1, "projectTaskSortRetryOutcome": 1,
@@ -238,7 +240,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -435,6 +437,10 @@ private final class Engine: @unchecked Sendable {
                 _ = try invoke("focusSavedFilterValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validateFocusSavedFilterAcknowledgment(command, value: value) }
             }
+            if let command = pending, command.method == "savedSearchCommit" {
+                _ = try invoke("savedSearchValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateSavedSearchAcknowledgment(command, value: value) }
+            }
             if let command = pending, command.method == "projectRenameCommit" {
                 _ = try invoke("projectRenameValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validateProjectRenameAcknowledgment(command, value: value) }
@@ -579,6 +585,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringTaskFocus = pending?.method == "taskFocusCommit"
         let recoveringFocusOrder = pending?.method == "focusOrderCommit"
         let recoveringFocusSavedFilter = pending?.method == "focusSavedFilterCommit"
+        let recoveringSavedSearch = pending?.method == "savedSearchCommit"
         let recoveringProjectRename = pending?.method == "projectRenameCommit"
         let recoveringProjectFlow = pending?.method == "projectFlowCommit"
         let recoveringProjectTaskSort = pending?.method == "projectTaskSortCommit"
@@ -626,6 +633,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringTaskFocus, let terminal, case .success(let value) = terminal { startupTaskFocusResult = value }
         if recoveringFocusOrder, let terminal, case .success(let value) = terminal { startupFocusOrderResult = value }
         if recoveringFocusSavedFilter, let terminal, case .success(let value) = terminal { startupFocusSavedFilterResult = value }
+        if recoveringSavedSearch, let terminal, case .success(let value) = terminal { startupSavedSearchResult = value }
         if recoveringProjectRename, let terminal, case .success(let value) = terminal { startupProjectRenameResult = value }
         if recoveringProjectFlow, let terminal, case .success(let value) = terminal { startupProjectFlowResult = value }
         if recoveringProjectTaskSort, let terminal, case .success(let value) = terminal { startupProjectTaskSortResult = value }
@@ -660,7 +668,7 @@ private final class Engine: @unchecked Sendable {
             ?? recoveredAreas ?? startupProjectFocusResult
             ?? startupProjectRenameResult ?? recoveredProjectMetadata
         let recoveredFocus = startupTaskFocusResult ?? startupFocusOrderResult ?? startupFocusSavedFilterResult
-            ?? startupFocusGroupResult
+            ?? startupFocusGroupResult ?? startupSavedSearchResult
         let recoveredSomedaySections = startupSomedaySectionCreateResult ?? startupSomedaySectionRenameResult
             ?? startupSomedaySectionDeleteResult ?? startupSomedaySectionOrderResult
             ?? startupSomedaySectionTaskResult
@@ -702,6 +710,7 @@ private final class Engine: @unchecked Sendable {
             : startupMindSweepResult != nil ? "mindSweepCommit"
             : projectRecoveryMethod ?? (startupTaskFocusResult != nil ? "taskFocusCommit"
                 : startupFocusOrderResult != nil ? "focusOrderCommit"
+                : startupSavedSearchResult != nil ? "savedSearchCommit"
                 : startupFocusSavedFilterResult != nil ? "focusSavedFilterCommit"
                 : startupInboxResult != nil ? "inboxPreparedCommit" : startupChecklistResult != nil ? "checklistPreparedCommit"
                 : startupTaskListSortResult != nil ? "taskListSortWrite"
@@ -746,6 +755,7 @@ private final class Engine: @unchecked Sendable {
         startupTaskFocusResult = nil
         startupFocusOrderResult = nil
         startupFocusSavedFilterResult = nil
+        startupSavedSearchResult = nil
         startupProjectRenameResult = nil
         startupProjectFlowResult = nil
         startupProjectTaskSortResult = nil
@@ -876,7 +886,7 @@ private final class Engine: @unchecked Sendable {
             // Mind Sweep has no journal or write before argument validation.
             // Its UI may release an oversized draft only on a definite refusal.
             // With an older command still owed, keep every error uncertain.
-            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "focusSavedFilterWrite", "focusSavedFilterRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectAttachmentWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
+            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "savedSearchOptions", "focusSavedFilterWrite", "savedSearchWrite", "focusSavedFilterRetryOutcome", "savedSearchRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectAttachmentWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
             throw error
         }
         guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
@@ -892,7 +902,7 @@ private final class Engine: @unchecked Sendable {
                     throw CoreHostRejection(message: failure.message)
                 }
             }
-            if ["focusGroupRetryOutcome", "taskListSortRetryOutcome", "unassignedAreaColorRetryOutcome", "somedaySectionCreateRetryOutcome", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteRetryOutcome", "somedaySectionOrderRetryOutcome", "somedaySectionTaskRetryOutcome", "projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "projectSectionOrderRetryOutcome", "appLockRetryOutcome", "gtdWorkflowRetryOutcome", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteRetryOutcome", "managePersonCreateRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaRenameRetryOutcome", "manageAreaEditRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "manageAreaDeleteRetryOutcome", "projectFocusRetryOutcome", "taskFocusRetryOutcome", "focusOrderRetryOutcome", "focusSavedFilterRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectTaskSortRetryOutcome", "projectTaskOrderRetryOutcome", "projectNotesWriteRetryOutcome", "projectTagsWriteRetryOutcome", "projectAttachmentWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome", "projectAreaRetryOutcome"].contains(method) {
+            if ["focusGroupRetryOutcome", "taskListSortRetryOutcome", "unassignedAreaColorRetryOutcome", "somedaySectionCreateRetryOutcome", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteRetryOutcome", "somedaySectionOrderRetryOutcome", "somedaySectionTaskRetryOutcome", "projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "projectSectionOrderRetryOutcome", "appLockRetryOutcome", "gtdWorkflowRetryOutcome", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteRetryOutcome", "managePersonCreateRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaRenameRetryOutcome", "manageAreaEditRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "manageAreaDeleteRetryOutcome", "projectFocusRetryOutcome", "taskFocusRetryOutcome", "focusOrderRetryOutcome", "focusSavedFilterRetryOutcome", "savedSearchRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectTaskSortRetryOutcome", "projectTaskOrderRetryOutcome", "projectNotesWriteRetryOutcome", "projectTagsWriteRetryOutcome", "projectAttachmentWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome", "projectAreaRetryOutcome"].contains(method) {
                 do {
                     let value = try invoke(method, arguments: args)
                     if method == "appLockRetryOutcome" {
@@ -903,6 +913,7 @@ private final class Engine: @unchecked Sendable {
                         }
                         try validateAppLockResult(result, request: request)
                     }
+                    if method == "savedSearchRetryOutcome" { throw HostFailure("Malformed saved search probe: positive outcome is unsupported") }
                     if method == "gtdWorkflowRetryOutcome" {
                         throw HostFailure("Malformed GTD workflow probe: positive outcome is unsupported")
                     }
@@ -1169,6 +1180,7 @@ private final class Engine: @unchecked Sendable {
                 NSLog("Native iOS Focus order options validated releaseCheck=v1.3.4/ios-focus-order-revision outcome=accepted")
             }
             if method == "focusSavedFilterOptions" { try validateFocusSavedFilterOptions(value) }
+            if method == "savedSearchOptions" { try validateSavedSearchOptions(value) }
             if method == "somedaySectionTaskOptions" {
                 guard let inputJSON = args.first as? String,
                       let input = try NativeJSON.jsonObject(with: Data(inputJSON.utf8)) as? [String: Any],
@@ -1466,6 +1478,38 @@ private final class Engine: @unchecked Sendable {
                 command = PendingCommand(version: 2, method: "focusSavedFilterCommit", argumentsJSON: encoded)
                 _ = try journalArguments(command)
                 _ = try invoke("focusSavedFilterValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "savedSearchWrite" {
+            do {
+                let value = try invoke("savedSearchPrepare", arguments: args)
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed Saved search preparation")
+                }
+                if kind == "noop" {
+                    guard Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any] else {
+                        throw HostFailure("Malformed Saved search no-op")
+                    }
+                    try validateSavedSearchResult(result, request: submitted)
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      let result = prepared["result"] as? [String: Any],
+                      Self.equalJSON(request, submitted) else {
+                    throw HostFailure("Malformed prepared Saved search")
+                }
+                try validateSavedSearchResult(result, request: request)
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Saved search is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                command = PendingCommand(version: 2, method: "savedSearchCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("savedSearchValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "projectRenameWrite" {
             do {
@@ -2738,6 +2782,10 @@ private final class Engine: @unchecked Sendable {
             _ = try invoke("focusSavedFilterValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validateFocusSavedFilterAcknowledgment(command, value: value) }
         }
+        if command.method == "savedSearchCommit" {
+            _ = try invoke("savedSearchValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateSavedSearchAcknowledgment(command, value: value) }
+        }
         if command.method == "projectRenameCommit" {
             _ = try invoke("projectRenameValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validateProjectRenameAcknowledgment(command, value: value) }
@@ -3072,6 +3120,12 @@ private final class Engine: @unchecked Sendable {
 #endif
             NSLog("Native iOS Focus saved filter saved releaseCheck=v1.3.4/ios-focus-saved-filter outcome=confirmed")
         }
+        if command.method == "savedSearchCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("savedSearchSaved")
+#endif
+            NSLog("Native iOS Saved search saved releaseCheck=v1.3.4/ios-saved-search-write outcome=confirmed")
+        }
         if command.method == "projectRenameCommit", case .success = terminal {
 #if DEBUG
             faults?.commandDiagnostic?("projectRenameApplied")
@@ -3203,7 +3257,7 @@ private final class Engine: @unchecked Sendable {
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
-            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
             || (method == "somedaySectionOrderWrite" && message.hasPrefix("STALE_REVISION:"))
@@ -3918,6 +3972,57 @@ private final class Engine: @unchecked Sendable {
             throw HostFailure("Malformed Focus saved filter acknowledgment")
         }
         try validateFocusSavedFilterResult(result, request: request)
+    }
+    private static func validSavedSearchOperation(_ value: Any?) -> Bool {
+        guard let operation = value as? [String: Any] else { return false }
+        if operation["type"] as? String == "save" {
+            return Set(operation.keys) == Set(["type", "query"])
+                && (operation["query"] as? String).map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf16.count <= 2000 }) == true
+        }
+        return operation["type"] as? String == "delete" && Set(operation.keys) == Set(["type", "id"])
+            && (operation["id"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true
+    }
+
+    private func validateSavedSearchResult(_ result: [String: Any], request: [String: Any]) throws {
+        guard Set(result.keys) == Set(["id", "existing", "changed"]),
+              let id = result["id"] as? String, !id.isEmpty, id.utf16.count <= 200,
+              Self.isBoolean(result["existing"]), Self.isBoolean(result["changed"]),
+              let existing = result["existing"] as? Bool, let changed = result["changed"] as? Bool,
+              let operation = request["operation"] as? [String: Any] else { throw HostFailure("Malformed saved search result") }
+        if operation["type"] as? String == "delete" {
+            guard !existing, id.utf8.elementsEqual((operation["id"] as? String ?? "").utf8) else { throw HostFailure("Malformed saved search deletion result") }
+        } else if existing {
+            guard !changed, let encoded = request["expected"] as? String,
+                  let scope = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  let rows = scope["savedSearches"] as? [[String: Any]],
+                  let query = operation["query"] as? String,
+                  let match = rows.first(where: { ($0["query"] as? String ?? "").utf8.elementsEqual(query.trimmingCharacters(in: .whitespacesAndNewlines).utf8) }),
+                  id.utf8.elementsEqual((match["id"] as? String ?? "").utf8) else { throw HostFailure("Malformed existing saved search result") }
+        } else {
+            guard changed, id.utf8.elementsEqual((request["requestId"] as? String ?? "").utf8) else { throw HostFailure("Malformed saved search creation result") }
+        }
+    }
+
+    private func validateSavedSearchOptions(_ value: String) throws {
+        guard value.utf8.count <= 2_000_000,
+              let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(options.keys) == Set(["expected"]), let expected = options["expected"] as? String,
+              !expected.isEmpty, expected.utf8.count <= 2_000_000,
+              try NativeJSON.jsonObject(with: Data(expected.utf8)) is [String: Any] else { throw HostFailure("Malformed saved search options") }
+    }
+
+    private func validateSavedSearchAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Self.equalJSON(result, expected) else {
+            throw HostFailure("Malformed Saved search acknowledgment")
+        }
+        try validateSavedSearchResult(result, request: request)
     }
 
     private func validateProjectRenameAcknowledgment(_ command: PendingCommand, value: String) throws {
@@ -4840,6 +4945,23 @@ private final class Engine: @unchecked Sendable {
             _ = try arguments("focusSavedFilterWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
             return args
         }
+        if command.method == "savedSearchCommit" {
+            guard command.argumentsJSON.utf8.count <= 2_100_000,
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  Self.equalJSON(request, original) else {
+                throw HostFailure("Malformed prepared Saved search journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("savedSearchWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
         if command.method == "projectSectionRenameCommit" {
             guard command.argumentsJSON.utf8.count <= 12_000_000,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
@@ -5449,7 +5571,7 @@ private final class Engine: @unchecked Sendable {
         if ["focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome"].contains(method) && json.utf8.count > 2_000_000 {
             throw HostFailure("INVALID_INPUT: Focus order transport is too large")
         }
-        if ["focusSavedFilterOptions", "focusSavedFilterWrite", "focusSavedFilterRetryOutcome"].contains(method) && json.utf8.count > 2_000_000 {
+        if ["focusSavedFilterOptions", "savedSearchOptions", "focusSavedFilterWrite", "savedSearchWrite", "focusSavedFilterRetryOutcome", "savedSearchRetryOutcome"].contains(method) && json.utf8.count > 2_000_000 {
             throw HostFailure("INVALID_INPUT: Focus saved filter transport is too large")
         }
         if ["focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome"].contains(method) && json.utf8.count > 2_000_000 {
@@ -6054,6 +6176,29 @@ private final class Engine: @unchecked Sendable {
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
                   Set(input.keys) == Set(["controls"]), input["controls"] is [String: Any] else {
                 throw HostFailure("INVALID_INPUT: Focus order options need bounded controls")
+            }
+        }
+        if method == "savedSearchOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["operation"]), Self.validSavedSearchOperation(input["operation"]) else {
+                throw HostFailure("INVALID_INPUT: Saved search options need a bounded operation")
+            }
+        }
+        if ["savedSearchWrite", "savedSearchRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "operation", "name", "expected"]),
+                  let requestID = input["requestId"] as? String,
+                  requestID == UUID(uuidString: requestID)?.uuidString.lowercased(),
+                  Self.validSavedSearchOperation(input["operation"]),
+                  let operation = input["operation"] as? [String: Any],
+                  (operation["type"] as? String == "save"
+                    ? (input["name"] as? String).map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf16.count <= 2000 }) == true
+                    : input["name"] is NSNull),
+                  let expected = input["expected"] as? String, !expected.isEmpty, expected.utf8.count <= 2_000_000,
+                  try NativeJSON.jsonObject(with: Data(expected.utf8)) is [String: Any] else {
+                throw HostFailure("INVALID_INPUT: Saved search needs a bounded operation, name, token, and lowercase UUID")
             }
         }
         if method == "focusSavedFilterOptions" {

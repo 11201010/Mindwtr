@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-saved-search-write`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Saved search saved` with `outcome=confirmed` proves the prepared saved-search Save/Delete completed durably. No name, query, identifier or result text is logged.
+
 - **`v1.3.4/ios-saved-search-read`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS saved search opened` confirms an existing Menu saved search reached a current shared-core result view. No query, title, identifier or result text is logged.
 
 - **`v1.3.4/archive-retention`** — `packages/core/src/store-archive-retention.ts`. `Archive retention cleanup saved` follows durable persistence of an eligible Archive expiration batch. Fields `taskCount`, `projectCount`, and `sectionCount` show only aggregate purged rows. A no-op, blocked edit, or failed save emits no success line. Verify expired standalone archived tasks and complete archived project groups leave Archive and cannot return from Trash; a newer child keeps its project group. No titles, identifiers, attachments, or URLs are logged.
