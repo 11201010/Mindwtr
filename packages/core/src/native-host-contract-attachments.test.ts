@@ -5,7 +5,7 @@ import { setLogger } from './logger';
 import type { AttachmentAvailabilityOutcome } from './mobile-attachment-availability';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
 import type { NativeAttachmentOwner, NativeAttachmentsHost } from './native-host-contract-attachments';
-import { requestRowId } from './native-request-receipts';
+import { requestRowId, taskRevisionOf } from './native-request-receipts';
 import { loadScreenFixture, normalize, openScreenHost, openSqliteHost, value } from './screen-parity.replay';
 import { flushPendingSave, useTaskStore } from './store';
 import type { Attachment, Project, Task } from './types';
@@ -366,6 +366,33 @@ describe('native host contract: attachments, crash safety', () => {
             requestId: '00000000-0000-4000-8000-00000000c002' })).toMatchObject({ ok: true });
         expect(useTaskStore.getState()._tasksById.get('t1')?.attachments).toEqual([tombstone]);
     });
+
+    it('keeps a removed file\'s bytes when its attachment is restored before the cleanup runs, or the task changed since the Save', async () => {
+        const state = { ports: {} as Ports, log: [] as unknown[][] };
+        const kept = pdf('f1');
+        const task: Task = { id: 't1', title: 'Task', status: 'next', tags: [], contexts: [], attachments: [kept], createdAt: CREATED, updatedAt: CREATED };
+        env = await openSqliteHost({ tasks: [task] }, undefined, { attachments: fakeHost(state) });
+        const saveRemoval = async (requestId: string) => {
+            const baseline = useTaskStore.getState()._tasksById.get('t1')!.attachments!;
+            const draft = baseline.map((item) => ({ ...item, deletedAt: NOW, updatedAt: NOW }));
+            expect(await env!.host.saveTaskDraft({ id: 't1', base: {}, patch: {}, attachments: { base: baseline, value: draft }, requestId })).toMatchObject({ ok: true });
+            const saved = useTaskStore.getState()._tasksById.get('t1')!;
+            return { baseline, draft, committed: saved.attachments!, taskId: 't1', taskRevision: taskRevisionOf(saved) };
+        };
+        const removal = await saveRemoval('00000000-0000-4000-8000-00000000c003');
+        // Restored (an undo, or another device) before the delayed cleanup runs.
+        await later(() => useTaskStore.getState().updateTask('t1', { attachments: [kept] }));
+        expect(ok(await env.host.settleTaskDraftAttachments(removal))).toEqual({ deleted: 0 });
+        expect(state.log).toEqual([]);
+
+        const second = await saveRemoval('00000000-0000-4000-8000-00000000c004');
+        await later(() => useTaskStore.getState().updateTask('t1', { title: 'Renamed elsewhere' }));
+        expect(ok(await env.host.settleTaskDraftAttachments(second))).toEqual({ deleted: 0 });
+        expect(state.log).toEqual([]);
+        expect(ok(await env.host.settleTaskDraftAttachments({ ...second, taskRevision: taskRevisionOf(useTaskStore.getState()._tasksById.get('t1')!) })))
+            .toEqual({ deleted: 1 });
+        expect(state.log).toEqual([['deleteManagedAttachmentFile', expect.objectContaining({ id: 'f1', uri: kept.uri })]]);
+    });
 });
 
 describe('native host contract: attachments, the list and the editor\'s helpers', () => {
@@ -430,7 +457,8 @@ describe('native host contract: attachments, the list and the editor\'s helpers'
         const { host, attachments, state } = await open();
         const added = pdf('added');
         const baseline = attachments.filter((item) => !item.deletedAt);
-        const answer = ok(await host.settleTaskDraftAttachments({ baseline, draft: [...baseline, added], committed: baseline }));
+        const taskRevision = taskRevisionOf(useTaskStore.getState()._tasksById.get('t1')!);
+        const answer = ok(await host.settleTaskDraftAttachments({ taskId: 't1', taskRevision, baseline, draft: [...baseline, added], committed: baseline }));
         expect(answer).toEqual({ deleted: 1 });
         expect(state.log).toEqual([['deleteManagedAttachmentFile', added]]);
     });

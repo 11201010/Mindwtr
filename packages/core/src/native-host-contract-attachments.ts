@@ -78,7 +78,7 @@ import {
 import type { NativeHostResult } from './native-host-contract';
 import { fail, isObjectRecord, isText } from './native-host-contract-menu-views';
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
-import { createNativeRequestReceipts, requestRowId, runStoreWrite, settleWrite } from './native-request-receipts';
+import { createNativeRequestReceipts, requestRowId, runStoreWrite, settleWrite, taskRevisionOf } from './native-request-receipts';
 import { useTaskStore } from './store';
 import type { Attachment, Project, Task } from './types';
 
@@ -562,20 +562,43 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
         /**
          * After the editor's Save (`committed`: the saved task's attachments) or Discard
          * (`committed`: `baseline`): deletes the managed copies no attachment owns any more,
-         * as React Native's editor settles its draft.
+         * as React Native's editor settles its draft. `taskRevision` is the task's as
+         * getTaskView showed it after the Save (or at the Discard). The bytes are checked
+         * against the store as it is now: a file any live task or project attachment still
+         * points to is kept (an attachment restored before the cleanup ran), and a removed or
+         * replaced saved file is kept once the task changed after `taskRevision`. A kept copy
+         * no record owns is left for the orphan cleanup.
          */
-        async settleTaskDraftAttachments(input: { baseline: Attachment[]; draft: Attachment[]; committed: Attachment[] }): Promise<NativeHostResult<{ deleted: number }>> {
+        async settleTaskDraftAttachments(input: {
+            taskId: string;
+            taskRevision: string;
+            baseline: Attachment[];
+            draft: Attachment[];
+            committed: Attachment[];
+        }): Promise<NativeHostResult<{ deleted: number }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const lists = isObjectRecord(input) ? [input.baseline, input.draft, input.committed].map(readNativeAttachments) : [];
-            if (lists.length !== 3 || lists.some((list) => !list)) return fail('INVALID_INPUT', 'baseline, draft and committed attachment lists are required');
+            const lists = isObjectRecord(input) && isText(input.taskId, ID_LIMIT) && isText(input.taskRevision, TEXT_LIMIT)
+                ? [input.baseline, input.draft, input.committed].map(readNativeAttachments)
+                : [];
+            if (lists.length !== 3 || lists.some((list) => !list)) {
+                return fail('INVALID_INPUT', 'The task ID, its revision, and the baseline, draft and committed attachment lists are required');
+            }
             const host = deps.host();
             if (!host) return unbound();
             const [baselineAttachments, draftAttachments, committedAttachments] = lists as Attachment[][];
             const candidates = planAttachmentDraftSettlement({ baselineAttachments, draftAttachments, committedAttachments });
-            for (const { attachment } of candidates) {
+            let deleted = 0;
+            for (const { attachment, reason } of candidates) {
+                const state = useTaskStore.getState();
+                const task = state._tasksById.get(input.taskId);
+                const moved = !task || taskRevisionOf(task) !== input.taskRevision;
+                const owned = [...state._allTasks, ...state._allProjects].some((owner) => !owner.deletedAt
+                    && owner.attachments?.some((item) => !item.deletedAt && item.kind === 'file' && item.uri === attachment.uri));
+                if (owned || (moved && reason !== 'uncommitted-draft')) continue;
                 try {
                     await host.deleteManagedAttachmentFile(attachment);
+                    deleted += 1;
                 } catch (error) {
                     logWarn('Native draft attachment cleanup failed', {
                         scope: 'attachment',
@@ -583,7 +606,7 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
                     });
                 }
             }
-            return { ok: true, value: { deleted: candidates.length } };
+            return { ok: true, value: { deleted } };
         },
     };
 }
