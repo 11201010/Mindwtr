@@ -279,7 +279,7 @@ export const LOCALES = {
         // Include the newly translated sandbox and Reference strings; keep the native translation above
         // the mixed-English brand-name check threshold as the English dictionary grows.
         // Includes subsequent shipped translations and the UI simplification labels.
-        translatedKeyFloor: 2421,
+        translatedKeyFloor: 2444,
     },
     it: {
         loadSync: () => require('./locales/it') as typeof import('./locales/it'),

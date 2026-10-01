@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   reviewAt TEXT,
   completedAt TEXT,
   cancelledAt TEXT,
+  archivedAt TEXT,
   statusBeforeProjectArchive TEXT,
   completedAtBeforeProjectArchive TEXT,
   isFocusedTodayBeforeProjectArchive INTEGER,
@@ -84,6 +85,7 @@ CREATE TABLE IF NOT EXISTS projects (
   purgedAt TEXT,
   startDate TEXT,
   cancelledAt TEXT,
+  archivedAt TEXT,
   viewSectionIds TEXT
 );
 

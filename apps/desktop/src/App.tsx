@@ -118,6 +118,7 @@ import { handleDesktopCloseRequest } from './lib/close-request-handler';
 import { beginCloseFlush, resetCloseFlushGate } from './lib/close-flush-gate';
 import { hideMainWindowToTray } from './lib/hide-to-tray';
 import { useConfirmDialog } from './hooks/useConfirmDialog';
+import { useArchiveRetentionRunner } from './hooks/useArchiveRetentionRunner';
 import { subscribeNavigateEvent } from './lib/navigation-events';
 import { shouldOpenDesktopFirstRunOnboarding, subscribeDesktopOnboardingEvent } from './lib/desktop-onboarding-events';
 import { QUICK_ADD_SAVED_EVENT } from './lib/quick-add-saved-event';
@@ -318,6 +319,7 @@ function App() {
     const settingsCalendarSystem = useTaskStore((state) => state.settings?.calendarSystem);
     const settingsTimeFormat = useTaskStore((state) => state.settings?.timeFormat);
     const updateSettings = useTaskStore((state) => state.updateSettings);
+
     const showToast = useUiStore((state) => state.showToast);
     const { requestConfirmation, confirmModal } = useConfirmDialog();
     const { t, language, setLanguage } = useLanguage();
@@ -350,6 +352,7 @@ function App() {
     const [resolvingExternalSync, setResolvingExternalSync] = useState(false);
     const [hasHydratedSettings, setHasHydratedSettings] = useState(false);
     const [startupDataReady, setStartupDataReady] = useState(false);
+    useArchiveRetentionRunner(hasHydratedSettings && !isLoading, sandboxMode);
     // App tests seed the store directly and deliberately skip the native startup
     // hydration effect; in the app, only the completed fetch opens this gate.
     const viewSettingsHydrated = hasHydratedSettings

@@ -34,6 +34,8 @@ This folder contains small, focused decision documents that explain **why** we m
 - [ADR 0028: How native surfaces run core commands while the app is closed](0028-native-surfaces-run-core-commands.md) (Proposed)
 - [ADR 0029: Native clients host the TypeScript core in-process](0029-native-clients-host-the-typescript-core.md) (Accepted 2026-09-22)
 
+- [ADR 0030: Optional archive retention](0030-archive-retention.md)
+
 ## Template
 
 Use this structure when adding a new ADR:

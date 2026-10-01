@@ -33,6 +33,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // cloud-attachment-gc-retention reuses releaseCheck, count, operation, and outcome below.
     // archive-section-retention: number of restorable sections kept during timed cleanup.
     'retainedSectionCount',
+    // archive-retention: counts from a durably saved expiration batch.
+    'taskCount', 'projectCount', 'sectionCount',
     // Apple development evaluations (#915, #1194, #1214, #1195).
     // apple-pcc-evaluation: fixed synthetic fixture identifier and elapsed request time.
     'fixtureId', 'durationMs',

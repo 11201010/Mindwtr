@@ -1467,6 +1467,11 @@ const TaskEditModalWithBoundary = (props: TaskEditModalProps) => {
     const { t } = useLanguage();
     const tc = useThemeColors();
     const taskOpenMode = useTaskOpenMode();
+    useEffect(() => {
+        if (!props.visible) return;
+        useTaskStore.getState().lockEditing();
+        return () => useTaskStore.getState().unlockEditing();
+    }, [props.visible]);
     if (!taskOpenMode.hydrated) return null;
     const resolvedDefaultTab = resolveTaskOpenTab({
         mode: taskOpenMode.mode,

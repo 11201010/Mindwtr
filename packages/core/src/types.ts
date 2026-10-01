@@ -97,6 +97,7 @@ export interface Project {
     dueDate?: string; // Optional project deadline/target date (ISO date or datetime).
     reviewAt?: string; // Tickler/review date (ISO string). If set, project is due for review at/after this time.
     cancelledAt?: string; // ISO datetime with timezone when the project was cancelled. Cancelled projects are archived.
+    archivedAt?: string; // ISO timestamp when this project entered Archive.
     areaId?: string;
     areaTitle?: string;
     viewSectionIds?: ViewSectionIds; // Same shape and semantics as Task.viewSectionIds; groups a deferred project in a view (#1319)
@@ -260,6 +261,7 @@ export interface Task {
     reviewAt?: string; // Tickler/review date (ISO string). If set, task is due for review at/after this time.
     completedAt?: string; // ISO timestamp when task was last completed/archived.
     cancelledAt?: string; // ISO datetime with timezone when the task was cancelled. Cancelled tasks are archived, not completed.
+    archivedAt?: string; // ISO timestamp when this task entered Archive, including via its project.
     statusBeforeProjectArchive?: TaskStatus; // Original status when a project archive auto-completed this task.
     completedAtBeforeProjectArchive?: string | null; // Original completion timestamp before project archive auto-completion.
     isFocusedTodayBeforeProjectArchive?: boolean | null; // Original focus flag before project archive auto-completion.
@@ -361,6 +363,7 @@ export interface GtdSettings {
     timeEstimatePresets?: TimeEstimate[];
     taskEditor?: TaskEditorSettings;
     autoArchiveDays?: number;
+    archiveRetentionDays?: number; // 0/absent disables permanent Archive expiration.
     defaultCaptureMethod?: 'text' | 'audio';
     defaultAreaMode?: DefaultTaskAreaMode;
     defaultAreaId?: string | null;

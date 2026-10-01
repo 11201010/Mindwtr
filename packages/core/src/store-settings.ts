@@ -39,6 +39,7 @@ import { buildGtdSettingsUpdate, GTD_DEFAULT_AREA_ACTIVE_OPTION, isGtdSettingSto
 import { DEFAULT_TASK_EDITOR_ORDER, TASK_EDITOR_SECTION_ORDER } from './task-editor-layout';
 import { generalPreferenceWitness } from './general-preference-witness';
 import { taskEditValuesEqual } from './json-value-equality';
+import { backfillArchiveClocks, getArchiveRetentionPreview, isArchiveRetentionDays } from './archive-retention';
 
 const STORAGE_TIMEOUT_MS = 15_000;
 // Runtime diagnostic threshold: loads slower than this get a phase-breakdown log line.
@@ -797,6 +798,16 @@ export const createSettingsActions = ({
      * @param updates Settings to update
      */
     updateSettings: async (updates: Partial<AppData['settings']>) => {
+        const retentionUpdate = Object.prototype.hasOwnProperty.call(updates.gtd ?? {}, 'archiveRetentionDays');
+        if (retentionUpdate && updates.gtd?.archiveRetentionDays !== undefined
+            && !isArchiveRetentionDays(updates.gtd.archiveRetentionDays)) {
+            set({ error: 'Archive retention must be an integer from 0 to 36500 days' });
+            return;
+        }
+        if (retentionUpdate && (get().isLoading || get().editLockCount > 0 || get().persistenceFailure)) {
+            set({ error: 'Archive retention is unavailable while data is loading, editing, or unsaved' });
+            return;
+        }
         // A store that never loaded a document has no device identity yet.
         // Persisting from it would enqueue a snapshot of the empty in-memory
         // state, which the pre-load save flush then writes over the on-disk
@@ -871,6 +882,19 @@ export const createSettingsActions = ({
 
             const newSettings = syncUpdated ? { ...nextSettings, syncPreferencesUpdatedAt: nextSyncUpdatedAt } : nextSettings;
             const shouldTrackChange = shouldTrackSettingsChange(state.settings, newSettings, updates);
+            if (retentionUpdate && newSettings.gtd?.archiveRetentionDays) {
+                const preview = getArchiveRetentionPreview({
+                    tasks: state._allTasks, projects: state._allProjects, sections: state._allSections,
+                }, newSettings.gtd.archiveRetentionDays);
+                const backfill = backfillArchiveClocks({ tasks: state._allTasks, projects: state._allProjects },
+                    preview, nowIso, deviceState.deviceId);
+                if (backfill.tasks !== state._allTasks || backfill.projects !== state._allProjects) {
+                    clearDerivedCache();
+                    persist(set, debouncedSave, state, { tasks: backfill.tasks, projects: backfill.projects, settings: newSettings });
+                    return { _allTasks: backfill.tasks, _allProjects: backfill.projects, settings: newSettings,
+                        lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+                }
+            }
             if (archiveDaysUpdate) {
                 const autoArchiveResult = runAutoArchive(state._allTasks, newSettings, {
                     nowIso,

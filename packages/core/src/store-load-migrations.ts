@@ -369,6 +369,7 @@ const autoArchiveStaleCompletedTasks = (
         return {
             ...task,
             status: 'archived' as const,
+            archivedAt: context.nowIso,
             completedAt: Number.isFinite(completedAt) ? task.completedAt : task.updatedAt || context.nowIso,
             isFocusedToday: false,
             updatedAt: context.nowIso,

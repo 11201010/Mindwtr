@@ -21,6 +21,7 @@ import { markCoreStartupPhase } from './startup-profiler';
 import { createProjectActions } from './store-projects';
 import { createSettingsActions } from './store-settings';
 import { createTaskActions } from './store-tasks';
+import { createArchiveRetentionActions } from './store-archive-retention';
 import { sleep } from './async-utils';
 import { instrumentStoreSubscribe } from './store-notify-profiler';
 import { runAfterStoreWriteLock } from './data-transfer-transaction';
@@ -671,6 +672,8 @@ const STORE_WRITE_ACTION_KEYS = [
     'deleteContext',
     'renameContext',
     'updateSettings',
+    'setArchiveRetentionDays',
+    'runArchiveRetention',
     'persistSnapshot',
 ] as const satisfies readonly (keyof TaskStore)[];
 
@@ -739,6 +742,7 @@ export const useTaskStore = createWithEqualityFn<TaskStore>()(subscribeWithSelec
             getSaveGeneration: () => pendingVersion,
             getStorage: () => storage,
         }),
+        ...createArchiveRetentionActions({ set, debouncedSave, flushPendingSave }),
         ...createProjectActions({
             set,
             get,

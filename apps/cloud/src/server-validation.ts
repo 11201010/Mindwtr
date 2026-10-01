@@ -1,5 +1,6 @@
 import {
     filterNotDeleted,
+    isArchiveRetentionDays,
     isTaskSectionProjectArchiveReference,
     normalizeCancellationTimestamp,
     normalizeRecurrenceForLoad,
@@ -248,6 +249,9 @@ export function validateAppData(
         if (task.deletedAt != null && !isValidIsoTimestamp(task.deletedAt)) {
             return { ok: false, error: 'Invalid data: task deletedAt must be a valid ISO timestamp when present' };
         }
+        if (task.archivedAt != null && typeof task.archivedAt !== 'string') {
+            return { ok: false, error: 'Invalid data: task archivedAt must be a string when present' };
+        }
         const valueError = validateTaskPropValues(task);
         if (valueError) {
             return { ok: false, error: `Invalid data: task ${String(task.id)}: ${valueError}` };
@@ -272,6 +276,9 @@ export function validateAppData(
         }
         if (project.purgedAt != null && !isValidIsoTimestamp(project.purgedAt)) {
             return { ok: false, error: 'Invalid data: project purgedAt must be a valid ISO timestamp when present' };
+        }
+        if (project.archivedAt != null && typeof project.archivedAt !== 'string') {
+            return { ok: false, error: 'Invalid data: project archivedAt must be a string when present' };
         }
         const valueError = validateProjectPropValues(project);
         if (valueError) {
@@ -421,6 +428,10 @@ export function validateAppData(
         }
     }
 
+    const gtd = settings && isRecord(settings) ? (settings as Record<string, unknown>).gtd : undefined;
+    if (isRecord(gtd) && gtd.archiveRetentionDays !== undefined && !isArchiveRetentionDays(gtd.archiveRetentionDays)) {
+        return { ok: false, error: 'Invalid data: settings.gtd.archiveRetentionDays must be an integer from 0 to 36500' };
+    }
     const attachments = settings && isRecord(settings) ? (settings as Record<string, unknown>).attachments : undefined;
     if (attachments !== undefined) {
         if (!isRecord(attachments)) {

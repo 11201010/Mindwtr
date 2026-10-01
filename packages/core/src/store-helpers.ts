@@ -111,9 +111,10 @@ export function applyTaskUpdates(
     createId?: () => string,
     recurrenceProjection?: RecurrenceProjection | null,
 ): { updatedTask: Task; nextRecurringTask: Task | null } {
-    let normalizedUpdates = updates;
+    // Archive entry is a lifecycle clock, never an editable task field.
+    let normalizedUpdates = { ...updates };
+    delete normalizedUpdates.archivedAt;
     if (Object.prototype.hasOwnProperty.call(updates, 'textDirection') && updates.textDirection === undefined) {
-        normalizedUpdates = { ...updates };
         delete normalizedUpdates.textDirection;
     }
     const updatesToApply = normalizedUpdates;
@@ -163,6 +164,7 @@ export function applyTaskUpdates(
         finalUpdates = {
             ...updatesToApply,
             status: incomingStatus,
+            archivedAt: now,
             completedAt: explicitCancelledAt
                 ? undefined
                 : explicitCompletedAt ?? (oldTask.completedAt || now),
@@ -177,6 +179,10 @@ export function applyTaskUpdates(
             completedAt: undefined,
             cancelledAt: undefined,
         };
+    }
+
+    if (statusChanged && oldTask.status === 'archived' && incomingStatus !== 'archived') {
+        finalUpdates = { ...finalUpdates, archivedAt: undefined };
     }
 
     if (incomingStatus !== 'reference') {
@@ -541,6 +547,7 @@ export const completeTaskForProjectArchive = (task: Task, archivedAt: string, de
     ...task,
     status: 'done',
     completedAt: archivedAt,
+    archivedAt,
     cancelledAt: undefined,
     isFocusedToday: false,
     focusOrder: undefined,
@@ -562,6 +569,7 @@ export const cancelTaskForProjectArchive = (
 ): Task => ({
     ...task,
     status: 'archived',
+    archivedAt: operationAt,
     completedAt: undefined,
     cancelledAt,
     isFocusedToday: false,
@@ -599,6 +607,7 @@ export const restoreTaskFromProjectArchive = (task: Task, restoredAt: string, de
     return {
         ...task,
         status: previousStatus!,
+        archivedAt: undefined,
         completedAt: task.completedAtBeforeProjectArchive ?? undefined,
         cancelledAt: undefined,
         isFocusedToday: task.isFocusedTodayBeforeProjectArchive ?? false,
@@ -824,21 +833,38 @@ export const applyProjectLifecycleTransition = (
     const activatedCancellation = isProjectCancelled(normalizedProject)
         && (!isProjectCancelled(project) || project.cancelledAt !== normalizedProject.cancelledAt);
     const reactivated = project.status === 'archived' && incomingStatus !== 'archived';
+    if (enteredArchive) projectUpdates.archivedAt = now;
+    else if (reactivated) projectUpdates.archivedAt = undefined;
 
     let nextTasks = tasks;
     let nextSections = sections;
+    const projectSectionIds = new Set(sections.filter((section) => section.projectId === project.id).map((section) => section.id));
+    const isProjectChild = (task: Task): boolean => task.projectId === project.id
+        || (!task.projectId && !!task.sectionId && projectSectionIds.has(task.sectionId));
+    const repairSectionOnlyOwner = (original: Task, changed: Task): Task => original.projectId
+        ? changed
+        : changed === original
+            ? { ...changed, projectId: project.id, updatedAt: now, rev: nextRevision(changed.rev), revBy: deviceId }
+            : { ...changed, projectId: project.id };
     if (enteredArchive || activatedCancellation) {
         const cancelledAt = normalizedProject.cancelledAt;
         nextTasks = mapChanged(tasks, (task) => {
-            if (task.projectId !== project.id || task.deletedAt) return task;
+            if (!isProjectChild(task) || task.deletedAt) return task;
+            let changed: Task;
             if (isProjectCancelled(normalizedProject)) {
-                return isTaskActionable(task)
+                changed = isTaskActionable(task)
                     ? cancelTaskForProjectArchive(task, cancelledAt!, deviceId, now)
-                    : task;
+                    : enteredArchive && !task.archivedAt
+                        ? { ...task, archivedAt: now, updatedAt: now, rev: nextRevision(task.rev), revBy: deviceId }
+                        : task;
+            } else {
+                changed = !isTaskFinished(task) && task.status !== 'reference'
+                    ? completeTaskForProjectArchive(task, now, deviceId)
+                    : enteredArchive && !task.archivedAt
+                        ? { ...task, archivedAt: now, updatedAt: now, rev: nextRevision(task.rev), revBy: deviceId }
+                        : task;
             }
-            return !isTaskFinished(task) && task.status !== 'reference'
-                ? completeTaskForProjectArchive(task, now, deviceId)
-                : task;
+            return repairSectionOnlyOwner(task, changed);
         });
         if (enteredArchive) {
             nextSections = mapChanged(sections, (section) => (
@@ -848,11 +874,15 @@ export const applyProjectLifecycleTransition = (
             ));
         }
     } else if (reactivated) {
-        nextTasks = mapChanged(tasks, (task) => (
-            task.projectId === project.id && task.projectArchivedAt
+        nextTasks = mapChanged(tasks, (task) => {
+            if (!isProjectChild(task) || task.deletedAt) return task;
+            const changed = task.projectArchivedAt
                 ? restoreTaskFromProjectArchive(task, now, deviceId)
-                : task
-        ));
+                : task.status !== 'archived' && task.archivedAt
+                    ? { ...task, archivedAt: undefined, updatedAt: now, rev: nextRevision(task.rev), revBy: deviceId }
+                    : task;
+            return repairSectionOnlyOwner(task, changed);
+        });
         nextSections = mapChanged(sections, (section) => (
             section.projectId === project.id && section.projectArchivedAt
                 ? restoreSectionFromProjectArchive(section, now, deviceId)

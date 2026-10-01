@@ -63,6 +63,7 @@ import { useRootLayoutPomodoro } from '@/hooks/root-layout/use-root-layout-pomod
 import { useRootLayoutWatch } from '@/hooks/root-layout/use-root-layout-watch';
 import { useRootLayoutNotificationOpenHandler } from '@/hooks/root-layout/use-root-layout-notification-open-handler';
 import { useRootLayoutStartup } from '@/hooks/root-layout/use-root-layout-startup';
+import { useRootLayoutArchiveRetention } from '@/hooks/root-layout/use-root-layout-archive-retention';
 import { resolveMobileAnalyticsVersion } from '@/lib/analytics-heartbeat';
 import { useRootLayoutSyncEffects } from '@/hooks/root-layout/use-root-layout-sync-effects';
 import { ProjectNextActionPromptProvider } from '@/components/project-next-action-prompt';
@@ -449,6 +450,7 @@ function RootLayoutContentInner() {
     sandboxMode,
     storageInitError: null,
   });
+  useRootLayoutArchiveRetention(canonicalDataReady, sandboxMode);
   const isShellReady = themeReady && languageReady;
   const isFirstPaintReady = isShellReady && dataReady;
   const startupReadiness = useMemo(() => ({ canonicalDataReady, pathname }), [canonicalDataReady, pathname]);

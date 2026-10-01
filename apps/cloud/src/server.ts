@@ -717,6 +717,7 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
             // created with a start date and no explicit status enters
             // as Next rather than Inbox.
             const status = resolveCaptureStatusForStart(explicitProps, parsedStatus || 'inbox');
+            const effectiveStatus = props.cancelledAt && rawStatus === undefined ? 'archived' : status;
             const tags = Array.isArray(props.tags) ? props.tags : [];
             const contexts = Array.isArray(props.contexts) ? props.contexts : [];
             const {
@@ -738,7 +739,8 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                 id: generateUUID(),
                 title,
                 ...restProps,
-                status: props.cancelledAt && rawStatus === undefined ? 'archived' : status,
+                status: effectiveStatus,
+                archivedAt: effectiveStatus === 'archived' ? nowIso : undefined,
                 tags,
                 contexts,
                 rev: 1,

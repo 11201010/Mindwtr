@@ -196,6 +196,7 @@ export const GTD_SYNCED_FIELD_KEYS = [
     'timeEstimatePresets',
     'taskEditor',
     'autoArchiveDays',
+    'archiveRetentionDays',
     'defaultCaptureMethod',
     'defaultScheduleTime',
     'defaultAreaMode',

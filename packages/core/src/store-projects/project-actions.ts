@@ -24,7 +24,7 @@ import type { Area, TaskSortBy } from '../types';
 import type { Project, ProjectCoreActions, ProjectActionContext, Task, TaskStatus } from './shared';
 import type { PreparedProjectArea, PreparedProjectAttachmentWrite, PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, ProjectAttachmentIntent, ProjectFlowAction, TaskStore } from '../store-types';
 import { projectTagsForIntent, type ProjectTagsIntent } from '../project-tags';
-import type { PendingRemoteAttachmentDelete } from '../types';
+import { settingsWithPurgedParentAttachmentDeletes } from '../attachment-cleanup';
 import {
     compactPurgedProjectForLocalStorage,
     compactPurgedProjectSectionTombstone,
@@ -44,72 +44,6 @@ const duplicateProjectAttachmentCopy = (attachment: NonNullable<Project['attachm
     contentMtimeMs: undefined,
     contentSize: undefined,
 });
-
-const collectRetainedAttachmentCloudKeys = (
-    projects: readonly Project[],
-    tasks: readonly Task[],
-): Set<string> => {
-    const cloudKeys = new Set<string>();
-    for (const project of projects) {
-        if (project.purgedAt) continue;
-        for (const attachment of project.attachments || []) {
-            if (attachment.kind === 'file' && attachment.cloudKey) {
-                cloudKeys.add(attachment.cloudKey);
-            }
-        }
-    }
-    for (const task of tasks) {
-        if (task.purgedAt) continue;
-        for (const attachment of task.attachments || []) {
-            if (attachment.kind === 'file' && attachment.cloudKey) {
-                cloudKeys.add(attachment.cloudKey);
-            }
-        }
-    }
-    return cloudKeys;
-};
-
-const collectPendingRemoteDeletesForProjects = (
-    projects: readonly Project[],
-    remainingProjects: readonly Project[],
-    tasks: readonly Task[],
-): PendingRemoteAttachmentDelete[] => {
-    const byCloudKey = new Map<string, PendingRemoteAttachmentDelete>();
-    const retainedCloudKeys = collectRetainedAttachmentCloudKeys(remainingProjects, tasks);
-    for (const project of projects) {
-        for (const attachment of project.attachments || []) {
-            if (attachment.kind !== 'file' || !attachment.cloudKey) continue;
-            if (retainedCloudKeys.has(attachment.cloudKey)) continue;
-            if (byCloudKey.has(attachment.cloudKey)) continue;
-            byCloudKey.set(attachment.cloudKey, {
-                cloudKey: attachment.cloudKey,
-            });
-        }
-    }
-    return Array.from(byCloudKey.values());
-};
-
-const appendPendingRemoteDeletes = (
-    settings: TaskStore['settings'],
-    pendingDeletes: readonly PendingRemoteAttachmentDelete[],
-): TaskStore['settings'] => {
-    if (pendingDeletes.length === 0) return settings;
-    const byCloudKey = new Map<string, PendingRemoteAttachmentDelete>();
-    for (const existing of settings.attachments?.pendingRemoteDeletes || []) {
-        byCloudKey.set(existing.cloudKey, existing);
-    }
-    for (const pending of pendingDeletes) {
-        if (byCloudKey.has(pending.cloudKey)) continue;
-        byCloudKey.set(pending.cloudKey, pending);
-    }
-    return {
-        ...settings,
-        attachments: {
-            ...settings.attachments,
-            pendingRemoteDeletes: Array.from(byCloudKey.values()),
-        },
-    };
-};
 
 type BuildNewProjectParams = {
     title: string;
@@ -354,6 +288,7 @@ export const buildNewProject = ({
     const lifecycleProject = normalizeProjectLifecycleFields({
         ...project,
         ...normalizeProjectUpdate(baseProject, initialProps ?? {}),
+        archivedAt: project.status === 'archived' ? now : undefined,
     });
     // Resolved from the FINAL areaId, which initialProps may have supplied.
     const areaTitle = lifecycleProject.areaId
@@ -1095,12 +1030,9 @@ export const createProjectCoreActions = ({
                     .filter((section) => section.projectId === id)
                     .map((section) => section.id)
             );
-            const remainingProjects = state._allProjects.filter((project) => project.id !== id);
-            const pendingDeletes = collectPendingRemoteDeletesForProjects([target], remainingProjects, state._allTasks);
-            const nextSettings = pendingDeletes.length > 0
-                ? appendPendingRemoteDeletes(deviceState.settings, pendingDeletes)
-                : deviceState.settings;
-            const settingsChanged = deviceState.updated || pendingDeletes.length > 0;
+            const nextSettings = settingsWithPurgedParentAttachmentDeletes(deviceState.settings,
+                state._allTasks, state._allProjects, new Set(), new Set([id]));
+            const settingsChanged = deviceState.updated || nextSettings !== deviceState.settings;
 
             const newAllProjects = state._allProjects.map((project) =>
                 project.id === id
@@ -1178,12 +1110,9 @@ export const createProjectCoreActions = ({
                     .filter((section) => selectedIds.has(section.projectId))
                     .map((section) => section.id)
             );
-            const remainingProjects = state._allProjects.filter((project) => !selectedIds.has(project.id));
-            const pendingDeletes = collectPendingRemoteDeletesForProjects(selectedProjects, remainingProjects, state._allTasks);
-            const nextSettings = pendingDeletes.length > 0
-                ? appendPendingRemoteDeletes(deviceState.settings, pendingDeletes)
-                : deviceState.settings;
-            const settingsChanged = deviceState.updated || pendingDeletes.length > 0;
+            const nextSettings = settingsWithPurgedParentAttachmentDeletes(deviceState.settings,
+                state._allTasks, state._allProjects, new Set(), selectedIds);
+            const settingsChanged = deviceState.updated || nextSettings !== deviceState.settings;
 
             const newAllProjects = state._allProjects.map((project) =>
                 selectedIds.has(project.id)
@@ -1264,6 +1193,7 @@ export const createProjectCoreActions = ({
                 order: baseOrder,
                 isFocused: false,
                 cancelledAt: undefined,
+                archivedAt: sourceProject.status === 'archived' ? now : undefined,
                 attachments: projectAttachments.length > 0 ? projectAttachments : undefined,
                 createdAt: now,
                 updatedAt: now,
@@ -1316,6 +1246,7 @@ export const createProjectCoreActions = ({
                     reviewAt: undefined,
                     completedAt: undefined,
                     cancelledAt: undefined,
+                    archivedAt: undefined,
                     isFocusedToday: false,
                     pushCount: 0,
                     checklist,
