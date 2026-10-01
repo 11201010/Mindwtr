@@ -7,8 +7,7 @@ plugins {
 // under RN's namespace, so class names and R stay RN's and placed widgets keep their providers. Left out: the Expo bridge
 // (AndroidWidgetModule.kt; the engine publishes the payload, HostWidgets.kt) and RN's headless task (CaptureSyncHeadlessService.kt)
 // and capture receiver (CaptureIntentReceiver.kt), whose native versions are in src/main: they start CoreWork through the app's
-// hook. Its manifest is RN's plugins' entries (scripts/build-widgets.mjs, with the app's placeholders for the package and the
-// launcher label); the plugins' XML, strings and classes are generated per build type in the app.
+// hook. The manifest entries and the plugins' XML are generated per build type in the app (scripts/build-widgets.mjs).
 val rnModule = rootProject.projectDir.resolve("../../mobile/modules/android-widget/android")
 val rnExcluded = listOf("AndroidWidgetModule", "CaptureSyncHeadlessService", "CaptureIntentReceiver")
 
@@ -27,7 +26,6 @@ android {
     sourceSets {
         // src/main/res is a link to RN's resources: RN's tests read them by that relative path (WidgetThemeResourcesTest).
         getByName("main").java.srcDir(layout.buildDirectory.dir("generated/rnWidget/main/java"))
-        getByName("main").manifest.srcFile(layout.buildDirectory.file("generated/widgetManifest/AndroidManifest.xml").get().asFile)
         getByName("test").java.srcDir(layout.buildDirectory.dir("generated/rnWidget/test/java"))
     }
 
@@ -57,16 +55,4 @@ val rnWidget by tasks.registering(Sync::class) {
     }
     into(layout.buildDirectory.dir("generated/rnWidget"))
 }
-val widgetManifest by tasks.registering(Exec::class) {
-    workingDir = rootProject.projectDir.resolve("../../..")
-    val out = layout.buildDirectory.file("generated/widgetManifest/AndroidManifest.xml").get().asFile
-    commandLine("node", "apps/android-native/scripts/build-widgets.mjs", "--manifest", out.path)
-    inputs.files(
-        workingDir.resolve("apps/mobile/plugins/android-widget.js"),
-        workingDir.resolve("apps/mobile/plugins/android-quick-settings-tile.js"),
-        workingDir.resolve("apps/mobile/app.json"),
-        workingDir.resolve("apps/android-native/scripts/build-widgets.mjs"),
-    )
-    outputs.file(out)
-}
-tasks.named("preBuild") { dependsOn(rnWidget, widgetManifest) }
+tasks.named("preBuild") { dependsOn(rnWidget) }

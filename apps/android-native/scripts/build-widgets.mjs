@@ -4,11 +4,8 @@
 // builders with RN's props (app.json). The plugins' own write steps (their withDangerousMod) are repeated here in their order;
 // every file's text is the builders'. Two changes, both for the native app's identity: the tile's class keeps RN's release name
 // (tech.dongdongbh.mindwtr.quicksettings) in every build type, so its manifest name is absolute (RN's is relative to RN's
-// namespace), and its `R` is this app's (tech.dongdongbh.mindwtr.pilot.R), which holds the tile's strings and icon. The manifest
-// entries go to the widget module's manifest (library manifests merge into every build type), with the app's placeholders for the
-// package and the launcher label; the files go to each build type of the app.
-// Usage: node build-widgets.mjs --manifest <file>
-//        node build-widgets.mjs <out dir> <build type>=<applicationId>:<label> ...
+// namespace), and its `R` is this app's (tech.dongdongbh.mindwtr.pilot.R), which holds the tile's strings and icon.
+// Usage: node build-widgets.mjs <out dir> <build type>=<applicationId>:<label> ...
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
@@ -33,11 +30,8 @@ export function widgetProps(label) {
     return { ...entry[1], label };
 }
 
-/** The app's manifest placeholders the widget module's manifest uses. */
-export const PLACEHOLDERS = { applicationId: '${applicationId}', label: '${widgetLabel}' };
-
-/** The manifest the plugins write: RN's widget components and the tile, nothing else. */
-export function buildManifest(applicationId = PLACEHOLDERS.applicationId, label = PLACEHOLDERS.label) {
+/** The manifest the plugins write, as one variant's extra manifest: RN's widget components and the tile, nothing else. */
+export function buildManifest(applicationId, label) {
     const manifest = { manifest: { $: { 'xmlns:android': 'http://schemas.android.com/apk/res/android' }, application: [{}] } };
     widget.ensureWidgetComponents(manifest, widgetProps(label), applicationId);
     tile.ensureCaptureTileService(manifest);
@@ -56,10 +50,11 @@ export function buildTileSource() {
 
 const write = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
 
-/** Writes one build type's files under [root]: res/ and java/. */
+/** Writes one build type's files under [root]: AndroidManifest.xml, res/ and java/. */
 export function writeWidgets(root, applicationId, label) {
     rmSync(root, { recursive: true, force: true });
     const res = resolve(root, 'res');
+    write(resolve(root, 'AndroidManifest.xml'), buildManifest(applicationId, label));
     // android-widget.js's withDangerousMod, in its order.
     const props = widget.resolveProps(widgetProps(label));
     const kinds = widget.buildWidgetKinds(props);
@@ -87,9 +82,7 @@ export function writeWidgets(root, applicationId, label) {
     write(resolve(res, 'drawable', 'ic_quick_settings_capture.xml'), tile.buildTileIconXml());
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href && process.argv[2] === '--manifest') {
-    write(resolve(process.argv[3]), buildManifest());
-} else if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     const [out, ...variants] = process.argv.slice(2);
     if (!out || variants.length === 0) throw new Error('usage: build-widgets.mjs <out dir> <build type>=<applicationId>:<label> ...');
     for (const variant of variants) {

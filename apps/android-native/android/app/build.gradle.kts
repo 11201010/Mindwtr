@@ -23,8 +23,6 @@ fun com.android.build.api.dsl.ApplicationBuildType.urlScheme() {
     val scheme = urlSchemes.getValue(name)
     buildConfigField("String", "URL_SCHEME", "\"$scheme\"")
     manifestPlaceholders["urlScheme"] = scheme
-    // The widget module's manifest names RN's widgets with the build's launcher label.
-    manifestPlaceholders["widgetLabel"] = widgetLabels.getValue(name)
 }
 
 android {
@@ -82,8 +80,8 @@ android {
     // RN's app shortcuts, generated per build type (buildShortcuts below).
     sourceSets { urlSchemes.keys.forEach { getByName(it).res.srcDir(layout.buildDirectory.dir("generated/shortcuts/$it/res")) } }
     // RN's attachment installer Kotlin, with its JVM tests, compiled as it is (rnAttachmentInstaller below); RN's widget
-    // components' files, generated per build type from RN's plugins (buildWidgets below): their XML and resources, the legacy
-    // widget class and the Quick Settings tile. Their manifest entries are the widget module's.
+    // components, generated per build type from RN's plugins (buildWidgets below): their XML and resources, the legacy widget
+    // class and the Quick Settings tile; their manifest entries are added to each variant below.
     sourceSets {
         getByName("main").java.srcDir(layout.buildDirectory.dir("generated/rnInstaller/main/java"))
         getByName("test").java.srcDir(layout.buildDirectory.dir("generated/rnInstaller/test/java"))
@@ -110,6 +108,11 @@ android {
 
 // A build type cannot replace applicationId; the variant API can. 152 = RN v1.3.2, 154 = RN recovery build.
 androidComponents {
+    // RN's widget components' manifest entries (buildWidgets), merged as one more manifest of each variant, so a build type's own
+    // manifest (the debug build's check entries) stays.
+    onVariants { variant ->
+        variant.sources.manifests?.addStaticManifestFile(layout.buildDirectory.file("generated/widgets/${variant.buildType}/AndroidManifest.xml").get().asFile.path)
+    }
     onVariants(selector().withBuildType("upgradetest")) { variant ->
         variant.applicationId.set("tech.dongdongbh.mindwtr.upgradetest")
         variant.outputs.forEach { it.versionCode.set(153) }
