@@ -340,6 +340,7 @@ export const trOverrides: Record<string, string> = {
         'attachments.fileTooLarge': 'Dosya yüklenemeyecek kadar büyük.',
         'attachments.fileNotReadable': 'Bu dosya okunamadığı için eklenmedi. Dosyayı başka bir klasöre taşıyıp yeniden deneyin.',
         'attachments.linkToFile': 'Dosyaya bağlantı ver…',
+        'attachments.linkFolder': 'Klasör bağla…',
         'attachments.invalidFileType': 'Desteklenmeyen dosya türü.',
         'attachments.invalidLink': 'Lütfen geçerli bir URL girin.',
         'attachments.photoUnavailableTitle': 'Fotoğraf seçici kullanılamıyor',

@@ -437,6 +437,7 @@ export const viOverrides: Record<string, string> = {
         'attachments.fileTooLarge': 'Tệp quá lớn để tải lên.',
         'attachments.fileNotReadable': 'Không thể đọc tệp này nên tệp chưa được đính kèm. Hãy chuyển tệp sang thư mục khác và thử lại.',
         'attachments.linkToFile': 'Liên kết tới tệp…',
+        'attachments.linkFolder': 'Liên kết thư mục…',
         'attachments.invalidFileType': 'Loại tệp không được hỗ trợ.',
         'attachments.invalidLink': 'Vui lòng nhập URL hợp lệ.',
         'attachments.photoUnavailableTitle': 'Bộ chọn ảnh không khả dụng',

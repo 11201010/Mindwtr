@@ -1,7 +1,8 @@
-import { BookOpen, Link2, Paperclip, Pencil, Trash2 } from 'lucide-react';
+import { BookOpen, Folder, FolderOpen, Link2, Paperclip, Pencil, Trash2 } from 'lucide-react';
 import { tFallback, type Attachment } from '@mindwtr/core';
-import { useBareFileReferenceCheck, useExternalFileReferenceCheck } from '../../../lib/attachment-reference';
+import { isFolderLinkAttachment, useBareFileReferenceCheck, useExternalFileReferenceCheck } from '../../../lib/attachment-reference';
 import { getAttachmentDisplayTitle } from '../../../lib/attachment-utils';
+import { isTauriRuntime } from '../../../lib/runtime';
 import { isImageAttachment } from '../task-item-attachment-utils';
 import { AttachmentImage } from '../AttachmentImage';
 import { QUICK_ADD_FIELD_TOKENS, QuickAddTokenBadge, TaskEditorFieldLabel } from '../task-editor-label';
@@ -17,6 +18,8 @@ type AttachmentsFieldProps = {
     visibleEditAttachments: Attachment[];
     addFileAttachment: () => void;
     addLinkAttachment: () => void;
+    // Desktop shell only: the folder picker is a native dialog.
+    addFolderLinkAttachment?: () => void;
     addObsidianNoteAttachment: () => void;
     showObsidianNoteAttachment: boolean;
     editLinkAttachment: (attachment: Attachment) => void;
@@ -30,6 +33,7 @@ export function AttachmentsField({
     visibleEditAttachments,
     addFileAttachment,
     addLinkAttachment,
+    addFolderLinkAttachment,
     addObsidianNoteAttachment,
     showObsidianNoteAttachment,
     editLinkAttachment,
@@ -79,6 +83,16 @@ export function AttachmentsField({
                         <Link2 className="w-3.5 h-3.5" aria-hidden="true" />
                         {t('attachments.addLink')}
                     </button>
+                    {addFolderLinkAttachment && isTauriRuntime() && (
+                        <button
+                            type="button"
+                            onClick={addFolderLinkAttachment}
+                            className={taskEditorAddButtonClassName}
+                        >
+                            <FolderOpen className="w-3.5 h-3.5" aria-hidden="true" />
+                            {t('attachments.linkFolder')}
+                        </button>
+                    )}
                     {showObsidianNoteAttachment && (
                         <button
                             type="button"
@@ -183,7 +197,9 @@ export function AttachmentsField({
                         return (
                             <div key={attachment.id} className="flex items-center justify-between gap-2 rounded-md px-1.5 py-1 text-xs transition-colors hover:bg-muted/40">
                                 <div className="flex min-w-0 items-center gap-1.5">
-                                    {isPointer
+                                    {isFolderLinkAttachment(attachment)
+                                        ? <Folder className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+                                        : isPointer
                                         ? <Link2 className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden="true" />
                                         : <Paperclip className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden="true" />}
                                     <button

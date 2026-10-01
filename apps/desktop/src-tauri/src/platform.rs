@@ -973,6 +973,103 @@ pub(crate) fn migrate_portable_attachments(
     Ok(result)
 }
 
+fn link_folder_bookmark_for(raw: Option<&str>, attachment_id: &str) -> Option<String> {
+    let map = serde_json::from_str::<Map<String, Value>>(raw?).ok()?;
+    map.get(attachment_id)?.as_str().map(str::to_string)
+}
+
+// An unreadable map is replaced: it only caches access the user can grant
+// again by re-linking the folder.
+fn with_link_folder_bookmark(raw: Option<&str>, attachment_id: &str, bookmark: String) -> String {
+    let mut map = raw
+        .and_then(|raw| serde_json::from_str::<Map<String, Value>>(raw).ok())
+        .unwrap_or_default();
+    map.insert(attachment_id.to_string(), Value::String(bookmark));
+    Value::Object(map).to_string()
+}
+
+// "Link folder…" on the sandboxed App Store build: the folder the user just
+// picked is reachable only for this launch, so keep a security-scoped
+// bookmark for it in the device-local config. Other builds open the stored
+// path as is and keep nothing.
+// ponytail: entries are never pruned when a link is removed; each is a few
+// hundred bytes, prune on attachment delete if the config ever grows large.
+#[tauri::command(async)]
+pub(crate) fn remember_link_folder_access(
+    app: tauri::AppHandle,
+    attachment_id: String,
+    path: String,
+) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        if !crate::install::is_mac_app_store_build() {
+            return Ok(false);
+        }
+        let c_path = CString::new(path).map_err(|e| e.to_string())?;
+        let raw = unsafe { mindwtr_macos_create_security_bookmark(c_path.as_ptr()) };
+        if raw.is_null() {
+            log::warn!("Linked folder bookmark could not be created extra.releaseCheck=v1.3.4/link-folder-bookmark outcome=create-failed");
+            return Ok(false);
+        }
+        let bookmark = unsafe { CStr::from_ptr(raw) }.to_string_lossy().to_string();
+        unsafe { mindwtr_macos_free_bookmark_string(raw) };
+        let _config_guard = lock_config_read_modify_write()?;
+        let mut config = read_config(&app);
+        config.link_folder_bookmarks = Some(with_link_folder_bookmark(
+            config.link_folder_bookmarks.as_deref(),
+            &attachment_id,
+            bookmark,
+        ));
+        write_config_files(&get_config_path(&app), &get_secrets_path(&app), &config)?;
+        log::info!("Linked folder bookmark saved extra.releaseCheck=v1.3.4/link-folder-bookmark outcome=saved");
+        Ok(true)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, attachment_id, path);
+        Ok(false)
+    }
+}
+
+// Ok(false) = no usable bookmark on this device; the caller takes the normal
+// open path, which the sandbox may refuse with the usual error.
+#[cfg(target_os = "macos")]
+fn open_through_link_folder_bookmark(
+    app: &tauri::AppHandle,
+    path: &str,
+    attachment_id: Option<&str>,
+) -> Result<bool, String> {
+    let Some(attachment_id) = attachment_id else {
+        return Ok(false);
+    };
+    if !crate::install::is_mac_app_store_build() {
+        return Ok(false);
+    }
+    let config = read_config(app);
+    let Some(bookmark) =
+        link_folder_bookmark_for(config.link_folder_bookmarks.as_deref(), attachment_id)
+    else {
+        return Ok(false);
+    };
+    let expected = strip_file_scheme(path.trim())?;
+    let (Ok(c_bookmark), Ok(c_expected)) = (CString::new(bookmark), CString::new(expected)) else {
+        return Ok(false);
+    };
+    let outcome =
+        unsafe { mindwtr_macos_open_security_bookmark(c_bookmark.as_ptr(), c_expected.as_ptr()) };
+    let label = match outcome {
+        1 => "opened",
+        0 => "fallback",
+        _ => "open-failed",
+    };
+    log::info!("Linked folder opened through its bookmark extra.releaseCheck=v1.3.4/link-folder-bookmark outcome={label}");
+    match outcome {
+        1 => Ok(true),
+        0 => Ok(false),
+        _ => Err("Path does not exist or cannot be opened.".to_string()),
+    }
+}
+
 // Stateless: canonicalizes the path and spawns the OS file-open shell
 // command, no shared state to race (B1).
 #[tauri::command(async)]
@@ -981,6 +1078,10 @@ pub(crate) fn open_path(
     path: String,
     attachment_id: Option<String>,
 ) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    if open_through_link_folder_bookmark(&app, &path, attachment_id.as_deref())? {
+        return Ok(true);
+    }
     let managed_attachments_dir = get_data_dir(&app).join("attachments");
     let normalized = normalize_open_path(
         &path,
@@ -1347,6 +1448,21 @@ mod tests {
         fs::write(&attachment_path, "notes").expect("should write attachment");
 
         assert!(path_is_openable(&attachment_path, &[]));
+    }
+
+    #[test]
+    fn link_folder_bookmarks_are_kept_per_attachment() {
+        assert_eq!(link_folder_bookmark_for(None, "a"), None);
+        let one = with_link_folder_bookmark(None, "a", "bm-a".to_string());
+        let two = with_link_folder_bookmark(Some(&one), "b", "bm-b".to_string());
+        assert_eq!(link_folder_bookmark_for(Some(&two), "a").as_deref(), Some("bm-a"));
+        assert_eq!(link_folder_bookmark_for(Some(&two), "b").as_deref(), Some("bm-b"));
+        assert_eq!(link_folder_bookmark_for(Some(&two), "c"), None);
+        // Re-linking replaces; a corrupt map starts over instead of failing.
+        let replaced = with_link_folder_bookmark(Some(&two), "a", "bm-a2".to_string());
+        assert_eq!(link_folder_bookmark_for(Some(&replaced), "a").as_deref(), Some("bm-a2"));
+        let fresh = with_link_folder_bookmark(Some("not json"), "a", "bm".to_string());
+        assert_eq!(link_folder_bookmark_for(Some(&fresh), "a").as_deref(), Some("bm"));
     }
 
     #[test]

@@ -4,6 +4,7 @@ import type { Attachment, Task } from '@mindwtr/core';
 import { LanguageProvider } from '../../contexts/language-context';
 import { TaskAttachmentOverlays } from './TaskAttachmentOverlays';
 import { useTaskItemAttachments } from './useTaskItemAttachments';
+import { openAttachmentTarget } from '../../lib/open-attachment-target';
 
 const openMock = vi.fn();
 const invokeMock = vi.fn();
@@ -126,6 +127,75 @@ describe('useTaskItemAttachments addFileAttachment', () => {
 
         expect(result.current.editAttachments).toHaveLength(0);
         expect(result.current.attachmentError).toBe('attachments.fileTooLarge');
+    });
+});
+
+describe('useTaskItemAttachments addFolderLinkAttachment', () => {
+    beforeEach(() => {
+        openMock.mockReset();
+        invokeMock.mockReset();
+        vi.mocked(openAttachmentTarget).mockClear();
+    });
+
+    it('stores the picked folder as a plain link and asks the native side to remember access', async () => {
+        openMock.mockResolvedValue('/Users/dd/Projects/Alpha');
+        invokeMock.mockResolvedValue(true);
+
+        const { result } = renderHook(() => useTaskItemAttachments({ task, t }));
+        await act(async () => {
+            await result.current.addFolderLinkAttachment();
+        });
+
+        expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ directory: true, multiple: false }));
+        expect(result.current.editAttachments).toHaveLength(1);
+        const [attachment] = result.current.editAttachments;
+        expect(attachment).toMatchObject({
+            kind: 'link',
+            title: 'Alpha',
+            uri: '/Users/dd/Projects/Alpha',
+            mimeType: 'inode/directory',
+        });
+        // A link owns no bytes: nothing for the file upload pipeline.
+        expect(attachment.cloudKey).toBeUndefined();
+        expect(attachment.localStatus).toBeUndefined();
+        expect(invokeMock).toHaveBeenCalledWith('remember_link_folder_access', {
+            attachmentId: attachment.id,
+            path: '/Users/dd/Projects/Alpha',
+        });
+        expect(invokeMock).not.toHaveBeenCalledWith('import_attachment_file', expect.anything());
+
+        act(() => {
+            result.current.openAttachment(attachment);
+        });
+        // The id travels with the open so the App Store build can find the
+        // folder's bookmark; other builds open the path as before.
+        expect(openAttachmentTarget).toHaveBeenCalledWith('/Users/dd/Projects/Alpha', attachment.id);
+    });
+
+    it('keeps the link when the native side cannot remember access', async () => {
+        openMock.mockResolvedValue('C:\\Work\\Client');
+        invokeMock.mockRejectedValue(new Error('boom'));
+
+        const { result } = renderHook(() => useTaskItemAttachments({ task, t }));
+        await act(async () => {
+            await result.current.addFolderLinkAttachment();
+        });
+
+        expect(result.current.editAttachments).toHaveLength(1);
+        expect(result.current.editAttachments[0]).toMatchObject({ kind: 'link', title: 'Client', uri: 'C:\\Work\\Client' });
+        expect(result.current.attachmentError).toBeNull();
+    });
+
+    it('adds nothing when the picker is cancelled', async () => {
+        openMock.mockResolvedValue(null);
+
+        const { result } = renderHook(() => useTaskItemAttachments({ task, t }));
+        await act(async () => {
+            await result.current.addFolderLinkAttachment();
+        });
+
+        expect(result.current.editAttachments).toHaveLength(0);
+        expect(invokeMock).not.toHaveBeenCalled();
     });
 });
 

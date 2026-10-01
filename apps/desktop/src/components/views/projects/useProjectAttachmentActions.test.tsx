@@ -4,9 +4,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Attachment, Project } from '@mindwtr/core';
 
 import { useProjectAttachmentActions } from './useProjectAttachmentActions';
+import { isTauriRuntime } from '../../../lib/runtime';
+
+const dialogOpenMock = vi.hoisted(() => vi.fn());
+const invokeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../lib/runtime', () => ({
     isTauriRuntime: vi.fn(() => false),
+}));
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+    open: dialogOpenMock,
+}));
+
+vi.mock('@tauri-apps/api/core', () => ({
+    invoke: invokeMock,
 }));
 
 const baseProject: Project = {
@@ -64,5 +76,32 @@ describe('useProjectAttachmentActions', () => {
         });
 
         expect(openSpy).toHaveBeenCalledWith('file:///tmp/notes.txt', '_blank');
+    });
+
+    it('links a picked folder to the project as a plain link', async () => {
+        vi.mocked(isTauriRuntime).mockReturnValue(true);
+        dialogOpenMock.mockResolvedValue('/Users/dd/Projects/Alpha');
+        invokeMock.mockResolvedValue(true);
+        const { hook, params } = setup();
+
+        await act(async () => {
+            await hook.result.current.addProjectFolderLinkAttachment();
+        });
+
+        expect(dialogOpenMock).toHaveBeenCalledWith(expect.objectContaining({ directory: true }));
+        expect(params.updateProject).toHaveBeenCalledWith('project-1', {
+            attachments: [expect.objectContaining({
+                kind: 'link',
+                title: 'Alpha',
+                uri: '/Users/dd/Projects/Alpha',
+                mimeType: 'inode/directory',
+            })],
+        });
+        const [{ attachments }] = vi.mocked(params.updateProject).mock.calls[0].slice(1) as [Partial<Project>];
+        expect(invokeMock).toHaveBeenCalledWith('remember_link_folder_access', {
+            attachmentId: attachments?.[0].id,
+            path: '/Users/dd/Projects/Alpha',
+        });
+        vi.mocked(isTauriRuntime).mockReturnValue(false);
     });
 });

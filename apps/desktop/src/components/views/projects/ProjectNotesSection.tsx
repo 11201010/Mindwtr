@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { Link2, Maximize2, Paperclip } from 'lucide-react';
+import { Folder, FolderOpen, Link2, Maximize2, Paperclip } from 'lucide-react';
 import {
     applyMarkdownKeyboardShortcut,
     applyMarkdownToolbarAction,
@@ -19,7 +19,7 @@ import { MarkdownFormatToolbar } from '../../MarkdownFormatToolbar';
 import { Markdown } from '../../Markdown';
 import { MarkdownReferenceAutocompleteMenu, useMarkdownReferenceAutocomplete } from '../../MarkdownReferenceAutocomplete';
 import { AttachmentProgressIndicator } from '../../AttachmentProgressIndicator';
-import { useBareFileReferenceCheck } from '../../../lib/attachment-reference';
+import { isFolderLinkAttachment, useBareFileReferenceCheck } from '../../../lib/attachment-reference';
 import { getAttachmentDisplayTitle } from '../../../lib/attachment-utils';
 
 type ProjectNotesSectionProps = {
@@ -28,6 +28,8 @@ type ProjectNotesSectionProps = {
     onTogglePreview: () => void;
     onAddFile: () => void;
     onAddLink: () => void;
+    // Desktop shell only: the folder picker is a native dialog.
+    onLinkFolder?: () => void;
     attachmentsBusy?: boolean;
     visibleAttachments: Attachment[];
     attachmentError: string | null;
@@ -47,6 +49,7 @@ export function ProjectNotesSection({
     onTogglePreview,
     onAddFile,
     onAddLink,
+    onLinkFolder,
     attachmentsBusy = false,
     visibleAttachments,
     attachmentError,
@@ -272,6 +275,19 @@ export function ProjectNotesSection({
                             <Link2 className="w-3 h-3" />
                             {t('attachments.addLink')}
                         </button>
+                        {onLinkFolder && (
+                            <button
+                                type="button"
+                                onClick={onLinkFolder}
+                                className="h-7 text-xs px-2.5 rounded-md border border-border bg-background hover:bg-muted/40 transition-colors flex items-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"
+                                disabled={attachmentsBusy || readOnly}
+                                aria-busy={attachmentsBusy}
+                                title={readOnly ? readOnlyHint : undefined}
+                            >
+                                <FolderOpen className="w-3 h-3" />
+                                {t('attachments.linkFolder')}
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -343,7 +359,9 @@ export function ProjectNotesSection({
                                     <div key={attachment.id} className="flex items-center justify-between gap-2 text-xs rounded-md border border-border/60 px-2 py-1.5 transition-colors hover:bg-muted/40">
                                         <div className="min-w-0 flex-1">
                                             <div className="flex min-w-0 items-center gap-1.5">
-                                                {isPointer
+                                                {isFolderLinkAttachment(attachment)
+                                                    ? <Folder className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+                                                    : isPointer
                                                     ? <Link2 className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden="true" />
                                                     : <Paperclip className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden="true" />}
                                                 <button

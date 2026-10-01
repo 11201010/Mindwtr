@@ -381,6 +381,7 @@ export const svOverrides: Record<string, string> = {
         'attachments.fileTooLarge': 'Filen är för stor för att laddas upp.',
         'attachments.fileNotReadable': 'Kunde inte läsa filen, så den bifogades inte. Flytta den till en annan mapp och försök igen.',
         'attachments.linkToFile': 'Länk till fil…',
+        'attachments.linkFolder': 'Länka mapp…',
         'attachments.linkedFileElsewhere': 'Den här länken pekar på en fil på en annan enhet: {{path}}. Öppna den där, eller bifoga filen i stället för att länka till den.',
         'attachments.openLinkFailed': 'Kunde inte öppna den här länken.',
         'attachments.invalidFileType': 'Filtypen stöds inte.',

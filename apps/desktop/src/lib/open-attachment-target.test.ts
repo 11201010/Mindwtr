@@ -43,6 +43,18 @@ describe('openAttachmentTarget', () => {
         expect(openShellMock).not.toHaveBeenCalled();
     });
 
+    it('passes a folder link and its id to open_path unchanged', async () => {
+        (window as any).__TAURI_INTERNALS__ = {};
+
+        await openAttachmentTarget('/Users/dd/Projects/Alpha', 'folder-1');
+
+        expect(invokeMock).toHaveBeenCalledWith('open_path', {
+            path: '/Users/dd/Projects/Alpha',
+            attachmentId: 'folder-1',
+        });
+        expect(openShellMock).not.toHaveBeenCalled();
+    });
+
     it('uses browser file urls outside Tauri', async () => {
         const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
 

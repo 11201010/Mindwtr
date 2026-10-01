@@ -381,6 +381,7 @@ export const faOverrides: Record<string, string> = {
         'attachments.fileTooLarge': 'حجم فایل برای بارگذاری زیاد است.',
         'attachments.fileNotReadable': 'این فایل خوانده نشد، بنابراین پیوست نگردید. آن را به پوشه دیگری منتقل کرده و دوباره امتحان کنید.',
         'attachments.linkToFile': 'پیوند به فایل…',
+        'attachments.linkFolder': 'پیوند به پوشه…',
         'attachments.linkedFileElsewhere': 'این پیوند به فایلی روی دستگاه دیگری اشاره می‌کند: {{path}}. آن را همان‌جا باز کنید یا به‌جای پیوند، خود فایل را پیوست کنید.',
         'attachments.openLinkFailed': 'باز کردن این پیوند ممکن نبود.',
         'attachments.invalidFileType': 'نوع فایل پشتیبانی نمی‌شود.',

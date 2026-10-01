@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isSandboxMode, useTaskStore, type Attachment, type Project } from '@mindwtr/core';
-import { importPickedFileAttachment } from '../../../lib/attachment-import';
+import { importPickedFileAttachment, pickFolderLinkAttachment } from '../../../lib/attachment-import';
 import { openAttachmentTarget } from '../../../lib/open-attachment-target';
 import { isTauriRuntime } from '../../../lib/runtime';
 import { logWarn } from '../../../lib/app-log';
@@ -50,10 +50,9 @@ export function useProjectAttachmentActions({
             return;
         }
         try {
-            await openAttachmentTarget(
-                attachment.uri,
-                attachment.kind === 'file' ? attachment.id : undefined,
-            );
+            // The id lets the native side find a file's managed copy, or a
+            // folder link's device-local bookmark on the App Store build.
+            await openAttachmentTarget(attachment.uri, attachment.id);
         } catch (error) {
             void logWarn('Failed to open attachment', {
                 scope: 'attachment',
@@ -109,6 +108,26 @@ export function useProjectAttachmentActions({
         setShowLinkPrompt(true);
     }, [getMutableProject, sandboxMode, t]);
 
+    const addProjectFolderLinkAttachment = useCallback(async () => {
+        if (sandboxMode) {
+            setAttachmentError(t('sandbox.unavailable'));
+            return;
+        }
+        const projectAtStart = getMutableProject();
+        if (!projectAtStart || isProjectAttachmentBusy || !isTauriRuntime()) return;
+        setIsProjectAttachmentBusy(true);
+        setAttachmentError(null);
+        try {
+            const attachment = await pickFolderLinkAttachment(t('attachments.linkFolder'));
+            if (!attachment) return;
+            const current = getMutableProject(projectAtStart.id);
+            if (!current) return;
+            updateProject(current.id, { attachments: [...(current.attachments || []), attachment] });
+        } finally {
+            setIsProjectAttachmentBusy(false);
+        }
+    }, [getMutableProject, isProjectAttachmentBusy, sandboxMode, t, updateProject]);
+
     const removeProjectAttachment = useCallback((id: string) => {
         const current = getMutableProject();
         if (!current) return;
@@ -128,6 +147,7 @@ export function useProjectAttachmentActions({
         openAttachment,
         addProjectFileAttachment,
         addProjectLinkAttachment,
+        addProjectFolderLinkAttachment,
         removeProjectAttachment,
     };
 }

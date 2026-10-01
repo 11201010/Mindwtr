@@ -6,6 +6,14 @@ import { isTauriRuntime } from './runtime';
 
 type AttachmentRef = Pick<Attachment, 'kind' | 'uri' | 'cloudKey'>;
 
+// A folder link ("Link folder…") is a plain `kind: 'link'` to a local path.
+// The standard directory MIME type is its only marker, so rows can show a
+// folder icon without touching the disk; editing the link drops it.
+export const FOLDER_LINK_MIME_TYPE = 'inode/directory';
+
+export const isFolderLinkAttachment = (attachment: Pick<Attachment, 'kind' | 'mimeType'>): boolean =>
+    attachment.kind === 'link' && attachment.mimeType === FOLDER_LINK_MIME_TYPE;
+
 // An external reference is a file attachment whose path lies outside the
 // managed attachments dir. Pre-#1001-fix "Add link" items are this shape —
 // possibly with a synced copy (cloudKey) attached — and are the ones Edit

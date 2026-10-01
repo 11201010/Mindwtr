@@ -381,6 +381,7 @@ export const daOverrides: Record<string, string> = {
     'attachments.fileNotReadable':
         'Kunne ikke læse denne fil, så den var ikke vedhæftet. Flyt den til en anden mappe, og prøv igen.',
     'attachments.linkToFile': 'Link til fil...',
+    'attachments.linkFolder': 'Link til mappe…',
     'attachments.linkedFileElsewhere':
         'Dette link peger på en fil på en anden enhed: {{path}}. Åbn den der, eller vedhæft filen i stedet for at linke den.',
     'attachments.openLinkFailed': 'Kunne ikke åbne dette link.',

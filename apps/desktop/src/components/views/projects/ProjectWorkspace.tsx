@@ -1601,6 +1601,7 @@ export function ProjectWorkspace({
         openAttachment,
         addProjectFileAttachment,
         addProjectLinkAttachment,
+        addProjectFolderLinkAttachment,
         removeProjectAttachment,
     } = useProjectAttachmentActions({
         t,
@@ -1842,6 +1843,7 @@ export function ProjectWorkspace({
                                         onTogglePreview={() => setShowNotesPreview((value) => !value)}
                                         onAddFile={addProjectFileAttachment}
                                         onAddLink={addProjectLinkAttachment}
+                                        onLinkFolder={isTauriRuntime() ? addProjectFolderLinkAttachment : undefined}
                                         attachmentsBusy={isProjectAttachmentBusy}
                                         visibleAttachments={visibleAttachments}
                                         attachmentError={attachmentError}

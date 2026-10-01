@@ -372,6 +372,7 @@ export const huOverrides: Record<string, string> = {
     'attachments.fileTooLarge': 'A fájl túl nagy a feltöltéshez.',
     'attachments.fileNotReadable': 'Nem sikerült beolvasni ezt a fájlt, ezért nem lett csatolva. Helyezze át egy másik mappába, és próbálja meg újra.',
     'attachments.linkToFile': 'Hivatkozás fájlra…',
+    'attachments.linkFolder': 'Mappa csatolása…',
     'attachments.linkedFileElsewhere': 'Ez a hivatkozás egy másik eszközön lévő fájlra mutat: {{path}}. Nyissa meg ott, vagy csatolja a fájlt hivatkozás helyett.',
     'attachments.openLinkFailed': 'Nem sikerült megnyitni ezt a hivatkozást.',
     'attachments.invalidFileType': 'Nem támogatott fájltípus.',
