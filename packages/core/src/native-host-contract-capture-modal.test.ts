@@ -367,6 +367,9 @@ describe('native host contract: the capture confirmation screen', () => {
 
     // Review blocker 1: a capture UUID reused after a restart with another draft (same title) answered saved.
     it('without a receipt on disk, a reused capture UUID answers saved only for the draft that made its task', async () => {
+        // On a Thursday, /start:tomorrow and /start:friday are the same request.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(fixture.now));
         const host = await openScreenHost({ data, record: {}, log: [] });
         const { draft } = value(host.openCaptureModal({ params: linkParams }));
         const input = { params: linkParams, draft: { ...draft, text: 'Plan trip /start:tomorrow %Ann' }, captureId: requestId() };
