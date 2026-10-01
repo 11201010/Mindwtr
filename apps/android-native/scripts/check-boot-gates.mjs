@@ -533,11 +533,12 @@ const backgroundFn = code(model.slice(model.indexOf('internal fun <T> background
 assert.match(backgroundFn, /if \(runtime == null \|\| busy \|\| failedAction != null\) return\s+val mine = \+\+issued/);
 assert.doesNotMatch(backgroundFn, /busy = /);
 assert.equal(code(model).match(/\bbusy = true\b/g).length, 1, 'only a user action takes busy');
-assert.match(model, /fun refreshFocus\(\) \{\s+val depth = focus\.depth\(\)\s+val controls = menu\.focusControls\.state\.toString\(\)\s+background\(/);
-assert.match(model, /fun refreshProjects\(\) \{\s+val at = depth\(\)\s+background\(/);
+// A list the boot left for later (still null) waits for a running action to end instead of being dropped (startup review 1).
+assert.match(model, /fun refreshFocus\(\) \{\s+\/\/[^\n]*\s+if \(focus == null && busy\) return menu\.whenIdle\(::refreshFocus\)\s+val depth = focus\.depth\(\)\s+val controls = menu\.focusControls\.state\.toString\(\)\s+background\(/);
+assert.match(model, /fun refreshProjects\(\) \{\s+\/\/[^\n]*\s+if \(projects == null && busy\) return menu\.whenIdle\(::refreshProjects\)\s+val at = depth\(\)\s+background\(/);
 assert.match(model, /private fun refreshAll\(\) \{\s+val at = depth\(\)\s+background\(Part\.entries, \{ runtime -> read\(runtime, at\) \}, ::showLists\)/);
 // A command's lists are read again only after it succeeds (or was refused as stale), in the background, once busy is released.
-assert.match(model, /try \{ work\(runtime\); done = true \}/);
+assert.match(model, /try \{\s+\/\/[^\n]*\s+debugProperty\("delay_action_ms"\)\.toLongOrNull\(\)\?\.let\(Thread::sleep\)\s+work\(runtime\); done = true\s+\}/);
 assert.match(model, /ui \{\s+busy = false\s+if \(\(done \|\| stale\) && action != null\) refreshAll\(\)\s+\}/);
 assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('fun openEditor('))), /read\(runtime/);
 // Stale results never overwrite newer state: every list read takes a number; a command outdates every earlier read;
@@ -848,8 +849,9 @@ assert.match(coreHost, /try \{ work\(args\) \} catch \(error: Throwable\) \{ NAT
 assert.equal(coreHost.match(/getprop/g).length, 1);
 assert.match(coreHost, /private fun debugFault\(name: String\): String = debugProperty\(name\)/);
 assert.match(coreHost, /fun debugProperty\(name: String\): String \{\s*if \(!BuildConfig\.DEBUG\) return ""/);
-// The only other debug property: the capture check's clipboard, put there for the field's real Paste.
-assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, captureUi].join('\n').match(/debugProperty\(/g).length, 1);
+// The only other debug properties: the capture check's clipboard, put there for the field's real Paste, and the projects
+// check's held user action (delay_action_ms, perform's worker thread; release builds read nothing).
+assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, captureUi].join('\n').match(/debugProperty\(/g).length, 2);
 assert.match(captureUi, /withContext\(Dispatchers\.IO\) \{ debugProperty\("clipboard"\) \}\.takeIf \{ it\.isNotEmpty\(\) \}\?\.let \{ clipboard\.setText\(/);
 // The command path's fault hook, and the same hook for a journal replay (a replay can meet a failed save too).
 assert.equal(coreHost.match(/failCommits =/g).length, 2);

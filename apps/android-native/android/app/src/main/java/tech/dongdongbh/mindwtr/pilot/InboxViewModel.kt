@@ -20,6 +20,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.RecoverySnapshots
+import tech.dongdongbh.mindwtr.pilot.core.debugProperty
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -815,6 +816,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
 
     /** Focus from offset 0, in the background: on resume and each minute while Focus shows. */
     fun refreshFocus() {
+        // Never read yet (the boot left it for later): a running action delays the read, never drops it.
+        if (focus == null && busy) return menu.whenIdle(::refreshFocus)
         val depth = focus.depth()
         val controls = menu.focusControls.state.toString()
         background(listOf(Part.Focus), { runtime -> readFocus(runtime, null, depth, controls) }) { view, mine -> if (fresh(mine, Part.Focus)) showFocus(view) }
@@ -1624,6 +1627,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
 
     /** Projects, and the open project from offset 0 as deep as it is shown, in the background: on every resume of the Projects tab. */
     fun refreshProjects() {
+        // Never read yet (the boot left it for later): a running action delays the read, never drops it.
+        if (projects == null && busy) return menu.whenIdle(::refreshProjects)
         val at = depth()
         background(listOf(Part.Projects, Part.Project), { runtime -> ProjectsView.parse(runtime.projects()) to readOpen(runtime, at) }) { (list, detail), mine ->
             if (fresh(mine, Part.Projects)) projects = list
@@ -1821,7 +1826,11 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             // RN has no revisions, so nothing shows and the lists are read again, as after a command; the commands in STALE_SHOWN keep
             // core's line on screen instead (a read's success would clear it).
             var stale = false
-            try { work(runtime); done = true }
+            try {
+                // Debug builds only (check-projects-device.mjs): a user action held long enough to switch tabs while it runs.
+                debugProperty("delay_action_ms").toLongOrNull()?.let(Thread::sleep)
+                work(runtime); done = true
+            }
             catch (failure: Throwable) {
                 val message = failure.message ?: failure.javaClass.simpleName
                 val refused = message.startsWith("STALE_REVISION") || (action?.kind in REFUSABLE && UPDATE_REFUSALS.any { message.startsWith(it) })

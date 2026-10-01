@@ -28,7 +28,9 @@
 // fixture's area chip stores one project (67 plus the marker) in that area (the
 // next run's prepare deletes it through core first); (m) the area switcher
 // narrows the list to core's projects for the fixture area, and "All areas"
-// widens it again (prepare also resets the filter). Core's expected lists
+// widens it again (prepare also resets the filter); (n) restored on Focus after process death (the boot reads only the tab
+// on screen), with a Focus view-options read held 4 s (debug delay_action_ms), Projects chosen meanwhile fills once the
+// read ends, without reopening the tab. Core's expected lists
 // come from core's own contract run on a fresh host copy of the database. It
 // touches only the development package (it refuses any other APK), never
 // launches over another app, leaves the app on its Inbox tab, and restores
@@ -66,7 +68,7 @@ const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
 const STAGED = '/data/local/tmp/mindwtr-native-dev-projects.db';
 // `language` is cleared so the app shows core's English on the (English) test phone.
-const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms', 'language'];
+const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms', 'language', 'delay_action_ms'];
 const DB = 'mindwtr-native-dev.db';
 const work = resolve(app, 'android/build/projects-check');
 const coreSrc = resolve(app, '../../packages/core/src');
@@ -660,6 +662,32 @@ try {
     await waitFor('the trigger to say All', (current) => current.some((node) => node['content-desc']?.startsWith('Area filter: All areas')), 15_000);
     sh('input keyevent KEYCODE_BACK');
     check(core(pullDatabase('m2'), 'groups').titles.includes(names.many), '(m) "All areas" widens core\'s list again');
+
+    // (n) Startup review 1: the boot leaves Projects for later when Focus shows. Chosen while a user action runs, Projects must
+    // still fill when that action ends (its read waits for idle; it is never dropped).
+    await showTab('Focus');
+    processId = pid();
+    await goHome();
+    await sleep(1500);
+    sh(`run-as ${PKG} kill -9 ${processId}`);
+    await waitFor('process death', () => pid() !== processId, 10_000);
+    setProp('delay_action_ms', '4000');
+    launch();
+    nodes = await waitFor('Focus restored with its View options', (current) => tabSelected(current, 'Focus') && button(current, 'View options'), 60_000);
+    processId = pid();
+    await tap(button(nodes, 'View options'));
+    nodes = await waitFor('the view options sheet', (current) => button(current, 'Done')
+        && current.some((node) => node.selected === 'true' && node['content-desc'] && !['Focus', 'Inbox', 'Projects', 'Menu'].includes(node['content-desc'])), 10_000);
+    // The current sort again: a read-only Focus controls request (no command, so no full refresh follows it).
+    await tap(nodes.find((node) => node.selected === 'true' && node['content-desc'] && !['Focus', 'Inbox', 'Projects', 'Menu'].includes(node['content-desc'])));
+    const heldAt = Date.now();
+    await tap(button(await screen(), 'Done'));
+    await showTab('Projects');
+    check(Date.now() - heldAt < 4000, `(n) Projects chosen while the Focus read was held (${Date.now() - heldAt} ms after it started)`);
+    const listed = (current) => tabSelected(current, 'Projects') && current.some((node) => /^active projects$/i.test(node.text ?? ''));
+    nodes = await waitFor('core\'s projects once the held read ends', listed, 20_000);
+    check(listed(nodes) && pid() === processId, '(n) Projects filled after the held action, without reopening the tab, on the same process');
+    setProp('delay_action_ms', '');
 
     // Relaunch: boot validation passes on the final data.
     requireAppFront();
