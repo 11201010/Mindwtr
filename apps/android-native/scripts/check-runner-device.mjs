@@ -239,9 +239,14 @@ const restore = async () => {
             await sleep(5000);
         } catch { /* launched again above */ }
     }
-    // Automation capture off, as a development app nobody set up has it.
+    // Automation capture off, as a development app nobody set up has it: through its card, else as the card's Off does it
+    // (CaptureIntentConfigStore.setEnabled(false) deletes the config file), so a failed step never leaves it on.
     try {
         if (storedToken()) await setAutomationCapture(false);
+    } catch (error) { console.log(`note - the card did not turn Automation capture off (${error.message}); deleting its config as Off does`); }
+    try {
+        if (storedToken()) runAs(`rm -f ${CONFIG}`);
+        if (storedToken()) throw new Error('the config is still there');
     } catch (error) { console.error(`RESTORE FAILED: Automation capture is still on: ${error.message}; turn it off by hand`); process.exitCode = 1; }
     try { await toTabs(); } catch { /* the app is gone */ }
     try { if (front().includes(`${PKG}/`)) sh('input keyevent KEYCODE_HOME'); } catch { /* device gone */ }
@@ -550,11 +555,14 @@ try {
             unlockQueue();
         }
         // The job's own retry recovers with no tap: the journal's replay first, then the drain, then the trigger's notification.
-        await waitUntil('the trigger\'s retry to recover and post', () => count(lines(), ...CONTEXT_DONE) > jobsBefore, 400_000, 5000);
+        // Wait for the post itself: other jobs (step 6a's deactivation retrying behind this owed drain) also end in success, and
+        // WorkManager runs this job's retry on its own back-off.
+        await waitUntil('the trigger\'s retry to recover and post', () => count(lines(), ...POSTED) > postedBefore, 400_000, 5000);
+        await sleep(2000);
         const text = lines();
-        check(count(text, replayLine) > replaysBefore && text.lastIndexOf(replayLine) < text.lastIndexOf('"job":"context","outcome":"success"'),
-            '(6b) the job\'s retry replayed the owed journal entry before its job');
-        check(count(text, ...POSTED) === postedBefore + 1, '(6b) and then posted the trigger\'s notification');
+        check(count(text, replayLine) > replaysBefore && text.indexOf(replayLine) < text.lastIndexOf(POSTED[0]) && count(text, ...CONTEXT_DONE) > jobsBefore,
+            '(6b) a job\'s retry replayed the owed journal entry, and the trigger\'s job then finished');
+        check(count(text, ...POSTED) === postedBefore + 1, '(6b) the trigger posted its notification once, after the recovery');
         const [recovered] = stored(title(1));
         check(recovered.status === 'done' && recovered.rev === target.rev + 1 && !queued().includes(`${id}.json`) && journal().length === 0,
             `(6b) recovered: the check-off written once (rev ${recovered.rev}), its file and entry gone`);
