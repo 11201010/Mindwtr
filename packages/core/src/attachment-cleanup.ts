@@ -1,4 +1,4 @@
-import type { AppData, Attachment, PendingRemoteAttachmentDelete } from './types';
+import type { AppData, Attachment, PendingRemoteAttachmentDelete, Project, Task } from './types';
 import { normalizePendingRemoteDeletes } from './attachment-transfer';
 import { isFileSyncGenerationCloudKey } from './attachment-paths';
 import { getErrorStatus } from './sync-runtime-utils';
@@ -6,6 +6,41 @@ import { sanitizeAttachmentCloudKeyForSyncMerge } from './sync-normalization';
 
 export const PENDING_REMOTE_ATTACHMENT_DELETE_MAX_ATTEMPTS = 12;
 export const PENDING_REMOTE_ATTACHMENT_DELETE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Queue remote bytes only after every surviving task and project reference is checked. */
+export function settingsWithPurgedParentAttachmentDeletes(
+    settings: AppData['settings'],
+    tasks: readonly Task[],
+    projects: readonly Project[],
+    purgedTaskIds: ReadonlySet<string>,
+    purgedProjectIds: ReadonlySet<string>,
+): AppData['settings'] {
+    const retained = new Set<string>();
+    const deleted = new Set<string>();
+    for (const task of tasks) {
+        if (task.purgedAt) continue;
+        for (const attachment of task.attachments ?? []) {
+            if (attachment.kind !== 'file' || !attachment.cloudKey) continue;
+            (purgedTaskIds.has(task.id) ? deleted : retained).add(attachment.cloudKey);
+        }
+    }
+    for (const project of projects) {
+        if (project.purgedAt) continue;
+        for (const attachment of project.attachments ?? []) {
+            if (attachment.kind !== 'file' || !attachment.cloudKey) continue;
+            (purgedProjectIds.has(project.id) ? deleted : retained).add(attachment.cloudKey);
+        }
+    }
+    const pending = new Map((settings.attachments?.pendingRemoteDeletes ?? []).map((entry) => [entry.cloudKey, entry]));
+    let added = false;
+    for (const cloudKey of deleted) {
+        if (retained.has(cloudKey) || pending.has(cloudKey)) continue;
+        pending.set(cloudKey, { cloudKey });
+        added = true;
+    }
+    return added ? { ...settings, attachments: { ...settings.attachments,
+        pendingRemoteDeletes: [...pending.values()] } } : settings;
+}
 
 export interface CleanupResult {
     orphanedCount: number;

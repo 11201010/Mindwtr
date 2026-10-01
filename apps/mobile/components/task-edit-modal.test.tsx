@@ -58,6 +58,8 @@ vi.mock('@mindwtr/core', async () => {
     addArea: vi.fn(),
     cancelTask: vi.fn(),
     deleteTask: vi.fn(),
+    lockEditing: vi.fn(),
+    unlockEditing: vi.fn(),
     getDerivedState: () => ({
       allContexts: [],
       allTags: [],
@@ -199,6 +201,8 @@ describe('TaskEditModal', () => {
     vi.mocked(syncTaskEditPagerPosition).mockClear();
     taskOpenPreference.current = { hydrated: true, mode: 'automatic' };
     if (taskEditStore.current) {
+      taskEditStore.current.lockEditing.mockClear();
+      taskEditStore.current.unlockEditing.mockClear();
       const project = (taskEditStore.current._allProjects[0]
         ?? taskEditStore.current.projects[0]) as Project;
       taskEditStore.current.projects = [{ ...project, status: 'active' }];
@@ -217,6 +221,23 @@ describe('TaskEditModal', () => {
         sequentialProjectIds: new Set<string>(), sequentialWithinSectionProjectIds: new Set<string>(),
       });
     }
+  });
+
+  it('holds the core edit lock while the modal is open and releases it on close', async () => {
+    const task: Task = {
+      id: 'archived-task', title: 'Archived task', status: 'archived', contexts: [], tags: [],
+      createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+    const onClose = vi.fn();
+    const onSave = vi.fn();
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => { tree = renderer.create(<TaskEditModal visible task={task} onClose={onClose} onSave={onSave} />); });
+    expect(taskEditStore.current!.lockEditing).toHaveBeenCalledTimes(1);
+    expect(taskEditStore.current!.unlockEditing).not.toHaveBeenCalled();
+    await act(async () => { tree.update(<TaskEditModal visible={false} task={task} onClose={onClose} onSave={onSave} />); });
+    expect(taskEditStore.current!.unlockEditing).toHaveBeenCalledTimes(1);
+    await act(async () => tree.unmount());
+    expect(taskEditStore.current!.unlockEditing).toHaveBeenCalledTimes(1);
   });
 
   it('finds an archived context while editing without adding it to quick chips', async () => {

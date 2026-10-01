@@ -286,6 +286,7 @@ export * from './global-search-model';
 export * from './task-group-sections';
 export * from './contexts-view-model';
 export * from './archive-view-model';
+export * from './archive-retention';
 export * from './trash-view-model';
 export * from './calendar-composer';
 export * from './calendar-day-items';

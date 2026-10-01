@@ -252,6 +252,7 @@ export const normalizeTaskForSyncMerge = (
         reviewAt: normalized.reviewAt,
         completedAt: normalized.completedAt,
         cancelledAt: normalized.cancelledAt,
+        archivedAt: normalizeOptionalString(normalized.archivedAt),
         statusBeforeProjectArchive: normalized.statusBeforeProjectArchive,
         // Older clients uploaded these as explicit `null`; absent is the canonical shape (#1156).
         completedAtBeforeProjectArchive: normalized.completedAtBeforeProjectArchive ?? undefined,
@@ -310,6 +311,7 @@ export const normalizeProjectForSyncMerge = (
         startDate: normalizeOptionalString(project.startDate),
         reviewAt: normalizeOptionalString(project.reviewAt),
         cancelledAt: normalizeOptionalString(project.cancelledAt),
+        archivedAt: normalizeOptionalString(project.archivedAt),
         areaId: normalizeOptionalString(project.areaId),
         areaTitle: normalizeOptionalString(project.areaTitle),
     };

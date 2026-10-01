@@ -618,6 +618,13 @@ export const sanitizeMergedSettingsForSync = (
         ) {
             restoreGtdField('autoArchiveDays');
         }
+        if (next.gtd.archiveRetentionDays !== undefined
+            && (typeof next.gtd.archiveRetentionDays !== 'number'
+                || !Number.isInteger(next.gtd.archiveRetentionDays)
+                || next.gtd.archiveRetentionDays < 0
+                || next.gtd.archiveRetentionDays > 36500)) {
+            restoreGtdField('archiveRetentionDays');
+        }
 
         if (
             next.gtd.defaultCaptureMethod !== undefined

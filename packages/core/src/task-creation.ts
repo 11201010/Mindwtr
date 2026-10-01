@@ -83,6 +83,7 @@ export function buildNewTask({
         updatedAt: now,
         deletedAt: undefined,
         purgedAt: undefined,
+        archivedAt: effectiveStatus === 'archived' ? now : undefined,
         // Synced booleans whose canonical form is an explicit `false`
         // (sync-normalization.ts materializes both). SQLite hides the
         // gap by re-materializing every boolean column on read, so an

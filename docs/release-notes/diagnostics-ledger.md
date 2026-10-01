@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/archive-retention`** — `packages/core/src/store-archive-retention.ts`. `Archive retention cleanup saved` follows durable persistence of an eligible Archive expiration batch. Fields `taskCount`, `projectCount`, and `sectionCount` show only aggregate purged rows. A no-op, blocked edit, or failed save emits no success line. Verify expired standalone archived tasks and complete archived project groups leave Archive and cannot return from Trash; a newer child keeps its project group. No titles, identifiers, attachments, or URLs are logged.
+
 - **`v1.3.4/ios-task-preview-links`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS Task preview reference opened` with `destination=task` or `destination=project` confirms an accepted saved-preview reference opened its destination. `source=description` or `source=checklist` distinguishes the rendered source. Dirty, stale, unavailable and self references emit no line. No task text, titles, identifiers or URLs are logged.
 
 - **`v1.3.4/ios-project-notes-links`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS Project Notes reference opened` with `destination=task` or `destination=project` confirms a current shared-resolved reference opened its destination. Rejected, stale and self references emit no line. No Notes text, titles, identifiers or URLs are logged.

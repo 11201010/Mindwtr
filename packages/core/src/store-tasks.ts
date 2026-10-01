@@ -9,7 +9,8 @@ import {
     resolveFocusStarAction,
     type FocusStarAction,
 } from './focus-star';
-import type { AppData, PendingRemoteAttachmentDelete, Section, Task, TaskStatus } from './types';
+import type { AppData, Section, Task, TaskStatus } from './types';
+import { settingsWithPurgedParentAttachmentDeletes } from './attachment-cleanup';
 import type { StorageAdapter, TaskQueryOptions } from './storage';
 import { taskMatchesQuery } from './task-query';
 import type { PreparedAreaAuthority, PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedFocusOrder, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, PreparedTaskFocus, StoreActionResult, TaskFocusWitnessRow, TaskStore } from './store-types';
@@ -69,60 +70,6 @@ import {
 } from './tombstone-compaction';
 
 const SLOW_TASK_UPDATE_LOG_THRESHOLD_MS = 500;
-
-const collectAttachmentCloudKeysForTasks = (tasks: readonly Task[]): Set<string> => {
-    const cloudKeys = new Set<string>();
-    for (const task of tasks) {
-        if (task.purgedAt) continue;
-        for (const attachment of task.attachments || []) {
-            if (attachment.kind === 'file' && attachment.cloudKey) {
-                cloudKeys.add(attachment.cloudKey);
-            }
-        }
-    }
-    return cloudKeys;
-};
-
-const collectPendingRemoteDeletesForTasks = (
-    tasks: readonly Task[],
-    remainingTasks: readonly Task[] = [],
-): PendingRemoteAttachmentDelete[] => {
-    const byCloudKey = new Map<string, PendingRemoteAttachmentDelete>();
-    const retainedCloudKeys = collectAttachmentCloudKeysForTasks(remainingTasks);
-    for (const task of tasks) {
-        for (const attachment of task.attachments || []) {
-            if (attachment.kind !== 'file' || !attachment.cloudKey) continue;
-            if (retainedCloudKeys.has(attachment.cloudKey)) continue;
-            if (byCloudKey.has(attachment.cloudKey)) continue;
-            byCloudKey.set(attachment.cloudKey, {
-                cloudKey: attachment.cloudKey,
-            });
-        }
-    }
-    return Array.from(byCloudKey.values());
-};
-
-const appendPendingRemoteDeletes = (
-    settings: TaskStore['settings'],
-    pendingDeletes: readonly PendingRemoteAttachmentDelete[],
-): TaskStore['settings'] => {
-    if (pendingDeletes.length === 0) return settings;
-    const byCloudKey = new Map<string, PendingRemoteAttachmentDelete>();
-    for (const existing of settings.attachments?.pendingRemoteDeletes || []) {
-        byCloudKey.set(existing.cloudKey, existing);
-    }
-    for (const pending of pendingDeletes) {
-        if (byCloudKey.has(pending.cloudKey)) continue;
-        byCloudKey.set(pending.cloudKey, pending);
-    }
-    return {
-        ...settings,
-        attachments: {
-            ...settings.attachments,
-            pendingRemoteDeletes: Array.from(byCloudKey.values()),
-        },
-    };
-};
 
 type TaskActions = Pick<
     TaskStore,
@@ -685,6 +632,7 @@ export function buildDuplicateTask({ sourceTask, asNextAction, copyId, now, devi
         attachments: duplicatedAttachments.length > 0 ? duplicatedAttachments : undefined,
         completedAt: undefined,
         cancelledAt: undefined,
+        archivedAt: undefined,
         isFocusedToday: false,
         // A copy is not in Today's Focus and was never archived with a
         // project, so neither the focus position nor the restore
@@ -1793,11 +1741,9 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             }),
             buildSettings: (state, selectedTasks, { settings }) => {
                 const selectedIds = new Set(selectedTasks.map((task) => task.id));
-                const remainingTasks = state._allTasks.filter((task) => !selectedIds.has(task.id));
-                const pendingDeletes = collectPendingRemoteDeletesForTasks(selectedTasks, remainingTasks);
-                return pendingDeletes.length > 0
-                    ? appendPendingRemoteDeletes(settings, pendingDeletes)
-                    : undefined;
+                const next = settingsWithPurgedParentAttachmentDeletes(settings,
+                    state._allTasks, state._allProjects, selectedIds, new Set());
+                return next === settings ? undefined : next;
             },
             missingMessage: 'Task not found',
         });
@@ -1838,11 +1784,9 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             }),
             buildSettings: (state, selectedTasks, { settings }) => {
                 const selectedIds = new Set(selectedTasks.map((task) => task.id));
-                const remainingTasks = state._allTasks.filter((task) => !selectedIds.has(task.id));
-                const pendingDeletes = collectPendingRemoteDeletesForTasks(selectedTasks, remainingTasks);
-                return pendingDeletes.length > 0
-                    ? appendPendingRemoteDeletes(settings, pendingDeletes)
-                    : undefined;
+                const next = settingsWithPurgedParentAttachmentDeletes(settings,
+                    state._allTasks, state._allProjects, selectedIds, new Set());
+                return next === settings ? undefined : next;
             },
             missingMessage: 'Tasks not found',
         });
@@ -1859,11 +1803,9 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             }),
             buildSettings: (state, selectedTasks, { settings }) => {
                 const selectedIds = new Set(selectedTasks.map((task) => task.id));
-                const remainingTasks = state._allTasks.filter((task) => !selectedIds.has(task.id));
-                const pendingDeletes = collectPendingRemoteDeletesForTasks(selectedTasks, remainingTasks);
-                return pendingDeletes.length > 0
-                    ? appendPendingRemoteDeletes(settings, pendingDeletes)
-                    : undefined;
+                const next = settingsWithPurgedParentAttachmentDeletes(settings,
+                    state._allTasks, state._allProjects, selectedIds, new Set());
+                return next === settings ? undefined : next;
             },
             ensureDeviceIdWhenEmpty: true,
         });

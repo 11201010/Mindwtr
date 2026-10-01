@@ -41,7 +41,9 @@ export function normalizeProjectUpdate(
     project: Project,
     updates: Partial<Project>,
 ): Partial<Project> {
-    let adjustedUpdates = updates;
+    // The archive entry clock is stamped by the lifecycle writer.
+    let adjustedUpdates = { ...updates };
+    delete adjustedUpdates.archivedAt;
     if (hasOwnField(updates, 'cancelledAt')) {
         const cancelledAt = normalizeCancellationTimestamp(updates.cancelledAt);
         adjustedUpdates = {

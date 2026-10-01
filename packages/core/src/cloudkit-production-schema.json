@@ -48,7 +48,7 @@
     "orderNum",
     "focusOrder"
    ],
-   "pendingProduction": []
+   "pendingProduction": ["archivedAt"]
   },
   "MindwtrProject": {
    "deployed": [
@@ -77,7 +77,7 @@
     "cancelledAt",
     "viewSectionIds"
    ],
-   "pendingProduction": []
+   "pendingProduction": ["archivedAt"]
   },
   "MindwtrSection": {
    "deployed": [

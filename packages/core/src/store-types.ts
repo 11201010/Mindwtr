@@ -482,6 +482,11 @@ export interface TaskStore {
     _areasById: Map<string, Area>;
     _peopleById: Map<string, Person>;
 
+    /** Set the synced Archive expiration policy; zero disables it. */
+    setArchiveRetentionDays: (days: number) => Promise<StoreActionResult>;
+    /** Expire eligible Archive records from the latest store state. */
+    runArchiveRetention: () => Promise<StoreActionResult>;
+
     // Actions
     /** Load all data from storage, or apply an already-persisted snapshot without re-reading storage */
     fetchData: (options?: {

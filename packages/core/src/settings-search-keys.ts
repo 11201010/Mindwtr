@@ -130,6 +130,7 @@ export const SETTINGS_SEARCH_PAGE_KEYS: Record<SettingsSearchPageId, readonly Se
         { key: 'importOmniFocus', section: 'importData' },
         { key: 'importMindwtrCsv', section: 'importData' },
         'attachmentsCleanup',
+        'archiveRetention',
         'diagnostics',
         { key: 'analyticsHeartbeat', section: 'diagnostics' },
         { key: 'debugLogging', section: 'diagnostics' },

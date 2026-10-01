@@ -48,6 +48,7 @@ import {
     compactAttachmentCleanupMetadata,
     compactSectionsForPurgedProjects,
 } from './tombstone-compaction';
+import { hasValidArchiveClock } from './archive-retention';
 
 export type {
     ClockSkewDirection,
@@ -763,7 +764,24 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
             });
         }
 
-        const mergedItem = mergeConflict ? mergeConflict(normalizedLocalItem, normalizedIncomingItem, winner) : winner;
+        let mergedItem = mergeConflict ? mergeConflict(normalizedLocalItem, normalizedIncomingItem, winner) : winner;
+        if ((entityType === 'task' || entityType === 'project') && !hasValidArchiveClock((mergedItem as unknown as Task | Project).archivedAt)) {
+            const other = winner === normalizedLocalItem ? normalizedIncomingItem : normalizedLocalItem;
+            const withClock = other as unknown as Task | Project;
+            const withoutClock = mergedItem as unknown as Task | Project;
+            // A previous client can omit only this new field from the same saved operation.
+            // A newer operation with no clock must remain unknown and start a fresh period.
+            if (hasValidArchiveClock(withClock.archivedAt)
+                && withClock.rev === withoutClock.rev && withClock.revBy === withoutClock.revBy
+                && withClock.updatedAt === withoutClock.updatedAt
+                && withClock.status === withoutClock.status
+                && withClock.deletedAt === withoutClock.deletedAt
+                && withClock.purgedAt === withoutClock.purgedAt
+                && JSON.stringify(toComparableValue({ ...normalizedLocalItem, archivedAt: undefined }))
+                    === JSON.stringify(toComparableValue({ ...normalizedIncomingItem, archivedAt: undefined }))) {
+                mergedItem = { ...mergedItem, archivedAt: withClock.archivedAt };
+            }
+        }
         merged.push(normalizeTimestamps(mergedItem));
     }
 

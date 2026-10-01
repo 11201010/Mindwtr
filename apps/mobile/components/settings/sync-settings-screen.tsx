@@ -52,6 +52,7 @@ import {
 } from '@/lib/analytics-heartbeat';
 
 import { SettingRow } from './setting-row';
+import { ArchiveRetentionSection } from './archive-retention-section';
 import { MobileExtraConfig } from './settings.constants';
 import { AppleRemindersImportSection } from './apple-reminders-import-section';
 import { useSettingsLocalization, useSettingsScrollContent } from './settings.hooks';
@@ -771,6 +772,8 @@ function SyncSettingsView({
                             tr={tr}
                             tc={tc}
                         />
+
+                        <ArchiveRetentionSection />
 
                         <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 16 }]}>
                             <SettingRow

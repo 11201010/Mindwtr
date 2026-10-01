@@ -103,6 +103,8 @@ const storeActions = vi.hoisted(() => ({
     reorderSections: vi.fn(),
     updateProject: vi.fn(),
     updateSection: vi.fn(),
+    lockEditing: vi.fn(),
+    unlockEditing: vi.fn(),
 }));
 
 vi.mock('@mindwtr/core', async (importOriginal) => {
@@ -346,6 +348,20 @@ afterEach(() => {
     mockMeasureInWindow.mockReset();
     taskListPropsSpy.mockClear();
     vi.restoreAllMocks();
+});
+
+describe('ProjectDetailModal archive retention guard', () => {
+    it('holds the edit lock while a project draft is open and releases it on close', () => {
+        const props = createProjectDetailModalProps();
+        let tree!: ReturnType<typeof create>;
+        act(() => { tree = create(<ProjectDetailModal {...props} />); });
+        expect(storeActions.lockEditing).toHaveBeenCalledTimes(1);
+        expect(storeActions.unlockEditing).not.toHaveBeenCalled();
+        act(() => tree.update(<ProjectDetailModal {...props} project={null} />));
+        expect(storeActions.unlockEditing).toHaveBeenCalledTimes(1);
+        act(() => tree.unmount());
+        expect(storeActions.unlockEditing).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('ProjectDetailModal safe area handling', () => {

@@ -1324,6 +1324,9 @@ fn create_project_from_body(
         Value::String(device_id_from_data(data)),
     );
     project.insert("createdAt".to_string(), Value::String(now.clone()));
+    if project.get("status").and_then(Value::as_str) == Some("archived") {
+        project.insert("archivedAt".to_string(), Value::String(now.clone()));
+    }
     project.insert("updatedAt".to_string(), Value::String(now));
     Ok(project)
 }
@@ -1369,6 +1372,10 @@ fn apply_project_archive_to_task(
     }
     task.insert(
         "projectArchivedAt".to_string(),
+        Value::String(archived_at.to_string()),
+    );
+    task.insert(
+        "archivedAt".to_string(),
         Value::String(archived_at.to_string()),
     );
     task.insert("isFocusedToday".to_string(), Value::Bool(false));
@@ -1449,6 +1456,7 @@ fn restore_task_from_project_archive(
     task.remove("completedAtBeforeProjectArchive");
     task.remove("isFocusedTodayBeforeProjectArchive");
     task.remove("projectArchivedAt");
+    task.remove("archivedAt");
     task.insert(
         "updatedAt".to_string(),
         Value::String(restored_at.to_string()),
@@ -1472,29 +1480,104 @@ fn apply_project_lifecycle_to_children(
         return Ok((Vec::new(), Vec::new()));
     }
 
+    let project_section_ids: HashSet<String> = data
+        .get("sections")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|section| section.get("projectId").and_then(Value::as_str) == Some(project_id))
+        .filter_map(|section| {
+            section
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
     let mut changed_tasks = Vec::new();
     for task in ensure_array_mut(data, "tasks")? {
         let Some(task_object) = task.as_object_mut() else {
             continue;
         };
-        if task_object.get("projectId").and_then(Value::as_str) != Some(project_id) {
+        let task_project_id = task_object.get("projectId").and_then(Value::as_str);
+        let section_owned = task_object
+            .get("sectionId")
+            .and_then(Value::as_str)
+            .is_some_and(|section_id| project_section_ids.contains(section_id));
+        let needs_owner_repair = task_project_id.map_or(true, str::is_empty) && section_owned;
+        let belongs_to_project = task_project_id == Some(project_id) || needs_owner_repair;
+        if !belongs_to_project {
+            continue;
+        }
+        if has_non_empty_string(task_object, "deletedAt") {
             continue;
         }
         if entered_archive {
-            if has_non_empty_string(task_object, "deletedAt") {
-                continue;
+            if needs_owner_repair {
+                task_object.insert(
+                    "projectId".to_string(),
+                    Value::String(project_id.to_string()),
+                );
             }
             let status = task_object
                 .get("status")
                 .and_then(Value::as_str)
                 .unwrap_or("inbox");
             if !matches!(status, "inbox" | "next" | "waiting" | "someday") {
+                let needs_archive_stamp = matches!(status, "done" | "reference")
+                    && !has_non_empty_string(task_object, "archivedAt");
+                if needs_archive_stamp {
+                    task_object.insert(
+                        "archivedAt".to_string(),
+                        Value::String(operation_at.to_string()),
+                    );
+                }
+                if needs_archive_stamp || needs_owner_repair {
+                    task_object.insert(
+                        "updatedAt".to_string(),
+                        Value::String(operation_at.to_string()),
+                    );
+                    bump_task_revision(task_object, device_id);
+                    changed_tasks.push(Value::Object(task_object.clone()));
+                }
                 continue;
             }
             apply_project_archive_to_task(task_object, operation_at, device_id, cancellation_at);
             changed_tasks.push(Value::Object(task_object.clone()));
-        } else if restore_task_from_project_archive(task_object, operation_at, device_id) {
-            changed_tasks.push(Value::Object(task_object.clone()));
+        } else {
+            let mut changed =
+                restore_task_from_project_archive(task_object, operation_at, device_id);
+            if !changed
+                && matches!(
+                    task_object.get("status").and_then(Value::as_str),
+                    Some("done" | "reference")
+                )
+                && has_non_empty_string(task_object, "archivedAt")
+            {
+                task_object.remove("archivedAt");
+                task_object.insert(
+                    "updatedAt".to_string(),
+                    Value::String(operation_at.to_string()),
+                );
+                bump_task_revision(task_object, device_id);
+                changed = true;
+            }
+            if needs_owner_repair {
+                task_object.insert(
+                    "projectId".to_string(),
+                    Value::String(project_id.to_string()),
+                );
+                if !changed {
+                    task_object.insert(
+                        "updatedAt".to_string(),
+                        Value::String(operation_at.to_string()),
+                    );
+                    bump_task_revision(task_object, device_id);
+                }
+                changed = true;
+            }
+            if changed {
+                changed_tasks.push(Value::Object(task_object.clone()));
+            }
         }
     }
 
@@ -1648,6 +1731,11 @@ pub(crate) fn patch_project_in_data(
         };
     if next_status == "archived" {
         project.insert("isFocused".to_string(), Value::Bool(false));
+    }
+    if previous_status != "archived" && next_status == "archived" {
+        project.insert("archivedAt".to_string(), Value::String(now.clone()));
+    } else if previous_status == "archived" && next_status != "archived" {
+        project.remove("archivedAt");
     }
     let (changed_tasks, changed_sections) = apply_project_lifecycle_to_children(
         data,
@@ -2324,12 +2412,21 @@ fn has_non_empty_string(task: &Map<String, Value>, key: &str) -> bool {
 
 // Cancellation is an archived outcome, never a completed occurrence. Keep this
 // boundary aligned with core's normalizeTaskLifecycleFields for native writes.
-fn normalize_local_task_lifecycle(task: &mut Map<String, Value>, now: &str) {
+fn normalize_local_task_lifecycle(
+    task: &mut Map<String, Value>,
+    now: &str,
+    previous_status: Option<&str>,
+) {
     let status = task
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or("inbox")
         .to_string();
+    if status == "archived" && previous_status != Some("archived") {
+        task.insert("archivedAt".to_string(), Value::String(now.to_string()));
+    } else if status != "archived" && previous_status == Some("archived") {
+        task.remove("archivedAt");
+    }
     let has_valid_cancellation =
         status == "archived" && valid_cancellation_timestamp(task.get("cancelledAt"));
     if !has_valid_cancellation {
@@ -2385,6 +2482,7 @@ fn apply_task_action(
         "complete" => {
             let previous_task = task.clone();
             task.remove("cancelledAt");
+            task.remove("archivedAt");
             // archived -> done is a lifecycle correction, not a new
             // completion: keep the existing completedAt (falling back to
             // `now` only if it is somehow missing) instead of overwriting it,
@@ -2413,6 +2511,7 @@ fn apply_task_action(
         }
         "archive" => {
             task.insert("status".to_string(), Value::String("archived".to_string()));
+            task.insert("archivedAt".to_string(), Value::String(now.to_string()));
             if !has_non_empty_string(task, "completedAt") {
                 task.insert("completedAt".to_string(), Value::String(now.to_string()));
             }
@@ -3425,7 +3524,7 @@ fn create_task_from_body(
     if !had_explicit_status && has_non_empty_string(&task, "cancelledAt") {
         task.insert("status".to_string(), Value::String("archived".to_string()));
     }
-    normalize_local_task_lifecycle(&mut task, &now);
+    normalize_local_task_lifecycle(&mut task, &now, None);
     if task.get("status").and_then(Value::as_str) == Some("reference") {
         normalize_created_reference_task(&mut task);
     }
@@ -3574,7 +3673,7 @@ fn apply_task_patch_internal(
         task.insert("status".to_string(), Value::String("archived".to_string()));
         task.remove("boardOrder");
     }
-    normalize_local_task_lifecycle(task, &now);
+    normalize_local_task_lifecycle(task, &now, Some(&previous_status));
     task.insert("updatedAt".to_string(), Value::String(now));
     bump_task_revision(task, device_id);
     Ok(())
@@ -6061,6 +6160,11 @@ mod tests {
         let patch = json!({"cancelledAt": "2026-09-07T12:00:00.000Z"});
         apply_task_patch(&mut task, patch.as_object().unwrap(), "device-a").unwrap();
         assert_eq!(task["status"], "archived");
+        let archived_at = task["archivedAt"]
+            .as_str()
+            .expect("archive clock")
+            .to_string();
+        assert!(valid_cancellation_timestamp(task.get("archivedAt")));
         assert_eq!(task["cancelledAt"], "2026-09-07T12:00:00.000Z");
         assert_eq!(task["description"], "Keep this history");
         assert_eq!(task["recurrence"]["rule"], "weekly");
@@ -6079,6 +6183,7 @@ mod tests {
         .unwrap();
         assert!(!task.contains_key("completedAt"));
         assert!(task.contains_key("cancelledAt"));
+        assert_eq!(task["archivedAt"], archived_at);
 
         // Correcting the outcome to Completed clears cancellation and does not
         // create another recurring occurrence from an already archived item.
@@ -6094,6 +6199,7 @@ mod tests {
         assert!(follow_up.is_none());
         assert_eq!(task["status"], "done");
         assert!(!task.contains_key("cancelledAt"));
+        assert!(!task.contains_key("archivedAt"));
         assert_eq!(task["completedAt"], "2026-09-08T12:00:00.000Z");
     }
 
@@ -6103,6 +6209,7 @@ mod tests {
         let task =
             create_task_from_body(body.as_object().unwrap(), "device-a", &json!({})).unwrap();
         assert_eq!(task["status"], "archived");
+        assert!(valid_cancellation_timestamp(task.get("archivedAt")));
         assert_eq!(task["isFocusedToday"], false);
         assert!(!task.contains_key("completedAt"));
         for value in [
@@ -6114,6 +6221,87 @@ mod tests {
             let mut patch = Map::from_iter([("cancelledAt".to_string(), value)]);
             assert!(sanitize_task_patch_map(&mut patch).is_err());
         }
+        let mut backdated =
+            Map::from_iter([("archivedAt".to_string(), json!("2000-01-01T00:00:00Z"))]);
+        assert!(sanitize_task_patch_map(&mut backdated).is_err());
+    }
+
+    #[test]
+    fn local_api_archive_clock_reenters_and_rejects_project_backdating() {
+        let mut task = json!({"id":"task", "title":"Task", "status":"next", "rev":1})
+            .as_object()
+            .unwrap()
+            .clone();
+        apply_task_action(
+            &mut task,
+            "archive",
+            "next",
+            "2026-09-01T00:00:00Z",
+            "device-a",
+            &LiveContainers::default(),
+        )
+        .unwrap();
+        assert_eq!(task["archivedAt"], "2026-09-01T00:00:00Z");
+        apply_task_action(
+            &mut task,
+            "complete",
+            "archived",
+            "2026-09-02T00:00:00Z",
+            "device-a",
+            &LiveContainers::default(),
+        )
+        .unwrap();
+        assert!(task.get("archivedAt").is_none());
+        apply_task_action(
+            &mut task,
+            "archive",
+            "done",
+            "2026-09-03T00:00:00Z",
+            "device-a",
+            &LiveContainers::default(),
+        )
+        .unwrap();
+        assert_eq!(task["archivedAt"], "2026-09-03T00:00:00Z");
+
+        let mut data = json!({"tasks":[], "projects":[], "sections":[], "areas":[], "settings":{"deviceId":"device-a"}});
+        let project = create_project_from_body(
+            json!({"title":"Archive","props":{"status":"archived"}})
+                .as_object()
+                .unwrap(),
+            &data,
+        )
+        .unwrap();
+        assert_eq!(project["status"], "archived");
+        assert!(valid_cancellation_timestamp(project.get("archivedAt")));
+        data["projects"] = json!([project]);
+        let id = data["projects"][0]["id"].as_str().unwrap().to_string();
+        assert!(patch_project_in_data(
+            &mut data,
+            &id,
+            json!({"archivedAt":"2000-01-01T00:00:00Z"})
+                .as_object()
+                .unwrap()
+        )
+        .is_err());
+        data["projects"][0]["archivedAt"] = json!("2026-09-01T00:00:00Z");
+        let old_clock = data["projects"][0]["archivedAt"].clone();
+        patch_project_in_data(
+            &mut data,
+            &id,
+            json!({"status":"active"}).as_object().unwrap(),
+        )
+        .unwrap();
+        assert!(data["projects"][0].get("archivedAt").is_none());
+        patch_project_in_data(
+            &mut data,
+            &id,
+            json!({"status":"archived"}).as_object().unwrap(),
+        )
+        .unwrap();
+        assert!(valid_cancellation_timestamp(
+            data["projects"][0].get("archivedAt")
+        ));
+        assert_ne!(data["projects"][0]["archivedAt"], old_clock);
     }
 
     #[test]
@@ -6686,6 +6874,11 @@ mod tests {
                     "id": "reference", "title": "Reference", "status": "reference", "projectId": "project-1",
                     "sectionId": "section-1", "tags": [], "contexts": [], "rev": 1,
                     "createdAt": created_at, "updatedAt": created_at
+                },
+                {
+                    "id": "independent", "title": "Independent", "status": "archived", "projectId": "project-1",
+                    "archivedAt": "2026-08-01T00:00:00Z", "tags": [], "contexts": [], "rev": 1,
+                    "createdAt": created_at, "updatedAt": created_at
                 }
             ],
             "projects": [{
@@ -6709,11 +6902,11 @@ mod tests {
         )
         .expect("archive project");
 
-        assert_eq!(archived_tasks.len(), 2);
+        assert_eq!(archived_tasks.len(), 3);
         assert_eq!(archived_sections.len(), 1);
         assert_eq!(
             data["tasks"].as_array().unwrap().len(),
-            3,
+            4,
             "no recurrence follow-up"
         );
         assert_eq!(data["tasks"][0]["status"], "done");
@@ -6722,11 +6915,16 @@ mod tests {
         assert_eq!(data["tasks"][0]["boardOrder"], 8);
         assert!(data["tasks"][0].get("focusOrder").is_none());
         assert_eq!(data["tasks"][0]["isFocusedToday"], false);
-        assert_eq!(data["tasks"][2], original_reference);
+        assert_eq!(data["tasks"][2]["status"], original_reference["status"]);
         let archived_at = data["projects"][0]["updatedAt"]
             .as_str()
             .unwrap()
             .to_string();
+        assert_eq!(data["projects"][0]["archivedAt"], archived_at);
+        for task in data["tasks"].as_array().unwrap().iter().take(3) {
+            assert_eq!(task["archivedAt"], archived_at);
+        }
+        assert_eq!(data["tasks"][3]["archivedAt"], "2026-08-01T00:00:00Z");
         assert_eq!(data["sections"][0]["deletedAt"], archived_at);
         assert_eq!(data["sections"][0]["projectArchivedAt"], archived_at);
 
@@ -6741,17 +6939,120 @@ mod tests {
 
         assert_eq!(
             restored_tasks.len(),
-            1,
-            "edited archive child remains untouched"
+            3,
+            "children stamped by this archive lose that clock even if edited"
         );
         assert_eq!(restored_sections.len(), 1);
         assert_eq!(data["tasks"][0]["status"], "next");
         assert_eq!(data["tasks"][0]["isFocusedToday"], true);
         assert!(data["tasks"][0].get("projectArchivedAt").is_none());
+        assert!(data["tasks"][0].get("archivedAt").is_none());
         assert_eq!(data["tasks"][1]["status"], "done");
-        assert_eq!(data["tasks"][1]["rev"], 99);
+        assert_eq!(data["tasks"][1]["rev"], 100);
+        assert!(data["tasks"][1].get("archivedAt").is_none());
+        assert!(data["tasks"][2].get("archivedAt").is_none());
+        assert_eq!(data["tasks"][3]["archivedAt"], "2026-08-01T00:00:00Z");
+        assert!(data["projects"][0].get("archivedAt").is_none());
         assert!(data["sections"][0].get("deletedAt").is_none());
         assert!(data["sections"][0].get("projectArchivedAt").is_none());
+    }
+
+    #[test]
+    fn local_api_project_lifecycle_includes_section_only_children_without_crossing_owner() {
+        let at = "2026-09-01T00:00:00Z";
+        let mut data = json!({
+            "tasks": [
+                {"id":"direct","title":"Direct","status":"next","projectId":"project-1","rev":1,"updatedAt":at},
+                {"id":"section-only","title":"Section only","status":"next","sectionId":"section-1","rev":1,"updatedAt":at},
+                {"id":"empty-owner","title":"Empty owner","status":"waiting","projectId":"","sectionId":"section-1","rev":1,"updatedAt":at},
+                {"id":"reference","title":"Reference","status":"reference","sectionId":"section-1","rev":1,"updatedAt":at},
+                {"id":"already-archived","title":"Already archived","status":"archived","sectionId":"section-1","archivedAt":"2026-08-01T00:00:00Z","rev":1,"updatedAt":at},
+                {"id":"foreign","title":"Foreign","status":"next","projectId":"project-2","sectionId":"section-1","rev":1,"updatedAt":at},
+                {"id":"other-section","title":"Other section","status":"next","sectionId":"section-2","rev":1,"updatedAt":at}
+            ],
+            "projects": [
+                {"id":"project-1","title":"Project","status":"active","color":"#000","rev":1,"updatedAt":at},
+                {"id":"project-2","title":"Other","status":"active","color":"#000","rev":1,"updatedAt":at}
+            ],
+            "sections": [
+                {"id":"section-1","projectId":"project-1","title":"Section","rev":1,"updatedAt":at},
+                {"id":"section-2","projectId":"project-2","title":"Other section","rev":1,"updatedAt":at}
+            ],
+            "areas": [], "people": [], "settings": {"deviceId":"device-a"}
+        });
+        let foreign_before = data["tasks"][5].clone();
+        let other_before = data["tasks"][6].clone();
+        let (_, archived_tasks, _) = patch_project_in_data(
+            &mut data,
+            "project-1",
+            json!({"status":"archived"}).as_object().unwrap(),
+        )
+        .expect("archive project");
+        assert_eq!(archived_tasks.len(), 5);
+        let archived_at = data["projects"][0]["archivedAt"].clone();
+        for task in data["tasks"].as_array().unwrap().iter().take(4) {
+            assert_eq!(task["archivedAt"], archived_at);
+        }
+        for task in data["tasks"].as_array().unwrap().iter().take(5) {
+            assert_eq!(task["projectId"], "project-1");
+        }
+        assert_eq!(data["tasks"][1]["status"], "done");
+        assert_eq!(data["tasks"][2]["status"], "done");
+        assert_eq!(data["tasks"][3]["status"], "reference");
+        assert_eq!(data["tasks"][4]["archivedAt"], "2026-08-01T00:00:00Z");
+        assert_eq!(data["tasks"][4]["updatedAt"], archived_at);
+        assert_eq!(data["tasks"][4]["rev"], 2);
+        assert_eq!(data["tasks"][5], foreign_before);
+        assert_eq!(data["tasks"][6], other_before);
+
+        let (_, restored_tasks, _) = patch_project_in_data(
+            &mut data,
+            "project-1",
+            json!({"status":"active"}).as_object().unwrap(),
+        )
+        .expect("reactivate project");
+        assert_eq!(restored_tasks.len(), 4);
+        assert_eq!(data["tasks"][1]["status"], "next");
+        assert_eq!(data["tasks"][2]["status"], "waiting");
+        for task in data["tasks"].as_array().unwrap().iter().take(4) {
+            assert!(task.get("archivedAt").is_none());
+        }
+        assert_eq!(data["tasks"][4]["archivedAt"], "2026-08-01T00:00:00Z");
+        assert_eq!(data["tasks"][5], foreign_before);
+        assert_eq!(data["tasks"][6], other_before);
+    }
+
+    #[test]
+    fn local_api_reactivation_repairs_legacy_section_only_archived_child() {
+        let at = "2026-09-01T00:00:00Z";
+        let mut data = json!({
+            "tasks": [
+                {"id":"legacy","title":"Legacy","status":"archived","sectionId":"section-1","archivedAt":"2026-08-01T00:00:00Z","rev":1,"updatedAt":at},
+                {"id":"foreign","title":"Foreign","status":"archived","projectId":"project-2","sectionId":"section-1","rev":1,"updatedAt":at},
+                {"id":"deleted","title":"Deleted","status":"archived","sectionId":"section-1","deletedAt":at,"rev":1,"updatedAt":at}
+            ],
+            "projects": [{"id":"project-1","title":"Project","status":"archived","archivedAt":at,"color":"#000","rev":1,"updatedAt":at}],
+            "sections": [{"id":"section-1","projectId":"project-1","title":"Section","rev":1,"updatedAt":at}],
+            "areas": [], "people": [], "settings": {"deviceId":"device-a"}
+        });
+        let foreign_before = data["tasks"][1].clone();
+        let deleted_before = data["tasks"][2].clone();
+        let (_, changed_tasks, _) = patch_project_in_data(
+            &mut data,
+            "project-1",
+            json!({"status":"active"}).as_object().unwrap(),
+        )
+        .expect("reactivate project");
+        assert_eq!(changed_tasks.len(), 1);
+        assert_eq!(data["tasks"][0]["projectId"], "project-1");
+        assert_eq!(data["tasks"][0]["archivedAt"], "2026-08-01T00:00:00Z");
+        assert_eq!(data["tasks"][0]["rev"], 2);
+        assert_eq!(
+            data["tasks"][0]["updatedAt"],
+            data["projects"][0]["updatedAt"]
+        );
+        assert_eq!(data["tasks"][1], foreign_before);
+        assert_eq!(data["tasks"][2], deleted_before);
     }
 
     #[test]
