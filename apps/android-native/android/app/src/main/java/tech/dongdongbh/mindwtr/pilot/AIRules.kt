@@ -29,6 +29,16 @@ class AIRequestSlots<T : Any>(private val cancel: (T) -> Unit) {
 
     /** Whether [call] is still the one [scope] wants. */
     fun wanted(scope: String, call: T): Boolean = synchronized(this) { slots[scope] === call }
+
+    /**
+     * [call] answered off the main thread: [post] it there, where [answer] runs only if [call] is still the one [scope] wants
+     * (a close, a reopen or a newer call between the answer and the post drops it).
+     */
+    fun reply(scope: String, call: T, post: (() -> Unit) -> Unit, answer: () -> Unit) = post {
+        val wanted = wanted(scope, call)
+        finished(scope, call)
+        if (wanted) answer()
+    }
 }
 
 /** The Process Inbox step an AI Clarify was asked on: its answer shows and applies only on that step of that session. */
@@ -49,3 +59,20 @@ fun captureCopilotKey(session: String, request: String?): String? = request?.let
  */
 fun typedKey(current: String?, mask: String, text: String): String =
     if (current == null && text.startsWith(mask)) text.removePrefix(mask) else text.replace("\u2022", "")
+
+/**
+ * The key fields' typed text while they show it (AISettings.kt), each edit numbered: a blur's saved callback clears only the
+ * text up to the edit it waited for, never a newer edit typed after a refocus. Main thread.
+ */
+class KeyTexts {
+    private val texts = HashMap<String, String>()
+    private val edits = HashMap<String, Long>()
+    val shown: Map<String, String> get() = texts.toMap()
+    /** An edit: the field now shows [text]. */
+    fun typed(field: String, text: String) { texts[field] = text; edits[field] = edit(field) + 1 }
+    /** The field's latest edit. */
+    fun edit(field: String): Long = edits[field] ?: 0L
+    /** The field's writes up to edit [upTo] are stored: it shows saved, unless a newer edit came since. */
+    fun saved(field: String, upTo: Long) { if (edits[field] == upTo) texts.remove(field) }
+    fun clear() { texts.clear() }
+}

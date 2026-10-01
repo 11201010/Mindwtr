@@ -110,8 +110,9 @@ class AISettingsModel(private val menu: MenuModel) {
     var picker by mutableStateOf<String?>(null); private set
     /** Text fields as typed, by core's change type ("baseUrl" and "speechBaseUrl" for the base URLs), until core's view shows the text. */
     var typed by mutableStateOf(emptyMap<String, String>()); private set
-    /** A key field ("assistant" or "speech") while it has focus: the key typed after core's dots. Gone on blur. */
+    /** A key field ("assistant" or "speech") while it shows typed text: the key typed after core's dots ([keyTexts]). Gone once saved. */
     var keys by mutableStateOf(emptyMap<String, String>()); private set
+    private val keyTexts = KeyTexts()
     /** The extra request parameters as typed, and the stored text it last took (RN resets it whenever the stored ones change). */
     var extraDraft by mutableStateOf<String?>(null); private set
     private var extraFollowed: String? = null
@@ -185,10 +186,8 @@ class AISettingsModel(private val menu: MenuModel) {
         Thread({
             runCatching { runtime.aiRequest("loadAIModels", JSONObject().put("list", list).put("request", request).toString(), handle) }
                 .onFailure { if (it !is CancellationException) Log.w(CoreHost.TAG, "AI model list failed code=${it.message?.substringBefore(':')}") }
-            val wanted = modelCalls.wanted(list, handle)
-            modelCalls.finished(list, handle)
             // Read again once no action runs (a background read skips while one does), so the new list shows.
-            if (wanted) shell.ui { menu.whenIdle { settings.refresh() } }
+            modelCalls.reply(list, handle, shell::ui) { menu.whenIdle { settings.refresh() } }
         }, "mindwtr-ai-models").start()
     }
 
@@ -205,7 +204,7 @@ class AISettingsModel(private val menu: MenuModel) {
         modelCalls.cancel("assistant", "speech")
         opened = false
         assistantOpen = false; speechOpen = false; advancedOpen = false; extraOpen = false
-        picker = null; typed = emptyMap(); keys = emptyMap(); extraDraft = null; extraFollowed = null; consent = null
+        picker = null; typed = emptyMap(); keyTexts.clear(); keys = emptyMap(); extraDraft = null; extraFollowed = null; consent = null
         asked.clear(); unsaved.clear()
         val runtime = shell.coreHost() ?: return
         ordered.execute { runCatching { runtime.menuRead("aiSettingsClose", "{}") }.onFailure { Log.w(CoreHost.TAG, "AI screen close failed", it) } }
@@ -236,16 +235,18 @@ class AISettingsModel(private val menu: MenuModel) {
      */
     fun typeKey(field: String, provider: String, mask: String, text: String) {
         val next = typedKey(keys[field], mask, text)
-        keys = keys + (field to next)
+        keyTexts.typed(field, next)
+        keys = keyTexts.shown
         screenWrite("setAIKey", JSONObject().put("field", field).put("provider", provider).put("value", next), keyField = field)
     }
 
     /**
      * A key field lost focus: once its writes before are stored, the key leaves the screen's state and the field shows core's dots
-     * (saved). A failed write keeps the typed key in the field.
+     * (saved). A failed write keeps the typed key in the field, and an edit typed after a refocus stays (review C1 verification 4).
      */
     fun blurKey(field: String) {
-        ordered.execute { shell.ui { if (field !in unsaved) keys = keys - field } }
+        val upTo = keyTexts.edit(field)
+        ordered.execute { shell.ui { if (field !in unsaved) { keyTexts.saved(field, upTo); keys = keyTexts.shown } } }
     }
 
     /** The extra request parameters as typed, and their Save (core parses the text and answers the field's text). */

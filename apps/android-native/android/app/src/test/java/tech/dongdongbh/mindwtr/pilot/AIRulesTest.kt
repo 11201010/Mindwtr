@@ -60,4 +60,33 @@ class AIRulesTest {
         assertEquals("sk", typedKey("s", mask, "•••sk"))
         assertEquals("ske", typedKey("sk", mask, "ske"))
     }
+
+    // Review C1 verification A: a reply posted to the main thread shows only if its request is still the scope's one there.
+    @Test fun aReplyPostedBeforeACloseAndReopenNeverShows() {
+        val posted = ArrayDeque<() -> Unit>()
+        val shown = mutableListOf<String>()
+        slots.start("review", "first")
+        slots.reply("review", "first", posted::addLast) { shown += "first" }
+        // The review closes and opens again, and its new analysis starts, before the main thread runs the old reply.
+        slots.cancel("review")
+        slots.start("review", "second")
+        while (posted.isNotEmpty()) posted.removeFirst()()
+        slots.reply("review", "second", posted::addLast) { shown += "second" }
+        while (posted.isNotEmpty()) posted.removeFirst()()
+        assertEquals(listOf("second"), shown)
+        assertFalse(slots.wanted("review", "second"))
+    }
+
+    // Review C1 verification 4: blur, refocus and type again before the blur's writes land: the newer text stays.
+    @Test fun aBlursSavedCallbackNeverClearsANewerEdit() {
+        val texts = KeyTexts()
+        texts.typed("assistant", "sk-1")
+        val blurred = texts.edit("assistant")
+        texts.typed("assistant", "x")
+        texts.saved("assistant", blurred)
+        assertEquals(mapOf("assistant" to "x"), texts.shown)
+        texts.saved("assistant", texts.edit("assistant"))
+        assertEquals(emptyMap<String, String>(), texts.shown)
+    }
 }
+

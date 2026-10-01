@@ -354,8 +354,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         if (target == MenuScreen.Board) board.reset()
         // RN pushes Settings on its menu: no search, no sub-screen open.
         if (target == MenuScreen.Settings) settings.reset()
-        // RN mounts a new review modal: no analysis yet.
-        if (target == MenuScreen.Weekly) shell.ai.leaveReview()
+        // RN mounts a new review modal: no analysis yet. Leaving it stops its analysis.
+        if (target == MenuScreen.Weekly || screen == MenuScreen.Weekly) shell.ai.leaveReview()
         screen = target
         saved["menuScreen"] = target.name
         tab?.let(::keepTab)
@@ -388,6 +388,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
 
     private fun leave(back: MenuScreen?) {
         if (screen == MenuScreen.Projects) shell.closeProject()
+        // The Weekly Review closed: its analysis stops (review C1 verification 5).
+        if (screen == MenuScreen.Weekly) shell.ai.leaveReview()
         screen = back
         saved["menuScreen"] = back?.name
         loaded = null

@@ -77,9 +77,7 @@ class AIActionsModel(private val shell: InboxViewModel) {
         calls.start(scope, handle)
         Thread({
             val result = runCatching { runtime.aiRequest(name, input.toString(), handle) }
-            val wanted = calls.wanted(scope, handle)
-            calls.finished(scope, handle)
-            shell.ui { if (wanted) answered(result) }
+            calls.reply(scope, handle, shell::ui) { answered(result) }
         }, "mindwtr-ai-$scope").start()
     }
 
@@ -108,6 +106,8 @@ class AIActionsModel(private val shell: InboxViewModel) {
             cancelEditor()
             session = editor.session; suggestion = null; applied = JSONObject().put("tags", JSONArray()); asked = null; editorAI = null
         }
+        // Any edit while Clarify or Break down waits stops it, as the copilot's text change does (review C1 verification 5).
+        if (working == "editor" && editorAsked != snapshot()) { calls.cancel("editor"); working = null }
         val input = JSONObject().put("id", editor.id).put("draft", JSONObject(draftJson(editor.fullDraft())))
             .put("copilot", JSONObject().put("suggestion", suggestion ?: JSONObject.NULL).put("applied", applied))
         shell.background(emptyList(), { runtime -> runtime.menuRead("taskEditorAI", input.toString()) }) { view, _ ->
@@ -149,10 +149,19 @@ class AIActionsModel(private val shell: InboxViewModel) {
         readEditor()
     }
 
+    /** The draft and checklist Clarify or Break down was asked on: an answer shows and applies only while the editor still holds them. */
+    private var editorAsked: String? = null
+    private fun snapshot(): String? = shell.editor?.let { "${it.session}\n${draftJson(it.fullDraft())}\n${JSONArray(it.checklistNow)}" }
+    private fun editorFits(): () -> Boolean {
+        val asked = snapshot()
+        editorAsked = asked
+        return { asked != null && snapshot() == asked }
+    }
+
     /** RN's Clarify: core's dialog, whose buttons edit the draft (a new title, or the suggestion's title, estimate and context). */
     fun clarify() {
         val editor = shell.editor ?: return
-        val fits = { shell.editor?.session == editor.session }
+        val fits = editorFits()
         request("editor", "requestTaskEditorClarify", JSONObject().put("id", editor.id).put("draft", JSONObject(draftJson(editor.fullDraft()))), fits) { apply ->
             if (fits()) shell.applyAIEdit(apply as JSONObject)
         }
@@ -162,7 +171,7 @@ class AIActionsModel(private val shell: InboxViewModel) {
     fun breakdown() {
         val editor = shell.editor ?: return
         val input = JSONObject().put("id", editor.id).put("draft", JSONObject(draftJson(editor.fullDraft()))).put("checklist", JSONArray(editor.checklistNow))
-        val fits = { shell.editor?.session == editor.session }
+        val fits = editorFits()
         request("editor", "requestTaskEditorBreakdown", input, fits) { apply ->
             val steps = apply as JSONObject
             if (fits()) shell.addAISteps(steps.getJSONArray("checklist").toString(), steps.optJSONObject("edit"))

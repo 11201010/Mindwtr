@@ -10,12 +10,13 @@
 //   (2) the base URL typed (the stub's), the model list loaded from the stub (Suggestions lists its models), a model picked;
 //   (3) a key typed: sealed in RN's SecureStore format under `key_v1-mindwtr-ai-key_openai`, and in no other app file, log line
 //       or journal entry; the stub sees it as the bearer of the next request;
-//   (4) the editor (a capture link's Save & edit): the copilot's chips from the stub, a chip applied to the draft only; Clarify
-//       shows core's dialog and changes nothing until a button; Use suggestion changes the draft; Break down's Add steps adds
+//   (4) the editor (a capture link's Save & edit): the copilot's chips from the stub, a chip applied to the draft only; an edit
+//       while Clarify waits stops its provider call and no answer shows; Clarify shows core's dialog and changes nothing until a button; Use suggestion changes the draft; Break down's Add steps adds
 //       the checklist; nothing is stored until Save, and Save stores core's edits;
 //   (5) a stub error that echoes the key: the alert shows the error with the key redacted;
 //   (6) Process Inbox's Clarify: core's dialog, and its button edits the step's draft only;
-//   (7) the Weekly Review's Run analysis on the stale step: core's suggestions (or its empty line), and nothing written;
+//   (7) the Weekly Review's Run analysis on the stale step: closing the review while it waits stops the provider call and the
+//       reopened review shows no old answer; then core's suggestions (or its empty line), and nothing written;
 //   (8) the capture screen's copilot: its chips from the stub; Cancel writes nothing;
 //   (9) a kill during a key save: the stub sees a key the field held while typing (each keystroke is one write, in order; at a
 //       kill at once, also the key before), never another; a key the field showed as saved survives a kill at once
@@ -71,7 +72,7 @@ const ANSWERS = {
 
 /**
  * The OpenAI-compatible stub: GET /v1/models lists MODELS; POST /v1/chat/completions answers by the prompt's shape (Clarify,
- * Break down, the review analysis, the copilot). Mode "echo" answers 400 with the bearer echoed back (core shows a 400's message; a 401's it words itself). It runs on a worker
+ * Break down, the review analysis, the copilot). Mode "echo" answers 400 with the bearer echoed back (core shows a 400's message; a 401's it words itself). Mode "hold" never answers: it reports the request "held", then "aborted" when the app closes it. It runs on a worker
  * thread: the check's own adb calls are synchronous and would hold a request on this thread's event loop until the phone gave
  * up on it. Every request's method, path, bearer and answer kind comes back as a message into `seen`.
  */
@@ -94,6 +95,11 @@ const STUB_SOURCE = `
             if (request.method === 'GET' && request.url === '/v1/models') return answer(200, { data: models.map((id) => ({ id })) });
             if (request.method !== 'POST' || request.url !== '/v1/chat/completions') return answer(404, { error: { message: 'not found' } });
             if (mode === 'echo') return answer(400, { error: { message: 'Incorrect API key provided: ' + bearer, type: 'invalid_request_error' } }, 'echo');
+            if (mode === 'hold') {
+                parentPort.postMessage({ ...seen, kind: 'held' });
+                response.on('close', () => { if (!response.writableEnded) parentPort.postMessage({ ...seen, kind: 'aborted' }); });
+                return;
+            }
             const prompt = JSON.parse(Buffer.concat(chunks).toString('utf8')).messages.at(-1).content;
             let content;
             if (prompt.includes('"question"')) content = answers.clarify;
@@ -272,6 +278,8 @@ const typeInto = async (tag, text, clear = true, settleMs = 700) => {
     sh(`input text '${text}'`);
     await sleep(settleMs);
 };
+/** How many stub requests answered (or held) as [kind]. */
+const kinds = (kind) => stub.state.seen.filter((entry) => entry.kind === kind).length;
 /** The consent dialog: its title and message as shown. */
 const dialogTexts = (nodes) => nodes.filter((node) => node.class === 'android.widget.TextView').map((node) => node.text).filter(Boolean);
 /** How many times [operation] answered (host-entry.ts taskResult's line). */
@@ -397,6 +405,25 @@ try {
     check(copilotAsk?.bearer === KEYS.first, '(4) the copilot asked the stub with the stored key as its bearer');
     nodes = await tapExpecting(withDescription(nodes, '#finance'), (current) => Boolean(tagged(current, 'ai-applied')), 'the chip applied');
     check(tagged(nodes, 'ai-applied').text.includes('#finance'), `(4) the chip is applied to the draft ("${tagged(nodes, 'ai-applied').text}")`);
+    // An edit while Clarify waits stops its provider call, and its answer never shows (review C1 verification 5).
+    {
+        const [held, aborted] = [kinds('held'), kinds('aborted')];
+        stub.state.mode = 'hold';
+        await tap(tagged(nodes, 'ai-clarify'));
+        await until('Clarify held by the stub', () => kinds('held') > held, 30_000);
+        const titleField = (await screen()).find((node) => node.class === 'android.widget.EditText' && node.text === titles.editor) ?? fail('no title field');
+        await device.focusAtEnd(titleField);
+        requireAppFront();
+        sh('input text 9');
+        await until('the held Clarify stopped', () => kinds('aborted') > aborted, 20_000);
+        stub.state.mode = 'ok';
+        sh('input keyevent KEYCODE_DEL');
+        await hideKeyboard();
+        nodes = await waitFor('the title as before', (current) => current.some((node) => node.text === titles.editor), 10_000);
+        await sleep(1_500);
+        nodes = await screen();
+        check(!tagged(nodes, 'ai-answer'), '(4) an edit while Clarify waited stopped its provider call, and no answer shows');
+    }
     nodes = await tapExpecting(tagged(nodes, 'ai-clarify'), (current) => Boolean(tagged(current, 'ai-answer')), 'the Clarify dialog', 60_000);
     check(dialogTexts(nodes).includes(ANSWERS.clarify.question) && Boolean(withDescription(nodes, 'Phone the branch')) && Boolean(withDescription(nodes, en['ai.applySuggestion'])),
         '(4) Clarify shows core\'s dialog: the question, the stub\'s option and Use suggestion');
@@ -472,19 +499,41 @@ try {
         console.log(`info - after Finish it opened on "${tagged(nodes, 'review-step-title').text}" (${tagged(nodes, 'review-step-indicator')?.text})`);
     }
     const stale = en['review.staleStep'];
-    for (let steps = 0; steps < 10 && tagged(nodes, 'review-step-title').text !== stale; steps += 1) {
-        const back = withDescription(nodes, en['review.back']);
-        if (!back || back.enabled === 'false') break;
-        const shownStep = tagged(nodes, 'review-step-title').text;
-        nodes = await tapExpecting(back, (current) => weekly(current) && tagged(current, 'review-step-title').text !== shownStep, 'the step before');
-    }
-    for (let steps = 0; steps < 10 && tagged(nodes, 'review-step-title').text !== stale; steps += 1) {
-        const shownStep = tagged(nodes, 'review-step-title').text;
-        nodes = await waitFor('Next', (current) => Boolean(withDescription(current, en['review.next'])), 15_000);
-        console.log(`info - on "${tagged(nodes, 'review-step-title').text}", Next`);
-        nodes = await tapExpecting(withDescription(nodes, en['review.next']), (current) => weekly(current) && tagged(current, 'review-step-title').text !== shownStep, 'the next step');
-    }
+    const toStale = async (current) => {
+        nodes = current;
+        for (let steps = 0; steps < 10 && tagged(nodes, 'review-step-title').text !== stale; steps += 1) {
+            const back = withDescription(nodes, en['review.back']);
+            if (!back || back.enabled === 'false') break;
+            const shownStep = tagged(nodes, 'review-step-title').text;
+            nodes = await tapExpecting(back, (current) => weekly(current) && tagged(current, 'review-step-title').text !== shownStep, 'the step before');
+        }
+        for (let steps = 0; steps < 10 && tagged(nodes, 'review-step-title').text !== stale; steps += 1) {
+            const shownStep = tagged(nodes, 'review-step-title').text;
+            nodes = await waitFor('Next', (current) => Boolean(withDescription(current, en['review.next'])), 15_000);
+            console.log(`info - on "${tagged(nodes, 'review-step-title').text}", Next`);
+            nodes = await tapExpecting(withDescription(nodes, en['review.next']), (current) => weekly(current) && tagged(current, 'review-step-title').text !== shownStep, 'the next step');
+        }
+        return nodes;
+    };
+    nodes = await toStale(nodes);
     check(tagged(nodes, 'review-step-title').text === stale, `(7) the Weekly Review reached "${stale}"`);
+    // Closing the review while its analysis waits stops the provider call; the review opened again shows no old answer
+    // (review C1 verification 5 and A).
+    {
+        const [held, aborted] = [kinds('held'), kinds('aborted')];
+        stub.state.mode = 'hold';
+        await tap(await reveal((current) => tagged(current, 'review-ai-run'), 'Run analysis'));
+        await until('the analysis held by the stub', () => kinds('held') > held, 30_000);
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        nodes = await waitFor('the review closed', (current) => !tagged(current, 'weekly-review') && Boolean(button(current, en['review.startReview'])), 15_000);
+        await until('the held analysis stopped', () => kinds('aborted') > aborted, 20_000);
+        stub.state.mode = 'ok';
+        nodes = await toStale(await startWeekly(nodes));
+        await sleep(1_500);
+        nodes = await screen();
+        check(!tagged(nodes, 'review-ai-suggestion') && !tagged(nodes, 'review-ai-error'), '(7) closing the review stopped its analysis, and the review opened again shows no old answer');
+    }
     const tasksBefore = sqlite(database(), 'SELECT id, rev FROM tasks ORDER BY id');
     const asksBefore = stub.state.seen.filter((entry) => entry.kind === 'suggestions').length;
     const runButton = await reveal((current) => tagged(current, 'review-ai-run'), 'Run analysis');
