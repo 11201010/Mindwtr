@@ -530,11 +530,15 @@ export const createMobileAttachmentCommon = (host: MobileAttachmentCommonHost) =
       if (stagedStat && maxBufferedUploadBytes !== undefined) {
         assertBufferedAttachmentUploadSize(stagedStat.size, maxBufferedUploadBytes);
       }
-      const [stagedBytes, sourceStatAfter] = await Promise.all([
-        files.readFileAsBytes(stagedPath),
+      // A host that hashes files itself (fs.sha256) hashes the copy where it lies; else its bytes are read and hashed here.
+      const hostHashed = Boolean(fs.sha256 && stagedStat);
+      const [staged, sourceStatAfter] = await Promise.all([
+        hostHashed
+          ? files.computeAttachmentFileHash(stagedPath).then((fileHash) => ({ fileHash, size: stagedStat!.size }))
+          : files.readFileAsBytes(stagedPath).then(async (stagedBytes) => ({ fileHash: await computeSha256Hex(stagedBytes), size: stagedBytes.byteLength })),
         sourcePath.startsWith('content://') ? Promise.resolve(null) : files.statAttachmentFile(sourcePath),
       ]);
-      const fileHash = await computeSha256Hex(stagedBytes);
+      const { fileHash } = staged;
       if (!fileHash) return null;
       if (
         sourceStatBefore
@@ -542,7 +546,7 @@ export const createMobileAttachmentCommon = (host: MobileAttachmentCommonHost) =
           !sourceStatAfter
           || sourceStatBefore.mtimeMs !== sourceStatAfter.mtimeMs
           || sourceStatBefore.size !== sourceStatAfter.size
-          || sourceStatAfter.size !== stagedBytes.byteLength
+          || sourceStatAfter.size !== staged.size
         )
       ) {
         return null;
@@ -552,7 +556,7 @@ export const createMobileAttachmentCommon = (host: MobileAttachmentCommonHost) =
       return {
         sourcePath: stagedPath,
         fileHash,
-        stat: sourceStatAfter ?? stagedStat ?? { mtimeMs: 0, size: stagedBytes.byteLength },
+        stat: sourceStatAfter ?? stagedStat ?? { mtimeMs: 0, size: staged.size },
         dispose: async () => {
           await fs.delete(stagedPath);
         },

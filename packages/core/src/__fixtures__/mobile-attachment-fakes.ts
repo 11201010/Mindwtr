@@ -9,7 +9,7 @@ export const MANAGED = `${DOCUMENTS}attachments/`;
 
 type FileOp = Exclude<keyof MobileAttachmentFileSystemPort, 'documentDirectory' | 'cacheDirectory' | 'saf'>;
 
-export const createMemoryFileSystem = (options: { saf?: MobileAttachmentSafPort } = {}) => {
+export const createMemoryFileSystem = (options: { saf?: MobileAttachmentSafPort; sha256?: (bytes: Uint8Array) => Promise<string> } = {}) => {
   const files = new Map<string, { bytes: Uint8Array; mtimeMs: number }>();
   const directories = new Set<string>();
   const calls: string[] = [];
@@ -85,6 +85,14 @@ export const createMemoryFileSystem = (options: { saf?: MobileAttachmentSafPort 
       directories.delete(uri);
     },
     saf: () => options.saf ?? null,
+    ...(options.sha256 ? {
+      sha256: async (uri: string) => {
+        enter('sha256', uri);
+        const file = files.get(uri);
+        if (!file) throw notFound(uri);
+        return options.sha256!(file.bytes);
+      },
+    } : {}),
   };
 
   return {

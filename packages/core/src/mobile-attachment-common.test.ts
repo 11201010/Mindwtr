@@ -25,12 +25,13 @@ const attachment = (overrides: Partial<Attachment> = {}): Attachment => ({
 });
 
 const setup = (options: {
+  sha256?: (bytes: Uint8Array) => Promise<string>;
   install?: (stagedPath: string, targetPath: string) => Promise<AttachmentFileInstallResult>;
   installerMayBeMissing?: boolean;
   timersPaused?: boolean;
   createUploadTask?: () => MobileAttachmentUploadTask | null;
 } = {}) => {
-  const memory = createMemoryFileSystem();
+  const memory = createMemoryFileSystem({ sha256: options.sha256 });
   const { log, lines } = createRecordingLog();
   const files = createMobileAttachmentFiles({
     fs: memory.fs,
@@ -171,6 +172,30 @@ describe('mobile attachment common: upload snapshots', () => {
     expect(snapshot?.fileHash).toBe(await computeSha256Hex(bytes(5, 6)));
     await snapshot?.dispose();
     expect([...memory.files.keys()]).toEqual([`${MANAGED}att-1.txt`]);
+  });
+});
+
+describe('mobile attachment common: a host that hashes files itself', () => {
+  const hex = async (bytes: Uint8Array) => (await computeSha256Hex(bytes))!;
+
+  it('hashes the snapshot through the host and never reads its bytes into memory', async () => {
+    const { common, memory } = setup({ sha256: hex });
+    memory.put(`${MANAGED}att-1.txt`, bytes(5, 6, 7));
+
+    const snapshot = await common.createMobileAttachmentUploadSnapshot(`${MANAGED}att-1.txt`, attachment());
+
+    expect(snapshot?.fileHash).toBe(await hex(bytes(5, 6, 7)));
+    expect(snapshot?.stat.size).toBe(3);
+    expect(memory.calls.filter((call) => call.startsWith('readBytes'))).toEqual([]);
+    expect(memory.calls.some((call) => call.startsWith(`sha256 ${CACHE}mindwtr-upload-`))).toBe(true);
+  });
+
+  it('hashes a managed file through the host', async () => {
+    const { files, memory } = setup({ sha256: hex });
+    memory.put(`${MANAGED}att-1.txt`, bytes(1, 2));
+
+    expect(await files.computeAttachmentFileHash(`${MANAGED}att-1.txt`)).toBe(await hex(bytes(1, 2)));
+    expect(memory.calls.filter((call) => call.startsWith('readBytes'))).toEqual([]);
   });
 });
 
