@@ -17,6 +17,35 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testSearchHeaderNormal() { searchHeaderFlow(library: "3552d424-c7ab-48c8-a660-e6e959cef74a", stacked: false) }
+    func testSearchHeaderLargest() { searchHeaderFlow(library: "d921e0e8-efeb-439a-b100-f058ff6138ec", stacked: true) }
+    func testSearchHeaderGerman() { searchHeaderFlow(library: "a4457b97-4354-4393-88af-2a492540bb6c", stacked: true) }
+
+    private func searchHeaderFlow(library: String, stacked: Bool) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); boardTap(app, "search-open")
+        let input = app.textFields["search-input"]; boardEnabled(input)
+        input.tap(); input.typeText("Task133")
+        let clear = app.buttons["search-clear"], filters = app.buttons["search-filters-open"], close = app.buttons["search-close"]
+        for button in [clear, filters, close] {
+            boardEnabled(button)
+            XCTAssertGreaterThanOrEqual(button.frame.width, 43.99)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 43.99)
+        }
+        if stacked {
+            XCTAssertGreaterThanOrEqual(filters.frame.minY, input.frame.maxY)
+            XCTAssertGreaterThanOrEqual(close.frame.minY, input.frame.maxY)
+            XCTAssertLessThanOrEqual(close.frame.height, 65)
+        } else { XCTAssertLessThan(abs(close.frame.midY - input.frame.midY), 2) }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Search header"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "search-filters-open"); boardTap(app, "search-filters-close")
+        XCTAssertEqual(input.value as? String, "Task133")
+        boardTap(app, "search-clear"); input.typeText("Task133")
+        XCTAssertEqual(input.value as? String, "Task133")
+        boardTap(app, "search-close"); boardEnabled(app.buttons["search-open"])
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"]); app.terminate()
+    }
+
     func testTaskCancellationNormal() { taskCancellationFlow(library: "95b8592d-6203-4189-b3a1-8683fff86df9") }
     func testTaskCancellationLargestText() { taskCancellationFlow(library: "89b31166-aae3-470e-b645-77eebfd6c8eb") }
 

@@ -4,6 +4,7 @@ struct SearchScreen: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var inputFocused: Bool
     @FocusState private var locationFocused: Bool
     @State private var filtersPresented = false
@@ -79,45 +80,62 @@ struct SearchScreen: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            AppIcon(name: "search", size: 20).foregroundStyle(palette.secondary).padding(.trailing, 4)
-            TextField(model.label("search.placeholder"), text: Binding(get: { model.searchQuery }, set: model.setSearchQuery))
-                .rnFont(16).frame(minHeight: 44).focused($inputFocused).submitLabel(.search)
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                .disabled(model.retryNeeded || model.taskPresented)
-                .onSubmit { inputFocused = false }
-                .accessibilityLabel(model.label("search.title")).accessibilityIdentifier("search-input")
-            if !model.searchQuery.isEmpty {
-                Button { model.setSearchQuery(""); inputFocused = true } label: {
-                    AppIcon(name: "x", size: 20).foregroundStyle(palette.secondary).frame(width: 44, height: 44)
+        VStack(spacing: dynamicTypeSize.isAccessibilitySize ? 4 : 0) {
+            HStack(spacing: 8) {
+                AppIcon(name: "search", size: 20).foregroundStyle(palette.secondary).padding(.trailing, 4)
+                TextField(model.label("search.placeholder"), text: Binding(get: { model.searchQuery }, set: model.setSearchQuery))
+                    .rnFont(16).frame(minHeight: 44).focused($inputFocused).submitLabel(.search)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .disabled(model.retryNeeded || model.taskPresented)
+                    .onSubmit { inputFocused = false }
+                    .accessibilityLabel(model.label("search.title")).accessibilityIdentifier("search-input")
+                if !model.searchQuery.isEmpty {
+                    Button { model.setSearchQuery(""); inputFocused = true } label: {
+                        AppIcon(name: "x", size: 20).foregroundStyle(palette.secondary)
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.retryNeeded)
+                    .accessibilityLabel(model.label("common.clear")).accessibilityIdentifier("search-clear")
                 }
-                .buttonStyle(.plain).disabled(model.retryNeeded)
-                .accessibilityLabel(model.label("common.clear")).accessibilityIdentifier("search-clear")
+                if !dynamicTypeSize.isAccessibilitySize { filterButton; closeButton }
             }
-            Button {
-                inputFocused = false
-                filtersPresented = true
-            } label: {
-                AppIcon(name: "sliders", size: 18)
-                    .foregroundStyle(filtersPresented || model.searchView.flag("hasActiveFilters") ? palette.tint : palette.secondary)
-                    .frame(width: 32, height: 32)
-                    .background(filtersPresented || model.searchView.flag("hasActiveFilters") ? palette.filter : .clear,
-                                in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(
-                        filtersPresented || model.searchView.flag("hasActiveFilters") ? palette.tint : palette.border, lineWidth: 1))
-                    .frame(width: 44, height: 44)
+            if dynamicTypeSize.isAccessibilitySize {
+                HStack(spacing: 8) { Spacer(minLength: 0); filterButton; closeButton }
             }
-            .buttonStyle(.plain).disabled(!filtersEnabled)
-            .accessibilityLabel(model.label("filters.label")).accessibilityIdentifier("search-filters-open")
-            Button(model.label("common.cancel")) {
-                inputFocused = false
-                Task { await model.closeSearch() }
-            }
-            .rnFont(14, .semibold).frame(minHeight: 44).buttonStyle(.plain).foregroundStyle(palette.tint)
-            .disabled(model.busy || model.retryNeeded).accessibilityIdentifier("search-close")
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
         .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
+    }
+
+    private var filterButton: some View {
+        Button {
+            inputFocused = false
+            filtersPresented = true
+        } label: {
+            AppIcon(name: "sliders", size: 18)
+                .foregroundStyle(filtersPresented || model.searchView.flag("hasActiveFilters") ? palette.tint : palette.secondary)
+                .frame(width: 32, height: 32)
+                .background(filtersPresented || model.searchView.flag("hasActiveFilters") ? palette.filter : .clear,
+                            in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(
+                    filtersPresented || model.searchView.flag("hasActiveFilters") ? palette.tint : palette.border, lineWidth: 1))
+                .frame(width: 44, height: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!filtersEnabled)
+        .accessibilityLabel(model.label("filters.label")).accessibilityIdentifier("search-filters-open")
+    }
+
+    private var closeButton: some View {
+        Button {
+            inputFocused = false
+            Task { await model.closeSearch() }
+        } label: {
+            Text(model.label("common.cancel")).rnFont(14, .semibold)
+                .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
+                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(palette.tint)
+        .disabled(model.busy || model.retryNeeded).accessibilityIdentifier("search-close")
     }
 
     @ViewBuilder private var activeChips: some View {
