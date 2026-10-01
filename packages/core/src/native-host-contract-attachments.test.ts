@@ -434,6 +434,33 @@ describe('native host contract: attachments, crash safety', () => {
             .toEqual({ deleted: 1 });
         expect(state.log).toEqual([['deleteManagedAttachmentFile', expect.objectContaining({ id: 'f1', uri: kept.uri })]]);
     });
+
+    it('checks ownership after the host\'s own awaits, immediately before each delete', async () => {
+        const state = { ports: {} as Ports, log: [] as unknown[][] };
+        const kept = pdf('f1');
+        const task: Task = { id: 't1', title: 'Task', status: 'next', tags: [], contexts: [], attachments: [kept], createdAt: CREATED, updatedAt: CREATED };
+        const host: NativeAttachmentsHost = {
+            ...fakeHost(state),
+            // As createMobileAttachmentFiles: the directory setup is awaited before the delete,
+            // and the attachment is restored meanwhile.
+            deleteManagedAttachmentFile: async (attachment, options) => {
+                useTaskStore.getState().updateTask('t1', { attachments: [kept] });
+                await flushPendingSave();
+                if (options?.keep?.()) return false;
+                state.log.push(['deleteManagedAttachmentFile', attachment]);
+                return true;
+            },
+        };
+        env = await openSqliteHost({ tasks: [task] }, undefined, { attachments: host });
+        const baseline = [kept];
+        const draft = [{ ...kept, deletedAt: NOW, updatedAt: NOW }];
+        expect(await env.host.saveTaskDraft({ id: 't1', base: {}, patch: {}, attachments: { base: baseline, value: draft },
+            requestId: '00000000-0000-4000-8000-00000000c005' })).toMatchObject({ ok: true });
+        const saved = useTaskStore.getState()._tasksById.get('t1')!;
+        expect(ok(await env.host.settleTaskDraftAttachments({ taskId: 't1', taskRevision: taskRevisionOf(saved), baseline, draft,
+            committed: saved.attachments! }))).toEqual({ deleted: 0 });
+        expect(state.log).toEqual([]);
+    });
 });
 
 describe('native host contract: attachments, the list and the editor\'s helpers', () => {

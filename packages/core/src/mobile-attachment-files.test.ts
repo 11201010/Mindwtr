@@ -137,6 +137,22 @@ describe('mobile attachment files: storage home and safe writes', () => {
   });
 });
 
+describe('mobile attachment files: an owned file is never deleted', () => {
+  it('asks keep() after the directory setup, immediately before the delete', async () => {
+    let restored = false;
+    const { files, memory } = setup({ fs: (fs) => ({
+      ...fs,
+      // An attachment is restored while the directory setup is awaited.
+      makeDirectory: async (dir: string) => { await fs.makeDirectory(dir); restored = true; },
+    }) });
+    memory.put(`${MANAGED}att-1.txt`, bytes(1));
+
+    await expect(files.deleteManagedAttachmentFile(attachment(), { keep: () => restored })).resolves.toBe(false);
+    expect(memory.read(`${MANAGED}att-1.txt`)).toEqual(bytes(1));
+    await expect(files.deleteManagedAttachmentFile(attachment(), { keep: () => false })).resolves.toBe(true);
+  });
+});
+
 describe('mobile attachment files: presence and stat', () => {
   it('tells a missing file from an unreadable one', async () => {
     const { files, memory } = setup();

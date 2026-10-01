@@ -431,9 +431,13 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
    * Removes a local attachment only when its URI proves it is the id-named copy
    * owned by Mindwtr's managed attachments directory. Draft settlement passes
    * candidates here; arbitrary user-picked paths and sibling directories are
-   * intentionally rejected.
+   * intentionally rejected. `keep` runs after every await, immediately before the delete:
+   * true keeps the file (a live attachment points at it again).
    */
-  const deleteManagedAttachmentFile = async (attachment: Attachment): Promise<boolean> => {
+  const deleteManagedAttachmentFile = async (
+    attachment: Attachment,
+    options?: { keep?: () => boolean },
+  ): Promise<boolean> => {
     if (core.isSandboxMode()) return false;
     if (attachment.kind !== 'file' || !attachment.uri || !attachment.id) return false;
     const dir = await getAttachmentsDir();
@@ -441,6 +445,7 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
     const fileName = attachment.uri.slice(dir.length).split(/[?#]/, 1)[0];
     if (!fileName || fileName.includes('/')) return false;
     if (fileName !== attachment.id && !fileName.startsWith(`${attachment.id}.`)) return false;
+    if (options?.keep?.()) return false;
     try {
       await fs.delete(attachment.uri);
       return true;

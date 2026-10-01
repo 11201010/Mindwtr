@@ -65,7 +65,7 @@ import {
     type AttachmentRowState,
     describeAttachmentUriForLog,
 } from './attachment-editor-model';
-import { planAttachmentDraftSettlement } from './attachment-draft-settlement';
+import { isAttachmentFileInUse, planAttachmentDraftSettlement } from './attachment-draft-settlement';
 import { globalProgressTracker } from './attachment-progress';
 import type { TranslateFn } from './i18n';
 import { logWarn } from './logger';
@@ -89,8 +89,11 @@ export type NativeAttachmentsHost = {
     persistAttachmentLocally(attachment: Attachment): Promise<Attachment>;
     /** createMobileAttachmentAvailability(...).ensureAttachmentAvailableDetailed: the on-demand download. */
     ensureAttachmentAvailableDetailed(attachment: Attachment): Promise<AttachmentAvailabilityOutcome>;
-    /** createMobileAttachmentFiles(...).deleteManagedAttachmentFile: removes a managed copy, never another file. */
-    deleteManagedAttachmentFile(attachment: Attachment): Promise<unknown>;
+    /**
+     * createMobileAttachmentFiles(...).deleteManagedAttachmentFile: removes a managed copy, never
+     * another file. Call `keep` after every await, immediately before the delete; true keeps it.
+     */
+    deleteManagedAttachmentFile(attachment: Attachment, options?: { keep?: () => boolean }): Promise<unknown>;
 };
 
 /** Whose attachments: the task editor's draft list, or a project's stored list. */
@@ -595,15 +598,17 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
             const candidates = planAttachmentDraftSettlement({ baselineAttachments, draftAttachments, committedAttachments });
             let deleted = 0;
             for (const { attachment, reason } of candidates) {
-                const state = useTaskStore.getState();
-                const task = state._tasksById.get(input.taskId);
-                const moved = !task || taskRevisionOf(task) !== input.taskRevision;
-                const owned = [...state._allTasks, ...state._allProjects].some((owner) => !owner.deletedAt
-                    && owner.attachments?.some((item) => !item.deletedAt && item.kind === 'file' && item.uri === attachment.uri));
-                if (owned || (moved && reason !== 'uncommitted-draft')) continue;
+                // Asked by the host after its own awaits, immediately before the delete.
+                const keep = () => {
+                    const state = useTaskStore.getState();
+                    const task = state._tasksById.get(input.taskId);
+                    const moved = !task || taskRevisionOf(task) !== input.taskRevision;
+                    return isAttachmentFileInUse(attachment.uri, [...state._allTasks, ...state._allProjects])
+                        || (moved && reason !== 'uncommitted-draft');
+                };
+                if (keep()) continue;
                 try {
-                    await host.deleteManagedAttachmentFile(attachment);
-                    deleted += 1;
+                    if (await host.deleteManagedAttachmentFile(attachment, { keep }) !== false) deleted += 1;
                 } catch (error) {
                     logWarn('Native draft attachment cleanup failed', {
                         scope: 'attachment',
