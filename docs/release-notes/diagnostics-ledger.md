@@ -21,7 +21,7 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
-- **`v1.3.4/ios-task-preview-links`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS Task preview reference opened` with `destination=task` or `destination=project` confirms an accepted saved-preview reference opened its destination. Dirty, stale, unavailable and self references emit no line. No task text, titles, identifiers or URLs are logged.
+- **`v1.3.4/ios-task-preview-links`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS Task preview reference opened` with `destination=task` or `destination=project` confirms an accepted saved-preview reference opened its destination. `source=description` or `source=checklist` distinguishes the rendered source. Dirty, stale, unavailable and self references emit no line. No task text, titles, identifiers or URLs are logged.
 
 - **`v1.3.4/ios-project-notes-links`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS Project Notes reference opened` with `destination=task` or `destination=project` confirms a current shared-resolved reference opened its destination. Rejected, stale and self references emit no line. No Notes text, titles, identifiers or URLs are logged.
 

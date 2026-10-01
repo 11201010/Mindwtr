@@ -872,19 +872,7 @@ struct TaskViewSheet: View {
         case "description":
             VStack(alignment: .leading, spacing: 8) {
                 label(item.text("label"))
-                if let message = model.taskReferenceError {
-                    Text(message).rnFont(13).foregroundStyle(palette.danger)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("task-reference-error")
-                    if !model.taskDirty {
-                        Button { Task { await model.retryTaskViewReference() } } label: {
-                            Text(strings.text("common.retry")).rnFont(14, .semibold)
-                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain).disabled(!model.taskReferenceEnabled)
-                        .accessibilityIdentifier("task-reference-retry")
-                    }
-                }
+                if !model.taskReferenceFromChecklist { referenceError }
                 let sourceID = value.text("id"), sourceRevision = value.text("revision")
                 NativeMarkdownContent(blocks: item.objects("blocks"), labels: value.object("markdownLabels"),
                                       strings: strings, palette: palette,
@@ -899,6 +887,7 @@ struct TaskViewSheet: View {
         case "checklist":
             VStack(alignment: .leading, spacing: 6) {
                 label(item.text("label"))
+                if model.taskReferenceFromChecklist { referenceError }
                 let entries = item.objects("items")
                 ForEach(entries.indices, id: \.self) { index in
                     checklistEntry(entries[index], bullets: item.flag("bullets"), tappable: item.flag("tappable"))
@@ -1110,31 +1099,63 @@ struct TaskViewSheet: View {
         }
     }
 
-    @ViewBuilder private func checklistEntry(_ entry: CoreObject, bullets: Bool, tappable: Bool) -> some View {
-        let content = HStack(alignment: .top, spacing: 8) {
-            NativeMarkdownChecklistMarker(bullet: bullets, completed: entry.flag("completed"), palette: palette)
-                .padding(.top, 2)
-            NativeMarkdownInline(runs: entry.objects("inline"), labels: value.object("markdownLabels"),
-                                 palette: palette, size: 14)
+    @ViewBuilder private var referenceError: some View {
+        if let message = model.taskReferenceError {
+            Text(message).rnFont(13).foregroundStyle(palette.danger)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("task-reference-error")
+            if !model.taskDirty {
+                Button { Task { await model.retryTaskViewReference() } } label: {
+                    Text(strings.text("common.retry")).rnFont(14, .semibold)
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.taskReferenceEnabled)
+                .accessibilityIdentifier("task-reference-retry")
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        .contentShape(Rectangle())
-        if tappable && !bullets {
-            Button {
-                endEditingBeforeAction()
-                Task { await model.editTaskChecklist(["kind": "toggle", "index": entry.number("index")], refreshPreview: true) }
-            } label: { content }
+    }
+
+    @ViewBuilder private func checklistEntry(_ entry: CoreObject, bullets: Bool, tappable: Bool) -> some View {
+        let runs = entry.objects("inline")
+        let hasLinks = runs.contains { $0.text("type") == "link" }
+        let sourceID = value.text("id"), revision = value.text("revision"), index = entry.number("index")
+        let toggle = {
+            endEditingBeforeAction()
+            Task { await model.editTaskChecklist(["kind": "toggle", "index": index], refreshPreview: true) }
+        }
+        let marker = NativeMarkdownChecklistMarker(bullet: bullets, completed: entry.flag("completed"), palette: palette)
+        let content = HStack(alignment: .top, spacing: 8) {
+            if hasLinks && tappable && !bullets {
+                Button { toggle() } label: {
+                    marker.frame(width: 44, height: 44).contentShape(Rectangle())
+                }
                 .buttonStyle(.plain).disabled(frozen)
                 .accessibilityLabel(entry.text("title"))
                 .accessibilityValue(strings.text(entry.flag("completed") ? "common.done" : "status.active"))
-                .accessibilityIdentifier("task-view-checklist-toggle-\(entry.number("index"))")
-        } else if entry.text("accessibilityLabel").isEmpty {
-            content
+                .accessibilityIdentifier("task-view-checklist-toggle-\(index)")
+            } else { marker.padding(.top, 2) }
+            NativeMarkdownInline(runs: runs, labels: value.object("markdownLabels"), palette: palette, size: 14,
+                                 onReference: model.taskReferenceEnabled && !modalPresented && !discardConfirm ? { inline in
+                Task { await model.openTaskViewReference(sourceID: sourceID, revision: revision,
+                                                        checklistIndex: index, inlineIndex: inline) }
+            } : nil)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
+        if tappable && !bullets && !hasLinks {
+            Button { toggle() } label: { content }
+                .buttonStyle(.plain).disabled(frozen)
+                .accessibilityLabel(entry.text("title"))
+                .accessibilityValue(strings.text(entry.flag("completed") ? "common.done" : "status.active"))
+                .accessibilityIdentifier("task-view-checklist-toggle-\(index)")
+        } else if hasLinks || entry.text("accessibilityLabel").isEmpty {
+            content.accessibilityElement(children: .contain)
         } else {
             content.accessibilityElement(children: .combine)
                 .accessibilityLabel(entry.text("accessibilityLabel"))
         }
     }
+
 }
 
 struct NativeMarkdownChecklistMarker: View {

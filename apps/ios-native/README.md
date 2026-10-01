@@ -50,7 +50,7 @@ The Task editor supports URL attachments through Add link (including multiline i
 
 Project Notes Preview opens shared-resolved Task and Project references after checking the source revision. Closing a linked Task returns to the source Project; linked Projects preserve the Project-list return. Deleted and purged references stay inert. Navigation does not write data.
 
-Saved Task Preview descriptions open shared-resolved Task and Project references using the exact rendered input and revision. Unsaved source edits remain intact with save/discard-first guidance. Self links do nothing, and unavailable links offer Retry. Navigation while retaining an unsaved source editor and checklist references remain pending.
+Saved Task Preview descriptions and checklist items open shared-resolved Task and Project references using the exact rendered input and revision. Unsaved source edits remain intact with save/discard-first guidance. Self links do nothing, and unavailable links offer Retry. Link-bearing checklist rows have a separate checkbox so following a link cannot toggle the item. Navigation while retaining an unsaved source editor remains pending.
 
 Expanded Project Details shows the shared attachment list and opens URL titles, including archived Projects. Pending Project Notes edits must finish saving before leaving the app. Project URL links can be added from multiline input and soft-removed through the prepared Project writer. Failed saves keep the exact request for Retry, and cold recovery completes that journaled write once. File operations remain pending.
 

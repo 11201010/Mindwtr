@@ -17,6 +17,73 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testTaskChecklistInternalReferencesAndToggle() {
+        taskChecklistInternalReferences(library: "77bb58c4-46f1-4c29-b8f2-4523178548b8")
+    }
+
+    func testTaskChecklistInternalReferencesLargestText() {
+        taskChecklistInternalReferences(library: "2d47e9a8-9453-4a5d-a0f3-8780bca856de")
+    }
+
+    private func taskChecklistInternalReferences(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        func project() {
+            app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+            boardTap(app, "project-open-task125-source")
+        }
+        func source() {
+            let row = app.buttons["task-title-task125-task"]
+            revealPagedElement(app, row, in: app.scrollViews["project-detail-scroll"])
+            boardEnabled(row); row.tap(); boardEnabled(app.buttons["task-view-close"])
+            if !app.buttons["task-mode-view"].isSelected { boardTap(app, "task-mode-view") }
+        }
+        func follow(_ title: String) {
+            let link = app.links.matching(NSPredicate(format: "label == %@", title)).firstMatch
+            revealPagedElement(app, link, in: app.scrollViews["task-editor-scroll"])
+            XCTAssertTrue(link.exists); link.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
+            // A minute boundary can invalidate the rendered view while scrolling.
+            let retry = app.buttons["task-reference-retry"]
+            if retry.waitForExistence(timeout: 1) {
+                revealPagedElement(app, retry, in: app.scrollViews["task-editor-scroll"])
+                boardEnabled(retry); retry.tap()
+                revealPagedElement(app, link, in: app.scrollViews["task-editor-scroll"])
+                XCTAssertTrue(link.exists); link.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
+            }
+        }
+        project(); source()
+        follow("Task125 self")
+        XCTAssertTrue(app.buttons["task-view-close"].exists)
+        follow("Task125 linked task")
+        let destination = app.staticTexts["Task125 destination task"]
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Task125 destination task"), evaluatedWith: destination)
+        waitForExpectations(timeout: 20)
+        boardTap(app, "task-view-close"); boardEnabled(app.buttons["project-back"])
+        source(); follow("Task125 linked project")
+        XCTAssertTrue(app.staticTexts["Task125 Target"].waitForExistence(timeout: 15))
+        boardTap(app, "project-back"); boardEnabled(app.buttons["project-open-task125-source"])
+        app.terminate(); project(); source()
+        let toggle = app.buttons["task-view-checklist-toggle-0"]
+        revealPagedElement(app, toggle, in: app.scrollViews["task-editor-scroll"])
+        let originalValue = toggle.value as? String
+        boardEnabled(toggle); toggle.tap()
+        expectation(for: NSPredicate(format: "value != %@", originalValue ?? ""), evaluatedWith: toggle)
+        waitForExpectations(timeout: 10)
+        follow("Task125 linked task")
+        let error = app.staticTexts["task-reference-error"]
+        revealPagedElement(app, error, in: app.scrollViews["task-editor-scroll"])
+        XCTAssertTrue(error.exists)
+        XCTAssertNotEqual(toggle.value as? String, originalValue)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Checklist link refuses an unsaved toggle"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard")
+        source(); follow("Task125 linked task")
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Task125 destination task"), evaluatedWith: destination)
+        waitForExpectations(timeout: 20)
+        boardTap(app, "task-view-close"); app.terminate()
+    }
+
     func testTaskPreviewInternalReferencesAndDraftRefusal() {
         taskPreviewInternalReferences(library: "04d81239-d25f-442c-928d-f542bcbbd2b0")
     }

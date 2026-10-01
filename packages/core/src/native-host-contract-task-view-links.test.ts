@@ -21,7 +21,7 @@ const value = <T,>(result: NativeHostResult<T>): T => {
     return result.value;
 };
 
-describe('Task View description reference target', () => {
+describe('Task View reference target', () => {
     let host: ReturnType<typeof createNativeHostContract>;
     let writes: ReturnType<typeof vi.fn>;
     let view: Parameters<typeof host.getTaskViewReferenceTarget>[0]['view'];
@@ -29,7 +29,8 @@ describe('Task View description reference target', () => {
     const input = (blockIndex: number, inlineIndex: number, itemIndex?: number) => ({
         view, revision, blockIndex, ...(itemIndex === undefined ? {} : { itemIndex }), inlineIndex,
     });
-    const read = (request: ReturnType<typeof input>) => host.getTaskViewReferenceTarget(request);
+    const checklistInput = (checklistIndex: number, inlineIndex: number) => ({ view, revision, checklistIndex, inlineIndex });
+    const read = (request: Parameters<typeof host.getTaskViewReferenceTarget>[0]) => host.getTaskViewReferenceTarget(request);
     const saved = () => useTaskStore.getState()._tasksById.get('source') as Task;
     const refresh = () => { revision = value(host.getTaskView(view)).revision; };
     const changeTask = (id: string, patch: Partial<Task>) => useTaskStore.setState((state) => {
@@ -70,6 +71,93 @@ describe('Task View description reference target', () => {
         expect(read(input(4, 0, 1))).toEqual({ ok: true, value: { kind: 'project', id: 'archived-project' } });
         expect(read(input(6, 0, 0))).toEqual({ ok: true, value: { kind: 'task', id: 'source' } });
         expect(read(input(8, 0, 0))).toEqual({ ok: true, value: { kind: 'task', id: 'live' } });
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('resolves the original checklist index past the first page, even with duplicate item IDs', () => {
+        const checklist = Array.from({ length: 150 }, (_, index) => ({
+            id: 'duplicate', title: index === 101 ? 'See [[task:live|Live]]' : 'Plain', isCompleted: false,
+        }));
+        changeTask('source', { checklist });
+        view = { ...view, draft: createTaskDraft(saved()), checklist };
+        refresh();
+        const page = value(host.getTaskView({ ...view, offset: 101, limit: 1, revision })).rows
+            .find((row) => row.type === 'checklist');
+        expect(page?.type === 'checklist' && page.items.map((item) => item.index)).toEqual([101]);
+        expect(read(checklistInput(101, 1))).toEqual({ ok: true, value: { kind: 'task', id: 'live' } });
+        expect(read(checklistInput(0, 1))).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(read(checklistInput(150, 1))).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('resolves reference bullets and archived read-only checklist links without a description', () => {
+        changeTask('source', { description: '', status: 'reference', checklist: [
+            { id: 'c1', title: '[[project:target|Project]]', isCompleted: false },
+        ] });
+        view = { ...view, draft: createTaskDraft(saved()), checklist: saved().checklist };
+        refresh();
+        expect(value(host.getTaskView(view)).rows.find((row) => row.type === 'checklist'))
+            .toMatchObject({ bullets: true, tappable: false });
+        expect(read(checklistInput(0, 0))).toEqual({ ok: true, value: { kind: 'project', id: 'target' } });
+        changeTask('source', { status: 'next', projectId: 'archived-project' });
+        view = { ...view, draft: createTaskDraft(saved()) };
+        refresh();
+        expect(value(host.getTaskView(view))).toMatchObject({ readOnly: true });
+        expect(read(checklistInput(0, 0))).toEqual({ ok: true, value: { kind: 'project', id: 'target' } });
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('refuses stale checklist order, editor drafts and global data', () => {
+        changeTask('source', { checklist: [
+            { id: 'same', title: '[[task:live|Live]]', isCompleted: false },
+            { id: 'same', title: '[[project:target|Project]]', isCompleted: false },
+        ] });
+        view = { ...view, draft: createTaskDraft(saved()), checklist: saved().checklist };
+        refresh();
+        const stale = () => expect(read(checklistInput(0, 0)))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        view = { ...view, checklist: [...view.checklist!].reverse() };
+        stale();
+        view = { ...view, checklist: saved().checklist };
+        refresh();
+        view = { ...view, draft: { ...view.draft!, title: 'Edited' } };
+        stale();
+        view = { ...view, draft: createTaskDraft(saved()) };
+        refresh();
+        changeTask('live', { title: 'Changed target' });
+        stale();
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('refuses malformed checklist positions and noninternal or deleted runs', () => {
+        changeTask('source', { checklist: [{ id: 'c1',
+            title: 'See [[task:live|Live]], [Web](https://example.org), [[task:gone|Gone]], plain', isCompleted: false }] });
+        view = { ...view, draft: createTaskDraft(saved()), checklist: saved().checklist };
+        refresh();
+        expect(read(checklistInput(0, 1))).toEqual({ ok: true, value: { kind: 'task', id: 'live' } });
+        for (const candidate of [
+            { ...checklistInput(0, 1), blockIndex: 0 },
+            { ...checklistInput(0, 1), itemIndex: 0 },
+            { ...checklistInput(0, 1), targetId: 'live' },
+            { ...checklistInput(0, 1), view: { ...view, offset: 0 } },
+            { ...checklistInput(0, 1), checklistIndex: -1 },
+            { ...checklistInput(0, 1), checklistIndex: 0.5 },
+            { ...checklistInput(0, 1), checklistIndex: Number.MAX_SAFE_INTEGER + 1 },
+            { ...checklistInput(0, 1), inlineIndex: -1 },
+            { ...checklistInput(0, 1), inlineIndex: 0.5 },
+            { ...checklistInput(0, 1), revision: 'é'.repeat(1_000_000) },
+        ]) {
+            expect(host.getTaskViewReferenceTarget(candidate as never))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        for (const index of [0, 2, 3, 4, 5, 6, 7]) {
+            const result = read(checklistInput(0, index));
+            expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect(JSON.stringify(result)).not.toMatch(/example\.org|Gone/);
+        }
+        changeTask('live', { deletedAt: at });
+        refresh();
+        expect(read(checklistInput(0, 1))).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(writes).not.toHaveBeenCalled();
     });
 

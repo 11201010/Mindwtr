@@ -542,6 +542,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var taskLinkSubmitting = false
     @Published private(set) var taskReferenceOpening = false
     @Published private(set) var taskReferenceError: String?
+    @Published private(set) var taskReferenceFromChecklist = false
     @Published private(set) var taskAttachmentOpening = false
     @Published private(set) var taskAttachmentOpenError: String?
     private var taskAttachmentOpenClaim = UUID()
@@ -2080,8 +2081,10 @@ final class CoreModel: ObservableObject {
             && taskChecklistWriteKind == nil && !taskChecklistReadPending && !taskScheduleUpdating
     }
 
-    func openTaskViewReference(sourceID: String, revision: String, blockIndex: Int, itemIndex: Int?, inlineIndex: Int) async {
+    func openTaskViewReference(sourceID: String, revision: String, blockIndex: Int? = nil, itemIndex: Int? = nil,
+                               checklistIndex: Int? = nil, inlineIndex: Int) async {
         guard taskReferenceEnabled, viewedTaskID == sourceID, taskView.text("revision") == revision else { return }
+        taskReferenceFromChecklist = checklistIndex != nil
         guard !taskDirty else {
             taskReferenceError = "Save or discard this task's changes before opening an internal link."
             return
@@ -2103,7 +2106,9 @@ final class CoreModel: ObservableObject {
                               "attachments": taskAttachments])) == identity
         }
         do {
-            var input: CoreObject = ["view": view, "revision": revision, "blockIndex": blockIndex, "inlineIndex": inlineIndex]
+            var input: CoreObject = ["view": view, "revision": revision, "inlineIndex": inlineIndex]
+            if let blockIndex { input["blockIndex"] = blockIndex }
+            if let checklistIndex { input["checklistIndex"] = checklistIndex }
             if let itemIndex { input["itemIndex"] = itemIndex }
             let target = try await query("taskViewReferenceTarget", [try json(input)])
             guard sourceCurrent(), target.count == 2, ["task", "project"].contains(target.text("kind")),
@@ -2118,12 +2123,12 @@ final class CoreModel: ObservableObject {
                 prepareTaskPresentation(target.text("id"))
                 await readTaskView()
                 if taskError == nil && taskPresented && viewedTaskID == target.text("id") {
-                    NSLog("Native iOS Task preview reference opened releaseCheck=v1.3.4/ios-task-preview-links destination=task")
+                    NSLog("Native iOS Task preview reference opened releaseCheck=v1.3.4/ios-task-preview-links destination=task source=\(checklistIndex == nil ? "description" : "checklist")")
                 }
             } else {
                 await presentProject(["id": target.text("id")], caller: caller == .project ? projectCaller : caller)
                 if projectCurrent && projectHeader.text("id") == target.text("id") {
-                    NSLog("Native iOS Task preview reference opened releaseCheck=v1.3.4/ios-task-preview-links destination=project")
+                    NSLog("Native iOS Task preview reference opened releaseCheck=v1.3.4/ios-task-preview-links destination=project source=\(checklistIndex == nil ? "description" : "checklist")")
                 }
             }
         } catch {

@@ -19665,7 +19665,10 @@ final class CoreHostTests: XCTestCase {
         await setup.close()
         let sqlite = try SQLiteBridge(url: database)
         let notes = "# [[task:\(target)|Task target]]\n\n- [[project:focus-target|Project target]]\n- [[task:\(source)|Self]]\n\n[[task:missing|Deleted]]\n\n[Web](https://example.com)"
-        _ = try sqlite.execute("UPDATE tasks SET description = ? WHERE id = ?", parametersJSON: json([notes, source]))
+        var checklist: [[String: Any]] = (0..<102).map { ["id": "duplicate", "title": "Plain \($0)", "isCompleted": false] }
+        checklist[0]["title"] = "[[task:\(target)|Checklist task]]"
+        checklist[101]["title"] = "[[project:focus-target|Checklist project]]"
+        _ = try sqlite.execute("UPDATE tasks SET description = ?, checklist = ? WHERE id = ?", parametersJSON: json([notes, json(checklist), source]))
         let before = try nineTableSnapshot(sqlite)
         sqlite.close()
         for _ in 0..<2 {
@@ -19688,7 +19691,17 @@ final class CoreHostTests: XCTestCase {
                 let result = try object(await active.call("taskViewReferenceTarget", argumentsJSON: json([json(input)])))
                 XCTAssertEqual(try json(result), try json(["kind": kind, "id": id]))
             }
-            var malformed = [request(4), request(6), request(100), request(0, 0)]
+            func checklistRequest(_ index: Any) -> [String: Any] {
+                ["view": view, "revision": revision, "checklistIndex": index, "inlineIndex": 0]
+            }
+            for (index, kind, id) in [(0, "task", target), (101, "project", "focus-target")] {
+                let result = try object(await active.call("taskViewReferenceTarget", argumentsJSON: json([json(checklistRequest(index))])))
+                XCTAssertEqual(try json(result), try json(["kind": kind, "id": id]))
+            }
+            var malformed = [request(4), request(6), request(100), request(0, 0),
+                             checklistRequest(true), checklistRequest(-1), checklistRequest(0.5),
+                             checklistRequest(1), checklistRequest(102)]
+            var mixed = checklistRequest(0); mixed["blockIndex"] = 0; malformed.append(mixed)
             for (field, value) in [("blockIndex", true as Any), ("inlineIndex", -1 as Any),
                                    ("itemIndex", NSNull()), ("id", target as Any), ("view", ["id": source, "offset": 0] as Any)] {
                 var input = request(0); input[field] = value; malformed.append(input)
