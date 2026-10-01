@@ -359,11 +359,13 @@ export type PreparedTaxonomy = {
 
 /** Internal native Board journal: before is the source guard, after the sole written row. */
 export type PreparedBoardTask = {
-    kind: 'duplicateTask' | 'trashTask';
+    kind: 'duplicateTask' | 'trashTask' | 'restoreTask';
     before: Task;
     after: Task;
+    /** Restore binds the device stamp captured when its prepared effect was planned. */
+    deviceIdBefore?: string | null;
     deviceIdToInitialize: string | null;
-    /** Calendar Delete refuses a newly archived parent inside the atomic commit. */
+    /** Calendar and editor Delete refuse a newly archived parent inside the atomic commit. */
     respectReadOnly?: true;
 };
 

@@ -367,6 +367,8 @@ export type NativeTaskEditorModel = TaskEditorModel & {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     revision: string;
     id: string;
+    /** Saved-row compare-and-set token for actions that ignore the unsaved editor draft. */
+    taskRevision: string;
     readOnly: boolean;
     canCancel: boolean;
     cancelLabel: string;
@@ -1509,6 +1511,7 @@ export function createNativeHostContract(options: {
             version: NATIVE_HOST_CONTRACT_VERSION,
             revision: `${revision()}:${displayRevision(now)}`,
             id: task.id,
+            taskRevision: taskRevisionOf(task),
             readOnly: isInArchivedProject(task),
             canCancel: canCancelNativeTask(task, state._allProjects, isInArchivedProject(task)),
             cancelLabel: task.recurrence

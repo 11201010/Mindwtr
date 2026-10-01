@@ -17,6 +17,56 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testTaskDeleteNormal() { taskDeleteFlow(library: "d4ff80f3-2fa5-47d5-a683-33d3d2ddb39d") }
+    func testTaskDeleteLargestText() { taskDeleteFlow(library: "fb24537b-6beb-48ca-8bac-80025e184466") }
+    func testTaskDeleteUndoPreference() { taskDeleteFlow(library: "84adaee8-790f-428f-b821-396c7fd78ab0") }
+
+    private func beginTaskDelete(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+        let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText("Task135 scheduled")
+        boardTap(app, "search-task-task135-task"); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]; boardEnabled(title)
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap(); title.typeText(" unsaved")
+        XCTAssertEqual(title.value as? String, "Task135 scheduled task unsaved")
+        boardTap(app, "task-more"); boardTap(app, "task-delete")
+    }
+
+    private func taskDeleteFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); beginTaskDelete(app)
+        let undo = app.buttons["task-delete-undo"]; boardEnabled(undo, timeout: 30)
+        XCTAssertGreaterThanOrEqual(undo.frame.width, 43.99); XCTAssertGreaterThanOrEqual(undo.frame.height, 43.99)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task Delete Undo"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "task-delete-undo")
+        boardTap(app, "search-task-task135-task"); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]; boardEnabled(title)
+        XCTAssertEqual(title.value as? String, "Task135 scheduled task")
+        XCTAssertTrue(app.buttons["task-editor-status-next"].isSelected)
+        boardTap(app, "task-view-close")
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists); app.terminate()
+    }
+
+    func testTaskDeleteFailureRetainsDraft() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "c530adc0-e495-456d-ad18-5648937f097c"]
+        app.launch(); beginTaskDelete(app)
+        boardEnabled(app.buttons["task-view-retry"], timeout: 30)
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task135 scheduled task unsaved")
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["task-view-close"].isEnabled)
+            boardTap(app, "task-view-retry"); boardEnabled(app.buttons["task-view-retry"], timeout: 30)
+        }
+        app.terminate()
+    }
+
+    func testTaskDeleteColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "c530adc0-e495-456d-ad18-5648937f097c"]
+        app.launch(); XCTAssertTrue(app.staticTexts["trash-title"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "trash-", "task135-task")).firstMatch.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30); app.terminate()
+    }
+
     func testSearchHeaderNormal() { searchHeaderFlow(library: "3552d424-c7ab-48c8-a660-e6e959cef74a", stacked: false) }
     func testSearchHeaderLargest() { searchHeaderFlow(library: "d921e0e8-efeb-439a-b100-f058ff6138ec", stacked: true) }
     func testSearchHeaderGerman() { searchHeaderFlow(library: "a4457b97-4354-4393-88af-2a492540bb6c", stacked: true) }
@@ -46,7 +96,7 @@ final class FoundationUITests: XCTestCase {
         app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"]); app.terminate()
     }
 
-    func testTaskCancellationNormal() { taskCancellationFlow(library: "95b8592d-6203-4189-b3a1-8683fff86df9") }
+    func testTaskCancellationNormal() { taskCancellationFlow(library: "696f67f0-004f-4083-a7ff-69d51bb90b08") }
     func testTaskCancellationLargestText() { taskCancellationFlow(library: "89b31166-aae3-470e-b645-77eebfd6c8eb") }
 
     private func beginTaskCancellation(_ app: XCUIApplication) {

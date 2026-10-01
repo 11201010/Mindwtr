@@ -68,6 +68,135 @@ final class EditorDraftRecoveryHostTests: XCTestCase {
             "checklist": ["base": [], "value": []]])])
     }
 
+    private func deletionArguments(_ id: String, requestID: String, opening: [String: Any]) throws -> String {
+        try json([json(["requestId": requestID, "taskId": id,
+            "taskRevision": try XCTUnwrap(opening["taskRevision"] as? String)])])
+    }
+
+    func testTaskDeleteKeepsSavedSourceAndFrozenDraftUntilColdCommit() async throws {
+        let faults = HostIOFaults(), first = host()
+        _ = try await first.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(first, id: id)
+        await first.close()
+        let writing = host(faults); _ = try await writing.start()
+        let before = try json(task(id))
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: id,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Unsaved deleted title"}}"#)
+        try await writing.checkpointEditorDraft(draft)
+        let args = try deletionArguments(id, requestID: UUID().uuidString.lowercased(), opening: opening)
+        do {
+            _ = try await writing.call("taskDelete", argumentsJSON: args)
+            XCTFail("Delete with an editor snapshot must use its exact attempt")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Editor draft must use")) }
+        XCTAssertEqual(try json(task(id)), before)
+        XCTAssertEqual(try EditorDraftStore(databaseURL: database).read()?.snapshot, draft)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Delete COMMIT") } }
+        do {
+            _ = try await writing.saveEditorDraft("taskDelete", argumentsJSON: args,
+                expectedSession: draft.sessionID, expectedGeneration: draft.generation)
+            XCTFail("Expected failed Delete")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED"), error.localizedDescription) }
+        XCTAssertEqual(try json(task(id)), before)
+        let frozen = try XCTUnwrap(EditorDraftStore(databaseURL: database).read())
+        XCTAssertEqual(frozen.snapshot, draft)
+        XCTAssertEqual(frozen.attempt?.method, "taskDelete")
+        let owed = try json(JSONSerialization.jsonObject(with: Data(contentsOf: journal)))
+        do { _ = try await writing.retryPending(); XCTFail("Expected repeated Delete failure") } catch {}
+        XCTAssertEqual(try json(JSONSerialization.jsonObject(with: Data(contentsOf: journal))), owed)
+        await writing.close()
+
+        let recovered = host()
+        let startup = try object(await recovered.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "taskDeleteCommit")
+        let result = try XCTUnwrap(recovery["result"] as? [String: Any])
+        XCTAssertEqual(result["id"] as? String, id)
+        XCTAssertEqual((result["deletion"] as? [String: Any])?["undoEnabled"] as? Bool, true)
+        let deleted = try task(id)
+        XCTAssertEqual(deleted["title"] as? String, "Before edit")
+        XCTAssertNotNil(deleted["deletedAt"] as? String)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await recovered.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(try json(task(id)), try json(deleted))
+    }
+
+    func testTaskDeleteUndoRequiresConfirmedProofAndColdRestoresSavedSource() async throws {
+        let faults = HostIOFaults(), writing = host(faults)
+        _ = try await writing.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(writing, id: id)
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: id,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Unsaved deleted title"}}"#)
+        try await writing.checkpointEditorDraft(draft)
+        let deleteID = UUID().uuidString.lowercased()
+        let deletion = try object(await writing.saveEditorDraft("taskDelete",
+            argumentsJSON: deletionArguments(id, requestID: deleteID, opening: opening),
+            expectedSession: draft.sessionID, expectedGeneration: draft.generation))
+        XCTAssertEqual(deletion["id"] as? String, id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        let deleted = try json(task(id))
+        do {
+            _ = try await writing.call("taskDeleteUndo", argumentsJSON: json([json([
+                "requestId": UUID().uuidString.lowercased(), "deleteRequestId": UUID().uuidString.lowercased()])]))
+            XCTFail("Expected unconfirmed Undo refusal")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("INVALID_INPUT")) }
+        XCTAssertEqual(try json(task(id)), deleted)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let undoArgs = try json([json(["requestId": UUID().uuidString.lowercased(), "deleteRequestId": deleteID])])
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Delete Undo COMMIT") } }
+        do {
+            _ = try await writing.call("taskDeleteUndo", argumentsJSON: undoArgs)
+            XCTFail("Expected failed Delete Undo")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED"), error.localizedDescription) }
+        XCTAssertEqual(try json(task(id)), deleted)
+        await writing.close()
+
+        let recovered = host(); _ = try await recovered.start()
+        let restored = try task(id)
+        XCTAssertTrue(restored["deletedAt"] is NSNull)
+        XCTAssertEqual(restored["title"] as? String, "Before edit")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await recovered.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(try json(task(id)), try json(restored))
+    }
+
+    func testTaskDeleteTerminalDraftCleanupRetainsExactUndoProof() async throws {
+        let faults = HostIOFaults(), writing = host(faults)
+        _ = try await writing.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(writing, id: id)
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: id,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Unsaved deleted title"}}"#)
+        try await writing.checkpointEditorDraft(draft)
+        let deleteID = UUID().uuidString.lowercased()
+        faults.editorDraftRemove = { throw HostFailure("Injected Delete draft cleanup") }
+        do {
+            _ = try await writing.saveEditorDraft("taskDelete",
+                argumentsJSON: deletionArguments(id, requestID: deleteID, opening: opening),
+                expectedSession: draft.sessionID, expectedGeneration: draft.generation)
+            XCTFail("Expected terminal draft cleanup failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Injected Delete draft cleanup")) }
+        XCTAssertNotNil(try task(id)["deletedAt"] as? String)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try EditorDraftStore(databaseURL: database).read()?.attempt?.method, "taskDelete")
+        faults.editorDraftRemove = nil
+        let acknowledgment = try await writing.retryPending()
+        let result = try XCTUnwrap(acknowledgment)
+        XCTAssertEqual(try object(result)["id"] as? String, id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        let undo = try object(await writing.call("taskDeleteUndo", argumentsJSON: json([json([
+            "requestId": UUID().uuidString.lowercased(), "deleteRequestId": deleteID])])))
+        XCTAssertEqual(undo["id"] as? String, id)
+        XCTAssertTrue(try task(id)["deletedAt"] is NSNull)
+        XCTAssertEqual(try task(id)["title"] as? String, "Before edit")
+    }
+
     func testTaskCancellationFailedCommitRetainsDraftAndColdAppliesOnce() async throws {
         let faults = HostIOFaults(), first = host()
         _ = try await first.start()

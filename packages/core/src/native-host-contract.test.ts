@@ -1555,6 +1555,7 @@ describe('native host contract', () => {
                 version: 1,
                 revision: expect.any(String),
                 id: 'edit',
+                taskRevision: taskRevisionOf(stored),
                 readOnly: false,
                 canCancel: true,
                 cancelLabel: 'Cancel recurring series',

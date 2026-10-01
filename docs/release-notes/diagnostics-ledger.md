@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-task-delete`** — native iOS `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Task deletion saved` with `operation=delete` or `operation=undo` and `outcome=confirmed` proves the saved Task deletion or restore settled durably. Delete retains the editor draft until its exact acknowledgment; Undo restores the saved Task with valid container references. Failed persistence retains the frozen command for retry. No task text or identifiers are logged.
+
 - **`v1.3.4/ios-task-cancel`** — native iOS `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Task cancellation saved` with `operation=cancel` or `operation=undo` and `outcome=confirmed` proves the prepared change settled durably. Cancel saves the current draft; Undo restores cancellation lifecycle fields while retaining unrelated later edits. Failed persistence must retain the exact command for retry. No task content, dates or identifiers are logged.
 
 - **`v1.3.4/ios-task-duplicate`** — native iOS `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. Message: `Native iOS Task duplicated`; outcome `confirmed`. The Task editor's Duplicate action copies the saved source using the prepared Board command. The log must appear only after durable success and settlement of the matching editor snapshot, including cold recovery. A failed write retains the source draft and exact command; retry must create only one copy. No task content or identifiers are logged.

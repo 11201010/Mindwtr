@@ -84,19 +84,19 @@ struct InboxScreen: View {
                                 Spacer()
                             }
                         }
-                        if !model.taskCancellationNotice.isEmpty && !model.taskPresented {
+                        if !model.taskActionNotice.isEmpty && !model.taskPresented {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text(model.taskCancellationNotice.text("message")).rnFont(14)
-                                    .accessibilityIdentifier("task-cancel-notice")
-                                if model.taskCancellationNotice.flag("undoEnabled") {
+                                Text(model.taskActionNotice.text("message")).rnFont(14)
+                                    .accessibilityIdentifier("task-" + model.taskActionNotice.text("operation") + "-notice")
+                                if model.taskActionNotice.flag("undoEnabled") {
                                     Button {
-                                        Task { await model.undoTaskCancellation() }
+                                        Task { await model.undoTaskAction() }
                                     } label: {
-                                        Text(model.taskCancellationNotice.text("undoLabel"))
+                                        Text(model.taskActionNotice.text("undoLabel"))
                                             .frame(minWidth: 44, minHeight: 44)
                                             .contentShape(Rectangle())
                                     }.disabled(model.busy || model.retryNeeded)
-                                        .accessibilityIdentifier("task-cancel-undo")
+                                        .accessibilityIdentifier("task-" + model.taskActionNotice.text("operation") + "-undo")
                                 }
                             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                                 .foregroundStyle(palette.text).background(palette.filter)

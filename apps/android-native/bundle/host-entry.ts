@@ -2048,6 +2048,24 @@ globalThis.MindwtrHost = {
     boardCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedBoardAction(JSON.parse(json))));
     },
+    taskDeletePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareTaskDelete(editorJson(json) as Parameters<typeof contract.prepareTaskDelete>[0])); });
+    },
+    taskDeleteValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTaskDelete(editorJson(json) as Parameters<typeof contract.validatePreparedTaskDelete>[0])));
+    },
+    taskDeleteCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedTaskDelete(editorJson(json) as Parameters<typeof contract.commitPreparedTaskDelete>[0])));
+    },
+    taskDeleteUndoPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareTaskDeleteUndo(editorJson(json) as Parameters<typeof contract.prepareTaskDeleteUndo>[0])); });
+    },
+    taskDeleteUndoValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTaskDeleteUndo(editorJson(json) as Parameters<typeof contract.validatePreparedTaskDeleteUndo>[0])));
+    },
+    taskDeleteUndoCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedTaskDeleteUndo(editorJson(json) as Parameters<typeof contract.commitPreparedTaskDeleteUndo>[0])));
+    },
     /** Private native editor preparation freezes the raw Task effect before journaling. */
     draftPrepare(json: string): string {
         return submit(async () => {

@@ -271,7 +271,7 @@ const currentFocusOrder = (state: TaskStore, controls: PreparedFocusOrder['reque
 
 export const sanitizeRestoredTaskContainerReferences = (
     task: Task,
-    state: TaskStore,
+    state: Pick<TaskStore, '_allProjects' | '_allSections' | '_allAreas'>,
 ): Pick<Task, 'projectId' | 'sectionId' | 'areaId'> => {
     let projectId = normalizeOptionalContainerId(task.projectId);
     let sectionId = normalizeOptionalContainerId(task.sectionId);
@@ -866,7 +866,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
     },
 
     // The contract validates action authority before this guarded one-row commit.
-    commitPreparedBoardTask: async ({ kind, before, after, deviceIdToInitialize, respectReadOnly }) => {
+    commitPreparedBoardTask: async ({ kind, before, after, deviceIdBefore, deviceIdToInitialize, respectReadOnly }) => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Board action conflicts with current data' };
         const persisted = (task: Task) => {
             const values = taskToSqliteRow(task);
@@ -882,9 +882,17 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 return state;
             }
             const source = state._tasksById.get(before.id);
-            if (!source || !matches(source, before) || source.deletedAt || source.purgedAt
+            if (!source || !matches(source, before) || source.purgedAt
+                || (kind === 'restoreTask' ? !source.deletedAt : Boolean(source.deletedAt))
+                || (kind === 'restoreTask' && (state.settings.deviceId ?? null) !== deviceIdBefore)
                 || (kind === 'duplicateTask' && target)) return state;
             if (respectReadOnly && kind === 'trashTask' && isStatusListTaskReadOnly(source, state._allProjects)) return state;
+            if (kind === 'restoreTask') {
+                const sanitized = sanitizeRestoredTaskContainerReferences(source, state);
+                if (after.deletedAt || after.purgedAt || !taskEditValuesEqual(sanitized, {
+                    projectId: after.projectId, sectionId: after.sectionId, areaId: after.areaId,
+                })) return state;
+            }
             if (kind === 'duplicateTask') {
                 // Recheck only the scalar reservations the pure builder read.
                 // Exact target replay above deliberately precedes these guards.

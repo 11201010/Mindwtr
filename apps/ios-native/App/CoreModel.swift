@@ -2707,6 +2707,7 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .history
                 historyTabs = ["tab": "archived"]
             }
+            if recovery.text("method") == "taskDeleteCommit" { selectedSurface = .trash }
             if recovery.text("method") == "boardCommit" {
                 // Keep the durable acknowledgement if a later startup read fails.
                 boardRecoveredResult = recovery.object("result")
@@ -14619,58 +14620,114 @@ final class CoreModel: ObservableObject {
         catch { taskError = error.localizedDescription }
     }
 
-    @Published private(set) var taskCancellationNotice: CoreObject = [:]
-    private var taskCancellationRequestID: String?
-    private var taskCancellationUndoRequest: String?
-    private var taskCancellationNoticeGeneration = 0
+    @Published private(set) var taskActionNotice: CoreObject = [:]
+    private var taskActionRequestID: String?
+    private var taskActionUndoRequest: String?
+    private var taskActionNoticeGeneration = 0
 
-    private func showTaskCancellation(_ result: CoreObject) {
-        guard let requestID = taskCancellationRequestID else { return }
-        let cancellation = result.object("cancellation")
-        guard !cancellation.isEmpty else { return }
-        taskCancellationRequestID = nil
-        taskCancellationNotice = cancellation.merging(["requestId": requestID, "id": result.text("id")]) { _, new in new }
-        taskCancellationNoticeGeneration += 1
-        let generation = taskCancellationNoticeGeneration
+    private var taskActionUndoMethod: String {
+        taskActionNotice.text("operation") == "delete" ? "taskDeleteUndo" : "taskCancellationUndo"
+    }
+
+    private func showTaskAction(_ result: CoreObject, operation: String = "cancel") {
+        guard let requestID = taskActionRequestID else { return }
+        let notice = result.object(operation == "delete" ? "deletion" : "cancellation")
+        guard !notice.isEmpty else { return }
+        taskActionRequestID = nil
+        taskActionNotice = notice.merging(["requestId": requestID, "id": result.text("id"), "operation": operation]) { _, new in new }
+        taskActionNoticeGeneration += 1
+        let generation = taskActionNoticeGeneration
         Task {
             try? await Task.sleep(nanoseconds: 5_200_000_000)
-            if taskCancellationNoticeGeneration == generation && taskCancellationUndoRequest == nil {
-                taskCancellationNotice = [:]
+            if taskActionNoticeGeneration == generation && taskActionUndoRequest == nil {
+                taskActionNotice = [:]
             }
         }
     }
 
-    func undoTaskCancellation() async {
+    func undoTaskAction() async {
         guard !busy, !retryNeeded, !taskPresented, !capturePresented,
-              taskCancellationNotice.flag("undoEnabled"), taskCancellationUndoRequest == nil else { return }
+              taskActionNotice.flag("undoEnabled"), taskActionUndoRequest == nil else { return }
         busy = true
         error = nil
         defer { finishOperation() }
         do {
+            let proofField = taskActionNotice.text("operation") == "delete" ? "deleteRequestId" : "cancelRequestId"
             let request = try json(["requestId": UUID().uuidString.lowercased(),
-                                    "cancelRequestId": taskCancellationNotice.text("requestId")])
-            taskCancellationUndoRequest = request
-            let result = try await query("taskCancellationUndo", [request])
-            try acknowledgeTaskCancellationUndo(result)
+                                    proofField: taskActionNotice.text("requestId")])
+            taskActionUndoRequest = request
+            let result = try await query(taskActionUndoMethod, [request])
+            try acknowledgeTaskActionUndo(result)
             do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
         } catch {
             if isDefiniteRejection(error) {
-                taskCancellationUndoRequest = nil
-                taskCancellationNotice = [:]
+                taskActionUndoRequest = nil
+                taskActionNotice = [:]
             }
-            retryNeeded = taskCancellationUndoRequest != nil
+            retryNeeded = taskActionUndoRequest != nil
             self.error = error.localizedDescription
         }
     }
 
-    private func acknowledgeTaskCancellationUndo(_ result: CoreObject) throws {
-        guard taskCancellationUndoRequest != nil, result.text("id") == taskCancellationNotice.text("id") else {
+    private func acknowledgeTaskActionUndo(_ result: CoreObject) throws {
+        guard taskActionUndoRequest != nil, result.text("id") == taskActionNotice.text("id") else {
             throw CocoaError(.coderReadCorrupt)
         }
-        taskCancellationUndoRequest = nil
-        taskCancellationNotice = [:]
+        taskActionUndoRequest = nil
+        taskActionNotice = [:]
         retryNeeded = false
         error = nil
+    }
+
+    private var taskDeleteRequest: String?
+
+    func deleteTask() async {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              !taskScheduleUpdating, !taskAttachmentOpening, !taskLinkSheetActive,
+              !taskPersonCreateOwed, !taskPersonCreateNeedsReview,
+              taskChecklistWriteKind == nil, !taskChecklistReadPending, let host else { return }
+        // Like RN, Delete acts on the saved Task. Keep unsaved edits until its ACK.
+        taskRecoveryOwn(["title"])
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            checkpointTaskDraft(force: true)
+            await flushTaskDraftCheckpoint()
+            guard taskRecoveryCheckpointError == nil, let snapshot = taskRecoverySnapshot else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            let requestID = UUID().uuidString.lowercased()
+            let request = try json(["requestId": requestID, "taskId": viewedTaskID,
+                                    "taskRevision": taskEditor.text("taskRevision")])
+            taskDeleteRequest = request
+            taskActionRequestID = requestID
+            taskRecoverySaving = true
+            let result = try decode(try await host.saveEditorDraft("taskDelete",
+                argumentsJSON: try json([request]), expectedSession: snapshot.sessionID,
+                expectedGeneration: snapshot.generation))
+            try await acknowledgeTaskDelete(result)
+        } catch {
+            if isDefiniteRejection(error) { taskDeleteRequest = nil }
+            retryNeeded = taskDeleteRequest != nil
+            taskRecoverySaving = retryNeeded
+            taskError = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeTaskDelete(_ result: CoreObject) async throws {
+        guard let request = taskDeleteRequest, let host,
+              result.text("id") == (try decode(request)).text("taskId"),
+              !result.object("deletion").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        taskRecoverySnapshot = try await host.readEditorDraft()
+        guard taskRecoverySnapshot == nil else { throw CocoaError(.coderReadCorrupt) }
+        taskDeleteRequest = nil
+        taskRecoverySaving = false
+        retryNeeded = false
+        taskError = nil
+        showTaskAction(result, operation: "delete")
+        dismissTask(refreshCaller: false)
+        do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
     }
 
     private var taskDuplicateRequest: String?
@@ -14824,7 +14881,7 @@ final class CoreModel: ObservableObject {
             }
             if cancel {
                 request["intent"] = "cancel"
-                taskCancellationRequestID = request.text("requestId")
+                taskActionRequestID = request.text("requestId")
             }
             let payload = try json(request)
             if let snapshot = taskRecoverySnapshot {
@@ -14871,7 +14928,7 @@ final class CoreModel: ObservableObject {
             return
         }
         taskRecoverySaving = false
-        if let cancellationResult { showTaskCancellation(cancellationResult) }
+        if let cancellationResult { showTaskAction(cancellationResult) }
         dismissTask()
         do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
     }
@@ -16766,12 +16823,25 @@ final class CoreModel: ObservableObject {
                 await finishTaskPersonCreateRead(frozen)
                 return
             }
-            if let request = taskCancellationUndoRequest {
+            if let request = taskActionUndoRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
-                else { result = try await query("taskCancellationUndo", [request]) }
-                try acknowledgeTaskCancellationUndo(result)
+                else { result = try await query(taskActionUndoMethod, [request]) }
+                try acknowledgeTaskActionUndo(result)
                 do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+                return
+            }
+            if taskDeleteRequest != nil {
+                if let acknowledgment {
+                    try await acknowledgeTaskDelete(try decode(acknowledgment))
+                } else {
+                    taskRecoverySnapshot = try await host!.readEditorDraft()
+                    guard taskRecoverySnapshot != nil else { throw CocoaError(.coderReadCorrupt) }
+                    taskDeleteRequest = nil
+                    taskRecoverySaving = false
+                    retryNeeded = false
+                    taskError = label("task.updateFailed")
+                }
                 return
             }
             if taskDuplicateRequest != nil {
@@ -16796,7 +16866,7 @@ final class CoreModel: ObservableObject {
                     }
                     taskRecoverySnapshot = try await host!.readEditorDraft()
                     guard taskRecoverySnapshot == nil else { throw CocoaError(.coderReadCorrupt) }
-                    if !result.object("cancellation").isEmpty { showTaskCancellation(result) }
+                    if !result.object("cancellation").isEmpty { showTaskAction(result) }
                     taskRecoverySaving = false
                     taskSavePending = false
                     taskChecklistWriteKind = nil
@@ -17531,9 +17601,13 @@ final class CoreModel: ObservableObject {
                 capturePending = false
                 taskSavePending = false
                 boardActionRequest = nil
-                if taskCancellationUndoRequest != nil {
-                    taskCancellationUndoRequest = nil
-                    taskCancellationNotice = [:]
+                if taskActionUndoRequest != nil {
+                    taskActionUndoRequest = nil
+                    taskActionNotice = [:]
+                }
+                if taskDeleteRequest != nil {
+                    taskDeleteRequest = nil
+                    taskRecoverySaving = false
                 }
                 if taskDuplicateRequest != nil {
                     taskDuplicateRequest = nil

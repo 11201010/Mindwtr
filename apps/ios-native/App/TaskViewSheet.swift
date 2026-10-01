@@ -125,6 +125,10 @@ struct TaskViewSheet: View {
                             endEditingBeforeAction()
                             Task { await model.shareTask() }
                         }.accessibilityIdentifier("task-share")
+                        Button(strings.text("common.delete"), role: .destructive) {
+                            endEditingBeforeAction()
+                            Task { await model.deleteTask() }
+                        }.accessibilityIdentifier("task-delete")
                     } label: {
                         Image(systemName: "ellipsis").frame(width: 44, height: 44).contentShape(Rectangle())
                     }
