@@ -372,6 +372,7 @@ export const esOverrides: Record<string, string> = {
 'attachments.fileTooLarge': "El archivo es demasiado grande para subirlo.",
 'attachments.fileNotReadable': "No se pudo leer este archivo, así que no se adjuntó. Muévelo a otra carpeta e inténtalo de nuevo.",
 'attachments.linkToFile': "Enlazar a archivo…",
+'attachments.linkFolder': 'Enlazar carpeta…',
 'attachments.linkedFileElsewhere': "Este enlace apunta a un archivo en otro dispositivo: {{path}}. Ábrelo allí o adjunta el archivo en lugar de enlazarlo.",
 'attachments.openLinkFailed': "No se pudo abrir este enlace.",
 'attachments.invalidFileType': "Tipo de archivo no compatible.",

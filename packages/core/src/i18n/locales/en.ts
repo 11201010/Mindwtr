@@ -391,6 +391,7 @@ export const en: Record<string, string> = {
         'attachments.fileTooLarge': 'File is too large to upload.',
         'attachments.fileNotReadable': 'Couldn\'t read this file, so it was not attached. Move it to a different folder and try again.',
         'attachments.linkToFile': 'Link to file…',
+        'attachments.linkFolder': 'Link folder…',
         'attachments.linkedFileElsewhere': 'This link points to a file on another device: {{path}}. Open it there, or attach the file instead of linking it.',
         'attachments.openLinkFailed': 'Could not open this link.',
         'attachments.invalidFileType': 'Unsupported file type.',

@@ -42,6 +42,7 @@ import {
     webdavPutFile,
     webdavPutJson,
 } from '@mindwtr/core';
+import { createNativeAI } from './host-ai';
 import { createNativeSync, type NativeSync } from './host-sync';
 
 type NativeBridge = {
@@ -219,7 +220,10 @@ const requireSync = (): NativeSync => {
     return nativeSync;
 };
 
-const contract = createNativeHostContract(nativeSync ? { syncSettings: nativeSync.settingsHost } : {});
+/** Settings › AI and the AI actions (host-ai.ts), on the same host: RN's AsyncStorage and SecureStore hold what RN's do. */
+const nativeAI = nativeSync ? createNativeAI(keyValue, () => globalThis.__mindwtrSecrets as HostSecrets) : null;
+
+const contract = createNativeHostContract({ ...(nativeSync ? { syncSettings: nativeSync.settingsHost } : {}), ...(nativeAI ? { ai: nativeAI } : {}) });
 const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: string; message: string } }): T => {
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
@@ -227,10 +231,15 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
     | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
     | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting'
-    | 'syncPreference' | SyncScreenCommand;
+    | 'syncPreference' | 'setAISetting' | SyncScreenCommand | AIScreenCommand;
 /** Settings › Sync's screen commands: never journaled (core's NATIVE_UNJOURNALED_COMMANDS), sent by CoreHost.syncCommand. */
 type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncBackend' | 'saveSyncBackend' | 'syncNow' | 'testSyncConnection'
     | 'pickSyncFolder' | 'connectDropbox' | 'disconnectDropbox' | 'runSyncEncryptionAction';
+/**
+ * Settings › AI's screen writes, sent by AISettings.kt itself: its open (journaled; target-state), and a key or a base URL (never
+ * journaled: core's NATIVE_UNJOURNALED_COMMANDS, a key or a URL that may hold a password).
+ */
+type AIScreenCommand = 'openAISettings' | 'setAIKey' | 'setAIEndpoint';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
     | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
@@ -546,6 +555,24 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     captureModalView: (input) => contract.getCaptureModalView(input),
     captureModalEdit: (input) => contract.editCaptureModal(input),
     captureModalDiscard: (input) => contract.discardCaptureModal(input),
+    // Settings › AI's view for this visit and its close, and the editor's AI parts (native-host-contract-ai.ts): none writes.
+    aiSettings: () => contract.getAISettings(),
+    aiSettingsClose: () => contract.closeAISettings(),
+    taskEditorAI: (input) => contract.getTaskEditorAI(input),
+};
+/**
+ * The AI's requests (native-host-contract-ai.ts): each waits on the provider (up to RN's 5 min request timeout), so
+ * CoreHost.aiRequest waits for it without holding the engine. None writes: an answer is a dialog whose buttons apply through the
+ * screen's own edits and commands. The operation's signal goes down to the provider call: MindwtrHost.abort stops it.
+ */
+const AI_REQUESTS: Record<string, (input: never, signal: AbortSignal) => Promise<Reply>> = {
+    loadAIModels: (input, signal) => contract.loadAIModels(input, { signal }),
+    requestTaskEditorCopilot: (input, signal) => contract.requestTaskEditorCopilot(input, { signal }),
+    requestAICopilot: (input, signal) => contract.requestAICopilot(input, { signal }),
+    requestTaskEditorClarify: (input, signal) => contract.requestTaskEditorClarify(input, { signal }),
+    requestTaskEditorBreakdown: (input, signal) => contract.requestTaskEditorBreakdown(input, { signal }),
+    requestInboxClarify: (input, signal) => contract.requestInboxClarify(input, { signal }),
+    requestWeeklyReviewAnalysis: (_input, signal) => contract.requestWeeklyReviewAnalysis({ signal }),
 };
 /** The Menu tab's commands, by their diagnostic operation: each passes Kotlin's input (its request or capture UUID included) unchanged. */
 const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
@@ -599,6 +626,11 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
     connectDropbox: (input) => contract.connectDropbox(input),
     disconnectDropbox: (input) => contract.disconnectDropbox(input),
     runSyncEncryptionAction: (input) => contract.runSyncEncryptionAction(input),
+    // Settings › AI: a control's change (journaled, target-state), the screen's open (journaled), a key and a base URL (never journaled).
+    setAISetting: (input) => contract.setAISetting(input),
+    openAISettings: (input) => contract.openAISettings(input),
+    setAIKey: (input) => contract.setAIKey(input),
+    setAIEndpoint: (input) => contract.setAIEndpoint(input),
 };
 
 let bootAdapter: ValidatedSqliteAdapter | null = null;
@@ -2065,6 +2097,25 @@ globalThis.MindwtrHost = {
     /** After the journal's boot replay: drops request receipts older than 30 days. */
     pruneReceipts(): string {
         return submit(async () => ({ pruned: await pruneNativeRequestReceipts(sqlite) }));
+    },
+    /** `name` is one of AI_REQUESTS; `json` is that request's input. It writes nothing. */
+    aiRequest(name: string, json: string): string {
+        return submit(async (signal) => {
+            requireSaved();
+            const request = AI_REQUESTS[name];
+            if (!request) throw new Error(`INVALID_INPUT: no AI request ${name}`);
+            const answer = await request(JSON.parse(json) as never, signal);
+            if (signal.aborted) throw new Error('The AI request was cancelled');
+            return unwrap(answer);
+        });
+    },
+    /**
+     * Operation `idText` is no longer wanted (CoreHost.cancel: an AI request whose input changed, whose screen closed, or whose
+     * caller stopped waiting): its signal fires, so its provider call stops. Unlike cancel, no other host call is refused.
+     */
+    abort(idText: string): null {
+        pending.get(Number(idText))?.controller.abort(Object.assign(new Error('The AI request was cancelled'), { name: 'AbortError' }));
+        return null;
     },
     /** Debug builds only: runNetCheck against check-net-device.mjs's server on `port`. */
     netCheck(port: string): string {

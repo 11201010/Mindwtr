@@ -294,6 +294,12 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         settings.push("sync")
     }
 
+    /** An AI toast's Open (RN's `/settings?settingsScreen=ai`): Settings › AI. */
+    fun openAISettings() {
+        open(MenuScreen.Settings)
+        settings.push("ai")
+    }
+
     /** RN's saved search screen (`/saved-search/<id>`), pushed over the tabs under RN's stack header. */
     fun openSavedSearch(id: String) {
         editOwn("savedSearch") { put("id", id) }
@@ -348,6 +354,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         if (target == MenuScreen.Board) board.reset()
         // RN pushes Settings on its menu: no search, no sub-screen open.
         if (target == MenuScreen.Settings) settings.reset()
+        // RN mounts a new review modal: no analysis yet. Leaving it stops its analysis.
+        if (target == MenuScreen.Weekly || screen == MenuScreen.Weekly) shell.ai.leaveReview()
         screen = target
         saved["menuScreen"] = target.name
         tab?.let(::keepTab)
@@ -380,6 +388,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
 
     private fun leave(back: MenuScreen?) {
         if (screen == MenuScreen.Projects) shell.closeProject()
+        // The Weekly Review closed: its analysis stops (review C1 verification 5).
+        if (screen == MenuScreen.Weekly) shell.ai.leaveReview()
         screen = back
         saved["menuScreen"] = back?.name
         loaded = null
@@ -1290,7 +1300,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         // Bulk organize's create, Mind Sweep's Add and a saved search's Delete: core's whole input and the request UUID.
         "bulkCreate", "mindSweepAdd", "savedSearchDelete" -> JSONObject(action.title).put("requestId", action.id)
         // Settings: core's whole input and the request UUID; Manage's Someday section writes are target-state and take none.
-        "generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting", "syncPreference" -> JSONObject(action.title).put("requestId", action.id)
+        "generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting", "syncPreference", "setAISetting" -> JSONObject(action.title).put("requestId", action.id)
         "somedayRename", "somedayReorder", "somedayDelete" -> JSONObject(action.title)
         else -> JSONObject().put("requestId", action.id).put("action", JSONObject(action.title))
     }.toString()

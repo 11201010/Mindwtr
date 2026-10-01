@@ -112,7 +112,7 @@ use platform::{
     cloudkit_save_attachment_asset, cloudkit_save_records, create_macos_calendar_event,
     delete_macos_calendar_event, ensure_macos_mindwtr_calendar, get_macos_calendar_events,
     get_macos_calendar_permission_status, get_macos_writable_calendars, get_managed_data_dir,
-    import_attachment_file, migrate_portable_attachments, open_path,
+    import_attachment_file, migrate_portable_attachments, open_path, remember_link_folder_access,
     request_macos_calendar_permission, set_macos_activation_policy, update_macos_calendar_event,
 };
 use storage::{
@@ -453,6 +453,10 @@ struct AppConfigToml {
     dropbox_promotion_journal: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sync_cloud_provider: Option<String>,
+    // Device-local JSON map of attachment id -> security-scoped bookmark for
+    // folders picked with "Link folder…" on the sandboxed App Store build.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link_folder_bookmarks: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -642,6 +646,10 @@ unsafe extern "C" {
     fn mindwtr_macos_create_security_bookmark(path_cstr: *const c_char) -> *mut c_char;
     fn mindwtr_macos_resolve_security_bookmark(base64_cstr: *const c_char) -> *mut c_char;
     fn mindwtr_macos_free_bookmark_string(ptr: *mut c_char);
+    fn mindwtr_macos_open_security_bookmark(
+        base64_cstr: *const c_char,
+        expected_path_cstr: *const c_char,
+    ) -> i32;
     fn mindwtr_macos_make_quick_add_panel(ns_window: *mut std::ffi::c_void) -> bool;
     fn mindwtr_macos_present_quick_add_panel(ns_window: *mut std::ffi::c_void) -> bool;
 
@@ -1863,6 +1871,7 @@ pub fn run() {
             import_attachment_file,
             migrate_portable_attachments,
             open_path,
+            remember_link_folder_access,
             read_sync_file,
             read_sync_file_versioned,
             write_sync_file,

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract, NATIVE_AI_UNJOURNALED_COMMANDS, type NativeAIHost, type NativeHostResult } from './native-host-contract';
 import type { NativeAIActionAnswer, NativeAISettingChange, NativeAISettings, NativeAICopilotApplied, NativeAICopilotSuggestion } from './native-host-contract-ai';
-import { NATIVE_UNJOURNALED_COMMANDS, taskRevisionOf } from './native-request-receipts';
+import { NATIVE_UNJOURNALED_COMMANDS } from './native-request-receipts';
 import { openSqliteHost } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createTaskDraft, type TaskDraft } from './task-draft';
@@ -24,12 +24,19 @@ import { generateUUID } from './uuid';
 const device = vi.hoisted(() => ({
     queues: {} as Record<string, unknown[]>,
     calls: [] as unknown[][],
+    /** The abort signal each provider call and model list was given (review C1 5), apart from `calls`. */
+    signals: [] as (AbortSignal | undefined)[],
+    modelFetch: null as null | ((url: string, init: RequestInit) => Promise<unknown>),
 }));
 
-/** The next queued answer for `name`: `{ value }` answers it, `{ error }` rejects; none queued rejects with `fallback`. */
+/**
+ * The next queued answer for `name`: `{ value }` answers it, `{ error }` rejects, a function is awaited for its entry (it can
+ * change the store while the request waits); none queued rejects with `fallback`.
+ */
 const answer = async (name: string, fallback: string): Promise<any> => {
     const queue = device.queues[name];
-    const entry = queue && queue.length > 0 ? queue.shift() : { error: fallback };
+    const next = queue && queue.length > 0 ? queue.shift() : { error: fallback };
+    const entry = typeof next === 'function' ? await (next as () => Promise<unknown>)() : next;
     if (entry && typeof entry === 'object' && 'error' in entry) throw new Error(String((entry as { error: string }).error));
     return (entry as { value: unknown }).value;
 };
@@ -44,17 +51,22 @@ vi.mock('./ai/ai-service', () => ({
             }, input]);
             return answer(method, `No ${method} answer queued`);
         };
+        const signalled = (method: string) => (input: unknown, options?: { signal?: AbortSignal }) => {
+            device.signals.push(options?.signal);
+            return record(method, input);
+        };
         return {
-            predictMetadata: (input: unknown) => record('predictMetadata', input),
-            clarifyTask: (input: unknown) => record('clarifyTask', input),
-            breakDownTask: (input: unknown) => record('breakDownTask', input),
-            analyzeReview: (input: unknown) => record('analyzeReview', input),
+            predictMetadata: signalled('predictMetadata'),
+            clarifyTask: signalled('clarifyTask'),
+            breakDownTask: signalled('breakDownTask'),
+            analyzeReview: signalled('analyzeReview'),
         };
     },
 }));
 vi.mock('./ai/model-list', async (importOriginal) => ({
     ...(await importOriginal<typeof import('./ai/model-list')>()),
-    fetchProviderModelsCached: async (provider: string, options: { apiKey: string; baseUrl: string; kind: string }) => {
+    fetchProviderModelsCached: async (provider: string, options: { apiKey: string; baseUrl: string; kind: string; fetchImpl?: (url: string, init: RequestInit) => Promise<unknown> }) => {
+        device.modelFetch = options.fetchImpl ?? null;
         device.calls.push(['fetchModels', provider, { apiKey: options.apiKey, baseUrl: options.baseUrl, kind: options.kind }]);
         return answer('models', 'offline');
     },
@@ -96,7 +108,8 @@ function createDevice(input: Device, warnings: unknown[][] = []) {
             locate: async (modelId) => ({ exists: false, uri: `file:///whisper/${modelId}.bin`, size: 0 }),
         },
     };
-    device.queues = JSON.parse(JSON.stringify(input.queues ?? {}));
+    device.queues = Object.fromEntries(Object.entries(input.queues ?? {}).map(([name, entries]) => [name,
+        entries.map((entry) => (typeof entry === 'function' ? entry : JSON.parse(JSON.stringify(entry))))]));
     device.calls.length = 0;
     return { host, log, storage, secrets };
 }
@@ -541,7 +554,7 @@ async function replayActions(scenario: ActionsScenario, strings: Record<string, 
         return observations;
     }
 
-    const review = { error: null as string | null, ran: false, suggestions: [] as { id: string; action: string; reason: string; title: string }[], selected: new Set<string>() };
+    const review = { error: null as string | null, ran: false, suggestions: [] as { id: string; action: string; reason: string; title: string; taskRevision: string | null }[], selected: new Set<string>() };
     const observe = () => normalize({
         error: review.error,
         loading: false,
@@ -564,8 +577,8 @@ async function replayActions(scenario: ActionsScenario, strings: Record<string, 
             else review.selected.add(id);
         } else if (kind === 'apply') {
             const chosen = review.suggestions.filter((entry) => review.selected.has(entry.id));
-            const byId = useTaskStore.getState()._tasksById;
-            const taskRevisions = Object.fromEntries(chosen.filter((entry) => byId.has(entry.id)).map((entry) => [entry.id, taskRevisionOf(byId.get(entry.id)!)]));
+            // Each suggestion's task at the revision the analysis read it (a native host keeps no other copy of the stale tasks).
+            const taskRevisions = Object.fromEntries(chosen.flatMap((entry) => (entry.taskRevision ? [[entry.id, entry.taskRevision]] : [])));
             value(await contract.runReviewAction({
                 requestId: generateUUID(),
                 action: { type: 'applySuggestions', suggestions: chosen.map(({ id, action, reason }) => ({ id, action: action as never, reason })), taskRevisions },
@@ -847,6 +860,105 @@ describe('native host contract: AI keys stay out of views, errors and logs', () 
         expect(text).not.toContain('pw-9x7');
     });
 
+    // Review C1 1: the endpoint changed while the request waited; its error echoes the password the request was sent with.
+    it('drops the password the request was sent with, though the endpoint changed while it waited', async () => {
+        const settings: AppSettings = { ai: { enabled: true, provider: 'openai', baseUrl: 'http://ann:pw-old-1@10.0.0.5:11434/v1' } };
+        const tasks = [{ id: 't1', title: 'Plan the trip', status: 'next', contexts: [], tags: [], createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }] as Task[];
+        await seed({ tasks, settings });
+        const warned: unknown[][] = [];
+        const changed = async () => {
+            await useTaskStore.getState().updateSettings({ ai: { ...useTaskStore.getState().settings.ai, baseUrl: 'http://ann:pw-new-2@10.0.0.6:11434/v1' } });
+            return { error: 'Upstream 401: the password pw-old-1 is wrong' };
+        };
+        const dev = createDevice({ queues: { clarifyTask: [changed], analyzeReview: [changed] } }, warned);
+        const contract = await openHost(dev.host);
+        const draft = createTaskDraft(useTaskStore.getState()._tasksById.get('t1')!);
+        const result = value(await contract.requestTaskEditorClarify({ id: 't1', draft }));
+        expect(result.kind).toBe('alert');
+        expect(JSON.stringify([result, warned])).toContain('Upstream 401');
+        expect(JSON.stringify([result, warned])).not.toContain('pw-old-1');
+        await useTaskStore.getState().updateSettings({ ai: { ...useTaskStore.getState().settings.ai, baseUrl: 'http://ann:pw-old-1@10.0.0.5:11434/v1' } });
+        const tasksStale = [{ ...tasks[0], updatedAt: '2026-01-01T00:00:00.000Z' }] as Task[];
+        await seed({ tasks: tasksStale, settings });
+        const analysis = value(await (await openHost(createDevice({ queues: { analyzeReview: [changed] } }, warned).host)).requestWeeklyReviewAnalysis());
+        expect(analysis.error).toContain('Upstream 401');
+        expect(JSON.stringify([analysis, warned])).not.toContain('pw-old-1');
+    });
+
+    // Review C1 2: sync installs a newer, still-stale copy of a task while the analysis waits; Apply must refuse it (CAS).
+    it('gives each suggestion the revision the analysis read, so Apply refuses a task changed while it waited', async () => {
+        const tasks = [{ id: 's1', title: 'Old errand', status: 'next', contexts: [], tags: [], rev: 3, revBy: 'this', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }] as Task[];
+        await seed({ tasks, settings: { ai: { enabled: true, provider: 'openai', baseUrl: 'http://local/v1' } } });
+        const installNewer = async () => {
+            const state = useTaskStore.getState();
+            const newer = { ...state._tasksById.get('s1')!, rev: 4, revBy: 'other-device' } as Task;
+            const swap = (list: Task[]) => list.map((task) => (task.id === 's1' ? newer : task));
+            useTaskStore.setState({ _allTasks: swap(state._allTasks), tasks: swap(state.tasks), _tasksById: new Map(state._tasksById).set('s1', newer) } as never);
+            return { value: { suggestions: [{ id: 's1', action: 'someday', reason: 'Stale' }] } };
+        };
+        const contract = await openHost(createDevice({ queues: { analyzeReview: [installNewer] } }).host);
+        const analysis = value(await contract.requestWeeklyReviewAnalysis());
+        const suggestion = analysis.suggestions!.find((entry) => entry.id === 's1')!;
+        expect(suggestion.taskRevision).toBe('3:this:2026-01-01T00:00:00.000Z');
+        const applied = await contract.runReviewAction({
+            requestId: generateUUID(),
+            action: { type: 'applySuggestions', suggestions: [{ id: 's1', action: 'someday', reason: 'Stale' }], taskRevisions: { s1: suggestion.taskRevision! } },
+        });
+        expect(applied).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(useTaskStore.getState()._tasksById.get('s1')!.status).toBe('next');
+    });
+
+    // Review C1 5: the host's signal (an input change, a close, a timeout) reaches every provider call and model list.
+    it('hands the caller\'s abort signal to each provider call and to the model list\'s fetch', async () => {
+        const tasks = [{ id: 't1', title: 'Plan the trip', status: 'next', contexts: [], tags: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }] as Task[];
+        await seed({ tasks, settings: { ai: { enabled: true, provider: 'openai', baseUrl: 'http://local/v1' } } });
+        const dev = createDevice({ queues: { clarifyTask: [{ error: 'x' }], breakDownTask: [{ error: 'x' }], predictMetadata: [{ error: 'x' }, { error: 'x' }], analyzeReview: [{ error: 'x' }], models: [{ value: [] }] } });
+        const seen: RequestInit[] = [];
+        dev.host.fetch = (async (_url: string, init: RequestInit) => { seen.push(init); return new Response('{}'); }) as typeof fetch;
+        const contract = await openHost(dev.host);
+        const draft = createTaskDraft(useTaskStore.getState()._tasksById.get('t1')!);
+        const signal = new AbortController().signal;
+        device.signals.length = 0;
+        await contract.requestTaskEditorClarify({ id: 't1', draft }, { signal });
+        await contract.requestTaskEditorBreakdown({ id: 't1', draft, checklist: [] }, { signal });
+        await contract.requestTaskEditorCopilot({ id: 't1', draft }, { signal });
+        await contract.requestAICopilot({ request: { title: 'Plan the trip', contexts: [], tags: [] } }, { signal });
+        await contract.requestWeeklyReviewAnalysis({ signal });
+        expect(device.signals).toEqual([signal, signal, signal, signal, signal]);
+        const view = value(await contract.openAISettings({ requestId: generateUUID() }));
+        const aborting = new AbortController();
+        value(await contract.loadAIModels({ list: 'assistant', request: view.modelLists.assistant.request! }, { signal: aborting.signal }));
+        await device.modelFetch!('http://local/v1/models', {});
+        aborting.abort();
+        expect(seen[0].signal?.aborted).toBe(true);
+    });
+
+    // Review C1 verification B: a cancelled model list frees its request, so the same request later fetches again.
+    it('fetches a model list again after its earlier load was cancelled (endpoint A, B, then A while A loads)', async () => {
+        await seed({ settings: { ai: { enabled: true, provider: 'openai', baseUrl: 'http://a/v1' } } });
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const dev = createDevice({ queues: { models: [async () => { await held; return { error: 'aborted' }; }, { value: ['a-model'] }] } });
+        dev.secrets.set('mindwtr-ai-key_openai', 'sk-1');
+        const contract = await openHost(dev.host);
+        let view = value(await contract.openAISettings({ requestId: generateUUID() }));
+        const atA = view.modelLists.assistant.request!;
+        const first = new AbortController();
+        const loading = contract.loadAIModels({ list: 'assistant', request: atA }, { signal: first.signal });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        value(await contract.setAIEndpoint({ requestId: generateUUID(), field: 'assistant', value: 'http://b/v1' }));
+        expect(value(contract.getAISettings()).modelLists.assistant.request).not.toBe(atA);
+        value(await contract.setAIEndpoint({ requestId: generateUUID(), field: 'assistant', value: 'http://a/v1' }));
+        expect(value(contract.getAISettings()).modelLists.assistant.request).toBe(atA);
+        // The host cancels A's first load before it asks again.
+        first.abort();
+        view = value(await contract.loadAIModels({ list: 'assistant', request: atA }, { signal: new AbortController().signal }));
+        release();
+        await loading;
+        expect(device.calls.filter((call) => call[0] === 'fetchModels')).toHaveLength(2);
+        expect(JSON.stringify(view)).toContain('a-model');
+    });
+
     it('answers an unreadable keystore with an alert, and the screen shows no key', async () => {
         const tasks = [{ id: 't1', title: 'Plan the trip', status: 'next', contexts: [], tags: [], createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }] as Task[];
         await seed({ tasks, settings: { ai: { enabled: true, provider: 'gemini' } } });
@@ -903,6 +1015,17 @@ describe('native host contract: AI keys stay out of views, errors and logs', () 
         const edits = answered.kind === 'dialog' ? answered.choices.find((choice) => choice.variant === 'primary')!.apply! : [];
         for (const edit of edits) view = value(contract.getInboxProcessingStep({ sessionId: started.sessionId!, taskId: view.taskId, step: view.step, edit }));
         expect(view.draft).toMatchObject({ title: 'Call Sam', contexts: ['@calls'] });
+    });
+
+    // Pass C1 native: RN's Process Inbox shows Clarify while AI is on (InboxCaptureCard's aiEnabled); the native view says so.
+    it('names Process Inbox\'s Clarify button while AI is on, and no button while it is off', async () => {
+        const tasks = [{ id: 'i1', title: 'Gift', status: 'inbox', tags: [], contexts: [], createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }] as Task[];
+        await seed({ tasks, settings: { ai: { enabled: true, provider: 'openai' } } });
+        const contract = await openHost(createDevice({}).host);
+        expect(value(contract.startInboxProcessing({})).view!.aiClarify).toEqual({ label: 'AI clarify', working: 'Working...' });
+        await seed({ tasks, settings: { ai: { enabled: false, provider: 'openai' } } });
+        const off = await openHost(createDevice({}).host);
+        expect(value(off.startInboxProcessing({})).view!.aiClarify).toBeNull();
     });
 
     it('answers ACTION_FAILED without a bound AI host, and sends nothing', async () => {

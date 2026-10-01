@@ -11519,12 +11519,12 @@ final class FoundationUITests: XCTestCase {
 
     func testTaskBackdatedCompletionDraftSaveDiscardAndRestart() {
         taskBackdatedCompletionEditor(
-            library: "bcf76941-e5f8-44e8-b222-5985eebd6ffc",
-            hiddenLibrary: "acc666f3-7273-4875-a4ac-9446ab2c77cc")
+            library: "fb7f8d24-7bbc-4280-9975-a4398510fa2b",
+            hiddenLibrary: "86738a5a-6748-476c-bfba-f10b7071e291")
     }
 
     func testTaskBackdatedCompletionLargestTextAndRestart() {
-        taskBackdatedCompletionEditor(library: "6e6fbc0d-e04b-4237-97eb-50edd8652ab5")
+        taskBackdatedCompletionEditor(library: "677f0ed5-c775-4cee-9a9f-c0e4d51b06f7")
     }
 
     func testTaskTransientModalCancelPreservesFocusedTokenRawInput() {
@@ -11578,7 +11578,11 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
-    private func taskBackdatedCompletionEditor(library: String, hiddenLibrary: String? = nil) {
+    func testTaskBackdatedCompletionNextSaveDiscardAndRestart() {
+        taskBackdatedCompletionEditor(library: "ecf0f373-4105-4ddc-974c-25df1cd296c0", checkDone: false)
+    }
+
+    private func taskBackdatedCompletionEditor(library: String, hiddenLibrary: String? = nil, checkDone: Bool = true) {
         continueAfterFailure = false
         let app = XCUIApplication()
         func launch(_ fixture: String) {
@@ -11612,8 +11616,8 @@ final class FoundationUITests: XCTestCase {
         func minutes() -> XCUIElement {
             let header = app.buttons["task-editor-section-organization"]
             boardEnabled(header)
+            revealPagedElement(app, header, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
             if header.value as? String == "Expand" {
-                revealPagedElement(app, header, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
                 header.tap()
                 expectation(for: NSPredicate(format: "value == %@", "Collapse"), evaluatedWith: header)
                 waitForExpectations(timeout: 10)
@@ -11624,6 +11628,9 @@ final class FoundationUITests: XCTestCase {
             return field
         }
         func replace(_ field: XCUIElement, with value: String) {
+            if field.identifier == "task-backdate-minutes" {
+                revealPagedElement(app, field, in: app.scrollViews["task-backdate-scroll"], outerEdge: true)
+            }
             field.tap(); boardEnabled(app.keyboards.firstMatch)
             if let old = field.value as? String, old != field.placeholderValue, !old.isEmpty {
                 field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
@@ -11677,43 +11684,45 @@ final class FoundationUITests: XCTestCase {
         }
 
         launch(library)
-        open("task115-readonly", title: "Task115 Readonly")
-        XCTAssertFalse(app.buttons["task-mode-edit"].exists)
-        XCTAssertFalse(app.buttons["task-editor-backdate"].exists)
-        close()
+        if checkDone {
+            open("task115-readonly", title: "Task115 Readonly")
+            XCTAssertFalse(app.buttons["task-mode-edit"].exists)
+            XCTAssertFalse(app.buttons["task-editor-backdate"].exists)
+            close()
 
-        open("task115-done", title: "Task115 Done")
-        XCTAssertTrue(app.buttons["task-editor-status-done"].isSelected)
-        XCTAssertEqual(minutes().value as? String, "17")
-        let untouched = openBackdate()!
-        XCTAssertEqual(untouched.value as? String, "17")
-        finishBackdate(confirm: false)
-        close() // Opening and cancelling the dialog did not dirty the draft.
+            open("task115-done", title: "Task115 Done")
+            XCTAssertTrue(app.buttons["task-editor-status-done"].isSelected)
+            let untouched = openBackdate()!
+            XCTAssertEqual(untouched.value as? String, "17")
+            finishBackdate(confirm: false)
+            close() // Opening and cancelling the dialog did not dirty the draft.
 
-        open("task115-done", title: "Task115 Done")
-        _ = openBackdate()
-        finishBackdate(confirm: true)
-        XCTAssertTrue(app.buttons["task-editor-status-done"].isSelected)
-        boardTap(app, "task-editor-save") // Root's persisted oracle checks the original .678 milliseconds.
-        boardEnabled(app.textFields["search-input"])
-        boardTap(app, "search-close")
-        restart()
-        open("task115-done", title: "Task115 Done")
-        XCTAssertEqual(minutes().value as? String, "17")
-        close()
+            open("task115-done", title: "Task115 Done")
+            _ = openBackdate()
+            finishBackdate(confirm: true)
+            XCTAssertTrue(app.buttons["task-editor-status-done"].isSelected)
+            boardTap(app, "task-editor-save") // Root's persisted oracle checks the original .678 milliseconds.
+            boardEnabled(app.textFields["search-input"])
+            boardTap(app, "search-close")
+            restart()
+            open("task115-done", title: "Task115 Done")
+            XCTAssertEqual(minutes().value as? String, "17")
+            close()
 
-        open("task115-done", title: "Task115 Done")
-        replace(minutes(), with: "23")
-        let local = openBackdate()!
-        XCTAssertEqual(local.value as? String, "23")
-        replace(local, with: "41")
-        finishBackdate(confirm: false)
-        XCTAssertEqual(minutes().value as? String, "23")
-        close(clean: false)
-        restart()
-        open("task115-done", title: "Task115 Done")
-        XCTAssertEqual(minutes().value as? String, "17")
-        close()
+            open("task115-done", title: "Task115 Done")
+            replace(minutes(), with: "23")
+            let local = openBackdate()!
+            XCTAssertEqual(local.value as? String, "23")
+            replace(local, with: "41")
+            finishBackdate(confirm: false)
+            XCTAssertEqual(minutes().value as? String, "23")
+            close(clean: false)
+            restart()
+            open("task115-done", title: "Task115 Done")
+            XCTAssertEqual(minutes().value as? String, "17")
+            close()
+
+        }
 
         open("task115-next", title: "Task115 Next")
         XCTAssertTrue(app.buttons["task-editor-status-next"].isSelected)

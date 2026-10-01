@@ -370,6 +370,7 @@ export const ukOverrides: Record<string, string> = {
     "attachments.fileTooLarge": "Файл завеликий для вивантаження.",
     "attachments.fileNotReadable": "Не вдалося прочитати цей файл, тому його не було вкладено. Перемістіть його в іншу папку та повторіть спробу.",
     "attachments.linkToFile": "Посилання на файл…",
+    "attachments.linkFolder": "Пов’язати теку…",
     "attachments.linkedFileElsewhere": "Це посилання вказує на файл на іншому пристрої: {{path}}. Відкрийте його там або прикріпіть файл замість посилання.",
     "attachments.openLinkFailed": "Не вдалося відкрити це посилання.",
     "attachments.invalidFileType": "Непідтримуваний тип файлу.",

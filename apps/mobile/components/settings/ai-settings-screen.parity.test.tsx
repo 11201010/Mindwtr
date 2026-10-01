@@ -266,7 +266,8 @@ const scenarios: Scenario[] = [
   },
   {
     name: 'assistant: models, pickers and the OpenAI panel',
-    settings: 'base', device: {},
+    // This device agreed to OpenAI before (review C1 3: a model list asks only a provider it agreed to).
+    settings: 'base', device: { storage: { [CONSENT_KEY]: JSON.stringify({ openai: true }) } },
     actions: [
       ['press', 'k:settings.ai'],
       ['type', 0, 'gpt-custom'],
@@ -279,6 +280,16 @@ const scenarios: Scenario[] = [
       ['type', 2, 'http://localhost:1234/v1'],
       ['type', 3, 'sk-typed-1'],
       ['type', 3, ''],
+    ],
+  },
+  {
+    // Review C1 3: a key and an endpoint saved while the assistant is off reach no provider before its question is answered.
+    name: 'assistant: a key and an endpoint saved while it is off list no models before consent',
+    settings: 'base', device: {},
+    actions: [
+      ['press', 'k:settings.ai'],
+      ['type', 2, 'http://localhost:1234/v1'],
+      ['type', 3, 'sk-typed-2'],
     ],
   },
   {
@@ -336,7 +347,10 @@ const scenarios: Scenario[] = [
   },
   {
     name: 'speech: cloud providers',
-    settings: 'speech', device: { secrets: { [KEY.openai]: 'sk-speech' }, queues: { models: [{ value: ['whisper-1', 'gpt-4o-transcribe'] }] } },
+    settings: 'speech', device: {
+      storage: { [CONSENT_KEY]: JSON.stringify({ openai: true, gemini: true }) },
+      secrets: { [KEY.openai]: 'sk-speech' }, queues: { models: [{ value: ['whisper-1', 'gpt-4o-transcribe'] }] },
+    },
     actions: [
       ['press', 'k:settings.speechTitle'],
       ['press', 'k:settings.aiMobile.suggestions'],

@@ -50,16 +50,19 @@ class WriteJournal(
             "openSyncSettings" to "{}", "closeSyncSettings" to "{}", "selectSyncBackend" to "{requestId}", "saveSyncBackend" to "{requestId,revision}",
             "syncNow" to "{requestId}", "testSyncConnection" to "{}", "pickSyncFolder" to "{requestId}", "connectDropbox" to "{requestId}",
             "disconnectDropbox" to "{requestId}", "runSyncEncryptionAction" to "{}",
+            // Settings › AI's key and base URL: never on disk either (UNJOURNALED).
+            "setAIKey" to "{requestId}", "setAIEndpoint" to "{requestId}",
         ) + listOf("archiveAction", "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction",
             "boardCreate", "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd",
-            "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "manageEditor", "manageDelete", "syncPreference").associateWith { "{requestId}" }
+            "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "manageEditor", "manageDelete", "syncPreference", "setAISetting",
+            "openAISettings").associateWith { "{requestId}" }
         val WRITES = SHAPES.keys
         /**
          * Writes never journaled: a key (the host method, or a Menu command's name) whose core command is in core's
          * NATIVE_UNJOURNALED_COMMANDS, a payload that can carry a secret. check-boot-gates.mjs keeps it equal to core's set.
          */
         val UNJOURNALED = setOf("openSyncSettings", "closeSyncSettings", "selectSyncBackend", "saveSyncBackend", "syncNow", "testSyncConnection",
-            "pickSyncFolder", "connectDropbox", "disconnectDropbox", "runSyncEncryptionAction")
+            "pickSyncFolder", "connectDropbox", "disconnectDropbox", "runSyncEncryptionAction", "setAIKey", "setAIEndpoint")
 
         /** Whether [method] with [args] is an [UNJOURNALED] write: CoreHost's long calls (callLong) take only these. */
         fun unjournaled(method: String, args: List<Any?>): Boolean = method in WRITES && key(method, args) in UNJOURNALED

@@ -212,6 +212,7 @@ const createProps = (overrides: FixtureOverrides = {}): Omit<RendererProps, 'fie
             visibleEditAttachments: [],
             addFileAttachment: vi.fn(),
             addLinkAttachment: vi.fn(),
+            addFolderLinkAttachment: vi.fn(),
             addObsidianNoteAttachment: vi.fn(),
             editLinkAttachment: vi.fn(),
             appendRetainedAttachment: vi.fn(),

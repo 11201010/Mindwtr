@@ -13,7 +13,7 @@
 // RN's capture screen for each entry kind (a capture link with the keyboard up and down, a share, an assistant note, and a
 // widget's quick capture), the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
 // task, and Review), the Weekly Review's first step, the Calendar's week and month, the Board, and Settings'
-// General, GTD (their switches drawn as RN's for the props it sets) and Sync (off), in light
+// General, GTD (their switches drawn as RN's for the props it sets), Sync (off) and AI (each card unfolded), in light
 // and dark mode.
 // Then it installs
 // the native upgradetest build (153) over it, on the same database, and shoots the same
@@ -28,7 +28,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, chipOn, connect, evidenced, hasText, inEditor, inList, Stopped, switchOn, tab, tabSelected, withDescription } from './device.mjs';
+import { button, check, chipOn, connect, evidenced, fail, hasText, inEditor, inList, Stopped, switchOn, tab, tabSelected, withDescription } from './device.mjs';
 
 const [serial] = process.argv.slice(2);
 if (!serial) {
@@ -137,7 +137,7 @@ const buildFixture = () => execFileSync('bun', ['-e', `
 
 // ---- the device ----
 const device = connect({ serial, pkg: PKG, uiFile: '/data/local/tmp/mindwtr-parity-ui.xml' });
-const { adbRaw, sh, home, front, requireAppFront, pid, waitFor, tap } = device;
+const { adbRaw, sh, home, front, requireAppFront, pid, screen, waitFor, tap } = device;
 const runAs = (command) => sh(`run-as ${PKG} ${command}`);
 const installed = () => sh(`pm list packages ${PKG}`).split('\n').some((line) => line.trim() === `package:${PKG}`);
 const originalNight = /Night mode: (\w+)/.exec(sh('cmd uimode night'))?.[1] ?? 'auto';
@@ -372,9 +372,38 @@ const shootSettings = async (prefix, suffix, rn) => {
         sh('input keyevent KEYCODE_BACK');
         await sleep(1000);
     }
+    await shootAI(prefix, suffix, rn);
     requireAppFront();
     sh('input keyevent KEYCODE_BACK');
     await sleep(1000);
+};
+/**
+ * Settings › Advanced › AI (pass C1): the assistant card unfolded, then folded again and the speech card unfolded, each shot at
+ * the top of the screen. A card's heading is RN's touchable row (tapped on its description) or the native FoldRow (one node,
+ * "title, description"). Back twice returns to the Settings menu.
+ */
+const shootAI = async (prefix, suffix, rn) => {
+    const rows = await waitFor('the Advanced row', (current) => Boolean(withDescription(current, `${en['settings.advanced']}. ${en['settings.menuDesc.advanced']}`)), 30_000);
+    await tap(withDescription(rows, `${en['settings.advanced']}. ${en['settings.menuDesc.advanced']}`));
+    const advanced = await waitFor('the AI row', (current) => Boolean(withDescription(current, `${en['settings.ai']}. ${en['settings.menuDesc.ai']}`)), 30_000);
+    await tap(withDescription(advanced, `${en['settings.ai']}. ${en['settings.menuDesc.ai']}`));
+    const heading = (current, title, description) => (rn ? current.find((node) => node.text === description) : withDescription(current, `${title}, ${description}`));
+    const cards = [[en['settings.ai'], en['settings.aiDesc'], en['settings.aiEnable']], [en['settings.speechTitle'], en['settings.speechDesc'], en['settings.speechEnable']]];
+    for (const [index, [title, description, inside]] of cards.entries()) {
+        // The speech card is shot alone: the assistant card folds again first (unfolded, it pushes the speech card below the fold).
+        if (index === 1) {
+            await tap(heading(await screen(), cards[0][0], cards[0][1]) ?? fail('no assistant card heading'));
+            await waitFor('the assistant card folded', (current) => !hasText(current, cards[0][2]), 15_000);
+        }
+        const shown = await waitFor(`the ${title} card`, (current) => Boolean(heading(current, title, description)), 30_000);
+        await tap(heading(shown, title, description));
+        await shoot(`${prefix}-settings-ai-${index === 0 ? 'assistant' : 'speech'}-${suffix}`, (current) => hasText(current, inside));
+    }
+    for (let step = 0; step < 2; step += 1) {
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        await sleep(1000);
+    }
 };
 const SCREENS = [
     { name: 'inbox', link: 'inbox', tab: 'Inbox', text: T.call },

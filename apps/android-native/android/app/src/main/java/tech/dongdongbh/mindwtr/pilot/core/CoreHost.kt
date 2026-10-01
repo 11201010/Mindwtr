@@ -16,6 +16,7 @@ import java.io.File
 import java.security.SecureRandom
 import android.os.SystemClock
 import java.util.concurrent.Callable
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Future
@@ -192,6 +193,8 @@ class CoreHost(
             bridge.setProperty("kvMultiSet", guarded { args -> keyValue.multiSet(JSONArray(args[0] as String).let { pairs ->
                 List(pairs.length()) { pairs.getJSONArray(it).let { pair -> pair.getString(0) to pair.getString(1) } } }); null })
             bridge.setProperty("kvMultiRemove", guarded { args -> keyValue.multiRemove(stringList(args[0] as String)); null })
+            // Debug builds only (check-ai-device.mjs): RN's AI consent record goes before boot, so the check sees RN's question again.
+            if (debugFault("ai_consent_reset") == "1") keyValue.remove("mindwtr-ai-provider-consent-v1")
             // An event for the screens: handed on as text; a listener that throws never reaches JS.
             bridge.setProperty("hostEvent", guarded { args -> runCatching { onEvent?.invoke(args[0] as String) }; null })
             engine.globalObject.setProperty("__mindwtrNative", bridge)
@@ -387,6 +390,37 @@ class CoreHost(
      */
     fun syncCommand(name: String, json: String): JSONObject = callLong("menuCommand", name, json)
 
+    /**
+     * An AI request (host-entry.ts AI_REQUESTS) with [json] unchanged: it waits on the provider for up to RN's longest request
+     * timeout (5 min), so it never holds the engine ([callLong]). It is a read: nothing to journal.
+     */
+    fun aiRequest(name: String, json: String, handle: LongCall = LongCall()): JSONObject = callLong("aiRequest", name, json, handle = handle)
+
+    /**
+     * A long call's handle: [cancel] frees the thread that waits on it at once and aborts its operation's signal
+     * (host-entry.ts abort), so its provider call stops. Main thread safe: nothing here waits for the engine.
+     */
+    class LongCall {
+        @Volatile internal var id: String? = null
+        @Volatile internal var done: CompletableFuture<String>? = null
+        @Volatile internal var cancelled = false
+    }
+
+    /** [handle]'s call is no longer wanted (its input changed, its screen closed): see [LongCall]. */
+    fun cancel(handle: LongCall) {
+        handle.cancelled = true
+        handle.done?.completeExceptionally(CancellationException("The AI request was cancelled"))
+        runCatching { synchronized(lifecycleLock) { if (shutdown == null) executor.execute { abortLong(handle) } } }
+    }
+
+    /** Engine thread: [handle]'s operation's signal fires (its answer still settles through the pump, which forgets it). */
+    private fun abortLong(handle: LongCall) {
+        val id = handle.id ?: return
+        if (context == null || stopped != null) return
+        runCatching { call("abort", id) }
+        handle.done?.completeExceptionally(CancellationException("The AI request was cancelled"))
+    }
+
     /** Core's getProjects: its Active, Deferred, and Archived groups in its order. */
     fun projects(): JSONObject = callAsync("projects")
 
@@ -452,25 +486,31 @@ class CoreHost(
     }
 
     /**
-     * A long operation (a Sync screen command) that never holds the engine: it starts here, then the idle pump and every other
-     * call's pump advance it while the caller waits on this thread. Only an unjournaled write comes here, so no journaled write
-     * skips the journal. Past [SYNC_WAIT_MS] the caller stops waiting; nothing holds the engine, so nothing needs to stop.
+     * A long operation (a Sync screen command, an AI request) that never holds the engine: it starts here, then the idle pump and
+     * every other call's pump advance it while the caller waits on this thread. Only an unjournaled write or a read comes here, so
+     * no journaled write skips the journal. Past [SYNC_WAIT_MS] the caller stops waiting; nothing holds the engine, so nothing
+     * needs to stop.
      */
-    private fun callLong(method: String, vararg args: Any?): JSONObject {
-        require(WriteJournal.unjournaled(method, args.toList())) { "$method is not an unjournaled command" }
+    private fun callLong(method: String, vararg args: Any?, handle: LongCall = LongCall()): JSONObject {
+        require(method !in WriteJournal.WRITES || WriteJournal.unjournaled(method, args.toList())) { "$method is a journaled write" }
         check(Thread.currentThread() !== engineThread) { "A long operation is waited for off the engine thread" }
         val done = CompletableFuture<String>()
-        val id = onEngine {
+        handle.done = done
+        onEngine {
             stopped?.let { throw IllegalStateException(it) }
             (call(method, *args) as String).also {
                 watched[it] = done
+                handle.id = it
+                // Cancelled before it started: its signal fires now.
+                if (handle.cancelled) abortLong(handle)
                 idlePump()
             }
         }
         val answer = try {
             done.get(SYNC_WAIT_MS, TimeUnit.MILLISECONDS)
         } catch (_: TimeoutException) {
-            onEngine { watched.remove(id) }
+            // Past the wait: the operation's signal fires too, so its requests stop (the pump settles and forgets it).
+            onEngine { abortLong(handle) }
             throw IllegalStateException("Core $method timed out")
         } catch (failure: ExecutionException) {
             throw failure.cause ?: failure

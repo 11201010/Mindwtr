@@ -3255,6 +3255,7 @@ mod tests {
             autostart_startup_flag_migrated: Some("true".to_string()),
             dropbox_promotion_journal: Some("dropbox-journal-secret".to_string()),
             sync_cloud_provider: Some("dropbox".to_string()),
+            link_folder_bookmarks: Some("{\"a1\":\"Ym9va21hcms=\"}".to_string()),
         }
     }
 

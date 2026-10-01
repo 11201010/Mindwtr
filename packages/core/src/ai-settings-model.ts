@@ -166,6 +166,15 @@ export async function readAIProviderConsent(storage: ConsentStorage, warn: Conse
     }
 }
 
+/**
+ * Whether a model list may ask `provider` (it sends the key there): only a provider this device agreed to, or the one the
+ * assistant is on with (the synced switch carries the consent given where it was turned on). A key or an endpoint saved while
+ * the assistant is off reaches no provider before its question is answered.
+ */
+export function canDiscoverAIModels(input: { provider: string; consent: Readonly<Record<string, boolean>>; aiEnabled: boolean; aiProvider: string }): boolean {
+    return input.consent[input.provider] === true || (input.aiEnabled && input.aiProvider === input.provider);
+}
+
 /** Records this device's consent for `provider`; a failed write is warned, and the answer stands. */
 export async function recordAIProviderConsent(storage: ConsentStorage, provider: AIProviderId, warn: ConsentWarn): Promise<void> {
     try {

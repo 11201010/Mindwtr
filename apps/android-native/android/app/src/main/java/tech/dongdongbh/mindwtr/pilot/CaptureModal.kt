@@ -93,6 +93,9 @@ fun CaptureModalScreen(model: InboxViewModel, modal: CaptureModal) = with(model.
     DisposableEffect(Unit) { onDispose { keyboard?.hide() } }
     // Edits wait while an action runs; they go on once none does.
     LaunchedEffect(model.busy, owed) { if (!model.busy && !owed) pump() }
+    // Core's copilot question for the title as it reads now: requestAICopilot once typing pauses (RN's 800 ms), its answer back as an edit.
+    val copilotRequest = view.getJSONObject("copilot").optJSONObject("request")
+    LaunchedEffect(modal.session, copilotRequest?.toString()) { model.ai.captureCopilot(modal.session, copilotRequest) }
     BackHandler {
         if (model.busy) return@BackHandler
         if (modal.confirm != null) cancelLines() else cancel(leave = false)
@@ -141,6 +144,8 @@ fun CaptureModalScreen(model: InboxViewModel, modal: CaptureModal) = with(model.
                                     Modifier) { describe(it) }
                             }
                         }
+                        // The copilot's chips and the applied line (RN's copilotPill), while AI is on.
+                        CaptureCopilot(model, view.getJSONObject("copilot"), !locked)
                         view.getJSONObject("help").text("text")?.let { Text(it, style = rnText(12, 400), color = c.secondaryText) }
                         // RN's failure line, until the next save starts; TalkBack hears it at once.
                         if (modal.failed) Text(t("task.addFailed"), style = rnText(13, 400, 18), color = c.danger,

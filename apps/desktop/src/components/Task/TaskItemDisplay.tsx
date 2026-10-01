@@ -1,9 +1,9 @@
-import { AlertTriangle, AlignLeft, Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Link2, ListChecks, Paperclip, RotateCcw, Copy, MapPin, History, Hourglass, Play, Zap, MoreHorizontal, XCircle } from 'lucide-react';
+import { AlertTriangle, AlignLeft, Folder, Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Link2, ListChecks, Paperclip, RotateCcw, Copy, MapPin, History, Hourglass, Play, Zap, MoreHorizontal, XCircle } from 'lucide-react';
 import type { Area, Attachment, Project, RangeSelectionOptions, Section, Task, TaskStatus, RecurrenceRule, RecurrenceStrategy, Language } from '@mindwtr/core';
 import { DEFAULT_AREA_COLOR, TASK_PRIORITY_COLORS, formatRecurrenceLabel, formatTimeEstimateLabel, formatTimeSpentLabel, getChecklistProgress, getContextColor, getInlineMarkdownPreview, getRecurringTaskPreviewDate, getTaskAgeLabel, getTaskDateCoherenceIssues, getTaskStaleness, getTaskUrgency, hasTimeComponent, isTaskActionable, isTaskCancelled, isTaskCompleted, isTaskFinished, safeFormatDate, resolveTaskTextDirection, tFallback } from '@mindwtr/core';
 import { cn } from '../../lib/utils';
 import { STATUS_PILL_CLASSES } from '../../lib/status-colors';
-import { useBareFileReferenceCheck } from '../../lib/attachment-reference';
+import { isFolderLinkAttachment, useBareFileReferenceCheck } from '../../lib/attachment-reference';
 import { getAttachmentDisplayTitle } from '../../lib/attachment-utils';
 import { MetadataBadge } from '../ui/MetadataBadge';
 import { AttachmentProgressIndicator } from '../AttachmentProgressIndicator';
@@ -967,7 +967,9 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                                         const fullTitle = attachment.uri || attachment.title;
                                         return (
                                             <div key={attachment.id} className="flex items-center gap-2">
-                                                {isPointer && <Link2 className="w-3 h-3 shrink-0" aria-hidden="true" />}
+                                                {isFolderLinkAttachment(attachment)
+                                                    ? <Folder className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                                    : isPointer && <Link2 className="w-3 h-3 shrink-0" aria-hidden="true" />}
                                                 <button
                                                     type="button"
                                                     onClick={(e) => {

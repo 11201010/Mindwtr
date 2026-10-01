@@ -90,6 +90,7 @@ fun SettingsList(model: InboxViewModel) = with(model.menu.settings) {
             "manage" -> ManageSettings(model, shown)
             "data" -> DataSettings(model, shown.view)
             "sync" -> SyncSettings(model, shown.view)
+            "ai" -> AISettings(model, shown.view)
             else -> GtdSettings(model, shown.view)
         }
         Spacer(Modifier.height(16.dp))
@@ -885,6 +886,7 @@ private fun SettingsDialogs(model: InboxViewModel, page: SettingsPage) = with(mo
         "settingsPicker" -> Picker(model, page.view, open.getString("picker"))
         "manageEditor" -> ManageEditor(model, page.view, open)
     }
+    if (settings.screen == "ai") AISettingsDialogs(model, page.view)
     if (settings.screen == "gtd-task-editor") settings.local.optString("sheetField").ifEmpty { null }?.let { id ->
         val field = page.view.getJSONObject("taskEditor").menuObjects("groups").flatMap { it.menuObjects("fields") }.firstOrNull { it.getString("id") == id }
         if (field != null) FieldSheet(model, field)

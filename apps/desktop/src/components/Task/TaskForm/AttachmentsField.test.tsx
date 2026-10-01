@@ -185,4 +185,46 @@ describe('AttachmentsField', () => {
         expect(queryByRole('button', { name: 'attachments.attachObsidianNote' })).not.toBeInTheDocument();
     });
 
+
+    it('offers Link folder only in the desktop shell and marks folder links with a folder icon', () => {
+        const addFolderLinkAttachment = vi.fn();
+        const folderLink = {
+            id: 'folder-1',
+            kind: 'link' as const,
+            title: 'Alpha',
+            uri: '/Users/dd/Projects/Alpha',
+            mimeType: 'inode/directory',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+        };
+        const field = (
+            <AttachmentsField
+                t={(key) => key}
+                attachmentError={null}
+                visibleEditAttachments={[folderLink]}
+                addFileAttachment={vi.fn()}
+                addLinkAttachment={vi.fn()}
+                addFolderLinkAttachment={addFolderLinkAttachment}
+                addObsidianNoteAttachment={vi.fn()}
+                showObsidianNoteAttachment={false}
+                editLinkAttachment={vi.fn()}
+                openAttachment={vi.fn()}
+                removeAttachment={vi.fn()}
+            />
+        );
+
+        const web = render(field);
+        expect(web.queryByText('attachments.linkFolder')).toBeNull();
+        expect(web.container.querySelector('.lucide-folder')).not.toBeNull();
+        web.unmount();
+
+        (window as any).__TAURI_INTERNALS__ = {};
+        try {
+            const desktop = render(field);
+            fireEvent.click(desktop.getByText('attachments.linkFolder'));
+            expect(addFolderLinkAttachment).toHaveBeenCalledTimes(1);
+        } finally {
+            delete (window as any).__TAURI_INTERNALS__;
+        }
+    });
 });

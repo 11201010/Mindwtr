@@ -497,6 +497,20 @@ describe('native host contract: the capture confirmation screen', () => {
         expect(value(local.openCaptureModal({ params })).view.copilot.request).toMatchObject({ title: 'Call the bank' });
     });
 
+    // Pass C1: a host that binds AI asks requestAICopilot, which loads the key itself and answers null without one.
+    it('asks the AI for any provider on a host that binds AI: requestAICopilot checks the key', async () => {
+        const params = { initialValue: 'Call%20the%20bank' };
+        const ai = {
+            platform: { isFossBuild: false },
+            storage: { getItem: async () => null, setItem: async () => undefined, removeItem: async () => undefined },
+            secrets: { get: async () => null, set: async () => undefined, delete: async () => undefined },
+        };
+        const bound = await openScreenHost({ data, record: {}, log: [], bindings: { ai } });
+        const { view } = value(bound.openCaptureModal({ params }));
+        expect(view.copilot.request).toMatchObject({ title: 'Call the bank' });
+        expect(value(await bound.requestAICopilot({ request: view.copilot.request! }))).toEqual({ suggestion: null });
+    });
+
     it('drops an AI answer for a title the field no longer holds', async () => {
         const host = await openScreenHost({ data: { ...data, settings: withLocalAIEndpoint(data.settings) }, record: {}, log: [] });
         const params = { initialValue: 'Call%20the%20bank' };

@@ -332,6 +332,7 @@ export const arOverrides: Record<string, string> = {
         'attachments.fileTooLarge': 'الملف كبير جدًا بحيث لا يمكن تحميله.',
         'attachments.fileNotReadable': 'تعذّرت قراءة هذا الملف، لذا لم يتم إرفاقه. انقله إلى مجلد آخر وحاول مرة أخرى.',
         'attachments.linkToFile': 'ربط بملف…',
+        'attachments.linkFolder': 'ربط مجلد…',
         'attachments.invalidFileType': 'نوع الملف غير معتمد.',
         'attachments.invalidLink': 'الرجاء إدخال عنوان URL صالح.',
         'attachments.photoUnavailableTitle': 'منتقي الصور غير متاح',

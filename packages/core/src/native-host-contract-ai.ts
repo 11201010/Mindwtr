@@ -54,7 +54,7 @@
  */
 import { createAIProvider } from './ai/ai-service';
 import { fetchProviderModelsCached, mergeModelOptions } from './ai/model-list';
-import type { AIProviderConfig, AIProviderId, AIReasoningEffort, AudioCaptureMode, AudioFieldStrategy, CopilotResponse } from './ai/types';
+import type { AIProviderConfig, AIProviderId, AIRequestOptions, AIReasoningEffort, AudioCaptureMode, AudioFieldStrategy, CopilotResponse } from './ai/types';
 import {
     AI_REQUEST_TIMEOUT_OPTIONS,
     buildAIConfig,
@@ -67,6 +67,7 @@ import {
 } from './ai-config';
 import {
     AI_MODEL_FETCH_DEBOUNCE_MS,
+    canDiscoverAIModels,
     canFetchAIChatModels,
     createAISettingsTranslator,
     getAIConsentPrompt,
@@ -111,7 +112,7 @@ import { applyCaptureModalCopilotParts } from './capture-modal-model';
 import type { Language } from './i18n/i18n-types';
 import { NATIVE_HOST_CONTRACT_VERSION, type NativeHostResult, type NativeInboxProcessingView, type NativeTaskDraftEdit } from './native-host-contract';
 import { fail, isObjectRecord, isText } from './native-host-contract-menu-views';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
+import { createNativeRequestReceipts, runStoreWrite, settleWrite, taskRevisionOf } from './native-request-receipts';
 import { getProcessInboxTokenPools, type ProcessInboxDraftEdit } from './process-inbox-model';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { getWeeklyReviewBuckets } from './review-utils';
@@ -324,8 +325,11 @@ export type NativeAIBreakdownApply = { checklist: ChecklistItem[]; edit: NativeT
 export type NativeWeeklyReviewAnalysis = {
     /** The error line (null clears it). */
     error: string | null;
-    /** The suggestions to show, or null: keep the ones shown. */
-    suggestions: { id: string; action: string; reason: string; title: string; meta: string; actionable: boolean }[] | null;
+    /**
+     * The suggestions to show, or null: keep the ones shown. `taskRevision` is the suggestion's task as the analysis read it
+     * (null for an item that is no live task): send it in applySuggestions' taskRevisions.
+     */
+    suggestions: { id: string; action: string; reason: string; title: string; meta: string; actionable: boolean; taskRevision: string | null }[] | null;
     /** The suggestions chosen at first (null: keep the choice). Apply sends the chosen ones to runReviewAction's applySuggestions. */
     selectedIds: string[] | null;
 };
@@ -346,7 +350,8 @@ const mask = (key: string) => '•'.repeat(key.length);
 const same = (left: unknown, right: unknown) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 const isOneOf = <T,>(values: readonly T[]) => (value: unknown): value is T => values.includes(value as T);
 
-type ModelList = { request: string; models: string[] | null };
+/** A model list asked for; `signal` is its load's, so a cancelled load never stands in for a later one. */
+type ModelList = { request: string; models: string[] | null; signal?: AbortSignal };
 type Visit = {
     /** The key each field shows (by provider, as React Native loaded it); in memory only. */
     keys: { assistant: { provider: AIProviderId; value: string } | null; speech: { provider: SpeechProviderChoice; value: string } | null };
@@ -354,6 +359,8 @@ type Visit = {
     whisper: { modelId: string; exists: boolean; size: number } | null;
     /** The extra parameters' error, shown until a Save stores or the stored parameters change. */
     extraBody: { error: string; stored: string } | null;
+    /** This device's consent record, read when the screen opens (as React Native reads it on mount); null until then. */
+    consent: Record<string, boolean> | null;
 };
 
 const readChange = (value: unknown): NativeAISettingChange | null => {
@@ -390,6 +397,19 @@ const readChange = (value: unknown): NativeAISettingChange | null => {
             return null;
     }
 };
+
+/**
+ * [fetcher] that also stops when [signal] aborts (the host no longer wants the answer: an input change, a close, a timeout),
+ * whatever signal the request brings of its own.
+ */
+const abortable = (fetcher: typeof fetch, signal: AbortSignal | undefined): typeof fetch => (!signal ? fetcher : ((url, init = {}) => {
+    const stop = new AbortController();
+    const forward = () => stop.abort(signal.aborted ? signal.reason : init.signal?.reason);
+    if (signal.aborted || init.signal?.aborted) forward();
+    signal.addEventListener('abort', forward, { once: true });
+    init.signal?.addEventListener('abort', forward, { once: true });
+    return fetcher(url, { ...init, signal: stop.signal });
+}) as typeof fetch);
 
 export function createAIMethods(deps: AIDeps) {
     const receipts = createNativeRequestReceipts({ save: deps.save });
@@ -495,11 +515,15 @@ export function createAIMethods(deps: AIDeps) {
         const state = resolveAISettingsScreenState(settings(), isFossBuild);
         const assistantKey = visit?.keys.assistant?.provider === state.aiProvider ? visit.keys.assistant.value : '';
         const speechKey = visit?.keys.speech?.provider === state.speechProvider ? visit.keys.speech.value : '';
-        const assistant = canFetchAIChatModels({ isFossBuild, provider: state.aiProvider, apiKey: assistantKey.trim(), baseUrl: state.aiBaseUrl.trim() })
+        const consent = visit?.consent ?? null;
+        const agreed = (provider: string) => consent !== null
+            && canDiscoverAIModels({ provider, consent, aiEnabled: state.aiEnabled, aiProvider: state.aiProvider });
+        const assistant = agreed(state.aiProvider)
+            && canFetchAIChatModels({ isFossBuild, provider: state.aiProvider, apiKey: assistantKey.trim(), baseUrl: state.aiBaseUrl.trim() })
             ? { provider: state.aiProvider, apiKey: assistantKey.trim(), baseUrl: state.aiBaseUrl.trim(), kind: 'chat' as const }
             : null;
         const speechKind = getSpeechModelListKind({ provider: state.speechProvider, apiKey: speechKey.trim(), baseUrl: state.speechBaseUrl.trim() });
-        const speech = speechKind && state.speechProvider !== 'whisper'
+        const speech = speechKind && state.speechProvider !== 'whisper' && agreed(state.speechProvider)
             ? { provider: state.speechProvider as AIProviderId, apiKey: speechKey.trim(), baseUrl: state.speechBaseUrl.trim(), kind: speechKind }
             : null;
         return {
@@ -803,7 +827,7 @@ export function createAIMethods(deps: AIDeps) {
                 },
             };
         };
-        return { gate: 'ready' as const, apiKey, build };
+        return { gate: 'ready' as const, apiKey, build, sent: stored };
     };
 
     const editorTask = (input: { id: unknown; draft: unknown }): NativeHostResult<{ task: Task; draft: TaskDraft }> => {
@@ -824,9 +848,15 @@ export function createAIMethods(deps: AIDeps) {
             ? { kind: 'alert', title: t('ai.disabledTitle'), message: t('ai.disabledBody') }
             : { kind: 'alert', title: t('ai.missingKeyTitle'), message: t('ai.missingKeyBody') };
     };
-    const errorAlert = (error: unknown, apiKey: string, host: NativeAIHost, what: string): NativeAIActionAnswer<never> => {
-        host.log?.warn(`${what}: ${redactAIError(error, apiKey, settings()).message}`);
-        return { kind: 'alert', ...getAIErrorAlert(error, deps.t(), apiKey, settings()) };
+    /**
+     * A failed request's error without its secrets: the key and endpoint password it was sent with (`sent`, the settings its
+     * config was built from), then the current ones (the endpoint may have changed while it waited).
+     */
+    const sentRedacted = (error: unknown, apiKey: string, sent: AppSettings | null): unknown => (sent ? redactAIError(error, apiKey, sent) : error);
+    const errorAlert = (error: unknown, apiKey: string, host: NativeAIHost, what: string, sent: AppSettings | null): NativeAIActionAnswer<never> => {
+        const redacted = sentRedacted(error, apiKey, sent);
+        host.log?.warn(`${what}: ${redactAIError(redacted, apiKey, settings()).message}`);
+        return { kind: 'alert', ...getAIErrorAlert(redacted, deps.t(), apiKey, settings()) };
     };
     const choice = <Apply,>(label: string, variant: 'primary' | 'secondary' | undefined, apply: Apply | null): NativeAIDialogChoice<Apply> => (
         { label, variant: variant ?? null, apply }
@@ -859,7 +889,7 @@ export function createAIMethods(deps: AIDeps) {
                 return fail('INVALID_INPUT', 'A request UUID is required');
             }
             const { isFossBuild } = host.platform;
-            visit = { keys: { assistant: null, speech: null }, models: { assistant: null, speech: null }, whisper: null, extraBody: null };
+            visit = { keys: { assistant: null, speech: null }, models: { assistant: null, speech: null }, whisper: null, extraBody: null, consent: null };
             const opened = visit;
             try {
                 const corrected = await receipts.run<{ changed: boolean }>(input.requestId, JSON.stringify(['openAISettings']), async () => {
@@ -879,6 +909,8 @@ export function createAIMethods(deps: AIDeps) {
                 });
                 if (!corrected.ok) return corrected;
                 if (visit !== opened) return fail('ACTION_FAILED', 'Settings › AI was closed or opened again');
+                // A model list asks only a provider this device agreed to (canDiscoverAIModels, review C1 3).
+                opened.consent = await readAIProviderConsent(host.storage, warn(host));
                 await loadKeys(host, isFossBuild);
                 // Answered from its receipt: the model file's state is still read (a move is stored on the next open).
                 if (!opened.whisper) await whisperPathFix(host, isFossBuild);
@@ -924,6 +956,7 @@ export function createAIMethods(deps: AIDeps) {
                 if (plan.consentFor) {
                     if (consented) {
                         await recordAIProviderConsent(host.storage, plan.consentFor, warn(host));
+                        if (visit?.consent) visit.consent = { ...visit.consent, [plan.consentFor]: true };
                     } else {
                         const agreed = await readAIProviderConsent(host.storage, warn(host));
                         if (!agreed[plan.consentFor]) {
@@ -1001,7 +1034,7 @@ export function createAIMethods(deps: AIDeps) {
         },
 
         /** A model list the view asked for (`request`): the provider's own list; a failure keeps the built-in one. */
-        async loadAIModels(input: { list: 'assistant' | 'speech'; request: string }): Promise<NativeHostResult<NativeAISettings>> {
+        async loadAIModels(input: { list: 'assistant' | 'speech'; request: string }, options: AIRequestOptions = {}): Promise<NativeHostResult<NativeAISettings>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const host = bound.value;
@@ -1011,15 +1044,17 @@ export function createAIMethods(deps: AIDeps) {
             if (!visit) return fail('ACTION_FAILED', 'Open Settings › AI first');
             const opened = visit;
             const wanted = modelRequests(host.platform.isFossBuild)[input.list];
-            if (wanted && wanted.request === input.request && opened.models[input.list]?.request !== input.request) {
-                const slot: ModelList = { request: input.request, models: null };
+            const current = opened.models[input.list];
+            if (wanted && wanted.request === input.request && (current?.request !== input.request || current.signal?.aborted)) {
+                const slot: ModelList = { request: input.request, models: null, signal: options.signal };
                 opened.models[input.list] = slot;
                 try {
                     slot.models = await fetchProviderModelsCached(wanted.provider, {
-                        apiKey: wanted.apiKey, baseUrl: wanted.baseUrl, kind: wanted.kind, ...(host.fetch ? { fetchImpl: host.fetch } : {}),
+                        apiKey: wanted.apiKey, baseUrl: wanted.baseUrl, kind: wanted.kind, fetchImpl: abortable(host.fetch ?? globalThis.fetch, options.signal),
                     });
                 } catch {
-                    // The built-in list stays; nothing to tell the user.
+                    // The built-in list stays; nothing to tell the user. A cancelled load frees its request for the next ask.
+                    if (options.signal?.aborted && opened.models[input.list] === slot) opened.models[input.list] = null;
                 }
             }
             return visit ? { ok: true, value: buildView(host) } : fail('ACTION_FAILED', 'Settings › AI was closed');
@@ -1077,7 +1112,7 @@ export function createAIMethods(deps: AIDeps) {
          * needs is missing, the text is under 4 characters, the answer holds nothing to show, or the
          * request failed.
          */
-        async requestTaskEditorCopilot(input: { id: string; draft: TaskDraft }): Promise<NativeHostResult<{ text: string | null; suggestion: NativeAICopilotSuggestion | null }>> {
+        async requestTaskEditorCopilot(input: { id: string; draft: TaskDraft }, options: AIRequestOptions = {}): Promise<NativeHostResult<{ text: string | null; suggestion: NativeAICopilotSuggestion | null }>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const found = editorTask(input);
@@ -1090,7 +1125,7 @@ export function createAIMethods(deps: AIDeps) {
             try {
                 const ai = text ? await providerFor(bound.value, true) : null;
                 if (!text || ai?.gate !== 'ready') return { ok: true, value: { text, suggestion: null } };
-                const answer = await createAIProvider(ai.build()).predictMetadata({ title: text, contexts, tags });
+                const answer = await createAIProvider(ai.build()).predictMetadata({ title: text, contexts, tags }, options);
                 const kept = keepTaskCopilotSuggestion(answer, resolveFeatureFlags(settings()).timeEstimates);
                 return { ok: true, value: { text, suggestion: kept ? { ...kept, language: deps.language() } : null } };
             } catch {
@@ -1103,7 +1138,7 @@ export function createAIMethods(deps: AIDeps) {
          * (send the answer back as its setSuggestion edit). Null when AI is off, a key the provider
          * needs is missing, the answer holds nothing to show, or the request failed.
          */
-        async requestAICopilot(input: { request: { title: string; contexts: string[]; tags: string[] } }): Promise<NativeHostResult<{ suggestion: CopilotResponse | null }>> {
+        async requestAICopilot(input: { request: { title: string; contexts: string[]; tags: string[] } }, options: AIRequestOptions = {}): Promise<NativeHostResult<{ suggestion: CopilotResponse | null }>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const request = isObjectRecord(input) && isObjectRecord(input.request) ? input.request : null;
@@ -1114,7 +1149,7 @@ export function createAIMethods(deps: AIDeps) {
             try {
                 const ai = await providerFor(bound.value, true);
                 if (ai.gate !== 'ready') return { ok: true, value: { suggestion: null } };
-                const answer = await createAIProvider(ai.build()).predictMetadata({ title: request.title, contexts: request.contexts, tags: request.tags });
+                const answer = await createAIProvider(ai.build()).predictMetadata({ title: request.title, contexts: request.contexts, tags: request.tags }, options);
                 return { ok: true, value: { suggestion: keepTaskCopilotSuggestion(answer, resolveFeatureFlags(settings()).timeEstimates) } };
             } catch {
                 return { ok: true, value: { suggestion: null } };
@@ -1122,7 +1157,7 @@ export function createAIMethods(deps: AIDeps) {
         },
 
         /** Clarify: a dialog whose buttons carry an editTaskDraft edit (Cancel carries none), or an alert. */
-        async requestTaskEditorClarify(input: { id: string; draft: TaskDraft }): Promise<NativeHostResult<NativeAIActionAnswer<NativeTaskDraftEdit>>> {
+        async requestTaskEditorClarify(input: { id: string; draft: TaskDraft }, options: AIRequestOptions = {}): Promise<NativeHostResult<NativeAIActionAnswer<NativeTaskDraftEdit>>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const host = bound.value;
@@ -1132,13 +1167,15 @@ export function createAIMethods(deps: AIDeps) {
             const title = draft.title.trim();
             if (!title || deps.isReadOnly(task)) return { ok: true, value: { kind: 'none' } };
             let apiKey = '';
+            let sent: AppSettings | null = null;
             try {
                 const ai = await providerFor(host, false);
                 if (ai.gate !== 'ready') return { ok: true, value: gateAlert(ai.gate) };
                 apiKey = ai.apiKey;
+                sent = ai.sent;
                 const response = await createAIProvider(ai.build()).clarifyTask(buildTaskClarifyInput({
                     title, tasks: useTaskStore.getState().tasks, task, merged: mergedTask(task, draft), projectContext: projectContext(task, draft),
-                }));
+                }), options);
                 const dialog = getAIClarifyDialog(response, deps.t());
                 return {
                     ok: true,
@@ -1159,12 +1196,12 @@ export function createAIMethods(deps: AIDeps) {
                     },
                 };
             } catch (error) {
-                return { ok: true, value: errorAlert(error, apiKey, host, 'AI clarify failed') };
+                return { ok: true, value: errorAlert(error, apiKey, host, 'AI clarify failed', sent) };
             }
         },
 
         /** Break down: a dialog whose "Add steps" carries the draft and checklist to show, or an alert. */
-        async requestTaskEditorBreakdown(input: { id: string; draft: TaskDraft; checklist: ChecklistItem[] }): Promise<NativeHostResult<NativeAIActionAnswer<NativeAIBreakdownApply>>> {
+        async requestTaskEditorBreakdown(input: { id: string; draft: TaskDraft; checklist: ChecklistItem[] }, options: AIRequestOptions = {}): Promise<NativeHostResult<NativeAIActionAnswer<NativeAIBreakdownApply>>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const host = bound.value;
@@ -1178,13 +1215,15 @@ export function createAIMethods(deps: AIDeps) {
             const title = draft.title.trim();
             if (!title || deps.isReadOnly(task)) return { ok: true, value: { kind: 'none' } };
             let apiKey = '';
+            let sent: AppSettings | null = null;
             try {
                 const ai = await providerFor(host, false);
                 if (ai.gate !== 'ready') return { ok: true, value: gateAlert(ai.gate) };
                 apiKey = ai.apiKey;
+                sent = ai.sent;
                 const response = await createAIProvider(ai.build()).breakDownTask(buildTaskBreakdownInput({
                     title, description: draft.description, projectContext: projectContext(task, draft),
-                }));
+                }), options);
                 const steps = getTaskBreakdownSteps(response);
                 if (steps.length === 0) return { ok: true, value: { kind: 'none' } };
                 const dialog = getTaskBreakdownDialog(steps, deps.t());
@@ -1206,7 +1245,7 @@ export function createAIMethods(deps: AIDeps) {
                     },
                 };
             } catch (error) {
-                return { ok: true, value: errorAlert(error, apiKey, host, 'AI breakdown failed') };
+                return { ok: true, value: errorAlert(error, apiKey, host, 'AI breakdown failed', sent) };
             }
         },
 
@@ -1215,7 +1254,7 @@ export function createAIMethods(deps: AIDeps) {
          * to send, one by one, through getInboxProcessingStep; or a toast (AI off, a missing key:
          * its action opens Settings › AI) or an alert.
          */
-        async requestInboxClarify(input: { sessionId: string; taskId: string; step: string }): Promise<NativeHostResult<NativeAIActionAnswer<ProcessInboxDraftEdit[]>>> {
+        async requestInboxClarify(input: { sessionId: string; taskId: string; step: string }, options: AIRequestOptions = {}): Promise<NativeHostResult<NativeAIActionAnswer<ProcessInboxDraftEdit[]>>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const host = bound.value;
@@ -1229,6 +1268,7 @@ export function createAIMethods(deps: AIDeps) {
             if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
             const t = deps.t();
             let apiKey = '';
+            let sent: AppSettings | null = null;
             try {
                 const ai = await providerFor(host, false);
                 if (ai.gate !== 'ready') {
@@ -1242,12 +1282,13 @@ export function createAIMethods(deps: AIDeps) {
                     return { ok: true, value: { kind: 'toast', toast } };
                 }
                 apiKey = ai.apiKey;
+                sent = ai.sent;
                 const response = await createAIProvider(ai.build()).clarifyTask(buildInboxClarifyInput({
                     title: draft.title,
                     task,
                     contextPool: getProcessInboxTokenPools(useTaskStore.getState().tasks).contexts,
                     selectedContexts: draft.contexts,
-                }));
+                }), options);
                 const dialog = getAIClarifyDialog(response, t);
                 return {
                     ok: true,
@@ -1267,7 +1308,7 @@ export function createAIMethods(deps: AIDeps) {
                     },
                 };
             } catch (error) {
-                return { ok: true, value: errorAlert(error, apiKey, host, 'Inbox processing failed') };
+                return { ok: true, value: errorAlert(error, apiKey, host, 'Inbox processing failed', sent) };
             }
         },
 
@@ -1276,25 +1317,29 @@ export function createAIMethods(deps: AIDeps) {
          * null `suggestions` or `selectedIds` keeps what it shows. Apply sends the chosen suggestions
          * to runReviewAction's applySuggestions.
          */
-        async requestWeeklyReviewAnalysis(): Promise<NativeHostResult<NativeWeeklyReviewAnalysis>> {
+        async requestWeeklyReviewAnalysis(options: AIRequestOptions = {}): Promise<NativeHostResult<NativeWeeklyReviewAnalysis>> {
             const bound = requireHost();
             if (!bound.ok) return bound;
             const host = bound.value;
             const t = deps.t();
             const state = useTaskStore.getState();
             let apiKey = '';
+            let sent: AppSettings | null = null;
             try {
                 const ai = await providerFor(host, false);
                 if (ai.gate !== 'ready') {
                     return { ok: true, value: { error: t(ai.gate === 'disabled' ? 'ai.disabledBody' : 'ai.missingKeyBody'), suggestions: null, selectedIds: null } };
                 }
                 apiKey = ai.apiKey;
+                sent = ai.sent;
                 const { weekStart } = getWeeklyReviewSettings(state.settings);
                 const { staleItems } = getWeeklyReviewBuckets(state.tasks, state.projects, { weekStart });
                 if (staleItems.length === 0) return { ok: true, value: { error: null, suggestions: [], selectedIds: [] } };
-                const response = await createAIProvider(ai.build()).analyzeReview({ items: staleItems });
+                const response = await createAIProvider(ai.build()).analyzeReview({ items: staleItems }, options);
                 const analysis = readWeeklyReviewAnalysis(response, staleItems);
                 const labels = getWeeklyReviewLabels(t);
+                // The revisions of the snapshot the provider was sent (read before the await): a task changed since is refused.
+                const liveTasks = state._tasksById;
                 return {
                     ok: true,
                     value: {
@@ -1306,12 +1351,13 @@ export function createAIMethods(deps: AIDeps) {
                             title: suggestion.title,
                             meta: `${getReviewSuggestionActionLabel(suggestion.action, labels)} · ${suggestion.reason}`,
                             actionable: isActionableReviewSuggestion(suggestion),
+                            taskRevision: ((task) => (task && !task.deletedAt ? taskRevisionOf(task) : null))(liveTasks.get(suggestion.id)),
                         })),
                         selectedIds: analysis.selectedIds,
                     },
                 };
             } catch (error) {
-                return { ok: true, value: { error: getWeeklyReviewAnalysisError(error, t, apiKey, settings()), suggestions: null, selectedIds: null } };
+                return { ok: true, value: { error: getWeeklyReviewAnalysisError(sentRedacted(error, apiKey, sent), t, apiKey, settings()), suggestions: null, selectedIds: null } };
             }
         },
     };

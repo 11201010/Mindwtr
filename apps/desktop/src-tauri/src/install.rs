@@ -264,6 +264,22 @@ fn command_output_lowercase(cmd: &str, args: &[&str]) -> Option<String> {
     Some(combined)
 }
 
+// The App Store build is the only sandboxed one: its bundle carries the
+// store receipt, which DMG and Homebrew installs never have.
+#[cfg(target_os = "macos")]
+pub(crate) fn is_mac_app_store_build() -> bool {
+    env::current_exe()
+        .ok()
+        .and_then(|exe_path| find_macos_bundle_root(&exe_path))
+        .is_some_and(|bundle_root| {
+            bundle_root
+                .join("Contents")
+                .join("_MASReceipt")
+                .join("receipt")
+                .exists()
+        })
+}
+
 #[cfg(target_os = "macos")]
 fn find_macos_bundle_root(path: &Path) -> Option<PathBuf> {
     path.ancestors()
@@ -341,17 +357,8 @@ fn detect_install_source() -> String {
 
     #[cfg(target_os = "macos")]
     {
-        if let Ok(exe_path) = env::current_exe() {
-            if let Some(bundle_root) = find_macos_bundle_root(&exe_path) {
-                if bundle_root
-                    .join("Contents")
-                    .join("_MASReceipt")
-                    .join("receipt")
-                    .exists()
-                {
-                    return "mac-app-store".to_string();
-                }
-            }
+        if is_mac_app_store_build() {
+            return "mac-app-store".to_string();
         }
         let is_homebrew_path =
             |path: &str| path.contains("/caskroom/") || path.contains("/homebrew/");

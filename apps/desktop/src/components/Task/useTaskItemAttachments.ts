@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Attachment, DEFAULT_PROJECT_COLOR, areDraftAttachmentsDirty, buildTaskUpdatesFromSpeechResult, findSelectableProjectByTitleAndArea, generateUUID, isSandboxMode, normalizeLinkAttachmentInput, parseAttachmentLinkBatch, planAttachmentDraftSettlement, translateWithFallback, useTaskStore, type Task } from '@mindwtr/core';
 import { dataDir } from '@tauri-apps/api/path';
 import { BaseDirectory, readFile, readTextFile } from '@tauri-apps/plugin-fs';
-import { importDroppedFileAttachment, importPickedFileAttachment } from '../../lib/attachment-import';
+import { importDroppedFileAttachment, importPickedFileAttachment, pickFolderLinkAttachment } from '../../lib/attachment-import';
 import { normalizeAttachmentPathForUrl, resolveAttachmentReadPath } from '../../lib/attachment-paths';
 import { normalizeAttachmentInput } from '../../lib/attachment-utils';
 import { openAttachmentTarget } from '../../lib/open-attachment-target';
@@ -200,10 +200,9 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
                 window.open(blobUrl, '_blank');
                 return;
             }
-            await openAttachmentTarget(
-                attachment.uri,
-                attachment.kind === 'file' ? attachment.id : undefined,
-            );
+            // The id lets the native side find a file's managed copy, or a
+            // folder link's device-local bookmark on the App Store build.
+            await openAttachmentTarget(attachment.uri, attachment.id);
         } catch (error) {
             void logWarn('Failed to open attachment', {
                 scope: 'attachment',
@@ -496,6 +495,18 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
         setShowLinkPrompt(true);
     }, [sandboxMode, t]);
 
+    const addFolderLinkAttachment = useCallback(async () => {
+        if (sandboxMode) {
+            setAttachmentError(t('sandbox.unavailable'));
+            return;
+        }
+        if (!isTauriRuntime()) return;
+        setAttachmentError(null);
+        const attachment = await pickFolderLinkAttachment(t('attachments.linkFolder'));
+        if (!attachment) return;
+        setEditAttachments((prev) => [...prev, attachment]);
+    }, [sandboxMode, t]);
+
     const addObsidianNoteAttachment = useCallback(() => {
         if (sandboxMode) {
             setAttachmentError(t('sandbox.unavailable'));
@@ -683,6 +694,7 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
         addFileAttachment,
         addDroppedFileAttachments,
         addLinkAttachment,
+        addFolderLinkAttachment,
         addObsidianNoteAttachment,
         editLinkAttachment,
         handleAddLinkAttachment,

@@ -126,6 +126,7 @@ export type TaskEditorAttachments = {
     visibleEditAttachments: Attachment[];
     addFileAttachment: () => void;
     addLinkAttachment: () => void;
+    addFolderLinkAttachment: () => void;
     addObsidianNoteAttachment: () => void;
     editLinkAttachment: (attachment: Attachment) => void;
     appendRetainedAttachment: (attachment: Attachment, latestStoreAttachments: Attachment[]) => void;
@@ -193,6 +194,7 @@ export function TaskItemFieldRenderer({
         visibleEditAttachments,
         addFileAttachment,
         addLinkAttachment,
+        addFolderLinkAttachment,
         addObsidianNoteAttachment,
         editLinkAttachment,
         appendRetainedAttachment,
@@ -815,6 +817,7 @@ export function TaskItemFieldRenderer({
                     visibleEditAttachments={visibleEditAttachments}
                     addFileAttachment={addFileAttachment}
                     addLinkAttachment={addLinkAttachment}
+                    addFolderLinkAttachment={addFolderLinkAttachment}
                     addObsidianNoteAttachment={addObsidianNoteAttachment}
                     showObsidianNoteAttachment={showObsidianNoteAttachment}
                     editLinkAttachment={editLinkAttachment}

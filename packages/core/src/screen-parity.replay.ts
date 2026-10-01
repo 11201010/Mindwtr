@@ -49,6 +49,8 @@ export async function openScreenHost(input: {
     log: unknown[][];
     saveData?: (data: unknown) => Promise<void>;
     intercept?: (name: string, args: unknown[]) => Promise<unknown> | undefined;
+    /** Device bindings (createNativeHostContract's options, such as `ai`). */
+    bindings?: Omit<NonNullable<Parameters<typeof createNativeHostContract>[0]>, 'replayTokens'>;
 }) {
     await flushPendingSave();
     resetForTests();
@@ -70,7 +72,7 @@ export async function openScreenHost(input: {
         _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
         settings: {}, error: null, persistenceFailure: null, isLoading: false, editLockCount: 0, lastDataChangeAt: 0,
     } as never);
-    const host = createNativeHostContract({ replayTokens: 'required' });
+    const host = createNativeHostContract({ ...input.bindings, replayTokens: 'required' });
     value(await host.setLanguage({ storedLanguage: 'en', systemLocale: null }));
     value(await host.activate({ writeSafetyReady: true }));
     useTaskStore.setState(Object.fromEntries(Object.entries(input.record).map(([name, count]) => [name, async (...args: unknown[]) => {

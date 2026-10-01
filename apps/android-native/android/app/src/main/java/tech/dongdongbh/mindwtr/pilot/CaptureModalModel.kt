@@ -73,6 +73,7 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
     private var inFlight: JSONObject? = null
 
     private fun keep(value: CaptureModal?, persist: Boolean = true) {
+        if (value == null && open != null) shell.ai.cancelCapture()
         open = value
         saved["captureModal"] = value != null
         if (value == null) file.delete() else if (persist) write(value.state().toString())

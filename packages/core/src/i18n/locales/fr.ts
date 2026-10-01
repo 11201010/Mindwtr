@@ -345,6 +345,7 @@ export const frOverrides: Record<string, string> = {
         'attachments.fileTooLarge': 'Le fichier est trop volumineux pour être téléversé.',
         'attachments.fileNotReadable': 'Impossible de lire ce fichier, il n\'a donc pas été joint. Déplacez-le dans un autre dossier et réessayez.',
         'attachments.linkToFile': 'Lier à un fichier…',
+        'attachments.linkFolder': 'Lier un dossier…',
         'attachments.invalidFileType': 'Type de fichier non pris en charge.',
         'attachments.invalidLink': 'Veuillez saisir une URL valide.',
         'attachments.photoUnavailableTitle': 'Sélecteur de photos indisponible',

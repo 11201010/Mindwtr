@@ -361,6 +361,7 @@ export const deOverrides: Record<string, string> = {
         'attachments.fileTooLarge': 'Die Datei ist zu groß für das Hochladen.',
         'attachments.fileNotReadable': 'Diese Datei konnte nicht gelesen werden und wurde daher nicht angehängt. Verschiebe sie in einen anderen Ordner und versuche es erneut.',
         'attachments.linkToFile': 'Mit Datei verknüpfen …',
+        'attachments.linkFolder': 'Ordner verknüpfen…',
         'attachments.invalidFileType': 'Nicht unterstützter Dateityp.',
         'attachments.invalidLink': 'Bitte eine gültige URL angeben.',
         'attachments.photoUnavailableTitle': 'Fotoauswahl ist nicht verfügbar',

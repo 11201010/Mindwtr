@@ -231,6 +231,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     val lock = AppLock(this)
     /** RN's capture confirmation screen that links, shares and assistant notes open (CaptureModalModel.kt). */
     val captureModal = CaptureModalModel(this, saved, File(app.noBackupFilesDir, "capture-modal"))
+    /** RN's AI actions: the editor's copilot, Clarify and Break down, Process Inbox's Clarify, the review's analysis (AIActions.kt). */
+    val ai = AIActionsModel(this)
     /** A link, share or assistant note waiting to open (EntryPoints.kt). */
     val entries = EntryRouter(this, File(app.noBackupFilesDir, "entries"))
     /** A system capture's screen closed: MainActivity puts the app behind the previous one, as RN's returnToPreviousApp (#1169). */
@@ -661,6 +663,29 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun editFields(values: Map<String, Any?>) =
         editDraft(JSONObject().put("type", "fields").put("patch", JSONObject().apply { values.forEach { (field, value) -> put(field, value ?: JSONObject.NULL) } }))
 
+    /**
+     * An AI answer's draft edit (a copilot chip, a Clarify button): core's editTaskDraft edit, queued as a control's edit. A
+     * context, tag or person it sets shows as that field's text, as RN's field follows its draft.
+     */
+    internal fun applyAIEdit(edit: JSONObject) {
+        val current = editor ?: return
+        val patch = edit.optJSONObject("patch")
+        val typed = buildMap { for (field in TYPED_FIELDS) if (patch?.has(field) == true) put(field, patch.getString(field)) }
+        keepEditor(current.copy(inputs = current.inputs + typed, resolved = current.resolved + typed))
+        editDraft(edit)
+    }
+
+    /**
+     * Break down's "Add steps": core's checklist (the editor's items and the steps) becomes the draft's, and a list task's status
+     * edit (or none) reads core's model for it. It waits for edits still with core, which could change the checklist first.
+     */
+    internal fun addAISteps(checklist: String, edit: JSONObject?) {
+        val current = editor ?: return
+        if (editsPending) { main.postDelayed({ addAISteps(checklist, edit) }, 100); return }
+        keepEditor(current.copy(checklist = checklist).queued(edit?.toString() ?: "", null))
+        pumpEdits()
+    }
+
     /** Typed text (title, notes, location) stays in the editor as typed; no core rule reads it while editing. */
     fun editText(field: String, text: String) { editor?.let { keepEditor(it.edit(mapOf(field to text))) } }
 
@@ -687,6 +712,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     }
 
     fun closeEditor() {
+        ai.cancelEditor()
         inFlight = null
         editRefusal = null
         taskView = null
@@ -1503,6 +1529,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** RN's close: the session ends in core (nothing is written), and the Inbox shows again. */
     fun closeProcessing() {
         val current = processing ?: return
+        ai.cancelInbox()
         keepProcessing(null)
         stepInFlight = null
         background(emptyList(), { runtime -> runCatching { runtime.endInboxProcessing(current.sessionId) } }) { _, _ -> }

@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import android.content.Intent
 import org.json.JSONArray
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.text.SimpleDateFormat
@@ -397,6 +398,9 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
     LaunchedEffect(busy, failed) { if (!busy && !failed) pumpEdits() }
     // Core's quick chips and the draft value of restored typed text, whenever no action runs.
     LaunchedEffect(editor.id, busy, failed) { if (!busy && !failed) TYPED_FIELDS.forEach { suggest(it, editor.input(it)) } }
+    // Core's AI parts (Clarify, Break down, the copilot) for the draft as it changes; the copilot asks once typing pauses.
+    val aiDraft = editor.fullDraft().toString()
+    LaunchedEffect(editor.session, aiDraft, busy) { if (!busy) { delay(150); ai.readEditor() } }
 
     Column(Modifier.fillMaxSize().background(c.bg).systemBarsPadding().semantics { testTagsAsResourceId = true }.testTag("task-editor")) {
         // RN's TaskEditHeader: Close at the left, Save at the right (Close alone when read-only). Its More menu is not built.
@@ -459,6 +463,8 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
                 // RN's title input is multiline, and a typed line break becomes a space.
                 EditorInput(editor.text("title"), { editText("title", it.replace(Regex("[\r\n]+"), " ")) }, null, !locked)
             }
+            // RN's AI row and the copilot's pills under the title (TaskEditFormTab.tsx), while AI is on.
+            EditorAIRows(model, locked)
             // The Destination row stands for both Project and Area, at the first of them in core's order (RN's destinationFields).
             val destination = editor.view.sections.flatMap { it.fields }.firstOrNull { it == "project" || it == "area" }
             val field = @Composable { id: String -> EditorField(model, editor, id, locked, id == destination, { picker = it }, { pickDate = it }, { pickTime = it }) }
@@ -523,6 +529,7 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
     }
 
     if (editor.waitingFor != null) WaitingPrompt(model, editor.waitingFor, locked)
+    AIOverlays(model)
 
     if (help) AlertDialog(
         onDismissRequest = { help = false },

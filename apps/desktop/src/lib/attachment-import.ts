@@ -1,5 +1,6 @@
-import { type Attachment, DEFAULT_MAX_FILE_SIZE_BYTES, generateUUID, isSandboxMode } from '@mindwtr/core';
+import { type Attachment, DEFAULT_MAX_FILE_SIZE_BYTES, generateUUID, isSandboxMode, normalizeAttachmentInput } from '@mindwtr/core';
 import { logWarn } from './app-log';
+import { FOLDER_LINK_MIME_TYPE } from './attachment-reference';
 import { getManagedPath } from './managed-paths';
 import { ATTACHMENTS_DIR_NAME, extractExtension } from './sync-service-utils';
 import { invokeNative } from './tauri-invoke';
@@ -19,6 +20,40 @@ export async function browseForLinkTarget(dialogTitle: string): Promise<string |
         title: dialogTitle,
     });
     return typeof selected === 'string' ? selected : null;
+}
+
+// "Link folder…": pick a folder and point at it. Nothing is copied or
+// uploaded. The native side keeps a device-local bookmark on the sandboxed
+// App Store build so the folder still opens after a relaunch.
+export async function pickFolderLinkAttachment(dialogTitle: string): Promise<Attachment | null> {
+    if (isSandboxMode()) return null;
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const selected = await open({
+        multiple: false,
+        directory: true,
+        title: dialogTitle,
+    });
+    if (typeof selected !== 'string' || !selected.trim()) return null;
+    const { title, uri } = normalizeAttachmentInput(selected);
+    const now = new Date().toISOString();
+    const attachment: Attachment = {
+        id: generateUUID(),
+        kind: 'link',
+        title,
+        uri,
+        mimeType: FOLDER_LINK_MIME_TYPE,
+        createdAt: now,
+        updatedAt: now,
+    };
+    try {
+        await invokeNative('remember_link_folder_access', { attachmentId: attachment.id, path: uri });
+    } catch (error) {
+        void logWarn('Failed to remember linked folder access', {
+            scope: 'attachment',
+            extra: { error: error instanceof Error ? error.message : String(error) },
+        });
+    }
+    return attachment;
 }
 
 // Copies the picked file into the app-managed attachments dir (via the Rust

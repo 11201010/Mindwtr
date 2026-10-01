@@ -430,6 +430,7 @@ export const csOverrides: Record<string, string> = {
         'attachments.fileTooLarge': 'Soubor je na nahrání příliš velký.',
         'attachments.fileNotReadable': 'Tento soubor se nepodařilo přečíst, proto nebyl připojen. Přesuňte jej do jiné složky a zkuste to znovu.',
         'attachments.linkToFile': 'Odkázat na soubor…',
+        'attachments.linkFolder': 'Propojit složku…',
         'attachments.invalidFileType': 'Nepodporovaný typ souboru.',
         'attachments.invalidLink': 'Zadejte prosím platnou URL.',
         'attachments.photoUnavailableTitle': 'Výběr fotek není dostupný',
