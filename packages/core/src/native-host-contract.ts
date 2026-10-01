@@ -608,6 +608,7 @@ export type NativeProjectNotes = {
     blocks: ResolvedMarkdownBlock[];
     markdownLabels: { deletedTask: string; deletedProject: string; copyCode: string };
 };
+export type NativeProjectNotesReferenceTarget = { kind: 'task' | 'project'; id: string };
 type ProjectDetailCache = {
     readOnly: boolean;
     groupCompletedTasksLast: boolean;
@@ -2472,6 +2473,44 @@ export function createNativeHostContract(options: {
             };
             return isNativeJsonWithinBytes(value) ? { ok: true, value }
                 : fail('INVALID_INPUT', 'Project Notes page exceeds the bounded native read');
+        },
+
+        getProjectNotesReferenceTarget(input: {
+            projectId: string; revision: string; blockIndex: number; itemIndex?: number; inlineIndex: number;
+        }): NativeHostResult<NativeProjectNotesReferenceTarget> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            const persistence = getPersistenceStatus();
+            if (persistence.failed) {
+                return fail('SAVE_FAILED', 'Previous changes could not be saved; retry before continuing');
+            }
+            if (persistence.queued || persistence.inFlight || persistence.immediate || persistence.retrying) {
+                return fail('NOT_READY', 'Project Notes are still saving');
+            }
+            if (!isObjectRecord(input) || !isNativeJsonWithinBytes(input)
+                || Object.keys(input).length !== (input.itemIndex === undefined ? 4 : 5)
+                || Object.keys(input).some((key) => !['projectId', 'revision', 'blockIndex', 'itemIndex', 'inlineIndex'].includes(key))
+                || typeof input.projectId !== 'string' || !input.projectId.trim() || input.projectId.length > 500
+                || typeof input.revision !== 'string' || !input.revision || input.revision.length > 500
+                || !Number.isSafeInteger(input.blockIndex) || input.blockIndex < 0
+                || !Number.isSafeInteger(input.inlineIndex) || input.inlineIndex < 0
+                || (input.itemIndex !== undefined && (!Number.isSafeInteger(input.itemIndex) || input.itemIndex < 0))) {
+                return fail('INVALID_INPUT', 'A bounded Project Notes reference position is required');
+            }
+            const notes = this.getProjectNotes({ projectId: input.projectId,
+                offset: input.blockIndex, limit: 1, revision: input.revision });
+            if (!notes.ok) return notes;
+            const block = notes.value.blocks[0];
+            const inline = block?.type === 'heading' || block?.type === 'paragraph'
+                ? input.itemIndex === undefined ? block.inline : undefined
+                : block?.type === 'taskList' || block?.type === 'bulletList' || block?.type === 'orderedList'
+                    ? input.itemIndex === undefined ? undefined : block.items[input.itemIndex]?.inline
+                    : undefined;
+            const run = inline?.[input.inlineIndex];
+            if (run?.type !== 'link' || run.target.kind === 'external') {
+                return fail('INVALID_INPUT', 'Project Notes reference is unavailable');
+            }
+            return { ok: true, value: { kind: run.target.kind, id: run.target.id } };
         },
 
         getProjectNotesDraftDirection(input: { projectId: string; text: string }): NativeHostResult<{ direction: 'ltr' | 'rtl' }> {

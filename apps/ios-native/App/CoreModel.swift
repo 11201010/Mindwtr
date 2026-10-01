@@ -409,6 +409,8 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectNotesExpanded = false
     @Published private(set) var projectNotesCurrent = false
     @Published private(set) var projectNotesError: String?
+    @Published private(set) var projectNotesReferenceError: String?
+    @Published private(set) var projectNotesReferenceOpening = false
     @Published private(set) var projectNotesEditMode = false
     @Published private(set) var projectNotesDraft = ""
     @Published private(set) var projectNotesDraftDirection = ""
@@ -1148,7 +1150,7 @@ final class CoreModel: ObservableObject {
             && !projectFilterNeedsRead && !capturePresented && !areaPickerPresented
             && !areaManagerPresented && !morePresented && !projectSectionsPresented && !projectAreaPresented
             && !projectTagsPresented && projectDateField == nil && !projectStatusOpen
-            && !projectAttachmentLinkPresented && !projectAttachmentEditOpening
+            && !projectAttachmentLinkPresented && !projectAttachmentEditOpening && !projectNotesReferenceOpening
     }
     var projectViewReadPending: Bool {
         pendingProjectView != nil || projectFilterPendingEdit != nil || projectFilterNeedsRead
@@ -11904,11 +11906,15 @@ final class CoreModel: ObservableObject {
                   searchView.objects("projects").contains(where: { $0.text("id") == row.text("id") }) else { return }
             invalidateSearch()
         }
+        await presentProject(row, caller: selectedSurface)
+    }
+
+    private func presentProject(_ row: CoreObject, caller: Surface) async {
         projectTaskOrderPresented = false
         projectTaskOrderView = [:]
         projectTaskOrderError = nil
         projectTaskOrderCurrent = false
-        projectCaller = selectedSurface
+        projectCaller = caller
         projectFilterSession += 1
         projectFilterReadTask?.cancel()
         resetProjectAttachments()
@@ -11943,6 +11949,7 @@ final class CoreModel: ObservableObject {
         projectNotesExpanded = false
         projectNotesCurrent = false
         projectNotesError = nil
+        projectNotesReferenceError = nil
         projectNotesLoadedDepth = pageSize
         projectNotesEditMode = false
         projectNotesDraft = ""
@@ -13164,6 +13171,80 @@ final class CoreModel: ObservableObject {
         } catch { projectNotesError = error.localizedDescription }
     }
 
+    var projectNotesReferenceEnabled: Bool {
+        projectViewOpenEnabled && !appLock.concealed && projectNotesExpanded && !projectNotesEditMode
+            && !projectViewOptionsPresented && !projectTaskSortPresented && !projectFiltersPresented
+            && projectNotesCurrent && !projectNotesWritePending
+            && projectNotes.text("revision") == projectDetail.text("mutationRevision")
+    }
+
+    func openProjectNotesReference(projectID: String, revision: String,
+                                   blockIndex: Int, itemIndex: Int?, inlineIndex: Int) async {
+        guard projectNotesReferenceEnabled, projectHeader.text("id") == projectID,
+              projectNotes.text("revision") == revision else { return }
+        let session = projectFilterSession
+        projectNotesReferenceOpening = true
+        projectNotesReferenceError = nil
+        defer { projectNotesReferenceOpening = false }
+        func sourceCurrent() -> Bool {
+            selectedSurface == .project && projectFilterSession == session && projectCurrent
+                && projectHeader.text("id") == projectID && projectNotesCurrent && projectNotesExpanded
+                && !projectNotesEditMode && projectNotes.text("revision") == revision
+                && projectDetail.text("mutationRevision") == revision && !appLock.concealed
+                && !projectNotesDirty && !projectNotesWritePending && !retryNeeded && !taskPresented
+                && !projectViewOptionsPresented && !projectTaskSortPresented && !projectFiltersPresented
+        }
+        func refuseCurrentSource() {
+            if selectedSurface == .project, projectFilterSession == session,
+               projectHeader.text("id") == projectID {
+                projectNotesReferenceError = "This Notes link changed or is unavailable. Refresh Notes and try again."
+            }
+        }
+        guard await flushProjectNotesEdit(), sourceCurrent(), !busy else {
+            refuseCurrentSource()
+            return
+        }
+        if taskRecoverySnapshot != nil || taskRecoveryCorrupt {
+            taskRecoveryConflict = "A saved task draft needs a decision before following a Notes link."
+            taskRecoveryGateVisible = true
+            return
+        }
+        var input: CoreObject = ["projectId": projectID, "revision": revision,
+                                 "blockIndex": blockIndex, "inlineIndex": inlineIndex]
+        if let itemIndex { input["itemIndex"] = itemIndex }
+        let target: CoreObject
+        busy = true
+        do {
+            target = try await query("projectNotesReferenceTarget", [try json(input)])
+            guard sourceCurrent(), target.count == 2,
+                  ["task", "project"].contains(target.text("kind")),
+                  !target.text("id").isEmpty, target.text("id").utf16.count <= 500 else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+        } catch {
+            finishOperation()
+            refuseCurrentSource()
+            return
+        }
+        finishOperation()
+        guard sourceCurrent(), !busy else {
+            refuseCurrentSource()
+            return
+        }
+        if target.text("kind") == "task" {
+            prepareTaskPresentation(target.text("id"))
+            await readTaskView()
+            if taskError == nil && taskPresented && viewedTaskID == target.text("id") {
+                NSLog("Native iOS Project Notes reference opened releaseCheck=v1.3.4/ios-project-notes-links destination=task")
+            }
+        } else if target.text("id") != projectID {
+            await presentProject(["id": target.text("id")], caller: projectCaller)
+            if projectCurrent && projectHeader.text("id") == target.text("id") {
+                NSLog("Native iOS Project Notes reference opened releaseCheck=v1.3.4/ios-project-notes-links destination=project")
+            }
+        }
+    }
+
     func retryProjectNotes() async {
         guard projectActionsEnabled, projectNotesExpanded else { return }
         busy = true
@@ -13174,6 +13255,7 @@ final class CoreModel: ObservableObject {
     private func readProjectNotes() async {
         projectNotesCurrent = false
         projectNotesError = nil
+        projectNotesReferenceError = nil
         let id = projectHeader.text("id")
         for attempt in 0..<2 {
             do {

@@ -2057,13 +2057,28 @@ private struct ProjectNotesPreview: View {
             } else if model.projectNotesCurrent {
                 let notes = model.projectNotes
                 let blocks = notes.objects("blocks")
+                if let message = model.projectNotesReferenceError {
+                    Text(message).rnFont(13).foregroundStyle(palette.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("project-notes-reference-error")
+                    Button { Task { await model.retryProjectNotes() } } label: {
+                        Text(model.label("common.retry")).rnFont(14, .semibold)
+                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectActionsEnabled)
+                    .accessibilityIdentifier("project-notes-reference-retry")
+                }
                 if notes.number("total") == 0 {
                     Text(model.label("common.none")).rnFont(14).foregroundStyle(palette.secondary)
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         .accessibilityIdentifier("project-notes-empty")
                 } else {
                     NativeMarkdownContent(blocks: blocks, labels: notes.object("markdownLabels"),
-                                          strings: model.strings, palette: palette)
+                                          strings: model.strings, palette: palette,
+                                          onReference: model.projectNotesReferenceEnabled ? { block, item, inline in
+                        Task { await model.openProjectNotesReference(projectID: notes.text("projectId"),
+                            revision: notes.text("revision"), blockIndex: block, itemIndex: item, inlineIndex: inline) }
+                    } : nil)
                         .environment(\.layoutDirection, notes.text("direction") == "rtl" ? .rightToLeft : .leftToRight)
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("project-notes-content")

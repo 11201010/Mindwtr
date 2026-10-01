@@ -148,8 +148,8 @@ export type MarkdownLinkLookup = {
 };
 
 export function createMarkdownLinkLookup(tasks: readonly Task[], projects: readonly Project[]): MarkdownLinkLookup {
-    const tasksById = new Map(tasks.filter((task) => !task.deletedAt).map((task) => [task.id, task]));
-    const projectsById = new Map(projects.filter((project) => !project.deletedAt).map((project) => [project.id, project]));
+    const tasksById = new Map(tasks.filter((task) => !task.deletedAt && !task.purgedAt).map((task) => [task.id, task]));
+    const projectsById = new Map(projects.filter((project) => !project.deletedAt && !project.purgedAt).map((project) => [project.id, project]));
     return {
         task: (id) => tasksById.get(id) ?? null,
         project: (id) => projectsById.get(id) ?? null,

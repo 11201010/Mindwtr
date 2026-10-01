@@ -1140,14 +1140,20 @@ struct NativeMarkdownContent: View {
     let labels: CoreObject
     let strings: CoreObject
     let palette: AppPalette
+    var onReference: ((Int, Int?, Int) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(blocks.indices, id: \.self) { index in block(blocks[index]) }
+            ForEach(blocks.indices, id: \.self) { index in block(blocks[index], at: index) }
         }
     }
 
-    @ViewBuilder private func block(_ block: CoreObject) -> some View {
+    private func referenceHandler(_ blockIndex: Int, itemIndex: Int?) -> ((Int) -> Void)? {
+        guard let onReference else { return nil }
+        return { onReference(blockIndex, itemIndex, $0) }
+    }
+
+    @ViewBuilder private func block(_ block: CoreObject, at blockIndex: Int) -> some View {
         switch block.text("type") {
         case "blank":
             Color.clear.frame(height: 12).accessibilityHidden(true)
@@ -1156,10 +1162,11 @@ struct NativeMarkdownContent: View {
         case "heading":
             NativeMarkdownInline(runs: block.objects("inline"), labels: labels, palette: palette,
                                  size: block.number("level") == 1 ? 16 : block.number("level") == 2 ? 15 : 14,
-                                 weight: .bold)
+                                 weight: .bold, onReference: referenceHandler(blockIndex, itemIndex: nil))
                 .accessibilityAddTraits(.isHeader)
         case "paragraph":
-            NativeMarkdownInline(runs: block.objects("inline"), labels: labels, palette: palette)
+            NativeMarkdownInline(runs: block.objects("inline"), labels: labels, palette: palette,
+                                 onReference: referenceHandler(blockIndex, itemIndex: nil))
         case "code":
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
@@ -1194,7 +1201,8 @@ struct NativeMarkdownContent: View {
                             Text(item.text("marker")).rnFont(13).foregroundStyle(palette.secondary)
                                 .fixedSize().accessibilityHidden(true)
                         }
-                        NativeMarkdownInline(runs: item.objects("inline"), labels: labels, palette: palette)
+                        NativeMarkdownInline(runs: item.objects("inline"), labels: labels, palette: palette,
+                                             onReference: referenceHandler(blockIndex, itemIndex: index))
                             .accessibilityValue(block.text("type") == "taskList" ? strings.text(item.flag("checked") ? "common.done" : "status.active") : "")
                     }
                     // ponytail: indent caps at eight levels; use horizontal scrolling if deeper nesting must stay distinct.
@@ -1214,11 +1222,24 @@ struct NativeMarkdownInline: View {
     let palette: AppPalette
     var size: Double = 13
     var weight: Font.Weight = .regular
+    var onReference: ((Int) -> Void)? = nil
 
     var body: some View {
-        Text(Self.attributedText(runs, labels: labels, palette: palette)).rnFont(size, weight).textSelection(.enabled)
+        Text(Self.attributedText(runs, labels: labels, palette: palette, referenceLinks: onReference != nil)).rnFont(size, weight).textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .environment(\.openURL, OpenURLAction { url in
+                if let onReference, url.scheme == "mindwtr-native-row", url.host == "reference",
+                   let index = Int(url.lastPathComponent),
+                   url.absoluteString == "mindwtr-native-row://reference/\(index)",
+                   runs.indices.contains(index), runs[index].text("type") == "link",
+                   ["task", "project"].contains(runs[index].object("target").text("kind")) {
+                    onReference(index)
+                    return .handled
+                }
+                return ["http", "https", "mailto", "tel"].contains(url.scheme?.lowercased() ?? "")
+                    ? .systemAction : .discarded
+            })
     }
 
     static func attributedText(_ runs: [CoreObject], labels: CoreObject, palette: AppPalette, referenceLinks: Bool = false) -> AttributedString {

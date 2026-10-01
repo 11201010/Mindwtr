@@ -17,6 +17,60 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testProjectNotesInternalReferencesAndColdRead() {
+        projectNotesInternalReferences(library: "c28871f3-e65f-4bb4-8a92-456ec4d87019")
+    }
+
+    func testProjectNotesInternalReferencesLargestText() {
+        projectNotesInternalReferences(library: "e2234a4f-e8f1-476d-bb5b-c2e175527f26")
+    }
+
+    private func projectNotesInternalReferences(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        func projects() {
+            app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        }
+        func notes() {
+            boardTap(app, "project-open-task123-source")
+            boardTap(app, "project-details-toggle")
+            let toggle = app.buttons["project-notes-toggle"]
+            revealPagedElement(app, toggle, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+            boardEnabled(toggle); toggle.tap()
+            let preview = app.buttons["project-notes-mode-preview"]
+            if preview.exists && preview.isEnabled {
+                revealPagedElement(app, preview, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+                preview.tap()
+            }
+        }
+        func follow(_ title: String) {
+            let link = app.links[title]
+            revealPagedElement(app, link, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+            XCTAssertTrue(link.exists); link.tap()
+        }
+        projects(); notes()
+        follow("Task123 heading task")
+        boardEnabled(app.buttons["task-view-close"])
+        XCTAssertTrue(app.staticTexts["Task123 target task"].exists)
+        boardTap(app, "task-view-close")
+        boardEnabled(app.buttons["project-back"])
+        follow("Task123 self")
+        XCTAssertFalse(app.buttons["task-view-close"].exists)
+        follow("Task123 target project")
+        boardEnabled(app.buttons["project-back"])
+        XCTAssertTrue(app.staticTexts["Task123 Target"].waitForExistence(timeout: 10))
+        boardTap(app, "project-back")
+        boardEnabled(app.buttons["project-open-task123-source"])
+        app.terminate(); projects(); notes()
+        follow("Task123 heading task"); boardEnabled(app.buttons["task-view-close"])
+        boardTap(app, "task-view-close")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Project Notes references after cold launch"
+        screenshot.lifetime = .keepAlways; add(screenshot)
+        app.terminate()
+    }
+
     private func openProject122(_ library: String) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--native-ui-test-library", library]

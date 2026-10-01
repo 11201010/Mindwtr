@@ -1930,6 +1930,12 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getProjectNotes({ projectId: id, offset, limit, revision: revision || undefined }));
         });
     },
+    projectNotesReferenceTarget(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getProjectNotesReferenceTarget(JSON.parse(json)));
+        });
+    },
     /** `json` is `{ id, base, patch }`, passed to core unchanged: the status menu and the Restore and Next swipes. */
     update(json: string): string {
         return submit(async () => taskResult('update', await contract.updateTask(JSON.parse(json))));
