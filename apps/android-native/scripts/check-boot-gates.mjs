@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -2627,22 +2627,22 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         assert.match(gradle, /if \(name == "mergeBenchmarkTraceAssets"\) "--allow-module-trace"/, 'only benchmarkTrace\'s merged assets may carry them');
     }
     // RN's shortcuts from RN's own builder: the same ids, capabilities, labels and links, on the build's scheme; Add task opens
-    // the capture popup through RN's system capture link until the widget pass brings QuickCaptureActivity.
+    // RN's quick capture dialog in the build's package, as RN's does (pass W1 brings it).
+    assert.match(gradle, /urlSchemes\.map \{ \(type, scheme\) -> "\$type=\$scheme@\$\{packages\.getValue\(type\)\}" \}/);
     const { createRequire } = await import('node:module');
     const rnShortcuts = createRequire(import.meta.url)('../../mobile/plugins/android-app-shortcuts.js').__testables;
     const { buildShortcuts } = await import('./build-shortcuts.mjs');
-    const rnXml = rnShortcuts.buildShortcutsXml('tech.dongdongbh.mindwtr');
     const ids = (xml) => [...xml.matchAll(/android:shortcutId="([^"]+)"/g)].map(([, id]) => id);
     const capabilities = (xml) => [...xml.matchAll(/<capability android:name="([^"]+)"/g)].map(([, id]) => id);
-    for (const scheme of ['mindwtr-native-dev', 'mindwtr-upgradetest', 'mindwtr']) {
-        const { xml, strings } = buildShortcuts(scheme);
+    for (const [scheme, applicationId] of [['mindwtr-native-dev', 'tech.dongdongbh.mindwtr.nativeclient.dev'], ['mindwtr-upgradetest', 'tech.dongdongbh.mindwtr.upgradetest'], ['mindwtr', 'tech.dongdongbh.mindwtr']]) {
+        const { xml, strings } = buildShortcuts(scheme, applicationId);
+        const rnXml = rnShortcuts.buildShortcutsXml(applicationId);
         assert.deepEqual(ids(xml), ['capture', 'inbox', 'focus', 'waiting', 'someday', 'projects', 'review', 'calendar', 'add_task_inbox', 'open_focus', 'open_calendar']);
         assert.deepEqual(ids(xml), ids(rnXml));
         assert.deepEqual(capabilities(xml), capabilities(rnXml));
         assert.equal(strings, rnShortcuts.SHORTCUTS_STRINGS_XML);
-        assert.equal(xml.replaceAll(`${scheme}:///`, 'mindwtr:///').replace(/android:data="mindwtr:\/\/\/capture-quick" \/>/,
-            'android:targetPackage="tech.dongdongbh.mindwtr"\n      android:targetClass="tech.dongdongbh.mindwtr.androidwidget.QuickCaptureActivity" />'), rnXml);
-        assert.doesNotMatch(xml, /QuickCaptureActivity|targetPackage/);
+        assert.equal(xml.replaceAll(`${scheme}:///`, 'mindwtr:///'), rnXml, 'RN\'s shortcuts but for the scheme');
+        assert.match(xml, new RegExp(`android:targetPackage="${applicationId.replace(/\./g, '\\.')}"\\s+android:targetClass="tech\\.dongdongbh\\.mindwtr\\.androidwidget\\.QuickCaptureActivity"`), 'Add task opens RN\'s dialog');
     }
     // Core's buildCreateNoteCapture mirrors RN's MainActivity (the name, else the Assistant's text, else EXTRA_TEXT; the note when
     // it differs): if RN's rule changes, this fails, and core's mirror must change with it.
@@ -3112,6 +3112,40 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     } finally {
         globalThis.setTimeout = realSetTimeout;
     }
+    // RN's widget components from RN's plugins (build-widgets.mjs): the four providers with their info XML, the dialog, the
+    // configure, tap and peek activities, the list service, the capture receiver and the tile, under RN's names, in the app's one
+    // process. Exported: exactly RN's, plus the debug build's two entries for the device check.
+    const { buildManifest, buildTileSource, TILE_PACKAGE } = await import('./build-widgets.mjs');
+    const overlay = buildManifest('tech.dongdongbh.mindwtr.nativeclient.dev', 'Mindwtr Native Dev');
+    const merged = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + overlay;
+    const exportedNames = (text) => [...text.matchAll(/<(?:activity-alias|activity|receiver|service|provider)\s[^>]*?android:name="([^"]+)"[^>]*?android:exported="true"/g)].map((m) => m[1]).sort();
+    assert.deepEqual(exportedNames(merged), ['${applicationId}.MainActivity', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
+        'tech.dongdongbh.mindwtr.androidwidget.CompactWidgetProvider', 'tech.dongdongbh.mindwtr.androidwidget.QuickCaptureWidgetProvider',
+        'tech.dongdongbh.mindwtr.androidwidget.TasksWidgetProvider', 'tech.dongdongbh.mindwtr.androidwidget.WidgetConfigureActivity',
+        'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver', 'tech.dongdongbh.mindwtr.nativeclient.dev.widget.TasksWidget',
+        'tech.dongdongbh.mindwtr.quicksettings.CaptureTileService'], 'only RN\'s exported components');
+    const debugManifest = readFileSync(resolve(app, 'android/app/src/debug/AndroidManifest.xml'), 'utf8');
+    assert.deepEqual(exportedNames(debugManifest), ['${applicationId}.DebugQuickCapture', 'tech.dongdongbh.mindwtr.pilot.WidgetHostActivity'], 'the debug build adds only the check\'s two entries');
+    assert(!existsSync(resolve(app, 'android/app/src/release')) && !existsSync(resolve(app, 'android/app/src/upgradetest')), 'no other build type adds an entry');
+    assert.doesNotMatch(overlay, /android:process=/);
+    for (const info of ['mindwtr_tasks_widget_info', 'mindwtr_compact_widget_info', 'mindwtr_quick_capture_widget_info', 'mindwtr_legacy_tasks_widget_info']) {
+        assert.match(overlay, new RegExp(`android:resource="@xml/${info}"`), `${info} keeps RN's name`);
+    }
+    assert.equal(TILE_PACKAGE, 'tech.dongdongbh.mindwtr', 'the tile keeps RN\'s release class name');
+    assert.equal(buildTileSource().replace('import tech.dongdongbh.mindwtr.pilot.R\n', 'import tech.dongdongbh.mindwtr.R\n'),
+        (await import('node:module')).createRequire(import.meta.url)('../../mobile/plugins/android-quick-settings-tile.js').__testables.buildCaptureTileServiceSource(TILE_PACKAGE), 'the tile is RN\'s but for its R');
+    // RN's check-off request codes and sweep action stay in RN's files, which compile as they are.
+    const rnWidgetKt = (name) => readFileSync(resolve(app, '../mobile/modules/android-widget/android/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
+    assert.match(rnWidgetKt('WidgetRenderer.kt'), /REQUEST_CAPTURE = 4612[\s\S]*REQUEST_ROW = 4613/);
+    assert.match(rnWidgetKt('CheckoffStore.kt'), /ACTION_SWEEP = "tech\.dongdongbh\.mindwtr\.androidwidget\.CHECKOFF_SWEEP"[\s\S]*REQUEST_SWEEP = 4614/);
+    const widgetGradle = readFileSync(resolve(app, 'android/widget/build.gradle.kts'), 'utf8');
+    assert.match(widgetGradle, /namespace = "tech\.dongdongbh\.mindwtr\.androidwidget"/, 'RN\'s R and namespace');
+    assert.match(widgetGradle, /val rnExcluded = listOf\("AndroidWidgetModule", "CaptureSyncHeadlessService", "CaptureIntentReceiver"\)/, 'only the Expo bridge, the headless task and the receiver stay out');
+    assert.equal(realpathSync(resolve(app, 'android/widget/src/main/res')), realpathSync(resolve(app, '../mobile/modules/android-widget/android/src/main/res')), 'the module\'s resources are RN\'s');
+    // The widget module's hook is CoreWork's ingest job, set before any component runs.
+    assert.match(readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/MindwtrApplication.kt'), 'utf8'),
+        /CaptureSyncHeadlessService\.install\(this\) \{ context -> CoreWork\.enqueue\(context, CoreJob\.INGEST\) \}/);
+    assert.match(readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8'), /android:name="\.MindwtrApplication"/);
     // The Android bridge's two calls are guarded in CoreHost and published off the engine thread (HostWidgets).
     const coreHostKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');
     assert.match(coreHostKt, /bridge\.setProperty\("widgetInputs", guarded \{ _ -> widgets\.inputs\(\) \}\)/);

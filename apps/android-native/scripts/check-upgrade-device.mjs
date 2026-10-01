@@ -2,7 +2,7 @@
 // upgradetest build, then by a newer RN recovery build.
 //
 //   node apps/android-native/scripts/build-upgrade-harness.mjs
-//   node apps/android-native/scripts/check-upgrade-device.mjs <adb-serial> [--only=1,4,2,4b,2b,3,3b,5,5b,6] [--keep]
+//   node apps/android-native/scripts/check-upgrade-device.mjs <adb-serial> [--only=1,4,2,4b,2b,3,3b,5,5b,6,7,8] [--keep]
 //
 // Scenarios, each from a fresh RN v1.3.2 install:
 //   1   happy upgrade: the native app shows the RN data, imports the capture RN
@@ -33,6 +33,9 @@
 //       library's AlarmReceiver); the native app's first start cancels it, deletes RN's alarm database and map, and sets its own
 //       alarm for the same task: RN's gone, the native one present, once each. Then the RN 154 recovery build over the native
 //       app: it reads the native app's map under RN's key, holds none of its alarms, and sets its own alarm for the task, once.
+//   8   an RN user's widget check-off still in its Undo file (files/mindwtr-widget-checkoff-pending.json,
+//       RN's PendingCheckoffStore format) when the native app replaces RN: the native app's first boot
+//       completes that task once, through the queue, and a relaunch writes nothing more.
 //
 // RN writes every seed row through its own code: queued captures in
 // files/pending-captures, which RN imports at launch (tasks, a +Project task,
@@ -52,7 +55,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { bootFailure, box, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, inboxCount, tab, tagged, withDescription } from './device.mjs';
 import { serveWebdav, webdavDocument } from './sync-harness.mjs';
 
-const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6', '7'];
+const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6', '7', '8'];
 const USAGE = `usage: node check-upgrade-device.mjs <adb-serial> [--only=${SCENARIOS.join(',')}] [--keep]`;
 const args = process.argv.slice(2);
 const serials = args.filter((arg) => !arg.startsWith('--'));
@@ -488,6 +491,41 @@ const scenarioUpgrade = async () => {
     checkLedger('1', after);
     check(changed.length === 0, `(1) every other non-database file is unchanged (${[...before.keys()].filter((path) => !isDatabase(path)).length} files)${shortList(changed)}`);
     return { t, pre, queued };
+};
+
+const scenarioPendingCheckoff = async () => {
+    console.log('\n# 8 widget check-off pending at the upgrade');
+    fresh();
+    const title = `91${run}`;
+    const capture = { id: randomUUID(), title, createdAt: new Date().toISOString(), source: 'android-quick-capture' };
+    queue([capture]);
+    device.launch(RN_ACTIVITY);
+    await drained([capture], 'one queued capture');
+    await stopApp();
+    const taskSql = `SELECT status, rev FROM tasks WHERE id = '${capture.id}' AND deletedAt IS NULL`;
+    const [before] = rows(pullDatabase('8-pre'), taskSql);
+    check(before?.status === 'inbox', `(8) RN imported ${title}`);
+    // RN's PendingCheckoffStore file, tapped a minute ago: past its Undo window, never swept because RN stopped.
+    const pendingPath = 'files/mindwtr-widget-checkoff-pending.json';
+    const local = resolve(work, '8-pending.json');
+    writeFileSync(local, JSON.stringify({ version: 1, pending: [{ id: capture.id, at: Date.now() - 60_000 }] }));
+    pushPrivate(local, pendingPath);
+    install(APKS.native153, true);
+    device.launch(NATIVE_ACTIVITY);
+    const nodes = await nativeScreen();
+    check(!unavailable(nodes), `(8) native boot succeeded ${unavailable(nodes) ?? ''}`);
+    await until('the native boot to store the check-off', () => rows(pullDatabase('8-poll'), taskSql)[0]?.status === 'done', 60_000);
+    await sleep(3000);
+    await stopApp();
+    const [after] = rows(pullDatabase('8-post'), taskSql);
+    check(after.status === 'done' && after.rev === before.rev + 1, `(8) the native boot completed the RN check-off once (rev ${before.rev} to ${after.rev})`);
+    check(JSON.parse(runAs(`cat ${pendingPath}`)).pending.length === 0, '(8) RN\'s pending file is empty');
+    check(!runAs('ls files/pending-captures').split(/\s+/).some((name) => name.endsWith('.json')), '(8) nothing is left in the queue');
+    device.launch(NATIVE_ACTIVITY);
+    await nativeScreen();
+    await sleep(3000);
+    await stopApp();
+    check(rows(pullDatabase('8-relaunch'), taskSql)[0].rev === after.rev, '(8) a relaunch writes nothing more');
 };
 
 const scenarioRecovery = async ({ t, pre, queued }) => {
@@ -990,6 +1028,7 @@ try {
     if (want('5b')) await scenarioMissingWithBackup();
     if (want('6')) await scenarioSync();
     if (want('7')) await scenarioAlarms();
+    if (want('8')) await scenarioPendingCheckoff();
     console.log(`\nUpgrade device check passed${blocked4 ? '; scenario 4 BLOCKED (see above)' : ''}`);
 } catch (error) {
     evidenced(error);

@@ -12,6 +12,13 @@ val tracedBundleAssets = layout.buildDirectory.dir("generated/traced-bundle/asse
 // shortcuts (scripts/build-shortcuts.mjs), and BuildConfig.URL_SCHEME (the scheme core reads links for) use it.
 val urlSchemes = mapOf("debug" to "mindwtr-native-dev", "upgradetest" to "mindwtr-upgradetest", "release" to "mindwtr") +
     mapOf("benchmark" to "mindwtr-native-bench", "benchmarkSeed" to "mindwtr-native-bench", "benchmarkTrace" to "mindwtr-native-bench")
+// Each build type's package (defaultConfig's; the upgradetest one is set in androidComponents below, the benchmarks' by their
+// suffix), which RN's shortcuts and legacy widget class name, and the widgets' launcher label.
+val packages = mapOf("debug" to "tech.dongdongbh.mindwtr.nativeclient.dev", "upgradetest" to "tech.dongdongbh.mindwtr.upgradetest",
+    "release" to "tech.dongdongbh.mindwtr.nativeclient.dev") +
+    listOf("benchmark", "benchmarkSeed", "benchmarkTrace").associateWith { "tech.dongdongbh.mindwtr.nativeclient.dev.benchmark" }
+val widgetLabels = mapOf("debug" to "Mindwtr Native Dev", "upgradetest" to "Mindwtr Native Dev", "release" to "Mindwtr") +
+    listOf("benchmark", "benchmarkSeed", "benchmarkTrace").associateWith { "Mindwtr" }
 fun com.android.build.api.dsl.ApplicationBuildType.urlScheme() {
     val scheme = urlSchemes.getValue(name)
     buildConfigField("String", "URL_SCHEME", "\"$scheme\"")
@@ -168,27 +175,20 @@ val buildTracedCoreBundle by tasks.registering(Exec::class) {
 val buildShortcuts by tasks.registering(Exec::class) {
     workingDir = rootProject.projectDir.resolve("../../..")
     val out = layout.buildDirectory.dir("generated/shortcuts").get().asFile
-    commandLine(listOf("node", "apps/android-native/scripts/build-shortcuts.mjs", out.path) + urlSchemes.map { (type, scheme) -> "$type=$scheme" })
+    commandLine(listOf("node", "apps/android-native/scripts/build-shortcuts.mjs", out.path) + urlSchemes.map { (type, scheme) -> "$type=$scheme@${packages.getValue(type)}" })
     inputs.files(
         workingDir.resolve("apps/mobile/plugins/android-app-shortcuts.js"),
         workingDir.resolve("apps/android-native/scripts/build-shortcuts.mjs"),
     )
     inputs.property("urlSchemes", urlSchemes.toString())
+    inputs.property("packages", packages.toString())
     outputs.dir(out)
 }
 // RN's widgets and tile for each build type (scripts/build-widgets.mjs, from RN's plugins), labelled as the build's launcher icon.
-val widgetIdentities = mapOf(
-    "debug" to "tech.dongdongbh.mindwtr.nativeclient.dev:Mindwtr Native Dev",
-    "upgradetest" to "tech.dongdongbh.mindwtr.upgradetest:Mindwtr Native Dev",
-    "release" to "tech.dongdongbh.mindwtr.nativeclient.dev:Mindwtr",
-    "benchmark" to "tech.dongdongbh.mindwtr.nativeclient.dev.benchmark:Mindwtr",
-    "benchmarkSeed" to "tech.dongdongbh.mindwtr.nativeclient.dev.benchmark:Mindwtr",
-    "benchmarkTrace" to "tech.dongdongbh.mindwtr.nativeclient.dev.benchmark:Mindwtr",
-)
 val buildWidgets by tasks.registering(Exec::class) {
     workingDir = rootProject.projectDir.resolve("../../..")
     val out = layout.buildDirectory.dir("generated/widgets").get().asFile
-    commandLine(listOf("node", "apps/android-native/scripts/build-widgets.mjs", out.path) + widgetIdentities.map { (type, identity) -> "$type=$identity" })
+    commandLine(listOf("node", "apps/android-native/scripts/build-widgets.mjs", out.path) + packages.map { (type, id) -> "$type=$id:${widgetLabels.getValue(type)}" })
     inputs.files(
         fileTree(workingDir.resolve("apps/mobile/plugins")),
         fileTree(workingDir.resolve("apps/mobile/modules/android-widget/android/src/main/res/layout")),
@@ -196,7 +196,8 @@ val buildWidgets by tasks.registering(Exec::class) {
         fileTree(workingDir.resolve("apps/mobile/assets/images")) { include("widget-*.png") },
         workingDir.resolve("apps/android-native/scripts/build-widgets.mjs"),
     )
-    inputs.property("widgetIdentities", widgetIdentities.toString())
+    inputs.property("packages", packages.toString())
+    inputs.property("widgetLabels", widgetLabels.toString())
     outputs.dir(out)
 }
 // RN's attachment installer (apps/mobile/modules/attachment-file-installer): its install, hash and journal recovery policy and its

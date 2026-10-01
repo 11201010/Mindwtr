@@ -60,7 +60,10 @@ export const createWidgetPublisher = (bridge: WidgetBridge) => {
         if (payload === last) return false;
         bridge.publish(payload);
         last = payload;
-        logInfo('Native Android widget payload published', { scope: 'widget', context: { items: publication.items.length, language } });
+        logInfo('Native Android widget payload published', {
+            scope: 'widget',
+            context: { items: publication.items.length, language, scheme: input.systemColorScheme, locale: input.systemLocale, lists: input.listSelections },
+        });
         return true;
     };
 
