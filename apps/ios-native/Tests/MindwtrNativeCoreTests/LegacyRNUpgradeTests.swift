@@ -30,8 +30,9 @@ final class LegacyRNUpgradeTests: XCTestCase {
 
     func testJSONAheadImportRetainsDataAfterInterruptedMarkerAcknowledgment() async throws {
         let at = "2026-09-20T10:00:00.000Z"
+        // Keep activation's due-Inbox promotion out of this import/replay check.
         let live: [String: Any] = ["id": "rn-live", "title": "Unsynced RN task ü 😀", "description": "Keep notes\nline two",
-            "status": "inbox", "tags": ["#tag"], "contexts": ["@home"], "dueDate": "2026-10-01",
+            "status": "next", "tags": ["#tag"], "contexts": ["@home"], "dueDate": "2026-10-01",
             "createdAt": at, "updatedAt": at, "rev": 4, "revBy": "rn-device"]
         var deleted = live
         deleted["id"] = "rn-tombstone"
