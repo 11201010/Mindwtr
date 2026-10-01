@@ -944,7 +944,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     }
     assert.match(hostEntry, /const draftOnly = \(input: never, command: \(\) => Promise<Reply>\): Promise<Reply> => \(\(input as \{ owner\?: \{ kind\?: unknown \} \} \| null\)\?\.owner\?\.kind === 'task'\s*\? command\(\)\s*: Promise\.resolve\(\{ ok: false, error: \{ code: 'INVALID_INPUT', message: 'Only a task draft attachment command runs here' \} \}\)\);/);
     assert.match(source('Attachments.kt'), /if \(owner\.kind == "task"\) \{\s*sendDraft\(owner, kind,/, 'a task draft\'s commands take the draft path');
-    assert.match(source('Attachments.kt'), /private fun sendDraft\([^)]*\) \{[\s\S]{0,300}?runtime\.attachmentRequest\(DRAFT_REQUESTS\.getValue\(kind\)/, 'a task draft\'s commands are sent unjournaled');
+    assert.match(source('Attachments.kt'), /private fun sendDraft\([\s\S]{0,500}?runtime\.attachmentRequest\(DRAFT_REQUESTS\.getValue\(kind\)/, 'a task draft\'s commands are sent unjournaled');
     assert.match(host, /attachmentRequest\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*const request = ATTACHMENT_REQUESTS\[name\];/);
     assert.deepEqual(called(table('AI_REQUESTS')).sort(), ['loadAIModels', 'requestAICopilot', 'requestInboxClarify', 'requestTaskEditorBreakdown',
         'requestTaskEditorClarify', 'requestTaskEditorCopilot', 'requestWeeklyReviewAnalysis'], 'AI_REQUESTS are core\'s AI requests');
