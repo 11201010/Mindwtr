@@ -36,7 +36,7 @@ struct TaskViewSheet: View {
     private var busy: Bool { model.busy }
     private var error: String? { model.taskError }
     private var readOnly: Bool { model.taskEditor.flag("readOnly") }
-    private var frozen: Bool { busy || model.retryNeeded || model.taskChecklistReadPending || model.taskPersonCreateOwed || model.taskAttachmentOpening }
+    private var frozen: Bool { busy || model.retryNeeded || model.taskChecklistReadPending || model.taskPersonCreateOwed || model.taskAttachmentOpening || model.taskReferenceOpening }
 
     private var rows: [CoreObject] { value.objects("rows") }
     private var modalPresented: Bool {
@@ -872,8 +872,26 @@ struct TaskViewSheet: View {
         case "description":
             VStack(alignment: .leading, spacing: 8) {
                 label(item.text("label"))
+                if let message = model.taskReferenceError {
+                    Text(message).rnFont(13).foregroundStyle(palette.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("task-reference-error")
+                    if !model.taskDirty {
+                        Button { Task { await model.retryTaskViewReference() } } label: {
+                            Text(strings.text("common.retry")).rnFont(14, .semibold)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(!model.taskReferenceEnabled)
+                        .accessibilityIdentifier("task-reference-retry")
+                    }
+                }
+                let sourceID = value.text("id"), sourceRevision = value.text("revision")
                 NativeMarkdownContent(blocks: item.objects("blocks"), labels: value.object("markdownLabels"),
-                                      strings: strings, palette: palette)
+                                      strings: strings, palette: palette,
+                                      onReference: model.taskReferenceEnabled && !modalPresented && !discardConfirm ? { block, item, inline in
+                    Task { await model.openTaskViewReference(sourceID: sourceID, revision: sourceRevision, blockIndex: block,
+                                                            itemIndex: item, inlineIndex: inline) }
+                } : nil)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(12)
                 .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))

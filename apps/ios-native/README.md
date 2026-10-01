@@ -50,6 +50,8 @@ The Task editor supports URL attachments through Add link (including multiline i
 
 Project Notes Preview opens shared-resolved Task and Project references after checking the source revision. Closing a linked Task returns to the source Project; linked Projects preserve the Project-list return. Deleted and purged references stay inert. Navigation does not write data.
 
+Saved Task Preview descriptions open shared-resolved Task and Project references using the exact rendered input and revision. Unsaved source edits remain intact with save/discard-first guidance. Self links do nothing, and unavailable links offer Retry. Navigation while retaining an unsaved source editor and checklist references remain pending.
+
 Expanded Project Details shows the shared attachment list and opens URL titles, including archived Projects. Pending Project Notes edits must finish saving before leaving the app. Project URL links can be added from multiline input and soft-removed through the prepared Project writer. Failed saves keep the exact request for Retry, and cold recovery completes that journaled write once. File operations remain pending.
 
 Not yet established: replacement installs, credentials/preferences migration, sync, attachments, extensions, background behavior or production readiness. A separate native development build now runs on an iPhone 12 with iOS 17.5.1; its focused workflow evidence does not establish full physical-device parity. Simulator and macOS package evidence must be reported separately from physical-device evidence.

@@ -810,6 +810,12 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getTaskView(editorJson(json) as Parameters<typeof contract.getTaskView>[0]));
         });
     },
+    taskViewReferenceTarget(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getTaskViewReferenceTarget(editorJson(json) as Parameters<typeof contract.getTaskViewReferenceTarget>[0]));
+        });
+    },
     taskAttachmentList(json: string): string {
         return submit(async () => {
             requireSaved();

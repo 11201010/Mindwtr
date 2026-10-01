@@ -540,6 +540,8 @@ final class CoreModel: ObservableObject {
     @Published private(set) var taskLinkSheet: CoreObject = [:]
     @Published private(set) var taskLinkSheetError: String?
     @Published private(set) var taskLinkSubmitting = false
+    @Published private(set) var taskReferenceOpening = false
+    @Published private(set) var taskReferenceError: String?
     @Published private(set) var taskAttachmentOpening = false
     @Published private(set) var taskAttachmentOpenError: String?
     private var taskAttachmentOpenClaim = UUID()
@@ -2068,6 +2070,73 @@ final class CoreModel: ObservableObject {
         taskLinkSheetActive && taskRecoverySnapshot != nil
             && taskRecoveryCheckpointError == nil
             && taskRecoveryCheckpointedGeneration == taskRecoveryGeneration
+    }
+
+    var taskReferenceEnabled: Bool {
+        taskPresented && !taskEditor.isEmpty && !taskView.isEmpty && !appLock.concealed
+            && !busy && !retryNeeded && !taskReferenceOpening && !taskAttachmentOpening
+            && !taskRecoverySaving && !taskSavePending && !taskPersonCreateOwed && !taskPersonCreateNeedsReview
+            && !taskLinkSubmitting && taskLinkSheet.isEmpty && taskDestinationKind.isEmpty
+            && taskChecklistWriteKind == nil && !taskChecklistReadPending && !taskScheduleUpdating
+    }
+
+    func openTaskViewReference(sourceID: String, revision: String, blockIndex: Int, itemIndex: Int?, inlineIndex: Int) async {
+        guard taskReferenceEnabled, viewedTaskID == sourceID, taskView.text("revision") == revision else { return }
+        guard !taskDirty else {
+            taskReferenceError = "Save or discard this task's changes before opening an internal link."
+            return
+        }
+        let id = viewedTaskID, session = taskRecoverySession, caller = selectedSurface
+        let view: CoreObject = ["id": id, "draft": taskDraft, "checklist": taskChecklist, "attachments": taskAttachments]
+        guard let identity = try? json(view) else { return }
+        taskReferenceOpening = true
+        taskReferenceError = nil
+        busy = true
+        defer { taskReferenceOpening = false; finishOperation() }
+        func sourceCurrent() -> Bool {
+            taskPresented && viewedTaskID == id && taskRecoverySession == session && selectedSurface == caller
+                && taskView.text("revision") == revision && !appLock.concealed && !retryNeeded && !taskDirty
+                && !taskSavePending && !taskPersonCreateOwed && !taskPersonCreateNeedsReview
+                && !taskLinkSubmitting && taskLinkSheet.isEmpty && taskDestinationKind.isEmpty
+                && taskChecklistWriteKind == nil && !taskChecklistReadPending && !taskScheduleUpdating
+                && (try? json(["id": viewedTaskID, "draft": taskDraft, "checklist": taskChecklist,
+                              "attachments": taskAttachments])) == identity
+        }
+        do {
+            var input: CoreObject = ["view": view, "revision": revision, "blockIndex": blockIndex, "inlineIndex": inlineIndex]
+            if let itemIndex { input["itemIndex"] = itemIndex }
+            let target = try await query("taskViewReferenceTarget", [try json(input)])
+            guard sourceCurrent(), target.count == 2, ["task", "project"].contains(target.text("kind")),
+                  !target.text("id").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            if target.text("kind") == "task" && target.text("id") == id { return }
+            // Reuse Close's exact clean-draft cleanup before replacing the editor.
+            busy = false
+            await discardCleanTaskSnapshotAndClose(refreshCaller: false)
+            guard !taskPresented, taskRecoverySession == session, selectedSurface == caller,
+                  !appLock.concealed, !retryNeeded, !busy else { return }
+            if target.text("kind") == "task" {
+                prepareTaskPresentation(target.text("id"))
+                await readTaskView()
+                if taskError == nil && taskPresented && viewedTaskID == target.text("id") {
+                    NSLog("Native iOS Task preview reference opened releaseCheck=v1.3.4/ios-task-preview-links destination=task")
+                }
+            } else {
+                await presentProject(["id": target.text("id")], caller: caller == .project ? projectCaller : caller)
+                if projectCurrent && projectHeader.text("id") == target.text("id") {
+                    NSLog("Native iOS Task preview reference opened releaseCheck=v1.3.4/ios-task-preview-links destination=project")
+                }
+            }
+        } catch {
+            if taskPresented && viewedTaskID == id && taskRecoverySession == session {
+                taskReferenceError = "This link changed or is unavailable. Refresh Preview and try again."
+            }
+        }
+    }
+
+    func retryTaskViewReference() async {
+        guard taskReferenceEnabled, !taskDirty else { return }
+        taskReferenceError = nil
+        await readTaskView()
     }
 
     private func taskAttachmentOwner() -> CoreObject {
@@ -13605,24 +13674,25 @@ final class CoreModel: ObservableObject {
         taskEstimateResolvedInput = ""
         taskTimeSpentInput = ""
         taskTimeSpentResolvedInput = ""
+        taskReferenceError = nil
         taskError = nil
         taskPresented = true
     }
 
     func closeTask() {
-        guard !busy, !retryNeeded, !taskAttachmentOpening, !taskPersonCreateOwed, !taskSavePending, taskChecklistWriteKind == nil,
+        guard !busy, !retryNeeded, !taskReferenceOpening, !taskAttachmentOpening, !taskPersonCreateOwed, !taskSavePending, taskChecklistWriteKind == nil,
               !taskChecklistReadPending, !taskScheduleUpdating else { return }
         guard !taskDirty else { return }
         Task { await discardCleanTaskSnapshotAndClose() }
     }
 
     func discardTask() {
-        guard !busy, !retryNeeded, !taskAttachmentOpening, !taskPersonCreateOwed, !taskSavePending, taskChecklistWriteKind == nil,
+        guard !busy, !retryNeeded, !taskReferenceOpening, !taskAttachmentOpening, !taskPersonCreateOwed, !taskSavePending, taskChecklistWriteKind == nil,
               !taskChecklistReadPending, !taskScheduleUpdating else { return }
         Task { await discardTaskRecoveryDraft(close: true) }
     }
 
-    private func discardCleanTaskSnapshotAndClose() async {
+    private func discardCleanTaskSnapshotAndClose(refreshCaller: Bool = true) async {
         guard !taskDirty else { return }
         let wasBusy = busy
         busy = true
@@ -13639,7 +13709,7 @@ final class CoreModel: ObservableObject {
             catch { taskRecoveryCheckpointError = error.localizedDescription; return }
             taskRecoverySnapshot = nil
         }
-        dismissTask()
+        dismissTask(refreshCaller: refreshCaller)
     }
 
     func discardTaskRecoveryDraft(close: Bool = false) async {
@@ -13895,7 +13965,7 @@ final class CoreModel: ObservableObject {
         } catch { taskError = error.localizedDescription }
     }
 
-    private func dismissTask() {
+    private func dismissTask(refreshCaller: Bool = true) {
         // Resetting the checklist publishes a value. Close must never turn
         // that reset into a new checkpoint or replace a Keep-for-later draft.
         taskRecoveryHydrating = true
@@ -13922,7 +13992,7 @@ final class CoreModel: ObservableObject {
         }
         // Reset can commit while the editor stays open; Close and Discard must
         // also refresh the caller, including its status membership and counts.
-        Task { await refresh() }
+        if refreshCaller { Task { await refresh() } }
     }
 
     private func resetTaskChecklistState() {

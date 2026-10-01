@@ -188,7 +188,7 @@ private final class Engine: @unchecked Sendable {
     private static let methods: [String: Int] = [
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
         "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1,
-        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentOpen": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
+        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "taskViewReferenceTarget": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentOpen": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
         "projects": 0, "projectDetail": 4, "projectNotes": 4, "projectAttachmentList": 1, "projectAttachmentOpen": 1, "projectCreateOptions": 0, "projectCreate": 1, "projectCreateRetryOutcome": 1,
         "projectSectionOptions": 1, "projectSectionCreate": 1, "projectSectionCreateRetryOutcome": 1,
         "projectSectionRenameOptions": 1, "projectSectionRename": 1, "projectSectionRenameRetryOutcome": 1,
@@ -5551,6 +5551,29 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Editor resume check needs a bounded task and raw base")
             }
         }
+        if method == "taskViewReferenceTarget" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["view", "revision", "blockIndex", "inlineIndex"])
+                    || Set(input.keys) == Set(["view", "revision", "blockIndex", "itemIndex", "inlineIndex"]),
+                  let view = input["view"] as? [String: Any],
+                  Set(view.keys).isSubset(of: ["id", "draft", "checklist", "attachments"]),
+                  let id = view["id"] as? String, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  id.utf16.count <= 500,
+                  view["draft"] == nil || view["draft"] is [String: Any],
+                  view["checklist"] == nil || view["checklist"] is [[String: Any]],
+                  view["attachments"] == nil || Self.validTaskAttachmentList(view["attachments"]),
+                  let revision = input["revision"] as? String, !revision.isEmpty,
+                  ["blockIndex", "inlineIndex"].allSatisfy({
+                      Self.isInteger(input[$0]) && (input[$0] as? Double ?? -1) >= 0
+                        && (input[$0] as? Double ?? .infinity) <= 9_007_199_254_740_991
+                  }),
+                  input["itemIndex"] == nil || (Self.isInteger(input["itemIndex"])
+                    && (input["itemIndex"] as? Double ?? -1) >= 0
+                    && (input["itemIndex"] as? Double ?? .infinity) <= 9_007_199_254_740_991) else {
+                throw HostFailure("INVALID_INPUT: Task reference needs a bounded source view, revision and indices")
+            }
+        }
         if method == "taskView" {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
@@ -5865,7 +5888,7 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Process Inbox needs a bounded step object")
             }
         }
-        if ["inboxView", "captureView", "captureEdit", "captureSubmit", "setAreaFilter", "taskView", "editDraft", "destinationPicker", "search", "mindSweepGuide", "mindSweepAdd",
+        if ["inboxView", "captureView", "captureEdit", "captureSubmit", "setAreaFilter", "taskView", "taskViewReferenceTarget", "editDraft", "destinationPicker", "search", "mindSweepGuide", "mindSweepAdd",
             "calendarComposerOpen", "calendarComposerEdit", "calendarComposerSave", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome",
             "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectAttachmentWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
             guard let json = args.first as? String,

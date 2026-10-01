@@ -19655,6 +19655,61 @@ final class CoreHostTests: XCTestCase {
         await replay.close()
     }
 
+    func testTaskViewReferenceTargetsAreReadOnlyAcrossFreshHosts() async throws {
+        try await seedProjectFocusRows()
+        let setup = host()
+        _ = try await setup.start()
+        let source = UUID().uuidString.lowercased(), target = UUID().uuidString.lowercased()
+        _ = try await setup.call("captureSubmit", argumentsJSON: capture(setup, title: "Reference source", id: source))
+        _ = try await setup.call("captureSubmit", argumentsJSON: capture(setup, title: "Reference target", id: target))
+        await setup.close()
+        let sqlite = try SQLiteBridge(url: database)
+        let notes = "# [[task:\(target)|Task target]]\n\n- [[project:focus-target|Project target]]\n- [[task:\(source)|Self]]\n\n[[task:missing|Deleted]]\n\n[Web](https://example.com)"
+        _ = try sqlite.execute("UPDATE tasks SET description = ? WHERE id = ?", parametersJSON: json([notes, source]))
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        for _ in 0..<2 {
+            let faults = HostIOFaults()
+            let active = host(faults)
+            _ = try await active.start()
+            var statements = 0, journals = 0
+            faults.beforeSQL = { _ in statements += 1 }; faults.journalWrite = { journals += 1 }
+            let editor = try object(await active.call("editorModel", argumentsJSON: json([source])))
+            let view: [String: Any] = ["id": source, "draft": try XCTUnwrap(editor["draft"])]
+            let page = try object(await active.call("taskView", argumentsJSON: json([json(view)])))
+            let revision = try XCTUnwrap(page["revision"] as? String)
+            func request(_ block: Int, _ item: Int? = nil) -> [String: Any] {
+                var input: [String: Any] = ["view": view, "revision": revision, "blockIndex": block, "inlineIndex": 0]
+                if let item { input["itemIndex"] = item }
+                return input
+            }
+            for (input, kind, id) in [(request(0), "task", target), (request(2, 0), "project", "focus-target"),
+                                      (request(2, 1), "task", source)] {
+                let result = try object(await active.call("taskViewReferenceTarget", argumentsJSON: json([json(input)])))
+                XCTAssertEqual(try json(result), try json(["kind": kind, "id": id]))
+            }
+            var malformed = [request(4), request(6), request(100), request(0, 0)]
+            for (field, value) in [("blockIndex", true as Any), ("inlineIndex", -1 as Any),
+                                   ("itemIndex", NSNull()), ("id", target as Any), ("view", ["id": source, "offset": 0] as Any)] {
+                var input = request(0); input[field] = value; malformed.append(input)
+            }
+            for input in malformed {
+                await expectFailure("INVALID_INPUT") {
+                    _ = try await active.call("taskViewReferenceTarget", argumentsJSON: json([json(input)]))
+                }
+            }
+            _ = try await active.call("language", argumentsJSON: json(["de", "de-DE"]))
+            await expectFailure("STALE_REVISION") {
+                _ = try await active.call("taskViewReferenceTarget", argumentsJSON: json([json(request(0))]))
+            }
+            XCTAssertEqual(statements, 0); XCTAssertEqual(journals, 0)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await active.close()
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), before); check.close()
+        }
+    }
+
     func testProjectNotesReferenceTargetsAndMalformedReadsPreserveAllTablesAcrossRestart() async throws {
         try await seedProjectFocusRows()
         let setup = host()

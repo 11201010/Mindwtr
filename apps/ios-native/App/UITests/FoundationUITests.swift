@@ -17,6 +17,62 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testTaskPreviewInternalReferencesAndDraftRefusal() {
+        taskPreviewInternalReferences(library: "04d81239-d25f-442c-928d-f542bcbbd2b0")
+    }
+
+    func testTaskPreviewInternalReferencesLargestText() {
+        taskPreviewInternalReferences(library: "339d1173-ff6e-46a2-ab43-5b82a17ac962")
+    }
+
+    private func taskPreviewInternalReferences(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        func project() {
+            app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+            boardTap(app, "project-open-task124-source")
+        }
+        func source() {
+            let row = app.buttons["task-title-task124-task"]
+            revealPagedElement(app, row, in: app.scrollViews["project-detail-scroll"])
+            boardEnabled(row); row.tap(); boardEnabled(app.buttons["task-view-close"])
+            if !app.buttons["task-mode-view"].isSelected { boardTap(app, "task-mode-view") }
+        }
+        func follow(_ title: String) {
+            let link = app.links.matching(NSPredicate(format: "label == %@", title)).firstMatch
+            revealPagedElement(app, link, in: app.scrollViews["task-editor-scroll"])
+            XCTAssertTrue(link.exists); link.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
+        }
+        project(); source()
+        follow("Task124 self")
+        XCTAssertTrue(app.buttons["task-view-close"].exists)
+        follow("Task124 linked task")
+        let destination = app.staticTexts["Task124 destination task"]
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Task124 destination task"), evaluatedWith: destination)
+        waitForExpectations(timeout: 20)
+        boardTap(app, "task-view-close"); boardEnabled(app.buttons["project-back"])
+        source(); follow("Task124 linked project")
+        XCTAssertTrue(app.staticTexts["Task124 Target"].waitForExistence(timeout: 15))
+        boardTap(app, "project-back"); boardEnabled(app.buttons["project-open-task124-source"])
+        app.terminate(); project(); source()
+        boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]
+        replaceProjectNotesText(title, with: "Task124 unsaved title")
+        boardTap(app, "task-mode-view"); follow("Task124 linked task")
+        XCTAssertTrue(app.staticTexts["task-reference-error"].waitForExistence(timeout: 10))
+        boardTap(app, "task-mode-edit")
+        revealPagedElement(app, title, in: app.scrollViews["task-editor-scroll"])
+        XCTAssertEqual(title.value as? String, "Task124 unsaved title")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Task preview link retains unsaved edits"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard")
+        source(); follow("Task124 linked task")
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Task124 destination task"), evaluatedWith: destination)
+        waitForExpectations(timeout: 20)
+        boardTap(app, "task-view-close"); app.terminate()
+    }
+
     func testProjectNotesInternalReferencesAndColdRead() {
         projectNotesInternalReferences(library: "c28871f3-e65f-4bb4-8a92-456ec4d87019")
     }

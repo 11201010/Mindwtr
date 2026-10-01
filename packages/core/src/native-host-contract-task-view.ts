@@ -18,7 +18,7 @@ import { isPaging, page, paramsKey } from './native-host-contract-menu-views';
 import { createNativeRequestReceipts, isRevision, refuseStaleTasks, runStoreWrite, settleWrite, taskRevisionOf } from './native-request-receipts';
 import { getProjectSectionsForView } from './project-utils';
 import { resolveFeatureFlags } from './resolve-feature-flags';
-import { useTaskStore } from './store';
+import { getPersistenceStatus, useTaskStore } from './store';
 import { createTaskDraft, setTaskDraftField, taskDraftToUpdatePatch, type TaskDraft } from './task-draft';
 import {
     applyTaskChecklistEdit,
@@ -122,7 +122,7 @@ export const isNativeJsonWithinBytes = (value: unknown, limit = NATIVE_JSON_LIMI
     return true;
 };
 
-const fail = (code: 'INVALID_INPUT' | 'STALE_REVISION' | 'TASK_NOT_FOUND' | 'SAVE_FAILED', message: string): NativeHostResult<never> => ({
+const fail = (code: 'INVALID_INPUT' | 'STALE_REVISION' | 'TASK_NOT_FOUND' | 'SAVE_FAILED' | 'NOT_READY', message: string): NativeHostResult<never> => ({
     ok: false,
     error: { code, message },
 });
@@ -317,6 +317,52 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
                     taskRevision: taskRevisionOf(task),
                 },
             };
+        },
+
+        /** Resolve only the internal link at the position the current View tab rendered. */
+        getTaskViewReferenceTarget(input: {
+            view: { id: string; draft?: TaskDraft; checklist?: ChecklistItem[]; attachments?: Attachment[] };
+            revision: string;
+            blockIndex: number;
+            itemIndex?: number;
+            inlineIndex: number;
+        }): NativeHostResult<{ kind: 'task' | 'project'; id: string }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const persistence = getPersistenceStatus();
+            if (persistence.failed) return fail('SAVE_FAILED', 'Previous changes could not be saved; retry before continuing');
+            if (persistence.queued || persistence.inFlight || persistence.immediate || persistence.retrying) {
+                return fail('NOT_READY', 'Task view is still saving');
+            }
+            if (!isRecord(input) || !isNativeJsonWithinBytes(input)
+                || Object.keys(input).length !== (input.itemIndex === undefined ? 4 : 5)
+                || Object.keys(input).some((key) => !['view', 'revision', 'blockIndex', 'itemIndex', 'inlineIndex'].includes(key))
+                || !isRecord(input.view)
+                || Object.keys(input.view).some((key) => !['id', 'draft', 'checklist', 'attachments'].includes(key))
+                || typeof input.view.id !== 'string' || !input.view.id.trim() || input.view.id.length > 500
+                || typeof input.revision !== 'string' || !input.revision
+                || !Number.isSafeInteger(input.blockIndex) || input.blockIndex < 0
+                || !Number.isSafeInteger(input.inlineIndex) || input.inlineIndex < 0
+                || (input.itemIndex !== undefined && (!Number.isSafeInteger(input.itemIndex) || input.itemIndex < 0))) {
+                return fail('INVALID_INPUT', 'A bounded Task View reference position is required');
+            }
+            const source = findTask(input.view.id);
+            if (!isTask(source)) return source;
+            if (source.purgedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            const view = this.getTaskView({ ...input.view, offset: 0, limit: 1, revision: input.revision });
+            if (!view.ok) return view;
+            const description = view.value.rows.find((row) => row.type === 'description');
+            const block = description?.blocks[input.blockIndex];
+            const inline = block?.type === 'heading' || block?.type === 'paragraph'
+                ? input.itemIndex === undefined ? block.inline : undefined
+                : block?.type === 'taskList' || block?.type === 'bulletList' || block?.type === 'orderedList'
+                    ? input.itemIndex === undefined ? undefined : block.items[input.itemIndex]?.inline
+                    : undefined;
+            const run = inline?.[input.inlineIndex];
+            if (run?.type !== 'link' || run.target.kind === 'external') {
+                return fail('INVALID_INPUT', 'Task View reference is unavailable');
+            }
+            return { ok: true, value: { kind: run.target.kind, id: run.target.id } };
         },
 
         /**
