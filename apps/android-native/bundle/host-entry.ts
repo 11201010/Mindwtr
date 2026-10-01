@@ -57,6 +57,7 @@ import {
 import { createNativeAI } from './host-ai';
 import { createNativeReminders } from './host-reminders';
 import { createNativeSync, type NativeSync } from './host-sync';
+import { createWidgetPublisher, type WidgetInputs } from './host-widgets';
 
 type NativeBridge = {
     sqlRun(sql: string, params: string): string | null;
@@ -88,6 +89,9 @@ type NativeBridge = {
     rnAlarmCleanup?(): number | string;
     reminderReceiverCounts?(): string;
     reminderLedger?(): string;
+    /** RN's widget module on Android (HostWidgets.kt): the publication's device inputs as JSON, and the payload to write and draw. */
+    widgetInputs?(): string;
+    widgetPublish?(payload: string): string | null;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown };
@@ -315,6 +319,18 @@ const requireSync = (): NativeSync => {
     if (!nativeSync) throw new Error('Sync is not available on this host');
     return nativeSync;
 };
+
+/** The language Kotlin last passed to setLanguage (RN's `mindwtr-language`), which the widgets' language falls back on as RN's does. */
+let storedLanguage: string | null = null;
+/** The home-screen widgets (host-widgets.ts), on a host with RN's widget module (Android); none on iOS or the gates' bridge. */
+const widgets = typeof (globalThis.__mindwtrNative as { widgetPublish?: unknown } | undefined)?.widgetPublish === 'function'
+    ? createWidgetPublisher({
+        ready: () => bootAdapter !== null,
+        inputs: () => JSON.parse(checked(native().widgetInputs!())) as WidgetInputs,
+        publish: (payload) => { checked(native().widgetPublish!(payload)); },
+        storedLanguage: () => storedLanguage,
+    })
+    : null;
 
 /** Settings › AI and the AI actions (host-ai.ts), on the same host: RN's AsyncStorage and SecureStore hold what RN's do. */
 const nativeAI = nativeSync ? createNativeAI(keyValue, () => globalThis.__mindwtrSecrets as HostSecrets) : null;
@@ -973,7 +989,10 @@ globalThis.MindwtrHost = {
     focus(limit: number, controls = '', controlEdit = ''): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(contract.getFocus({ limit, ...(controls ? { controls: JSON.parse(controls) } : {}), ...(controlEdit ? { controlEdit: JSON.parse(controlEdit) } : {}) }));
+            const focus = unwrap(contract.getFocus({ limit, ...(controls ? { controls: JSON.parse(controls) } : {}), ...(controlEdit ? { controlEdit: JSON.parse(controlEdit) } : {}) }));
+            // The Focus screen's filter and sort, handed to the widget's Focus list as RN's Focus screen hands it (setFocusWidgetFilter).
+            widgets?.focusFilter(focus.controls?.widgetFilter);
+            return focus;
         });
     },
     /** Core checks `key` and refuses a stale `revision`; Kotlin then reads Focus again from offset 0. `controls` as for focus. */
@@ -1112,7 +1131,15 @@ globalThis.MindwtrHost = {
     },
     /** Core's setLanguage. "" is no stored language. Labels are not stored data, so no failed save blocks them. */
     language(stored: string, system: string): string {
+        storedLanguage = stored || null;
         return submit(async () => unwrap(await contract.setLanguage({ storedLanguage: stored || null, systemLocale: system || null })));
+    },
+    /**
+     * Publishes the home-screen widgets now when what they show changed: after a CoreWork job and when the app comes to the
+     * front (host-widgets.ts). `{ published }`.
+     */
+    widgetsRefresh(): string {
+        return submit(async () => ({ published: widgets?.publish() ?? false }));
     },
     /** Opt-in iOS read: a settled synced language wins; the legacy device-key route above is unchanged. */
     languageSaved(stored: string, system: string): string {

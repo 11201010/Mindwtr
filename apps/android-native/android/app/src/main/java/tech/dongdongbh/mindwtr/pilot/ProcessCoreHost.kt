@@ -3,6 +3,7 @@ package tech.dongdongbh.mindwtr.pilot
 import android.app.Application
 import android.util.Log
 import org.json.JSONObject
+import tech.dongdongbh.mindwtr.androidwidget.CheckoffStore
 import tech.dongdongbh.mindwtr.androidwidget.PendingCaptureWriter
 import tech.dongdongbh.mindwtr.pilot.core.AndroidContentSource
 import tech.dongdongbh.mindwtr.pilot.core.BytecodeCache
@@ -13,6 +14,7 @@ import tech.dongdongbh.mindwtr.pilot.core.HostFiles
 import tech.dongdongbh.mindwtr.pilot.core.HostInstaller
 import tech.dongdongbh.mindwtr.pilot.core.HostIo
 import tech.dongdongbh.mindwtr.pilot.core.HostNetwork
+import tech.dongdongbh.mindwtr.pilot.core.HostWidgets
 import tech.dongdongbh.mindwtr.pilot.core.LegacyRnStoreGuard
 import tech.dongdongbh.mindwtr.pilot.core.RnKeyValue
 import tech.dongdongbh.mindwtr.pilot.core.traced
@@ -112,7 +114,8 @@ internal object ProcessCoreHost {
         val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir }, HostIo(app),
             File(app.filesDir, "journal"), deviceStore(app), File(app.filesDir, DiagnosticsLogFile.RELATIVE_PATH),
             keyValue, HostFiles(app.filesDir, app.cacheDir, content = AndroidContentSource(app)), installer,
-            ReminderAlarms(app, keyValue, checkpointRnState = { if (legacy != null) LegacyRnStoreGuard.checkpointRnState(app.dataDir) }))
+            ReminderAlarms(app, keyValue, checkpointRnState = { if (legacy != null) LegacyRnStoreGuard.checkpointRnState(app.dataDir) }),
+            HostWidgets(app))
         try {
             runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)
@@ -198,6 +201,7 @@ internal object ProcessCoreHost {
     /** One sync start at a time: the boot's held start (sync thread) and CoreWork's (its worker) may meet. */
     private val syncLock = Any()
     private val syncThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-sync-events") }
+    private val widgetThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-widget-refresh") }
     private val syncListeners = CopyOnWriteArraySet<(JSONObject) -> Unit>()
     /** The last sync badge and finished-cycle count (host-sync.ts's `sync` event), for a screen that opens later. */
     @Volatile var syncState: JSONObject? = null
@@ -241,7 +245,7 @@ internal object ProcessCoreHost {
      * it goes through, sync waits, and CoreWork retries it with its back-off. True once drained.
      */
     fun recovered(app: Application, runtime: CoreHost, deferSync: Boolean = false): Boolean = StartOrder.afterReplay(
-        drain = { drain(runtime, queue(app)) },
+        drain = { drain(runtime, queue(app), app) },
         owe = { message -> recordFailure(PendingFailure(FailedAction("journal", ""), message, null)) },
         retryLater = { runCatching { CoreWork.retryDrain(app) }.onFailure { Log.w(CoreHost.TAG, "Native Android drain retry not queued", it) } },
         // The boot's start waits for the first screen's content (startDeferredSync); CoreWork's and a retry's start at once. The
@@ -303,6 +307,11 @@ internal object ProcessCoreHost {
         }
         if (state == appState) return
         appState = state
+        // RN republishes the widgets when the app comes to the front (a new day, a changed theme); a boot still running publishes
+        // once it loaded.
+        if (state == "active") boot?.takeIf { it.isDone }?.let { task ->
+            widgetThread.execute { runCatching { task.get().refreshWidgets() }.onFailure { Log.w(CoreHost.TAG, "Native Android widget refresh failed", it) } }
+        }
         val runtime = syncHost ?: return
         syncThread.execute { runCatching { runtime.syncAppState(state) }.onFailure { Log.w(CoreHost.TAG, "Native Android sync app state failed ${failureForLog(it)}") } }
     }
@@ -326,8 +335,11 @@ internal object ProcessCoreHost {
      * CoreWork's job. It waits while another retry is owed. SAVE_FAILED keeps the drain's journal entry, whose replay drains
      * again. An empty [queue] folder needs no drain, so a start with nothing queued journals nothing.
      */
-    private fun drain(runtime: CoreHost, queue: File): StartOrder.Drain {
+    private fun drain(runtime: CoreHost, queue: File, app: Application): StartOrder.Drain {
         if (failure != null) return StartOrder.Drain.Waiting
+        // RN's widget check-offs past their Undo window (an RN user's pending file on the first native start, or a sweep a killed
+        // process missed) go into the queue first, through RN's CheckoffStore, so this drain stores them.
+        runCatching { CheckoffStore.sweep(app) }.onFailure { Log.w(CoreHost.TAG, "Native Android widget check-off sweep failed", it) }
         if (queue.list().isNullOrEmpty()) return StartOrder.Drain.Done
         return try {
             val ingested = runtime.ingestPendingCaptures(UUID.randomUUID().toString()).optInt("ingested")
