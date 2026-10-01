@@ -1312,6 +1312,27 @@ function App() {
         else runAfterTaskEditExit(changeView);
     }, [currentView, sandboxMode, startTransition]);
 
+    // A search result's highlight waits until its destination is the screen on
+    // display: views switch inside a transition, and the screen being left
+    // would otherwise scroll to the task first (#1262).
+    const pendingSearchHighlightRef = useRef<{ view: string; taskId: string } | null>(null);
+    const handleSearchNavigate = useCallback((view: string, _id?: string, options?: { highlightTaskId?: string }) => {
+        const taskId = options?.highlightTaskId;
+        if (taskId && view === activeView) {
+            pendingSearchHighlightRef.current = null;
+            useTaskStore.getState().setHighlightTask(taskId);
+        } else {
+            pendingSearchHighlightRef.current = taskId ? { view, taskId } : null;
+        }
+        handleViewChange(view);
+    }, [activeView, handleViewChange]);
+    useEffect(() => {
+        const pending = pendingSearchHighlightRef.current;
+        if (!pending || pending.view !== activeView) return;
+        pendingSearchHighlightRef.current = null;
+        useTaskStore.getState().setHighlightTask(pending.taskId);
+    }, [activeView]);
+
     useEffect(() => {
         if (!viewSettingsHydrated || isLoading || timelineEnabled) return;
         if (currentView !== 'timeline' && activeView !== 'timeline') return;
@@ -1723,7 +1744,7 @@ function App() {
                         )}
                     </Suspense>
                     <GlobalSearch
-                        onNavigate={(view, _id) => handleViewChange(view)}
+                        onNavigate={handleSearchNavigate}
                     defaultIncludeCompleted={currentView === 'history' || currentView === 'done' || currentView === 'archived'}
                     />
                     <QuickAddModal />
