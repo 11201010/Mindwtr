@@ -366,6 +366,23 @@ describe('useProjectAttachments download settlement', () => {
     act(() => tree.unmount());
   });
 
+  it('opens a project file already on this device without rewriting the project', async () => {
+    // Every write bumps the project's revision; an Open that changes nothing must not sync one.
+    const attachment = makeAttachment(1, { uri: 'file:///managed/attachment-1.pdf', localStatus: 'available' });
+    const project = makeProject(attachment);
+    coreStoreState._allProjects = [project];
+    availabilityMock.ensureAttachmentAvailableDetailed.mockResolvedValue({ status: 'available', attachment });
+    const expose = React.createRef<HarnessApi | null>();
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<Harness expose={expose} initial={project} />); });
+
+    await act(async () => { await expose.current!.openAttachment(attachment); });
+
+    expect(coreStoreState._allProjects[0]).toBe(project);
+    expect(expose.current!.selectedProject).toBe(project);
+    act(() => tree.unmount());
+  });
+
   it('does not attach a picked file after the project becomes archived', async () => {
     const originalAttachment = makeAttachment(1);
     const activeProject = makeProject(originalAttachment, { attachments: [] });

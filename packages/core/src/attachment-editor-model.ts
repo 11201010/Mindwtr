@@ -11,6 +11,7 @@ import { formatI18nTemplate, tFallback } from './i18n';
 import { isLikelyFilePath } from './mobile-sync-utils';
 import { isImageAttachment } from './task-view-model';
 import { taskEditValuesEqual } from './json-value-equality';
+import { logInfo } from './logger';
 
 type Translate = (key: string) => string;
 
@@ -206,6 +207,24 @@ export function planAttachmentLinkBatch(text: string, input: { newId: () => stri
 export const patchAttachment = (attachments: readonly Attachment[], id: string, patch: Partial<Attachment>): Attachment[] => (
     attachments.map((attachment) => (attachment.id === id ? { ...attachment, ...patch } : attachment))
 );
+
+/**
+ * Whether `patch` changes `attachment`. A Download or Open of a file already on the device
+ * brings back the fields it has; writing them anyway bumps the owner's revision, so a
+ * project would sync a change nobody made (and an archived project would be rewritten).
+ */
+export const attachmentPatchChanges = (attachment: Attachment, patch: Partial<Attachment>): boolean => (
+    Object.keys(patch).some((key) => !Object.is(attachment[key as keyof Attachment], patch[key as keyof Attachment]))
+);
+
+/** The log line that proves an unchanged Open skipped the project write (diagnostics ledger, v1.3.4). */
+export const logAttachmentWriteSkipped = (): void => {
+    logInfo('Project attachment open left the project unchanged', {
+        scope: 'attachment',
+        category: 'storage',
+        context: { releaseCheck: 'v1.3.4/project-attachment-open-no-write' },
+    });
+};
 
 /** Remove: a soft delete, so sync carries the removal (and its remote file's cleanup). */
 export const softDeleteAttachment = (attachments: readonly Attachment[], id: string, now: string): Attachment[] => (

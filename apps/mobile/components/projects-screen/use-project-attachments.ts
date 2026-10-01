@@ -3,11 +3,13 @@ import { Alert } from 'react-native';
 import {
   Attachment,
   addPickedAttachment,
+  attachmentPatchChanges,
   findProjectAttachmentForIdentity,
   generateUUID,
   getAttachmentOpenLinkFailedMessage,
   getAttachmentResolutionMessage,
   isSandboxMode,
+  logAttachmentWriteSkipped,
   patchAttachment,
   planAttachmentLinkBatch,
   planAttachmentOpen,
@@ -82,6 +84,10 @@ export function useProjectAttachments({
     const current = currentProjectAttachmentForIdentity(projectId, attachmentId, identity);
     if (!current) return null;
     const nextAttachment = { ...current.attachment, ...patch };
+    if (!attachmentPatchChanges(current.attachment, patch)) {
+      logAttachmentWriteSkipped();
+      return nextAttachment;
+    }
     const nextAttachments = patchAttachment(current.project.attachments || [], attachmentId, patch);
     updateProject(projectId, { attachments: nextAttachments });
     const selected = selectedProjectRef.current;

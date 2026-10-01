@@ -288,6 +288,22 @@ describe('native host contract: attachments, crash safety', () => {
         expect(stored().attachments![0]).toEqual(removed);
     });
 
+    it('downloads a project file; a replay after a restart finds it there and writes nothing', async () => {
+        const state = { ports: {} as Ports, log: [] as unknown[][] };
+        env = await openSqliteHost({ projects: [seedProject([remote('r1')])] }, undefined, { attachments: fakeHost(state) });
+        state.ports.ensure = { status: 'available', attachment: { ...remote('r1'), uri: 'file:///data/files/attachments/r1.pdf', localStatus: 'available' } };
+        expect(ok(await env.host.downloadAttachment({ owner: projectOwner, attachmentId: 'r1' })))
+            .toEqual({ status: 'available', message: null, update: null });
+        const downloaded = stored().attachments![0];
+        expect(downloaded).toMatchObject({ uri: 'file:///data/files/attachments/r1.pdf', localStatus: 'available' });
+        state.ports.ensure = { status: 'available', attachment: downloaded };
+
+        const replay = await env.replay((host) => host.downloadAttachment({ owner: projectOwner, attachmentId: 'r1' }));
+        expect(replay.result).toEqual({ ok: true, value: { status: 'available', message: null, update: null } });
+        expect(replay.wrote).toBe(false);
+        expect(stored()).toMatchObject({ rev: 2 });
+    });
+
     it('keeps a task draft\'s commands target-state: a retry with the draft it answered changes nothing and copies nothing', async () => {
         const state = { ports: {} as Ports, log: [] as unknown[][] };
         const task: Task = { id: 't1', title: 'Task', status: 'next', tags: [], contexts: [], createdAt: CREATED, updatedAt: CREATED };

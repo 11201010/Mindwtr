@@ -45,11 +45,13 @@
  */
 import {
     addPickedAttachment,
+    attachmentPatchChanges,
     findTaskDraftAttachmentForIdentity,
     getAttachmentLinkEditText,
     getAttachmentOpenLinkFailedMessage,
     getAttachmentResolutionMessage,
     getAttachmentRowState,
+    logAttachmentWriteSkipped,
     patchAttachment,
     planAttachmentLinkBatch,
     planAttachmentLinkEdit,
@@ -301,6 +303,10 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
                 const found = current(id, identity);
                 const latest = storedProject(owner.projectId);
                 if (!found || !latest) return null;
+                if (!attachmentPatchChanges(found, next)) {
+                    logAttachmentWriteSkipped();
+                    return { ...found, ...next };
+                }
                 void useTaskStore.getState().updateProject(owner.projectId, { attachments: patchAttachment(latest.attachments ?? [], id, next) });
                 return { ...found, ...next };
             },
