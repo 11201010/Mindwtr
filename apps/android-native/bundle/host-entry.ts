@@ -3,6 +3,8 @@ import {
     NativeReceiptSqliteAdapter,
     PENDING_CAPTURES_DIRECTORY,
     PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY,
+    NATIVE_HOST_CONTRACT_VERSION,
+    REMINDER_ALARM_MAP_STORAGE_KEY,
     REMINDER_NOTIFICATION_CHANNEL_NAME,
     STATUS_COLORS_BY_THEME,
     type SqliteAdapter,
@@ -50,6 +52,7 @@ import {
     webdavPutJson,
 } from '@mindwtr/core';
 import { createNativeAI } from './host-ai';
+import { createNativeReminders } from './host-reminders';
 import { createNativeSync, type NativeSync } from './host-sync';
 
 type NativeBridge = {
@@ -76,6 +79,10 @@ type NativeBridge = {
     hostEvent(json: string): string | null;
     /** Android only: opens an android.os.Trace section named `name`, or closes the open one for "". */
     trace?(name: string): void;
+    /** Reminder alarms (Reminders.kt): core's plan applied in core's order; the notification permission; RN's alarms cancelled once. */
+    alarmApply?(planJson: string): string | null;
+    notificationsAllowed?(): boolean | string;
+    rnAlarmCleanup?(): number | string;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown };
@@ -309,6 +316,24 @@ const nativeAI = nativeSync ? createNativeAI(keyValue, () => globalThis.__mindwt
 
 const contract = createNativeHostContract({ ...(nativeSync ? { syncSettings: nativeSync.settingsHost } : {}), ...(nativeAI ? { ai: nativeAI } : {}),
     ...(nativeSync?.attachmentsHost ? { attachments: nativeSync.attachmentsHost } : {}) });
+
+/**
+ * Reminder alarms (host-reminders.ts), on a host with the alarm bridges (Android). The iOS host and the gates' stand-in bridge have
+ * none, so they plan no alarms, as before.
+ */
+const reminders = typeof (globalThis.__mindwtrNative as { alarmApply?: unknown } | undefined)?.alarmApply === 'function'
+    ? createNativeReminders({
+        plan: (input) => contract.planReminderAlarms(input),
+        readStored: () => keyValue.get(REMINDER_ALARM_MAP_STORAGE_KEY),
+        permissionGranted: () => checked(native().notificationsAllowed!()) === true,
+        apply: (planJson) => { checked(native().alarmApply!(planJson)); },
+        cleanupRn: () => Number(checked(native().rnAlarmCleanup!())),
+    })
+    : null;
+const requireReminders = () => {
+    if (!reminders) throw new Error('Reminder alarms are not available on this host');
+    return reminders;
+};
 const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: string; message: string } }): T => {
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
@@ -367,7 +392,7 @@ type AIScreenCommand = 'openAISettings' | 'setAIKey' | 'setAIEndpoint';
 /** Attachments' writes, sent by Attachments.kt (the editor's draft list, a project's list written at once). */
 type AttachmentCommand = 'attachmentAddFile' | 'attachmentLinks' | 'attachmentRemove';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
-    | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | 'ingest' | MenuCommand;
+    | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | 'ingest' | 'reminderDone' | 'reminderSnooze' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
     const ios = globalThis.__mindwtrHostPlatform === 'ios';
     const meta = {
@@ -591,12 +616,40 @@ const runIntlCheck = () => {
 };
 
 type Reply = { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } };
+/**
+ * A tap on one of this app's notifications (CoreNotifications.kt sends the notification's data): RN's payload as its notification
+ * event reads it (notification-service-local.ts), routed by core's routeNotificationOpen, then opened as RN's open handler pushes
+ * each route (use-root-layout-notification-open-handler.ts), in the entry point's shape. A task's or project's tap plans the alarms
+ * again shortly after, as RN's event does.
+ */
+const isNotificationTap = (input: unknown): input is { kind: 'notification'; data?: unknown } => (input as { kind?: unknown } | null)?.kind === 'notification';
+const notificationEntry = (input: { data?: unknown }): Reply => {
+    const data = (input?.data && typeof input.data === 'object' ? input.data : {}) as Record<string, unknown>;
+    const text = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
+    const payload = {
+        notificationId: text(data.alarmKey) ?? text(data.id), actionIdentifier: 'open', taskId: text(data.taskId), projectId: text(data.projectId),
+        context: text(data.context), kind: text(data.kind),
+    };
+    if (payload.taskId || payload.projectId) reminders?.event();
+    const result = contract.routeNotificationOpen(payload);
+    if (!result.ok) return result;
+    const route = result.value;
+    const entry = { version: NATIVE_HOST_CONTRACT_VERSION, route: null as string | null, taskId: null as string | null, projectId: null as string | null,
+        search: null, capture: null, captureModal: null, notice: null, contextToken: null as string | null };
+    if (route.type === 'review') entry.route = '/review-tab';
+    else if (route.type === 'task') Object.assign(entry, { route: '/focus', taskId: route.taskId });
+    else if (route.type === 'project') Object.assign(entry, { route: '/projects-screen', projectId: route.projectId });
+    else if (route.type === 'contexts') Object.assign(entry, { route: '/contexts', contextToken: route.token });
+    else if (route.type === 'daily-review') entry.route = '/daily-review';
+    else if (route.type === 'weekly-review') entry.route = '/weekly-review';
+    return { ok: true, value: entry };
+};
 /** What an entry point opened, by kind only: never its URL, route text, or shared text. */
 const logEntryPoint = (input: { kind?: unknown }, result: Reply): Reply => {
     const entry = result.ok ? result.value as { route: string | null; taskId: string | null; projectId: string | null; search: unknown; capture: unknown; captureModal: unknown; notice: unknown } : null;
     const outcome = !entry ? 'refused' : entry.captureModal ? 'captureModal' : entry.capture ? 'capture' : entry.notice ? 'notice' : entry.taskId ? 'task' : entry.projectId ? 'project'
         : entry.search ? 'search' : entry.route ? 'screen' : 'nothing';
-    const kind = ['link', 'share', 'createNote'].includes(input?.kind as string) ? input.kind as string : 'other';
+    const kind = ['link', 'share', 'createNote', 'notification'].includes(input?.kind as string) ? input.kind as string : 'other';
     try {
         logInfo('Native Android entry point', { scope: 'native-android', context: { releaseCheck: 'v1.3.3/native-android-entry-point', kind, outcome } });
     } catch { /* a diagnostic sink must not change what the entry opens */ }
@@ -674,7 +727,7 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     mindSweep: (input) => contract.getMindSweep(input),
     savedSearch: (input) => contract.getSavedSearchView(input),
     // A link, text share or assistant note (native-host-contract-entry-points.ts), and the capture popup's Import .txt.
-    entryPoint: (input) => logEntryPoint(input, contract.resolveNativeEntryPoint(input)),
+    entryPoint: (input) => logEntryPoint(input, isNotificationTap(input) ? notificationEntry(input) : contract.resolveNativeEntryPoint(input)),
     captureImport: (input) => contract.planQuickCaptureImport(input),
     // The capture screen an entry opens (native-host-contract-capture-modal.ts): its open, its edits and its Cancel write nothing.
     captureModalOpen: (input) => contract.openCaptureModal(input),
@@ -2696,6 +2749,28 @@ globalThis.MindwtrHost = {
             if (!notification || isSandboxMode()) return { notification: null };
             return { notification: { ...buildImmediateNotificationDetails(notification.title, notification.message, notification.data), channelName: REMINDER_NOTIFICATION_CHANNEL_NAME } };
         });
+    },
+    /**
+     * Reminder alarms (host-reminders.ts), after the boot's validated load, journal replay and queue drain: RN's alarms cancelled
+     * once, the first plan applied, core's timers armed. `ask`: RN would ask for the notification permission now.
+     */
+    remindersStart(): string {
+        return submit(async () => requireReminders().start());
+    },
+    /** One plan applied now: `mode` "exact" remakes every alarm (Android just allowed exact alarms), else "cycle". */
+    remindersCycle(mode: string): string {
+        return submit(async () => requireReminders().cycle(mode === 'exact'));
+    },
+    /** A reminder's Done (core's completeReminderTask): a journaled write under the request UUID its notification was posted with. */
+    reminderDone(requestId: string, taskId: string): string {
+        return submit(async () => taskResult('reminderDone', await contract.completeReminderTask({ requestId, taskId })));
+    },
+    /**
+     * A reminder's Snooze (core's snoozeReminder, `json`: `{ requestId, requestedAt, details }`): a journaled write; its reply is the
+     * alarm to make, the same one on every retry of the request.
+     */
+    reminderSnooze(json: string): string {
+        return submit(async () => taskResult('reminderSnooze', await contract.snoozeReminder(JSON.parse(json))));
     },
     /** A line of Kotlin's runner (CoreWork, the queue drain) through core's logger, its fields in `context`. */
     logLine(message: string, contextJson: string): string {

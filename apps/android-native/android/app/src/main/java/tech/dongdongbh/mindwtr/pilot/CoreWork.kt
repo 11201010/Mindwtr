@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * CoreWork (D7): a WorkManager job that runs one named core job ([CoreJob]) while the app may be closed: the capture intent's
- * queue drain, a context trigger's notification. It runs in the app's process on this process's one host: a running app's own,
+ * queue drain, a context trigger's notification, a reminder's Done or Snooze, the reminders planned again. It runs in the app's process on this process's one host: a running app's own,
  * or one this job boots with the app's boot order (ProcessCoreHost: validated load, journal replay, queue drain). Never in
  * another process: two hosts on one database reject each other's writes.
  */
@@ -55,7 +55,13 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
                 }
                 .build()
             val work = WorkManager.getInstance(context)
-            if (job == CoreJob.INGEST) work.enqueueUniqueWork(INGEST_WORK, policy, request) else work.enqueue(request)
+            val requestId = input["requestId"]
+            when {
+                job == CoreJob.INGEST -> work.enqueueUniqueWork(INGEST_WORK, policy, request)
+                // A reminder's Done or Snooze: a second tap on the same notification is the same request, queued once.
+                requestId != null -> work.enqueueUniqueWork("mindwtr-core-$job-$requestId", ExistingWorkPolicy.KEEP, request)
+                else -> work.enqueue(request)
+            }
         }
     }
 
@@ -76,6 +82,9 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
                     override fun recover() = ProcessCoreHost.recover(host)
                     override fun drain() = ProcessCoreHost.recovered(app, host)
                     override fun contextAutomation(json: String) = host.contextAutomation(json)
+                    override fun reminders(mode: String) = host.remindersCycle(mode)
+                    override fun reminderDone(requestId: String, taskId: String) = host.reminderDone(requestId, taskId)
+                    override fun reminderSnooze(json: String) = host.reminderSnooze(json)
                 }
             },
             post = { details ->
@@ -85,7 +94,8 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
             },
             // The widgets pass refreshes the home-screen widgets here.
             refreshWidgets = {},
-            log = log)
+            log = log,
+            schedule = { alarm -> ReminderAlarms.arm(app, alarm) })
         return when (outcome) {
             CoreJob.Outcome.Success -> Result.success()
             CoreJob.Outcome.Retry -> Result.retry()

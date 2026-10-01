@@ -48,7 +48,21 @@ class CoreHost(
     private val files: HostFiles,
     /** RN's attachment installer: core's native installer port. */
     private val installer: HostInstaller,
+    /** Reminder alarms' platform side (host-reminders.ts's bridges); null: this host plans no alarms. */
+    private val reminders: Reminders? = null,
 ) {
+    /**
+     * Reminder alarms on the platform (pilot/Reminders.kt): core's plan applied in core's order, the notification permission as RN
+     * reads it, and React Native's old alarms cancelled once. Engine thread.
+     */
+    interface Reminders {
+        /** Core's NativeReminderAlarmPlan (JSON, with the channel's name): `writeAhead` stored, cancels, alarms, then `alarms` stored. */
+        fun apply(plan: String)
+        fun permissionGranted(): Boolean
+        /** React Native's alarms cancelled and its alarm maps removed; how many were cancelled (0 once none is left). */
+        fun cleanupRn(): Int
+    }
+
     companion object {
         const val TAG = "MindwtrNativeDev"
         /** Must match NATIVE_ERROR in bundle/host-entry.ts. */
@@ -340,6 +354,12 @@ class CoreHost(
         bridge.setProperty("fileDirectories", guarded { _ ->
             JSONObject().put("document", files.documentDirectory).put("cache", files.cacheDirectory).toString()
         })
+        // Reminder alarms (host-reminders.ts): core's plan applied, the notification permission, RN's old alarms cancelled once.
+        reminders?.let { alarms ->
+            bridge.setProperty("alarmApply", guarded { args -> alarms.apply(args[0] as String); null })
+            bridge.setProperty("notificationsAllowed", guarded { _ -> alarms.permissionGranted() })
+            bridge.setProperty("rnAlarmCleanup", guarded { _ -> alarms.cleanupRn() })
+        }
         engine.globalObject.setProperty("__mindwtrNative", bridge)
     }
 
@@ -494,6 +514,22 @@ class CoreHost(
 
     /** Core's runContextAutomation with [json] (`{ action, context }`): `{ notification }`, the details to post, or null. */
     fun contextAutomation(json: String): JSONObject = callAsync("contextAutomation", json)
+
+    /**
+     * Reminder alarms (bundle/host-reminders.ts): React Native's old alarms cancelled once, core's plan applied now, then again on
+     * core's timers (a store change, the capped window's top-up). `{ active, permissionGranted, ask }`: `ask` while a reminder
+     * feature is on and notifications are not allowed, where RN asks for the permission at start.
+     */
+    fun remindersStart(): JSONObject = callAsync("remindersStart")
+
+    /** Core's reminder plan applied now: [mode] "cycle", or "exact" to remake every alarm (exact alarms were just allowed). */
+    fun remindersCycle(mode: String): JSONObject = callAsync("remindersCycle", mode)
+
+    /** A reminder's Done (core's completeReminderTask), journaled under [requestId]: a retry or a replay writes nothing twice. */
+    fun reminderDone(requestId: String, taskId: String): JSONObject = callAsync("reminderDone", requestId, taskId)
+
+    /** A reminder's Snooze (core's snoozeReminder) with [json] (`{ requestId, requestedAt, details }`), journaled: the alarm to make. */
+    fun reminderSnooze(json: String): JSONObject = callAsync("reminderSnooze", json)
 
     /** Core's receipts older than 30 days go; ProcessCoreHost calls it once, after a boot replay that left no entry. */
     fun pruneReceipts(): JSONObject = callAsync("pruneReceipts")

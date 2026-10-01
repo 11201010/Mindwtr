@@ -108,9 +108,10 @@ internal object ProcessCoreHost {
             null
         }
         val installer = HostInstaller(app.filesDir, app.cacheDir)
+        val keyValue = RnKeyValue(app.getDatabasePath("RKStorage"))
         val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir }, HostIo(app),
             File(app.filesDir, "journal"), deviceStore(app), File(app.filesDir, DiagnosticsLogFile.RELATIVE_PATH),
-            RnKeyValue(app.getDatabasePath("RKStorage")), HostFiles(app.filesDir, app.cacheDir, content = AndroidContentSource(app)), installer)
+            keyValue, HostFiles(app.filesDir, app.cacheDir, content = AndroidContentSource(app)), installer, ReminderAlarms(app, keyValue))
         try {
             runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)
@@ -242,12 +243,57 @@ internal object ProcessCoreHost {
         drain = { drain(runtime, queue(app)) },
         owe = { message -> recordFailure(PendingFailure(FailedAction("journal", ""), message, null)) },
         retryLater = { runCatching { CoreWork.retryDrain(app) }.onFailure { Log.w(CoreHost.TAG, "Native Android drain retry not queued", it) } },
-        // The boot's start waits for the first screen's content (startDeferredSync); CoreWork's and a retry's start at once.
-        startSync = { if (deferSync) deferredSync.set { startSync(app, runtime) } else startSync(app, runtime) },
+        // The boot's start waits for the first screen's content (startDeferredSync); CoreWork's and a retry's start at once. The
+        // reminder alarms start with sync.
+        startSync = {
+            val start = {
+                startSync(app, runtime)
+                startReminders(runtime)
+            }
+            if (deferSync) deferredSync.set(start) else start()
+        },
     )
+
+    // ---- Reminder alarms (bundle/host-reminders.ts: core plans every alarm and runs the timers) ----
+
+    /** Set once the reminder alarms started; a resume plans them again on [syncThread]. */
+    @Volatile private var reminderHost: CoreHost? = null
+    /** remindersStart's reply: whether to ask for the notification permission (RN asks at start). */
+    @Volatile private var reminderStart: JSONObject? = null
+    @Volatile private var askedNotifications = false
+
+    /**
+     * Started where sync starts, after the validated load, the journal replay and the queue drain: RN's old alarms are cancelled
+     * once, then core plans every alarm. A failure never fails the boot: the next start, a resume or a reschedule plans again.
+     */
+    private fun startReminders(runtime: CoreHost) {
+        if (reminderHost != null) return
+        runCatching { runtime.remindersStart() }
+            .onSuccess { reply ->
+                reminderStart = reply
+                reminderHost = runtime
+                Log.i(CoreHost.TAG, "Native Android reminders started mode=${reply.optString("mode")} rnCancelled=${reply.optInt("rnCancelled")}")
+            }
+            .onFailure { Log.w(CoreHost.TAG, "Native Android reminders start failed", it) }
+    }
+
+    /**
+     * Once per process, after the boot: true when RN would ask for the notification permission at start (a reminder feature is on and
+     * Android 13+ does not allow notifications yet). The screen asks; its answer reaches core's plan at the next resume.
+     */
+    @Synchronized fun askNotifications(): Boolean {
+        if (askedNotifications || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return false
+        val start = reminderStart ?: return false
+        askedNotifications = true
+        return start.optBoolean("ask")
+    }
 
     /** MainActivity resumed ("active") or paused ("background"): core's triggers sync on resume and on leaving. */
     fun appState(state: String) {
+        // RN plans the reminder alarms again on every resume (its start runs one more cycle), so a permission that changed counts.
+        if (state == "active") reminderHost?.let { host ->
+            syncThread.execute { runCatching { host.remindersCycle("cycle") }.onFailure { Log.w(CoreHost.TAG, "Native Android reminders cycle failed", it) } }
+        }
         if (state == appState) return
         appState = state
         val runtime = syncHost ?: return

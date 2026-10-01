@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -282,8 +283,17 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         }
     }
 
-    /** RN's AppState for core's sync triggers: "active" on resume, "background" on leaving (MainActivity). */
-    fun appState(state: String) = ProcessCoreHost.appState(state)
+    /** Each resume (MainActivity), for screens that read a system state again then (the exact-alarm notice). */
+    var resumes by mutableIntStateOf(0); private set
+
+    /** RN's AppState for core's sync triggers and the reminder alarms: "active" on resume, "background" on leaving (MainActivity). */
+    fun appState(state: String) {
+        if (state == "active") resumes += 1
+        ProcessCoreHost.appState(state)
+    }
+
+    /** Whether to ask for the notification permission now, as RN asks at start (once per process; ProcessCoreHost.askNotifications). */
+    fun askNotifications() = ProcessCoreHost.askNotifications()
 
     override fun onCleared() {
         ProcessCoreHost.unlistenSync(syncListener)

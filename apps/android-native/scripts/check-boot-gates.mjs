@@ -608,7 +608,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\), HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer, ReminderAlarms\(app, keyValue\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 // RN's installer journal recovery runs at boot after the validated load and before the journal's replay, the first write that
 // can reach files/attachments (pass A2); it is RN's own Kotlin, compiled as it is.
 assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s*(?:\/\/[^\n]*\n\s*)*recoverInstalls\(installer\)\s*if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)/);
@@ -731,7 +731,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 31, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls and the attachment file, delete, abort and installer calls: each guarded');
+assert.equal(bridgeCallbacks.length, 34, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: each guarded');
 assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })'));
 // The attachment file port and the installer only start their call on the engine thread; HostIo's files thread runs it.
@@ -902,9 +902,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // The iOS host's task attachment link/remove methods (taskAttachmentLinks, taskAttachmentRemove) are its own; Kotlin sends
     // the same core writes through MENU_COMMANDS and the journal (pass A2).
     const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment'];
-    // Core writes no host method calls yet (reminder actions, Settings › Calendar's edits):
+    // Core writes no host method calls yet (Settings › Calendar's edits):
     // wiring one into host-entry fails the write-list checks above until the journal takes it.
-    const unwiredWrites = ['completeReminderTask', 'snoozeReminder', 'setCalendarSetting', 'addCalendarFeed'];
+    const unwiredWrites = ['setCalendarSetting', 'addCalendarFeed'];
     assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
     assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
@@ -931,7 +931,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // Settings › AI (pass C1): a control's change and the screen's open (receipts of their own), a key and a base URL (never journaled).
         'setAISetting', 'openAISettings', 'setAIKey', 'setAIEndpoint', 'ingestPendingCaptures',
         // Attachments (pass A2): Add file and Add photo, the link sheet's Save, Remove (a project's written at once, receipts of their own).
-        'addAttachmentFile', 'submitAttachmentLinks', 'removeAttachment'];
+        'addAttachmentFile', 'submitAttachmentLinks', 'removeAttachment',
+        // A reminder notification's Done and Snooze (pass R1), sent by CoreWork under the request UUID the notification was posted with.
+        'completeReminderTask', 'snoozeReminder'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -1362,7 +1364,7 @@ assert.match(owner, /runtime\.language\(stored \?: "", Locale\.getDefault\(\)\.t
 assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
 // After a finished replay (the boot's, the owed retry's, CoreWork's): the queue drain, then sync (StartOrder, StartOrderTest). Any
 // drain that did not finish becomes the screens' owed journal retry, holds sync back, and CoreWork retries it.
-assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost, deferSync: Boolean = false\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\)\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+(?:\/\/[^\n]*\s+)?startSync = \{ if \(deferSync\) deferredSync\.set \{ startSync\(app, runtime\) \} else startSync\(app, runtime\) \},\s+\)/);
+assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost, deferSync: Boolean = false\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\)\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+(?:\/\/[^\n]*\s+)*startSync = \{\s+val start = \{\s+startSync\(app, runtime\)\s+startReminders\(runtime\)\s+\}\s+if \(deferSync\) deferredSync\.set\(start\) else start\(\)\s+\},\s+\)/);
 assert.match(source('StartOrder.kt'), /Drain\.Done -> \{\s+startSync\(\)\s+return true\s+\}\s+Drain\.Waiting -> retryLater\(\)\s+is Drain\.Failed -> \{\s+owe\(result\.message\)\s+retryLater\(\)\s+\}/);
 assert.match(source('CoreWork.kt'), /fun retryDrain\(context: Context\) = enqueue\(context, CoreJob\.INGEST, emptyMap\(\), ExistingWorkPolicy\.KEEP\)/, 'a retry never cancels a running drain');
 // The queue drain (RN's startup drain; CoreWork's ingest job too): after the journal replay, before any screen, entry point or
@@ -2687,7 +2689,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(activity, /override fun onNewIntent\(intent: Intent\) \{\s+super\.onNewIntent\(intent\)\s+setIntent\(intent\)\s+model\.entries\.receive\(intent\)/);
     assert.match(activity, /LaunchedEffect\(entries\.head, entries\.blocked\) \{ entries\.pump\(\) \}/);
     assert.match(activity, /LaunchedEffect\(leaveApp\) \{ if \(leaveApp\) \{ leftApp\(\); moveTaskToBack\(true\) \} \}/);
-    assert.match(hostEntry, /^\s+entryPoint: \(input\) => logEntryPoint\(input, contract\.resolveNativeEntryPoint\(input\)\),$/m);
+    assert.match(hostEntry, /^\s+entryPoint: \(input\) => logEntryPoint\(input, isNotificationTap\(input\) \? notificationEntry\(input\) : contract\.resolveNativeEntryPoint\(input\)\),$/m);
+    // A notification tap (pass R1): core routes it (routeNotificationOpen); only this app's notifications carry the extra.
+    assert.match(hostEntry, /const result = contract\.routeNotificationOpen\(payload\);/);
+    assert.match(entryKt, /getStringExtra\(CoreNotifications\.EXTRA_OPEN\)\?\.let \{ data -> return@runCatching JSONObject\(\)\.put\("kind", "notification"\)\.put\("data", JSONObject\(data\)\) \}/);
     assert.match(hostEntry, /^\s+captureImport: \(input\) => contract\.planQuickCaptureImport\(input\),$/m);
     assert.ok(hostEntry.includes("releaseCheck: 'v1.3.3/native-android-entry-point', kind, outcome }"));
     // A system capture (RN's origin=system) opens the capture screen, which puts the app behind the previous one; the popup opens
@@ -2971,9 +2976,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const gradle = readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8');
     const rnWidget = (name) => readFileSync(resolve(app, '../mobile/modules/android-widget/android/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
     const nativeKt = (path) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr', path), 'utf8');
-    // Exported: RN's activity alias and RN's two automation receivers (plugins/android-widget.js, android-manifest-fixes.js), nothing else.
+    // Exported: RN's activity alias, RN's two automation receivers (plugins/android-widget.js, android-manifest-fixes.js), and the
+    // reminders' reschedule receiver in place of RN's exported AlarmBootReceiver (patch-alarm-notification-gradle.js), nothing else.
     const exported = [...manifest.matchAll(/<(?:activity-alias|activity|receiver|service|provider)\s[^>]*?android:name="([^"]+)"[^>]*?android:exported="true"/g)].map((m) => m[1]).sort();
-    assert.deepEqual(exported, ['${applicationId}.MainActivity', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
+    assert.deepEqual(exported, ['${applicationId}.MainActivity', '.ReminderRescheduleReceiver', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
         'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver'], 'only RN\'s exported components');
     const receiver = (name) => manifest.match(new RegExp(`<receiver\\s+android:name="${name.replace(/\./g, '\\.')}"[\\s\\S]*?</receiver>`))?.[0] ?? assert.fail(`no ${name}`);
     const rnPlugin = readFileSync(resolve(app, '../mobile/plugins/android-widget.js'), 'utf8');
@@ -3107,6 +3113,8 @@ export function getGeneralSettingsDeviceWrites(edit) { return edit.type === 'lan
 export const PENDING_CAPTURES_DIRECTORY = 'pending-captures';
 export const PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY = 'mindwtr:pending-captures:last-applied:v1';
 export const REMINDER_NOTIFICATION_CHANNEL_NAME = 'Mindwtr reminders';
+export const REMINDER_ALARM_MAP_STORAGE_KEY = 'mindwtr:local:alarms:v1';
+export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export function buildImmediateNotificationDetails(title, message, data) { return { title, message, channel: 'mindwtr_reminders_v2', data: { kind: 'pomodoro', ...data } }; }
 export function isSandboxMode() { return globalThis.sandbox === true; }
 // The debug net check's WebDAV calls: bundled, never run here.
@@ -3268,11 +3276,12 @@ export const useTaskStore = { getState: () => ({
 export function logInfo() { throw new Error('diagnostic sink failed'); }
 export function logWarn() { throw new Error('diagnostic sink failed'); }
 `;
-// host-sync.ts's core imports: bound only on a host with the key-value bridge, which the stand-in bridge below lacks, so
-// they are bundled and never run here. Each one the fake does not define throws if anything calls it.
+// host-sync.ts's and host-reminders.ts's core imports: bound only on a host with the key-value or the alarm bridges, which the
+// stand-in bridge below lacks, so they are bundled and never run here. Each one the fake does not define throws if anything calls it.
 // host-attachments.ts's too: host-sync.ts binds them on the same host only.
-const hostSyncTs = readFileSync(resolve(app, 'bundle/host-sync.ts'), 'utf8') + readFileSync(resolve(app, 'bundle/host-attachments.ts'), 'utf8');
-const syncOnly = [...hostSyncTs.matchAll(/^import \{([\s\S]*?)\} from '@mindwtr\/core';/gm)].flatMap((m) => [...m[1].matchAll(/^\s+(\w+),$/gm)].map((n) => n[1]))
+const hostSyncTs = readFileSync(resolve(app, 'bundle/host-sync.ts'), 'utf8') + readFileSync(resolve(app, 'bundle/host-attachments.ts'), 'utf8')
+    + readFileSync(resolve(app, 'bundle/host-reminders.ts'), 'utf8');
+const syncOnly = [...new Set([...hostSyncTs.matchAll(/^import \{([\s\S]*?)\} from '@mindwtr\/core';/gm)].flatMap((m) => [...m[1].matchAll(/^\s+(\w+),$/gm)].map((n) => n[1])))]
     .filter((name) => !new RegExp(`export (?:async )?(?:function|const|class) ${name}\\b|export \\{[^}]*\\b${name}\\b`).test(fakeCore));
 assert(syncOnly.includes('createMobileSyncService') && syncOnly.includes('createMobileSyncTriggers'), 'host-sync.ts\'s core imports parsed');
 const fakeCoreWithSync = `${fakeCore}\n${syncOnly.map((name) => `export const ${name} = () => { throw new Error('${name}: sync is not bound in the gates'); };`).join('\n')}\n`;
@@ -3992,6 +4001,131 @@ for (const file of ['device.mjs', 'check-net-device.mjs']) {
     assert.match(readFileSync(resolve(app, `scripts/${file}`), 'utf8'), /^import '\.\/device-lock\.mjs';$/m, `${file} waits for the phone's lock first`);
 }
 console.log('Entry points: RN\'s alias, links on the build\'s scheme, text shares and Assistant notes read as strings into core\'s resolveNativeEntryPoint, RN\'s shortcuts from RN\'s builder, Import .txt through core');
+// Pass B3 (R1 native): core's reminder planner and timers in the engine (host-reminders.ts); Kotlin applies each plan in core's
+// order (ReminderPlanTest), posts what a fired alarm carries, sends Done and Snooze to CoreWork as journaled core commands, plans
+// again after a reboot, a clock change or an update, and cancels RN's alarms once.
+{
+    const remindersKt = source('Reminders.kt');
+    const notificationsKt = source('CoreNotifications.kt');
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+    // Alarms and the buttons come only from this app's PendingIntents; the reschedule receiver takes only actions the system sends.
+    assert.match(manifest, /<receiver\s+android:name="\.ReminderAlarmReceiver"\s+android:exported="false" \/>/);
+    assert.match(manifest, /<receiver\s+android:name="\.ReminderActionReceiver"\s+android:exported="false" \/>/);
+    const reschedule = manifest.match(/<receiver\s+android:name="\.ReminderRescheduleReceiver"[\s\S]*?<\/receiver>/)[0];
+    assert.deepEqual([...reschedule.matchAll(/<action android:name="([^"]+)"/g)].map((m) => m[1]), ['android.intent.action.BOOT_COMPLETED',
+        'android.intent.action.TIME_SET', 'android.intent.action.TIMEZONE_CHANGED', 'android.intent.action.MY_PACKAGE_REPLACED',
+        'android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED']);
+    assert.doesNotMatch(manifest, /android:process=/, 'one process: two hosts on one database reject each other\'s writes');
+    assert.match(remindersKt, /action == DEBUG_RESCHEDULE && BuildConfig\.DEBUG ->/, 'the debug reschedule only in a debug build');
+    // Kotlin decides no alarm: no timer, no reason and no id of its own (core's id is the request code and the notification's id).
+    assert.doesNotMatch(code(remindersKt + notificationsKt), /postDelayed|Handler\(|Timer\(|"expired"|hashCode\(\)|Random\(/);
+    assert.match(remindersKt, /PendingIntent\.getBroadcast\(context, alarm\.getInt\("id"\), fireIntent\(context\)/);
+    assert.match(notificationsKt, /val id = alarm\.getInt\("id"\)/);
+    for (const text of [remindersKt, notificationsKt]) {
+        for (const call of code(text).matchAll(/PendingIntent\.get(?:Broadcast|Activity)\([\s\S]{0,240}/g)) assert.match(call[0], /^[^]*?FLAG_IMMUTABLE/, 'every PendingIntent is immutable');
+    }
+    // Exact when Android allows it, else allowed while idle, as RN's patched library sets an alarm.
+    assert.match(remindersKt, /if \(Build\.VERSION\.SDK_INT < Build\.VERSION_CODES\.S \|\| manager\.canScheduleExactAlarms\(\)\) \{\s+manager\.setExactAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP, at, intent\)\s+\} else \{\s+manager\.setAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP, at, intent\)/);
+    // RN's alarms through RN's receiver's name and its request codes (the row's alarmId), before the maps go, then the table.
+    assert.match(remindersKt, /RN_RECEIVER = "com\.emekalites\.react\.alarm\.notification\.AlarmReceiver"/);
+    assert.match(remindersKt, /JSONObject\(rows\.getString\(0\)\)\.getInt\("alarmId"\)/);
+    // Done and Snooze: CoreWork jobs, unique per request, journaled host methods (WriteJournal.SHAPES), the tap's time with Snooze.
+    assert.match(source('CoreWork.kt'), /requestId != null -> work\.enqueueUniqueWork\("mindwtr-core-\$job-\$requestId", ExistingWorkPolicy\.KEEP, request\)/);
+    assert.match(remindersKt, /"requestedAt" to System\.currentTimeMillis\(\)\.toString\(\)/);
+    assert.match(hostEntry, /reminderDone\(requestId: string, taskId: string\): string \{\s+return submit\(async \(\) => taskResult\('reminderDone', await contract\.completeReminderTask\(\{ requestId, taskId \}\)\)\);/);
+    assert.match(hostEntry, /reminderSnooze\(json: string\): string \{\s+return submit\(async \(\) => taskResult\('reminderSnooze', await contract\.snoozeReminder\(JSON\.parse\(json\)\)\)\);/);
+    // The debug-only stops and the short snooze read a debug property (empty in a release build).
+    assert.match(remindersKt, /if \(debugProperty\("reminder_stop"\) == point\)/);
+    assert.match(remindersKt, /debugProperty\("snooze_minutes"\)\.toDoubleOrNull\(\)/);
+}
+// host-reminders.ts with a stand-in core and bridge: RN's alarms cancelled once before the first plan (a failed cleanup plans
+// nothing), cycles one at a time, the plan applied with the channel's name, the store timer after the last change, the top-up, the
+// exact rebuild's pending mark, the tap's re-plan, and nothing at all in sandbox mode.
+{
+    const stand = `
+export const REMINDER_NOTIFICATION_CHANNEL_NAME = 'Mindwtr reminders';
+export const REMINDER_NOTIFICATION_EVENT_RESCHEDULE_DELAY_MS = 5;
+export const REMINDER_STORE_RESCHEDULE_DELAY_MS = 30;
+export const hasActiveMobileNotificationFeature = (settings) => settings.on === true;
+export const isSandboxMode = () => globalThis.reminderSandbox === true;
+export const logInfo = () => {}; export const logWarn = () => {};
+export const nameNotifyListener = (_name, listener) => listener;
+export const shouldRescheduleReminderAlarms = (state, previous) => state.tasks !== previous.tasks;
+const listeners = [];
+let state = { tasks: [], settings: { on: true } };
+export const useTaskStore = { getState: () => state, subscribe: (listener) => { listeners.push(listener); return () => {}; },
+  setState: (next) => { const previous = state; state = { ...state, ...next }; listeners.forEach((listener) => listener(state, previous)); } };
+globalThis.standStore = useTaskStore;
+`;
+    const out = await build({ entryPoints: [resolve(app, 'bundle/host-reminders.ts')], bundle: true, write: false, format: 'esm',
+        plugins: [{ name: 'stand-core', setup(plugin) {
+            plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'stand' }));
+            plugin.onLoad({ filter: /.*/, namespace: 'stand' }, () => ({ contents: stand, loader: 'js' }));
+        } }] });
+    const mod = await import(`data:text/javascript,${encodeURIComponent(out.outputFiles[0].text)}`);
+    const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+    const calls = [];
+    let stored = '{"task:a":{"id":7,"signature":"s"}}';
+    let cleanupFailure = true;
+    let topUp = null;
+    const reminders = mod.createNativeReminders({
+        plan: async (input) => { calls.push(`plan ${input.storedAlarms} ${input.permissionGranted}`); await sleep(5); return { ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', topUpDelayMs: topUp } }; },
+        readStored: async () => stored,
+        permissionGranted: () => false,
+        apply: (json) => calls.push(`apply ${JSON.parse(json).channelName}`),
+        cleanupRn: () => { calls.push('cleanup'); if (cleanupFailure) throw new Error('rnandb locked'); return 2; },
+    });
+    await assert.rejects(reminders.start(), /rnandb locked/);
+    assert.deepEqual(calls, ['cleanup'], 'a failed cleanup plans nothing');
+    cleanupFailure = false;
+    calls.length = 0;
+    const started = await reminders.start();
+    assert.equal(started.rnCancelled, 2);
+    assert.equal(started.ask, true, 'a feature on and no permission: RN asks at start');
+    assert.deepEqual(calls, ['cleanup', `plan ${stored} false`, 'apply Mindwtr reminders']);
+    // Cycles run one at a time; the cleanup ran once.
+    calls.length = 0;
+    await Promise.all([reminders.cycle(false), reminders.cycle(false)]);
+    assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders', `plan ${stored} false`, 'apply Mindwtr reminders']);
+    // The exact rebuild marks every held alarm pending.
+    calls.length = 0;
+    await reminders.cycle(true);
+    assert.deepEqual(calls, ['plan {"task:a":{"id":7,"signature":"s","pending":true}} false', 'apply Mindwtr reminders']);
+    // Store changes: one plan, REMINDER_STORE_RESCHEDULE_DELAY_MS after the last accepted change; other changes plan nothing.
+    calls.length = 0;
+    globalThis.standStore.setState({ tasks: [] });
+    await sleep(10);
+    globalThis.standStore.setState({ tasks: [] });
+    globalThis.standStore.setState({ settings: { on: true } });
+    await sleep(15);
+    assert.deepEqual(calls, [], 'no plan before the delay after the last change');
+    await sleep(40);
+    assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders'], 'one plan after the last accepted change');
+    globalThis.standStore.setState({ settings: { on: true } });
+    await sleep(50);
+    assert.equal(calls.length, 2, 'a change the rule does not accept plans nothing');
+    // The tap's re-plan and the top-up, each one plan.
+    calls.length = 0;
+    reminders.event();
+    await sleep(40);
+    assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders'], 'a tap plans again shortly after');
+    calls.length = 0;
+    topUp = 10;
+    await reminders.cycle(false);
+    topUp = null;
+    await sleep(60);
+    assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders', `plan ${stored} false`, 'apply Mindwtr reminders'], 'the top-up plans once more');
+    // Sandbox mode: no plan at all.
+    calls.length = 0;
+    globalThis.reminderSandbox = true;
+    assert.deepEqual(await reminders.start(), { mode: 'sandbox', ask: false });
+    await reminders.cycle(false);
+    reminders.event();
+    await sleep(20);
+    assert.deepEqual(calls, []);
+    globalThis.reminderSandbox = false;
+}
+console.log('Reminders: core plans and times every alarm in the engine, Kotlin applies each plan in core\'s order, the buttons and the reschedule go through CoreWork as core\'s commands, RN\'s alarms cancelled once before the first plan');
 console.log('Runner: CoreWork on the one host after the app\'s boot order, the queue drain after the journal replay, the queue\'s file and RKStorage ports, RN\'s capture intent and context receivers under RN\'s names, RN\'s capture intent Kotlin compiled in, the token only in Kotlin');
 // Review finding 3 (A2): a failure on a path that can carry a URI (attachments, links, sync, the shared log, core actions) is logged
 // by its class and core's code (failureForLog, attachmentLaunchLog), never with its message or stack, which can hold a credential URI.
