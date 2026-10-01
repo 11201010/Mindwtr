@@ -98,7 +98,7 @@ Prefer core tests for pure derivation and platform tests for render or native-th
 `benchmark` build (minified, profileable, not debuggable, its own application id), so the dev app's data is never touched:
 
 ```bash
-cd apps/android-native/android && ./gradlew assembleBenchmark assembleBenchmarkSeed
+(cd apps/android-native/android && ./gradlew assembleBenchmark assembleBenchmarkSeed)
 node apps/android-native/scripts/check-startup-device.mjs <adb-serial> \
   apps/android-native/android/app/build/outputs/apk/benchmarkSeed/app-benchmarkSeed.apk \
   apps/android-native/android/app/build/outputs/apk/benchmark/app-benchmark.apk
