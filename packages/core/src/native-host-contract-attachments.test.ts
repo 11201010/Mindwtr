@@ -261,6 +261,17 @@ describe('native host contract: attachments, crash safety', () => {
         expect(await env.receiptIds()).toEqual([input.requestId]);
     });
 
+    it('refuses a project file replayed after a restart whose picked document can no longer be read, and saves nothing', async () => {
+        // The process died before the first send's receipt; at the next boot the picker's read grant is gone.
+        const state = { ports: { persist: 'unreadable' } as Ports, log: [] as unknown[][] };
+        env = await openSqliteHost({ projects: [seedProject()] }, undefined, { attachments: fakeHost(state) });
+        const input = { requestId: '00000000-0000-4000-8000-00000000a0f1', owner: projectOwner, source: 'image' as const, picked: PICKED };
+        const replay = await env.replay((host) => host.addAttachmentFile(input));
+        expect(replay.result).toMatchObject({ ok: true, value: { kind: 'refused' } });
+        expect(replay.wrote).toBe(false);
+        expect(stored().attachments ?? []).toEqual([]);
+    });
+
     it('adds a project link batch once: a replay after a restart answers its first reply', async () => {
         env = await openSqliteHost({ projects: [seedProject()] }, undefined, { attachments: fakeHost({ ports: {}, log: [] }) });
         const input = { requestId: '00000000-0000-4000-8000-00000000a002', owner: projectOwner, text: 'https://one.example\nTwo | https://two.example' };
