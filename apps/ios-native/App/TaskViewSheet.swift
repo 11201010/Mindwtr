@@ -1524,6 +1524,7 @@ private struct TaskBackdatedCompletionDraft {
 }
 
 private struct TaskBackdatedCompletionDialog: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     let initial: TaskBackdatedCompletionDraft
@@ -1546,14 +1547,15 @@ private struct TaskBackdatedCompletionDialog: View {
     }
 
     var body: some View {
-        GeometryReader { _ in
+        GeometryReader { geometry in
             ZStack {
                 Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { cancel() }.accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 12) {
-                    ViewThatFits(in: .vertical) {
-                        form.fixedSize(horizontal: false, vertical: true)
-                        ScrollView { form }.scrollDismissesKeyboard(.interactively)
-                    }
+                    ScrollView { form }
+                    .scrollDismissesKeyboard(.interactively)
+                    // Keep this one form mounted as the keyboard changes the
+                    // available height; replacing it loses the focused input.
+                    .frame(maxHeight: max(120, min(dynamicTypeSize.isAccessibilitySize ? .infinity : 360, geometry.size.height - 132)))
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("task-backdate-scroll")
                     HStack {
