@@ -499,6 +499,16 @@ describe('native host contract: attachments, the list and the editor\'s helpers'
         expect(host.getAttachmentList({ owner: { kind: 'project', projectId: 'missing' } })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     });
 
+    it('checks the link sheet\'s text as React Native\'s sheet does while typing: the first line that is not a link', async () => {
+        const { host } = await open();
+        expect(ok(host.getAttachmentLinkCheck({ text: 'https://a.example\n\nDocs | https://b.example' }))).toEqual({ error: null });
+        expect(ok(host.getAttachmentLinkCheck({ text: 'https://a.example\nnot a link' }))).toEqual({ error: 'Line 2: enter a valid link.' });
+        // The edit sheet takes one line and shows no line error, as RN's single-line field does.
+        expect(ok(host.getAttachmentLinkCheck({ text: 'not a link', editing: true }))).toEqual({ error: null });
+        expect(ok(host.getAttachmentLinkCheck({ text: '' }))).toEqual({ error: null });
+        expect(host.getAttachmentLinkCheck({ text: 7 } as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
     it('takes no edit on an archived project', async () => {
         const { host } = await open(undefined, 'archived');
         const owner: NativeAttachmentOwner = { kind: 'project', projectId: 'p1' };

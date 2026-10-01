@@ -21,6 +21,7 @@
  * - addAttachmentFile: Add file and Add photo, with what the picker handed back. The new
  *   attachment's ID is the request UUID, so its managed copy (files/attachments/<id><ext>)
  *   is the same file on a retry and the attachment is added once.
+ * - getAttachmentLinkCheck: the link sheet's line check while typing (Save stays off on an invalid line).
  * - submitAttachmentLinks: the link sheet's Save. Each link's ID derives from the request
  *   UUID (requestRowId), so a retry adds none twice. With `editing` (task only: the link's
  *   ID and its title and uri when the sheet opened), saves that link's new text,
@@ -67,8 +68,9 @@ import {
     describeAttachmentUriForLog,
 } from './attachment-editor-model';
 import { isAttachmentFileInUse, planAttachmentDraftSettlement } from './attachment-draft-settlement';
+import { parseAttachmentLinkBatch } from './attachment-link-utils';
+import { formatI18nTemplate, type TranslateFn } from './i18n';
 import { globalProgressTracker } from './attachment-progress';
-import type { TranslateFn } from './i18n';
 import { logWarn } from './logger';
 import {
     getAttachmentAvailabilityPatch,
@@ -419,6 +421,20 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
             });
             const value = { rows, canEdit };
             return isNativeJsonWithinBytes(value) ? { ok: true, value } : fail('INVALID_INPUT', 'The attachment list exceeds the bounded native response');
+        },
+
+        /**
+         * The link sheet's line check while typing, as React Native's sheets show it under the field: the first line that is
+         * not a link, and Save stays off while there is one. The edit sheet (`editing`) takes one line and shows none.
+         */
+        getAttachmentLinkCheck(input: { text: string; editing?: boolean }): NativeHostResult<{ error: string | null }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isText(input.text, TEXT_LIMIT) || (input.editing !== undefined && typeof input.editing !== 'boolean')) {
+                return fail('INVALID_INPUT', 'The link text is required');
+            }
+            const invalidLine = input.editing ? null : parseAttachmentLinkBatch(input.text).invalidLine;
+            return { ok: true, value: { error: invalidLine === null ? null : formatI18nTemplate(deps.t()('attachments.invalidLinkLine'), { line: invalidLine }) } };
         },
 
         /** Add file (`file`) or Add photo (`image`): the picked file is validated and copied into files/attachments/. */
