@@ -115,6 +115,7 @@ struct TaskViewSheet: View {
                     }
                     .padding(20)
                 }
+                .id(editing)
                 .onChange(of: focusedChecklistIndex) { _ in scrollChecklistFocus(reader) }
                 .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
                     scrollChecklistFocus(reader)
