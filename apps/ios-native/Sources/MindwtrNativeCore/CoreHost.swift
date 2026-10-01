@@ -42,6 +42,29 @@ public final class CoreHost: @unchecked Sendable {
         try await perform { try $0.call(method, argumentsJSON: argumentsJSON) }
     }
 
+    public func readEditorDraft() async throws -> EditorDraftSnapshot? {
+        try await perform { try $0.readEditorDraft() }
+    }
+
+    public func checkpointEditorDraft(_ snapshot: EditorDraftSnapshot) async throws {
+        try await perform { try $0.checkpointEditorDraft(snapshot) }
+    }
+
+    public func discardEditorDraft(expectedSession: String) async throws {
+        try await perform { try $0.discardEditorDraft(expectedSession: expectedSession) }
+    }
+
+    public func discardCorruptEditorDraft() async throws {
+        try await perform { try $0.discardCorruptEditorDraft() }
+    }
+
+    public func saveEditorDraft(_ method: String, argumentsJSON: String,
+                                expectedSession: String, expectedGeneration: Int) async throws -> String {
+        try await perform { try $0.saveEditorDraft(method, argumentsJSON: argumentsJSON,
+                                                   expectedSession: expectedSession,
+                                                   expectedGeneration: expectedGeneration) }
+    }
+
     @discardableResult
     public func retryPending() async throws -> String? { try await perform { try $0.retryPending() } }
 
@@ -73,6 +96,7 @@ private struct PendingCommand: Codable {
     let method: String
     let argumentsJSON: String
     var terminal: TerminalResult? = nil
+    var editorDraft: EditorDraftAttempt? = nil
 }
 
 private enum TerminalResult: Codable {
@@ -95,6 +119,7 @@ private final class Engine: @unchecked Sendable {
     private let databaseURL: URL
     private let bundleURL: URL
     private let journalURL: URL
+    private let editorDrafts: EditorDraftStore
     private let legacyStorage: LegacyRNStorage?
     private var context: JSContext?
     private var database: SQLiteBridge?
@@ -162,7 +187,7 @@ private final class Engine: @unchecked Sendable {
     private static let methods: [String: Int] = [
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
         "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1,
-        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "editorModel": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
+        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "editorModel": 1, "taskEditorResumeCheck": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
         "projects": 0, "projectDetail": 4, "projectNotes": 4, "projectCreateOptions": 0, "projectCreate": 1, "projectCreateRetryOutcome": 1,
         "projectSectionOptions": 1, "projectSectionCreate": 1, "projectSectionCreateRetryOutcome": 1,
         "projectSectionRenameOptions": 1, "projectSectionRename": 1, "projectSectionRenameRetryOutcome": 1,
@@ -221,6 +246,30 @@ private final class Engine: @unchecked Sendable {
         self.bundleURL = bundleURL
         self.legacyStorage = legacyStorage
         journalURL = databaseURL.appendingPathExtension("pending.json")
+        editorDrafts = EditorDraftStore(databaseURL: databaseURL)
+    }
+
+    private func loadPendingJournal(checkingEditorSnapshot: Bool = true) throws -> PendingCommand? {
+        guard FileManager.default.fileExists(atPath: journalURL.path) else { return nil }
+        let journalData = try Data(contentsOf: journalURL)
+        guard let raw = try NativeJSON.jsonObject(with: journalData) as? [String: Any],
+              Set(raw.keys).isSubset(of: ["version", "method", "argumentsJSON", "terminal", "editorDraft"]),
+              raw["editorDraft"] == nil || (raw["editorDraft"] as? [String: Any]).map({
+                  Set($0.keys) == Set(["id", "sessionID", "taskID", "generation", "method", "argumentsJSON"])
+              }) == true,
+              let saved = try? JSONDecoder().decode(PendingCommand.self, from: journalData) else {
+            throw HostFailure("Invalid pending command journal")
+        }
+        guard saved.version == 2 else { throw HostFailure("Unsupported pending command journal; raw captures cannot be safely replanned") }
+        _ = try journalArguments(saved, checkingEditorSnapshot: checkingEditorSnapshot)
+        switch saved.terminal {
+        case .success(let value):
+            _ = try NativeJSON.jsonObject(with: Data(value.utf8), options: [.fragmentsAllowed])
+        case .rejected(let message):
+            guard isDefiniteRejection(message, method: saved.method) else { throw HostFailure("Invalid terminal command journal") }
+        case nil: break
+        }
+        return saved
     }
 
     func start() throws -> String {
@@ -237,19 +286,7 @@ private final class Engine: @unchecked Sendable {
             try DurableFile.sync(databaseURL.deletingLastPathComponent().deletingLastPathComponent(), directory: true)
             lockFD = open(databaseURL.appendingPathExtension("host-lock").path, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
             guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw HostFailure("Native database is already in use or cannot be locked") }
-            if pending == nil && FileManager.default.fileExists(atPath: journalURL.path) {
-                let saved = try JSONDecoder().decode(PendingCommand.self, from: Data(contentsOf: journalURL))
-                guard saved.version == 2 else { throw HostFailure("Unsupported pending command journal; raw captures cannot be safely replanned") }
-                _ = try journalArguments(saved)
-                switch saved.terminal {
-                case .success(let value):
-                    _ = try NativeJSON.jsonObject(with: Data(value.utf8), options: [.fragmentsAllowed])
-                case .rejected(let message):
-                    guard isDefiniteRejection(message, method: saved.method) else { throw HostFailure("Invalid terminal command journal") }
-                case nil: break
-                }
-                pending = saved
-            }
+            if pending == nil { pending = try loadPendingJournal() }
             guard let runtime = JSContext() else { throw HostFailure("Cannot create JavaScriptCore runtime") }
             context = runtime
             installBridge(runtime)
@@ -696,8 +733,95 @@ private final class Engine: @unchecked Sendable {
     }
 
     func call(_ method: String, argumentsJSON: String) throws -> String {
+        try call(method, argumentsJSON: argumentsJSON, editorAttempt: nil)
+    }
+
+    func readEditorDraft() throws -> EditorDraftSnapshot? {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, pending == nil else { throw HostFailure("Editor draft recovery is not settled") }
+        guard let current = try editorDrafts.read() else { return nil }
+        if let attempt = current.attempt {
+            // No journal means the invocation never began, or a definite refusal settled.
+            try editorDrafts.thaw(attempt)
+        }
+        return current.snapshot
+    }
+
+    func checkpointEditorDraft(_ snapshot: EditorDraftSnapshot) throws {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, pending == nil else { throw HostFailure("Editor draft is not ready") }
+        try editorDrafts.checkpoint(snapshot)
+    }
+
+    func discardEditorDraft(expectedSession: String) throws {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, pending == nil else { throw HostFailure("Editor Save must settle before discard") }
+        try editorDrafts.discard(sessionID: expectedSession)
+    }
+
+    func discardCorruptEditorDraft() throws {
+        dispatchPrecondition(condition: .onQueue(queue))
+        // A failed start may not yet have assigned `pending`. Inspect the durable
+        // journal itself before removing the only frozen proof of an editor Save.
+        let saved = try loadPendingJournal(checkingEditorSnapshot: false)
+        let editorMethods: Set<String> = ["draftCommit", "checklistPreparedCommit"]
+        if let pending, pending.editorDraft != nil || editorMethods.contains(pending.method) {
+            guard let saved, saved.method == pending.method,
+                  saved.editorDraft == pending.editorDraft else {
+                throw HostFailure("Pending editor Save has no matching durable terminal proof")
+            }
+        }
+        if let saved, saved.editorDraft != nil || editorMethods.contains(saved.method) {
+            guard let terminal = saved.terminal, case .success = terminal else {
+                throw HostFailure("Pending editor Save requires its frozen snapshot")
+            }
+        }
+        try editorDrafts.discardCorrupt()
+    }
+
+    func saveEditorDraft(_ method: String, argumentsJSON: String,
+                         expectedSession: String, expectedGeneration: Int) throws -> String {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, pending == nil, ["saveDraft", "checklistSave"].contains(method) else {
+            throw HostFailure("Editor Save is not ready")
+        }
+        let args = try arguments(method, argumentsJSON)
+        guard let encoded = args.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let id = request["id"] as? String,
+              method != "saveDraft" || request["scheduleBase"] != nil,
+              let current = try editorDrafts.read(), current.snapshot.taskID == id else {
+            throw HostFailure("Editor Save request does not match its draft")
+        }
+        let attempt = try editorDrafts.freeze(sessionID: expectedSession, generation: expectedGeneration,
+                                              method: method, argumentsJSON: argumentsJSON)
+        let value: String
+        do {
+            value = try call(method, argumentsJSON: argumentsJSON, editorAttempt: attempt)
+        } catch {
+            // A command that never entered the journal, or a definite refusal,
+            // cannot have written. Keep uncertain attempts frozen for exact replay.
+            if pending == nil { try editorDrafts.thaw(attempt) }
+            throw error
+        }
+        // A prepared draft no-op returns before a journal exists. Cleanup errors
+        // leave the frozen file for explicit read/retry, without another writer.
+        if pending == nil, let current = try editorDrafts.read() {
+            guard current.attempt == attempt else { throw HostFailure("Editor draft Save attempt changed") }
+            #if DEBUG
+            try faults?.editorDraftRemove?()
+            #endif
+            try editorDrafts.removeMatching(attempt)
+        }
+        return value
+    }
+
+    private func call(_ method: String, argumentsJSON: String, editorAttempt: EditorDraftAttempt?) throws -> String {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, !recoveryActivationPending else { throw HostFailure("Core host is not ready; retry startup") }
+        if editorAttempt == nil, ["saveDraft", "checklistSave"].contains(method), try editorDrafts.read() != nil {
+            throw HostFailure("Editor draft must use its exact Save attempt")
+        }
         let args: [Any]
         do { args = try arguments(method, argumentsJSON) }
         catch {
@@ -2147,7 +2271,8 @@ private final class Engine: @unchecked Sendable {
                 guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared checklist write is too large") }
                 let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
                 guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared checklist journal is too large") }
-                command = PendingCommand(version: 2, method: "checklistPreparedCommit", argumentsJSON: encoded)
+                command = PendingCommand(version: 2, method: "checklistPreparedCommit", argumentsJSON: encoded,
+                                         editorDraft: editorAttempt)
                 _ = try invoke("checklistPreparedValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if ["inboxCommit", "inboxSkip"].contains(method) {
@@ -2277,7 +2402,8 @@ private final class Engine: @unchecked Sendable {
                 }
                 let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
                 let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
-                command = PendingCommand(version: 2, method: "draftCommit", argumentsJSON: encoded)
+                command = PendingCommand(version: 2, method: "draftCommit", argumentsJSON: encoded,
+                                         editorDraft: editorAttempt)
                 try validateDraftAcknowledgment(command)
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else {
@@ -2600,7 +2726,16 @@ private final class Engine: @unchecked Sendable {
         // Once persisted, restart can clean up without entering core again.
         pending = finished
         try persist(finished)
+        if let attempt = command.editorDraft, case .success = terminal {
+            #if DEBUG
+            try faults?.editorDraftRemove?()
+            #endif
+            try editorDrafts.removeMatching(attempt)
+        }
         try clearPending()
+        if let attempt = command.editorDraft, case .rejected = terminal {
+            try editorDrafts.thaw(attempt)
+        }
         if command.method == "draftCommit", case .success = terminal {
 #if DEBUG
             faults?.commandDiagnostic?("taskEditorDurableApplied")
@@ -4345,7 +4480,40 @@ private final class Engine: @unchecked Sendable {
         }
     }
 
-    private func journalArguments(_ command: PendingCommand) throws -> [Any] {
+    private func journalArguments(_ command: PendingCommand, checkingEditorSnapshot: Bool = true) throws -> [Any] {
+        if let attempt = command.editorDraft {
+            guard UUID(uuidString: attempt.id)?.uuidString.lowercased() == attempt.id,
+                  UUID(uuidString: attempt.sessionID)?.uuidString.lowercased() == attempt.sessionID,
+                  !attempt.taskID.isEmpty, attempt.taskID.utf8.count <= 500,
+                  attempt.generation > 0,
+                  (attempt.method == "saveDraft" && command.method == "draftCommit")
+                    || (attempt.method == "checklistSave" && command.method == "checklistPreparedCommit"),
+                  attempt.argumentsJSON.utf8.count <= 2_000_000,
+                  let originalArgs = try NativeJSON.jsonObject(with: Data(attempt.argumentsJSON.utf8)) as? [String],
+                  originalArgs.count == 1,
+                  let original = try NativeJSON.jsonObject(with: Data(originalArgs[0].utf8)) as? [String: Any],
+                  original["id"] as? String == attempt.taskID,
+                  let preparedArgs = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+                  preparedArgs.count == 1,
+                  let envelope = try NativeJSON.jsonObject(with: Data(preparedArgs[0].utf8)) as? [String: Any],
+                  let preparedRequest = envelope["request"] as? [String: Any],
+                  Self.equalJSON(original, preparedRequest) else {
+                throw HostFailure("Malformed editor draft journal identity")
+            }
+            if !checkingEditorSnapshot {
+                // Corrupt-file discard validates durable journal authority first;
+                // the snapshot itself cannot be decoded until explicitly discarded.
+            } else if let frozen = try editorDrafts.read() {
+                guard frozen.attempt == attempt else {
+                    throw HostFailure("Editor draft journal identity does not match snapshot")
+                }
+            } else if let terminal = command.terminal, case .success = terminal {
+                // A terminal result may have removed this exact snapshot before
+                // journal cleanup failed; replaying no writer is now required.
+            } else {
+                throw HostFailure("Editor draft journal is missing its frozen snapshot")
+            }
+        }
         if command.method == "appLockCommit" {
             guard command.argumentsJSON.utf8.count <= 49_152,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
@@ -5080,6 +5248,9 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func arguments(_ method: String, _ json: String, allowPreparedDates: Bool = true) throws -> [Any] {
+        if method == "taskEditorResumeCheck" && json.utf8.count > 2_000_000 {
+            throw HostFailure("INVALID_INPUT: Editor resume check is too large")
+        }
         if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "appLockOptions", "appLock", "appLockRetryOutcome", "generalPreferenceOptions", "generalPreference", "generalPreferenceRetryOutcome"].contains(method), json.utf8.count > 49_152 {
             throw HostFailure("INVALID_INPUT: General preference transport is too large")
         }
@@ -5180,6 +5351,18 @@ private final class Engine: @unchecked Sendable {
                     throw HostFailure("Core numeric arguments must be integers")
                 }
             } else if !(argument is String) { throw HostFailure("Core arguments must be strings") }
+        }
+        if method == "taskEditorResumeCheck" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 1_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys).isSubset(of: ["id", "touchedBase", "scheduleBase", "recurrenceBase", "checklistBase"]),
+                  let id = input["id"] as? String, !id.isEmpty, id.utf16.count <= 500,
+                  input["touchedBase"] is [String: Any],
+                  input["scheduleBase"] == nil || input["scheduleBase"] is [String: Any],
+                  input["recurrenceBase"] == nil || input["recurrenceBase"] is [String: Any],
+                  input["checklistBase"] == nil || input["checklistBase"] is [[String: Any]] else {
+                throw HostFailure("INVALID_INPUT: Editor resume check needs a bounded task and raw base")
+            }
         }
         if ["focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 1_000_000,

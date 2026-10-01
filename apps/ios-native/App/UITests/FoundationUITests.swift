@@ -16,6 +16,263 @@ final class FoundationUITests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    func testTaskDraftRecoveryExternalUnrelatedSeed() {
+        seedTaskDraftRecoveryExternal(library: "0b2ea631-a75b-4864-b90b-00e06635a082")
+    }
+
+    func testTaskDraftRecoveryExternalOwnedSeed() {
+        seedTaskDraftRecoveryExternal(library: "3d02f94b-58f4-48b8-ba86-d9a61a7b080f")
+    }
+
+    private func seedTaskDraftRecoveryExternal(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        boardEnabled(app.buttons["Task116 Recovery"], timeout: 30)
+        app.buttons["Task116 Recovery"].tap()
+        boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]
+        boardEnabled(title)
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+        title.typeText(" draft")
+        XCTAssertEqual(title.value as? String, "Task116 Recovery draft")
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        app.terminate() // Root changes the isolated saved task before the finish test.
+    }
+
+    func testTaskDraftRecoveryExternalUnrelatedFinish() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "0b2ea631-a75b-4864-b90b-00e06635a082"]
+        app.launch()
+        let title = app.textFields["task-editor-title"]
+        boardEnabled(title, timeout: 30)
+        XCTAssertEqual(title.value as? String, "Task116 Recovery draft")
+        XCTAssertFalse(app.staticTexts["task-recovery-conflict"].exists)
+        boardTap(app, "task-editor-save")
+        boardEnabled(app.buttons["Task116 Recovery draft"], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["Task116 Recovery draft"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate() // Root checks the external description and all nine tables.
+    }
+
+    func testTaskDraftRecoveryExternalOwnedFinish() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "3d02f94b-58f4-48b8-ba86-d9a61a7b080f"]
+        app.launch()
+        let conflict = app.staticTexts["task-recovery-conflict"]
+        boardEnabled(conflict, timeout: 30)
+        XCTAssertFalse(conflict.label.isEmpty)
+        XCTAssertEqual(app.staticTexts["task-recovery-title"].label, "Task116 Recovery draft")
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        boardTap(app, "task-recovery-resume")
+        boardEnabled(conflict, timeout: 30)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        boardTap(app, "task-recovery-keep")
+        boardEnabled(app.buttons["Task116 External"], timeout: 30)
+        boardEnabled(app.buttons["task-recovery-open"])
+        boardTap(app, "task-recovery-open")
+        boardEnabled(conflict)
+        boardTap(app, "task-recovery-discard")
+        boardTap(app, "task-recovery-discard-confirm")
+        boardEnabled(app.buttons["Task116 External"], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["Task116 External"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.buttons["Task116 External"].tap()
+        boardTap(app, "task-mode-edit")
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task116 External")
+        boardTap(app, "task-view-close")
+        XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+        app.terminate()
+    }
+
+    func testTaskDraftRecoveryRawTitleColdSave() throws {
+        let app = XCUIApplication()
+        let library = "5d4d005a-317f-4878-a94e-833775727cfb"
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        boardEnabled(app.buttons["capture-open"], timeout: 30)
+        guard app.buttons["Task116 Recovery"].waitForExistence(timeout: 5) else {
+            throw XCTSkip("Requires isolated Task116 Recovery inbox fixture")
+        }
+        app.buttons["Task116 Recovery"].tap()
+        boardTap(app, "task-mode-edit")
+        let title = app.descendants(matching: .any).matching(identifier: "task-editor-title").firstMatch
+        boardEnabled(title)
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+        title.typeText(" draft")
+        XCTAssertEqual(title.value as? String, "Task116 Recovery draft")
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        app.terminate(); app.launch()
+        boardEnabled(title, timeout: 30)
+        XCTAssertEqual(title.value as? String, "Task116 Recovery draft")
+        boardTap(app, "task-editor-save")
+        boardEnabled(app.buttons["Task116 Recovery draft"], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["Task116 Recovery draft"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate()
+    }
+
+    func testTaskDraftRecoveryColdDiscardDoesNotResurrect() throws {
+        let app = XCUIApplication()
+        let library = "1af2c777-a865-4b09-a59a-9d793479ec0a"
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        boardEnabled(app.buttons["capture-open"], timeout: 30)
+        guard app.buttons["Task116 Recovery"].waitForExistence(timeout: 5) else {
+            throw XCTSkip("Requires isolated Task116 Recovery inbox fixture")
+        }
+        app.buttons["Task116 Recovery"].tap()
+        boardTap(app, "task-mode-edit")
+        let title = app.descendants(matching: .any).matching(identifier: "task-editor-title").firstMatch
+        boardEnabled(title)
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+        title.typeText(" throwaway")
+        XCTAssertEqual(title.value as? String, "Task116 Recovery throwaway")
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        app.terminate(); app.launch()
+        boardEnabled(title, timeout: 30)
+        XCTAssertEqual(title.value as? String, "Task116 Recovery throwaway")
+        boardTap(app, "task-view-close")
+        boardTap(app, "task-editor-discard")
+        boardEnabled(app.buttons["Task116 Recovery"], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["Task116 Recovery"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate()
+    }
+
+    func testTaskDraftRecoveryCompoundRawInputsAndScheduleColdSave() throws {
+        let app = XCUIApplication()
+        let library = "4c66e479-265b-443b-a14a-e2b6da9e068e"
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        boardEnabled(app.buttons["capture-open"], timeout: 30)
+        guard app.buttons["Task116 Compound"].waitForExistence(timeout: 5) else {
+            throw XCTSkip("Requires isolated Task116 Compound inbox fixture")
+        }
+        app.buttons["Task116 Compound"].tap()
+        boardTap(app, "task-mode-edit")
+        let scroll = app.scrollViews["task-editor-scroll"]
+        func field(_ identifier: String, section: String? = nil) -> XCUIElement {
+            if let section {
+                let header = app.buttons["task-editor-section-" + section]
+                boardEnabled(header)
+                if header.value as? String == "Expand" {
+                    revealPagedElement(app, header, in: scroll, outerEdge: true)
+                    header.tap()
+                }
+            }
+            let element = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+            boardEnabled(element)
+            revealPagedElement(app, element, in: scroll, outerEdge: true)
+            return element
+        }
+        let title = field("task-editor-title")
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+        title.typeText(" draft")
+        XCTAssertEqual(title.value as? String, "Task116 Compound draft")
+        let custom = field("task-editor-timeEstimate-custom", section: "organization")
+        custom.tap()
+        let due = field("task-date-dueDate-quick-next_week", section: "scheduling")
+        due.tap()
+        let estimate = field("task-editor-timeEstimate-input", section: "organization")
+        XCTAssertEqual(estimate.value as? String, "30m")
+        replaceTextView(estimate, with: "2h3", tapOffset: CGVector(dx: 0.5, dy: 0.5))
+        let minutes = field("task-editor-timeSpent-input", section: "organization")
+        minutes.tap(); minutes.typeText("41")
+        XCTAssertEqual(minutes.value as? String, "41")
+        let checklist = field("task-checklist-input-0", section: "details")
+        checklist.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        checklist.typeText(" raw")
+        XCTAssertEqual(checklist.value as? String, "Task116 checklist raw")
+        let context = field("task-editor-contexts", section: "organization")
+        context.tap(); context.typeText("ctxraw")
+        XCTAssertEqual(context.value as? String, "ctxraw")
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["task-mode-edit"], timeout: 30)
+        XCTAssertEqual(field("task-editor-title").value as? String, "Task116 Compound draft")
+        XCTAssertEqual(field("task-editor-contexts", section: "organization").value as? String, "ctxraw")
+        XCTAssertEqual(field("task-editor-timeEstimate-input", section: "organization").value as? String, "2h3")
+        XCTAssertEqual(field("task-editor-timeSpent-input", section: "organization").value as? String, "41")
+        XCTAssertEqual(field("task-checklist-input-0", section: "details").value as? String, "Task116 checklist raw")
+        boardTap(app, "task-editor-save")
+        boardEnabled(app.buttons["Task116 Compound draft"], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["Task116 Compound draft"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate()
+    }
+
+    func testTaskDraftRecoveryResolverFailureUnfreezesCorrection() throws {
+        let app = XCUIApplication()
+        let library = "a2d5e959-01ca-4da3-8001-ae3277992250"
+        app.launchArguments = ["--native-ui-test-library", library,
+                               "--native-task116-resolver-failure-once"]
+        app.launch()
+        boardEnabled(app.buttons["capture-open"], timeout: 30)
+        guard app.buttons["Task116 Resolver"].waitForExistence(timeout: 5) else {
+            throw XCTSkip("Requires isolated Task116 Resolver inbox fixture")
+        }
+        app.buttons["Task116 Resolver"].tap()
+        boardTap(app, "task-mode-edit")
+        let scroll = app.scrollViews["task-editor-scroll"]
+        let header = app.buttons["task-editor-section-organization"]
+        boardEnabled(header)
+        if header.value as? String == "Expand" {
+            revealPagedElement(app, header, in: scroll, outerEdge: true)
+            header.tap()
+        }
+        let context = app.textFields["task-editor-contexts"]
+        boardEnabled(context)
+        revealPagedElement(app, context, in: scroll, outerEdge: true)
+        context.tap(); context.typeText("ctxraw")
+        XCTAssertEqual(context.value as? String, "ctxraw")
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        boardTap(app, "task-editor-save")
+        let saveError = app.staticTexts["task-view-error"]
+        XCTAssertTrue(saveError.waitForExistence(timeout: 10))
+        XCTAssertTrue(saveError.isHittable)
+        XCTAssertFalse(saveError.label.isEmpty)
+        XCTAssertTrue(app.buttons["task-editor-save"].isEnabled)
+        revealPagedElement(app, context, in: scroll, outerEdge: true)
+        context.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+        context.typeText("2")
+        XCTAssertEqual(context.value as? String, "@ctxraw2")
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        boardTap(app, "task-editor-save")
+        boardEnabled(app.buttons["Task116 Resolver"], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["Task116 Resolver"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate()
+    }
+
+    func testTaskDraftRecoveryCorruptTerminalStartupDiscard() throws {
+        let app = XCUIApplication()
+        let library = "fecebd76-181e-43a5-ba61-2c8051d8d3df"
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        let corrupt = app.staticTexts["task-recovery-startup-corrupt"]
+        guard corrupt.waitForExistence(timeout: 15) else {
+            throw XCTSkip("Requires isolated terminal-journal plus corrupt editor snapshot fixture")
+        }
+        XCTAssertFalse(app.staticTexts["Task116 Recovery saved"].exists)
+        boardTap(app, "task-recovery-startup-discard")
+        boardTap(app, "task-recovery-startup-discard-confirm")
+        boardEnabled(app.buttons["capture-open"], timeout: 30)
+        boardEnabled(app.buttons["Task116 Recovery saved"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["Task116 Recovery saved"], timeout: 30)
+        XCTAssertFalse(app.staticTexts["task-recovery-startup-corrupt"].exists)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate()
+    }
+
     /// Root stages this isolated 103-item fixture; the first and last legacy IDs repeat.
     func testPagedChecklistGlobalIndexesSaveAndRestart() throws {
         let app = XCUIApplication()
@@ -841,15 +1098,20 @@ final class FoundationUITests: XCTestCase {
     }
 
     private func boardEnabled(_ element: XCUIElement, timeout: TimeInterval = 10) {
-        XCTAssertTrue(element.waitForExistence(timeout: timeout))
-        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: element)
-        waitForExpectations(timeout: timeout)
+        if !element.exists { XCTAssertTrue(element.waitForExistence(timeout: timeout)) }
+        if !element.isEnabled {
+            expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: element)
+            waitForExpectations(timeout: timeout)
+        }
     }
 
     private func boardTap(_ app: XCUIApplication, _ id: String) {
         let element = app.buttons.matching(identifier: id).firstMatch
         boardEnabled(element)
-        XCTAssertTrue(element.isHittable, id)
+        if !element.isHittable {
+            expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: element)
+            waitForExpectations(timeout: 10)
+        }
         element.tap()
     }
 
@@ -902,7 +1164,8 @@ final class FoundationUITests: XCTestCase {
             let distance = min(max(44, needed + 24), frame.height * (exists ? 0.4 : 0.7))
             let endY = startY + (above ? distance : -distance)
             let origin = app.coordinate(withNormalizedOffset: .zero)
-            let x = outerEdge ? frame.maxX - 4 : frame.midX
+            // The leading gutter avoids both controls and the trailing scroll indicator hit area.
+            let x = outerEdge ? frame.minX + 4 : frame.midX
             origin.withOffset(CGVector(dx: x, dy: startY)).press(forDuration: 0.05,
                 thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY)),
                 withVelocity: .slow, thenHoldForDuration: 0.2)

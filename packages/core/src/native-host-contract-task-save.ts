@@ -68,9 +68,10 @@ const FIELDS: readonly SaveField[] = ['title', 'description', 'location', 'assig
     'projectId', 'areaId', 'sectionId', 'startTime', 'dueDate', 'reviewAt', 'relativeStartOffset',
     'recurrence', 'recurrenceStrategy', 'recurrenceRRule', 'showFutureRecurrence'];
 const STORED_FIELDS = FIELDS.filter((field) => field !== 'recurrenceStrategy' && field !== 'recurrenceRRule' && field !== 'focusedToday');
-const SCHEDULE = ['startTime', 'dueDate', 'relativeStartOffset', 'reviewAt'] as const;
-const RECURRENCE = ['recurrence', 'recurrenceStrategy', 'recurrenceRRule', 'showFutureRecurrence'] as const;
-const ASSOCIATIONS = ['projectId', 'areaId', 'sectionId'] as const;
+export const SCHEDULE = ['startTime', 'dueDate', 'relativeStartOffset', 'reviewAt'] as const;
+export const RECURRENCE = ['recurrence', 'recurrenceStrategy', 'recurrenceRRule', 'showFutureRecurrence'] as const;
+export const ASSOCIATIONS = ['projectId', 'areaId', 'sectionId'] as const;
+export const LIFECYCLE = ['status', 'focusedToday', 'completedAt'] as const;
 const REFERENCE_FIELDS = new Set<SaveField>(['title', 'description', 'location', 'assignedTo', 'contexts', 'tags', 'energyLevel',
     'projectId', 'areaId', 'sectionId']);
 const referenceEditable = (request: NativeTaskDraftSaveRequest): boolean => Object.keys(request.patch)

@@ -57,9 +57,15 @@ struct TaskViewSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Button {
-                    endEditingBeforeAction()
-                    if model.taskDirty { discardConfirm = true }
-                    else { model.closeTask() }
+                    if model.taskDirty {
+                        model.preserveTaskTokenInputForTransientModal()
+                        _ = UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                            to: nil, from: nil, for: nil)
+                        discardConfirm = true
+                    } else {
+                        endEditingBeforeAction()
+                        model.closeTask()
+                    }
                 } label: {
                     AppIcon(name: "x", size: 22).frame(width: 44, height: 44).contentShape(Rectangle())
                 }
@@ -97,6 +103,12 @@ struct TaskViewSheet: View {
                 .padding(.horizontal, 16).padding(.vertical, 10)
                 Divider().overlay(palette.border)
             }
+            if model.taskRecoveryProtected {
+                Text("Draft saved on this device")
+                    .rnFont(13).foregroundStyle(palette.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 24)
+                    .accessibilityIdentifier("task-recovery-protected")
+            }
 
             ScrollViewReader { reader in
                 ScrollView {
@@ -121,6 +133,20 @@ struct TaskViewSheet: View {
                                     .accessibilityIdentifier("task-view-error")
                                 retryButton
                             }
+                            .id("task-view-error")
+                        }
+                        if let protectionError = model.taskRecoveryCheckpointError {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("This draft has not been saved for recovery: " + protectionError)
+                                    .rnFont(14).foregroundStyle(palette.danger)
+                                    .accessibilityIdentifier("task-recovery-checkpoint-error")
+                                Button(strings.text("common.retry")) {
+                                    Task { await model.retryTaskDraftCheckpoint() }
+                                }
+                                .frame(minWidth: 44, minHeight: 44)
+                                .accessibilityIdentifier("task-recovery-checkpoint-retry")
+                            }
+                            .id("task-recovery-checkpoint-error")
                         } else if rows.isEmpty && !busy {
                             Text(strings.text("common.notSet")).rnFont(14).foregroundStyle(palette.secondary)
                             retryButton
@@ -130,6 +156,14 @@ struct TaskViewSheet: View {
                 }
                 .id(editing)
                 .onChange(of: focusedChecklistIndex) { _ in scrollChecklistFocus(reader) }
+                .onChange(of: error) { message in
+                    guard message != nil else { return }
+                    DispatchQueue.main.async { reader.scrollTo("task-view-error", anchor: .top) }
+                }
+                .onChange(of: model.taskRecoveryCheckpointError) { message in
+                    guard message != nil else { return }
+                    DispatchQueue.main.async { reader.scrollTo("task-recovery-checkpoint-error", anchor: .top) }
+                }
                 .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
                     scrollChecklistFocus(reader)
                 }
@@ -145,6 +179,12 @@ struct TaskViewSheet: View {
                 model.discardTask()
             }
                 .accessibilityIdentifier("task-editor-discard")
+            if model.taskRecoveryAvailable {
+                Button("Keep for later") {
+                    Task { await model.keepTaskRecoveryForLater() }
+                }
+                .accessibilityIdentifier("task-editor-keep-for-later")
+            }
             Button(strings.text("common.cancel"), role: .cancel) {}
                 .accessibilityIdentifier("task-editor-keep-editing")
         } message: { Text(strings.text("taskEdit.discardChangesDesc")) }
@@ -174,7 +214,7 @@ struct TaskViewSheet: View {
         Button {
             endEditingBeforeAction()
             editing = edit
-            model.taskInitialTab = edit ? "task" : "view"
+            model.setTaskInitialTab(edit ? "task" : "view")
             if !edit { datePickerID = "" }
             if !edit { Task { await model.readTaskView() } }
         } label: {
@@ -196,7 +236,8 @@ struct TaskViewSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
                 label(strings.text("taskEdit.titleLabel"))
-                TextField(strings.text("taskEdit.titleLabel"), text: $model.taskTitleDraft, axis: .vertical)
+                TextField(strings.text("taskEdit.titleLabel"), text: Binding(
+                    get: { model.taskTitleDraft }, set: { model.setTaskTitleDraft($0) }), axis: .vertical)
                     .rnFont(16).lineLimit(2...6).padding(12)
                     .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
@@ -321,7 +362,7 @@ struct TaskViewSheet: View {
         } else if field == "description" {
             VStack(alignment: .leading, spacing: 8) {
                 label(strings.text("taskEdit.descriptionLabel"))
-                TextEditor(text: $model.taskNoteDraft)
+                TextEditor(text: Binding(get: { model.taskNoteDraft }, set: { model.setTaskNoteDraft($0) }))
                     .rnFont(16).scrollContentBackground(.hidden).frame(minHeight: 220)
                     .padding(8).background(palette.input, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
@@ -332,7 +373,8 @@ struct TaskViewSheet: View {
         } else if field == "location" {
             VStack(alignment: .leading, spacing: 8) {
                 label(strings.text("taskEdit.locationLabel"))
-                TextField(strings.text("taskEdit.locationPlaceholder"), text: $model.taskLocationDraft)
+                TextField(strings.text("taskEdit.locationPlaceholder"), text: Binding(
+                    get: { model.taskLocationDraft }, set: { model.setTaskLocationDraft($0) }))
                     .rnFont(16).padding(12).frame(minHeight: 44)
                     .submitLabel(.done).onSubmit(endEditingBeforeAction)
                     .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
@@ -367,7 +409,8 @@ struct TaskViewSheet: View {
                 .foregroundStyle(palette.secondary).accessibilityAddTraits(.isHeader)
                 metadataOptions(field)
                 if field == "timeEstimate" && estimate.flag("customSelected") {
-                    TextField("2h30", text: $model.taskEstimateInput)
+                    TextField("2h30", text: Binding(
+                        get: { model.taskEstimateInput }, set: { model.setTaskEstimateInput($0) }))
                         .rnFont(16).textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.done)
                         .padding(12).frame(minHeight: 44).background(palette.input, in: RoundedRectangle(cornerRadius: 10))
                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
@@ -385,7 +428,8 @@ struct TaskViewSheet: View {
                         Text(strings.text("taskEdit.timeSpentLabel").uppercased()).rnFont(14)
                     }
                     .foregroundStyle(palette.secondary).accessibilityAddTraits(.isHeader)
-                    TextField(strings.text("taskEdit.timeSpentPlaceholder"), text: $model.taskTimeSpentInput)
+                    TextField(strings.text("taskEdit.timeSpentPlaceholder"), text: Binding(
+                        get: { model.taskTimeSpentInput }, set: { model.setTaskTimeSpentInput($0) }))
                         .rnFont(16).keyboardType(.numberPad).submitLabel(.done)
                         .padding(12).frame(minHeight: 44)
                         .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
@@ -819,7 +863,8 @@ struct TaskViewSheet: View {
                 }
                 if !item.object("add").isEmpty {
                     let add = item.object("add")
-                    TextField(add.text("placeholder"), text: $model.taskChecklistAppendInput)
+                    TextField(add.text("placeholder"), text: Binding(
+                        get: { model.taskChecklistAppendInput }, set: { model.setTaskChecklistAppendInput($0) }))
                         .rnFont(16).padding(12).frame(minHeight: 44)
                         .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
@@ -1524,6 +1569,7 @@ private struct TaskBackdatedCompletionDraft {
 }
 
 private struct TaskBackdatedCompletionDialog: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     let initial: TaskBackdatedCompletionDraft
@@ -1546,14 +1592,15 @@ private struct TaskBackdatedCompletionDialog: View {
     }
 
     var body: some View {
-        GeometryReader { _ in
+        GeometryReader { geometry in
             ZStack {
                 Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { cancel() }.accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 12) {
-                    ViewThatFits(in: .vertical) {
-                        form.fixedSize(horizontal: false, vertical: true)
-                        ScrollView { form }.scrollDismissesKeyboard(.interactively)
-                    }
+                    ScrollView { form }
+                    .scrollDismissesKeyboard(.interactively)
+                    // Keep this one form mounted as the keyboard changes the
+                    // available height; replacing it loses the focused input.
+                    .frame(maxHeight: max(120, min(dynamicTypeSize.isAccessibilitySize ? .infinity : 360, geometry.size.height - 132)))
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("task-backdate-scroll")
                     HStack {

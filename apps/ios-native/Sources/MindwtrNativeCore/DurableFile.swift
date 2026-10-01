@@ -19,11 +19,22 @@ enum DurableFile {
         }
     }
 
-    static func write(_ data: Data, to url: URL) throws {
+    static func write(_ data: Data, to url: URL, privateDraft: Bool = false) throws {
         let temporary = url.deletingLastPathComponent().appendingPathComponent(".pending-\(UUID().uuidString)")
         let fd = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         guard fd >= 0 else { throw HostFailure("Cannot create pending command journal") }
         defer { Darwin.close(fd); try? FileManager.default.removeItem(at: temporary) }
+        if privateDraft {
+            // Protect the empty inode before the first byte of task text is written.
+            #if os(iOS)
+            try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                                                  ofItemAtPath: temporary.path)
+            #endif
+            var protectedURL = temporary
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try protectedURL.setResourceValues(values)
+        }
         try data.withUnsafeBytes { bytes in
             var offset = 0
             while offset < bytes.count {
@@ -55,6 +66,7 @@ final class HostIOFaults {
     var afterIntegrity: (() throws -> Void)?
     var journalWrite: (() throws -> Void)?
     var journalRemove: (() throws -> Void)?
+    var editorDraftRemove: (() throws -> Void)?
     var commandDiagnostic: ((String) -> Void)?
 }
 #endif

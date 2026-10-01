@@ -728,6 +728,13 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getTaskEditorModel({ id }));
         });
     },
+    /** Strict read of an editor snapshot's touched opening bases, including unresolved raw-only inputs. */
+    taskEditorResumeCheck(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(await contract.checkTaskEditorResume(JSON.parse(json)));
+        });
+    },
     destinationPicker(json: string): string {
         return submit(async () => {
             requireSaved();

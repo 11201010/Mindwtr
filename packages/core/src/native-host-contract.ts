@@ -255,6 +255,7 @@ import { createReviewViewMethods } from './native-host-contract-review-views';
 import { createQuickCaptureMethods } from './native-host-contract-quick-capture';
 import { createMindSweepMethods } from './native-host-contract-mind-sweep';
 import { createTaskDraftSaveMethods, getNativeTaskScheduleBase, getNativeTaskRecurrenceBase, type NativeTaskScheduleBase, type NativeTaskRecurrenceBase } from './native-host-contract-task-save';
+import { createTaskEditorResumeMethods } from './native-host-contract-task-editor-resume';
 import { createTaskChecklistSaveMethods } from './native-host-contract-task-checklist';
 import { createTaskFocusMethods } from './native-host-contract-task-focus';
 import { createFocusOrderMethods } from './native-host-contract-focus-order';
@@ -1558,6 +1559,8 @@ export function createNativeHostContract(options: {
     return {
         version: NATIVE_HOST_CONTRACT_VERSION,
         ...createTaskDraftSaveMethods({ readiness, save, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value) }),
+        ...createTaskEditorResumeMethods({ readiness, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value),
+            isReadOnly: isInArchivedProject }),
         ...createTaskChecklistSaveMethods({ readiness, save,
             validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value), isReadOnly: isInArchivedProject }),
         ...inboxProcessingMethods,

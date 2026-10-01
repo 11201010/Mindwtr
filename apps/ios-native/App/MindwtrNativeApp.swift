@@ -154,6 +154,7 @@ final class AppLockController: ObservableObject {
 private struct AppLockRoot: View {
     @ObservedObject var model: CoreModel
     @ObservedObject var lock: AppLockController
+    @State private var confirmingCorruptDraftDiscard = false
     @Environment(\.scenePhase) private var phase
     @Environment(\.colorScheme) private var scheme
     private var palette: AppPalette { AppPalette(theme: model.theme, system: scheme) }
@@ -161,7 +162,19 @@ private struct AppLockRoot: View {
     var body: some View {
         Group {
             if model.ready && !lock.concealed {
-                InboxScreen(model: model)
+                if model.taskRecoveryGateVisible {
+                    TaskRecoveryGate(model: model, palette: palette)
+                } else {
+                    InboxScreen(model: model)
+                        .overlay(alignment: .bottomTrailing) {
+                            if model.taskRecoveryAvailable {
+                                Button("Resume draft") { model.showTaskRecovery() }
+                                    .buttonStyle(.borderedProminent)
+                                    .padding(16)
+                                    .accessibilityIdentifier("task-recovery-open")
+                            }
+                        }
+                }
             } else {
                 ZStack {
                     palette.bg.ignoresSafeArea()
@@ -180,6 +193,12 @@ private struct AppLockRoot: View {
                                 .frame(maxWidth: 320).padding(.bottom, 26)
                             if model.busy || lock.authenticating {
                                 ProgressView().accessibilityLabel(model.label("appLock.authenticating"))
+                            } else if model.taskRecoveryStartupCorrupt {
+                                Text("An unreadable task draft prevents startup. Its contents cannot be shown.")
+                                    .rnFont(15).multilineTextAlignment(.center).padding(.bottom, 12)
+                                    .accessibilityIdentifier("task-recovery-startup-corrupt")
+                                Button("Discard unreadable draft") { confirmingCorruptDraftDiscard = true }
+                                    .accessibilityIdentifier("task-recovery-startup-discard")
                             } else if model.appLockRecoveryPending {
                                 Text("The pending App lock change could not be confirmed. Cancel it to continue with the saved setting.")
                                     .rnFont(15).multilineTextAlignment(.center).padding(.bottom, 20)
@@ -209,10 +228,12 @@ private struct AppLockRoot: View {
         .preferredColorScheme(model.theme.text("scheme").isEmpty ? nil : palette.dark ? .dark : .light)
         .onAppear { lock.sceneChanged(phase) }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            model.flushTaskDraftCheckpointInBackground()
             if model.appLockActive && !lock.authenticating { lock.readFailed() }
             lock.concealSnapshot()
         }
         .onChange(of: phase) { next in
+            if next != .active { model.flushTaskDraftCheckpointInBackground() }
             if next != .active && model.appLockActive && !lock.authenticating { lock.readFailed() }
             lock.sceneChanged(next)
             if next == .active && !lock.concealed { Task { await model.refresh() } }
@@ -223,6 +244,92 @@ private struct AppLockRoot: View {
         .task(id: "\(model.ready)-\(lock.nonce)-\(phase == .active)-\(lock.authenticating)") {
             guard model.ready, phase == .active else { return }
             await lock.autoUnlock(label: model.label)
+        }
+        .alert("Discard unreadable draft?", isPresented: $confirmingCorruptDraftDiscard) {
+            Button("Discard draft", role: .destructive) {
+                Task { await model.discardCorruptStartupDraft() }
+            }
+            .accessibilityIdentifier("task-recovery-startup-discard-confirm")
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the unsaved editor draft from this device. A pending save will prevent removal until it is settled.")
+        }
+    }
+}
+
+private struct TaskRecoveryGate: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @State private var confirmingDiscard = false
+
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("Saved task draft").rnFont(24, .bold)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(model.taskRecoveryReviewTitle.isEmpty ? "Untitled task" : model.taskRecoveryReviewTitle)
+                        .rnFont(17, .semibold)
+                        .accessibilityIdentifier("task-recovery-title")
+                    if !model.taskRecoveryReviewNote.isEmpty {
+                        Text(model.taskRecoveryReviewNote).rnFont(15)
+                            .foregroundStyle(palette.secondary)
+                            .accessibilityIdentifier("task-recovery-note")
+                    }
+                    ForEach(Array(model.taskRecoveryReviewLines.enumerated()), id: \.offset) { entry in
+                        Text(entry.element).rnFont(15).foregroundStyle(palette.secondary)
+                    }
+                    if let conflict = model.taskRecoveryConflict {
+                        Text(conflict).rnFont(15).foregroundStyle(palette.danger)
+                            .accessibilityIdentifier("task-recovery-conflict")
+                    }
+                    if let protectionError = model.taskRecoveryCheckpointError {
+                        Text(protectionError).rnFont(15).foregroundStyle(palette.danger)
+                            .accessibilityIdentifier("task-recovery-error")
+                        Button(model.label("common.retry")) {
+                            Task { await model.retryTaskDraftCheckpoint() }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .accessibilityIdentifier("task-recovery-retry-checkpoint")
+                    }
+                    if model.busy {
+                        ProgressView().frame(minHeight: 44)
+                            .accessibilityIdentifier("task-recovery-loading")
+                    }
+                    Button("Resume editing") { Task { await model.restoreTaskRecovery() } }
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .disabled(model.busy)
+                        .accessibilityIdentifier("task-recovery-resume")
+                    Button("Keep for later") { Task { await model.keepTaskRecoveryForLater() } }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .disabled(model.busy || model.taskRecoveryCheckpointError != nil)
+                        .accessibilityIdentifier("task-recovery-keep")
+                    Button("Discard draft", role: .destructive) { confirmingDiscard = true }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .disabled(model.busy)
+                        .accessibilityIdentifier("task-recovery-discard")
+                }
+                .padding(24)
+                .frame(maxWidth: 540, minHeight: geometry.size.height, alignment: .center)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .foregroundStyle(palette.text)
+        .background(palette.bg)
+        .tint(palette.tint)
+        .accessibilityIdentifier("task-recovery-gate")
+        .alert("Discard saved draft?", isPresented: $confirmingDiscard) {
+            Button("Discard draft", role: .destructive) {
+                Task { await model.discardTaskRecoveryDraft(close: true) }
+            }
+            .accessibilityIdentifier("task-recovery-discard-confirm")
+            Button(model.label("common.cancel"), role: .cancel) {}
+        } message: {
+            Text("This removes the unsaved task changes from this device.")
+        }
+        .task {
+            if model.taskRecoveryConflict == nil { await model.restoreTaskRecovery() }
         }
     }
 }

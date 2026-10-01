@@ -501,7 +501,9 @@ final class CoreModel: ObservableObject {
     var taskInitialTab = "view"
     @Published private(set) var taskView: CoreObject = [:]
     @Published private(set) var taskError: String?
-    @Published private(set) var taskEditor: CoreObject = [:]
+    @Published private(set) var taskEditor: CoreObject = [:] {
+        didSet { checkpointTaskDraftAfterCoreEdit() }
+    }
     @Published private(set) var taskDestination: CoreObject = [:]
     @Published private(set) var taskDestinationKind = ""
     @Published private(set) var taskDestinationQuery = ""
@@ -512,7 +514,9 @@ final class CoreModel: ObservableObject {
     @Published var taskLocationDraft = ""
     @Published var taskEstimateInput = ""
     @Published var taskTimeSpentInput = ""
-    @Published private(set) var taskChecklist: [CoreObject] = []
+    @Published private(set) var taskChecklist: [CoreObject] = [] {
+        didSet { checkpointTaskDraftAfterCoreEdit() }
+    }
     @Published private(set) var taskChecklistField: CoreObject = [:]
     @Published private(set) var taskChecklistInputs: [Int: String] = [:]
     @Published var taskChecklistAppendInput = ""
@@ -669,6 +673,28 @@ final class CoreModel: ObservableObject {
     private var taskTokenEdited: Set<String> = []
     private var taskTokenFocused: Set<String> = []
     private var taskTokenSuppressNextBlur: Set<String> = []
+    @Published private(set) var taskRecoveryGateVisible = false
+    @Published private(set) var taskRecoveryStartupCorrupt = false
+    @Published private(set) var taskRecoveryConflict: String?
+    @Published private var taskRecoveryReviewOptions: CoreObject = [:]
+    @Published private(set) var taskRecoveryCheckpointError: String?
+    private var taskRecoverySnapshot: EditorDraftSnapshot?
+    private var taskRecoveryCorrupt = false
+    private var taskRecoveryTouched: Set<String> = []
+    private var taskRecoveryChecklistTouched = false
+    private var taskRecoverySession = UUID().uuidString.lowercased()
+    private var taskRecoveryGeneration = 0
+    @Published private(set) var taskRecoveryCheckpointedGeneration = 0
+    private var taskRecoveryCheckpointTask: Task<Void, Never>?
+    private var taskRecoveryBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var taskRecoveryBackgroundGeneration = 0
+    private var taskRecoveryHydrating = false
+    private var taskRecoverySaving = false
+    var taskRecoveryAvailable: Bool { taskRecoverySnapshot != nil || taskRecoveryCorrupt }
+    var taskRecoveryProtected: Bool {
+        taskRecoverySnapshot != nil && taskRecoveryCheckpointError == nil
+            && taskRecoveryCheckpointedGeneration == taskRecoveryGeneration
+    }
     private var taskDestinationGeneration = 0
     private var taskDestinationReadTask: Task<Void, Never>?
     private var taskDestinationNeedsRead = false
@@ -679,6 +705,7 @@ final class CoreModel: ObservableObject {
     @Published private var focusRefusedLocationID: Int?
     #if DEBUG && targetEnvironment(simulator)
     // Response faults are enabled only for an explicitly isolated UI-test library.
+    private var taskRecoveryResolverTestFailure = false
     private var projectAreaTestReadFailure = false
     private var projectAreaTestBlockedWrite = false
     private var projectTagTestReadFailure = false
@@ -1571,6 +1598,360 @@ final class CoreModel: ObservableObject {
             && capture.object("picker").text("query") == contextQuery
     }
     func label(_ key: String) -> String { strings.text(key) }
+    private let taskRecoveryScheduleFields = ["startTime", "dueDate", "relativeStartOffset", "reviewAt"]
+    private let taskRecoveryAssociationFields = ["projectId", "areaId", "sectionId"]
+    private let taskRecoveryLifecycleFields = ["status", "focusedToday", "completedAt"]
+
+    var taskRecoveryReviewTitle: String {
+        guard let snapshot = taskRecoverySnapshot,
+              let payload = try? decode(snapshot.payloadJSON) else { return "Saved task draft" }
+        let raw = payload.object("raw")
+        let title = raw.text("title").isEmpty ? payload.object("edited").text("title") : raw.text("title")
+        return title.isEmpty ? "Saved task draft" : String(title.prefix(500))
+    }
+
+    var taskRecoveryReviewNote: String {
+        guard let snapshot = taskRecoverySnapshot,
+              let payload = try? decode(snapshot.payloadJSON) else { return "" }
+        return String(payload.object("raw").text("note").prefix(2_000))
+    }
+
+    private func taskRecoveryReviewLabel(_ field: String) -> String {
+        let labels: [String: (String, String)] = [
+            "title": ("taskEdit.titleLabel", "Title"), "description": ("taskEdit.descriptionLabel", "Description"),
+            "location": ("taskEdit.locationLabel", "Location"), "assignedTo": ("taskEdit.assignedTo", "Assigned To"),
+            "priority": ("taskEdit.priorityLabel", "Priority"), "energyLevel": ("taskEdit.energyLevel", "Energy"),
+            "timeEstimate": ("taskEdit.timeEstimateLabel", "Estimate"), "timeSpentMinutes": ("taskEdit.timeSpentLabel", "Time Spent"),
+            "contexts": ("taskEdit.contextsLabel", "Contexts"), "tags": ("taskEdit.tagsLabel", "Tags"),
+            "status": ("taskEdit.statusLabel", "Status"), "focusedToday": ("agenda.addToFocus", "Focused Today"),
+            "completedAt": ("task.completedAtPromptTitle", "Completed At"),
+            "projectId": ("nav.projects", "Project"), "areaId": ("projects.areaLabel", "Area"),
+            "sectionId": ("projects.sectionsLabel", "Section"), "startTime": ("taskEdit.startDateLabel", "Start"),
+            "dueDate": ("taskEdit.dueDateLabel", "Due"), "reviewAt": ("taskEdit.reviewDateLabel", "Review"),
+            "relativeStartOffset": ("taskEdit.startModeRelative", "Relative Start"),
+            "recurrence": ("taskEdit.recurrenceLabel", "Recurrence"),
+            "recurrenceStrategy": ("taskEdit.recurrenceLabel", "Recurrence strategy"),
+            "recurrenceRRule": ("taskEdit.recurrenceLabel", "Recurrence rule"),
+            "showFutureRecurrence": ("recurrence.showFutureInCalendar", "Show future recurrence")]
+        let (key, fallback) = labels[field] ?? ("", field)
+        let translated = strings.text(key)
+        return translated.isEmpty ? fallback : translated
+    }
+
+    private func taskRecoveryReviewValue(_ value: Any?, field: String = "") -> String {
+        guard let value, !(value is NSNull) else { return strings.text("common.none").isEmpty ? "None" : strings.text("common.none") }
+        if let text = value as? String {
+            if ["projectId", "areaId", "sectionId"].contains(field) {
+                if text.isEmpty { return strings.text("common.none").isEmpty ? "None" : strings.text("common.none") }
+                let collection = field == "projectId" ? "projects" : field == "areaId" ? "areas" : "sections"
+                let match = taskRecoveryReviewOptions.objects(collection).first { $0.text("id") == text }
+                let name = match?.text(field == "areaId" ? "name" : "title") ?? ""
+                return name.isEmpty ? "Destination unavailable" : String(name.prefix(300))
+            }
+            if field == "status" {
+                let translated = strings.text("status." + text)
+                if !translated.isEmpty { return translated }
+            }
+            return String(text.prefix(300))
+        }
+        if let number = value as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return number.boolValue ? "On" : "Off" }
+            return number.stringValue
+        }
+        if let object = value as? CoreObject {
+            if field == "relativeStartOffset" {
+                return String("\(object.number("amount")) \(object.text("unit")) before due".prefix(300))
+            }
+            return "Changed"
+        }
+        if let list = value as? [String] {
+            return String(list.prefix(8).joined(separator: ", ").prefix(300))
+        }
+        return "Changed"
+    }
+
+    private func taskRecoveryPendingLine(_ operation: CoreObject) -> String {
+        let edit = operation.object("edit")
+        let field = edit.text("field")
+        let label = ["startTime", "dueDate", "reviewAt"].contains(field)
+            ? taskRecoveryReviewLabel(field) : "Schedule"
+        switch edit.text("type") {
+        case "dateAction":
+            let action = edit.text("action")
+            let detail = action == "clear" ? "Clear date" : action == "dateOnly" ? "Date only"
+                : edit.text("preset").replacingOccurrences(of: "_", with: " ").capitalized
+            return "Pending \(label): \(detail)"
+        case "pickDate": return "Pending \(label): Date \(edit.text("date"))"
+        case "pickTime": return "Pending \(label): Time \(edit.text("time"))"
+        case "relativeStart":
+            return "Pending \(taskRecoveryReviewLabel("relativeStartOffset")): \(edit.text("amount")) \(edit.text("unit")) before due"
+        case "monthlyCustom":
+            return "Pending \(taskRecoveryReviewLabel("recurrence")): Custom monthly, every \(edit.text("intervalText")) months"
+        case "toggleFutureRecurrence":
+            return "Pending \(taskRecoveryReviewLabel("showFutureRecurrence")): Toggle"
+        case "recurrence":
+            let value = edit.object("edit")
+            let kind = value.text("kind")
+            let detail: String
+            switch kind {
+            case "interval": detail = "Every \(value.text("text"))"
+            case "count": detail = "Ends after \(value.text("text"))"
+            case "until": detail = "Ends on \(value.text("date"))"
+            case "monthlyCustom": detail = "Custom monthly"
+            default: detail = kind.replacingOccurrences(of: "_", with: " ").capitalized
+            }
+            return "Pending \(taskRecoveryReviewLabel("recurrence")): \(detail)"
+        case "fields":
+            let patch = edit.object("patch")
+            if let field = patch.keys.sorted().first {
+                return "Pending \(taskRecoveryReviewLabel(field)): \(taskRecoveryReviewValue(patch[field], field: field))"
+            }
+            return "Pending scheduling change"
+        default: return "Pending scheduling change"
+        }
+    }
+
+    var taskRecoveryReviewLines: [String] {
+        guard let snapshot = taskRecoverySnapshot,
+              let payload = try? decode(snapshot.payloadJSON) else { return [] }
+        let raw = payload.object("raw")
+        var lines: [String] = []
+        let edited = payload.object("edited")
+        for field in edited.keys.sorted() {
+            lines.append(taskRecoveryReviewLabel(field) + ": " + taskRecoveryReviewValue(edited[field], field: field))
+        }
+        for (field, title) in [("location", "Location"), ("estimate", "Estimate"),
+                               ("timeSpent", "Time Spent")] {
+            if !raw.text(field).isEmpty { lines.append(title + " input: " + String(raw.text(field).prefix(300))) }
+        }
+        let tokens = raw.object("tokens")
+        for (field, title) in [("contexts", "Contexts"), ("tags", "Tags"),
+                               ("assignedTo", "Assigned To")] {
+            if !tokens.text(field).isEmpty { lines.append(title + " input: " + String(tokens.text(field).prefix(300))) }
+        }
+        if !raw.text("relativeAmount").isEmpty {
+            lines.append("Relative Start input: " + String(raw.text("relativeAmount").prefix(300)))
+        }
+        for (field, value) in raw.object("recurrenceInputs").sorted(by: { $0.key < $1.key }) {
+            if let input = value as? String, !input.isEmpty {
+                lines.append("Recurrence \(field.capitalized) input: " + taskRecoveryReviewValue(input))
+            }
+        }
+        if let checklist = payload["checklistValue"] as? [CoreObject] {
+            for item in checklist.prefix(20) { lines.append("Checklist: " + String(item.text("title").prefix(300))) }
+            if checklist.count > 20 { lines.append("\(checklist.count - 20) more checklist items omitted") }
+        }
+        let checklistInputs = raw.object("checklistInputs")
+        for (_, title) in checklistInputs.sorted(by: { $0.key < $1.key }).prefix(20) {
+            lines.append("Checklist input: " + taskRecoveryReviewValue(title))
+        }
+        if checklistInputs.count > 20 { lines.append("\(checklistInputs.count - 20) more checklist inputs omitted") }
+        if !raw.text("checklistAppend").isEmpty {
+            lines.append("Checklist input: " + String(raw.text("checklistAppend").prefix(300)))
+        }
+        let scheduleEdits = payload.objects("scheduleEdits")
+        for operation in scheduleEdits.prefix(20) {
+            lines.append(String(taskRecoveryPendingLine(operation).prefix(300)))
+        }
+        if scheduleEdits.count > 20 { lines.append("\(scheduleEdits.count - 20) more scheduling changes omitted") }
+        if lines.count > 80 { return Array(lines.prefix(80)) + ["\(lines.count - 80) more changes omitted"] }
+        return lines
+    }
+
+    private func taskRecoveryOwn(_ fields: [String] = [], checklist: Bool = false) {
+        guard taskPresented, !taskEditor.isEmpty, !taskRecoveryHydrating, !taskRecoverySaving,
+              !taskEditor.flag("readOnly"), taskRecoverySnapshot == nil
+                || taskRecoverySnapshot?.sessionID == taskRecoverySession else { return }
+        for field in fields {
+            if taskRecoveryScheduleFields.contains(field) { taskRecoveryTouched.formUnion(taskRecoveryScheduleFields) }
+            else if taskRecurrenceFields.contains(field) { taskRecoveryTouched.formUnion(taskRecurrenceFields) }
+            else if taskRecoveryAssociationFields.contains(field) { taskRecoveryTouched.formUnion(taskRecoveryAssociationFields) }
+            else if taskRecoveryLifecycleFields.contains(field) { taskRecoveryTouched.formUnion(taskRecoveryLifecycleFields) }
+            else { taskRecoveryTouched.insert(field) }
+        }
+        if checklist { taskRecoveryChecklistTouched = true }
+        checkpointTaskDraft()
+    }
+
+    private func checkpointTaskDraftAfterCoreEdit() {
+        guard !taskRecoveryHydrating, !taskRecoverySaving,
+              !taskRecoveryTouched.isEmpty || taskRecoveryChecklistTouched else { return }
+        checkpointTaskDraft()
+    }
+
+    private func taskRecoveryPayload() -> CoreObject {
+        let current = taskDraft
+        var touchedBase: CoreObject = [:]
+        var edited: CoreObject = [:]
+        for field in taskRecoveryTouched {
+            touchedBase[field] = taskOriginalDraft[field] ?? NSNull()
+            edited[field] = current[field] ?? NSNull()
+        }
+        let scheduleEdits: [CoreObject] = taskScheduleEdits.map { operation in
+            ["id": operation.id, "control": operation.control, "edit": operation.edit,
+             "coalesces": operation.coalesces]
+        }
+        let scheduleOwned = taskRecoveryTouched.contains(where: { taskRecoveryScheduleFields.contains($0) })
+        let recurrenceOwned = taskRecoveryTouched.contains(where: { taskRecurrenceFields.contains($0) })
+        let checklistInputs = taskRecoveryChecklistTouched
+            ? Dictionary(uniqueKeysWithValues: taskChecklistInputs.map { (String($0.key), $0.value) })
+            : [String: String]()
+        let tokens = taskTokenInputs.filter { taskRecoveryTouched.contains($0.key) }
+        let tokenCanonical = taskTokenCanonical.filter { taskRecoveryTouched.contains($0.key) }
+        let tokenResolved = taskTokenResolvedInputs.filter { taskRecoveryTouched.contains($0.key) }
+        var payload: CoreObject = [
+            "version": 1, "taskID": viewedTaskID, "tab": taskInitialTab,
+            "touchedBase": touchedBase, "edited": edited,
+            "raw": ["title": taskRecoveryTouched.contains("title") ? taskTitleDraft : "",
+                    "note": taskRecoveryTouched.contains("description") ? taskNoteDraft : "",
+                    "location": taskRecoveryTouched.contains("location") ? taskLocationDraft : "",
+                    "estimate": taskRecoveryTouched.contains("timeEstimate") ? taskEstimateInput : "",
+                    "estimateResolved": taskRecoveryTouched.contains("timeEstimate") ? taskEstimateResolvedInput : "",
+                    "timeSpent": taskRecoveryTouched.contains("timeSpentMinutes") ? taskTimeSpentInput : "",
+                    "timeSpentResolved": taskRecoveryTouched.contains("timeSpentMinutes") ? taskTimeSpentResolvedInput : "",
+                    "tokens": tokens, "tokenCanonical": tokenCanonical,
+                    "tokenResolved": tokenResolved,
+                    "tokenEdited": Array(taskTokenEdited.filter { taskRecoveryTouched.contains($0) }).sorted(),
+                    "checklistInputs": checklistInputs,
+                    "checklistAppend": taskRecoveryChecklistTouched ? taskChecklistAppendInput : "",
+                    "relativeAmount": scheduleOwned ? taskRelativeAmountInput : "",
+                    "relativeUnit": scheduleOwned ? taskRelativeUnitInput : "",
+                    "relativeOwned": scheduleOwned && taskRelativeInputOwned,
+                    "relativeCommitRequested": scheduleOwned && taskRelativeInputCommitRequested,
+                    "recurrenceInputs": recurrenceOwned ? taskRecurrenceInputs : [:],
+                    "recurrenceOwned": recurrenceOwned ? Array(taskRecurrenceInputOwned).sorted() : [],
+                    "recurrenceCommitRequested": recurrenceOwned ? Array(taskRecurrenceInputCommitRequested).sorted() : []],
+            "scheduleEdits": scheduleEdits,
+            "scheduleFailedID": taskScheduleFailedID.map { $0 as Any } ?? NSNull()]
+        if scheduleOwned {
+            payload["scheduleBase"] = taskOriginalSchedule
+        }
+        if recurrenceOwned {
+            payload["recurrenceBase"] = taskOriginalRecurrence
+        }
+        if taskRecoveryChecklistTouched {
+            payload["checklistBase"] = taskOriginalChecklist
+            payload["checklistValue"] = taskChecklist
+        }
+        return payload
+    }
+
+    private func checkpointTaskDraft(force: Bool = false) {
+        guard let host, taskPresented, !viewedTaskID.isEmpty, !taskRecoveryHydrating,
+              !taskRecoverySaving || force,
+              !taskRecoveryTouched.isEmpty || taskRecoveryChecklistTouched else { return }
+        do {
+            taskRecoveryGeneration += 1
+            let snapshot = EditorDraftSnapshot(sessionID: taskRecoverySession, taskID: viewedTaskID,
+                generation: taskRecoveryGeneration, payloadJSON: try json(taskRecoveryPayload()))
+            taskRecoverySnapshot = snapshot
+            let previous = taskRecoveryCheckpointTask
+            taskRecoveryCheckpointTask = Task {
+                await previous?.value
+                do {
+                    try await host.checkpointEditorDraft(snapshot)
+                    if taskRecoverySession == snapshot.sessionID,
+                       taskRecoveryGeneration == snapshot.generation {
+                        taskRecoveryCheckpointedGeneration = snapshot.generation
+                        taskRecoveryCheckpointError = nil
+                    }
+                } catch {
+                    if taskRecoverySession == snapshot.sessionID,
+                       taskRecoveryGeneration == snapshot.generation {
+                        taskRecoveryCheckpointError = error.localizedDescription
+                    }
+                }
+            }
+        } catch { taskRecoveryCheckpointError = error.localizedDescription }
+    }
+
+    func flushTaskDraftCheckpoint() async {
+        while true {
+            let generation = taskRecoveryGeneration
+            await taskRecoveryCheckpointTask?.value
+            if generation == taskRecoveryGeneration { return }
+        }
+    }
+
+    func flushTaskDraftCheckpointInBackground() {
+        guard taskRecoverySnapshot != nil, taskRecoveryBackgroundTask == .invalid else { return }
+        taskRecoveryBackgroundGeneration += 1
+        let claim = taskRecoveryBackgroundGeneration
+        taskRecoveryBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Task draft checkpoint") { [weak self] in
+            Task { @MainActor in self?.endTaskRecoveryBackgroundClaim(claim) }
+        }
+        Task {
+            await flushTaskDraftCheckpoint()
+            endTaskRecoveryBackgroundClaim(claim)
+        }
+    }
+
+    private func endTaskRecoveryBackgroundClaim(_ claim: Int) {
+        guard claim == taskRecoveryBackgroundGeneration, taskRecoveryBackgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(taskRecoveryBackgroundTask)
+        taskRecoveryBackgroundTask = .invalid
+    }
+
+    func retryTaskDraftCheckpoint() async {
+        guard let snapshot = taskRecoverySnapshot, !taskRecoverySaving else { return }
+        if taskPresented { checkpointTaskDraft() }
+        else if let host {
+            taskRecoveryGeneration += 1
+            let retry = EditorDraftSnapshot(sessionID: snapshot.sessionID, taskID: snapshot.taskID,
+                generation: taskRecoveryGeneration, payloadJSON: snapshot.payloadJSON)
+            taskRecoverySnapshot = retry
+            let previous = taskRecoveryCheckpointTask
+            taskRecoveryCheckpointTask = Task {
+                await previous?.value
+                do {
+                    try await host.checkpointEditorDraft(retry)
+                    if taskRecoveryGeneration == retry.generation {
+                        taskRecoveryCheckpointedGeneration = retry.generation
+                        taskRecoveryCheckpointError = nil
+                    }
+                } catch {
+                    if taskRecoveryGeneration == retry.generation { taskRecoveryCheckpointError = error.localizedDescription }
+                }
+            }
+        }
+        await flushTaskDraftCheckpoint()
+    }
+
+    func setTaskTitleDraft(_ text: String) {
+        guard !taskRecoverySaving else { return }
+        taskTitleDraft = text
+        taskRecoveryOwn(["title"])
+    }
+    func setTaskNoteDraft(_ text: String) {
+        guard !taskRecoverySaving else { return }
+        taskNoteDraft = text
+        taskRecoveryOwn(["description"])
+    }
+    func setTaskLocationDraft(_ text: String) {
+        guard !taskRecoverySaving else { return }
+        taskLocationDraft = text
+        taskRecoveryOwn(["location"])
+    }
+    func setTaskEstimateInput(_ text: String) {
+        guard !taskRecoverySaving else { return }
+        taskEstimateInput = text
+        taskRecoveryOwn(["timeEstimate"])
+    }
+    func setTaskTimeSpentInput(_ text: String) {
+        guard !taskRecoverySaving else { return }
+        taskTimeSpentInput = text
+        taskRecoveryOwn(["timeSpentMinutes"])
+    }
+    func setTaskChecklistAppendInput(_ text: String) {
+        guard !taskRecoverySaving else { return }
+        taskChecklistAppendInput = text
+        taskRecoveryOwn(checklist: true)
+    }
+    func setTaskInitialTab(_ tab: String) {
+        guard ["task", "view"].contains(tab) else { return }
+        taskInitialTab = tab
+        if taskRecoverySnapshot != nil { checkpointTaskDraft() }
+    }
     var taskDirty: Bool {
         !taskEditor.isEmpty && ((taskSaveFields + taskRecurrenceFields).contains { !taskDraftValuesEqual(taskDraft[$0], taskOriginalDraft[$0]) }
             || !taskDraftValuesEqual(taskDraft["relativeStartOffset"], taskOriginalDraft["relativeStartOffset"])
@@ -1722,6 +2103,7 @@ final class CoreModel: ObservableObject {
                     manageAreaEditOptionsTestReadFailures = arguments.contains("--native-manage-area-edit-options-failure") ? 1 : 0
                     manageAreaEditTestReadFailures = arguments.contains("--native-manage-area-edit-read-failure") ? 2 : 0
                     manageAreaEditTestRefusals = arguments.contains("--native-manage-area-edit-refusal") ? 1 : 0
+                    taskRecoveryResolverTestFailure = arguments.contains("--native-task116-resolver-failure-once")
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1848,6 +2230,20 @@ final class CoreModel: ObservableObject {
                 historyParamsByTab[name] = params
             }
             let startup = try decode(await host!.start())
+            taskRecoveryStartupCorrupt = false
+            do {
+                taskRecoverySnapshot = try await host!.readEditorDraft()
+                if let snapshot = taskRecoverySnapshot {
+                    taskRecoverySession = snapshot.sessionID
+                    taskRecoveryGeneration = snapshot.generation
+                    taskRecoveryCheckpointedGeneration = snapshot.generation
+                    taskRecoveryGateVisible = true
+                }
+            } catch is EditorDraftStoreError {
+                taskRecoveryCorrupt = true
+                taskRecoveryGateVisible = true
+                taskRecoveryConflict = "The saved task draft is unreadable."
+            }
             let recovery = startup.object("recovery")
             if recovery.text("method") == "boardCommit" {
                 // Keep the durable acknowledgement if a later startup read fails.
@@ -1911,11 +2307,31 @@ final class CoreModel: ObservableObject {
             appLockRecoveryPending = false
         } catch {
             appLockRecoveryPending = error is CoreHostAppLockRecovery
-            self.error = error.localizedDescription
+            taskRecoveryStartupCorrupt = error is EditorDraftStoreError
+            self.error = taskRecoveryStartupCorrupt ? "Saved editor draft is unreadable" : error.localizedDescription
         }
         #else
         error = "This build is not enabled for physical-device testing."
         #endif
+    }
+
+    func discardCorruptStartupDraft() async {
+        guard !ready, taskRecoveryStartupCorrupt, !busy, let host else { return }
+        busy = true
+        do {
+            // The host independently checks that no nonterminal editor journal
+            // still needs this snapshot before removing a corrupt file.
+            try await host.discardCorruptEditorDraft()
+        } catch {
+            busy = false
+            self.error = "The unreadable draft could not be discarded. Retry after resolving the pending save."
+            return
+        }
+        busy = false
+        taskRecoveryStartupCorrupt = false
+        error = nil
+        NSLog("Native iOS editor recovery outcome=discarded-corrupt releaseCheck=v1.3.4/ios-editor-draft-recovery")
+        await start()
     }
 
     func refresh() async {
@@ -2475,6 +2891,10 @@ final class CoreModel: ObservableObject {
                     "projects.areaFilter", "filters.excluded", "taskEdit.tab.view", "common.notSet", "status.active", "status.waiting", "status.someday",
                     "common.save", "common.edit", "common.rename", "common.discard", "taskEdit.discardChanges", "taskEdit.discardChangesDesc",
                     "markdown.edit", "markdown.preview", "taskEdit.titleLabel", "taskEdit.descriptionLabel",
+                    "taskEdit.assignedTo", "taskEdit.priorityLabel", "taskEdit.timeEstimateLabel", "taskEdit.timeSpentLabel",
+                    "taskEdit.contextsLabel", "taskEdit.statusLabel", "taskEdit.reviewDateLabel",
+                    "taskEdit.startModeRelative", "taskEdit.recurrenceLabel", "recurrence.showFutureInCalendar",
+                    "task.completedAtPromptTitle", "status.inbox", "status.next", "status.done", "status.reference",
                     "taskEdit.descriptionPlaceholder", "search.placeholder", "search.noResults", "search.searching",
                     "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators",
                     "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone",
@@ -7936,6 +8356,12 @@ final class CoreModel: ObservableObject {
         let open = result.object("open")
         guard selectedSurface == .board, !taskPresented, !capturePresented, !areaPickerPresented,
               open.text("tab") == "task", !open.text("taskId").isEmpty else { return false }
+        if taskRecoverySnapshot != nil || taskRecoveryCorrupt {
+            taskRecoveryConflict = taskRecoverySnapshot?.taskID == open.text("taskId")
+                ? nil : "A saved task draft needs a decision before another task can open."
+            taskRecoveryGateVisible = true
+            return false
+        }
         // The trusted result may be outside the current filter or loaded page.
         // It is the frozen copy ID, never a source/current-selection lookup.
         prepareTaskPresentation(open.text("taskId"), initialTab: "task")
@@ -12299,6 +12725,12 @@ final class CoreModel: ObservableObject {
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
         guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
               !projectRenameEditing, selectedSurface != .trash else { return }
+        if taskRecoverySnapshot != nil || taskRecoveryCorrupt {
+            taskRecoveryConflict = taskRecoverySnapshot?.taskID == id
+                ? nil : "A saved task draft needs a decision before another task can open."
+            taskRecoveryGateVisible = true
+            return
+        }
         if selectedSurface == .review {
             guard reviewActionsEnabled, reviewTaskIDs.contains(id) else { return }
         }
@@ -12347,6 +12779,13 @@ final class CoreModel: ObservableObject {
     }
 
     private func prepareTaskPresentation(_ id: String, initialTab: String = "view") {
+        taskRecoverySession = UUID().uuidString.lowercased()
+        taskRecoveryGeneration = 0
+        taskRecoveryCheckpointedGeneration = 0
+        taskRecoveryTouched = []
+        taskRecoveryChecklistTouched = false
+        taskRecoveryCheckpointError = nil
+        taskRecoverySaving = false
         resetTaskDestination()
         resetTaskTokens()
         resetTaskSchedule()
@@ -12371,22 +12810,268 @@ final class CoreModel: ObservableObject {
         guard !busy, !retryNeeded, !taskSavePending, taskChecklistWriteKind == nil,
               !taskChecklistReadPending, !taskScheduleUpdating else { return }
         guard !taskDirty else { return }
-        dismissTask()
+        Task { await discardCleanTaskSnapshotAndClose() }
     }
 
     func discardTask() {
         guard !busy, !retryNeeded, !taskSavePending, taskChecklistWriteKind == nil,
               !taskChecklistReadPending, !taskScheduleUpdating else { return }
+        Task { await discardTaskRecoveryDraft(close: true) }
+    }
+
+    private func discardCleanTaskSnapshotAndClose() async {
+        guard !taskDirty else { return }
+        let wasBusy = busy
+        busy = true
+        taskRecoverySaving = true
+        defer { busy = wasBusy; taskRecoverySaving = false }
+        if taskRecoverySnapshot != nil {
+            await flushTaskDraftCheckpoint()
+            guard let host else { return }
+            do {
+                if try await host.readEditorDraft() != nil {
+                    try await host.discardEditorDraft(expectedSession: taskRecoverySession)
+                }
+            }
+            catch { taskRecoveryCheckpointError = error.localizedDescription; return }
+            taskRecoverySnapshot = nil
+        }
         dismissTask()
     }
 
+    func discardTaskRecoveryDraft(close: Bool = false) async {
+        guard !taskRecoverySaving, let host else { return }
+        let wasBusy = busy
+        busy = true
+        taskRecoverySaving = true
+        defer { busy = wasBusy; taskRecoverySaving = false }
+        await flushTaskDraftCheckpoint()
+        do {
+            if taskRecoveryCorrupt { try await host.discardCorruptEditorDraft() }
+            else if let snapshot = taskRecoverySnapshot, try await host.readEditorDraft() != nil {
+                try await host.discardEditorDraft(expectedSession: snapshot.sessionID)
+            }
+            taskRecoverySnapshot = nil
+            taskRecoveryCorrupt = false
+            taskRecoveryConflict = nil
+            taskRecoveryReviewOptions = [:]
+            taskRecoveryCheckpointError = nil
+            taskRecoveryGateVisible = false
+            taskRecoveryTouched = []
+            taskRecoveryChecklistTouched = false
+            NSLog("Native iOS editor recovery outcome=discarded releaseCheck=v1.3.4/ios-editor-draft-recovery")
+            if close && taskPresented { dismissTask() }
+        } catch {
+            taskRecoveryCheckpointError = error.localizedDescription
+            taskRecoveryGateVisible = true
+        }
+    }
+
+    func keepTaskRecoveryForLater() async {
+        guard !taskRecoverySaving else { return }
+        let wasBusy = busy
+        busy = true
+        taskRecoverySaving = true
+        defer { busy = wasBusy; taskRecoverySaving = false }
+        await flushTaskDraftCheckpoint()
+        guard taskRecoveryCheckpointError == nil else {
+            taskRecoveryGateVisible = true
+            return
+        }
+        taskRecoveryGateVisible = false
+        if taskPresented { dismissTask() }
+    }
+
+    func showTaskRecovery() {
+        guard taskRecoverySnapshot != nil || taskRecoveryCorrupt else { return }
+        taskRecoveryGateVisible = true
+    }
+
+    func restoreTaskRecovery() async {
+        guard ready, !appLock.concealed, !busy, let host,
+              taskRecoverySnapshot != nil || taskRecoveryCorrupt else { return }
+        guard !taskRecoveryCorrupt, let snapshot = taskRecoverySnapshot else {
+            taskRecoveryConflict = "The saved task draft is unreadable."
+            return
+        }
+        busy = true
+        taskRecoveryConflict = nil
+        taskRecoveryReviewOptions = [:]
+        defer { finishOperation() }
+        do {
+            let payload = try decode(snapshot.payloadJSON)
+            guard payload.number("version") == 1, payload.text("taskID") == snapshot.taskID,
+                  ["task", "view"].contains(payload.text("tab")),
+                  let touchedBase = payload["touchedBase"] as? CoreObject,
+                  let edited = payload["edited"] as? CoreObject,
+                  let raw = payload["raw"] as? CoreObject,
+                  let queue = payload["scheduleEdits"] as? [CoreObject],
+                  let tokens = raw["tokens"] as? [String: String],
+                  let tokenCanonical = raw["tokenCanonical"] as? [String: String],
+                  let tokenResolved = raw["tokenResolved"] as? [String: String],
+                  let tokenEdited = raw["tokenEdited"] as? [String],
+                  let checklistInputs = raw["checklistInputs"] as? [String: String],
+                  let recurrenceInputs = raw["recurrenceInputs"] as? [String: String],
+                  let recurrenceOwned = raw["recurrenceOwned"] as? [String],
+                  let recurrenceCommitRequested = raw["recurrenceCommitRequested"] as? [String],
+                  Set(edited.keys) == Set(touchedBase.keys),
+                  ["title", "note", "location", "estimate", "estimateResolved", "timeSpent", "timeSpentResolved",
+                   "checklistAppend", "relativeAmount", "relativeUnit"].allSatisfy({ raw[$0] is String }),
+                  raw["relativeOwned"] is Bool, raw["relativeCommitRequested"] is Bool else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            var check: CoreObject = ["id": snapshot.taskID, "touchedBase": touchedBase]
+            if let base = payload["scheduleBase"] { check["scheduleBase"] = base }
+            if let base = payload["recurrenceBase"] { check["recurrenceBase"] = base }
+            if let base = payload["checklistBase"] { check["checklistBase"] = base }
+            let ready = try await query("taskEditorResumeCheck", [try json(check)])
+            guard ready.text("kind") == "ready", let fresh = ready["freshDraft"] as? CoreObject,
+                  let freshChecklist = ready["freshChecklistBase"] as? [CoreObject],
+                  let freshSchedule = ready["freshScheduleBase"] as? CoreObject,
+                  let freshRecurrence = ready["freshRecurrenceBase"] as? CoreObject else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let freshEditor = try await query("editorModel", [snapshot.taskID])
+            guard !freshEditor.flag("readOnly"),
+                  taskSaveFields.allSatisfy({ taskDraftValuesEqual(freshEditor.object("draft")[$0], fresh[$0]) }),
+                  (taskRecoveryScheduleFields + taskRecurrenceFields + taskRecoveryLifecycleFields + ["timeSpentMinutes"])
+                    .allSatisfy({ taskDraftValuesEqual(freshEditor.object("draft")[$0], fresh[$0]) }) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            try await readTaskEditorLabels(freshEditor)
+            let restoredChecklist = payload["checklistValue"] as? [CoreObject] ?? freshChecklist
+            let restoredEditor: CoreObject
+            if edited.isEmpty { restoredEditor = freshEditor }
+            else {
+                restoredEditor = try await query("editDraft", [try json([
+                    "id": snapshot.taskID, "draft": freshEditor.object("draft"),
+                    "checklist": restoredChecklist,
+                    "edit": ["type": "fields", "patch": edited]])])
+            }
+            let checklistResult = try await query("checklistEdit", [try json([
+                "id": snapshot.taskID, "draft": restoredEditor.object("draft"),
+                "checklist": restoredChecklist])])
+            guard let checklist = checklistResult["checklist"] as? [CoreObject],
+                  !checklistResult.object("field").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            let finalEditor = try await query("editDraft", [try json([
+                "id": snapshot.taskID, "draft": checklistResult.object("draft"), "checklist": checklist])])
+            var restoredQueue: [TaskScheduleEdit] = []
+            for item in queue {
+                guard let id = item["id"] as? Int, id > 0,
+                      let control = item["control"] as? String,
+                      let edit = item["edit"] as? CoreObject,
+                      let coalesces = item["coalesces"] as? Bool else { throw CocoaError(.coderReadCorrupt) }
+                restoredQueue.append(TaskScheduleEdit(id: id, control: control, edit: edit, coalesces: coalesces))
+            }
+            var restoredInputs: [Int: String] = [:]
+            for (index, value) in checklistInputs {
+                guard let parsed = Int(index), parsed >= 0, parsed < checklist.count else { throw CocoaError(.coderReadCorrupt) }
+                restoredInputs[parsed] = value
+            }
+            taskRecoveryHydrating = true
+            prepareTaskPresentation(snapshot.taskID, initialTab: payload.text("tab"))
+            taskRecoverySession = snapshot.sessionID
+            taskRecoveryGeneration = snapshot.generation
+            taskRecoveryCheckpointedGeneration = snapshot.generation
+            taskRecoverySnapshot = snapshot
+            taskRecoveryTouched = Set(touchedBase.keys)
+            taskRecoveryChecklistTouched = payload["checklistBase"] != nil
+            taskEditor = finalEditor
+            taskOriginalDraft = fresh
+            for (field, value) in touchedBase { taskOriginalDraft[field] = value }
+            taskOriginalSchedule = payload.object("scheduleBase").isEmpty ? freshSchedule : payload.object("scheduleBase")
+            taskOriginalRecurrence = payload.object("recurrenceBase").isEmpty ? freshRecurrence : payload.object("recurrenceBase")
+            taskChecklistLoaded = true
+            taskOriginalChecklist = payload["checklistBase"] as? [CoreObject] ?? freshChecklist
+            taskChecklist = checklist
+            taskChecklistField = checklistResult.object("field")
+            taskChecklistInputs = taskRecoveryChecklistTouched ? restoredInputs : [:]
+            taskChecklistAppendInput = taskRecoveryChecklistTouched ? raw.text("checklistAppend") : ""
+            taskTitleDraft = taskRecoveryTouched.contains("title") ? raw.text("title") : finalEditor.object("draft").text("title")
+            taskNoteDraft = taskRecoveryTouched.contains("description") ? raw.text("note") : finalEditor.object("draft").text("description")
+            taskLocationDraft = taskRecoveryTouched.contains("location") ? raw.text("location") : finalEditor.object("draft").text("location")
+            resetTaskEstimateInput()
+            if taskRecoveryTouched.contains("timeEstimate") {
+                taskEstimateInput = raw.text("estimate")
+                taskEstimateResolvedInput = raw.text("estimateResolved")
+            }
+            resetTaskTimeSpentInput()
+            if taskRecoveryTouched.contains("timeSpentMinutes") {
+                taskTimeSpentInput = raw.text("timeSpent")
+                taskTimeSpentResolvedInput = raw.text("timeSpentResolved")
+            }
+            initializeTaskTokens()
+            for field in taskTokenFields where taskRecoveryTouched.contains(field) {
+                guard let input = tokens[field], let canonical = tokenCanonical[field] else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                taskTokenInputs[field] = input
+                taskTokenCanonical[field] = canonical
+                taskTokenResolvedInputs[field] = tokenResolved[field]
+                if tokenEdited.contains(field) { taskTokenEdited.insert(field) }
+            }
+            if taskRecoveryTouched.contains(where: { taskRecoveryScheduleFields.contains($0) }) {
+                taskRelativeAmountInput = raw.text("relativeAmount")
+                taskRelativeUnitInput = raw.text("relativeUnit")
+                taskRelativeInputOwned = raw.flag("relativeOwned")
+                taskRelativeInputCommitRequested = raw.flag("relativeCommitRequested")
+            } else { synchronizeTaskRelativeInput() }
+            if taskRecoveryTouched.contains(where: { taskRecurrenceFields.contains($0) }) {
+                taskRecurrenceInputs = recurrenceInputs
+                taskRecurrenceInputOwned = Set(recurrenceOwned)
+                taskRecurrenceInputCommitRequested = Set(recurrenceCommitRequested)
+            } else { synchronizeTaskRecurrenceInputs() }
+            taskScheduleEdits = restoredQueue
+            taskScheduleSequence = restoredQueue.map(\.id).max() ?? 0
+            taskSchedulePending = !restoredQueue.isEmpty
+            taskScheduleFailedID = payload["scheduleFailedID"] as? Int
+            taskScheduleFailure = taskScheduleFailedID == nil ? nil : CocoaError(.coderReadCorrupt)
+            taskRecoveryHydrating = false
+            taskRecoveryGateVisible = false
+            taskRecoveryConflict = nil
+            taskRecoveryReviewOptions = [:]
+            NSLog("Native iOS editor recovery outcome=resumed releaseCheck=v1.3.4/ios-editor-draft-recovery")
+            for field in taskTokenFields { requestTaskTokenRead(field, delay: 0) }
+            if taskScheduleFailure == nil { startTaskSchedulePump() }
+            await readRecoveredTaskPreview()
+        } catch {
+            taskRecoveryHydrating = false
+            taskRecoveryGateVisible = true
+            if let editor = try? await query("editorModel", [snapshot.taskID]) {
+                taskRecoveryReviewOptions = editor.object("options")
+                try? await readTaskEditorLabels(editor)
+            }
+            taskRecoveryConflict = error.localizedDescription
+            NSLog("Native iOS editor recovery outcome=retained releaseCheck=v1.3.4/ios-editor-draft-recovery")
+        }
+    }
+
+    private func readRecoveredTaskPreview() async {
+        guard taskPresented, let _ = taskRecoverySnapshot else { return }
+        let session = taskRecoverySession
+        let id = viewedTaskID
+        do {
+            let view = try await query("taskView", [try json([
+                "id": id, "draft": taskDraft, "checklist": taskChecklist, "offset": 0, "limit": pageSize])])
+            if taskPresented, taskRecoverySession == session, viewedTaskID == id { taskView = view }
+        } catch { taskError = error.localizedDescription }
+    }
+
     private func dismissTask() {
+        // Resetting the checklist publishes a value. Close must never turn
+        // that reset into a new checkpoint or replace a Keep-for-later draft.
+        taskRecoveryHydrating = true
+        taskPresented = false
         resetTaskDestination()
         resetTaskTokens()
         resetTaskSchedule()
         resetTaskChecklistState()
-        taskPresented = false
         viewedTaskID = ""
+        taskRecoveryHydrating = false
+        if taskRecoverySnapshot == nil {
+            taskRecoveryTouched = []
+            taskRecoveryChecklistTouched = false
+        }
         // Reset can commit while the editor stays open; Close and Discard must
         // also refresh the caller, including its status membership and counts.
         Task { await refresh() }
@@ -12408,11 +13093,12 @@ final class CoreModel: ObservableObject {
     }
 
     func setTaskChecklistInput(_ index: Int, text: String) {
-        guard taskPresented, taskChecklistLoaded, !busy, !retryNeeded, !taskSavePending,
+        guard taskPresented, taskChecklistLoaded, !busy, !retryNeeded, !taskSavePending, !taskRecoverySaving,
               taskChecklistWriteKind == nil, !taskChecklistReadPending,
               index >= 0, index < taskChecklist.count else { return }
         if text == taskChecklist[index].text("title") { taskChecklistInputs.removeValue(forKey: index) }
         else { taskChecklistInputs[index] = text }
+        taskRecoveryOwn(checklist: true)
     }
 
     private func applyTaskChecklistEdit(_ edit: CoreObject?, id: String, session: Int) async throws -> Bool {
@@ -12443,12 +13129,18 @@ final class CoreModel: ObservableObject {
                 guard let text = taskChecklistInputs[index] else { continue }
                 guard index < taskChecklist.count else { throw CocoaError(.coderReadCorrupt) }
                 _ = try await applyTaskChecklistEdit(["kind": "rename", "index": index, "text": text], id: id, session: session)
-                if taskChecklistInputs[index] == text { taskChecklistInputs.removeValue(forKey: index) }
+                if taskChecklistInputs[index] == text {
+                    taskChecklistInputs.removeValue(forKey: index)
+                    checkpointTaskDraft()
+                }
             }
             if append, !taskChecklistAppendInput.isEmpty {
                 let title = taskChecklistAppendInput
                 _ = try await applyTaskChecklistEdit(["kind": "append", "title": title], id: id, session: session)
-                if taskChecklistAppendInput == title { taskChecklistAppendInput = "" }
+                if taskChecklistAppendInput == title {
+                    taskChecklistAppendInput = ""
+                    checkpointTaskDraft()
+                }
             }
             if taskChecklistInputs.isEmpty && (!append || taskChecklistAppendInput.isEmpty) { return }
         }
@@ -12460,6 +13152,7 @@ final class CoreModel: ObservableObject {
               taskChecklistWriteKind == nil, !taskChecklistReadPending else { return }
         let id = viewedTaskID
         let session = taskChecklistSession
+        taskRecoveryOwn(checklist: true)
         busy = true
         taskError = nil
         defer { finishOperation() }
@@ -12468,6 +13161,7 @@ final class CoreModel: ObservableObject {
             _ = try await applyTaskChecklistEdit(edit, id: id, session: session)
             if edit.text("kind") == "append", taskChecklistAppendInput == edit.text("title") {
                 taskChecklistAppendInput = ""
+                checkpointTaskDraft()
             }
             if refreshPreview { Task { await readTaskView() } }
         } catch {
@@ -12531,6 +13225,18 @@ final class CoreModel: ObservableObject {
     func resetTaskChecklist() async {
         guard taskPresented, taskChecklistLoaded, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
               taskChecklistWriteKind == nil, !taskChecklistReadPending else { return }
+        if taskRecoverySnapshot != nil {
+            guard !taskDirty else {
+                taskRecoveryConflict = "Save or discard this task draft before resetting its checklist."
+                taskRecoveryGateVisible = true
+                return
+            }
+            await discardTaskRecoveryDraft()
+            guard taskRecoverySnapshot == nil, taskRecoveryCheckpointError == nil else { return }
+            taskRecoverySession = UUID().uuidString.lowercased()
+            taskRecoveryGeneration = 0
+            taskRecoveryCheckpointedGeneration = 0
+        }
         let id = viewedTaskID
         let session = taskChecklistSession
         busy = true
@@ -12573,16 +13279,22 @@ final class CoreModel: ObservableObject {
     func saveTask() async {
         guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
               taskChecklistWriteKind == nil, !taskChecklistReadPending else { return }
-        guard taskDirty else { dismissTask(); return }
+        guard taskDirty else { await discardCleanTaskSnapshotAndClose(); return }
         let id = viewedTaskID
         let session = taskChecklistSession
+        taskRecoverySaving = true
         busy = true
         taskError = nil
         defer { finishOperation() }
         do {
             try await resolveTaskEditorInputs()
             try await flushTaskChecklistInputs(id: id, session: session)
-            guard !taskEditor.flag("readOnly") else { return }
+            if taskRecoverySnapshot != nil {
+                checkpointTaskDraft(force: true)
+                await flushTaskDraftCheckpoint()
+                guard taskRecoveryCheckpointError == nil else { throw CocoaError(.fileWriteUnknown) }
+            }
+            guard !taskEditor.flag("readOnly") else { taskRecoverySaving = false; return }
             var base: CoreObject = [:]
             var patch: CoreObject = [:]
             let current = taskDraft
@@ -12633,7 +13345,11 @@ final class CoreModel: ObservableObject {
             }
             let checklistChanged = !taskDraftValuesEqual(taskChecklist, taskOriginalChecklist)
             let checklistSave = checklistChanged || lifecycleChanged
-            guard !patch.isEmpty || checklistSave else { dismissTask(); return }
+            guard !patch.isEmpty || checklistSave else {
+                taskRecoverySaving = false
+                await discardCleanTaskSnapshotAndClose()
+                return
+            }
             var request: CoreObject = ["id": viewedTaskID, "base": base, "patch": patch]
             guard !taskOriginalSchedule.isEmpty else { throw CocoaError(.coderReadCorrupt) }
             request["scheduleBase"] = taskOriginalSchedule
@@ -12646,7 +13362,23 @@ final class CoreModel: ObservableObject {
                 request["requestId"] = UUID().uuidString.lowercased()
             }
             let payload = try json(request)
-            if checklistSave {
+            if let snapshot = taskRecoverySnapshot {
+                guard let host else { throw CocoaError(.coderInvalidValue) }
+                if checklistSave {
+                    taskChecklistWriteKind = "save"
+                    taskChecklistWriteRequest = payload
+                } else { taskSavePending = true }
+                let result = try decode(try await host.saveEditorDraft(
+                    checklistSave ? "checklistSave" : "saveDraft",
+                    argumentsJSON: try json([payload]), expectedSession: snapshot.sessionID,
+                    expectedGeneration: snapshot.generation))
+                if checklistSave, result.text("id") != id { throw CocoaError(.coderReadCorrupt) }
+                taskRecoverySnapshot = nil
+                taskRecoverySaving = false
+                taskChecklistWriteKind = nil
+                taskChecklistWriteRequest = nil
+                taskSavePending = false
+            } else if checklistSave {
                 taskChecklistWriteKind = "save"
                 taskChecklistWriteRequest = payload
                 let result = try await query("checklistSave", [payload])
@@ -12660,14 +13392,18 @@ final class CoreModel: ObservableObject {
             }
         } catch {
             if isDefiniteRejection(error) {
+                taskRecoverySaving = false
                 taskSavePending = false
                 taskChecklistWriteKind = nil
                 taskChecklistWriteRequest = nil
             }
             retryNeeded = taskSavePending || taskChecklistWriteKind != nil
+            if taskRecoveryCheckpointError != nil { retryNeeded = false; taskRecoverySaving = false }
+            if !retryNeeded { taskRecoverySaving = false }
             taskError = error.localizedDescription
             return
         }
+        taskRecoverySaving = false
         dismissTask()
         do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
     }
@@ -12678,6 +13414,7 @@ final class CoreModel: ObservableObject {
               taskEditor.object("layout").objects("sections").contains(where: {
                   ($0["fields"] as? [String] ?? []).contains(field)
               }) else { return }
+        taskRecoveryOwn([field])
         busy = true
         taskError = nil
         defer { finishOperation() }
@@ -12721,6 +13458,7 @@ final class CoreModel: ObservableObject {
         guard taskStatusEditable(status), assignedTo == nil || status == "waiting",
               expectedID == nil || expectedID == viewedTaskID,
               expectedSession == nil || expectedSession == taskScheduleSession else { return false }
+        taskRecoveryOwn(assignedTo == nil ? ["status"] : ["status", "assignedTo"])
         let id = viewedTaskID
         let session = taskScheduleSession
         busy = true
@@ -12762,6 +13500,7 @@ final class CoreModel: ObservableObject {
         guard taskStatusEditable("done"), viewedTaskID == expectedID,
               taskScheduleSession == expectedSession,
               timeSpentText == nil || taskEditor.object("fields").object("timeSpent").flag("enabled") else { return false }
+        taskRecoveryOwn(timeSpentText == nil ? ["status"] : ["status", "timeSpentMinutes"])
         busy = true
         taskError = nil
         defer { finishOperation() }
@@ -12840,6 +13579,7 @@ final class CoreModel: ObservableObject {
     private func resetTaskEstimateInput() {
         taskEstimateInput = taskEditor.object("fields").object("timeEstimate").text("customText")
         taskEstimateResolvedInput = taskEstimateInput
+        if taskRecoveryTouched.contains("timeEstimate") { checkpointTaskDraft() }
     }
 
     private func resolveTaskTimeSpentInput() async throws {
@@ -12863,6 +13603,7 @@ final class CoreModel: ObservableObject {
             taskTimeSpentInput = ""
         }
         taskTimeSpentResolvedInput = taskTimeSpentInput
+        if taskRecoveryTouched.contains("timeSpentMinutes") { checkpointTaskDraft() }
     }
 
     private func taskDraftValuesEqual(_ lhs: Any?, _ rhs: Any?) -> Bool {
@@ -12890,7 +13631,7 @@ final class CoreModel: ObservableObject {
     }
 
     private func taskDateFieldAvailable(_ field: String) -> Bool {
-        taskPresented && !taskEditor.isEmpty && !taskEditor.flag("readOnly") && !retryNeeded && !taskSavePending
+        taskPresented && !taskEditor.isEmpty && !taskEditor.flag("readOnly") && !retryNeeded && !taskSavePending && !taskRecoverySaving
             && taskDateFields.contains(field) && taskEditor.object("layout").objects("sections").contains {
                 ($0["fields"] as? [String] ?? []).contains(field)
             }
@@ -12958,7 +13699,7 @@ final class CoreModel: ObservableObject {
     }
 
     private var taskRecurrenceAvailable: Bool {
-        taskPresented && !taskEditor.isEmpty && !taskEditor.flag("readOnly") && !retryNeeded && !taskSavePending
+        taskPresented && !taskEditor.isEmpty && !taskEditor.flag("readOnly") && !retryNeeded && !taskSavePending && !taskRecoverySaving
             && taskEditor.object("layout").objects("sections").contains {
                 ($0["fields"] as? [String] ?? []).contains("recurrence")
             }
@@ -13027,6 +13768,7 @@ final class CoreModel: ObservableObject {
             taskScheduleFailure = nil
             taskSchedulePending = !taskScheduleEdits.isEmpty
             taskError = nil
+            checkpointTaskDraft()
         }
     }
 
@@ -13047,6 +13789,8 @@ final class CoreModel: ObservableObject {
         }
         else { taskScheduleEdits.append(next) }
         taskSchedulePending = true
+        if control.hasPrefix("recurrence:") { taskRecoveryOwn(["recurrence"]) }
+        else { taskRecoveryOwn([control == "relativeStart" ? "relativeStartOffset" : String(control.split(separator: ":").first ?? "startTime")]) }
         if taskScheduleFailure == nil { taskError = nil }
         if !busy { startTaskSchedulePump() }
     }
@@ -13055,6 +13799,7 @@ final class CoreModel: ObservableObject {
         guard taskScheduleTask == nil, !taskScheduleEdits.isEmpty, taskScheduleFailure == nil,
               taskPresented, !taskEditor.flag("readOnly"), !retryNeeded else { return }
         let session = taskScheduleSession
+        let recoverySession = taskRecoverySession
         let id = viewedTaskID
         taskScheduleUpdating = true
         taskScheduleTask = Task {
@@ -13072,17 +13817,18 @@ final class CoreModel: ObservableObject {
                 do {
                     try await resolveTaskEstimateInput()
                     try await resolveTaskTokenInputs()
-                    guard taskPresented, taskScheduleSession == session, viewedTaskID == id else { return }
+                    guard taskPresented, taskScheduleSession == session, taskRecoverySession == recoverySession, viewedTaskID == id else { return }
                     let edit = try await taskScheduleCommand(operation.edit)
-                    guard taskPresented, taskScheduleSession == session, viewedTaskID == id else { return }
+                    guard taskPresented, taskScheduleSession == session, taskRecoverySession == recoverySession, viewedTaskID == id else { return }
                     let editor = try await query("editDraft", [try json(taskEditRequest(edit))])
-                    guard taskPresented, taskScheduleSession == session, viewedTaskID == id else { return }
+                    guard taskPresented, taskScheduleSession == session, taskRecoverySession == recoverySession, viewedTaskID == id else { return }
                     taskEditor = editor
                     taskScheduleEdits.removeAll { $0.id == operation.id }
                     synchronizeTaskRelativeInput()
                     synchronizeTaskRecurrenceInputs()
+                    checkpointTaskDraft()
                 } catch {
-                    guard taskPresented, taskScheduleSession == session, viewedTaskID == id else { return }
+                    guard taskPresented, taskScheduleSession == session, taskRecoverySession == recoverySession, viewedTaskID == id else { return }
                     // A newer edit of this control explicitly supersedes a
                     // refused value. Other controls and Save cannot erase it.
                     if operation.coalesces, taskScheduleEdits.contains(where: { $0.id > operation.id && $0.control == operation.control && $0.coalesces }) {
@@ -13092,6 +13838,7 @@ final class CoreModel: ObservableObject {
                     taskScheduleFailure = error
                     taskScheduleFailedID = operation.id
                     taskError = error.localizedDescription
+                    checkpointTaskDraft()
                     return
                 }
             }
@@ -13109,6 +13856,12 @@ final class CoreModel: ObservableObject {
     }
 
     private func resolveTaskEditorInputs(estimate: Bool = true) async throws {
+        #if DEBUG && targetEnvironment(simulator)
+        if taskRecoveryResolverTestFailure && taskRecoverySaving {
+            taskRecoveryResolverTestFailure = false
+            throw CocoaError(.fileReadUnknown)
+        }
+        #endif
         repeat {
             try await resolveTaskScheduleEdits()
             if estimate { try await resolveTaskEstimateInput() }
@@ -13192,10 +13945,11 @@ final class CoreModel: ObservableObject {
     }
 
     func setTaskTokenInput(_ field: String, text: String) {
-        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !retryNeeded, !taskSavePending,
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !retryNeeded, !taskSavePending, !taskRecoverySaving,
               taskTokenFields.contains(field), taskTokenInputs[field] != text else { return }
         taskTokenInputs[field] = text
         taskTokenEdited.insert(field)
+        taskRecoveryOwn([field])
         requestTaskTokenRead(field)
     }
 
@@ -13219,9 +13973,11 @@ final class CoreModel: ObservableObject {
     }
 
     func commitTaskTokenInput(_ field: String) {
-        guard taskPresented, !taskEditor.flag("readOnly"), !retryNeeded, taskTokenFields.contains(field) else { return }
+        guard taskPresented, !taskEditor.flag("readOnly"), !retryNeeded, !taskRecoverySaving,
+              taskTokenFields.contains(field) else { return }
         taskTokenEdited.insert(field)
         taskTokenCommitDisplay.insert(field)
+        taskRecoveryOwn([field])
         if !busy, taskTokenSuggestionInputs[field] == taskTokenInputs[field],
            let canonical = taskTokenSuggestions[field]?["draftValue"] as? String {
             taskTokenCanonical[field] = canonical
@@ -13286,20 +14042,24 @@ final class CoreModel: ObservableObject {
         guard !busy else { return }
         let generation = taskTokenGenerations[field]
         let id = viewedTaskID
+        let sessionID = taskRecoverySession
         let raw = taskTokenInputs[field] ?? ""
         taskTokenReadTasks[field] = Task {
             do { try await Task.sleep(nanoseconds: delay) } catch { return }
-            guard !Task.isCancelled, taskTokenGenerations[field] == generation, taskPresented, viewedTaskID == id else { return }
+            guard !Task.isCancelled, taskTokenGenerations[field] == generation, taskPresented, viewedTaskID == id,
+                  taskRecoverySession == sessionID else { return }
             guard !busy, !retryNeeded else { return }
             taskTokenNeedsRead.remove(field)
             do {
                 let result = try await readTaskTokenSuggestions(field, raw: raw, id: id)
-                guard taskPresented, viewedTaskID == id, taskTokenGenerations[field] == generation,
+                guard taskPresented, viewedTaskID == id, taskRecoverySession == sessionID,
+                      taskTokenGenerations[field] == generation,
                       taskTokenInputs[field] == raw else { return }
                 try acceptTaskTokenRead(result, field: field, raw: raw)
                 if taskTokenCommitDisplay.contains(field) { canonicalizeTaskTokenDisplay(field) }
             } catch {
-                guard taskPresented, viewedTaskID == id, taskTokenGenerations[field] == generation,
+                guard taskPresented, viewedTaskID == id, taskRecoverySession == sessionID,
+                      taskTokenGenerations[field] == generation,
                       taskTokenInputs[field] == raw else { return }
                 taskTokenErrors[field] = error.localizedDescription
             }
@@ -13324,6 +14084,7 @@ final class CoreModel: ObservableObject {
         taskTokenSuggestions[field] = result
         taskTokenSuggestionInputs[field] = raw
         taskTokenErrors[field] = nil
+        if taskRecoveryTouched.contains(field) { checkpointTaskDraft() }
     }
 
     private func canonicalizeTaskTokenDisplay(_ field: String) {
@@ -13332,6 +14093,7 @@ final class CoreModel: ObservableObject {
         guard taskTokenInputs[field] != canonical else { return }
         taskTokenInputs[field] = canonical
         taskTokenResolvedInputs[field] = canonical
+        if taskRecoveryTouched.contains(field) { checkpointTaskDraft() }
         requestTaskTokenRead(field, delay: 0)
     }
 
@@ -13468,6 +14230,7 @@ final class CoreModel: ObservableObject {
     }
 
     private func applyTaskDestinationPatch(_ patch: CoreObject, id: String) async throws {
+        taskRecoveryOwn(Array(patch.keys))
         let editor = try await query("editDraft", [try json(taskEditRequest(
             ["type": "fields", "patch": patch]))])
         guard taskPresented, viewedTaskID == id else { return }
@@ -14388,6 +15151,40 @@ final class CoreModel: ObservableObject {
         }
         do {
             let acknowledgment = try await host!.retryPending()
+            if taskRecoverySaving {
+                if let acknowledgment {
+                    let result = try decode(acknowledgment)
+                    if taskChecklistWriteKind == "save", result.text("id") != viewedTaskID {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    taskRecoverySnapshot = try await host!.readEditorDraft()
+                    guard taskRecoverySnapshot == nil else { throw CocoaError(.coderReadCorrupt) }
+                    taskRecoverySaving = false
+                    taskSavePending = false
+                    taskChecklistWriteKind = nil
+                    taskChecklistWriteRequest = nil
+                    retryNeeded = false
+                    taskError = nil
+                    dismissTask()
+                    try await readSelectedSurface()
+                    return
+                }
+                taskRecoverySnapshot = try await host!.readEditorDraft()
+                if taskRecoverySnapshot != nil {
+                    taskRecoverySaving = false
+                    taskSavePending = false
+                    taskChecklistWriteKind = nil
+                    taskChecklistWriteRequest = nil
+                    retryNeeded = false
+                    taskError = "The save was not submitted. Review the draft and save again."
+                    return
+                }
+                taskRecoverySaving = false
+                retryNeeded = false
+                dismissTask()
+                try await readSelectedSurface()
+                return
+            }
             if let kind = taskChecklistWriteKind {
                 guard let request = taskChecklistWriteRequest else { throw CocoaError(.coderValueNotFound) }
                 let result: CoreObject

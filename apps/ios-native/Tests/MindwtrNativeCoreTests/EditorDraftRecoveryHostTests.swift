@@ -1,0 +1,449 @@
+import XCTest
+import SQLite3
+@testable import MindwtrNativeCore
+
+final class EditorDraftRecoveryHostTests: XCTestCase {
+    private var directory: URL!
+    private var bundle: URL!
+    private var database: URL { directory.appendingPathComponent("core.sqlite") }
+    private var journal: URL { database.appendingPathExtension("pending.json") }
+    private var snapshotFile: URL { EditorDraftStore(databaseURL: database).url }
+
+    override func setUpWithError() throws {
+        guard let path = ProcessInfo.processInfo.environment["MINDWTR_CORE_BUNDLE"] else {
+            throw XCTSkip("Build core-host.js and set MINDWTR_CORE_BUNDLE to its absolute path")
+        }
+        bundle = URL(fileURLWithPath: path)
+        directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".mindwtr-native-tests/\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        if let directory { try FileManager.default.removeItem(at: directory) }
+    }
+
+    private func host(_ faults: HostIOFaults = HostIOFaults()) -> CoreHost {
+        let value = CoreHost(databaseURL: database, bundleURL: bundle, faults: faults)
+        addTeardownBlock { await value.close() }
+        return value
+    }
+
+    private func json(_ object: Any) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    private func object(_ text: String) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+    }
+
+    private func task(_ id: String) throws -> [String: Any] {
+        let sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sqlite.execute(
+            "SELECT * FROM tasks WHERE id = ?", parametersJSON: json([id])).utf8)) as? [[String: Any]])
+        return try XCTUnwrap(rows.first)
+    }
+
+    private func seed(_ core: CoreHost, id: String) async throws -> [String: Any] {
+        let opened = try object(await core.call("captureOpen"))
+        _ = try await core.call("captureSubmit", argumentsJSON: json([json([
+            "text": "Before edit", "options": try XCTUnwrap(opened["options"]),
+            "captureId": id, "openAfterSave": false,
+        ])]))
+        return try object(await core.call("editorModel", argumentsJSON: json([id])))
+    }
+
+    private func titleSave(_ id: String, opening: [String: Any]) throws -> String {
+        try json([json([
+            "id": id, "base": ["title": "Before edit"], "patch": ["title": "After edit"],
+            "scheduleBase": try XCTUnwrap(opening["scheduleBase"]),
+        ])])
+    }
+
+    func testSnapshotStrictIdentityCorruptionAndPrivacy() throws {
+        let store = EditorDraftStore(databaseURL: database)
+        let session = UUID().uuidString.lowercased()
+        let first = EditorDraftSnapshot(sessionID: session, taskID: "task-one", generation: 1,
+                                        payloadJSON: #"{"note":"private draft"}"#)
+        try store.checkpoint(first)
+        XCTAssertEqual(try store.read()?.snapshot, first)
+        XCTAssertThrowsError(try store.checkpoint(EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(),
+            taskID: "task-one", generation: 2, payloadJSON: "{}")))
+        XCTAssertThrowsError(try store.checkpoint(EditorDraftSnapshot(sessionID: session,
+            taskID: "task-one", generation: 0, payloadJSON: "{}")))
+        let second = EditorDraftSnapshot(sessionID: session, taskID: "task-one", generation: 2, payloadJSON: "{}")
+        try store.checkpoint(second)
+        XCTAssertThrowsError(try store.checkpoint(first))
+        XCTAssertThrowsError(try store.checkpoint(EditorDraftSnapshot(sessionID: session,
+            taskID: "task-two", generation: 3, payloadJSON: "{}")))
+        let attempt = try store.freeze(sessionID: session, generation: 2, method: "saveDraft",
+                                       argumentsJSON: #"["{\"id\":\"task-one\"}"]"#)
+        XCTAssertThrowsError(try store.checkpoint(EditorDraftSnapshot(sessionID: session,
+            taskID: "task-one", generation: 3, payloadJSON: "{}")))
+        try store.thaw(attempt)
+        XCTAssertEqual(try store.read()?.snapshot, second)
+        #if os(iOS)
+        let attributes = try FileManager.default.attributesOfItem(atPath: snapshotFile.path)
+        XCTAssertEqual(attributes[.protectionKey] as? FileProtectionType, .completeUntilFirstUserAuthentication)
+        #endif
+        XCTAssertTrue(try snapshotFile.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+        try Data(#"{"snapshot":{"version":2}}"#.utf8).write(to: snapshotFile)
+        XCTAssertThrowsError(try store.read())
+        try store.discardCorrupt()
+        XCTAssertNil(try store.read())
+        try Data(repeating: 0, count: 3_000_001).write(to: snapshotFile)
+        XCTAssertThrowsError(try store.read())
+        try store.discardCorrupt()
+        try store.checkpoint(second)
+        XCTAssertThrowsError(try store.discardCorrupt())
+        XCTAssertEqual(try store.read()?.snapshot, second)
+    }
+
+    func testTerminalCleanupFailureColdReplayRemovesOnlyMatchingSnapshot() async throws {
+        let faults = HostIOFaults()
+        let first = host(faults)
+        _ = try await first.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(first, id: id)
+        let session = UUID().uuidString.lowercased()
+        let draft = EditorDraftSnapshot(sessionID: session, taskID: id, generation: 1, payloadJSON: "{}")
+        try await first.checkpointEditorDraft(draft)
+        faults.editorDraftRemove = { throw HostFailure("Injected draft cleanup failure") }
+        do {
+            _ = try await first.saveEditorDraft("saveDraft", argumentsJSON: titleSave(id, opening: opening),
+                                               expectedSession: session, expectedGeneration: 1)
+            XCTFail("Expected cleanup failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("cleanup failure")) }
+        XCTAssertEqual(try task(id)["title"] as? String, "After edit")
+        let rev = try XCTUnwrap(task(id)["rev"] as? Int)
+        XCTAssertNotNil(try object(String(contentsOf: journal))["terminal"])
+        XCTAssertNotNil(try EditorDraftStore(databaseURL: database).read()?.attempt)
+        await first.close()
+
+        let second = host()
+        _ = try await second.start()
+        XCTAssertEqual(try task(id)["rev"] as? Int, rev)
+        XCTAssertEqual(try task(id)["title"] as? String, "After edit")
+        let restored = try await second.readEditorDraft()
+        XCTAssertNil(restored)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        await second.close()
+    }
+
+    func testFrozenBeforeJournalRestoresAsUnsavedOnColdStart() async throws {
+        let faults = HostIOFaults()
+        let first = host(faults)
+        _ = try await first.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(first, id: id)
+        let session = UUID().uuidString.lowercased()
+        let draft = EditorDraftSnapshot(sessionID: session, taskID: id, generation: 1,
+                                        payloadJSON: #"{"title":"unsaved"}"#)
+        try await first.checkpointEditorDraft(draft)
+        faults.journalWrite = { throw HostFailure("Injected pre-journal failure") }
+        do {
+            _ = try await first.saveEditorDraft("saveDraft", argumentsJSON: titleSave(id, opening: opening),
+                                               expectedSession: session, expectedGeneration: 1)
+            XCTFail("Expected journal failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("pre-journal failure")) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try task(id)["title"] as? String, "Before edit")
+        await first.close()
+
+        let second = host()
+        _ = try await second.start()
+        let restored = try await second.readEditorDraft()
+        XCTAssertEqual(restored, draft)
+        XCTAssertNil(try EditorDraftStore(databaseURL: database).read()?.attempt)
+        try await second.checkpointEditorDraft(EditorDraftSnapshot(sessionID: session, taskID: id,
+            generation: 2, payloadJSON: #"{"title":"still unsaved"}"#))
+        XCTAssertEqual(try task(id)["title"] as? String, "Before edit")
+        await second.close()
+    }
+
+    func testPreparedNoopCleanupFailureRetainsRetryableSnapshot() async throws {
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(core, id: id)
+        let session = UUID().uuidString.lowercased()
+        let draft = EditorDraftSnapshot(sessionID: session, taskID: id, generation: 1,
+                                        payloadJSON: #"{"title":"Before edit"}"#)
+        try await core.checkpointEditorDraft(draft)
+        let rev = try XCTUnwrap(task(id)["rev"] as? Int)
+        let unchanged = try json([json([
+            "id": id, "base": ["title": "Before edit"], "patch": ["title": "Before edit"],
+            "scheduleBase": try XCTUnwrap(opening["scheduleBase"]),
+        ])])
+        do {
+            _ = try await core.call("saveDraft", argumentsJSON: unchanged)
+            XCTFail("Expected direct writer to be fenced")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("exact Save attempt")) }
+        faults.editorDraftRemove = { throw HostFailure("Injected no-op cleanup failure") }
+        do {
+            _ = try await core.saveEditorDraft("saveDraft", argumentsJSON: unchanged,
+                                              expectedSession: session, expectedGeneration: 1)
+            XCTFail("Expected no-op cleanup failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("no-op cleanup failure")) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try task(id)["rev"] as? Int, rev)
+        let retained = try await core.readEditorDraft()
+        XCTAssertEqual(retained, draft)
+        faults.editorDraftRemove = nil
+        _ = try await core.saveEditorDraft("saveDraft", argumentsJSON: unchanged,
+                                           expectedSession: session, expectedGeneration: 1)
+        let cleared = try await core.readEditorDraft()
+        XCTAssertNil(cleared)
+        XCTAssertEqual(try task(id)["rev"] as? Int, rev)
+        await core.close()
+    }
+
+    func testCommittedWriteWithUnpersistedTerminalColdReplaysExactlyOnce() async throws {
+        let faults = HostIOFaults()
+        let first = host(faults)
+        _ = try await first.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(first, id: id)
+        let session = UUID().uuidString.lowercased()
+        let draft = EditorDraftSnapshot(sessionID: session, taskID: id, generation: 1, payloadJSON: "{}")
+        try await first.checkpointEditorDraft(draft)
+        let beforeRev = try XCTUnwrap(task(id)["rev"] as? Int)
+        var journalWrites = 0
+        faults.journalWrite = {
+            journalWrites += 1
+            if journalWrites == 2 { throw HostFailure("Injected terminal journal failure") }
+        }
+        do {
+            _ = try await first.saveEditorDraft("saveDraft", argumentsJSON: titleSave(id, opening: opening),
+                                               expectedSession: session, expectedGeneration: 1)
+            XCTFail("Expected terminal journal failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("terminal journal failure")) }
+        XCTAssertEqual(journalWrites, 2)
+        let committed = try task(id)
+        XCTAssertEqual(committed["title"] as? String, "After edit")
+        XCTAssertEqual(committed["rev"] as? Int, beforeRev + 1)
+        let pending = try object(String(contentsOf: journal))
+        XCTAssertNil(pending["terminal"])
+        let journalAttempt = try XCTUnwrap(pending["editorDraft"] as? [String: Any])
+        XCTAssertEqual(journalAttempt["sessionID"] as? String, session)
+        XCTAssertEqual(journalAttempt["taskID"] as? String, id)
+        XCTAssertEqual(journalAttempt["generation"] as? Int, 1)
+        let frozen = try XCTUnwrap(EditorDraftStore(databaseURL: database).read()?.attempt)
+        XCTAssertEqual(journalAttempt["id"] as? String, frozen.id)
+        await first.close()
+
+        let replayFaults = HostIOFaults()
+        var replayTaskWrites = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+tasks\b"#,
+                         options: .regularExpression) != nil { replayTaskWrites += 1 }
+        }
+        let second = host(replayFaults)
+        _ = try await second.start()
+        XCTAssertEqual(replayTaskWrites, 0)
+        XCTAssertEqual(try task(id)["rev"] as? Int, beforeRev + 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        let restored = try await second.readEditorDraft()
+        XCTAssertNil(restored)
+        await second.close()
+
+        let third = host()
+        _ = try await third.start()
+        XCTAssertEqual(try task(id)["rev"] as? Int, beforeRev + 1)
+        XCTAssertNil(try EditorDraftStore(databaseURL: database).read())
+        await third.close()
+    }
+
+    func testMismatchedAttemptJournalRefusesBeforeDatabaseActivation() async throws {
+        let faults = HostIOFaults()
+        let first = host(faults)
+        _ = try await first.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(first, id: id)
+        let session = UUID().uuidString.lowercased()
+        let draft = EditorDraftSnapshot(sessionID: session, taskID: id, generation: 1, payloadJSON: "{}")
+        try await first.checkpointEditorDraft(draft)
+        let before = try task(id)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pre-commit failure") } }
+        do {
+            _ = try await first.saveEditorDraft("saveDraft", argumentsJSON: titleSave(id, opening: opening),
+                                               expectedSession: session, expectedGeneration: 1)
+            XCTFail("Expected pre-commit failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("pre-commit failure")) }
+        let frozen = try XCTUnwrap(EditorDraftStore(databaseURL: database).read()?.attempt)
+        XCTAssertEqual(frozen.generation, 1)
+        await first.close()
+
+        var pending = try object(String(contentsOf: journal))
+        XCTAssertNil(pending["terminal"])
+        var tampered = try XCTUnwrap(pending["editorDraft"] as? [String: Any])
+        tampered["generation"] = 2 // Internally well formed, but different from the frozen attempt.
+        pending["editorDraft"] = tampered
+        let changed = try json(pending)
+        try Data(changed.utf8).write(to: journal)
+        let replayFaults = HostIOFaults()
+        var statements = 0
+        replayFaults.beforeSQL = { _ in statements += 1 }
+        let second = host(replayFaults)
+        do {
+            _ = try await second.start()
+            XCTFail("Expected identity mismatch before SQLite activation")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("identity does not match snapshot")) }
+        XCTAssertEqual(statements, 0)
+        XCTAssertEqual(try task(id)["rev"] as? Int, before["rev"] as? Int)
+        XCTAssertEqual(try task(id)["title"] as? String, "Before edit")
+        XCTAssertEqual(try Data(contentsOf: journal), Data(changed.utf8))
+        XCTAssertEqual(try EditorDraftStore(databaseURL: database).read()?.attempt, frozen)
+        await second.close()
+    }
+
+    func testPreparedJournalMissingFrozenSnapshotRefusesBeforeDatabaseActivation() async throws {
+        let faults = HostIOFaults()
+        let first = host(faults)
+        _ = try await first.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(first, id: id)
+        let session = UUID().uuidString.lowercased()
+        try await first.checkpointEditorDraft(EditorDraftSnapshot(sessionID: session, taskID: id,
+            generation: 1, payloadJSON: "{}"))
+        let before = try task(id)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pre-commit failure") } }
+        do {
+            _ = try await first.saveEditorDraft("saveDraft", argumentsJSON: titleSave(id, opening: opening),
+                                               expectedSession: session, expectedGeneration: 1)
+            XCTFail("Expected pre-commit failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("pre-commit failure")) }
+        let pending = try Data(contentsOf: journal)
+        XCTAssertNil(try object(String(decoding: pending, as: UTF8.self))["terminal"])
+        await first.close()
+
+        try FileManager.default.removeItem(at: snapshotFile)
+        let replayFaults = HostIOFaults()
+        var statements = 0
+        replayFaults.beforeSQL = { _ in statements += 1 }
+        let second = host(replayFaults)
+        do {
+            _ = try await second.start()
+            XCTFail("Expected missing frozen snapshot refusal")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("missing its frozen snapshot")) }
+        XCTAssertEqual(statements, 0)
+        XCTAssertEqual(try task(id)["rev"] as? Int, before["rev"] as? Int)
+        XCTAssertEqual(try task(id)["title"] as? String, "Before edit")
+        XCTAssertEqual(try Data(contentsOf: journal), pending)
+        await second.close()
+    }
+
+    func testSuccessfulTerminalWithoutSnapshotCompletesColdJournalCleanup() async throws {
+        let faults = HostIOFaults()
+        let first = host(faults)
+        _ = try await first.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(first, id: id)
+        let session = UUID().uuidString.lowercased()
+        try await first.checkpointEditorDraft(EditorDraftSnapshot(sessionID: session, taskID: id,
+            generation: 1, payloadJSON: "{}"))
+        let beforeRev = try XCTUnwrap(task(id)["rev"] as? Int)
+        faults.journalRemove = { throw HostFailure("Injected final journal cleanup failure") }
+        do {
+            _ = try await first.saveEditorDraft("saveDraft", argumentsJSON: titleSave(id, opening: opening),
+                                               expectedSession: session, expectedGeneration: 1)
+            XCTFail("Expected final journal cleanup failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("final journal cleanup failure")) }
+        XCTAssertEqual(try task(id)["rev"] as? Int, beforeRev + 1)
+        XCTAssertNotNil(try object(String(contentsOf: journal))["terminal"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        await first.close()
+
+        let replayFaults = HostIOFaults()
+        var taskWrites = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+tasks\b"#,
+                         options: .regularExpression) != nil { taskWrites += 1 }
+        }
+        let second = host(replayFaults)
+        _ = try await second.start()
+        XCTAssertEqual(taskWrites, 0)
+        XCTAssertEqual(try task(id)["rev"] as? Int, beforeRev + 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let restored = try await second.readEditorDraft()
+        XCTAssertNil(restored)
+        await second.close()
+    }
+
+    func testCorruptSnapshotCannotBeDiscardedBesideNonterminalEditorJournal() async throws {
+        let faults = HostIOFaults()
+        let first = host(faults)
+        _ = try await first.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(first, id: id)
+        let session = UUID().uuidString.lowercased()
+        try await first.checkpointEditorDraft(EditorDraftSnapshot(sessionID: session, taskID: id,
+            generation: 1, payloadJSON: "{}"))
+        let before = try task(id)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pre-commit failure") } }
+        do {
+            _ = try await first.saveEditorDraft("saveDraft", argumentsJSON: titleSave(id, opening: opening),
+                                               expectedSession: session, expectedGeneration: 1)
+            XCTFail("Expected pre-commit failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("pre-commit failure")) }
+        let pending = try Data(contentsOf: journal)
+        XCTAssertNil(try object(String(decoding: pending, as: UTF8.self))["terminal"])
+        await first.close()
+
+        let corrupt = Data(#"{"snapshot":{"version":99}}"#.utf8)
+        try corrupt.write(to: snapshotFile)
+        let second = host()
+        do {
+            _ = try await second.start()
+            XCTFail("Expected unreadable frozen snapshot")
+        } catch { XCTAssertTrue(error is EditorDraftStoreError) }
+        do {
+            try await second.discardCorruptEditorDraft()
+            XCTFail("Expected pending editor journal to block discard")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("requires its frozen snapshot")) }
+        XCTAssertEqual(try Data(contentsOf: snapshotFile), corrupt)
+        XCTAssertEqual(try Data(contentsOf: journal), pending)
+        XCTAssertEqual(try task(id)["rev"] as? Int, before["rev"] as? Int)
+        await second.close()
+    }
+
+    func testCorruptSnapshotMayBeDiscardedAfterDurableTerminalSuccess() async throws {
+        let faults = HostIOFaults()
+        let first = host(faults)
+        _ = try await first.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(first, id: id)
+        let session = UUID().uuidString.lowercased()
+        try await first.checkpointEditorDraft(EditorDraftSnapshot(sessionID: session, taskID: id,
+            generation: 1, payloadJSON: "{}"))
+        let beforeRev = try XCTUnwrap(task(id)["rev"] as? Int)
+        faults.editorDraftRemove = { throw HostFailure("Injected draft removal failure") }
+        do {
+            _ = try await first.saveEditorDraft("saveDraft", argumentsJSON: titleSave(id, opening: opening),
+                                               expectedSession: session, expectedGeneration: 1)
+            XCTFail("Expected snapshot removal failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("draft removal failure")) }
+        XCTAssertEqual(try task(id)["rev"] as? Int, beforeRev + 1)
+        XCTAssertNotNil(try object(String(contentsOf: journal))["terminal"])
+        await first.close()
+
+        try Data(#"{"snapshot":{"version":99}}"#.utf8).write(to: snapshotFile)
+        let second = host()
+        do {
+            _ = try await second.start()
+            XCTFail("Expected unreadable snapshot before cleanup")
+        } catch { XCTAssertTrue(error is EditorDraftStoreError) }
+        try await second.discardCorruptEditorDraft()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        _ = try await second.start()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try task(id)["rev"] as? Int, beforeRev + 1)
+        let restored = try await second.readEditorDraft()
+        XCTAssertNil(restored)
+        await second.close()
+    }
+}
