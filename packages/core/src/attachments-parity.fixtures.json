@@ -3,7 +3,17 @@
   "command": "cd apps/mobile && MINDWTR_CAPTURE_ATTACHMENTS=1 MINDWTR_CAPTURE_ATTACHMENTS_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run tests/attachments.parity.test.tsx",
   "capturedAt": "d7e5635103b4194651d416924f054529bf577295",
   "sourceState": "Every file under apps/ and packages/ was at HEAD except this attachments parity harness and its fixture.",
-  "rendering": "use-task-edit-attachments.ts (task task-1, visible, its draft in React state) and use-project-attachments.ts (project project-1, the selected project in React state, updateProject writing the store) mounted with react-test-renderer under a fake Date, English strings, request-ordered UUIDs (00000000-0000-4000-8000-<n>, from 1 per scenario) and Platform.OS web. The pickers, persistAttachmentLocally (copies to file:///data/files/attachments/<id><title extension>, or returns the attachment unchanged when unreadable), ensureAttachmentAvailableDetailed, Linking, Sharing, the Android viewer, the audio player, the log and Alert are replaced; the availability identity and patch rules are core's. Each step lists, in order, what the hook did, then the draft or project attachments and the screen state."
+  "rendering": "use-task-edit-attachments.ts (task task-1, visible, its draft in React state) and use-project-attachments.ts (project project-1, the selected project in React state, updateProject writing the store) mounted with react-test-renderer under a fake Date, English strings, request-ordered UUIDs (00000000-0000-4000-8000-<n>, from 1 per scenario) and Platform.OS web. The pickers, persistAttachmentLocally (copies to file:///data/files/attachments/<id><title extension>, or returns the attachment unchanged when unreadable), ensureAttachmentAvailableDetailed, Linking, Sharing, the Android viewer, the audio player, the log and Alert are replaced; the availability identity and patch rules are core's. Each step lists, in order, what the hook did, then the draft or project attachments and the screen state.",
+  "recaptured": [
+   {
+    "commit": "6a28ab6a5c0acdb3159d5cf665567ae237c51bfc",
+    "reason": "RN fix: opening a project file already on the device no longer writes the project (no updateProject, no setSelectedProject)",
+    "scenarios": [
+     "project: an archived project takes nothing",
+     "project: open links, an image and a document"
+    ]
+   }
+  ]
  },
  "timeZone": "UTC",
  "now": "2026-09-30T10:00:00.000Z",
@@ -4600,37 +4610,6 @@
       }
      ],
      [
-      "updateProject",
-      "project-1",
-      {
-       "attachments": [
-        {
-         "id": "link-old",
-         "kind": "link",
-         "title": "Old doc",
-         "uri": "https://old.example/doc",
-         "createdAt": "2026-09-01T00:00:00.000Z",
-         "updatedAt": "2026-09-01T00:00:00.000Z"
-        },
-        {
-         "id": "file-1",
-         "kind": "file",
-         "title": "file-1.pdf",
-         "uri": "file:///data/files/attachments/file-1.pdf",
-         "mimeType": "application/pdf",
-         "size": 2048,
-         "localStatus": "available",
-         "createdAt": "2026-09-01T00:00:00.000Z",
-         "updatedAt": "2026-09-01T00:00:00.000Z"
-        }
-       ]
-      }
-     ],
-     [
-      "setSelectedProject",
-      "project-1"
-     ],
-     [
       "tryOpenWithAndroidViewer",
       "file:///data/files/attachments/file-1.pdf",
       "application/pdf"
@@ -4666,7 +4645,7 @@
     ],
     "screen": {
      "linkModalVisible": false,
-     "linkInput": "",
+     "linkInput": "https://one.example",
      "imagePreview": null,
      "storedAttachments": [
       {
@@ -5399,56 +5378,6 @@
        "createdAt": "2026-09-01T00:00:00.000Z",
        "updatedAt": "2026-09-01T00:00:00.000Z"
       }
-     ],
-     [
-      "updateProject",
-      "project-1",
-      {
-       "attachments": [
-        {
-         "id": "web",
-         "kind": "link",
-         "title": "https://example.com/doc",
-         "uri": "https://example.com/doc",
-         "createdAt": "2026-09-01T00:00:00.000Z",
-         "updatedAt": "2026-09-01T00:00:00.000Z"
-        },
-        {
-         "id": "desktop",
-         "kind": "link",
-         "title": "D:\\Docs\\a.docx",
-         "uri": "D:\\Docs\\a.docx",
-         "createdAt": "2026-09-01T00:00:00.000Z",
-         "updatedAt": "2026-09-01T00:00:00.000Z"
-        },
-        {
-         "id": "image-1",
-         "kind": "file",
-         "title": "Photo.png",
-         "uri": "file:///data/files/attachments/image-1.png",
-         "mimeType": "image/png",
-         "size": 2048,
-         "localStatus": "available",
-         "createdAt": "2026-09-01T00:00:00.000Z",
-         "updatedAt": "2026-09-01T00:00:00.000Z"
-        },
-        {
-         "id": "doc-1",
-         "kind": "file",
-         "title": "doc-1.pdf",
-         "uri": "file:///data/files/attachments/doc-1.pdf",
-         "mimeType": "application/pdf",
-         "size": 2048,
-         "localStatus": "available",
-         "createdAt": "2026-09-01T00:00:00.000Z",
-         "updatedAt": "2026-09-01T00:00:00.000Z"
-        }
-       ]
-      }
-     ],
-     [
-      "setSelectedProject",
-      "project-1"
      ]
     ],
     "attachments": [
@@ -5553,56 +5482,6 @@
        "createdAt": "2026-09-01T00:00:00.000Z",
        "updatedAt": "2026-09-01T00:00:00.000Z"
       }
-     ],
-     [
-      "updateProject",
-      "project-1",
-      {
-       "attachments": [
-        {
-         "id": "web",
-         "kind": "link",
-         "title": "https://example.com/doc",
-         "uri": "https://example.com/doc",
-         "createdAt": "2026-09-01T00:00:00.000Z",
-         "updatedAt": "2026-09-01T00:00:00.000Z"
-        },
-        {
-         "id": "desktop",
-         "kind": "link",
-         "title": "D:\\Docs\\a.docx",
-         "uri": "D:\\Docs\\a.docx",
-         "createdAt": "2026-09-01T00:00:00.000Z",
-         "updatedAt": "2026-09-01T00:00:00.000Z"
-        },
-        {
-         "id": "image-1",
-         "kind": "file",
-         "title": "Photo.png",
-         "uri": "file:///data/files/attachments/image-1.png",
-         "mimeType": "image/png",
-         "size": 2048,
-         "localStatus": "available",
-         "createdAt": "2026-09-01T00:00:00.000Z",
-         "updatedAt": "2026-09-01T00:00:00.000Z"
-        },
-        {
-         "id": "doc-1",
-         "kind": "file",
-         "title": "doc-1.pdf",
-         "uri": "file:///data/files/attachments/doc-1.pdf",
-         "mimeType": "application/pdf",
-         "size": 2048,
-         "localStatus": "available",
-         "createdAt": "2026-09-01T00:00:00.000Z",
-         "updatedAt": "2026-09-01T00:00:00.000Z"
-        }
-       ]
-      }
-     ],
-     [
-      "setSelectedProject",
-      "project-1"
      ],
      [
       "tryOpenWithAndroidViewer",
