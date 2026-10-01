@@ -108,12 +108,12 @@ assert.equal(String(new consoleState.URL('https://host/dav/?dir=a+b')), 'https:/
     const noDates = vm.createContext({ console: { info() {} }, Intl: undefined, __mindwtrNative: { log() {} } });
     vm.runInContext(polyfills, noDates);
     assert.equal(vm.runInContext("new Intl.DateTimeFormat('de-DE', { weekday: 'long' }).format(new Date(2026, 8, 6))", noDates), 'Sunday');
-    // The Kotlin side: one guarded callback, its formatter made in start (on the engine thread) and used only there, no IO;
+    // The Kotlin side: one guarded callback, its formatter made in install (on the engine thread) and used only there, no IO;
     // the device check's cases run only in a debug build.
     const kotlin = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core', name), 'utf8');
     const host = kotlin('CoreHost.kt');
     const icu = kotlin('IcuDateTimeFormat.kt');
-    assert.match(host, /fun start\([^)]*\): JSONObject = onEngine \{[\s\S]*?val dates = IcuDateTimeFormat\(\)\s+bridge\.setProperty\("dateTimeFormat", guarded \{ args -> dates\.reply\(args\[0\] as String, args\[1\] as String, \(args\[2\] as Number\)\.toDouble\(\)\) \}\)/);
+    assert.match(host, /private fun install\(engine: QuickJSContext, database: \(\) -> SqliteBridge\) \{[\s\S]*?val dates = IcuDateTimeFormat\(\)\s+bridge\.setProperty\("dateTimeFormat", guarded \{ args -> dates\.reply\(args\[0\] as String, args\[1\] as String, \(args\[2\] as Number\)\.toDouble\(\)\) \}\)/);
     assert.equal(host.match(/IcuDateTimeFormat\(\)|dates\./g).length, 2, 'made once, used only by the bridge callback');
     assert.doesNotMatch(icu, /java\.io|java\.nio|\bFile\b|Thread|Executor|\bLog\.|debugProperty|synchronized|Volatile|quickjs|getprop/, 'pure: no IO, no threads');
     assert.match(host, /if \(debugFault\("intl_check"\) == "1"\) engine\.globalObject\.setProperty\("__mindwtrIntlCheck", true\)/);
@@ -400,8 +400,19 @@ assert(pragmaOrder.every((index, i) => index > (i ? pragmaOrder[i - 1] : -1)), `
 assert.equal(sqliteBridge.match(/journal_mode|synchronous =/g).length, 2);
 assert.doesNotMatch(bridgeCheckpoint, /\breturn\b/);
 assert.match(sqliteBridge, /syncFile\(partial\)[\s\S]*?renameTo\(checkpointFile\)[\s\S]*?syncDirectory/);
-assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('engine.evaluate(bundle'));
-assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('callAsync("boot", legacyState, legacyBackup, "journaled")'));
+// Startup (phase 2 #3): SQLite opens and takes its checkpoint on the caller's thread while the engine loads the bundle. No SQL runs
+// before the checkpoint: the bridge reaches SQLite only through the open's future, and boot starts after the engine took it.
+{
+    const start = coreHost.slice(coreHost.indexOf('fun start(bundle: CoreBundle'), coreHost.indexOf('/** Where the bundle came from'));
+    const order = ['val opened = FutureTask {', 'database.ensureRecoveryCheckpoint()', 'val database = { opened.get() }', 'executor.submit(Callable {',
+        'install(engine, database)', 'load(engine, database, bundle)', 'opened.run()', 'return onEngine {', 'loading.get()', 'sqlite = database()',
+        'callAsync("boot", legacyState, legacyBackup, "journaled")'].map((text) => start.indexOf(text));
+    assert(order.every((index, i) => index > (i ? order[i - 1] : -1)), `start order ${order}`);
+    assert.match(start, /catch \(failure: Throwable\) \{\s+if \(sqlite == null\) runCatching \{ database\(\)\.close\(\) \}\s+closeOnEngine\(\)/, 'a failed start closes an open database it never handed over');
+    assert.match(start, /catch \(error: Throwable\) \{\s+runCatching \{ database\.close\(\) \}\s+throw error/, 'a failed checkpoint closes its database');
+    assert.equal(coreHost.match(/database\(\)\.(run|all|exec)\(/g).length, 3, 'the SQL calls take the database from the open\'s future');
+    assert.equal(coreHost.match(/\bsqlite = (?!null)/g).length, 1, 'the engine takes the database once, at start');
+}
 const source = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot', name), 'utf8');
 const activity = source('MainActivity.kt');
 const model = source('InboxViewModel.kt');

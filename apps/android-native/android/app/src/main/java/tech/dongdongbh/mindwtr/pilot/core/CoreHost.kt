@@ -21,6 +21,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Future
+import java.util.concurrent.FutureTask
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -123,32 +124,54 @@ class CoreHost(
         functions.getOrPut(method) { host.getJSFunction(method) }.call(*args)
     }
 
-    /** [legacyState] and [legacyBackup] come from LegacyRnStoreGuard; both are "" for the dev database. */
-    fun start(bundle: CoreBundle, legacyState: String = "", legacyBackup: String = ""): JSONObject = onEngine {
-        try {
-            Trace.beginSection("core:journalOpen")
-            journal = WriteJournal(journalDir, log = { Log.i(TAG, it) }, floor = devices.highestSequence())
-            Trace.endSection()
-            Trace.beginSection("core:contextCreate")
-            val engine = QuickJSContext.create()
-            Trace.endSection()
-            context = engine
-            Trace.beginSection("core:sqliteOpen")
-            val database = SqliteBridge(databaseFile)
-            Trace.endSection()
-            sqlite = database
-            Trace.beginSection("core:recoveryCheckpoint")
-            database.ensureRecoveryCheckpoint()
-            Trace.endSection()
-            install(engine, database)
-            // A fetch or secret answer queued while no call runs wakes the idle pump, which settles it at once.
-            io.wake = { runCatching { executor.execute { idlePump() } } }
-            load(engine, database, bundle)
-            // This host journals every write (WriteJournal), so core requires each write's replay tokens.
-            callAsync("boot", legacyState, legacyBackup, "journaled").also { netCheck() }
-        } catch (error: Throwable) {
-            closeOnEngine()
-            throw error
+    /**
+     * [legacyState] and [legacyBackup] come from LegacyRnStoreGuard; both are "" for the dev database.
+     *
+     * SQLite opens and takes its recovery checkpoint on the caller's thread while the engine thread loads the bundle. No SQL
+     * runs before the checkpoint: the bridge's SQL calls take the database from [opened] (they would wait for it), and boot,
+     * the first caller, starts only after the engine owns it. From then on only the engine thread uses it.
+     */
+    fun start(bundle: CoreBundle, legacyState: String = "", legacyBackup: String = ""): JSONObject {
+        val opened = FutureTask {
+            val database = traced("core:sqliteOpen") { SqliteBridge(databaseFile) }
+            try {
+                traced("core:recoveryCheckpoint") { database.ensureRecoveryCheckpoint() }
+            } catch (error: Throwable) {
+                runCatching { database.close() }
+                throw error
+            }
+            database
+        }
+        val database = { opened.get() }
+        val loading = synchronized(lifecycleLock) {
+            check(shutdown == null) { "Core host is closed" }
+            executor.submit(Callable {
+                Trace.beginSection("core:journalOpen")
+                journal = WriteJournal(journalDir, log = { Log.i(TAG, it) }, floor = devices.highestSequence())
+                Trace.endSection()
+                Trace.beginSection("core:contextCreate")
+                val engine = QuickJSContext.create()
+                Trace.endSection()
+                context = engine
+                install(engine, database)
+                // A fetch or secret answer queued while no call runs wakes the idle pump, which settles it at once.
+                io.wake = { runCatching { executor.execute { idlePump() } } }
+                load(engine, database, bundle)
+            })
+        }
+        opened.run()
+        // The engine runs this after the load (one thread, in order).
+        return onEngine {
+            try {
+                loading.get()
+                sqlite = database()
+                // This host journals every write (WriteJournal), so core requires each write's replay tokens.
+                callAsync("boot", legacyState, legacyBackup, "journaled").also { netCheck() }
+            } catch (failure: Throwable) {
+                if (sqlite == null) runCatching { database().close() }
+                closeOnEngine()
+                throw (failure as? ExecutionException)?.cause ?: failure
+            }
         }
     }
 
@@ -161,7 +184,7 @@ class CoreHost(
      * The bundle into [engine]: its cached bytecode when the cache's key matches, without reading the source; else the
      * source. Bytecode that fails to run is dropped with its engine, and a new engine runs the source.
      */
-    private fun load(first: QuickJSContext, database: SqliteBridge, bundle: CoreBundle) {
+    private fun load(first: QuickJSContext, database: () -> SqliteBridge, bundle: CoreBundle) {
         var engine = first
         val cached = bundle.cache?.let { cache -> bundle.hash.takeIf { it.isNotEmpty() }?.let(cache::read) }
         bundleOutcome = cached?.outcome ?: "off"
@@ -210,12 +233,12 @@ class CoreHost(
         writer.start()
     }
 
-    /** The native bridge, `globalThis.__mindwtrNative`, on a new [engine]. */
-    private fun install(engine: QuickJSContext, database: SqliteBridge) {
+    /** The native bridge, `globalThis.__mindwtrNative`, on a new [engine]; [database] waits for SQLite's recovery checkpoint. */
+    private fun install(engine: QuickJSContext, database: () -> SqliteBridge) {
         val bridge = engine.createNewJSObject()
-        bridge.setProperty("sqlRun", guarded { args -> traced("sql:run") { database.run(args[0] as String, args[1] as String) }; null })
-        bridge.setProperty("sqlAll", guarded { args -> traced("sql:all") { database.all(args[0] as String, args[1] as String) } })
-        bridge.setProperty("sqlExec", guarded { args -> traced("sql:exec") { database.exec(args[0] as String) }; null })
+        bridge.setProperty("sqlRun", guarded { args -> traced("sql:run") { database().run(args[0] as String, args[1] as String) }; null })
+        bridge.setProperty("sqlAll", guarded { args -> traced("sql:all") { database().all(args[0] as String, args[1] as String) } })
+        bridge.setProperty("sqlExec", guarded { args -> traced("sql:exec") { database().exec(args[0] as String) }; null })
         // The bundle's boot steps as trace sections (Perfetto): a name opens one, "" closes the open one.
         bridge.setProperty("trace", guarded { args ->
             (args[0] as String).let { if (it.isEmpty()) Trace.endSection() else Trace.beginSection(it.take(127)) }
