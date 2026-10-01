@@ -566,6 +566,21 @@ export type NativePreparedCalendarSchedule = {
 export type NativeCalendarSchedulePreparation = { kind: 'prepared'; prepared: NativePreparedCalendarSchedule }
     | { kind: 'refused' | 'noop'; result: NativeCalendarActionResult };
 
+export type NativeCalendarUnscheduleRequest = { requestId: string; taskId: string; taskRevision: string };
+export type NativePreparedCalendarUnschedule = {
+    version: 1;
+    kind: 'unschedule';
+    request: NativeCalendarUnscheduleRequest;
+    before: Task;
+    after: Task;
+    policy: CalendarSchedulePolicy;
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    result: NativeCalendarActionResult;
+};
+export type NativeCalendarUnschedulePreparation = { kind: 'prepared'; prepared: NativePreparedCalendarUnschedule }
+    | { kind: 'noop'; result: NativeCalendarActionResult };
+
 export type NativeCalendarCreateRequest = { requestId: string; composer: NativeCalendarComposer };
 type CalendarCreateIntent = {
     sourceTitle: string;
@@ -625,6 +640,21 @@ const calendarStoredRow = (task: Task): Task => {
     return taskFromSqliteRow(Object.fromEntries(TASK_SQLITE_COLUMNS.map((column, index) => [column, values[index]])));
 };
 const calendarRowEqual = (left: Task, right: Task) => calendarSame(calendarStoredRow(left), calendarStoredRow(right));
+const calendarUtf8Within = (text: string, limit: number): boolean => {
+    let bytes = 0;
+    for (let index = 0; index < text.length; index++) {
+        const code = text.charCodeAt(index);
+        if (code < 0x80) bytes++;
+        else if (code < 0x800) bytes += 2;
+        else if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length
+            && text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff) {
+            bytes += 4;
+            index++;
+        } else bytes += 3;
+        if (bytes > limit) return false;
+    }
+    return true;
+};
 const localProjection = (instant: string, offsetMinutes: number) => {
     const projected = new Date(Date.parse(instant) + offsetMinutes * 60_000);
     return { day: projected.toISOString().slice(0, 10), minute: projected.getUTCHours() * 60 + projected.getUTCMinutes() };
@@ -909,6 +939,72 @@ export const validatePreparedCalendarSchedule = (input: unknown): NativeHostResu
         return { ok: true, value: result };
     } catch {
         return fail('INVALID_INPUT', 'Malformed prepared Calendar schedule');
+    }
+};
+
+const unscheduleResult = (taskId: string, changed: boolean): NativeCalendarActionResult => ({
+    taskId, changed, toast: null, next: null, scrollToMinutes: null, composer: null,
+});
+
+/** Pure journal authority, including the exact shared task-update policy and stored row. */
+export const validatePreparedCalendarUnschedule = (input: unknown): NativeHostResult<NativeCalendarActionResult> => {
+    const malformed = () => fail('INVALID_INPUT', 'Malformed prepared Calendar unschedule');
+    try {
+        const serialized = JSON.stringify(input);
+        if (typeof serialized !== 'string' || !calendarUtf8Within(serialized, 2_000_000)
+            || !calendarRecord(input) || !calendarKeys(input, ['request', 'prepared'])
+            || !calendarRecord(input.request) || !calendarRecord(input.prepared)) return malformed();
+        const request = input.request as NativeCalendarUnscheduleRequest;
+        const prepared = input.prepared as NativePreparedCalendarUnschedule;
+        const { before, after, policy } = prepared;
+        if (!calendarKeys(input.request, ['requestId', 'taskId', 'taskRevision'])
+            || typeof request.requestId !== 'string' || !CALENDAR_UUID.test(request.requestId)
+            || typeof request.taskId !== 'string' || !request.taskId || request.taskId.length > 200
+            || typeof request.taskRevision !== 'string' || !request.taskRevision || request.taskRevision.length > 200
+            || !calendarKeys(input.prepared, ['version', 'kind', 'request', 'before', 'after', 'policy', 'deviceIdBefore', 'deviceIdToInitialize', 'result'])
+            || prepared.version !== 1 || prepared.kind !== 'unschedule' || !calendarSame(request, prepared.request)
+            || !calendarRecord(before) || !calendarRecord(after)
+            || before.id !== request.taskId || after.id !== request.taskId
+            || taskRevisionOf(before) !== request.taskRevision
+            || typeof before.startTime !== 'string' || !before.startTime
+            || before.deletedAt || before.purgedAt || before.status === 'reference'
+            || isProjectedRecurringTaskId(request.taskId)
+            || !calendarRecord(policy) || !calendarKeys(policy, ['preparedAt', 'preparedOffsetMinutes', 'preparedLocalDay', 'endOfLocalTodayUTC', 'endOffsetMinutes', 'container', 'normalizedUpdates'])
+            || !instantValid(policy.preparedAt) || !instantValid(policy.endOfLocalTodayUTC)
+            || !offsetValid(policy.preparedOffsetMinutes) || !offsetValid(policy.endOffsetMinutes)
+            || localProjection(policy.preparedAt, policy.preparedOffsetMinutes).day !== policy.preparedLocalDay
+            || localProjection(policy.endOfLocalTodayUTC, policy.endOffsetMinutes).day !== policy.preparedLocalDay
+            || localProjection(policy.endOfLocalTodayUTC, policy.endOffsetMinutes).minute !== 1439
+            || new Date(Date.parse(policy.endOfLocalTodayUTC) + policy.endOffsetMinutes * 60_000).toISOString().slice(11) !== '23:59:59.999Z'
+            || Date.parse(policy.endOfLocalTodayUTC) < Date.parse(policy.preparedAt)
+            || Date.parse(policy.endOfLocalTodayUTC) - Date.parse(policy.preparedAt) > 27 * 60 * 60_000
+            || !calendarRecord(policy.container) || !calendarKeys(policy.container, ['project', 'section', 'area'])
+            || !calendarRecord(policy.normalizedUpdates)
+            || !(prepared.deviceIdBefore === null || typeof prepared.deviceIdBefore === 'string')
+            || !(prepared.deviceIdToInitialize === null || typeof prepared.deviceIdToInitialize === 'string')
+            || (prepared.deviceIdBefore === null ? prepared.deviceIdToInitialize !== after.revBy
+                : prepared.deviceIdBefore !== after.revBy || prepared.deviceIdToInitialize !== null)
+            || after.rev !== nextRevision(before.rev) || after.updatedAt !== policy.preparedAt) return malformed();
+        const container = policy.container;
+        if ((container.project !== null && (!calendarRecord(container.project) || !calendarKeys(container.project, ['id', 'status', 'deletedAt', 'purgedAt']) || container.project.id !== before.projectId))
+            || (container.section !== null && (!calendarRecord(container.section) || !calendarKeys(container.section, ['id', 'projectId', 'deletedAt']) || container.section.id !== before.sectionId))
+            || (container.area !== null && (!calendarRecord(container.area) || !calendarKeys(container.area, ['id', 'deletedAt']) || container.area.id !== before.areaId))
+            || (before.projectId && !container.project) || (before.sectionId && !container.section) || (before.areaId && !container.area)) return malformed();
+        const lists = resolverLists(container);
+        if (isStatusListTaskReadOnly(before, lists.projects)) return malformed();
+        const updates = prepareTaskUpdatesForStore({ task: before, updates: { ...CALENDAR_UNSCHEDULE_UPDATES },
+            allProjects: lists.projects, allSections: lists.sections, allAreas: lists.areas,
+            futureBoundary: policy.endOfLocalTodayUTC });
+        if (!updates.ok || findTaskProjectReactivationTarget(before, updates.updates, lists.projects)
+            || !calendarSame(calendarUpdates(updates.updates), policy.normalizedUpdates)) return malformed();
+        const applied = applyTaskUpdates(before, { ...updates.updates, rev: after.rev, revBy: after.revBy }, policy.preparedAt);
+        if (applied.nextRecurringTask || !calendarSame(applied.updatedTask, after) || !calendarRowEqual(applied.updatedTask, after)) return malformed();
+        const result = prepared.result;
+        if (!calendarRecord(result) || !calendarKeys(result, ['taskId', 'changed', 'toast', 'next', 'scrollToMinutes', 'composer'])
+            || !calendarSame(result, unscheduleResult(request.taskId, true))) return malformed();
+        return { ok: true, value: result };
+    } catch {
+        return malformed();
     }
 };
 
@@ -1904,6 +2000,80 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             if (!saved.ok) return saved;
             try { logInfo('Native iOS Calendar schedule saved', { scope: 'native-host', category: 'storage',
                 context: { releaseCheck: 'v1.3.3/native-ios-calendar-schedule', outcome: applied.outcome } }); }
+            catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            return authority;
+        },
+
+        /** Freeze RN's Unschedule update policy before the native host writes its journal. */
+        async prepareCalendarUnschedule(input: NativeCalendarUnscheduleRequest): Promise<NativeHostResult<NativeCalendarUnschedulePreparation>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!calendarRecord(input) || !calendarKeys(input, ['requestId', 'taskId', 'taskRevision'])
+                || typeof input.requestId !== 'string' || !CALENDAR_UUID.test(input.requestId)
+                || typeof input.taskId !== 'string' || !input.taskId || input.taskId.length > 200
+                || typeof input.taskRevision !== 'string' || !input.taskRevision || input.taskRevision.length > 200) {
+                return fail('INVALID_INPUT', 'An Unschedule task and view revision are required');
+            }
+            const store = useTaskStore.getState();
+            const task = store._tasksById.get(input.taskId);
+            if (!task || task.deletedAt || task.purgedAt || task.status === 'reference'
+                || isProjectedRecurringTaskId(input.taskId) || isStatusListTaskReadOnly(task, store._allProjects)) {
+                return fail('TASK_NOT_FOUND', 'Task is not schedulable');
+            }
+            if (taskRevisionOf(task) !== input.taskRevision) return fail('STALE_REVISION', 'Task changed since the Calendar view');
+            if (!task.startTime) return { ok: true, value: { kind: 'noop', result: unscheduleResult(task.id, false) } };
+            const now = new Date();
+            const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+            const policy: CalendarSchedulePolicy = {
+                preparedAt: now.toISOString(), preparedOffsetMinutes: -now.getTimezoneOffset(),
+                preparedLocalDay: dayKey(now), endOfLocalTodayUTC: end.toISOString(), endOffsetMinutes: -end.getTimezoneOffset(),
+                container: {
+                    project: projectProjection(store._allProjects.find((item) => item.id === task.projectId)),
+                    section: sectionProjection(store._allSections.find((item) => item.id === task.sectionId)),
+                    area: areaProjection(store._allAreas.find((item) => item.id === task.areaId)),
+                }, normalizedUpdates: {},
+            };
+            const lists = resolverLists(policy.container);
+            const planned = prepareTaskUpdatesForStore({ task, updates: { ...CALENDAR_UNSCHEDULE_UPDATES },
+                allProjects: lists.projects, allSections: lists.sections, allAreas: lists.areas,
+                futureBoundary: policy.endOfLocalTodayUTC });
+            if (!planned.ok || findTaskProjectReactivationTarget(task, planned.updates, store._allProjects)) {
+                return fail('INVALID_INPUT', 'This task needs a wider Calendar update');
+            }
+            policy.normalizedUpdates = calendarUpdates(planned.updates);
+            const device = ensureDeviceId(store.settings);
+            const applied = applyTaskUpdates(task, { ...planned.updates, rev: nextRevision(task.rev), revBy: device.deviceId }, policy.preparedAt);
+            if (applied.nextRecurringTask) return fail('INVALID_INPUT', 'Recurring follow-up is outside this Calendar save');
+            const prepared: NativePreparedCalendarUnschedule = {
+                version: 1, kind: 'unschedule', request: input,
+                before: JSON.parse(JSON.stringify(task)) as Task,
+                after: JSON.parse(JSON.stringify(applied.updatedTask)) as Task,
+                policy, deviceIdBefore: store.settings.deviceId ?? null,
+                deviceIdToInitialize: device.updated ? device.deviceId : null,
+                result: unscheduleResult(task.id, true),
+            };
+            const decoded = validatePreparedCalendarUnschedule({ request: input, prepared });
+            return decoded.ok ? { ok: true, value: { kind: 'prepared', prepared } }
+                : fail('INVALID_INPUT', 'Calendar Unschedule could not produce a valid prepared journal');
+        },
+
+        validatePreparedCalendarUnschedule,
+
+        async commitPreparedCalendarUnschedule(input: { request: NativeCalendarUnscheduleRequest; prepared: NativePreparedCalendarUnschedule }): Promise<NativeHostResult<NativeCalendarActionResult>> {
+            const authority = validatePreparedCalendarUnschedule(input);
+            if (!authority.ok) return authority;
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const applied = await useTaskStore.getState().commitPreparedCalendarTask(input.prepared);
+            if (!applied.success) return fail(applied.reason === 'missing' ? 'TASK_NOT_FOUND' : 'STALE_REVISION', applied.error ?? 'Prepared Calendar Unschedule conflicts with current data');
+            if (useTaskStore.getState().persistenceFailure) {
+                try { await useTaskStore.getState().retryPersistence(); }
+                catch { return fail('SAVE_FAILED', 'Pending Calendar Unschedule is not saved'); }
+            }
+            const saved = await deps.save();
+            if (!saved.ok) return saved;
+            try { logInfo('Native iOS Calendar unschedule saved', { scope: 'native-host', category: 'storage',
+                context: { releaseCheck: 'v1.3.4/ios-calendar-unschedule', outcome: applied.outcome } }); }
             catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
             return authority;
         },

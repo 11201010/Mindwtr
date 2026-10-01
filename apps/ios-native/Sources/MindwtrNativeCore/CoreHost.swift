@@ -159,6 +159,7 @@ private final class Engine: @unchecked Sendable {
     private var startupTaskFocusResult: String?
     private var startupFocusOrderResult: String?
     private var startupFocusSavedFilterResult: String?
+    private var startupCalendarUnscheduleResult: String?
     private var startupSavedSearchResult: String?
     private var startupProjectRenameResult: String?
     private var startupProjectFlowResult: String?
@@ -233,14 +234,14 @@ private final class Engine: @unchecked Sendable {
         "projectStatusOptions": 1, "projectStatusWrite": 1, "projectStatusRetryOutcome": 1,
         "projectDateOptions": 1, "projectDateWrite": 1, "projectDateRetryOutcome": 1,
         "projectAreaOptions": 1, "projectAreaWrite": 1, "projectAreaRetryOutcome": 1,
-        "menuRead": 2, "destinationPicker": 1, "editorSuggestions": 4, "calendarPreference": 1, "boardAction": 1,
+        "menuRead": 2, "destinationPicker": 1, "editorSuggestions": 4, "calendarPreference": 1, "calendarUnschedule": 1, "boardAction": 1,
         "calendarComposerOpen": 1, "calendarComposerEdit": 1, "calendarComposerSave": 1,
         "mindSweepGuide": 1, "mindSweepAdd": 1,
         "inboxStart": 1, "inboxStep": 1, "inboxEnd": 1,
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -336,6 +337,10 @@ private final class Engine: @unchecked Sendable {
                 // for terminal journals whose remaining work is only cleanup.
                 _ = try invoke("boardValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validateBoardAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "calendarUnscheduleCommit" {
+                _ = try invoke("calendarUnscheduleValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateCalendarAcknowledgment(command, value: value) }
             }
             if let command = pending, ["calendarComposerCommit", "calendarComposerCreateCommit"].contains(command.method) {
                 _ = try invoke(command.method == "calendarComposerCommit" ? "calendarComposerValidate" : "calendarComposerCreateValidate", arguments: journalArguments(command))
@@ -585,6 +590,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringTaskFocus = pending?.method == "taskFocusCommit"
         let recoveringFocusOrder = pending?.method == "focusOrderCommit"
         let recoveringFocusSavedFilter = pending?.method == "focusSavedFilterCommit"
+        let recoveringCalendarUnschedule = pending?.method == "calendarUnscheduleCommit"
         let recoveringSavedSearch = pending?.method == "savedSearchCommit"
         let recoveringProjectRename = pending?.method == "projectRenameCommit"
         let recoveringProjectFlow = pending?.method == "projectFlowCommit"
@@ -633,6 +639,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringTaskFocus, let terminal, case .success(let value) = terminal { startupTaskFocusResult = value }
         if recoveringFocusOrder, let terminal, case .success(let value) = terminal { startupFocusOrderResult = value }
         if recoveringFocusSavedFilter, let terminal, case .success(let value) = terminal { startupFocusSavedFilterResult = value }
+        if recoveringCalendarUnschedule, let terminal, case .success(let value) = terminal { startupCalendarUnscheduleResult = value }
         if recoveringSavedSearch, let terminal, case .success(let value) = terminal { startupSavedSearchResult = value }
         if recoveringProjectRename, let terminal, case .success(let value) = terminal { startupProjectRenameResult = value }
         if recoveringProjectFlow, let terminal, case .success(let value) = terminal { startupProjectFlowResult = value }
@@ -668,7 +675,7 @@ private final class Engine: @unchecked Sendable {
             ?? recoveredAreas ?? startupProjectFocusResult
             ?? startupProjectRenameResult ?? recoveredProjectMetadata
         let recoveredFocus = startupTaskFocusResult ?? startupFocusOrderResult ?? startupFocusSavedFilterResult
-            ?? startupFocusGroupResult ?? startupSavedSearchResult
+            ?? startupFocusGroupResult ?? startupSavedSearchResult ?? startupCalendarUnscheduleResult
         let recoveredSomedaySections = startupSomedaySectionCreateResult ?? startupSomedaySectionRenameResult
             ?? startupSomedaySectionDeleteResult ?? startupSomedaySectionOrderResult
             ?? startupSomedaySectionTaskResult
@@ -710,6 +717,7 @@ private final class Engine: @unchecked Sendable {
             : startupMindSweepResult != nil ? "mindSweepCommit"
             : projectRecoveryMethod ?? (startupTaskFocusResult != nil ? "taskFocusCommit"
                 : startupFocusOrderResult != nil ? "focusOrderCommit"
+                : startupCalendarUnscheduleResult != nil ? "calendarUnscheduleCommit"
                 : startupSavedSearchResult != nil ? "savedSearchCommit"
                 : startupFocusSavedFilterResult != nil ? "focusSavedFilterCommit"
                 : startupInboxResult != nil ? "inboxPreparedCommit" : startupChecklistResult != nil ? "checklistPreparedCommit"
@@ -756,6 +764,7 @@ private final class Engine: @unchecked Sendable {
         startupFocusOrderResult = nil
         startupFocusSavedFilterResult = nil
         startupSavedSearchResult = nil
+        startupCalendarUnscheduleResult = nil
         startupProjectRenameResult = nil
         startupProjectFlowResult = nil
         startupProjectTaskSortResult = nil
@@ -2450,6 +2459,35 @@ private final class Engine: @unchecked Sendable {
                 command = PendingCommand(version: 2, method: "mindSweepCommit", argumentsJSON: encoded)
                 _ = try invoke("mindSweepValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "calendarUnschedule" {
+            do {
+                let value = try invoke("calendarUnschedulePrepare", arguments: args)
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String, let original = args.first as? String,
+                      let submitted = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed Calendar Unschedule preparation")
+                }
+                if kind == "noop" {
+                    guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any],
+                          Set(result.keys) == Set(["changed", "toast", "next", "scrollToMinutes", "composer", "taskId"]),
+                          Self.isBoolean(result["changed"]), result["changed"] as? Bool == false,
+                          result["taskId"] as? String == submitted["taskId"] as? String,
+                          ["toast", "next", "scrollToMinutes", "composer"].allSatisfy({ result[$0] is NSNull }) else {
+                        throw HostFailure("Malformed Calendar Unschedule no-op")
+                    }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any], let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Calendar Unschedule")
+                }
+                let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+                command = PendingCommand(version: 2, method: "calendarUnscheduleCommit", argumentsJSON: encoded)
+                _ = try invoke("calendarUnscheduleValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "calendarComposerSave" {
             do {
                 guard let original = args.first as? String,
@@ -2682,6 +2720,10 @@ private final class Engine: @unchecked Sendable {
             _ = try invoke("boardValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validateBoardAcknowledgment(command, value: value) }
         }
+        if command.method == "calendarUnscheduleCommit" {
+            _ = try invoke("calendarUnscheduleValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateCalendarAcknowledgment(command, value: value) }
+        }
         if ["calendarComposerCommit", "calendarComposerCreateCommit"].contains(command.method) {
             _ = try invoke(command.method == "calendarComposerCommit" ? "calendarComposerValidate" : "calendarComposerCreateValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validateCalendarAcknowledgment(command, value: value) }
@@ -2908,6 +2950,12 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("boardAction")
 #endif
             NSLog("Native iOS Board action saved releaseCheck=v1.3.3/native-ios-board-action")
+        }
+        if command.method == "calendarUnscheduleCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("calendarUnschedule")
+#endif
+            NSLog("Native iOS Calendar unscheduled releaseCheck=v1.3.4/ios-calendar-unschedule outcome=confirmed")
         }
         if ["calendarComposerCommit", "calendarComposerCreateCommit"].contains(command.method), case .success = terminal {
 #if DEBUG
@@ -3257,7 +3305,7 @@ private final class Engine: @unchecked Sendable {
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
-            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
             || (method == "somedaySectionOrderWrite" && message.hasPrefix("STALE_REVISION:"))
@@ -5418,6 +5466,21 @@ private final class Engine: @unchecked Sendable {
             _ = try arguments("boardAction", encoded)
             return args
         }
+        if command.method == "calendarUnscheduleCommit" {
+            guard let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]), let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+                  prepared["kind"] as? String == "unschedule", let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Calendar Unschedule journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
+            _ = try arguments("calendarUnschedule", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
         if ["calendarComposerCommit", "calendarComposerCreateCommit"].contains(command.method) {
             guard let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
                   args[0].utf8.count <= 2_000_000,
@@ -6893,6 +6956,16 @@ private final class Engine: @unchecked Sendable {
                       input["title"] is String else {
                     throw HostFailure("INVALID_INPUT: Mind Sweep needs a literal title and lowercase UUID")
                 }
+            }
+        }
+        if method == "calendarUnschedule" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "taskId", "taskRevision"]),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil,
+                  let taskID = input["taskId"] as? String, !taskID.isEmpty, taskID.utf16.count <= 200,
+                  let revision = input["taskRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 200 else {
+                throw HostFailure("INVALID_INPUT: Calendar Unschedule needs a task and revision")
             }
         }
         if ["calendarComposerOpen", "calendarComposerEdit", "calendarComposerSave"].contains(method) {

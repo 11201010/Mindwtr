@@ -735,7 +735,7 @@ struct CalendarItemSheet: View {
                             CalendarAction(title: model.label("common.retry"), enabled: !model.busy && !model.retryNeeded,
                                 palette: palette, id: "calendar-item-retry") { Task { await model.retryCalendarItem() } }
                         }
-                        let actions = model.calendarItemSheet.objects("buttons").filter { ["edit", "done", "cancel", "ok"].contains($0.text("id")) }
+                        let actions = model.calendarItemSheet.objects("buttons").filter { ["edit", "unschedule", "done", "cancel", "ok"].contains($0.text("id")) }
                         ForEach(actions.indices, id: \.self) { index in
                             let action = actions[index]
                             CalendarAction(title: action.text("label"), enabled: !model.busy && !model.retryNeeded,
@@ -747,6 +747,7 @@ struct CalendarItemSheet: View {
                             CalendarAction(title: model.label("common.close"), enabled: !model.busy && !model.retryNeeded,
                                 palette: palette, id: "calendar-item-close") { model.closeCalendarItem() }
                         }
+                        if model.retryNeeded && model.error != nil { FailureBanner(model: model, palette: palette) }
                         if model.busy { ProgressView() }
                     }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
                 }

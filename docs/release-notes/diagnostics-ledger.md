@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-calendar-unschedule`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Calendar unscheduled` with `outcome=confirmed` proves the prepared Unschedule command completed durable persistence and acknowledgment. No Task text, identifiers or dates are logged.
+
 - **`v1.3.4/ios-saved-search-write`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Saved search saved` with `outcome=confirmed` proves the prepared saved-search Save/Delete completed durably. No name, query, identifier or result text is logged.
 
 - **`v1.3.4/ios-saved-search-read`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS saved search opened` confirms an existing Menu saved search reached a current shared-core result view. No query, title, identifier or result text is logged.

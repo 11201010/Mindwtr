@@ -659,6 +659,7 @@ final class CoreModel: ObservableObject {
     private var calendarNeedsRead = false
     private var calendarReadTask: Task<Void, Never>?
     private var calendarItemTaskID = ""
+    private var calendarUnscheduleRequest: String?
     private var calendarPreferenceValues: CoreObject = [:]
     private var calendarPreferencePending = false
     private var calendarPreferenceTarget: CoreObject?
@@ -2661,6 +2662,8 @@ final class CoreModel: ObservableObject {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
                 selectedSurface = .projects
+            } else if recovery.text("method") == "calendarUnscheduleCommit" {
+                selectedSurface = .calendar
             } else if recovery.text("method") == "savedSearchCommit" {
                 selectedSurface = .inbox
             } else if recovery.text("method") == "focusSavedFilterCommit" {
@@ -9542,6 +9545,7 @@ final class CoreModel: ObservableObject {
         busy = true
         defer { finishOperation() }
         calendarItemError = nil
+        calendarItemSheet = [:]
         do {
             let sheet = try await query("menuRead", ["calendarItem", try json(["taskId": calendarItemTaskID, "state": calendarState])])
             guard sheet.text("kind") == "projected" || (sheet.text("kind") == "task" && sheet.text("taskId") == calendarItemTaskID) else {
@@ -9567,6 +9571,46 @@ final class CoreModel: ObservableObject {
         let id = calendarItemTaskID
         if action == "edit" { closeCalendarItem(); await openTask(id) }
         else if action == "done" { closeCalendarItem(); await complete(id) }
+        else if action == "unschedule" { await unscheduleCalendarItem() }
+    }
+
+    private func unscheduleCalendarItem() async {
+        guard !busy, !retryNeeded, calendarUnscheduleRequest == nil,
+              !calendarItemSheet.text("taskRevision").isEmpty else { return }
+        busy = true
+        defer { finishOperation() }
+        calendarItemError = nil
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                "taskId": calendarItemTaskID, "taskRevision": calendarItemSheet.text("taskRevision")])
+            calendarUnscheduleRequest = request
+            let result = try await query("calendarUnschedule", [request])
+            try await acknowledgeCalendarUnschedule(result)
+        } catch {
+            if isDefiniteRejection(error) {
+                calendarUnscheduleRequest = nil
+                calendarItemSheet = [:]
+                calendarItemError = error.localizedDescription
+            } else {
+                retryNeeded = calendarUnscheduleRequest != nil
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private func acknowledgeCalendarUnschedule(_ result: CoreObject) async throws {
+        guard result.text("taskId") == calendarItemTaskID, result["changed"] is Bool,
+              ["toast", "next", "scrollToMinutes", "composer"].allSatisfy({ result[$0] is NSNull }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        calendarUnscheduleRequest = nil
+        calendarItemPresented = false
+        calendarItemSheet = [:]
+        calendarItemTaskID = ""
+        calendarItemError = nil
+        retryNeeded = false
+        error = nil
+        await readCalendar()
     }
 
     func openReview() async {
@@ -17046,6 +17090,11 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if calendarUnscheduleRequest != nil {
+                guard let acknowledgment else { throw CocoaError(.coderValueNotFound) }
+                try await acknowledgeCalendarUnschedule(try decode(acknowledgment))
+                return
+            }
             if calendarComposerSaveRequest != nil {
                 guard let acknowledgment else { throw CocoaError(.coderValueNotFound) }
                 await acknowledgeCalendarComposerSave(try decode(acknowledgment))
@@ -17279,6 +17328,12 @@ final class CoreModel: ObservableObject {
                     mindSweepRequestID = nil
                     mindSweepRequestGroup = nil
                     mindSweepAddFailed = true
+                    self.error = nil
+                }
+                if calendarUnscheduleRequest != nil {
+                    calendarUnscheduleRequest = nil
+                    calendarItemSheet = [:]
+                    calendarItemError = error.localizedDescription
                     self.error = nil
                 }
                 if calendarComposerSaveRequest != nil {

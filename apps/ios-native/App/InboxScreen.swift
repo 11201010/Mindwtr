@@ -87,7 +87,7 @@ struct InboxScreen: View {
                         if !model.taskFocusNotice.isEmpty && !model.reviewGuidePresented {
                             TaskFocusNotice(model: model, palette: palette)
                         }
-                        if model.error != nil && !model.capturePresented && !model.areaPickerPresented && !model.morePresented && !model.mindSweepPresented && !model.processInboxPresented
+                        if model.error != nil && !model.capturePresented && !model.areaPickerPresented && !model.morePresented && !model.mindSweepPresented && !model.processInboxPresented && !model.calendarItemPresented
                             && !(model.somedayPanel == "newSection" && model.somedaySectionCreateError != nil)
                             && !(model.somedayPanel == "newSectionTask" && model.somedaySectionTaskError != nil)
                             && !(model.somedayPanel == "moveSection" && model.somedayMoveError != nil)

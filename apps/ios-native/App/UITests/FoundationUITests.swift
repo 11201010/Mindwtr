@@ -17,6 +17,67 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    private func openUnscheduleCalendar(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        if app.buttons["tab-calendar"].exists { boardTap(app, "tab-calendar") }
+        else {
+            boardTap(app, "tab-menu")
+            let calendar = app.buttons["menu-calendar"]
+            if !calendar.isHittable {
+                revealPagedElement(app, calendar, in: app.scrollViews.containing(.button, identifier: "menu-calendar").firstMatch)
+            }
+            boardTap(app, "menu-calendar")
+        }
+        boardTap(app, "calendar-today")
+    }
+
+    private func unscheduleItem(_ app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "calendar-item-", "Task129 scheduled task")).firstMatch
+    }
+
+    func testCalendarUnscheduleNormal() { calendarUnscheduleFlow(library: "52de3127-c771-4c63-95e9-4a4655c4811f") }
+    func testCalendarUnscheduleLargestText() { calendarUnscheduleFlow(library: "7c3b2db7-60fb-478c-b5ac-8109c8952615") }
+
+    private func calendarUnscheduleFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); openUnscheduleCalendar(app)
+        let item = unscheduleItem(app); boardEnabled(item); item.tap()
+        boardEnabled(app.buttons["calendar-action-unschedule"])
+        boardTap(app, "calendar-action-cancel"); boardEnabled(item); item.tap()
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Calendar Unschedule"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "calendar-action-unschedule"); boardEnabled(app.buttons["calendar-today"])
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: item); waitForExpectations(timeout: 15)
+        boardTap(app, "search-open")
+        let search = app.textFields["search-input"]; boardEnabled(search); search.tap(); search.typeText("Task129 scheduled")
+        boardTap(app, "search-task-task129-task"); boardTap(app, "task-view-close"); boardTap(app, "search-close")
+        app.terminate(); app.launch(); openUnscheduleCalendar(app)
+        XCTAssertFalse(unscheduleItem(app).exists); app.terminate()
+    }
+
+    func testCalendarUnscheduleFailureRetainsExactRequest() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "a3398e14-e0c2-4447-b319-3cf1331f1789"]
+        app.launch(); openUnscheduleCalendar(app)
+        let item = unscheduleItem(app); boardEnabled(item); item.tap(); boardTap(app, "calendar-action-unschedule")
+        XCTAssertTrue(app.staticTexts["persistence-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["calendar-action-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["calendar-action-unschedule"].isEnabled)
+            boardTap(app, "persistence-retry"); boardEnabled(app.buttons["persistence-retry"])
+        }
+        app.terminate()
+    }
+
+    func testCalendarUnscheduleColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "a3398e14-e0c2-4447-b319-3cf1331f1789"]
+        for _ in 0..<2 {
+            app.launch(); openUnscheduleCalendar(app); XCTAssertFalse(unscheduleItem(app).exists)
+            boardTap(app, "search-open")
+            let field = app.textFields["search-input"]; boardEnabled(field); field.tap(); field.typeText("Task129 scheduled")
+            boardEnabled(app.buttons["search-task-task129-task"]); app.terminate()
+        }
+    }
+
     func testSavedSearchWriteNormal() { savedSearchWriteFlow(library: "0178bb87-1319-49f1-afec-40c38368d28d") }
     func testSavedSearchWriteLargestText() { savedSearchWriteFlow(library: "b43325de-3d8f-432f-bb65-607ae71f5f7e") }
 
@@ -2673,7 +2734,7 @@ final class FoundationUITests: XCTestCase {
         enabled(app.buttons["calendar-action-edit"])
         XCTAssertFalse(app.buttons["calendar-mode-month"].isHittable)
         XCTAssertFalse(app.buttons["calendar-action-delete"].exists)
-        XCTAssertFalse(app.buttons["calendar-action-unschedule"].exists)
+        XCTAssertTrue(app.buttons["calendar-action-unschedule"].exists)
         tap("calendar-action-edit")
         let viewTitle = app.staticTexts.matching(identifier: "task-view-task-title").firstMatch
         XCTAssertTrue(viewTitle.waitForExistence(timeout: 10))

@@ -1988,6 +1988,15 @@ globalThis.MindwtrHost = {
     calendarComposerEdit(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.editCalendarComposer(JSON.parse(json))); });
     },
+    calendarUnschedulePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareCalendarUnschedule(JSON.parse(json))); });
+    },
+    calendarUnscheduleValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedCalendarUnschedule(JSON.parse(json))));
+    },
+    calendarUnscheduleCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedCalendarUnschedule(JSON.parse(json))));
+    },
     /** Private pure preparation, persisted by the iOS host before any task write. */
     calendarComposerPrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.prepareCalendarComposerSave(JSON.parse(json))); });

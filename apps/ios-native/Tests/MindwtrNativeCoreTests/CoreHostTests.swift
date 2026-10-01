@@ -9193,6 +9193,129 @@ final class CoreHostTests: XCTestCase {
         return ["requestId": requestID, "composer": composer]
     }
 
+    private func calendarUnscheduleInput(_ core: CoreHost, taskID: String) async throws -> String {
+        let sheet = try object(await core.call("menuRead", argumentsJSON: json(["calendarItem", json(["taskId": taskID])])))
+        return try json([json(["requestId": UUID().uuidString.lowercased(), "taskId": taskID,
+                               "taskRevision": XCTUnwrap(sheet["taskRevision"] as? String)])])
+    }
+
+    private func seedCalendarUnschedule() async throws -> String {
+        let id = try await seedBoardActionFixture()
+        let core = host()
+        _ = try await core.start()
+        _ = try await core.call("calendarComposerSave", argumentsJSON: json([json(try await calendarScheduleInput(core, taskID: id))]))
+        await core.close()
+        return id
+    }
+
+    func testCalendarUnscheduleJournalsBeforeWriteAndPreservesOtherData() async throws {
+        let id = try await seedCalendarUnschedule()
+        let faults = HostIOFaults()
+        let active = host(faults)
+        _ = try await active.start()
+        let request = try await calendarUnscheduleInput(active, taskID: id)
+        let before = try storedTask(id)
+        let db = try SQLiteBridge(url: database)
+        let tables = try nineTableSnapshot(db)
+        var writes = 0, diagnostics = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+tasks\b"#, options: .regularExpression) != nil {
+                writes += 1
+                XCTAssertTrue(FileManager.default.fileExists(atPath: self.journal.path))
+            }
+        }
+        faults.commandDiagnostic = { if $0 == "calendarUnschedule" { diagnostics += 1 } }
+        let result = try object(await active.call("calendarUnschedule", argumentsJSON: request))
+        XCTAssertEqual(result["changed"] as? Bool, true)
+        XCTAssertEqual(result["taskId"] as? String, id)
+        XCTAssertTrue(result["next"] is NSNull)
+        let after = try storedTask(id)
+        XCTAssertTrue(after["startTime"] is NSNull)
+        XCTAssertEqual(after["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
+        XCTAssertEqual(try datePreservedFields(before, excluding: ["startTime", "updatedAt", "rev", "revBy"]),
+                       try datePreservedFields(after, excluding: ["startTime", "updatedAt", "rev", "revBy"]))
+        XCTAssertEqual(Array(try nineTableSnapshot(db).dropFirst()), Array(tables.dropFirst()))
+        db.close()
+        XCTAssertEqual(writes, 1); XCTAssertEqual(diagnostics, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await expectFailure("STALE_REVISION") { _ = try await active.call("calendarUnschedule", argumentsJSON: request) }
+        let noop = try object(await active.call("calendarUnschedule", argumentsJSON: try await calendarUnscheduleInput(active, taskID: id)))
+        XCTAssertEqual(noop["changed"] as? Bool, false)
+        XCTAssertEqual(writes, 1)
+        for method in ["calendarUnschedulePrepare", "calendarUnscheduleValidate", "calendarUnscheduleCommit"] {
+            await expectFailure("unavailable") { _ = try await active.call(method, argumentsJSON: "[]") }
+        }
+    }
+
+    func testCalendarUnscheduleFailedSaveExactRetryAndColdRecovery() async throws {
+        let id = try await seedCalendarUnschedule()
+        let faults = HostIOFaults()
+        let active = host(faults)
+        _ = try await active.start()
+        let request = try await calendarUnscheduleInput(active, taskID: id)
+        let before = try storedTask(id)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Calendar Unschedule failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await active.call("calendarUnschedule", argumentsJSON: request) }
+        let frozen = try Data(contentsOf: journal)
+        await expectFailure("SAVE_FAILED") { _ = try await active.retryPending() }
+        XCTAssertEqual(try json(object(String(contentsOf: journal))), try json(object(String(decoding: frozen, as: UTF8.self))))
+        XCTAssertEqual(try json(storedTask(id)), try json(before))
+        await active.close()
+        let fresh = host()
+        let result = try object(await fresh.start())
+        XCTAssertEqual((result["recovery"] as? [String: Any])?["method"] as? String, "calendarUnscheduleCommit")
+        XCTAssertTrue(try storedTask(id)["startTime"] is NSNull)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let written = try storedTask(id)
+        await fresh.close()
+        let again = host(); _ = try await again.start()
+        XCTAssertEqual(try json(storedTask(id)), try json(written))
+    }
+
+    func testCalendarUnscheduleLostAcknowledgmentReplaysWithoutSecondWrite() async throws {
+        let id = try await seedCalendarUnschedule()
+        let faults = HostIOFaults()
+        let core = host(faults); _ = try await core.start()
+        let request = try await calendarUnscheduleInput(core, taskID: id)
+        var journals = 0
+        faults.journalWrite = { journals += 1; if journals == 2 { throw HostFailure("Injected Unschedule lost reply") } }
+        await expectFailure("lost reply") { _ = try await core.call("calendarUnschedule", argumentsJSON: request) }
+        let written = try storedTask(id)
+        await core.close()
+        let reopenedFaults = HostIOFaults(); var writes = 0
+        reopenedFaults.beforeSQL = { if $0.hasPrefix("INSERT INTO tasks") { writes += 1 } }
+        let fresh = host(reopenedFaults); _ = try await fresh.start()
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try json(storedTask(id)), try json(written))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testCalendarUnscheduleForgedJournalRefusesBeforeSQLite() async throws {
+        let id = try await seedCalendarUnschedule()
+        let faults = HostIOFaults()
+        let core = host(faults); _ = try await core.start()
+        let request = try await calendarUnscheduleInput(core, taskID: id)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Calendar Unschedule failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("calendarUnschedule", argumentsJSON: request) }
+        var pending = try object(String(contentsOf: journal))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(pending["argumentsJSON"] as? String).utf8)) as? [String])
+        var envelope = try object(XCTUnwrap(args.first))
+        var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        var after = try XCTUnwrap(prepared["after"] as? [String: Any]); after["title"] = "Forged"
+        prepared["after"] = after; envelope["prepared"] = prepared
+        pending["argumentsJSON"] = try json([json(envelope)])
+        await core.close()
+        let forged = try Data(json(pending).utf8); try forged.write(to: journal)
+        let before = try Data(contentsOf: database)
+        let reopenedFaults = HostIOFaults(); var sql = 0
+        reopenedFaults.beforeSQL = { _ in sql += 1 }
+        let fresh = host(reopenedFaults)
+        await expectFailure { _ = try await fresh.start() }
+        XCTAssertEqual(sql, 0)
+        XCTAssertEqual(try Data(contentsOf: database), before)
+        XCTAssertEqual(try Data(contentsOf: journal), forged)
+    }
+
     private func calendarCreateInput(_ core: CoreHost, title: String,
                                      requestID: String = UUID().uuidString.lowercased()) async throws -> [String: Any] {
         let opened = try object(await core.call("calendarComposerOpen", argumentsJSON: json([json([
