@@ -1292,7 +1292,7 @@ function projectFluidIsoFrom(
     return { iso: nextIso, steps };
 }
 
-function projectUnscheduledMonthlyStart(
+function projectUnscheduledStart(
     rule: RecurrenceRule,
     projectionBase: Date,
     byDay?: RecurrenceByDay[],
@@ -1301,11 +1301,18 @@ function projectUnscheduledMonthlyStart(
     weekStart?: RecurrenceWeekday,
     bySetPos?: number,
 ): ProjectedIsoResult {
+    const seedIso = format(projectionBase, 'yyyy-MM-dd');
+    if (rule === 'daily') return { iso: seedIso, steps: 1 };
+    if (rule === 'weekly' && normalizeWeeklyByDay(byDay)?.length) {
+        // Include today; intervals apply only after the first matching weekday.
+        const iso = nextIsoFrom(seedIso, rule, projectionBase, byDay, 1, undefined, weekStart, addDays(projectionBase, -1));
+        return iso ? { iso, steps: 1 } : emptyProjectedIsoResult();
+    }
+
     if (rule !== 'monthly' || !hasMonthlyRuleDateAnchor(byDay, byMonthDay)) {
         return emptyProjectedIsoResult();
     }
 
-    const seedIso = format(projectionBase, 'yyyy-MM-dd');
     const iso = nextIsoFrom(seedIso, rule, projectionBase, byDay, interval, byMonthDay, weekStart, undefined, undefined, bySetPos);
     return iso ? { iso, steps: 1 } : emptyProjectedIsoResult();
 }
@@ -1383,7 +1390,7 @@ function projectNextRecurringOccurrenceFields(
 
     const hasScheduleFields = Boolean(baseTask.startTime || baseTask.dueDate || baseTask.reviewAt);
     if (!hasScheduleFields) {
-        const nextStart = projectUnscheduledMonthlyStart(
+        const nextStart = projectUnscheduledStart(
             rule,
             projectionBase,
             byDay,
@@ -1508,7 +1515,7 @@ export function createCurrentRecurringCalendarTask(
     if (count && completedOccurrences >= count) return null;
 
     const projectionBase = getProjectionBaseDate(projectedAtIso);
-    const currentStart = projectUnscheduledMonthlyStart(
+    const currentStart = projectUnscheduledStart(
         rule,
         projectionBase,
         getRecurrenceByDay(task.recurrence),
