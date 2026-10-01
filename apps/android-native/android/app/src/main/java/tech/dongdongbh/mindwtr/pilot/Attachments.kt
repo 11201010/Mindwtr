@@ -111,6 +111,9 @@ data class AttachmentRowView(
     }
 }
 
+/** A task draft command's answer [reply] for the list [sent] is stale when the draft now holds [now] instead: send it again. */
+internal fun draftMoved(sent: String, now: String, reply: JSONObject): Boolean = reply.optString("kind") == "saved" && sent != now
+
 /** Whose attachments: the open editor's draft (a task), or a project's stored list. */
 data class AttachmentOwner(val kind: String, val id: String)
 
@@ -221,11 +224,7 @@ class AttachmentsModel(private val shell: InboxViewModel) {
     private fun command(owner: AttachmentOwner, kind: String, requestId: String, build: (Context) -> JSONObject) {
         val context = shell.getApplication<android.app.Application>()
         if (owner.kind == "task") {
-            val draftOwner = runCatching { ownerJson(owner) }.getOrNull() ?: return
-            shell.perform { runtime ->
-                val reply = runtime.attachmentRequest(DRAFT_REQUESTS.getValue(kind), build(context).put("owner", draftOwner).toString())
-                shell.ui { answered(owner, kind, reply) }
-            }
+            sendDraft(owner, kind, shell.editor?.takeIf { it.id == owner.id }?.attachmentsNow ?: return) { build(context) }
             return
         }
         // A project's: built first (the picked document's metadata), then sent as an exact request.
@@ -237,6 +236,23 @@ class AttachmentsModel(private val shell: InboxViewModel) {
             }
             shell.ui { send(FailedAction(kind, requestId, input.toString())) }
         }, "mindwtr-attachment-input").start()
+    }
+
+    /**
+     * A task draft's command on the draft list [list]. Its answer applies only while the draft still holds that list; one that
+     * moved meanwhile (a download's update landed) is sent again on the draft as it is now, with the same request UUID, so core
+     * answers it target-state and a download's local fields are never dropped.
+     */
+    private fun sendDraft(owner: AttachmentOwner, kind: String, list: String, build: () -> JSONObject) {
+        val draftOwner = JSONObject().put("kind", "task").put("taskId", owner.id).put("attachments", JSONArray(list))
+        shell.perform { runtime ->
+            val reply = runtime.attachmentRequest(DRAFT_REQUESTS.getValue(kind), build().put("owner", draftOwner).toString())
+            shell.ui {
+                val now = shell.editor?.takeIf { it.id == owner.id }?.attachmentsNow ?: return@ui
+                // Posted once more, so it starts after this action's end frees the shell.
+                if (draftMoved(list, now, reply)) shell.ui { sendDraft(owner, kind, now, build) } else answered(owner, kind, reply)
+            }
+        }
     }
 
     /** A project's command with [action]'s exact request (its id is the request UUID, its title core's input). */
@@ -454,7 +470,8 @@ fun EditorAttachments(model: InboxViewModel, editor: TaskEditor, locked: Boolean
         AttachmentButton(Ionicons.LinkOutline, t("attachments.addLink"), !locked, Modifier.weight(1f), "attachment-add-link") { openLink(owner) }
     }
     if (editorRows.isEmpty()) Text(t("common.none"), style = rnText(13, 400), color = c.secondaryText, modifier = Modifier.padding(top = 6.dp))
-    else AttachmentList(editorRows, !locked, open = { open(owner, it) }, download = { download(owner, it) }) { row ->
+    // RN's Download is never disabled, as the project card's (it only fetches the bytes).
+    else AttachmentList(editorRows, true, open = { open(owner, it) }, download = { download(owner, it) }) { row ->
         if (row.kind == "link") RowIcon(Lucide.Pencil, t("common.edit"), !locked) { openLink(owner, row.id) }
         RowIcon(Lucide.Trash2, t("attachments.remove"), !locked) { remove(owner, row.id) }
     }
