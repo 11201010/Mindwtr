@@ -11188,7 +11188,7 @@ final class FoundationUITests: XCTestCase {
     }
 
     func testTaskTimeSpentLargestTextAndRestart() {
-        taskTimeSpentEditor(library: "6016f2f3-ee8c-43f1-aca3-56780ce3bbd0")
+        taskTimeSpentEditor(library: "dcb0f3a9-a1c0-472e-8e7d-6216d19a66c9")
     }
 
     private func taskTimeSpentEditor(library: String, hiddenLibrary: String? = nil) {
