@@ -2641,6 +2641,17 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("checklistWrite")
 #endif
             NSLog("Native iOS checklist write saved releaseCheck=v1.3.3/native-ios-checklist-write")
+            if let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+               let encoded = args.first,
+               let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+               let request = envelope["request"] as? [String: Any],
+               let patch = request["patch"] as? [String: Any],
+               !Set(["status", "focusedToday", "completedAt"]).isDisjoint(with: patch.keys) {
+#if DEBUG
+                faults?.commandDiagnostic?("taskEditorStatusApplied")
+#endif
+                NSLog("Native iOS Task Editor status saved releaseCheck=v1.3.4/ios-editor-status outcome=confirmed")
+            }
         }
         if command.method == "projectCreateCommit", case .success = terminal {
 #if DEBUG
@@ -6176,11 +6187,11 @@ private final class Engine: @unchecked Sendable {
                           checklist["base"] is [[String: Any]], checklist["value"] is [[String: Any]] else {
                         throw HostFailure("INVALID_INPUT: Checklist save needs exact baselines and final list")
                     }
-                    let allowed = Set(["title", "description", "location", "assignedTo", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "status"])
+                    let allowed = Set(["title", "description", "location", "assignedTo", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "status", "focusedToday", "completedAt"])
                         .union(Self.scheduleFields).union(Self.recurrenceFields)
                     guard Set(patch.keys).isSubset(of: allowed), patch.keys.allSatisfy({ field in
                         if field == "relativeStartOffset" { return Self.isOffset(base[field]) && Self.isOffset(patch[field]) }
-                        if field == "showFutureRecurrence" { return Self.isBoolean(base[field]) && Self.isBoolean(patch[field]) }
+                        if field == "showFutureRecurrence" || field == "focusedToday" { return Self.isBoolean(base[field]) && Self.isBoolean(patch[field]) }
                         return base[field] is String && patch[field] is String
                     }) else { throw HostFailure("INVALID_INPUT: Checklist save contains unsupported draft fields") }
                     let hasRecurrence = !Self.recurrenceFields.isDisjoint(with: patch.keys)

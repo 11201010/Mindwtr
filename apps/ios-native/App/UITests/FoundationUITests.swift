@@ -11183,6 +11183,80 @@ final class FoundationUITests: XCTestCase {
         tap("task-view-close")
     }
 
+    func testTaskStatusWaitingCancelCascadesAndRestart() {
+        taskStatusEditor(library: "aa6f73c4-22b8-4a6d-8fad-1af37947bb74")
+    }
+
+    func testTaskStatusWaitingLargestTextAndRestart() {
+        taskStatusEditor(library: "a9ad9f01-c7d4-4325-9bf4-ad92394691a1")
+    }
+
+    private func taskStatusEditor(library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        func open(_ suffix: String) {
+            boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+            let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText("Task113 " + suffix)
+            boardTap(app, "search-task-task113-" + suffix.lowercased()); boardTap(app, "task-mode-edit")
+            expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["task-mode-edit"])
+            waitForExpectations(timeout: 10)
+        }
+        func status(_ value: String) -> XCUIElement { app.buttons["task-editor-status-" + value] }
+        func choose(_ value: String) {
+            let control = status(value)
+            boardEnabled(control)
+            revealPagedElement(app, control, in: app.scrollViews["task-editor-scroll"])
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44)
+            XCTAssertFalse(control.label.isEmpty)
+            control.tap()
+            if value != "waiting" {
+                expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: control)
+                waitForExpectations(timeout: 10)
+            }
+        }
+        func restart() { app.terminate(); app.launch() }
+        func close() { boardTap(app, "task-view-close"); boardTap(app, "search-close") }
+
+        open("Focus")
+        for value in ["inbox", "next", "waiting", "someday", "done", "reference"] { XCTAssertTrue(status(value).exists) }
+        choose("waiting")
+        let input = app.textFields["task-waiting-assignment-input"]
+        boardEnabled(input); XCTAssertFalse((input.placeholderValue ?? "").isEmpty)
+        input.tap(); input.typeText("Discard113")
+        XCTAssertFalse(status("next").isHittable, "Parent editor is excluded while the prompt is open")
+        boardTap(app, "task-waiting-cancel")
+        XCTAssertTrue(status("next").isSelected)
+        close() // Cancel leaves no dirty draft or discard confirmation.
+
+        open("Focus"); choose("waiting")
+        boardEnabled(input); input.tap(); input.typeText("Person113 A")
+        let choice = app.buttons["task-waiting-suggestion-Person113 Ada"]
+        boardEnabled(choice)
+        if !choice.isHittable { app.scrollViews["task-waiting-scroll"].swipeUp() }
+        choice.tap()
+        XCTAssertEqual(input.value as? String, "Person113 Ada")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Waiting assignment prompt"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "task-waiting-confirm")
+        expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: status("waiting"))
+        waitForExpectations(timeout: 10)
+        for value in ["reference", "inbox", "someday", "next"] { choose(value) }
+        boardTap(app, "task-editor-save")
+        restart(); open("Focus"); XCTAssertTrue(status("next").isSelected)
+        boardTap(app, "task-mode-view")
+        let assignment = app.staticTexts["Person113 Ada"]
+        revealPagedElement(app, assignment, in: app.scrollViews["task-editor-scroll"])
+        XCTAssertTrue(assignment.exists); close()
+
+        open("Done"); XCTAssertTrue(status("done").isSelected)
+        choose("next"); choose("done"); boardTap(app, "task-editor-save")
+        restart(); open("Done"); XCTAssertTrue(status("done").isSelected); close()
+
+        open("Recurring"); choose("done"); boardTap(app, "task-editor-save")
+        restart(); open("Recurring"); XCTAssertTrue(status("done").isSelected)
+        close(); app.terminate()
+    }
+
     func testTaskAssignedToSuggestionsSaveDiscardAndRestart() {
         taskAssignedToEditor(library: "6cf1eaad-8b3c-48ec-9e23-a275b06ac1bb")
     }

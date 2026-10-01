@@ -29,6 +29,7 @@ export type NativeTaskRecurrenceBase = {
     showFutureRecurrence: boolean | null;
 };
 type SaveField = 'title' | 'description' | 'location' | 'assignedTo' | 'priority' | 'energyLevel' | 'timeEstimate' | 'contexts' | 'tags' | 'status'
+    | 'focusedToday' | 'completedAt'
     | 'projectId' | 'areaId' | 'sectionId' | 'startTime' | 'dueDate' | 'reviewAt' | 'relativeStartOffset'
     | 'recurrence' | 'recurrenceStrategy' | 'recurrenceRRule' | 'showFutureRecurrence';
 type SaveFields = Partial<{ [K in SaveField]: Exclude<TaskDraft[K], undefined> | (K extends 'relativeStartOffset' ? null : never) }>;
@@ -61,10 +62,10 @@ export type NativePreparedTaskDraftSaveV2 = {
 };
 export type NativePreparedTaskDraftSaveAny = NativePreparedTaskDraftSave | NativePreparedTaskDraftSaveV2;
 
-const FIELDS: readonly SaveField[] = ['title', 'description', 'location', 'assignedTo', 'priority', 'energyLevel', 'timeEstimate', 'contexts', 'tags', 'status',
+const FIELDS: readonly SaveField[] = ['title', 'description', 'location', 'assignedTo', 'priority', 'energyLevel', 'timeEstimate', 'contexts', 'tags', 'status', 'focusedToday', 'completedAt',
     'projectId', 'areaId', 'sectionId', 'startTime', 'dueDate', 'reviewAt', 'relativeStartOffset',
     'recurrence', 'recurrenceStrategy', 'recurrenceRRule', 'showFutureRecurrence'];
-const STORED_FIELDS = FIELDS.filter((field) => field !== 'recurrenceStrategy' && field !== 'recurrenceRRule');
+const STORED_FIELDS = FIELDS.filter((field) => field !== 'recurrenceStrategy' && field !== 'recurrenceRRule' && field !== 'focusedToday');
 const SCHEDULE = ['startTime', 'dueDate', 'relativeStartOffset', 'reviewAt'] as const;
 const RECURRENCE = ['recurrence', 'recurrenceStrategy', 'recurrenceRRule', 'showFutureRecurrence'] as const;
 const ASSOCIATIONS = ['projectId', 'areaId', 'sectionId'] as const;
@@ -127,7 +128,8 @@ export const readNativeTaskDraftSaveRequest = (input: unknown, validateField: (f
     if (!keys(value, ['id', 'base', 'patch', 'scheduleBase', ...(editsRecurrence ? ['recurrenceBase'] : [])])
         || (!allowChecklist && fields.length === 0)
         || (!allowChecklist && !allowPlain && !(editsRecurrence || fields.some((field) => (SCHEDULE as readonly string[]).includes(field))))
-        || !keys(value.base, fields) || fields.some((field) => !(FIELDS as readonly string[]).includes(field) || (!allowChecklist && field === 'status'))) return null;
+        || !keys(value.base, fields) || fields.some((field) => !(FIELDS as readonly string[]).includes(field)
+            || (!allowChecklist && ['status', 'focusedToday', 'completedAt'].includes(field)))) return null;
     if (editsRecurrence && (!RECURRENCE.every((field) => own(value.patch as object, field))
         || !record(value.recurrenceBase) || !keys(value.recurrenceBase, ['recurrence', 'showFutureRecurrence'])
         || !(value.recurrenceBase.recurrence === null || typeof value.recurrenceBase.recurrence === 'string' || record(value.recurrenceBase.recurrence))
@@ -143,6 +145,8 @@ export const readNativeTaskDraftSaveRequest = (input: unknown, validateField: (f
         const base = value.base[field];
         if ((RECURRENCE as readonly string[]).includes(field)
             ? !validateField(field, base)
+            : field === 'focusedToday' ? typeof base !== 'boolean'
+            : field === 'completedAt' ? !validateField(field, base)
             : field === 'relativeStartOffset' ? !(base === null || record(base)) : typeof base !== 'string') return null;
         if (!validateField(field, next === null && field === 'relativeStartOffset' ? undefined : next)) return null;
     }

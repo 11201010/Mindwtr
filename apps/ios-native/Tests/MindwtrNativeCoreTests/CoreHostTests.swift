@@ -10216,6 +10216,93 @@ final class CoreHostTests: XCTestCase {
                 "checklist": ["base": try checklistItems(id), "value": checklist]]
     }
 
+    func testEditorStatusSameFinalStatusCascadesRetryAndColdReplay() async throws {
+        for status in ["next", "done"] {
+            let id = try await seedDestinationTask()
+            let sqlite = try SQLiteBridge(url: database)
+            _ = try sqlite.execute("UPDATE tasks SET status = ?, isFocusedToday = ?, completedAt = ?, timeSpentMinutes = 17 WHERE id = ?",
+                                   parametersJSON: json([status, status == "next" ? 1 : 0,
+                                                         status == "done" ? "2026-09-29T12:00:00.000Z" as Any : NSNull(), id]))
+            let faults = HostIOFaults()
+            let core = host(faults, bundleURL: try dateBundle(at: "2026-09-30T12:00:00.000Z"))
+            _ = try await core.start()
+            // Seed through the ordinary writer so load-time legacy fixture defaults
+            // are already persisted before the preservation baseline is taken.
+            _ = try await core.call("captureSubmit", argumentsJSON: capture(core, title: "Status sibling", id: UUID().uuidString.lowercased()))
+            let opening = try object(await core.call("editorModel", argumentsJSON: json([id])))
+            var edited = opening
+            for selected in [status == "next" ? "reference" : "next", status] {
+                edited = try object(await core.call("editDraft", argumentsJSON: json([json([
+                    "id": id, "draft": try XCTUnwrap(edited["draft"]),
+                    "edit": ["type": "fields", "patch": ["status": selected]],
+                ])])))
+            }
+            let draft = try XCTUnwrap(edited["draft"] as? [String: Any])
+            XCTAssertEqual(draft["status"] as? String, status)
+            let field = status == "next" ? "focusedToday" : "completedAt"
+            let request = try checklistSaveRequest(id, opening: opening, checklist: checklistItems(id),
+                                                  patch: [field: try XCTUnwrap(draft[field])])
+            let before = try nineTableSnapshot(sqlite)
+            let original = try storedTask(id)
+            var confirmations = 0
+            faults.commandDiagnostic = { if $0 == "taskEditorStatusApplied" { confirmations += 1 } }
+            faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected status COMMIT failure") } }
+            await expectFailure("SAVE_FAILED") { _ = try await core.call("checklistSave", argumentsJSON: json([json(request)])) }
+            let pending = try Data(contentsOf: journal)
+            await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+            try assertJournalContentUnchanged(pending)
+            XCTAssertEqual(try nineTableSnapshot(sqlite), before)
+            XCTAssertEqual(confirmations, 0)
+            await core.close()
+            let replayFaults = HostIOFaults()
+            replayFaults.commandDiagnostic = { if $0 == "taskEditorStatusApplied" { confirmations += 1 } }
+            let reopened = host(replayFaults, bundleURL: try dateBundle(at: "2026-09-30T13:00:00.000Z", suffix: """
+            MindwtrHost.checklistSavePrepare = function () { throw new Error('Replay must not prepare status'); };
+            """))
+            _ = try await reopened.start()
+            let saved = try storedTask(id)
+            XCTAssertEqual(saved["status"] as? String, status)
+            XCTAssertEqual(saved["timeSpentMinutes"] as? Int, 17)
+            if status == "next" { XCTAssertEqual(saved["isFocusedToday"] as? Int, 0) }
+            else { XCTAssertEqual(saved["completedAt"] as? String, saved["updatedAt"] as? String) }
+            XCTAssertEqual(saved["rev"] as? Int, (original["rev"] as? Int ?? 0) + 1)
+            let changed: Set<String> = ["isFocusedToday", "focusOrder", "completedAt", "rev", "revBy", "updatedAt"]
+            XCTAssertEqual(try datePreservedFields(saved, excluding: changed), try datePreservedFields(original, excluding: changed))
+            let after = try nineTableSnapshot(sqlite)
+            XCTAssertEqual(Array(after.dropFirst()), Array(before.dropFirst()))
+            let oldTasks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[0].utf8)) as? [[String: Any]])
+            let newTasks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(after[0].utf8)) as? [[String: Any]])
+            XCTAssertEqual(try json(oldTasks.filter { $0["id"] as? String != id }),
+                           try json(newTasks.filter { $0["id"] as? String != id }))
+            XCTAssertEqual(confirmations, 1)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            let retried = try await reopened.retryPending(); XCTAssertNil(retried)
+            await reopened.close()
+            let cold = host(bundleURL: try dateBundle(at: "2026-09-30T14:00:00.000Z")); _ = try await cold.start()
+            XCTAssertEqual(try nineTableSnapshot(sqlite), after)
+            await cold.close(); sqlite.close()
+        }
+    }
+
+    func testEditorStatusTransportTypesAndDraftRouteStaySealed() async throws {
+        let id = try await seedDestinationTask()
+        let faults = HostIOFaults(); let core = host(faults)
+        _ = try await core.start()
+        let opening = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        var statements = 0
+        faults.beforeSQL = { _ in statements += 1 }
+        for patch: [String: Any] in [["focusedToday": 1], ["focusedToday": "false"], ["completedAt": false]] {
+            let request = try checklistSaveRequest(id, opening: opening, checklist: checklistItems(id), patch: patch)
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("checklistSave", argumentsJSON: json([json(request)])) }
+        }
+        for patch: [String: Any] in [["focusedToday": false], ["completedAt": ""], ["status": "done"]] {
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: opening, patch: patch)) }
+        }
+        XCTAssertEqual(statements, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
     func testChecklistCombinedSaveRecurrenceLostAcknowledgmentReplaysOneEffect() async throws {
         let id = try await seedDestinationTask()
         let fixture = try SQLiteBridge(url: database)

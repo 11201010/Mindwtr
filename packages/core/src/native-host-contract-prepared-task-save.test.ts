@@ -656,6 +656,20 @@ describe('prepared native task draft save', () => {
         expect(saveData).not.toHaveBeenCalled();
     });
 
+    it('keeps lifecycle fields exclusive to checklist saves in legacy and v2 draft routes', async () => {
+        for (const patch of [
+            { focusedToday: true },
+            { completedAt: '2026-09-27T11:00:00.000Z' },
+            { dueDate: '2026-10-05', focusedToday: true },
+            { dueDate: '2026-10-05', completedAt: '' },
+        ]) {
+            const input = request(patch);
+            expect(host.prepareTaskDraftSave(input)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect(await host.prepareTaskDraftSaveV2(input)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
     it('guards changed independent fields, omitted dependencies, and new stored fields by default', async () => {
         await seed({ recurrence: { rule: 'weekly', strategy: 'strict' } });
         const prepared = prepare({ dueDate: '2026-10-05', title: 'Mine' });

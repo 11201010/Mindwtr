@@ -1570,7 +1570,7 @@ final class CoreModel: ObservableObject {
     var taskDirty: Bool {
         !taskEditor.isEmpty && ((taskSaveFields + taskRecurrenceFields).contains { !taskDraftValuesEqual(taskDraft[$0], taskOriginalDraft[$0]) }
             || !taskDraftValuesEqual(taskDraft["relativeStartOffset"], taskOriginalDraft["relativeStartOffset"])
-            || !taskDraftValuesEqual(taskDraft["status"], taskOriginalDraft["status"])
+            || ["status", "focusedToday", "completedAt"].contains { !taskDraftValuesEqual(taskDraft[$0], taskOriginalDraft[$0]) }
             || !taskDraftValuesEqual(taskChecklist, taskOriginalChecklist)
             || taskChecklistInputs.contains { entry in
                 entry.key < taskChecklist.count && entry.value != taskChecklist[entry.key].text("title")
@@ -12602,13 +12602,17 @@ final class CoreModel: ObservableObject {
                     patch[field] = current[field]
                 }
             }
-            let statusChanged = !taskDraftValuesEqual(current["status"], taskOriginalDraft["status"])
-            if statusChanged {
-                base["status"] = taskOriginalDraft.text("status")
-                patch["status"] = current.text("status")
+            let lifecycleFields = ["status", "focusedToday", "completedAt"]
+            let lifecycleChanged = lifecycleFields.contains { !taskDraftValuesEqual(current[$0], taskOriginalDraft[$0]) }
+            for field in lifecycleFields where !taskDraftValuesEqual(current[field], taskOriginalDraft[field]) {
+                guard let original = taskOriginalDraft[field], let edited = current[field] else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                base[field] = original
+                patch[field] = edited
             }
             let checklistChanged = !taskDraftValuesEqual(taskChecklist, taskOriginalChecklist)
-            let checklistSave = checklistChanged || statusChanged
+            let checklistSave = checklistChanged || lifecycleChanged
             guard !patch.isEmpty || checklistSave else { dismissTask(); return }
             var request: CoreObject = ["id": viewedTaskID, "base": base, "patch": patch]
             guard !taskOriginalSchedule.isEmpty else { throw CocoaError(.coderReadCorrupt) }
@@ -12668,6 +12672,72 @@ final class CoreModel: ObservableObject {
             resetTaskEstimateInput()
             try await refreshTaskDestination()
         } catch { taskError = error.localizedDescription }
+    }
+
+    var taskEditorSession: Int { taskScheduleSession }
+
+    func taskStatusEditable(_ status: String) -> Bool {
+        taskPresented && !taskEditor.isEmpty && !taskEditor.flag("readOnly") && !busy && !retryNeeded
+            && taskChecklistWriteKind == nil && !taskChecklistReadPending
+            && taskEditor.object("layout").flag("showStatusField")
+            && taskEditor.object("layout").objects("sections").contains(where: {
+                $0.text("id") == "basic" && ($0["fields"] as? [String] ?? []).contains("status")
+            })
+            && (taskEditor.object("options")["statuses"] as? [String] ?? []).contains(status)
+    }
+
+    func editTaskStatus(_ status: String, assignedTo: String? = nil,
+                        expectedID: String? = nil, expectedSession: Int? = nil) async -> Bool {
+        guard taskStatusEditable(status), assignedTo == nil || status == "waiting",
+              expectedID == nil || expectedID == viewedTaskID,
+              expectedSession == nil || expectedSession == taskScheduleSession else { return false }
+        let id = viewedTaskID
+        let session = taskScheduleSession
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            try await resolveTaskEditorInputs()
+            guard taskPresented, viewedTaskID == id, taskScheduleSession == session,
+                  !taskEditor.flag("readOnly") else { throw CancellationError() }
+            var patch: CoreObject = ["status": status]
+            if let assignedTo { patch["assignedTo"] = assignedTo.trimmingCharacters(in: .whitespacesAndNewlines) }
+            let editor = try await query("editDraft", [try json(taskEditRequest(
+                ["type": "fields", "patch": patch]))])
+            guard taskPresented, viewedTaskID == id, taskScheduleSession == session else { throw CancellationError() }
+            taskEditor = editor
+            if assignedTo != nil {
+                let field = "assignedTo"
+                invalidateTaskTokenRead(field)
+                let canonical = editor.object("draft").text(field)
+                taskTokenInputs[field] = canonical
+                taskTokenCanonical[field] = canonical
+                taskTokenResolvedInputs[field] = canonical
+                taskTokenSuggestions[field] = nil
+                taskTokenErrors[field] = nil
+                taskTokenEdited.insert(field)
+                taskTokenNeedsRead.insert(field)
+            }
+            do { try await refreshTaskDestination() }
+            catch { taskError = error.localizedDescription }
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func taskWaitingSuggestions(_ raw: String, id: String, session: Int) async throws -> CoreObject {
+        guard taskPresented, viewedTaskID == id, taskScheduleSession == session,
+              !taskEditor.flag("readOnly"), !retryNeeded else { throw CancellationError() }
+        let result = try await readTaskTokenSuggestions("assignedTo", raw: raw, id: id)
+        guard taskPresented, viewedTaskID == id, taskScheduleSession == session,
+              !taskEditor.flag("readOnly"), !retryNeeded,
+              result["draftValue"] is String, result["matches"] is [CoreObject],
+              result.objects("matches").allSatisfy({ $0["text"] is String && $0["value"] is String }) else {
+            throw CancellationError()
+        }
+        return result
     }
 
     func commitTaskEstimateInput() async {
@@ -13359,7 +13429,8 @@ final class CoreModel: ObservableObject {
         var keys = ["common.none", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
                     "taskEdit.scheduling", "taskEdit.organization", "taskEdit.details",
                     "taskEdit.contextsLabel", "taskEdit.contextsPlaceholder", "taskEdit.tagsLabel", "taskEdit.tagsPlaceholder",
-                    "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder",
+                    "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder", "taskEdit.statusLabel",
+                    "process.waitingFor", "process.waitingForDesc", "common.cancel", "common.save",
                     "taskEdit.startDateLabel", "taskEdit.dueDateLabel", "taskEdit.reviewDateLabel", "taskEdit.dateOnly",
                     "taskEdit.startModeAbsolute", "taskEdit.startModeRelative", "taskEdit.relativeStartAmount",
                     "taskEdit.relativeStartBeforeDue", "task.aria.startTime", "task.aria.dueTime", "calendar.changeTime", "common.done",
@@ -13372,6 +13443,7 @@ final class CoreModel: ObservableObject {
                     "recurrence.weekdayMonFri", "recurrence.ordinal.first", "recurrence.ordinal.second",
                     "recurrence.ordinal.third", "recurrence.ordinal.fourth", "recurrence.ordinal.last"]
         keys += options.objects("recurrences").map { $0.text("labelKey") }
+        keys += (options["statuses"] as? [String] ?? []).map { "status." + $0 }
         keys += (options["priorities"] as? [String] ?? []).map { "priority." + $0 }
         keys += (options["energyLevels"] as? [String] ?? []).map { "energyLevel." + $0 }
         let translated = try await query("strings", [try json(keys)]).object("strings")

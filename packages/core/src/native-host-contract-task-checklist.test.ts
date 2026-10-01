@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
-import type { AppData, Project, Task } from './types';
+import type { AppData, Area, Project, Section, Task } from './types';
 import { createTaskDraft } from './task-draft';
 
 const clock = '2026-09-27T15:00:00.000Z';
@@ -17,12 +17,13 @@ const unwrap = <T,>(result: NativeHostResult<T>): T => {
     return result.value;
 };
 async function open(task: Task = source(), options: {
-    tasks?: Task[]; projects?: Project[]; saveData?: (next: AppData) => Promise<void>;
+    tasks?: Task[]; projects?: Project[]; sections?: Section[]; areas?: Area[];
+    saveData?: (next: AppData) => Promise<void>;
 } = {}) {
     await flushPendingSave();
     resetForTests();
     let data: AppData = { tasks: [task, ...(options.tasks ?? [])], projects: options.projects ?? [],
-        sections: [], areas: [], people: [], settings: { deviceId: 'device-a' } };
+        sections: options.sections ?? [], areas: options.areas ?? [], people: [], settings: { deviceId: 'device-a' } };
     let saves = 0;
     setStorageAdapter({ getData: async () => data, saveData: async (next) => {
         await options.saveData?.(next);
@@ -113,6 +114,118 @@ describe('prepared native checklist Save and Reset', () => {
         const rev = savedTask().rev;
         expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: prepared.prepared }))).toEqual({ id: 'checklist-task' });
         expect(savedTask().rev).toBe(rev);
+    });
+
+    it('saves a same-final Next draft that lost its Focus star', async () => {
+        const original = source({ status: 'next', isFocusedToday: true, focusOrder: 2, timeSpentMinutes: 35 });
+        const { host } = await open(original);
+        const request = { id: original.id, requestId: id,
+            base: { focusedToday: true }, patch: { focusedToday: false }, scheduleBase,
+            checklist: { base: original.checklist!, value: original.checklist! } };
+        const plan = unwrap(host.prepareTaskChecklistSave(request));
+        expect(plan.kind).toBe('prepared');
+        if (plan.kind !== 'prepared') return;
+        expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: plan.prepared })))
+            .toEqual({ id: original.id });
+        expect(savedTask()).toMatchObject({ status: 'next', isFocusedToday: false, timeSpentMinutes: 35, rev: 4 });
+        expect(savedTask().focusOrder).toBeUndefined();
+    });
+
+    it('validates Swift-sorted prepared JSON with an unchanged duplicate checklist and attachments', async () => {
+        const at = '2026-09-01T10:00:00.000Z';
+        const checklist = [item('duplicate', 'First'), item('duplicate', 'Second', true)];
+        const attachment = { id: 'file', kind: 'file' as const, title: 'Retained', uri: 'file:///retained.txt',
+            createdAt: at, updatedAt: at };
+        const original = source({ projectId: 'project', sectionId: 'section', dueDate: '2036-10-02',
+            startTime: '2036-10-01T14:30:00.000Z', checklist, attachments: [attachment],
+            tags: ['#keep'], contexts: ['@desk'], priority: 'high', energyLevel: 'low',
+            timeEstimate: '15min', order: 37, orderNum: 37, isFocusedToday: true, timeSpentMinutes: 17 });
+        const { host } = await open(original, { projects: [{ id: 'project', title: 'Project', status: 'active',
+            color: '#94a3b8', areaId: 'area', order: 0, createdAt: at, updatedAt: at }],
+        sections: [{ id: 'section', projectId: 'project', title: 'Section', order: 0, createdAt: at, updatedAt: at }],
+        areas: [{ id: 'area', name: 'Area', order: 0, createdAt: at, updatedAt: at }] });
+        const opening = unwrap(host.getTaskEditorModel({ id: original.id }));
+        const reference = unwrap(host.editTaskDraft({ id: original.id, draft: opening.draft,
+            edit: { type: 'fields', patch: { status: 'reference' } } }));
+        const final = unwrap(host.editTaskDraft({ id: original.id, draft: reference.draft,
+            edit: { type: 'fields', patch: { status: 'next' } } }));
+        expect(final.draft.focusedToday).toBe(false);
+        const request = { id: original.id, requestId: id,
+            base: { focusedToday: true }, patch: { focusedToday: false }, scheduleBase: opening.scheduleBase,
+            checklist: { base: checklist, value: checklist } };
+        const plan = unwrap(host.prepareTaskChecklistSave(request));
+        expect(plan.kind).toBe('prepared');
+        if (plan.kind !== 'prepared') return;
+        const sorted = (value: unknown): unknown => Array.isArray(value) ? value.map(sorted)
+            : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value)
+                .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, sorted(item)])) : value;
+        const envelope = JSON.parse(JSON.stringify(sorted({ request, prepared: plan.prepared })));
+        expect(Object.keys(envelope.prepared.witness.source.checklist[0])).toEqual(['id', 'isCompleted', 'title']);
+        expect(unwrap(host.validatePreparedTaskChecklistWrite(envelope))).toEqual({ id: original.id });
+        unwrap(await host.commitPreparedTaskChecklistWrite(envelope));
+        expect(savedTask()).toMatchObject({ status: 'next', isFocusedToday: false, timeSpentMinutes: 17,
+            projectId: 'project', sectionId: 'section', dueDate: '2036-10-02',
+            startTime: '2036-10-01T14:30:00.000Z', checklist, attachments: [attachment],
+            tags: ['#keep'], contexts: ['@desk'], priority: 'high', energyLevel: 'low', timeEstimate: '15min', rev: 4 });
+    });
+
+    it('saves a same-final Done completion correction without a second recurrence', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(clock));
+        const original = source({ status: 'done', completedAt: '2026-09-26T10:00:00.000Z',
+            timeSpentMinutes: 35, recurrence: { rule: 'daily', strategy: 'strict', rrule: 'FREQ=DAILY' },
+            dueDate: '2026-09-27' });
+        const { host } = await open(original);
+        const request = { id: original.id, requestId: id,
+            base: { completedAt: original.completedAt! }, patch: { completedAt: '' },
+            scheduleBase: { ...scheduleBase, dueDate: original.dueDate! },
+            checklist: { base: original.checklist!, value: original.checklist! } };
+        const plan = unwrap(host.prepareTaskChecklistSave(request));
+        expect(plan.kind).toBe('prepared');
+        if (plan.kind !== 'prepared') return;
+        expect(plan.prepared.effect.tasks).toHaveLength(1);
+        unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: plan.prepared }));
+        expect(savedTask()).toMatchObject({ status: 'done', completedAt: clock, timeSpentMinutes: 35, rev: 4 });
+        expect(useTaskStore.getState()._allTasks).toHaveLength(1);
+    });
+
+    it('accepts Waiting assignment and rejects malformed lifecycle baselines before writing', async () => {
+        const original = source({ isFocusedToday: true, focusOrder: 2 });
+        const { host, saves } = await open(original);
+        const request = { id: original.id, requestId: id,
+            base: { status: 'next', assignedTo: '', focusedToday: true },
+            patch: { status: 'waiting', assignedTo: '  Casey  ', focusedToday: false }, scheduleBase,
+            checklist: { base: original.checklist!, value: original.checklist! } };
+        for (const invalid of [
+            { ...request, base: { ...request.base, focusedToday: 'true' } },
+            { ...request, patch: { ...request.patch, focusedToday: 'false' } },
+            { ...request, base: { ...request.base, completedAt: 'bad date' },
+                patch: { ...request.patch, completedAt: '' } },
+        ]) {
+            expect(host.prepareTaskChecklistSave(invalid as never))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        const before = saves();
+        expect(saves()).toBe(before);
+        const plan = unwrap(host.prepareTaskChecklistSave(request));
+        expect(plan.kind).toBe('prepared');
+        if (plan.kind !== 'prepared') return;
+        unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: plan.prepared }));
+        expect(savedTask()).toMatchObject({ status: 'waiting', assignedTo: 'Casey', isFocusedToday: false, rev: 4 });
+    });
+
+    it('clears Focus when entering Reference without a separate star patch', async () => {
+        const original = source({ isFocusedToday: true, focusOrder: 2, timeSpentMinutes: 35 });
+        const { host } = await open(original);
+        const request = { id: original.id, requestId: id,
+            base: { status: 'next' }, patch: { status: 'reference' }, scheduleBase,
+            checklist: { base: original.checklist!, value: original.checklist! } };
+        const plan = unwrap(host.prepareTaskChecklistSave(request));
+        expect(plan.kind).toBe('prepared');
+        if (plan.kind !== 'prepared') return;
+        unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: plan.prepared }));
+        expect(savedTask()).toMatchObject({ status: 'reference', isFocusedToday: false, timeSpentMinutes: 35, rev: 4 });
+        expect(savedTask().focusOrder).toBeUndefined();
     });
 
     it('writes a nonempty already-open Reset and returns an empty saved-list no-write result', async () => {
@@ -277,6 +390,9 @@ describe('prepared native checklist Save and Reset', () => {
         expect(saves()).toBe(before);
         unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: prepared.prepared }));
         const child = prepared.prepared.effect.tasks.find((row) => !row.before)!.after;
+        expect(useTaskStore.getState()._allTasks.filter((row) => row.id === child.id)).toHaveLength(1);
+        unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: prepared.prepared }));
+        expect(useTaskStore.getState()._allTasks.filter((row) => row.id === child.id)).toHaveLength(1);
         useTaskStore.setState({ _allTasks: useTaskStore.getState()._allTasks.filter((entry) => entry.id !== child.id) });
         expect(await host.commitPreparedTaskChecklistWrite({ request, prepared: prepared.prepared }))
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
@@ -284,11 +400,11 @@ describe('prepared native checklist Save and Reset', () => {
 
     it('retries an owed persistence failure with the same frozen UUID and no second task revision', async () => {
         let failSave = false;
-        const { host, saved, saves } = await open(source(), { saveData: async () => {
+        const { host, saved, saves } = await open(source({ isFocusedToday: true, focusOrder: 3 }), { saveData: async () => {
             if (failSave) throw new Error('disk unavailable');
         } });
-        const request = { id: 'checklist-task', requestId: id, base: { title: 'Before' },
-            patch: { title: 'After' }, scheduleBase,
+        const request = { id: 'checklist-task', requestId: id, base: { title: 'Before', focusedToday: true },
+            patch: { title: 'After', focusedToday: false }, scheduleBase,
             checklist: { base: savedTask().checklist!, value: [item('one', 'First'), item('two', 'Second', true)] } };
         const prepared = unwrap(host.prepareTaskChecklistSave(request));
         expect(prepared.kind).toBe('prepared');
@@ -301,8 +417,8 @@ describe('prepared native checklist Save and Reset', () => {
         failSave = false;
         expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: prepared.prepared })))
             .toEqual({ id: request.id });
-        expect(savedTask()).toMatchObject({ title: 'After', rev: 4 });
-        expect(saved().tasks.find((task) => task.id === request.id)).toMatchObject({ title: 'After', rev: 4 });
+        expect(savedTask()).toMatchObject({ title: 'After', isFocusedToday: false, rev: 4 });
+        expect(saved().tasks.find((task) => task.id === request.id)).toMatchObject({ title: 'After', isFocusedToday: false, rev: 4 });
         const count = saves();
         useTaskStore.setState({ settings: { ...useTaskStore.getState().settings,
             gtd: { ...useTaskStore.getState().settings.gtd, autoArchiveDays: 7 } } });

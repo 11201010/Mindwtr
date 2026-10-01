@@ -130,8 +130,10 @@ const validClears = (value: Partial<Task>, fields: string[]) => fields.every((fi
     && new Set(fields).size === fields.length;
 const directSaveUpdates = (source: Task, request: NativeChecklistSaveRequest): Partial<Task> | null => {
     const draft = applyTaskDraftPatch(createTaskDraft(source), nativeTaskDraftPatchValues(draftRequest(request)));
+    // Swift's sorted JSON keys must not turn an unchanged checklist into a draft edit.
+    const editSource = { ...source, checklist: toChecklist(source.checklist) };
     const updates = buildTaskEditUpdatePatch({ draft, checklist: request.checklist.value,
-        attachments: source.attachments }, source);
+        attachments: source.attachments }, editSource);
     if (!updates) return null;
     for (const field of ['startTime', 'dueDate', 'relativeStartOffset', 'reviewAt'] as const) {
         if (own(request.patch, field)) Object.assign(updates, { [field]: draft[field] || undefined });

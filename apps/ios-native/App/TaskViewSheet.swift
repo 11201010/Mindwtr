@@ -12,6 +12,7 @@ struct TaskViewSheet: View {
     @State private var datePickerID = ""
     @State private var datePickerValue = Date.distantPast
     @State private var monthlyCustom: CoreObject?
+    @State private var waitingAssignment: String?
     @State private var checklistReordering = false
     @FocusState private var focusedChecklistIndex: Int?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -23,7 +24,7 @@ struct TaskViewSheet: View {
     private var frozen: Bool { busy || model.retryNeeded || model.taskChecklistReadPending }
 
     private var rows: [CoreObject] { value.objects("rows") }
-    private var modalPresented: Bool { !model.taskDestinationKind.isEmpty || monthlyCustom != nil }
+    private var modalPresented: Bool { !model.taskDestinationKind.isEmpty || monthlyCustom != nil || waitingAssignment != nil }
 
     var body: some View {
         ZStack {
@@ -36,6 +37,11 @@ struct TaskViewSheet: View {
             if let custom = monthlyCustom {
                 TaskMonthlyCustomDialog(model: model, palette: palette, initial: custom,
                     beforeAction: endEditingBeforeAction, close: { monthlyCustom = nil })
+            }
+            if let initial = waitingAssignment {
+                TaskWaitingAssignmentDialog(model: model, palette: palette, initial: initial,
+                    taskID: model.taskEditor.text("id"), session: model.taskEditorSession,
+                    beforeAction: endEditingBeforeAction, close: { waitingAssignment = nil })
             }
         }
     }
@@ -115,6 +121,7 @@ struct TaskViewSheet: View {
                     }
                     .padding(20)
                 }
+                .id(editing)
                 .onChange(of: focusedChecklistIndex) { _ in scrollChecklistFocus(reader) }
                 .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
                     scrollChecklistFocus(reader)
@@ -138,7 +145,8 @@ struct TaskViewSheet: View {
             editing = model.taskInitialTab == "task"
             initializeSections()
         }
-        .onChange(of: model.taskEditor.text("id")) { _ in initializeSections() }
+        .onChange(of: model.taskEditor.text("id")) { _ in waitingAssignment = nil; initializeSections() }
+        .onChange(of: model.taskEditorSession) { _ in waitingAssignment = nil }
         .onChange(of: model.taskChecklistFocusIndex) { index in focusedChecklistIndex = index }
     }
 
@@ -207,6 +215,7 @@ struct TaskViewSheet: View {
     @ViewBuilder private func editorSection(_ section: CoreObject) -> some View {
         let fields = (section["fields"] as? [String] ?? []).filter { field in
             ["description", "location", "assignedTo", "priority", "energyLevel", "timeEstimate", "contexts", "tags", "startTime", "dueDate", "reviewAt", "recurrence", "checklist"].contains(field)
+                || (section.text("id") == "basic" && field == "status" && model.taskEditor.object("layout").flag("showStatusField"))
                 || (section.text("id") == "basic" && field == model.taskDestination.object("destination").text("fieldId"))
                 || (section.text("id") == "basic" && field == "section" && model.taskDestination.object("section").flag("visible"))
         }
@@ -245,7 +254,38 @@ struct TaskViewSheet: View {
     }
 
     @ViewBuilder private func editorField(_ field: String) -> some View {
-        if field == "description" {
+        if field == "status" {
+            VStack(alignment: .leading, spacing: 8) {
+                label(strings.text("taskEdit.statusLabel"))
+                AppChipFlow {
+                    ForEach(model.taskEditor.object("options")["statuses"] as? [String] ?? [], id: \.self) { status in
+                        let selected = model.taskEditor.object("draft").text("status") == status
+                        Button {
+                            guard model.taskStatusEditable(status) else { return }
+                            if status == "waiting" && !selected {
+                                let current = model.taskTokenInputs["assignedTo"] ?? model.taskEditor.object("draft").text("assignedTo")
+                                _ = UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                waitingAssignment = current
+                            } else {
+                                endEditingBeforeAction()
+                                Task { _ = await model.editTaskStatus(status) }
+                            }
+                        } label: {
+                            Text(strings.text("status." + status)).rnFont(14)
+                                .foregroundStyle(selected ? palette.onTint : palette.secondary)
+                                .padding(.horizontal, 12).padding(.vertical, 10).frame(minWidth: 44, minHeight: 44)
+                                .background(selected ? palette.tint : palette.filter, in: RoundedRectangle(cornerRadius: 16))
+                                .overlay(RoundedRectangle(cornerRadius: 16).stroke(selected ? palette.tint : palette.border, lineWidth: 1))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(frozen)
+                        .accessibilityLabel(strings.text("taskEdit.statusLabel") + ": " + strings.text("status." + status))
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                        .accessibilityIdentifier("task-editor-status-" + status)
+                    }
+                }
+            }
+        } else if field == "description" {
             VStack(alignment: .leading, spacing: 8) {
                 label(strings.text("taskEdit.descriptionLabel"))
                 TextEditor(text: $model.taskNoteDraft)
@@ -1403,6 +1443,143 @@ private struct TaskRecurrenceField: View {
             }), displayedComponents: .date)
                 .datePickerStyle(.wheel).labelsHidden().tint(palette.tint)
                 .accessibilityLabel(model.label("recurrence.endsOnDate")).accessibilityIdentifier("task-recurrence-until-picker")
+        }
+    }
+}
+
+private struct TaskWaitingAssignmentDialog: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let taskID: String
+    let session: Int
+    let beforeAction: () -> Void
+    let close: () -> Void
+    @State private var input: String
+    @State private var suggestions: [CoreObject] = []
+    @State private var readError: String?
+    @State private var generation = 0
+    @State private var open = true
+    @State private var saving = false
+    @FocusState private var focused: Bool
+    private var frozen: Bool { model.busy || model.retryNeeded || saving }
+
+    init(model: CoreModel, palette: AppPalette, initial: String, taskID: String, session: Int,
+         beforeAction: @escaping () -> Void, close: @escaping () -> Void) {
+        self.model = model
+        self.palette = palette
+        self.taskID = taskID
+        self.session = session
+        self.beforeAction = beforeAction
+        self.close = close
+        _input = State(initialValue: initial)
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { cancel() }.accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 12) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(model.label("process.waitingFor")).rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+                            Text(model.label("process.waitingForDesc")).rnFont(14).foregroundStyle(palette.secondary)
+                            TextField(model.label("taskEdit.assignedToPlaceholder"), text: $input)
+                                .rnFont(16).textInputAutocapitalization(.words).autocorrectionDisabled().submitLabel(.done)
+                                .focused($focused).onSubmit(confirm)
+                                .padding(12).frame(minHeight: 44)
+                                .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+                                .accessibilityLabel(model.label("process.waitingFor"))
+                                .accessibilityHint(model.label("process.waitingForDesc"))
+                                .accessibilityIdentifier("task-waiting-assignment-input").disabled(frozen)
+                            if !suggestions.isEmpty {
+                                ForEach(suggestions.indices, id: \.self) { index in
+                                    Button {
+                                        input = suggestions[index].text("text")
+                                    } label: {
+                                        Text(suggestions[index].text("value")).rnFont(14)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.horizontal, 12).frame(minHeight: 44).contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain).foregroundStyle(palette.text).disabled(frozen)
+                                    .accessibilityIdentifier("task-waiting-suggestion-" + suggestions[index].text("value"))
+                                    if index < suggestions.count - 1 { Divider().overlay(palette.border) }
+                                }
+                            }
+                            if let message = readError ?? model.taskError {
+                                Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                                    .accessibilityIdentifier("task-waiting-error")
+                                if readError != nil {
+                                    Button(model.label("common.retry")) { readSuggestions() }
+                                        .buttonStyle(.plain).foregroundStyle(palette.tint).frame(minWidth: 44, minHeight: 44)
+                                        .disabled(frozen).accessibilityIdentifier("task-waiting-retry")
+                                }
+                            }
+                        }
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                    .frame(maxHeight: geometry.size.height * 0.65)
+                    .accessibilityIdentifier("task-waiting-scroll")
+                    HStack {
+                        Spacer()
+                        Button(model.label("common.cancel"), action: cancel)
+                            .buttonStyle(.plain).foregroundStyle(palette.secondary).frame(minWidth: 44, minHeight: 44)
+                            .disabled(frozen).accessibilityIdentifier("task-waiting-cancel")
+                        Button(model.label("common.save"), action: confirm)
+                            .buttonStyle(.plain).foregroundStyle(palette.tint).frame(minWidth: 44, minHeight: 44)
+                            .disabled(frozen).accessibilityIdentifier("task-waiting-confirm")
+                    }
+                }
+                .padding(16).frame(maxWidth: 420, maxHeight: geometry.size.height * 0.9)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(16)
+            }
+            .foregroundStyle(palette.text).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) { cancel() }
+        }
+        .onAppear { readSuggestions() }
+        .onChange(of: input) { _ in readSuggestions() }
+        .onDisappear { generation += 1; open = false }
+    }
+
+    private func readSuggestions() {
+        generation += 1
+        let requestedGeneration = generation
+        let raw = input
+        suggestions = []
+        readError = nil
+        Task {
+            do {
+                try await Task.sleep(nanoseconds: 150_000_000)
+                guard open, generation == requestedGeneration, input == raw else { return }
+                let result = try await model.taskWaitingSuggestions(raw, id: taskID, session: session)
+                guard open, generation == requestedGeneration, input == raw else { return }
+                suggestions = result.objects("matches")
+            } catch {
+                guard open, generation == requestedGeneration, input == raw, !(error is CancellationError) else { return }
+                readError = error.localizedDescription
+            }
+        }
+    }
+
+    private func cancel() {
+        guard !frozen else { return }
+        _ = UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        generation += 1
+        close()
+    }
+
+    private func confirm() {
+        guard !frozen else { return }
+        beforeAction()
+        saving = true
+        generation += 1
+        let value = input
+        Task {
+            if await model.editTaskStatus("waiting", assignedTo: value,
+                                          expectedID: taskID, expectedSession: session) { close() }
+            else { saving = false }
         }
     }
 }
