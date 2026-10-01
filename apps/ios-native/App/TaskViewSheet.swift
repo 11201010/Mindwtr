@@ -195,6 +195,19 @@ struct TaskViewSheet: View {
                     .accessibilityIdentifier("task-editor-title")
                     .disabled(model.taskScheduleUpdating)
             }
+            if model.taskEditor.object("draft").text("status") == "reference" {
+                Button {
+                    guard model.taskStatusEditable("next") else { return }
+                    endEditingBeforeAction()
+                    Task { _ = await model.editTaskStatus("next") }
+                } label: {
+                    Text(strings.text("reference.convertToAction")).rnFont(14, .semibold)
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint)
+                .disabled(!model.taskStatusEditable("next"))
+                .accessibilityIdentifier("task-reference-convert-to-action")
+            }
             let sections = model.taskEditor.object("layout").objects("sections")
             ForEach(sections.indices, id: \.self) { index in editorSection(sections[index]) }
         }

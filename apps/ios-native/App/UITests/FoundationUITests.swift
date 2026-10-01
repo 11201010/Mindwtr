@@ -11184,7 +11184,7 @@ final class FoundationUITests: XCTestCase {
     }
 
     func testTaskStatusWaitingCancelCascadesAndRestart() {
-        taskStatusEditor(library: "aa6f73c4-22b8-4a6d-8fad-1af37947bb74")
+        taskStatusEditor(library: "167c681e-3f2a-4d61-91f0-e5ebd6d40fa8")
     }
 
     func testTaskStatusWaitingLargestTextAndRestart() {
@@ -11210,7 +11210,10 @@ final class FoundationUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(control.frame.width, 44)
             XCTAssertFalse(control.label.isEmpty)
             control.tap()
-            if value != "waiting" {
+            if value == "reference" {
+                boardEnabled(app.buttons["task-reference-convert-to-action"])
+                XCTAssertFalse(status("next").exists)
+            } else if value != "waiting" {
                 expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: control)
                 waitForExpectations(timeout: 10)
             }
@@ -11240,7 +11243,11 @@ final class FoundationUITests: XCTestCase {
         boardTap(app, "task-waiting-confirm")
         expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: status("waiting"))
         waitForExpectations(timeout: 10)
-        for value in ["reference", "inbox", "someday", "next"] { choose(value) }
+        choose("reference")
+        boardTap(app, "task-reference-convert-to-action")
+        boardEnabled(status("next"))
+        XCTAssertTrue(status("next").isSelected)
+        for value in ["inbox", "someday", "next"] { choose(value) }
         boardTap(app, "task-editor-save")
         restart(); open("Focus"); XCTAssertTrue(status("next").isSelected)
         boardTap(app, "task-mode-view")

@@ -12677,12 +12677,13 @@ final class CoreModel: ObservableObject {
     var taskEditorSession: Int { taskScheduleSession }
 
     func taskStatusEditable(_ status: String) -> Bool {
-        taskPresented && !taskEditor.isEmpty && !taskEditor.flag("readOnly") && !busy && !retryNeeded
-            && taskChecklistWriteKind == nil && !taskChecklistReadPending
-            && taskEditor.object("layout").flag("showStatusField")
+        let statusVisible = taskEditor.object("layout").flag("showStatusField")
             && taskEditor.object("layout").objects("sections").contains(where: {
                 $0.text("id") == "basic" && ($0["fields"] as? [String] ?? []).contains("status")
             })
+        return taskPresented && !taskEditor.isEmpty && !taskEditor.flag("readOnly") && !busy && !retryNeeded
+            && taskChecklistWriteKind == nil && !taskChecklistReadPending
+            && (statusVisible || (status == "next" && taskEditor.object("draft").text("status") == "reference"))
             && (taskEditor.object("options")["statuses"] as? [String] ?? []).contains(status)
     }
 
@@ -13429,7 +13430,7 @@ final class CoreModel: ObservableObject {
         var keys = ["common.none", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
                     "taskEdit.scheduling", "taskEdit.organization", "taskEdit.details",
                     "taskEdit.contextsLabel", "taskEdit.contextsPlaceholder", "taskEdit.tagsLabel", "taskEdit.tagsPlaceholder",
-                    "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder", "taskEdit.statusLabel",
+                    "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder", "taskEdit.statusLabel", "reference.convertToAction",
                     "process.waitingFor", "process.waitingForDesc", "common.cancel", "common.save",
                     "taskEdit.startDateLabel", "taskEdit.dueDateLabel", "taskEdit.reviewDateLabel", "taskEdit.dateOnly",
                     "taskEdit.startModeAbsolute", "taskEdit.startModeRelative", "taskEdit.relativeStartAmount",
