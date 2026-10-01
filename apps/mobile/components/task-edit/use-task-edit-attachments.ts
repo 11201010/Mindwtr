@@ -10,6 +10,7 @@ import {
     getAttachmentLinkEditText,
     getAttachmentOpenLinkFailedMessage,
     getAttachmentResolutionMessage,
+    isAttachmentFileInUse,
     isImageAttachment,
     isSandboxMode,
     patchAttachment,
@@ -94,8 +95,17 @@ export function useTaskEditAttachments({
     }, [t]);
     const settleDraftAttachments = React.useCallback((input: AttachmentDraftSettlementInput) => {
         if (isSandboxMode()) return;
-        for (const candidate of planAttachmentDraftSettlement(input)) {
-            void deleteManagedAttachmentFile(candidate.attachment);
+        for (const { attachment } of planAttachmentDraftSettlement(input)) {
+            // Asked after the delete's own awaits: a file a live attachment holds again stays.
+            void deleteManagedAttachmentFile(attachment, {
+                keep: () => {
+                    const state = useTaskStore.getState();
+                    return isAttachmentFileInUse(attachment.uri, [
+                        ...(state._allTasks ?? state.tasks ?? []),
+                        ...(state._allProjects ?? state.projects ?? []),
+                    ]);
+                },
+            });
         }
     }, []);
     const [linkModalVisible, setLinkModalVisible] = React.useState(false);

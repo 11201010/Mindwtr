@@ -1,7 +1,7 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useTaskStore, type Task } from '@mindwtr/core';
+import { planAttachmentDraftSettlement, useTaskStore, type Task } from '@mindwtr/core';
 
 import { useTaskEditState } from './use-task-edit-state';
 
@@ -673,6 +673,58 @@ describe('useTaskEditState', () => {
             scope: 'task-edit',
             extra: { releaseCheck: 'v1.3.4/editor-attachment-save-merge', outcome: 'merged' },
         });
+    });
+
+    it('settles the files against the list Save wrote: newer stored bytes at the baseline path are kept', async () => {
+        let state!: ReturnType<typeof useTaskEditState>;
+        const settleAttachmentDraft = vi.fn();
+        const x = {
+            id: 'file-1',
+            kind: 'file' as const,
+            title: 'report.pdf',
+            uri: 'file:///documents/attachments/file-1.pdf',
+            cloudKey: 'attachments/file-1.pdf',
+            contentRev: 1,
+            createdAt: '2026-08-27T00:00:00.000Z',
+            updatedAt: '2026-08-27T00:00:00.000Z',
+        };
+        const withFile: Task = { ...task, attachments: [x] };
+
+        function Probe() {
+            state = useTaskEditState({
+                onClose: vi.fn(),
+                onSave: vi.fn().mockResolvedValue({ success: true }),
+                onSaveError: vi.fn(),
+                resetCopilotStateRef: { current: vi.fn() },
+                settleAttachmentDraft,
+                sections: [],
+                task: withFile,
+                tasks: [withFile],
+                visible: true,
+            });
+            return null;
+        }
+
+        renderer.act(() => {
+            renderer.create(React.createElement(Probe));
+        });
+        // The editor's download put the file at Y.
+        renderer.act(() => state.setAttachments([{ ...x, uri: 'file:///documents/attachments/file-1-y.pdf' }]));
+        // Meanwhile sync installed newer bytes at X.
+        const newer = { ...x, contentRev: 2, updatedAt: '2026-08-28T00:00:00.000Z' };
+        const previous = useTaskStore.getState()._allTasks;
+        useTaskStore.setState({ _allTasks: [{ ...withFile, attachments: [newer] }] });
+        try {
+            await renderer.act(async () => {
+                expect(await state.draftLifecycle.save()).toBe(true);
+            });
+        } finally {
+            useTaskStore.setState({ _allTasks: previous });
+        }
+        const input = settleAttachmentDraft.mock.calls[0]![0];
+        expect(input.committedAttachments).toEqual([newer]);
+        expect(planAttachmentDraftSettlement(input).map((candidate) => candidate.attachment.uri))
+            .toEqual(['file:///documents/attachments/file-1-y.pdf']);
     });
 
     it('settles attachment files only after the optimistic task write is durable', async () => {
