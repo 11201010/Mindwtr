@@ -20,7 +20,8 @@
 //     snooze alarm, and it fires again; then Done on it: CoreWork stores Done once (rev + 1) and the notification goes;
 // (7) Done on a recurring task with the process killed after core's reply (debug property `journal_stop`): after the restart's
 //     journal replay and CoreWork's retry, the task is done once and has exactly one next instance;
-// (8) a task completed in the app (Mark Done on a search result) withdraws its delivered notification (core's `withdrawn`);
+// (8) a delivered reminder whose task is completed before the next plan (a widget check-off while the app is closed) is withdrawn:
+//     its notification goes (core's `withdrawn`), an expired one stays;
 // (9) a tap on a task's reminder opens the app on that task's editor (core's routeNotificationOpen).
 // At the end this run's open tasks are checked off through the queue, so no alarm of this run stays, and Android's exact-alarm
 // access goes back to what it was. Titles are 87 + a 12-digit run id + one digit. It grants the development app the notification
@@ -31,7 +32,7 @@ import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { check, connect, evidenced, fail, field, inEditor, Stopped, tab, tagged, withDescription } from './device.mjs';
+import { check, connect, evidenced, fail, inEditor, Stopped, tab, tagged } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -67,7 +68,7 @@ const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padSt
 const title = (digit) => `87${run}${digit}`;
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
-const { sh, adbRaw, home, front, requireAppFront, pid, screen, waitFor, tapExpecting } = device;
+const { sh, adbRaw, home, front, requireAppFront, pid, screen, waitFor } = device;
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 const runAs = (command) => sh(`run-as ${PKG} sh -c '${command}'`);
 const allLogs = () => execFileSync(adbBin, ['-s', serial, 'logcat', '-d', '-s', `${TAG}:*`], { encoding: 'utf8', maxBuffer: 64 << 20 }).replace(/\\/g, '');
@@ -152,6 +153,41 @@ const coreDetails = (keys, nowMs) => {
     `], { encoding: 'utf8', env: { ...process.env, TZ: zone, CHECK_DB: db, CHECK_NOW: String(nowMs), CHECK_LANG: ['en', 'zh', 'de', 'fr', 'es', 'ja'].includes(language) ? language : 'en', CHECK_KEYS: JSON.stringify(keys) } }).trim());
 };
 
+/**
+ * With the app stopped: the database pulled, edited through Bun's SQLite (it has FTS5, which the tasks table's triggers need),
+ * pushed back over the app's, its WAL removed. [recurringId] repeats daily; task reminders are set to [reminders] (null: the key
+ * removed, as an unset setting). Answers the setting as it was.
+ */
+const editDb = (recurringId, reminders) => {
+    if (pid()) fail('the app must be stopped to edit its database');
+    const db = pullDb();
+    const before = execFileSync('bun', ['-e', `
+        import { Database } from 'bun:sqlite';
+        const db = new Database(process.env.CHECK_DB);
+        const { value } = db.query("SELECT json_extract(data, '$.notificationsEnabled') AS value FROM settings WHERE id = 1").get() ?? {};
+        if (process.env.CHECK_ID) db.query("UPDATE tasks SET recurrence = ? WHERE id = ?").run(JSON.stringify({ rule: 'daily', strategy: 'strict' }), process.env.CHECK_ID);
+        const setting = JSON.parse(process.env.CHECK_SETTING);
+        if (setting === null) db.query("UPDATE settings SET data = json_remove(data, '$.notificationsEnabled') WHERE id = 1").run();
+        else db.query("UPDATE settings SET data = json_set(data, '$.notificationsEnabled', json(?)) WHERE id = 1").run(String(setting));
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+        db.close();
+        console.log(value === undefined || value === null ? 'null' : String(Boolean(value)));
+    `], { encoding: 'utf8', env: { ...process.env, CHECK_DB: db, CHECK_ID: recurringId ?? '', CHECK_SETTING: JSON.stringify(reminders) } }).trim();
+    const next = `files/${DB}.reminders-new`;
+    adbRaw('push', db, STAGED);
+    try {
+        runAs(`cp ${STAGED} ${next}`);
+        if (Number(runAs(`stat -c %s ${next}`)) !== statSync(db).size) fail('the staged database has the wrong size');
+        if (pid()) fail('the app started while its database was being replaced');
+        runAs(`rm -f files/${DB}-wal files/${DB}-shm && mv -f ${next} files/${DB}`);
+    } finally {
+        sh(`rm -f ${STAGED}`);
+    }
+    return JSON.parse(before);
+};
+/** Task reminders as the development data had them before this run (undefined: not changed yet). */
+let reminderSetting;
+
 // ---- the system's view: this app's reminder alarms and notifications ----
 /** This app's pending reminder alarms: when each fires (ms) and whether it is exact (`dumpsys alarm`). */
 const alarms = () => sh('dumpsys alarm').split(/\n(?=\s*(?:RTC_WAKEUP|RTC|ELAPSED_WAKEUP|ELAPSED) #\d+: Alarm\{)/)
@@ -228,8 +264,6 @@ const launchAndPlan = async () => {
     device.launch(ACTIVITY);
     await waitUntil('the start\'s reminder plan', () => cycles() > before, 60_000);
 };
-const inSearch = (nodes) => Boolean(tagged(nodes, 'global-search')) && !inEditor(nodes);
-const results = (nodes) => nodes.filter((node) => (node['resource-id'] ?? '').endsWith('search-result')).map((node) => node['content-desc'] || node.text);
 const toTabs = async () => {
     for (let step = 0; step < 8; step += 1) {
         const nodes = await screen();
@@ -259,6 +293,14 @@ const restore = async () => {
             if (left.length > 0) console.error(`RESTORE: ${left.length} of this run's tasks still hold an alarm: ${left.join(', ')}`);
         }
     } catch (error) { console.error(`RESTORE: this run's tasks were not checked off (${error.message}); they may still post a reminder`); }
+    try {
+        if (reminderSetting !== undefined && reminderSetting !== true) {
+            await killApp();
+            editDb(null, reminderSetting);
+            await launchAndPlan();
+            reminderSetting = undefined;
+        }
+    } catch (error) { console.error(`RESTORE FAILED: task reminders are still on in the development data (${error.message})`); process.exitCode = 1; }
     try { sh(`appops set ${PKG} SCHEDULE_EXACT_ALARM ${exactMode}`); } catch { /* device gone */ }
     try { if (front().includes(`${PKG}/`)) sh('input keyevent KEYCODE_HOME'); } catch { /* device gone */ }
     try { sh(`settings put system accelerometer_rotation ${originalAccelerometer === 'null' ? 1 : originalAccelerometer}`); } catch { /* device gone */ }
@@ -281,7 +323,7 @@ try {
     sh('logcat -c');
 
     // (1) Tasks queued while the app is closed are planned at the next start.
-    const t0 = Math.ceil((phoneNow() + 7 * 60_000) / 60_000) * 60_000;
+    const t0 = Math.ceil((phoneNow() + 4 * 60_000) / 60_000) * 60_000;
     const due = { A: t0, C: t0 + 60_000, D: t0 + 120_000, G: t0 + 120_000 };
     const names = { A: title(1), B: title(2), C: title(3), D: title(4), G: title(5), E: title(6), F: title(7) };
     for (const key of ['A', 'C', 'D', 'G']) capture(`${names[key]} /due:${clock(due[key])}`);
@@ -296,20 +338,13 @@ try {
         openTasks.add(ids[key]);
     }
     check(['A', 'C', 'D', 'G'].every((key) => Date.parse(stored(names[key])[0].dueDate) === due[key]), `(1) the timed tasks are due at ${clock(t0)}, +1 and +2 minutes (${zone})`);
-    // C repeats daily: set in the database while the app is closed, as a synced edit would arrive (core's recurrence).
+    // C repeats daily, and task reminders are on: both set in the database while the app is closed, as a synced edit would
+    // arrive (Settings › Notifications comes with pass R2). The setting goes back at the end.
     {
         await killApp();
-        const db = pullDb();
-        execFileSync('sqlite3', [db, `UPDATE tasks SET recurrence = '{"rule":"daily","strategy":"strict"}' WHERE id = '${ids.C}'; PRAGMA wal_checkpoint(TRUNCATE);`]);
-        const next = `files/${DB}.reminders-new`;
-        adbRaw('push', db, STAGED);
-        runAs(`cp ${STAGED} ${next}`);
-        if (Number(runAs(`stat -c %s ${next}`)) !== statSync(db).size) fail('(1) the staged database has the wrong size');
-        if (pid()) fail('(1) the app started while its database was being replaced');
-        runAs(`rm -f files/${DB}-wal files/${DB}-shm && mv -f ${next} files/${DB}`);
-        sh(`rm -f ${STAGED}`);
+        reminderSetting = editDb(ids.C, true);
         await launchAndPlan();
-        check(JSON.parse(stored(names.C)[0].recurrence ?? 'null')?.rule === 'daily', `(1) ${names.C} repeats daily`);
+        check(JSON.parse(stored(names.C)[0].recurrence ?? 'null')?.rule === 'daily', `(1) ${names.C} repeats daily; task reminders are on (they were ${reminderSetting ?? 'unset'})`);
     }
     await sleep(3000);
     let map = alarmMap();
@@ -361,7 +396,9 @@ try {
         const before = count(allLogs(), stopLine);
         let running = '';
         try {
-            device.launch(ACTIVITY);
+            // A boot with no screen (the reschedule receiver's job): Android restarts no activity after the process dies, so the
+            // reads below see the state the death left. The boot's own plan stops first.
+            sh(`am broadcast -f 0x20 -n ${RESCHEDULE} -a ${DEBUG_RESCHEDULE}`);
             // The process that logs the stop is the one seen last before its line; it is gone once pid() names another or none.
             await waitUntil(`the stop at ${at}`, () => {
                 if (count(allLogs(), stopLine) === before) {
@@ -445,53 +482,66 @@ try {
     {
         await waitUntil(`the reminder for ${names.C}`, () => shown(names.C).length > 0, 120_000);
         const [beforeDone] = stored(names.C);
+        const replays = () => allLogs().split('\n').filter((line) => line.includes('Native Android journal replay sent='));
+        const done = () => count(allLogs(), 'Native Android core work', '"job":"reminderDone","outcome":"success"');
+        const [replaysBefore, doneBefore] = [replays().length, done()];
         setProp('journal_stop', 'after:reminderDone');
         const stops = () => count(allLogs(), 'Native Android journal stop at=after op=reminderDone');
         const before = stops();
-        await tapInShade(names.C, 'COMPLETE');
-        await waitUntil('the stop after core\'s reply', () => stops() > before, 60_000);
-        setProp('journal_stop', '');
+        try {
+            await tapInShade(names.C, 'COMPLETE');
+            await waitUntil('the stop after core\'s reply', () => stops() > before, 60_000, 200);
+        } finally {
+            setProp('journal_stop', '');
+        }
         closeShade();
-        await waitUntil('the process to end', () => !pid(), 20_000);
         const atStop = stored(names.C);
         check(atStop.length === 2 && atStop[0].status === 'done' && atStop[0].rev === beforeDone.rev + 1 && atStop[1].status !== 'done',
             '(7) core replied: the task is done once, with one next instance, and the process died before the entry settled');
-        check(journal().some((entry) => entry.method === 'reminderDone'), '(7) the journal holds the Done request');
-        const replays = () => count(allLogs(), 'Native Android journal replay sent=');
-        const replaysBefore = replays();
-        device.launch(ACTIVITY);
-        await waitUntil('the boot\'s journal replay', () => replays() > replaysBefore, 60_000);
-        const done = () => count(allLogs(), 'Native Android core work', '"job":"reminderDone","outcome":"success"');
-        await waitUntil('CoreWork\'s retry of the Done job', () => done() >= 1 || journal().length === 0, 60_000);
+        // Android may restart the process at once (CoreWork's job service), and its boot replays the entry: on disk, or replayed.
+        check(journal().some((entry) => entry.method === 'reminderDone') || replays().length > replaysBefore,
+            '(7) the Done request outlived the process: the journal holds it, or the next boot replayed it');
+        if (!pid()) {
+            await waitFor('the home screen or the app', () => front().includes(`${home}/`) || front().includes(`${PKG}/`), 15_000);
+            device.launch(ACTIVITY);
+        }
+        await waitUntil('the next boot\'s journal replay', () => replays().length > replaysBefore, 60_000);
+        const replay = replays().slice(replaysBefore).find((line) => !line.includes('sent=0')) ?? '';
+        check(/sent=1 dropped=1 left=0 owed=none/.test(replay), `(7) the next boot replayed the Done request once and dropped it after core's reply: ${replay.split('journal replay ')[1] ?? 'none'}`);
+        await waitUntil('CoreWork\'s retry of the Done job', () => done() > doneBefore, 180_000, 2000);
         await sleep(3000);
         const after = stored(names.C);
         check(after.length === 2 && after[0].rev === atStop[0].rev && after[1].id === atStop[1].id && journal().length === 0,
-            `(7) after the replay and the retry: still done once and exactly one next instance (${after.length} rows), the journal empty`);
+            `(7) after the replay and CoreWork's retry (answered from core's receipt): still done once and exactly one next instance, the journal empty`);
         openTasks.delete(ids.C);
         openTasks.add(after[1].id);
         sh('input keyevent KEYCODE_HOME');
     }
 
-    // (8) A task completed in the app withdraws its delivered reminder; (9) a tap on a reminder opens its task.
+    // (8) A delivered reminder whose task is completed before the next plan is withdrawn: the app is closed when D fires (no plan
+    // runs after it), a widget check-off completes D, and the next start drains it before its plan, which withdraws D's alarm and
+    // removes its notification. (Core drops an alarm from the map at the first plan after it fires, so a completion after that
+    // plan leaves the notification: RN's behavior too, reported in the pass result.) (9) A tap on a reminder opens its task.
     {
+        await killApp();
         await waitUntil(`the reminders for ${names.D} and ${names.G}`, () => shown(names.D).length > 0 && shown(names.G).length > 0, 150_000);
-        device.launch(ACTIVITY);
-        let nodes = await tapExpecting(withDescription(await toTabs(), en['search.title']) ?? fail('no Search button'), inSearch, 'the search screen');
-        await device.focusAtEnd(field(nodes) ?? fail('no search field'));
-        requireAppFront();
-        sh(`input text ${names.D}`);
-        nodes = await waitFor(`the result ${names.D}`, (current) => JSON.stringify(results(current)) === JSON.stringify([names.D]), 20_000);
-        await device.tap(withDescription(nodes, en['review.markDone']) ?? fail('no Mark Done on the result'));
-        await waitUntil('the plan after the store change', () => stored(names.D)[0].status === 'done' && shown(names.D).length === 0, 30_000);
-        check(true, '(8) Mark Done in the app: the task is done and its delivered reminder is gone (withdrawn)');
-        check(count(allLogs(), CYCLE, '"withdrawn":1') >= 1, '(8) core\'s plan withdrew one alarm');
+        await killApp();
+        check(alarmMap()[keyOf('D')]?.id === map[keyOf('D')].id, '(8) D fired with the app closed: its alarm is still held');
+        checkOff(ids.D);
+        const withdrawals = () => allLogs().split('\n').filter((line) => line.includes(CYCLE) && /"withdrawn":[1-9]/.test(line)).length;
+        const withdrawnBefore = withdrawals();
+        await launchAndPlan();
+        await waitUntil('the start\'s plan to withdraw the delivered reminder', () => shown(names.D).length === 0, 30_000);
+        check(stored(names.D)[0].status === 'done', `(8) the check-off completed ${names.D} at the start`);
+        check(withdrawals() > withdrawnBefore, '(8) core\'s plan withdrew its alarm, and its delivered reminder is gone');
+        check(shown(names.G).length === 1, '(8) the other delivered reminder (only expired) stays');
         openTasks.delete(ids.D);
         await toTabs();
         sh('input keyevent KEYCODE_HOME');
         await sleep(1000);
         await tapInShade(names.G, null);
         await waitUntil('the app in front', () => front().includes(`${PKG}/`), 20_000);
-        nodes = await waitFor(`the editor of ${names.G}`, (current) => inEditor(current) && current.some((node) => node.text === names.G), 30_000);
+        await waitFor(`the editor of ${names.G}`, (current) => inEditor(current) && current.some((node) => node.text === names.G), 30_000);
         check(true, `(9) a tap on the reminder opened the app on ${names.G}'s editor`);
         check(shown(names.G).length === 0, '(9) the tapped notification is gone (auto-cancel)');
         await toTabs();
@@ -500,6 +550,9 @@ try {
     console.log('Reminders device check passed');
 } catch (error) {
     evidenced(error);
+    try {
+        console.error(`evidence - the app's reminder lines:\n${allLogs().split('\n').filter((line) => /[Rr]eminder|Local Notifications|core work|journal/.test(line)).slice(-25).join('\n')}`);
+    } catch { /* device gone */ }
     console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);
     process.exitCode = error instanceof Stopped ? 3 : 1;
 } finally {
