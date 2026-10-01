@@ -11183,6 +11183,77 @@ final class FoundationUITests: XCTestCase {
         tap("task-view-close")
     }
 
+    func testTaskTimeSpentGateSaveDiscardAndRestart() {
+        taskTimeSpentEditor(library: "f803885d-131e-4ae0-a55e-550e5e526d62", hiddenLibrary: "f1fffeb7-61f1-4891-9f25-8f0f767d19f5")
+    }
+
+    func testTaskTimeSpentLargestTextAndRestart() {
+        taskTimeSpentEditor(library: "6016f2f3-ee8c-43f1-aca3-56780ce3bbd0")
+    }
+
+    private func taskTimeSpentEditor(library: String, hiddenLibrary: String? = nil) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        func launch(_ library: String) { app.launchArguments = ["--native-ui-test-library", library]; app.launch() }
+        func open() {
+            boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+            let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText("Task114 Minutes")
+            boardTap(app, "search-filters-open")
+            let completed = app.buttons["search-include-completed"]; boardEnabled(completed)
+            if !completed.isSelected { completed.tap() }
+            boardTap(app, "search-filters-close")
+            boardTap(app, "search-task-task114-minutes"); boardTap(app, "task-mode-edit")
+            expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["task-mode-edit"])
+            waitForExpectations(timeout: 10)
+        }
+        func minutes() -> XCUIElement {
+            let header = app.buttons["task-editor-section-organization"]; boardEnabled(header)
+            if header.value as? String == "Expand" {
+                revealPagedElement(app, header, in: app.scrollViews["task-editor-scroll"]); header.tap()
+                expectation(for: NSPredicate(format: "value == %@", "Collapse"), evaluatedWith: header)
+                waitForExpectations(timeout: 10)
+            }
+            let field = app.textFields["task-editor-timeSpent-input"]; boardEnabled(field)
+            revealPagedElement(app, field, in: app.scrollViews["task-editor-scroll"])
+            XCTAssertGreaterThanOrEqual(field.frame.height, 44); XCTAssertFalse(field.label.isEmpty)
+            return field
+        }
+        func replace(_ value: String) {
+            let field = minutes(); field.tap(); boardEnabled(app.keyboards.firstMatch)
+            revealPagedElement(app, field, in: app.scrollViews["task-editor-scroll"])
+            if let old = field.value as? String, old != field.placeholderValue, !old.isEmpty {
+                field.tap(withNumberOfTaps: 3, numberOfTouches: 1); field.typeText(XCUIKeyboardKey.delete.rawValue)
+                XCTAssertTrue((field.value as? String ?? "").isEmpty || field.value as? String == field.placeholderValue)
+            }
+            if !value.isEmpty { field.typeText(value); XCTAssertEqual(field.value as? String, value) }
+        }
+        func restart() { app.terminate(); launch(library); open() }
+        if let hiddenLibrary {
+            launch(hiddenLibrary); open()
+            XCTAssertFalse(app.textFields["task-editor-timeSpent-input"].exists)
+            boardTap(app, "task-view-close"); XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+            app.terminate()
+        }
+        launch(library); open(); replace("37"); boardTap(app, "task-editor-save")
+        boardEnabled(app.textFields["search-input"]); restart(); XCTAssertEqual(minutes().value as? String, "37")
+        replace("52"); boardTap(app, "task-mode-view"); boardTap(app, "task-mode-edit")
+        XCTAssertEqual(minutes().value as? String, "52")
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard")
+        restart(); XCTAssertEqual(minutes().value as? String, "37")
+        replace(""); boardTap(app, "task-editor-save"); boardEnabled(app.textFields["search-input"])
+        restart(); let empty = minutes(); XCTAssertTrue((empty.value as? String ?? "").isEmpty || empty.value as? String == empty.placeholderValue)
+        replace("0"); boardTap(app, "task-editor-save"); boardEnabled(app.textFields["search-input"])
+        restart(); replace("41")
+        let done = app.buttons["task-editor-status-done"]
+        revealPagedElement(app, done, in: app.scrollViews["task-editor-scroll"]); done.tap()
+        expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: done); waitForExpectations(timeout: 10)
+        boardTap(app, "task-editor-save"); boardEnabled(app.textFields["search-input"])
+        restart(); XCTAssertTrue(app.buttons["task-editor-status-done"].isSelected)
+        XCTAssertEqual(minutes().value as? String, "41")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Saved Time Spent editor"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "task-view-close"); XCTAssertFalse(app.buttons["task-editor-discard"].exists); app.terminate()
+    }
+
     func testTaskStatusWaitingCancelCascadesAndRestart() {
         taskStatusEditor(library: "167c681e-3f2a-4d61-91f0-e5ebd6d40fa8")
     }

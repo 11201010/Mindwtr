@@ -147,6 +147,55 @@ describe('prepared native task draft save', () => {
         expect(saveData).not.toHaveBeenCalled();
     });
 
+    it('saves numeric Time Spent through v2, clears it with null, and treats zero as unset', async () => {
+        const input = request({ timeSpentMinutes: 17 });
+        const plan = await host.prepareTaskDraftSaveV2(input);
+        expect(plan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!plan.ok || plan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved()).toMatchObject({ timeSpentMinutes: 17, rev: 8 });
+        const before = saved();
+        saveData.mockClear();
+        expect(await host.prepareTaskDraftSaveV2(request({ timeSpentMinutes: 17 })))
+            .toMatchObject({ ok: true, value: { kind: 'noop' } });
+        expect(saved()).toEqual(before);
+        expect(saveData).not.toHaveBeenCalled();
+
+        const clear = request({ timeSpentMinutes: null });
+        const clearPlan = await host.prepareTaskDraftSaveV2(clear);
+        expect(clearPlan).toMatchObject({ ok: true, value: { kind: 'prepared' } });
+        if (!clearPlan.ok || clearPlan.value.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: clear, prepared: clearPlan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved().timeSpentMinutes).toBeUndefined();
+        saveData.mockClear();
+        expect(await host.prepareTaskDraftSaveV2(request({ timeSpentMinutes: 0 })))
+            .toMatchObject({ ok: true, value: { kind: 'noop' } });
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('keeps Time Spent out of legacy saves and refuses malformed numeric/null transport', async () => {
+        const mixed = request({ dueDate: '2036-10-05', timeSpentMinutes: 17 });
+        expect(host.prepareTaskDraftSave(mixed)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const old = host.prepareTaskDraftSave(request({ dueDate: '2036-10-05' }));
+        if (!old.ok) throw new Error(JSON.stringify(old));
+        const forged = json(old.value);
+        forged.request = mixed;
+        expect(host.validatePreparedTaskDraftSave({ request: mixed, prepared: forged }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        for (const value of [true, '17', -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+            const malformed = request({ timeSpentMinutes: value as never });
+            expect(await host.prepareTaskDraftSaveV2(malformed))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        const unmatched = request({ timeSpentMinutes: 17 });
+        unmatched.base = {};
+        expect(await host.prepareTaskDraftSaveV2(unmatched))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
     it('preserves a long Unicode free-text assignment without widening the suggestions transport', async () => {
         const longName = `  ${'😀'.repeat(1001)}  `;
         expect(longName.length).toBe(2006);

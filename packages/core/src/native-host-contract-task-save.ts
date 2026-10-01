@@ -11,6 +11,7 @@ import { isStatusListTaskReadOnly } from './menu-views-model';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
 import { normalizeRelativeStartOffset } from './task-relative-start';
 import { normalizeCancellationTimestamp } from './task-status';
+import { normalizeTimeSpentMinutes } from './time-spent';
 import { normalizeRecurrenceForLoad } from './recurrence';
 import { hasTimeComponent } from './date';
 import { logInfo } from './logger';
@@ -29,10 +30,11 @@ export type NativeTaskRecurrenceBase = {
     showFutureRecurrence: boolean | null;
 };
 type SaveField = 'title' | 'description' | 'location' | 'assignedTo' | 'priority' | 'energyLevel' | 'timeEstimate' | 'contexts' | 'tags' | 'status'
-    | 'focusedToday' | 'completedAt'
+    | 'focusedToday' | 'completedAt' | 'timeSpentMinutes'
     | 'projectId' | 'areaId' | 'sectionId' | 'startTime' | 'dueDate' | 'reviewAt' | 'relativeStartOffset'
     | 'recurrence' | 'recurrenceStrategy' | 'recurrenceRRule' | 'showFutureRecurrence';
-type SaveFields = Partial<{ [K in SaveField]: Exclude<TaskDraft[K], undefined> | (K extends 'relativeStartOffset' ? null : never) }>;
+type SaveFields = Partial<{ [K in SaveField]: Exclude<TaskDraft[K], undefined>
+    | (K extends 'relativeStartOffset' | 'timeSpentMinutes' ? null : never) }>;
 export type NativeTaskDraftSaveRequest = {
     id: string;
     base: SaveFields;
@@ -62,7 +64,7 @@ export type NativePreparedTaskDraftSaveV2 = {
 };
 export type NativePreparedTaskDraftSaveAny = NativePreparedTaskDraftSave | NativePreparedTaskDraftSaveV2;
 
-const FIELDS: readonly SaveField[] = ['title', 'description', 'location', 'assignedTo', 'priority', 'energyLevel', 'timeEstimate', 'contexts', 'tags', 'status', 'focusedToday', 'completedAt',
+const FIELDS: readonly SaveField[] = ['title', 'description', 'location', 'assignedTo', 'priority', 'energyLevel', 'timeEstimate', 'contexts', 'tags', 'status', 'focusedToday', 'completedAt', 'timeSpentMinutes',
     'projectId', 'areaId', 'sectionId', 'startTime', 'dueDate', 'reviewAt', 'relativeStartOffset',
     'recurrence', 'recurrenceStrategy', 'recurrenceRRule', 'showFutureRecurrence'];
 const STORED_FIELDS = FIELDS.filter((field) => field !== 'recurrenceStrategy' && field !== 'recurrenceRRule' && field !== 'focusedToday');
@@ -129,7 +131,8 @@ export const readNativeTaskDraftSaveRequest = (input: unknown, validateField: (f
         || (!allowChecklist && fields.length === 0)
         || (!allowChecklist && !allowPlain && !(editsRecurrence || fields.some((field) => (SCHEDULE as readonly string[]).includes(field))))
         || !keys(value.base, fields) || fields.some((field) => !(FIELDS as readonly string[]).includes(field)
-            || (!allowChecklist && ['status', 'focusedToday', 'completedAt'].includes(field)))) return null;
+            || (!allowChecklist && ['status', 'focusedToday', 'completedAt'].includes(field))
+            || (field === 'timeSpentMinutes' && !allowChecklist && !allowPlain))) return null;
     if (editsRecurrence && (!RECURRENCE.every((field) => own(value.patch as object, field))
         || !record(value.recurrenceBase) || !keys(value.recurrenceBase, ['recurrence', 'showFutureRecurrence'])
         || !(value.recurrenceBase.recurrence === null || typeof value.recurrenceBase.recurrence === 'string' || record(value.recurrenceBase.recurrence))
@@ -147,8 +150,9 @@ export const readNativeTaskDraftSaveRequest = (input: unknown, validateField: (f
             ? !validateField(field, base)
             : field === 'focusedToday' ? typeof base !== 'boolean'
             : field === 'completedAt' ? !validateField(field, base)
+            : field === 'timeSpentMinutes' ? !(base === null || validateField(field, base))
             : field === 'relativeStartOffset' ? !(base === null || record(base)) : typeof base !== 'string') return null;
-        if (!validateField(field, next === null && field === 'relativeStartOffset' ? undefined : next)) return null;
+        if (!validateField(field, next === null && ['relativeStartOffset', 'timeSpentMinutes'].includes(field) ? undefined : next)) return null;
     }
     return value as unknown as NativeTaskDraftSaveRequest;
 };
@@ -162,9 +166,10 @@ export const validNativeTaskDraftBases = (before: Task, request: NativeTaskDraft
     // Native opens the editor from the load projection. The v2 authority is
     // raw saved SQLite, so compare the frozen visible recurrence baseline to
     // that same projection while retaining the raw row for the write receipt.
-    const projected = savedRaw ? { ...before, recurrence: normalizeRecurrenceForLoad(before.recurrence) } : before;
+    const displayed = savedRaw ? { ...before, timeSpentMinutes: normalizeTimeSpentMinutes(before.timeSpentMinutes) } : before;
+    const projected = savedRaw ? { ...displayed, recurrence: normalizeRecurrenceForLoad(before.recurrence) } : before;
     const openingTask = savedRaw && request.recurrenceBase
-        && taskEditValuesEqual(getNativeTaskRecurrenceBase(projected), request.recurrenceBase) ? projected : before;
+        && taskEditValuesEqual(getNativeTaskRecurrenceBase(projected), request.recurrenceBase) ? projected : displayed;
     if (request.recurrenceBase && !taskEditValuesEqual(getNativeTaskRecurrenceBase(openingTask), request.recurrenceBase)) return false;
     const serialized = serializeNativeTaskDraftDirect(before, request);
     if (!serialized) return false;

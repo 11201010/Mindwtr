@@ -2607,6 +2607,17 @@ private final class Engine: @unchecked Sendable {
 #endif
             NSLog("Native iOS Task Editor save confirmed releaseCheck=v1.3.4/ios-editor-durable-save outcome=confirmed")
         }
+        if ["draftCommit", "checklistPreparedCommit"].contains(command.method), case .success = terminal,
+           let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+           let encoded = args.first,
+           let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+           let request = envelope["request"] as? [String: Any],
+           let patch = request["patch"] as? [String: Any], patch["timeSpentMinutes"] != nil {
+#if DEBUG
+            faults?.commandDiagnostic?("taskEditorTimeSpentApplied")
+#endif
+            NSLog("Native iOS Task Editor time spent saved releaseCheck=v1.3.4/ios-editor-time-spent outcome=confirmed")
+        }
         if command.method == "boardCommit", case .success = terminal, !boardActionLogged {
             boardActionLogged = true
 #if DEBUG
@@ -5035,6 +5046,12 @@ private final class Engine: @unchecked Sendable {
         return CFGetTypeID(number) == CFBooleanGetTypeID()
     }
 
+    private static func isTimeSpent(_ value: Any?) -> Bool {
+        if value is NSNull { return true }
+        guard isFiniteNumber(value), let number = value as? NSNumber else { return false }
+        return number.doubleValue >= 0
+    }
+
     private static func isProjectFlowScope(_ value: Any?) -> Bool {
         if value is NSNull { return true }
         guard let scope = value as? String else { return false }
@@ -6187,11 +6204,12 @@ private final class Engine: @unchecked Sendable {
                           checklist["base"] is [[String: Any]], checklist["value"] is [[String: Any]] else {
                         throw HostFailure("INVALID_INPUT: Checklist save needs exact baselines and final list")
                     }
-                    let allowed = Set(["title", "description", "location", "assignedTo", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "status", "focusedToday", "completedAt"])
+                    let allowed = Set(["title", "description", "location", "assignedTo", "priority", "energyLevel", "timeEstimate", "timeSpentMinutes", "projectId", "areaId", "sectionId", "contexts", "tags", "status", "focusedToday", "completedAt"])
                         .union(Self.scheduleFields).union(Self.recurrenceFields)
                     guard Set(patch.keys).isSubset(of: allowed), patch.keys.allSatisfy({ field in
                         if field == "relativeStartOffset" { return Self.isOffset(base[field]) && Self.isOffset(patch[field]) }
                         if field == "showFutureRecurrence" || field == "focusedToday" { return Self.isBoolean(base[field]) && Self.isBoolean(patch[field]) }
+                        if field == "timeSpentMinutes" { return Self.isTimeSpent(base[field]) && Self.isTimeSpent(patch[field]) }
                         return base[field] is String && patch[field] is String
                     }) else { throw HostFailure("INVALID_INPUT: Checklist save contains unsupported draft fields") }
                     let hasRecurrence = !Self.recurrenceFields.isDisjoint(with: patch.keys)
@@ -6505,7 +6523,7 @@ private final class Engine: @unchecked Sendable {
             let hasRecurrence = !Self.recurrenceFields.isDisjoint(with: patch.keys)
             let isPrepared = hasSchedule || hasRecurrence || input["scheduleBase"] != nil
             let allowed = Set(["title", "description", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags"])
-                .union(allowPreparedDates && isPrepared ? ["location", "assignedTo"] : [])
+                .union(allowPreparedDates && isPrepared ? ["location", "assignedTo", "timeSpentMinutes"] : [])
                 .union(allowPreparedDates ? Self.scheduleFields.union(Self.recurrenceFields) : [])
             var inputFields: Set<String> = ["id", "base", "patch"]
             if isPrepared && allowPreparedDates { inputFields.insert("scheduleBase") }
@@ -6515,6 +6533,7 @@ private final class Engine: @unchecked Sendable {
                   patch.keys.allSatisfy({ field in
                       if field == "relativeStartOffset" { return Self.isOffset(base[field]) && Self.isOffset(patch[field]) }
                       if field == "showFutureRecurrence" { return Self.isBoolean(base[field]) && Self.isBoolean(patch[field]) }
+                      if field == "timeSpentMinutes" { return Self.isTimeSpent(base[field]) && Self.isTimeSpent(patch[field]) }
                       return base[field] is String && patch[field] is String
                   }) else { throw HostFailure("INVALID_INPUT: Native editor requires matching supported draft fields") }
             if isPrepared {

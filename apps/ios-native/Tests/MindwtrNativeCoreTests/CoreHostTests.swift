@@ -10216,6 +10216,79 @@ final class CoreHostTests: XCTestCase {
                 "checklist": ["base": try checklistItems(id), "value": checklist]]
     }
 
+    func testEditorTimeSpentTransportRecoveryAndCombinedClear() async throws {
+        let id = try await seedDestinationTask()
+        let faults = HostIOFaults()
+        let core = host(faults, bundleURL: try dateBundle(at: "2026-09-30T12:00:00.000Z"))
+        _ = try await core.start()
+        _ = try await core.call("captureSubmit", argumentsJSON: capture(core, title: "Minutes sibling", id: UUID().uuidString.lowercased()))
+        let opening = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        let original = try storedTask(id)
+        var statements = 0
+        var confirmations = 0
+        faults.beforeSQL = { _ in statements += 1 }
+        faults.commandDiagnostic = { if $0 == "taskEditorTimeSpentApplied" { confirmations += 1 } }
+        for invalid: Any in [true, "25", -1, ["minutes": 25]] {
+            await expectFailure("INVALID_INPUT") {
+                _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: opening, patch: ["timeSpentMinutes": invalid]))
+            }
+            let request = try checklistSaveRequest(id, opening: opening, checklist: checklistItems(id), patch: ["timeSpentMinutes": invalid])
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("checklistSave", argumentsJSON: json([json(request)])) }
+        }
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("saveDraft", argumentsJSON: json([json([
+                "id": id, "base": ["timeSpentMinutes": NSNull()], "patch": ["timeSpentMinutes": 37],
+            ])]))
+        }
+        XCTAssertEqual(statements, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected minutes COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("saveDraft", argumentsJSON: datePayload(id, editor: opening, patch: ["timeSpentMinutes": 37]))
+        }
+        let pending = try Data(contentsOf: journal)
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        try assertJournalContentUnchanged(pending)
+        XCTAssertEqual(try nineTableSnapshot(sqlite), before)
+        XCTAssertEqual(confirmations, 0)
+        await core.close()
+        let replayFaults = HostIOFaults()
+        replayFaults.commandDiagnostic = { if $0 == "taskEditorTimeSpentApplied" { confirmations += 1 } }
+        let replay = host(replayFaults, bundleURL: try dateBundle(at: "2026-09-30T13:00:00.000Z", suffix:
+            "MindwtrHost.draftPrepare = function () { throw new Error('Minutes replay must not prepare'); };"))
+        _ = try await replay.start()
+        let saved = try storedTask(id)
+        XCTAssertEqual(saved["timeSpentMinutes"] as? Int, 37)
+        XCTAssertEqual(saved["rev"] as? Int, (original["rev"] as? Int ?? 0) + 1)
+        let changed: Set<String> = ["timeSpentMinutes", "rev", "revBy", "updatedAt"]
+        XCTAssertEqual(try datePreservedFields(saved, excluding: changed), try datePreservedFields(original, excluding: changed))
+        let after = try nineTableSnapshot(sqlite)
+        XCTAssertEqual(Array(after.dropFirst()), Array(before.dropFirst()))
+        let oldTasks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[0].utf8)) as? [[String: Any]])
+        let newTasks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(after[0].utf8)) as? [[String: Any]])
+        XCTAssertEqual(try json(oldTasks.filter { $0["id"] as? String != id }), try json(newTasks.filter { $0["id"] as? String != id }))
+        XCTAssertEqual(confirmations, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let edited = try object(await replay.call("editorModel", argumentsJSON: json([id])))
+        let clear = try checklistSaveRequest(id, opening: edited, checklist: checklistItems(id), patch: ["timeSpentMinutes": NSNull(), "status": "waiting"])
+        _ = try await replay.call("checklistSave", argumentsJSON: json([json(clear)]))
+        let cleared = try storedTask(id)
+        XCTAssertTrue(cleared["timeSpentMinutes"] is NSNull)
+        XCTAssertEqual(cleared["status"] as? String, "waiting")
+        XCTAssertEqual(cleared["rev"] as? Int, (saved["rev"] as? Int ?? 0) + 1)
+        XCTAssertEqual(try datePreservedFields(cleared, excluding: changed.union(["status", "focusOrder", "isFocusedToday"])),
+                       try datePreservedFields(saved, excluding: changed.union(["status", "focusOrder", "isFocusedToday"])))
+        XCTAssertEqual(confirmations, 2)
+        let final = try nineTableSnapshot(sqlite)
+        await replay.close()
+        let cold = host(bundleURL: try dateBundle(at: "2026-09-30T14:00:00.000Z")); _ = try await cold.start()
+        XCTAssertEqual(try nineTableSnapshot(sqlite), final)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await cold.close(); sqlite.close()
+    }
+
     func testEditorStatusSameFinalStatusCascadesRetryAndColdReplay() async throws {
         for status in ["next", "done"] {
             let id = try await seedDestinationTask()

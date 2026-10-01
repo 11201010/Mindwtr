@@ -511,6 +511,7 @@ final class CoreModel: ObservableObject {
     @Published var taskNoteDraft = ""
     @Published var taskLocationDraft = ""
     @Published var taskEstimateInput = ""
+    @Published var taskTimeSpentInput = ""
     @Published private(set) var taskChecklist: [CoreObject] = []
     @Published private(set) var taskChecklistField: CoreObject = [:]
     @Published private(set) var taskChecklistInputs: [Int: String] = [:]
@@ -654,6 +655,7 @@ final class CoreModel: ObservableObject {
     private let taskRecurrenceFields = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
     private let taskDateFields = ["startTime", "dueDate", "reviewAt"]
     private var taskEstimateResolvedInput = ""
+    private var taskTimeSpentResolvedInput = ""
     private let taskSaveFields = ["title", "description", "location", "assignedTo", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "startTime", "dueDate", "reviewAt"]
     private let taskTokenFields = ["contexts", "tags", "assignedTo"]
     private var taskTokenCanonical: [String: String] = [:]
@@ -1576,7 +1578,9 @@ final class CoreModel: ObservableObject {
                 entry.key < taskChecklist.count && entry.value != taskChecklist[entry.key].text("title")
             }
             || !taskChecklistAppendInput.isEmpty
-            || taskSchedulePending || taskEstimatePending || taskTokenFields.contains { taskTokenResolvedInputs[$0] != taskTokenInputs[$0] })
+            || taskSchedulePending || taskEstimatePending || taskTimeSpentPending
+            || !taskDraftValuesEqual(taskDraft["timeSpentMinutes"], taskOriginalDraft["timeSpentMinutes"])
+            || taskTokenFields.contains { taskTokenResolvedInputs[$0] != taskTokenInputs[$0] })
     }
     var taskDestinationActionsEnabled: Bool {
         taskPresented && !taskDestinationKind.isEmpty && taskDestinationCurrent && !busy && !retryNeeded
@@ -1605,6 +1609,7 @@ final class CoreModel: ObservableObject {
         taskEditor.object("fields").object("timeEstimate").flag("customSelected")
             && taskEstimateInput != taskEstimateResolvedInput
     }
+    private var taskTimeSpentPending: Bool { taskTimeSpentInput != taskTimeSpentResolvedInput }
 
     func start() async {
         guard !busy else { return }
@@ -12354,6 +12359,8 @@ final class CoreModel: ObservableObject {
         taskLocationDraft = ""
         taskEstimateInput = ""
         taskEstimateResolvedInput = ""
+        taskTimeSpentInput = ""
+        taskTimeSpentResolvedInput = ""
         taskError = nil
         taskPresented = true
     }
@@ -12595,6 +12602,17 @@ final class CoreModel: ObservableObject {
                 base["relativeStartOffset"] = taskOriginalDraft["relativeStartOffset"] ?? NSNull()
                 patch["relativeStartOffset"] = current["relativeStartOffset"] ?? NSNull()
             }
+            if !taskDraftValuesEqual(current["timeSpentMinutes"], taskOriginalDraft["timeSpentMinutes"]) {
+                let original = taskOriginalDraft["timeSpentMinutes"] ?? NSNull()
+                let edited = current["timeSpentMinutes"] ?? NSNull()
+                guard [original, edited].allSatisfy({ value in
+                    value is NSNull || (value as? NSNumber).map {
+                        CFGetTypeID($0) != CFBooleanGetTypeID() && $0.doubleValue.isFinite && $0.doubleValue >= 0
+                    } == true
+                }) else { throw CocoaError(.coderReadCorrupt) }
+                base["timeSpentMinutes"] = original
+                patch["timeSpentMinutes"] = edited
+            }
             let recurrenceChanged = taskRecurrenceFields.contains { !taskDraftValuesEqual(current[$0], taskOriginalDraft[$0]) }
             if recurrenceChanged {
                 for field in taskRecurrenceFields {
@@ -12752,6 +12770,18 @@ final class CoreModel: ObservableObject {
         } catch { taskError = error.localizedDescription }
     }
 
+    func commitTaskTimeSpentInput() async {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              taskTimeSpentPending else { return }
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            try await resolveTaskEditorInputs()
+            try await refreshTaskDestination()
+        } catch { taskError = error.localizedDescription }
+    }
+
     private func resolveTaskEstimateInput() async throws {
         guard taskEstimatePending else { return }
         let id = viewedTaskID
@@ -12766,6 +12796,29 @@ final class CoreModel: ObservableObject {
     private func resetTaskEstimateInput() {
         taskEstimateInput = taskEditor.object("fields").object("timeEstimate").text("customText")
         taskEstimateResolvedInput = taskEstimateInput
+    }
+
+    private func resolveTaskTimeSpentInput() async throws {
+        guard taskTimeSpentPending else { return }
+        let id = viewedTaskID
+        let session = taskScheduleSession
+        let raw = taskTimeSpentInput
+        let editor = try await query("editDraft", [try json(taskEditRequest(
+            ["type": "timeSpent", "text": raw]))])
+        guard taskPresented, viewedTaskID == id, taskScheduleSession == session else { throw CancellationError() }
+        taskEditor = editor
+        taskTimeSpentResolvedInput = raw
+        if taskTimeSpentInput == raw { resetTaskTimeSpentInput() }
+    }
+
+    private func resetTaskTimeSpentInput() {
+        if let number = taskEditor.object("draft")["timeSpentMinutes"] as? NSNumber,
+           CFGetTypeID(number) != CFBooleanGetTypeID() {
+            taskTimeSpentInput = number.stringValue
+        } else {
+            taskTimeSpentInput = ""
+        }
+        taskTimeSpentResolvedInput = taskTimeSpentInput
     }
 
     private func taskDraftValuesEqual(_ lhs: Any?, _ rhs: Any?) -> Bool {
@@ -13015,10 +13068,11 @@ final class CoreModel: ObservableObject {
         repeat {
             try await resolveTaskScheduleEdits()
             if estimate { try await resolveTaskEstimateInput() }
+            try await resolveTaskTimeSpentInput()
             try await resolveTaskTokenInputs()
             // A final native wheel/input callback can arrive during either
             // awaited normalization. Drain it before capturing a save payload.
-        } while !taskScheduleEdits.isEmpty || taskScheduleTask != nil
+        } while !taskScheduleEdits.isEmpty || taskScheduleTask != nil || taskTimeSpentPending
         // Explicit action callers already resigned input. Include any final
         // binding callback delivered during normalization before reconciling text.
         commitTaskRelativeInput()
@@ -13431,6 +13485,7 @@ final class CoreModel: ObservableObject {
                     "taskEdit.scheduling", "taskEdit.organization", "taskEdit.details",
                     "taskEdit.contextsLabel", "taskEdit.contextsPlaceholder", "taskEdit.tagsLabel", "taskEdit.tagsPlaceholder",
                     "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder", "taskEdit.statusLabel", "reference.convertToAction",
+                    "taskEdit.timeSpentLabel", "taskEdit.timeSpentPlaceholder",
                     "process.waitingFor", "process.waitingForDesc", "common.cancel", "common.save",
                     "taskEdit.startDateLabel", "taskEdit.dueDateLabel", "taskEdit.reviewDateLabel", "taskEdit.dateOnly",
                     "taskEdit.startModeAbsolute", "taskEdit.startModeRelative", "taskEdit.relativeStartAmount",
@@ -13479,6 +13534,7 @@ final class CoreModel: ObservableObject {
                     taskLocationDraft = editor.object("draft").text("location")
                     initializeTaskTokens()
                     resetTaskEstimateInput()
+                    resetTaskTimeSpentInput()
                 }
                 try await resolveTaskEditorInputs()
                 try await refreshTaskDestination()

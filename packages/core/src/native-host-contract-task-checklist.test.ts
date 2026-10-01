@@ -82,6 +82,27 @@ describe('prepared native checklist Save and Reset', () => {
             checklist: [item('one', 'Revised'), item('two', 'Second')] });
     });
 
+    it('clears Time Spent with explicit null alongside a checklist edit', async () => {
+        const original = source({ timeSpentMinutes: 17 });
+        const { host } = await open(original);
+        const request = { id: original.id, requestId: id,
+            base: { timeSpentMinutes: 17 }, patch: { timeSpentMinutes: null }, scheduleBase,
+            checklist: { base: original.checklist!, value: [item('one', 'Revised'), item('two', 'Second')] } };
+        for (const value of [true, '17', -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+            expect(host.prepareTaskChecklistSave({ ...request, patch: { timeSpentMinutes: value } } as never))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        const plan = unwrap(host.prepareTaskChecklistSave(request));
+        expect(plan.kind).toBe('prepared');
+        if (plan.kind !== 'prepared') return;
+        expect(unwrap(host.validatePreparedTaskChecklistWrite({ request, prepared: plan.prepared })))
+            .toEqual({ id: original.id });
+        expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: plan.prepared })))
+            .toEqual({ id: original.id });
+        expect(savedTask().timeSpentMinutes).toBeUndefined();
+        expect(savedTask().checklist).toEqual([item('one', 'Revised'), item('two', 'Second')]);
+    });
+
     it('projects an unsaved checklist into editor layout without changing the saved edit source', async () => {
         const { host } = await open(source({ checklist: [] }));
         const draft = createTaskDraft(savedTask());
@@ -248,11 +269,11 @@ describe('prepared native checklist Save and Reset', () => {
     it('saves a title, checklist, date, and list completion with exactly one recurring child', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date(clock));
-        const original = source({ recurrence: { rule: 'daily', strategy: 'strict', rrule: 'FREQ=DAILY' },
+        const original = source({ timeSpentMinutes: 17, recurrence: { rule: 'daily', strategy: 'strict', rrule: 'FREQ=DAILY' },
             dueDate: '2026-09-27', checklist: [item('one', 'First', true), item('two', 'Second')] });
         const { host } = await open(original);
-        const request = { id: original.id, requestId: id, base: { title: 'Before', status: 'next', dueDate: '2026-09-27' },
-            patch: { title: 'After', status: 'done', dueDate: '2026-09-28' },
+        const request = { id: original.id, requestId: id, base: { title: 'Before', status: 'next', dueDate: '2026-09-27', timeSpentMinutes: 17 },
+            patch: { title: 'After', status: 'done', dueDate: '2026-09-28', timeSpentMinutes: 25 },
             scheduleBase: { ...scheduleBase, dueDate: '2026-09-27' },
             checklist: { base: original.checklist!, value: original.checklist!.map((entry) => ({ ...entry, isCompleted: true })) } };
         const prepared = unwrap(host.prepareTaskChecklistSave(request));
@@ -263,7 +284,7 @@ describe('prepared native checklist Save and Reset', () => {
         expect(child?.checklist?.every((entry) => !entry.isCompleted)).toBe(true);
         expect(child?.id).not.toBe(original.id);
         expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: prepared.prepared }))).toEqual({ id: original.id });
-        expect(savedTask()).toMatchObject({ title: 'After', status: 'done', dueDate: '2026-09-28', rev: 4 });
+        expect(savedTask()).toMatchObject({ title: 'After', status: 'done', dueDate: '2026-09-28', timeSpentMinutes: 25, rev: 4 });
         expect(useTaskStore.getState()._allTasks.filter((entry) => entry.id === child?.id)).toHaveLength(1);
         expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: prepared.prepared }))).toEqual({ id: original.id });
         expect(useTaskStore.getState()._allTasks.filter((entry) => entry.id === child?.id)).toHaveLength(1);

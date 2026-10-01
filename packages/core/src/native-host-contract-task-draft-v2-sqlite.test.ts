@@ -61,6 +61,70 @@ async function open(path: string, seed = false) {
 }
 
 describe('native Task Editor v2 durable SQLite save', () => {
+    it.each([
+        { raw: 1.5, displayed: 2 },
+        { raw: 100_005, displayed: 100_000 },
+    ])('edits projected Time Spent from raw $raw with exact retry, replay and CAS', async ({ raw, displayed }) => {
+        const directory = mkdtempSync(join(root, 'task-draft-v2-')); directories.push(directory);
+        const path = join(directory, 'data.sqlite');
+        const seed = await open(path, true);
+        seed.db.prepare('UPDATE tasks SET timeSpentMinutes = ? WHERE id = ?').run(raw, 'edit');
+        const { db, host, fault } = await open(path);
+        expect(db.prepare('SELECT timeSpentMinutes FROM tasks WHERE id = ?').get('edit'))
+            .toEqual({ timeSpentMinutes: raw });
+        const opening = host.getTaskEditorModel({ id: 'edit' });
+        if (!opening.ok) throw new Error(opening.error.message);
+        expect(opening.value.draft.timeSpentMinutes).toBe(displayed);
+
+        const title = { id: 'edit', base: { title: opening.value.draft.title },
+            patch: { title: 'Unrelated title' }, scheduleBase: opening.value.scheduleBase };
+        const titlePlan = await host.prepareTaskDraftSaveV2(title);
+        if (!titlePlan.ok || titlePlan.value.kind !== 'prepared') throw new Error(JSON.stringify(titlePlan));
+        expect(titlePlan.value.prepared.effect.task.after.timeSpentMinutes).toBe(raw);
+        expect(await host.commitPreparedTaskDraftSave({ request: title, prepared: titlePlan.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(db.prepare('SELECT timeSpentMinutes FROM tasks WHERE id = ?').get('edit'))
+            .toEqual({ timeSpentMinutes: raw });
+
+        const edited = host.getTaskEditorModel({ id: 'edit' });
+        if (!edited.ok) throw new Error(edited.error.message);
+        expect(edited.value.draft.timeSpentMinutes).toBe(displayed);
+        const request = { id: 'edit', base: { timeSpentMinutes: displayed },
+            patch: { timeSpentMinutes: 45 }, scheduleBase: edited.value.scheduleBase };
+        const plan = await host.prepareTaskDraftSaveV2(request);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const prepared = plan.value.prepared;
+        expect(prepared.effect.task.before.timeSpentMinutes).toBe(raw);
+        expect(prepared.effect.task.after.timeSpentMinutes).toBe(45);
+        const before = db.prepare('SELECT * FROM tasks ORDER BY id').all();
+        fault.commits = 10;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            expect(await host.commitPreparedTaskDraftSave({ request, prepared }))
+                .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+            expect(db.prepare('SELECT * FROM tasks ORDER BY id').all()).toEqual(before);
+        }
+        fault.commits = 0;
+        expect(await host.commitPreparedTaskDraftSave({ request, prepared })).toMatchObject({ ok: true });
+        const committed = db.prepare('SELECT * FROM tasks ORDER BY id').all();
+        expect(db.prepare('SELECT timeSpentMinutes, rev, updatedAt FROM tasks WHERE id = ?').get('edit'))
+            .toEqual({ timeSpentMinutes: 45, rev: prepared.effect.task.after.rev,
+                updatedAt: prepared.preparedAt });
+        expect(committed.find((row) => (row as { id: string }).id === 'other'))
+            .toEqual(before.find((row) => (row as { id: string }).id === 'other'));
+        const cold = await open(path);
+        expect(await cold.host.commitPreparedTaskDraftSave({ request, prepared })).toMatchObject({ ok: true });
+        expect(cold.db.prepare('SELECT * FROM tasks ORDER BY id').all()).toEqual(committed);
+        cold.db.prepare('UPDATE tasks SET timeSpentMinutes = ?, rev = ?, revBy = ?, updatedAt = ? WHERE id = ?')
+            .run(60, 80, 'other-device', '2026-09-30T13:00:00.000Z', 'edit');
+        cold.db.prepare('UPDATE tasks SET timeSpentMinutes = ?, rev = ?, revBy = ?, updatedAt = ? WHERE id = ?')
+            .run(45, 81, 'other-device', '2026-09-30T14:00:00.000Z', 'edit');
+        const aba = cold.db.prepare('SELECT * FROM tasks ORDER BY id').all();
+        const coldAgain = await open(path);
+        expect(await coldAgain.host.commitPreparedTaskDraftSave({ request, prepared }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(coldAgain.db.prepare('SELECT * FROM tasks ORDER BY id').all()).toEqual(aba);
+    }, 40_000);
+
     it('recovers an Assigned To save after two failed COMMITs and refuses a cold same-value ABA', async () => {
         const directory = mkdtempSync(join(root, 'task-draft-v2-')); directories.push(directory);
         const path = join(directory, 'data.sqlite');

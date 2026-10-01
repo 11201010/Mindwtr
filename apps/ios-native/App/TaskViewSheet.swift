@@ -359,6 +359,25 @@ struct TaskViewSheet: View {
                         .accessibilityIdentifier("task-editor-timeEstimate-input")
                         .disabled(model.taskScheduleUpdating)
                 }
+                if field == "timeEstimate" && model.taskEditor.object("fields").object("timeSpent").flag("enabled") {
+                    HStack(spacing: 6) {
+                        metadataGlyph("hourglass", size: 16)
+                        Text(strings.text("taskEdit.timeSpentLabel").uppercased()).rnFont(14)
+                    }
+                    .foregroundStyle(palette.secondary).accessibilityAddTraits(.isHeader)
+                    TextField(strings.text("taskEdit.timeSpentPlaceholder"), text: $model.taskTimeSpentInput)
+                        .rnFont(16).keyboardType(.numberPad).submitLabel(.done)
+                        .padding(12).frame(minHeight: 44)
+                        .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+                        .onSubmit {
+                            endEditingBeforeAction()
+                            Task { await model.commitTaskTimeSpentInput() }
+                        }
+                        .accessibilityLabel(strings.text("taskEdit.timeSpentLabel"))
+                        .accessibilityIdentifier("task-editor-timeSpent-input")
+                        .disabled(model.taskScheduleUpdating)
+                }
             }
         }
     }
