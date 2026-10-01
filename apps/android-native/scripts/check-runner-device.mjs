@@ -458,7 +458,10 @@ try {
     // (6a) A check-off stored and saved whose record write fails (debug fail_kv_set), drained by a CoreWork job while the app
     // shows: owed, and its file is removed anyway, so nothing can apply it again; the job's retry recovers with no tap.
     const replayLine = 'journal replay sent=1 dropped=1 left=0 owed=none';
-    const lines = () => allLogs();
+    // The log since a step began (the device's clock): a long step can roll older lines out of logcat, so counts start at zero.
+    let stepStart = '';
+    const beginStep = () => { stepStart = sh("date +'%m-%d %H:%M:%S.000'"); };
+    const lines = () => execFileSync(adbBin, ['-s', serial, 'logcat', '-d', '-T', stepStart, '-s', `${TAG}:*`], { encoding: 'utf8', maxBuffer: 64 << 20 }).replace(/\\/g, '');
     const clearOwedRetry = async () => {
         for (let attempt = 0; attempt < 3; attempt += 1) {
             const nodes = await toTabs();
@@ -478,7 +481,8 @@ try {
         if (!front().includes(`${PKG}/`)) device.launch(ACTIVITY);
         await toTabs();
         const id = randomUUID();
-        const [failedBefore, replaysBefore] = [count(lines(), 'Native Android queue drain', '"error":"SAVE_FAILED"'), count(lines(), replayLine)];
+        beginStep();
+        const [failedBefore, replaysBefore] = [0, 0];
         setProp('fail_kv_set', '1');
         try {
             enqueue(id, JSON.stringify({ kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
@@ -507,8 +511,8 @@ try {
         check(target.status !== 'done' && other.status !== 'done', '(6b) the check-off\'s task and the task Mark Done tries are open');
         await toTabs();
         const id = randomUUID();
-        const [jobsBefore, postedBefore, replaysBefore] = [count(lines(), ...CONTEXT_DONE), count(lines(), ...POSTED), count(lines(), replayLine)];
-        const retriesBefore = count(lines(), 'Native Android core work', '"job":"context","outcome":"retry"');
+        beginStep();
+        const [jobsBefore, postedBefore, replaysBefore, retriesBefore] = [0, 0, 0, 0];
         enqueue(id, JSON.stringify({ kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
         lockQueue();
         try {
