@@ -514,3 +514,15 @@ Shared bounded validation passed 167 tests with one existing skip, core/mobile/d
 Simulator UI778 passed normal-size Time Spent editing in 401.971s: disabled feature gate, set/save/cold retention, Preview/Edit preservation, discard, clear, zero-as-unset no-op, and combined Done/minutes save. The nine-table oracle proved three task writes, unchanged sibling/settings/other fields and no pending journal; the disabled fixture was unchanged. Original simulator files/preferences and styles were restored; the saved-field screenshot was inspected. Largest-text/dark UI780 passed the same save/restart/discard/clear/combined-status flow in 456.789s, with the same nine-table and original-files/preferences/style oracles. Its screenshot was inspected. UI779 stopped on the storage-read retry screen during Mac disk exhaustion; it is retained as a failed run, not counted as passing evidence. Completed signed apps were archived before removing obsolete build outputs; the fresh UI780 run then passed.
 
 Signed iPhone 12/iOS 17.5.1 Device178 passed in-place update and the disabled Time Spent gate under the Full editor preset; Time Estimate remained visible. All nine tables were unchanged by update and editor inspection. Standard preset restoration changed only its four editor preferences and GTD stamp; cold restart retained those values, and the normal development launch was restored. Visible Time Spent editing on hardware remains deferred until native Pomodoro settings and a usable timer are available; no phone database override was used. Executable SHA-256 `7702a8d60b61667b81012081e53180091565817d9db18b7beb9e564f8dfafadf`, debug dylib `0ad4526df16850c8e98c406d57e1b63b068b3e9d723d48c05dac8853b6916315`. Six production/host-test/bundle hashes matched the Mac.
+
+## Approved Android native differences (maintainer decision, 2026-10-01)
+
+The maintainer approved these native Android behaviors that differ from the React Native app ("approve the native-only differences listed in the handoff, including C1's three", 2026-10-01):
+
+- App lock also hides the app's screenshot in the recent-apps view (stricter than RN).
+- Buttons dim while a command runs or while a failed save waits for its retry.
+- The capture screen locks its fields while a save is owed. Cancel keeps an owed retry, which may still land after the journal replay.
+- The capture screen's Back for a warm `capture-quick` start matches RN's.
+- Settings › AI: non-secret text fields send their change 500 ms after typing pauses (RN writes every keystroke). The key and base URL fields write each change at once, in order.
+- Process Inbox's AI toast "Open" closes Process Inbox, then opens Settings › AI (RN pushes the route under its modal; that RN behavior is a suspected bug, not yet verified).
+- A Settings row's text wraps about 12 dp wider than RN's.
