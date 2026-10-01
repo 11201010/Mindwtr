@@ -17,6 +17,9 @@
  *   soonest first. A cycle runs again 5 s after the soonest fires, so the window tops up.
  * - Snooze is a new alarm outside the map, 10 minutes after the tap, so a cycle never
  *   cancels it. It can still fire after the task is done: a kept trade-off.
+ * - Android start requests remove orphaned native rows (`findStaleNativeReminderAlarms`),
+ *   while the native receiver consumes fired one-shots and discards those over 24 h late.
+ *   A pending snooze of a live task stays.
  * - A store change re-runs a cycle 2.5 s after the last change to tasks, projects or a
  *   reminder setting.
  * - Date-only dates never schedule (buildReminderSchedule). No reminder feature on, or no
@@ -565,6 +568,61 @@ export function shouldRescheduleReminderAlarms(state: ReminderStoreSnapshot, pre
     const settingsRelevantChanged = state.settings !== previous.settings
         && getReminderSettingsSignature(state.settings) !== getReminderSettingsSignature(previous.settings);
     return tasksOrProjectsChanged || settingsRelevantChanged;
+}
+
+/** An Android alarm row's `key==>value;;` data (or an object), as strings. */
+function readNativeAlarmData(value: unknown): Record<string, string> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, String(item)]));
+    }
+    const data: Record<string, string> = {};
+    if (typeof value !== 'string') return data;
+    for (const item of value.split(';;')) {
+        const separator = item.indexOf('==>');
+        if (separator > 0) data[item.slice(0, separator)] = item.slice(separator + 3);
+    }
+    return data;
+}
+
+/**
+ * The Android alarm rows (`getScheduledAlarms`: id, scheduleType, local year/month/day/hour/
+ * minute/second, data) that no cycle can cancel and nothing still wants, with why each goes.
+ * A row whose id the alarm map holds, or a Pomodoro alarm, is never listed. Withdrawn: it
+ * names a task or project that is gone, done or archived. Expired: it repeats (every digest
+ * is in the map), or its time is over 24 h past. A recent or future one-shot
+ * of a live task stays: it may be a late or pending snooze.
+ */
+export function findStaleNativeReminderAlarms(input: {
+    rows: unknown;
+    trackedIds: ReadonlySet<number>;
+    tasks: Task[];
+    projects: Project[];
+    now: Date;
+}): { id: number; reason: ReminderAlarmCancelReason }[] {
+    if (!Array.isArray(input.rows)) return [];
+    const tasks = new Map(input.tasks.map((task) => [task.id, task]));
+    const projects = new Map(input.projects.map((project) => [project.id, project]));
+    const stale: { id: number; reason: ReminderAlarmCancelReason }[] = [];
+    for (const row of input.rows as Record<string, unknown>[]) {
+        if (!row || typeof row !== 'object') continue;
+        const id = Number(row.id);
+        if (!Number.isSafeInteger(id) || id <= 0 || input.trackedIds.has(id) || isPomodoroNativeAlarm(row)) continue;
+        const key = readNativeAlarmData(row.data).alarmKey ?? '';
+        const task = key.startsWith('task:') ? tasks.get(key.slice('task:'.length).replace(/:r\d+$/, '')) : undefined;
+        const project = key.startsWith('project:') ? projects.get(key.slice('project:'.length)) : undefined;
+        const ownerGone = (key.startsWith('task:') && (!task || Boolean(task.deletedAt) || !isTaskActionable(task)))
+            || (key.startsWith('project:') && (!project || Boolean(project.deletedAt) || project.status === 'archived'));
+        const fireAtMs = new Date(
+            Number(row.year), Number(row.month) - 1, Number(row.day), Number(row.hour), Number(row.minute), Number(row.second),
+        ).getTime();
+        if (ownerGone) stale.push({ id, reason: 'withdrawn' });
+        // A live snooze may be pending just after its fire time; Android can
+        // deliver it late. Match the native 24 h grace before expiring it.
+        else if (row.scheduleType === 'repeat' || fireAtMs < input.now.getTime() - 24 * 60 * 60 * 1000) {
+            stale.push({ id, reason: 'expired' });
+        }
+    }
+    return stale;
 }
 
 // --- The Pomodoro completion alarm ---

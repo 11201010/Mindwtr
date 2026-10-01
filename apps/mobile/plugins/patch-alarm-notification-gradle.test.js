@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -47,6 +48,107 @@ const applyAlarmIosColdStartHeaderPatchToSource = transformFor('alarm-ios-cold-s
 const applyAlarmIosUniqueIdentifierPatchToSource = transformFor('alarm-ios-unique-identifier');
 const applyAlarmIosDeletePendingPatchToSource = transformFor('alarm-ios-delete-pending-arg');
 const applyAlarmIosPendingKindPatchToSource = transformFor('alarm-ios-pending-kind');
+
+it('guards a stale one-shot before native delivery and consumes a fired row', () => {
+  const util = transformFor('alarm-stale-once-util')(`class AlarmUtil {
+    void setAlarm(AlarmModel alarm) {
+        Calendar calendar = getCalendarFromAlarm(alarm);
+    }
+    Calendar getCalendarFromAlarm(AlarmModel alarm) { return null; }
+    AlarmDatabase getAlarmDB() { return null; }
+    void snoozeAlarm(AlarmModel alarm) {
+        int snoozedAlarmRowId = getAlarmDB().insert(alarm);
+    }
+}`);
+  const receiver = transformFor('alarm-stale-once-receiver')(`class AlarmReceiver {
+    void onReceive() {
+                        alarm = alarmDB.getAlarm(id);
+
+                        alarmUtil.sendNotification(alarm);
+
+                        if ("repeat".equals(alarm.getScheduleType())) {
+                            alarmUtil.rescheduleRepeatingAlarm(alarm);
+                        }
+    }
+}`);
+  expect(util).toContain('boolean discardStaleOneShot(AlarmModel alarm)');
+  expect(util).toContain('getAlarmDB().delete(alarm.getId());');
+  expect(util).toContain('if (discardStaleOneShot(alarm)) return;');
+  expect(util).toContain('alarm.setActive(1);\n        int snoozedAlarmRowId = getAlarmDB().insert(alarm);');
+  expect(receiver.indexOf('alarmUtil.discardStaleOneShot(alarm)')).toBeLessThan(receiver.indexOf('alarmUtil.sendNotification(alarm)'));
+  expect(receiver).toContain('alarm.setActive(0);');
+  expect(receiver).toContain('alarmDB.update(alarm);');
+});
+
+it('runs the patched Java guard across old, recent, future, repeated and invalid alarms', () => {
+  const transformed = transformFor('alarm-stale-once-util')(`class AlarmUtil {
+    void setAlarm(AlarmModel alarm) {
+        Calendar calendar = getCalendarFromAlarm(alarm);
+    }
+    void snoozeAlarm(AlarmModel alarm) {
+        int snoozedAlarmRowId = getAlarmDB().insert(alarm);
+    }
+}`);
+  const guard = transformed.slice(
+    transformed.indexOf('    boolean discardStaleOneShot(AlarmModel alarm) {'),
+    transformed.indexOf('    void setAlarm(AlarmModel alarm) {')
+  );
+  const installedUtil = fs.readFileSync(path.join(
+    testDirectory, '..', '..', '..', 'node_modules', 'react-native-alarm-notification',
+    'android', 'src', 'main', 'java', 'com', 'emekalites', 'react', 'alarm', 'notification', 'AlarmUtil.java'
+  ), 'utf8');
+  const calendarMethod = installedUtil.slice(
+    installedUtil.indexOf('    Calendar getCalendarFromAlarm(AlarmModel alarm) {'),
+    installedUtil.indexOf('    void setAlarmFromCalendar(AlarmModel alarm, Calendar calendar) {')
+  );
+  const java = `import java.util.*;
+class AlarmModel {
+  final int id; final String scheduleType;
+  int year, month, day, hour, minute, second;
+  AlarmModel(int id, String scheduleType, Calendar at) {
+    this.id=id; this.scheduleType=scheduleType;
+    year=at.get(Calendar.YEAR); month=at.get(Calendar.MONTH)+1; day=at.get(Calendar.DAY_OF_MONTH);
+    hour=at.get(Calendar.HOUR_OF_DAY); minute=at.get(Calendar.MINUTE); second=at.get(Calendar.SECOND);
+  }
+  int getId() { return id; }
+  String getScheduleType() { return scheduleType; }
+  int getYear() { return year; } int getMonth() { return month; } int getDay() { return day; }
+  int getHour() { return hour; } int getMinute() { return minute; } int getSecond() { return second; }
+}
+class AlarmDatabase { int deleted=0; void delete(int id) { deleted=id; } }
+public class GuardCheck {
+  final AlarmDatabase db = new AlarmDatabase();
+  AlarmDatabase getAlarmDB() { return db; }
+${calendarMethod}
+${guard}
+  static Calendar hoursFromNow(int hours) { Calendar c=Calendar.getInstance(); c.add(Calendar.HOUR_OF_DAY,hours); return c; }
+  static Calendar millisFromNow(long delta) { Calendar c=Calendar.getInstance(); c.setTimeInMillis(c.getTimeInMillis()+delta); return c; }
+  static void check(boolean ok) { if (!ok) throw new AssertionError(); }
+  public static void main(String[] args) {
+    GuardCheck g=new GuardCheck();
+    check(g.discardStaleOneShot(new AlarmModel(1,"once",hoursFromNow(-25))) && g.db.deleted==1);
+    g.db.deleted=0;
+    check(!g.discardStaleOneShot(new AlarmModel(2,"once",hoursFromNow(-23))) && g.db.deleted==0);
+    check(!g.discardStaleOneShot(new AlarmModel(6,"once",millisFromNow(-86400000L+5000L))) && g.db.deleted==0);
+    check(g.discardStaleOneShot(new AlarmModel(7,"once",millisFromNow(-86400000L-5000L))) && g.db.deleted==7);
+    g.db.deleted=0;
+    check(!g.discardStaleOneShot(new AlarmModel(3,"once",hoursFromNow(1))) && g.db.deleted==0);
+    check(!g.discardStaleOneShot(new AlarmModel(4,"repeat",hoursFromNow(-25))) && g.db.deleted==0);
+    AlarmModel invalid=new AlarmModel(5,"once",hoursFromNow(0)); invalid.month=13;
+    check(g.discardStaleOneShot(invalid) && g.db.deleted==5);
+  }
+}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alarm-java-guard-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'GuardCheck.java'), java);
+    const compile = spawnSync('javac', ['GuardCheck.java'], { cwd: dir, encoding: 'utf8' });
+    expect(compile.status, compile.stderr).toBe(0);
+    const run = spawnSync('java', ['GuardCheck'], { cwd: dir, encoding: 'utf8' });
+    expect(run.status, run.stderr).toBe(0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe('patch-alarm-notification-gradle', () => {
   it('exposes only a type-checked pending notification kind on iOS and converges', () => {
@@ -988,6 +1090,7 @@ describe('PATCHES registry completeness', () => {
     ['AlarmUtil.java', 'applyAlarmDuplicateToastPatchToSource'],
     ['AlarmUtil.java', 'applyAlarmTimingPatchToSource'],
     ['AlarmUtil.java', 'applyAlarmExactRepeatPatchToSource'],
+    ['AlarmUtil.java', 'applyAlarmStaleOnceUtilPatchToSource'],
     ['AlarmUtil.java', 'applyAlarmReminderBehaviorPatchToSource'],
     ['AlarmUtil.java', 'applyAlarmLockScreenPrivacyPatchToSource'],
     ['AlarmUtil.java', 'applyAlarmCompleteUtilPatchToSource'],
@@ -995,6 +1098,7 @@ describe('PATCHES registry completeness', () => {
     ['AlarmDismissReceiver.java', 'applyAlarmDismissReceiverPatchToSource'],
     ['AlarmReceiver.java', 'applyAlarmReceiverPatchToSource'],
     ['AlarmReceiver.java', 'applyAlarmExactRepeatPatchToSource'],
+    ['AlarmReceiver.java', 'applyAlarmStaleOnceReceiverPatchToSource'],
     ['AlarmReceiver.java', 'applyAlarmCompleteReceiverPatchToSource'],
     ['Constants.java', 'applyAlarmCompleteConstantsPatchToSource'],
     ['RnAlarmNotification.m', 'applyAlarmIosCompleteActionPatchToSource'],
@@ -1025,7 +1129,7 @@ describe('PATCHES registry completeness', () => {
   });
 
   it('every entry declares required/firstMatchOnly explicitly', () => {
-    expect(PATCHES).toHaveLength(23);
+    expect(PATCHES).toHaveLength(25);
     for (const patch of PATCHES) {
       expect(typeof patch.id).toBe('string');
       expect(typeof patch.required).toBe('boolean');

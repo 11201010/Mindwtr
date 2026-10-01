@@ -350,6 +350,65 @@ ${indentation}}`
   return next;
 };
 
+// Old one-shot rows remain active in the library DB after delivery. A reboot
+// then schedules their past fire time again. Keep the row for notification
+// actions, but consume it after posting; discard older pending rows before
+// either boot scheduling or a delayed broadcast can post them.
+const applyAlarmStaleOnceUtilPatchToSource = (original) => {
+  let next = original;
+  const marker = '    void setAlarm(AlarmModel alarm) {';
+  if (!next.includes(marker)) return next;
+  if (!next.includes('boolean discardStaleOneShot(AlarmModel alarm)')) next = next.replace(marker, `    boolean discardStaleOneShot(AlarmModel alarm) {
+        if (!"once".equals(alarm.getScheduleType())) return false;
+        // ponytail: 24 h grace preserves short offline periods; revisit if task
+        // state is made available to the native receiver.
+        Calendar fireTime = getCalendarFromAlarm(alarm);
+        fireTime.setLenient(false);
+        long latenessMs;
+        try {
+            latenessMs = System.currentTimeMillis() - fireTime.getTimeInMillis();
+        } catch (IllegalArgumentException invalidDate) {
+            getAlarmDB().delete(alarm.getId());
+            return true;
+        }
+        if (latenessMs <= 24L * 60L * 60L * 1000L) return false;
+        getAlarmDB().delete(alarm.getId());
+        return true;
+    }
+
+${marker}
+        if (discardStaleOneShot(alarm)) return;`);
+  const snoozeRow = '        int snoozedAlarmRowId = getAlarmDB().insert(alarm);';
+  if (next.includes(snoozeRow) && !next.includes('alarm.setActive(1);\n' + snoozeRow)) {
+    next = next.replace(snoozeRow, '        alarm.setActive(1);\n' + snoozeRow);
+  }
+  if (!next.includes('alarm.setActive(1);\n' + snoozeRow)) {
+    throw new Error('alarm-stale-once-util: independent snooze row anchor missing');
+  }
+  return next;
+};
+
+const applyAlarmStaleOnceReceiverPatchToSource = (original) => {
+  if (original.includes('alarmUtil.discardStaleOneShot(alarm)')) return original;
+  const marker = `                        alarm = alarmDB.getAlarm(id);
+
+                        alarmUtil.sendNotification(alarm);`;
+  if (!original.includes(marker)) return original;
+  let next = original.replace(marker, `                        alarm = alarmDB.getAlarm(id);
+                        if (alarm == null || alarm.getActive() != 1 || alarmUtil.discardStaleOneShot(alarm)) return;
+
+                        alarmUtil.sendNotification(alarm);`);
+  const repeatMarker = `                        if ("repeat".equals(alarm.getScheduleType())) {
+                            alarmUtil.rescheduleRepeatingAlarm(alarm);
+                        }`;
+  if (!next.includes(repeatMarker)) throw new Error('alarm-stale-once-receiver: repeat anchor missing');
+  next = next.replace(repeatMarker, `${repeatMarker} else {
+                            alarm.setActive(0);
+                            alarmDB.update(alarm);
+                        }`);
+  return next;
+};
+
 const applyAlarmReminderBehaviorPatchToSource = (original) => {
   let next = original;
 
@@ -1331,6 +1390,15 @@ const PATCHES = [
     appliedMarker: 'MAX_REPEAT_SEARCH_STEPS',
   },
   {
+    id: 'alarm-stale-once-util',
+    platform: 'android',
+    getCandidates: androidJavaCandidates('AlarmUtil.java'),
+    transform: applyAlarmStaleOnceUtilPatchToSource,
+    required: true,
+    firstMatchOnly: false,
+    appliedMarker: 'boolean discardStaleOneShot(AlarmModel alarm)',
+  },
+  {
     id: 'alarm-reminder-behavior',
     platform: 'android',
     getCandidates: androidJavaCandidates('AlarmUtil.java'),
@@ -1406,6 +1474,15 @@ const PATCHES = [
     required: true,
     firstMatchOnly: false,
     appliedMarker: 'alarmUtil.rescheduleRepeatingAlarm(alarm);',
+  },
+  {
+    id: 'alarm-stale-once-receiver',
+    platform: 'android',
+    getCandidates: androidJavaCandidates('AlarmReceiver.java'),
+    transform: applyAlarmStaleOnceReceiverPatchToSource,
+    required: true,
+    firstMatchOnly: false,
+    appliedMarker: 'alarmUtil.discardStaleOneShot(alarm)',
   },
   {
     id: 'alarm-complete-action-receiver',

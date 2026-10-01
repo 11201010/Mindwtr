@@ -17,6 +17,7 @@ import {
   cancelReminderAlarm,
   cancelUnrequestedReminderAlarms,
   countReminderAlarmCancelReasons,
+  findStaleNativeReminderAlarms,
   getReminderAlarmCancelReason,
   getMaxPendingOneShotReminderAlarms,
   isExplicitPomodoroAlarmCancellation,
@@ -100,6 +101,7 @@ const DAILY_DIGEST_INDEPENDENT_RELEASE_CHECK = 'v1.3.1/daily-digest-independent'
 const REMINDER_CANCEL_RELEASE_CHECK = 'v1.3.4/reminder-withdrawn-clears-tray';
 const DENIED_RESUME_CLEANUP_RELEASE_CHECK = 'v1.3.4/denied-resume-cleanup';
 const SERIALIZED_RESCHEDULE_RELEASE_CHECK = 'v1.3.4/serialized-reminder-cycles';
+const STALE_REMINDER_GUARD_RELEASE_CHECK = 'v1.3.4/stale-reminder-guard';
 
 let started = false;
 let alarmApi: AlarmNotificationsApi | null = null;
@@ -468,6 +470,54 @@ function logCancelReasons(plan: ReminderAlarmPlan): void {
   }
 }
 
+// The alarm map cannot cancel a native row it no longer holds. Reconcile those rows
+// on Android start requests, when current task/project state is available. Native
+// also guards old one-shots before JS starts. Keep future snoozes of live tasks;
+// never sweep iOS, where snooze creates a pending request outside the map.
+async function deleteStaleNativeAlarms(api: AlarmNotificationsApi): Promise<void> {
+  if (Platform.OS !== 'android' || !loadedAlarmMap || typeof api.getScheduledAlarms !== 'function') return;
+  let rows: unknown;
+  try {
+    rows = await api.getScheduledAlarms();
+  } catch (error) {
+    logNotificationError('Failed to read native alarms', error);
+    return;
+  }
+  const { tasks, projects } = useTaskStore.getState();
+  const stale = findStaleNativeReminderAlarms({
+    rows,
+    trackedIds: new Set(Array.from(alarmMap.values(), (entry) => entry.id)),
+    tasks,
+    projects,
+    now: new Date(),
+  });
+  const counts = { withdrawn: 0, expired: 0 };
+  for (const { id, reason } of stale) {
+    if (reason === 'withdrawn') {
+      try {
+        // Android resolves the delivered notification through the row.
+        api.removeFiredNotification(id);
+      } catch (error) {
+        logNotificationError('Failed to remove stale native notification', error);
+      }
+    }
+    try {
+      api.deleteAlarm(id);
+      counts[reason] += 1;
+    } catch (error) {
+      logNotificationError('Failed to delete stale native alarm', error);
+    }
+  }
+  for (const reason of ['withdrawn', 'expired'] as const) {
+    if (counts[reason] === 0) continue;
+    logNotificationInfo('Stale native alarms deleted', {
+      releaseCheck: STALE_REMINDER_GUARD_RELEASE_CHECK,
+      reason,
+      count: counts[reason],
+    });
+  }
+}
+
 function scheduleOneShotTopUp(api: AlarmNotificationsApi, delayMs: number | null): void {
   clearOneShotTopUpTimer();
   if (delayMs === null) return;
@@ -483,7 +533,7 @@ async function loadReminderTranslations(activeFeature: boolean): Promise<Record<
   return getTranslations(language);
 }
 
-async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
+async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteStale?: boolean } = {}): Promise<void> {
   const cycleStartedAtMs = Date.now();
   await loadAlarmMapIfNeeded();
 
@@ -505,6 +555,8 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
     includeReviewAt: taskRemindersEnabled && settings.reviewAtNotificationsEnabled !== false,
     weeklyReviewEnabled,
   });
+
+  if (options.deleteStale) await deleteStaleNativeAlarms(api);
 
   const port = toReminderAlarmPort(api);
   const translations = await loadReminderTranslations(activeFeature);
@@ -601,10 +653,10 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
 // On Android that overlap is routine: coming back to the foreground fires the
 // overdue one-shot top-up timer and the AppState start request together.
 // The returned promise rejects with the cycle's error; the queue itself never does.
-function queueRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
+function queueRescheduleCycle(api: AlarmNotificationsApi, options: { deleteStale?: boolean } = {}): Promise<void> {
   const cycle = rescheduleQueue
     .catch(() => undefined)
-    .then(() => runRescheduleCycle(api));
+    .then(() => runRescheduleCycle(api, options));
   rescheduleQueue = cycle.catch(() => undefined);
   return cycle;
 }
@@ -972,7 +1024,7 @@ export async function startLocalMobileNotifications(): Promise<void> {
     });
     const api = await loadAlarmApi();
     if (api) {
-      await queueRescheduleCycle(api);
+      await queueRescheduleCycle(api, { deleteStale: true });
     }
     return;
   }
@@ -998,7 +1050,7 @@ export async function startLocalMobileNotifications(): Promise<void> {
   }
 
   attachNativeEventListeners();
-  await queueRescheduleCycle(api);
+  await queueRescheduleCycle(api, { deleteStale: true });
   logNotificationInfo('Service started');
 
   storeSubscription?.();

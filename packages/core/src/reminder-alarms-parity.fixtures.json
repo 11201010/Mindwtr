@@ -128,6 +128,76 @@
       "cycle": 1
      }
     ]
+   },
+   {
+    "change": "Every Android start request reads the alarm library's rows (getScheduledAlarms) right after \"Reschedule cycle started\" and deletes rows the alarm map does not hold and nothing still wants: a one-shot whose time passed, a repeating row, or one naming a task or project that is gone, done or archived. Each deletion reason logs \"Stale native alarms deleted\" with releaseCheck v1.3.4/stale-reminder-guard, reason and count. The harness answers getScheduledAlarms with [], so nothing is deleted or logged. Feedback f488a81a, 2026-10-01.",
+    "source": "The same harness and scenarios run on the working tree that adds the rule (apps/mobile/lib/notification-service-local.ts, packages/core/src/mobile-reminder-alarms.ts). Every observation not listed here is unchanged (the iOS cycle and the rebuild-as-exact cycle). In the listed ones the only difference is one added [\"getScheduledAlarms\"] call.",
+    "observations": [
+     {
+      "scenario": "digests and the weekly review with task reminders off",
+      "cycle": 0
+     },
+     {
+      "scenario": "digests and the weekly review with task reminders off",
+      "cycle": 1
+     },
+     {
+      "scenario": "digests and the weekly review with task reminders off",
+      "cycle": 2
+     },
+     {
+      "scenario": "task reminders of every kind, then a completed task and a moved review",
+      "cycle": 0
+     },
+     {
+      "scenario": "task reminders of every kind, then a completed task and a moved review",
+      "cycle": 1
+     },
+     {
+      "scenario": "the Android one-shot cap and its top-up",
+      "cycle": 0
+     },
+     {
+      "scenario": "the Android one-shot cap and its top-up",
+      "cycle": 1
+     },
+     {
+      "scenario": "stored alarms: unreadable, legacy, stale and invalid ids",
+      "cycle": 0
+     },
+     {
+      "scenario": "a taken minute retries one minute later",
+      "cycle": 0
+     },
+     {
+      "scenario": "a minute that stays taken aborts the cycle",
+      "cycle": 0
+     },
+     {
+      "scenario": "a rejected alarm aborts the cycle and keeps the ids already created",
+      "cycle": 0
+     },
+     {
+      "scenario": "a rejected alarm aborts the cycle and keeps the ids already created",
+      "cycle": 1
+     },
+     {
+      "scenario": "no reminder feature on cancels every alarm",
+      "cycle": 0
+     },
+     {
+      "scenario": "no reminder feature on cancels every alarm",
+      "cycle": 1
+     },
+     {
+      "scenario": "rebuilding as exact cancels and re-creates every alarm",
+      "cycle": 0
+     },
+     {
+      "scenario": "times across midnight and offsets with TZ pinned to UTC",
+      "cycle": 0
+     }
+    ]
    }
   ]
  },
@@ -5771,6 +5841,9 @@
       }
      ],
      [
+      "getScheduledAlarms"
+     ],
+     [
       "scheduleAlarm",
       {
        "title": "Morning briefing",
@@ -5971,6 +6044,9 @@
       }
      ],
      [
+      "getScheduledAlarms"
+     ],
+     [
       "logInfo",
       "[Local Notifications] Independent daily digest alarms reconciled",
       {
@@ -6051,6 +6127,9 @@
        "includeReviewAt": false,
        "weeklyReviewEnabled": true
       }
+     ],
+     [
+      "getScheduledAlarms"
      ],
      [
       "deleteAlarm",
@@ -6247,6 +6326,9 @@
        "includeReviewAt": true,
        "weeklyReviewEnabled": false
       }
+     ],
+     [
+      "getScheduledAlarms"
      ],
      [
       "scheduleAlarm",
@@ -6788,6 +6870,9 @@
       }
      ],
      [
+      "getScheduledAlarms"
+     ],
+     [
       "removeFiredNotification",
       107
      ],
@@ -7083,6 +7168,9 @@
        "includeReviewAt": true,
        "weeklyReviewEnabled": false
       }
+     ],
+     [
+      "getScheduledAlarms"
      ],
      [
       "scheduleAlarm",
@@ -15757,6 +15845,9 @@
       }
      ],
      [
+      "getScheduledAlarms"
+     ],
+     [
       "scheduleAlarm",
       {
        "title": "Minute 200",
@@ -19476,6 +19567,9 @@
       }
      ],
      [
+      "getScheduledAlarms"
+     ],
+     [
       "deleteAlarm",
       8
      ],
@@ -19760,6 +19854,9 @@
       }
      ],
      [
+      "getScheduledAlarms"
+     ],
+     [
       "scheduleAlarm",
       {
        "title": "Task t-busy",
@@ -19952,6 +20049,9 @@
        "includeReviewAt": true,
        "weeklyReviewEnabled": false
       }
+     ],
+     [
+      "getScheduledAlarms"
      ],
      [
       "scheduleAlarm",
@@ -21697,6 +21797,9 @@
       }
      ],
      [
+      "getScheduledAlarms"
+     ],
+     [
       "scheduleAlarm",
       {
        "title": "Evening review",
@@ -21892,6 +21995,9 @@
       }
      ],
      [
+      "getScheduledAlarms"
+     ],
+     [
       "scheduleAlarm",
       {
        "title": "Task t-two",
@@ -22035,6 +22141,9 @@
        "includeReviewAt": true,
        "weeklyReviewEnabled": true
       }
+     ],
+     [
+      "getScheduledAlarms"
      ],
      [
       "scheduleAlarm",
@@ -22192,6 +22301,9 @@
       }
      ],
      [
+      "getScheduledAlarms"
+     ],
+     [
       "removeFiredNotification",
       100
      ],
@@ -22306,6 +22418,9 @@
        "includeReviewAt": true,
        "weeklyReviewEnabled": false
       }
+     ],
+     [
+      "getScheduledAlarms"
      ],
      [
       "scheduleAlarm",
@@ -22664,6 +22779,9 @@
        "includeReviewAt": true,
        "weeklyReviewEnabled": true
       }
+     ],
+     [
+      "getScheduledAlarms"
      ],
      [
       "scheduleAlarm",

@@ -7,6 +7,7 @@ import {
     cancelReminderAlarm,
     cancelUnrequestedReminderAlarms,
     countReminderAlarmCancelReasons,
+    findStaleNativeReminderAlarms,
     getMaxPendingOneShotReminderAlarms,
     isPomodoroAlarmScheduleSuperseded,
     isPomodoroAlarmUnchanged,
@@ -287,5 +288,50 @@ describe('mobile reminder alarms', () => {
         expect(isPomodoroNativeAlarm({ data: '{"kind":"pomodoro"}' })).toBe(true);
         expect(isPomodoroNativeAlarm({ data: 'alarmKey==>x;;kind==>pomodoro' })).toBe(true);
         expect(isPomodoroNativeAlarm({ data: { kind: 'task-reminder' } })).toBe(false);
+    });
+
+    it('lists the Android rows the alarm map lost and nothing still wants, sparing a live snooze', () => {
+        // Synthetic shape from feedback f488a81a: old start reminders for finished tasks.
+        // The reporter's reboot trigger and exact orphan path remain unproved.
+        const at = (date: Date, id: number, alarmKey: string, scheduleType = 'once') => ({
+            id, scheduleType, data: `kind==>task-reminder;;alarmKey==>${alarmKey};;`,
+            year: date.getFullYear(), month: date.getMonth() + 1, day: date.getDate(),
+            hour: date.getHours(), minute: date.getMinutes(), second: date.getSeconds(),
+        });
+        const past = new Date(NOW.getTime() - 5 * 24 * 60 * 60 * 1000);
+        const soon = new Date(NOW.getTime() + 10 * 60 * 1000);
+        const justLate = new Date(NOW.getTime() - 60 * 1000);
+        const tooLate = new Date(NOW.getTime() - 25 * 60 * 60 * 1000);
+        const rows = [
+            at(soon, 1, 'task:live'), // tracked
+            at(soon, 2, 'task:done'), // lost id, task done before its start
+            at(past, 3, 'task:gone'), // lost id, task deleted
+            at(soon, 4, 'task:live'), // pending snooze of a live task
+            at(past, 5, 'task:live:r1'), // fired snooze or lost repeat of a live task
+            at(soon, 6, 'digest:morning', 'repeat'), // lost digest copy
+            at(soon, 7, 'project:archived'),
+            { ...at(past, 8, 'task:done'), data: 'kind==>pomodoro;;taskId==>done;;' },
+            { id: 'bad' },
+            { ...at(past, 7.5, 'task:done') },
+            { ...at(past, 0, 'task:done'), id: null },
+            { ...at(past, 0, 'task:done'), id: '' },
+            at(justLate, 9, 'task:live'), // Android may deliver this pending snooze late
+            at(tooLate, 10, 'task:live'), // past the native grace window
+        ];
+        expect(findStaleNativeReminderAlarms({
+            rows,
+            trackedIds: new Set([1]),
+            tasks: [task('live'), task('done', { status: 'done' }), task('gone', { deletedAt: '2026-09-27T00:00:00.000Z' })],
+            projects: [{ id: 'archived', title: 'P', status: 'archived', color: '#000', order: 0, tagIds: [], createdAt: '', updatedAt: '' } as Project],
+            now: NOW,
+        })).toEqual([
+            { id: 2, reason: 'withdrawn' },
+            { id: 3, reason: 'withdrawn' },
+            { id: 5, reason: 'expired' },
+            { id: 6, reason: 'expired' },
+            { id: 7, reason: 'withdrawn' },
+            { id: 10, reason: 'expired' },
+        ]);
+        expect(findStaleNativeReminderAlarms({ rows: null, trackedIds: new Set(), tasks: [], projects: [], now: NOW })).toEqual([]);
     });
 });

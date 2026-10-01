@@ -558,7 +558,7 @@ describe('notification-service-local', () => {
     mockStoreState.tasks = [
       { id: 'task-1', title: 'Task one', dueDate: new Date(Date.now() + 5 * 60 * 1000).toISOString() },
     ];
-    mockAlarmGetScheduledAlarms.mockResolvedValueOnce([{ id: '1' }, { id: '2' }, { id: '3' }]);
+    mockAlarmGetScheduledAlarms.mockResolvedValue([{ id: '1' }, { id: '2' }, { id: '3' }]);
 
     await startLocalMobileNotifications();
 
@@ -573,17 +573,124 @@ describe('notification-service-local', () => {
     );
   });
 
-  it('does not enumerate pending native alarms when diagnostics logging is off', async () => {
+  it('does not enumerate pending native alarms on a store change when diagnostics logging is off', async () => {
     // The enumeration is a native round-trip that only feeds the cycle log, and
-    // a reschedule runs on every store change (#766).
+    // a reschedule runs on every store change (#766). Only a start request reads
+    // the Android rows, to delete stale ones.
+    vi.useFakeTimers();
     mockIsLoggingEnabled.mockReturnValue(false);
     mockStoreState.tasks = [
       { id: 'task-1', title: 'Task one', dueDate: new Date(Date.now() + 5 * 60 * 1000).toISOString() },
     ];
 
     await startLocalMobileNotifications();
+    expect(mockAlarmGetScheduledAlarms).toHaveBeenCalledTimes(1);
 
-    expect(mockAlarmGetScheduledAlarms).not.toHaveBeenCalled();
+    const listener = (mockStoreSubscribe.mock.calls as unknown[][])[0]?.[0] as (state: unknown, prevState: unknown) => void;
+    const previous = { ...mockStoreState };
+    mockStoreState.tasks = [...mockStoreState.tasks];
+    listener(mockStoreState, previous);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(mockAlarmGetScheduledAlarms).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  describe('stale Android alarm rows', () => {
+    const nativeRow = (id: number, fireAt: Date, data: string, scheduleType = 'once') => ({
+      id,
+      alarmId: 1_000 + id,
+      active: 1,
+      scheduleType,
+      year: fireAt.getFullYear(),
+      month: fireAt.getMonth() + 1,
+      day: fireAt.getDate(),
+      hour: fireAt.getHours(),
+      minute: fireAt.getMinutes(),
+      second: fireAt.getSeconds(),
+      data,
+    });
+    const taskData = (taskId: string) => `kind==>task-reminder;;taskId==>${taskId};;alarmKey==>task:${taskId};;`;
+
+    beforeEach(() => {
+      const future = new Date(Date.now() + 60 * 60 * 1000);
+      const past = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      mockStoreState.tasks = [
+        { id: 'live', title: 'Live', startTime: future.toISOString() },
+        { id: 'finished', title: 'Finished', status: 'done', startTime: past.toISOString() },
+      ];
+      mockAsyncStorageGetItem.mockImplementation(async (key: string) => (
+        key === 'mindwtr:local:alarms:v1' ? JSON.stringify({ 'task:live': { id: 42 } }) : null
+      ));
+      mockAlarmGetScheduledAlarms.mockResolvedValue([
+        nativeRow(42, future, taskData('live')),
+        // The reporter's shape: a start reminder whose id the map lost, days after its task was done.
+        nativeRow(7, past, taskData('finished')),
+        // A pending snooze of a live task, a fired one, a Pomodoro alert and a lost digest copy.
+        nativeRow(8, new Date(Date.now() + 5 * 60 * 1000), taskData('live')),
+        nativeRow(9, past, taskData('live')),
+        nativeRow(10, past, 'kind==>pomodoro;;'),
+        nativeRow(11, past, 'kind==>daily-digest;;alarmKey==>digest:morning;;', 'repeat'),
+        nativeRow(12, new Date(Date.now() - 60 * 1000), taskData('live')),
+      ]);
+    });
+
+    it('a start request deletes rows the alarm map lost and nothing still wants', async () => {
+      await startLocalMobileNotifications();
+
+      const deleted = mockAlarmDeleteAlarm.mock.calls.map(([id]) => id);
+      expect(deleted).toEqual(expect.arrayContaining([7, 9, 11]));
+      expect(deleted).not.toContain(8);
+      expect(deleted).not.toContain(12);
+      expect(deleted).not.toContain(10);
+      // The finished task's delivered notification goes too; a fired snooze's stays.
+      expect(mockAlarmRemoveFiredNotification).toHaveBeenCalledWith(7);
+      expect(mockAlarmRemoveFiredNotification).not.toHaveBeenCalledWith(9);
+      expect(mockLogInfo).toHaveBeenCalledWith('[Local Notifications] Stale native alarms deleted', expect.objectContaining({
+        extra: { releaseCheck: 'v1.3.4/stale-reminder-guard', reason: 'withdrawn', count: 1 },
+      }));
+      expect(mockLogInfo).toHaveBeenCalledWith('[Local Notifications] Stale native alarms deleted', expect.objectContaining({
+        extra: { releaseCheck: 'v1.3.4/stale-reminder-guard', reason: 'expired', count: 2 },
+      }));
+    });
+
+    it('leaves iOS pending requests alone (iOS snooze is a request the map never sees)', async () => {
+      mockPlatform.OS = 'ios';
+      mockIsLoggingEnabled.mockReturnValue(false);
+
+      await startLocalMobileNotifications();
+
+      expect(mockAlarmGetScheduledAlarms).not.toHaveBeenCalled();
+      expect(mockAlarmDeleteAlarm).not.toHaveBeenCalledWith(7);
+    });
+
+    it('uses current task state after the native read resolves', async () => {
+      let resolveRows!: (rows: unknown[]) => void;
+      mockAlarmGetScheduledAlarms.mockReturnValue(new Promise((resolve) => { resolveRows = resolve; }));
+      const start = startLocalMobileNotifications();
+      await vi.waitFor(() => expect(mockAlarmGetScheduledAlarms).toHaveBeenCalledTimes(1));
+
+      // A restore may arrive while the native bridge reads alarm rows.
+      mockStoreState.tasks = [
+        { id: 'live', title: 'Live', startTime: new Date(Date.now() + 60 * 60 * 1000).toISOString() },
+        { id: 'finished', title: 'Restored', status: 'next', startTime: new Date(Date.now() - 60 * 1000).toISOString() },
+      ];
+      resolveRows([nativeRow(13, new Date(Date.now() - 60 * 1000), taskData('finished'))]);
+      await start;
+
+      expect(mockAlarmDeleteAlarm).not.toHaveBeenCalledWith(13);
+      expect(mockAlarmRemoveFiredNotification).not.toHaveBeenCalledWith(13);
+    });
+
+    it('deletes an orphan even when tray removal throws', async () => {
+      mockAlarmRemoveFiredNotification.mockImplementation((id: number) => {
+        if (id === 7) throw new Error('tray removal failed');
+      });
+
+      await startLocalMobileNotifications();
+
+      expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(7);
+    });
   });
 
   it('does not rewrite the alarm map when a reschedule cycle derives the same alarms', async () => {
