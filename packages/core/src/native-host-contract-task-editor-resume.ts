@@ -10,6 +10,8 @@ import { ASSOCIATIONS, LIFECYCLE, RECURRENCE, SCHEDULE, getNativeTaskRecurrenceB
     type NativeTaskRecurrenceBase, type NativeTaskScheduleBase } from './native-host-contract-task-save';
 import { isNativeJsonWithinBytes, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
 import type { ChecklistItem, Task } from './types';
+import type { Attachment } from './types';
+import { mergeNativeTaskLinkHalf, readNativeAttachments, readNativeTaskLinkHalf } from './native-host-contract-attachments';
 
 const OWNED_GROUPS = [SCHEDULE, RECURRENCE, ASSOCIATIONS, LIFECYCLE] as const;
 const own = (value: object, field: string) => Object.prototype.hasOwnProperty.call(value, field);
@@ -25,6 +27,8 @@ export type NativeTaskEditorResumeCheck = {
     scheduleBase?: NativeTaskScheduleBase;
     recurrenceBase?: NativeTaskRecurrenceBase;
     checklistBase?: ChecklistItem[];
+    attachmentsBase?: Attachment[];
+    attachments?: Attachment[];
 };
 
 export type NativeTaskEditorResumeReady = {
@@ -33,6 +37,7 @@ export type NativeTaskEditorResumeReady = {
     freshScheduleBase: NativeTaskScheduleBase;
     freshRecurrenceBase: NativeTaskRecurrenceBase;
     freshChecklistBase: ChecklistItem[];
+    freshAttachmentsBase: Attachment[];
 };
 
 /** Read the saved raw row without flushing queued writes or touching the write journal. */
@@ -70,7 +75,7 @@ export function createTaskEditorResumeMethods(deps: {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             if (!isNativeJsonWithinBytes(input) || !record(input)
-                || Object.keys(input).some((field) => !['id', 'touchedBase', 'scheduleBase', 'recurrenceBase', 'checklistBase'].includes(field))
+                || Object.keys(input).some((field) => !['id', 'touchedBase', 'scheduleBase', 'recurrenceBase', 'checklistBase', 'attachmentsBase', 'attachments'].includes(field))
                 || typeof input.id !== 'string' || !input.id.trim() || input.id.length > 500
                 || !record(input.touchedBase)) return fail('INVALID_INPUT', 'Invalid editor recovery base');
 
@@ -82,12 +87,21 @@ export function createTaskEditorResumeMethods(deps: {
                 return fail('INVALID_INPUT', 'Incomplete editor recovery group');
             const checklist = own(input, 'checklistBase') ? readChecklist(input.checklistBase, true) : undefined;
             if (checklist === null) return fail('INVALID_INPUT', 'Invalid editor recovery checklist');
+            if (own(input, 'attachmentsBase') !== own(input, 'attachments'))
+                return fail('INVALID_INPUT', 'Incomplete editor recovery attachments');
+            const attachments = own(input, 'attachmentsBase')
+                ? readNativeTaskLinkHalf({ base: input.attachmentsBase, value: input.attachments }, false) : undefined;
+            if (attachments === null) return fail('INVALID_INPUT', 'Invalid editor recovery attachments');
 
             const saved = await currentTask(input.id);
             if (!saved.ok) return saved;
             const { task, projects } = saved.value;
             if (deps.isReadOnly(task) || isStatusListTaskReadOnly(task, projects))
                 return fail('INVALID_INPUT', 'Task is read-only');
+            const freshAttachmentsBase = readNativeAttachments(task.attachments ?? []);
+            if (!freshAttachmentsBase || attachments
+                && mergeNativeTaskLinkHalf(freshAttachmentsBase, attachments) === null)
+                return fail('INVALID_INPUT', 'Invalid editor recovery attachments');
             const freshScheduleBase = getNativeTaskScheduleBase(task);
             const freshRecurrenceBase = getNativeTaskRecurrenceBase({ ...task, recurrence: normalizeRecurrenceForLoad(task.recurrence) });
             // The save parser owns field type grammar. An untouched schedule uses its fresh witness;
@@ -119,7 +133,7 @@ export function createTaskEditorResumeMethods(deps: {
                     && !RECURRENCE.includes(field as typeof RECURRENCE[number]) && !matchesOpening(field)))
                 return fail('STALE_REVISION', 'Task changed while editor draft was open');
             return { ok: true, value: { kind: 'ready', freshDraft, freshScheduleBase,
-                freshRecurrenceBase, freshChecklistBase } };
+                freshRecurrenceBase, freshChecklistBase, freshAttachmentsBase } };
         },
     };
 }

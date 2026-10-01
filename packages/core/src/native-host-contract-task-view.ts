@@ -30,7 +30,8 @@ import {
 import { getTaskEditorFieldLayout, getTaskEditorProjectSections } from './task-editor-model';
 import { formatTaskEditorDate } from './task-editor-schedule';
 import { buildTaskViewModel, type TaskViewRow } from './task-view-model';
-import type { ChecklistItem, Task } from './types';
+import type { Attachment, ChecklistItem, Task } from './types';
+import { readNativeAttachments } from './native-host-contract-attachments';
 import { generateUUID } from './uuid';
 
 export type NativeTaskViewRow =
@@ -60,6 +61,8 @@ export type NativeTaskView = {
     markdownLabels: { deletedTask: string; deletedProject: string; copyCode: string };
     /** The saved checklist: where the editor's checklist starts, and saveTaskDraft's `checklist.base`. */
     checklistBase: ChecklistItem[];
+    /** Complete raw saved list from editor open, including hidden tombstones and file metadata. */
+    attachmentsBase: Attachment[];
     /** The saved task's revision: resetTaskChecklist sends it. */
     taskRevision: string;
 };
@@ -194,6 +197,7 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
             id: string;
             draft?: TaskDraft;
             checklist?: ChecklistItem[];
+            attachments?: Attachment[];
             offset?: number;
             limit?: number;
             revision?: string;
@@ -204,7 +208,8 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
             const window = { offset: input.offset ?? 0, limit: input.limit ?? NATIVE_HOST_MAX_WINDOW, revision: input.revision };
             const draftInput = input.draft === undefined ? undefined : deps.readDraft(input.draft);
             const checklistInput = input.checklist === undefined ? undefined : readChecklist(input.checklist, true);
-            if (!isPaging(window) || draftInput === null || checklistInput === null) {
+            const attachmentsInput = input.attachments === undefined ? undefined : readNativeAttachments(input.attachments);
+            if (!isPaging(window) || draftInput === null || checklistInput === null || attachmentsInput === null) {
                 return fail('INVALID_INPUT', 'A valid draft and checklist when sent, a window of at most 100 items, and the revision for a later window are required');
             }
             const task = findTask(input.id);
@@ -215,13 +220,17 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
             const readOnly = deps.isReadOnly(task);
             const draft = draftInput ?? createTaskDraft(task);
             const checklist = checklistInput ?? task.checklist;
+            const attachmentsBase = readNativeAttachments(task.attachments ?? []);
+            if (!attachmentsBase) return fail('INVALID_INPUT', 'Saved attachment list exceeds the native response');
             // The editor's task with its draft applied (React Native's mergedTask).
             const shown: Task = readOnly ? task : {
                 ...task,
                 ...(taskDraftToUpdatePatch(draft, task, { attachments: task.attachments }) ?? {}),
                 checklist,
+                attachments: readOnly ? task.attachments : attachmentsInput ?? task.attachments,
             };
-            const attachments = (task.attachments ?? []).filter((attachment) => !attachment.deletedAt);
+            const attachments = (readOnly ? attachmentsBase : attachmentsInput ?? attachmentsBase)
+                .filter((attachment) => !attachment.deletedAt);
             const flags = resolveFeatureFlags(state.settings);
             const { showStatusField } = getTaskEditorFieldLayout({
                 task,
@@ -256,7 +265,7 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
                 formatTimeEstimateLabel: (value) => formatTimeEstimateLabel(value, { t }),
                 now,
             });
-            const revision = `${deps.revision(now)}:${paramsKey(readOnly ? null : [draft, checklist ?? null])}`;
+            const revision = `${deps.revision(now)}:${paramsKey(readOnly ? null : [draft, checklist ?? null, attachmentsInput ?? null])}`;
             if (window.revision !== undefined && window.revision !== revision) {
                 return fail('STALE_REVISION', 'The task or the draft changed; read the view again from offset zero');
             }
@@ -304,6 +313,7 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
                         copyCode: tFallback(t, 'markdown.copyCode', 'Copy code'),
                     },
                     checklistBase: toChecklist(task.checklist),
+                    attachmentsBase,
                     taskRevision: taskRevisionOf(task),
                 },
             };

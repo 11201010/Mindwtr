@@ -1,6 +1,6 @@
 import type { NativeHostResult } from './native-host-contract';
 import type { PreparedTaskEdit } from './store-types';
-import type { Area, Project, Section, Task } from './types';
+import type { Area, Attachment, Project, Section, Task } from './types';
 import { useTaskStore } from './store';
 import { applyTaskUpdates, createProjectOrderReserver, ensureDeviceId, findTaskProjectReactivationTarget,
     getNextProjectOrder, nextRevision, normalizeTaskUpdate } from './store-helpers';
@@ -18,6 +18,7 @@ import { logInfo } from './logger';
 import { createAreaSaveGuard, readAreaDurableData } from './native-host-contract-area-durable';
 import { TASK_SYNC_FIELD_SCHEMA, taskToSqliteRow } from './task-sync-schema';
 import { sameSectionDeleteJson, sameTaskSqliteRow } from './store-projects/section-actions';
+import { mergeNativeTaskLinkHalf, readNativeTaskLinkHalf } from './native-host-contract-attachments';
 
 export type NativeTaskScheduleBase = {
     startTime: string | null;
@@ -42,6 +43,7 @@ export type NativeTaskDraftSaveRequest = {
     scheduleBase: NativeTaskScheduleBase;
     /** Required exactly when the complete recurrence draft tuple is supplied. */
     recurrenceBase?: NativeTaskRecurrenceBase;
+    attachments?: { base: Attachment[]; value: Attachment[] };
 };
 /** Private journal payload. The host persists this exact result before commit. */
 export type NativePreparedTaskDraftSave = PreparedTaskEdit & { version: 1; request: NativeTaskDraftSaveRequest };
@@ -121,15 +123,16 @@ export const nativeTaskDraftPatchValues = (request: NativeTaskDraftSaveRequest):
     Object.entries(request.patch).map(([field, value]) => [field, value === null ? undefined : value]),
 );
 export const readNativeTaskDraftSaveRequest = (input: unknown, validateField: (field: TaskDraftField, value: unknown) => boolean, allowChecklist = false,
-    allowPlain = false): NativeTaskDraftSaveRequest | null => {
+    allowPlain = false, allowAttachments = false): NativeTaskDraftSaveRequest | null => {
     const value = detach(input, 1_000_000);
     if (!record(value)
         || typeof value.id !== 'string' || !value.id.trim() || value.id.length > 500
         || !record(value.base) || !record(value.patch) || !record(value.scheduleBase)) return null;
     const fields = Object.keys(value.patch);
     const editsRecurrence = RECURRENCE.some((field) => own(value.patch as object, field));
-    if (!keys(value, ['id', 'base', 'patch', 'scheduleBase', ...(editsRecurrence ? ['recurrenceBase'] : [])])
-        || (!allowChecklist && fields.length === 0)
+    const attachments = own(value, 'attachments') && allowAttachments ? readNativeTaskLinkHalf(value.attachments) : null;
+    if (!keys(value, ['id', 'base', 'patch', 'scheduleBase', ...(editsRecurrence ? ['recurrenceBase'] : []), ...(attachments ? ['attachments'] : [])])
+        || (!allowChecklist && fields.length === 0 && !attachments)
         || (!allowChecklist && !allowPlain && !(editsRecurrence || fields.some((field) => (SCHEDULE as readonly string[]).includes(field))))
         || !keys(value.base, fields) || fields.some((field) => !(FIELDS as readonly string[]).includes(field)
             || (!allowChecklist && ['status', 'focusedToday', 'completedAt'].includes(field))
@@ -155,7 +158,7 @@ export const readNativeTaskDraftSaveRequest = (input: unknown, validateField: (f
             : field === 'relativeStartOffset' ? !(base === null || record(base)) : typeof base !== 'string') return null;
         if (!validateField(field, next === null && ['relativeStartOffset', 'timeSpentMinutes'].includes(field) ? undefined : next)) return null;
     }
-    return value as unknown as NativeTaskDraftSaveRequest;
+    return { ...value, ...(attachments ? { attachments } : {}) } as unknown as NativeTaskDraftSaveRequest;
 };
 export const serializeNativeTaskDraftDirect = (before: Task, request: NativeTaskDraftSaveRequest) => taskDraftToUpdatePatch({
     ...createTaskDraft(before), ...nativeTaskDraftPatchValues(request),
@@ -301,10 +304,14 @@ const scopeRows = (scope: NativePreparedTaskDraftSaveV2['scope']) => ({
 const draftSaveEffect = (before: Task, request: NativeTaskDraftSaveRequest,
     scope: NativePreparedTaskDraftSaveV2['scope'], preparedAt: string, deviceId: string): Task | null => {
     if (!validNativeTaskDraftBases(before, request, true)) return null;
+    const attachments = request.attachments
+        ? mergeNativeTaskLinkHalf(before.attachments ?? [], request.attachments) : before.attachments;
+    if (attachments === null) return null;
     const rows = scopeRows(scope);
     const draft = applyTaskDraftPatch(createTaskDraft(before), nativeTaskDraftPatchValues(request));
-    const updates = buildTaskEditUpdatePatch({ draft, checklist: before.checklist, attachments: before.attachments }, before);
+    const updates = buildTaskEditUpdatePatch({ draft, checklist: before.checklist, attachments }, before);
     if (!updates) return null;
+    if (request.attachments && !taskEditValuesEqual(before.attachments ?? [], attachments)) updates.attachments = attachments;
     for (const field of SCHEDULE) {
         if (own(request.patch, field)) Object.assign(updates, { [field]: draft[field] || undefined });
     }
@@ -312,6 +319,7 @@ const draftSaveEffect = (before: Task, request: NativeTaskDraftSaveRequest,
     // containers. This writer owns only the requested fields and their shared
     // schedule/recurrence effects, not that unrelated cleanup.
     const requested = new Set<string>(Object.keys(request.patch));
+    if (request.attachments) requested.add('attachments');
     if (SCHEDULE.some((field) => own(request.patch, field))) SCHEDULE.forEach((field) => requested.add(field));
     if (RECURRENCE.some((field) => own(request.patch, field))) RECURRENCE.forEach((field) => requested.add(field));
     if (ASSOCIATIONS.some((field) => own(request.patch, field))) ASSOCIATIONS.forEach((field) => requested.add(field));
@@ -354,8 +362,8 @@ export function createTaskDraftSaveMethods(deps: {
     validateField: (field: TaskDraftField, value: unknown) => boolean;
 }) {
     const patchValues = nativeTaskDraftPatchValues;
-    const readRequest = (input: unknown, allowPlain = false) => {
-        const request = readNativeTaskDraftSaveRequest(input, deps.validateField, false, allowPlain);
+    const readRequest = (input: unknown, allowPlain = false, allowAttachments = false) => {
+        const request = readNativeTaskDraftSaveRequest(input, deps.validateField, false, allowPlain, allowAttachments);
         // V1 was sealed before Location and Assigned To were offered. Checklist
         // has its own parser, but old prepared journal grammar must not widen.
         return request && (!allowPlain && (own(request.patch, 'location') || own(request.patch, 'assignedTo')) ? null : request);
@@ -365,17 +373,23 @@ export function createTaskDraftSaveMethods(deps: {
     const saves = createAreaSaveGuard(deps.save);
 
     /** Check semantic authority without rerunning calendar or clock-dependent effects. */
-    const validPrepared = (prepared: NativePreparedTaskDraftSave, preserveRaw = false): boolean => {
+    const validPrepared = (prepared: NativePreparedTaskDraftSave, preserveRaw = false, allowAttachments = false): boolean => {
         const { before, changes, request } = prepared;
         if (before.id !== request.id || typeof before.title !== 'string' || typeof before.createdAt !== 'string'
             || typeof before.updatedAt !== 'string' || !['inbox', 'next', 'waiting', 'someday', 'done', 'archived',
                 ...(preserveRaw ? ['reference'] : [])].includes(before.status)
             || before.deletedAt || before.purgedAt || !validBases(before, request, preserveRaw)) return false;
-        if (Object.keys(changes).some((field) => !(STORED_FIELDS as readonly string[]).includes(field) && !EFFECTS.includes(field))) return false;
+        if (Object.keys(changes).some((field) => !(STORED_FIELDS as readonly string[]).includes(field)
+            && !EFFECTS.includes(field) && !(allowAttachments && field === 'attachments'))) return false;
         const after = applyPreparedTaskEditChanges(prepared);
         if (!taskEditValuesEqual(changes, buildPreparedTaskEditChanges(before, after))) return false;
         const direct = serializedDirect(before, request);
         if (!direct) return false;
+        if (allowAttachments) {
+            const attachments = request.attachments
+                ? mergeNativeTaskLinkHalf(before.attachments ?? [], request.attachments) : before.attachments;
+            if (attachments === null || !taskEditValuesEqual(after.attachments ?? [], attachments ?? [])) return false;
+        }
         for (const field of FIELDS) {
             if (field === 'status') continue; // The older date route may induce status promotion, but cannot request it.
             if ((SCHEDULE as readonly string[]).includes(field) || (ASSOCIATIONS as readonly string[]).includes(field)
@@ -458,7 +472,7 @@ export function createTaskDraftSaveMethods(deps: {
             || !record(value.scope) || !record(value.effect) || !keys(value.effect, ['task'])
             || !record(value.effect.task) || !keys(value.effect.task, ['before', 'after'])
             || !keys(value.scope, ['sourceProject', 'targetProject', 'targetSection', 'targetArea', 'nextProjectOrder'])) return null;
-        const request = readRequest(value.request, true);
+        const request = readRequest(value.request, true, true);
         if (!request || !iso(value.preparedAt)
             || !nullableText(value.deviceIdBefore) || !nullableText(value.deviceIdToInitialize)
             || (value.deviceIdBefore === null) === (value.deviceIdToInitialize === null)
@@ -503,6 +517,7 @@ export function createTaskDraftSaveMethods(deps: {
                 ['startTime', 'relativeStartOffset', 'status', 'isFocusedToday', 'focusOrder', 'boardOrder'].forEach((field) => allowed.add(field));
             }
             if (own(request.patch, 'dueDate')) allowed.add('pushCount');
+            if (request.attachments) allowed.add('attachments');
             const changedKeys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
                 .filter((field) => !['rev', 'revBy', 'updatedAt'].includes(field)
                     && !sameSectionDeleteJson(before[field as keyof Task], after[field as keyof Task]));
@@ -513,7 +528,7 @@ export function createTaskDraftSaveMethods(deps: {
                 if (!exact || !rawTaskEqual(exact, after)) return null;
             }
             return (before.status !== 'reference' || referenceEditable(request))
-                && validPrepared({ version: 1, request, before, changes }, true) ? prepared : null;
+                && validPrepared({ version: 1, request, before, changes }, true, true) ? prepared : null;
         } catch { return null; }
     };
     const readAnyPrepared = (input: unknown): NativePreparedTaskDraftSaveAny | null =>
@@ -565,7 +580,7 @@ export function createTaskDraftSaveMethods(deps: {
             | { kind: 'prepared'; prepared: NativePreparedTaskDraftSaveV2 }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const request = readRequest(input, true);
+            const request = readRequest(input, true, true);
             if (!request) return fail('INVALID_INPUT', 'A complete task draft and raw baselines are required');
             const read = await readAreaDurableData(false, true);
             if (!read.ok) return read;
@@ -608,7 +623,7 @@ export function createTaskDraftSaveMethods(deps: {
             if (!record(input) || !keys(input, ['request', 'prepared']))
                 return fail('INVALID_INPUT', 'A prepared task edit is required');
             const prepared = readAnyPrepared(input.prepared);
-            const request = readRequest(input.request, prepared?.version === 2);
+            const request = readRequest(input.request, prepared?.version === 2, prepared?.version === 2);
             if (!request || !prepared || !taskEditValuesEqual(request, prepared.request))
                 return fail('INVALID_INPUT', 'Prepared task edit request or journal does not match');
             return prepared.version === 2
@@ -621,7 +636,7 @@ export function createTaskDraftSaveMethods(deps: {
             if (!ready.ok) return ready;
             if (!record(input) || !keys(input, ['request', 'prepared'])) return fail('INVALID_INPUT', 'A prepared task edit is required');
             const prepared = readAnyPrepared(input.prepared);
-            const request = readRequest(input.request, prepared?.version === 2);
+            const request = readRequest(input.request, prepared?.version === 2, prepared?.version === 2);
             if (!request || !prepared || !taskEditValuesEqual(request, prepared.request)) return fail('INVALID_INPUT', 'Prepared task edit request or journal does not match');
             if (prepared.version === 2) {
                 const read = await readAreaDurableData(true, true);

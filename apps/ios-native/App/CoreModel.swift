@@ -519,6 +519,13 @@ final class CoreModel: ObservableObject {
     @Published private(set) var taskChecklist: [CoreObject] = [] {
         didSet { checkpointTaskDraftAfterCoreEdit() }
     }
+    @Published private(set) var taskAttachments: [CoreObject] = [] {
+        didSet { checkpointTaskDraftAfterCoreEdit() }
+    }
+    @Published private(set) var taskAttachmentRows: [CoreObject] = []
+    @Published private(set) var taskLinkSheet: CoreObject = [:]
+    @Published private(set) var taskLinkSheetError: String?
+    @Published private(set) var taskLinkSubmitting = false
     @Published private(set) var taskChecklistField: CoreObject = [:]
     @Published private(set) var taskChecklistInputs: [Int: String] = [:]
     @Published var taskChecklistAppendInput = ""
@@ -641,6 +648,8 @@ final class CoreModel: ObservableObject {
     private var taskSavePending = false
     private var taskChecklistLoaded = false
     private var taskOriginalChecklist: [CoreObject] = []
+    private var taskOriginalAttachments: [CoreObject] = []
+    private var taskRecoveryAttachmentsOwned = false
     private var taskChecklistSession = 0
     private var taskChecklistWriteKind: String?
     private var taskChecklistWriteRequest: String?
@@ -1765,6 +1774,10 @@ final class CoreModel: ObservableObject {
         if !raw.text("checklistAppend").isEmpty {
             lines.append("Checklist input: " + String(raw.text("checklistAppend").prefix(300)))
         }
+        if let links = payload["attachments"] as? [CoreObject] {
+            lines.append("Attachment changes: \(links.count) records")
+        }
+        if !payload.object("linkSheet").text("text").isEmpty { lines.append("Pending link input") }
         let scheduleEdits = payload.objects("scheduleEdits")
         for operation in scheduleEdits.prefix(20) {
             lines.append(String(taskRecoveryPendingLine(operation).prefix(300)))
@@ -1774,7 +1787,7 @@ final class CoreModel: ObservableObject {
         return lines
     }
 
-    private func taskRecoveryOwn(_ fields: [String] = [], checklist: Bool = false) {
+    private func taskRecoveryOwn(_ fields: [String] = [], checklist: Bool = false, attachments: Bool = false) {
         guard taskPresented, !taskEditor.isEmpty, !taskRecoveryHydrating, !taskRecoverySaving,
               !taskEditor.flag("readOnly"), taskRecoverySnapshot == nil
                 || taskRecoverySnapshot?.sessionID == taskRecoverySession else { return }
@@ -1786,12 +1799,13 @@ final class CoreModel: ObservableObject {
             else { taskRecoveryTouched.insert(field) }
         }
         if checklist { taskRecoveryChecklistTouched = true }
+        if attachments { taskRecoveryAttachmentsOwned = true }
         checkpointTaskDraft()
     }
 
     private func checkpointTaskDraftAfterCoreEdit() {
         guard !taskRecoveryHydrating, !taskRecoverySaving,
-              !taskRecoveryTouched.isEmpty || taskRecoveryChecklistTouched else { return }
+              !taskRecoveryTouched.isEmpty || taskRecoveryChecklistTouched || taskRecoveryAttachmentsOwned else { return }
         checkpointTaskDraft()
     }
 
@@ -1849,13 +1863,20 @@ final class CoreModel: ObservableObject {
             payload["checklistBase"] = taskOriginalChecklist
             payload["checklistValue"] = taskChecklist
         }
+        if taskRecoveryAttachmentsOwned {
+            payload["version"] = 2
+            payload["attachmentsBase"] = taskOriginalAttachments
+            payload["attachments"] = taskAttachments
+            payload["attachmentsOwned"] = true
+            payload["linkSheet"] = taskLinkSheet
+        }
         return payload
     }
 
     private func checkpointTaskDraft(force: Bool = false) {
         guard let host, taskPresented, !viewedTaskID.isEmpty, !taskRecoveryHydrating,
               !taskRecoverySaving || force,
-              !taskRecoveryTouched.isEmpty || taskRecoveryChecklistTouched else { return }
+              !taskRecoveryTouched.isEmpty || taskRecoveryChecklistTouched || taskRecoveryAttachmentsOwned else { return }
         do {
             taskRecoveryGeneration += 1
             let snapshot = EditorDraftSnapshot(sessionID: taskRecoverySession, taskID: viewedTaskID,
@@ -1982,6 +2003,116 @@ final class CoreModel: ObservableObject {
         taskChecklistAppendInput = text
         taskRecoveryOwn(checklist: true)
     }
+    var taskLinkSheetActive: Bool { !taskLinkSheet.isEmpty }
+    var taskLinkSheetProtected: Bool {
+        taskLinkSheetActive && taskRecoverySnapshot != nil
+            && taskRecoveryCheckpointError == nil
+            && taskRecoveryCheckpointedGeneration == taskRecoveryGeneration
+    }
+
+    private func taskAttachmentOwner() -> CoreObject {
+        ["kind": "task", "taskId": viewedTaskID, "attachments": taskAttachments]
+    }
+
+    private func refreshTaskAttachmentRows() async throws {
+        let id = viewedTaskID, session = taskRecoverySession
+        let current = try json(taskAttachments)
+        let result = try await query("taskAttachmentList", [try json(["owner": taskAttachmentOwner()])])
+        guard taskPresented, viewedTaskID == id, taskRecoverySession == session,
+              try json(taskAttachments) == current,
+              let rows = result["rows"] as? [CoreObject] else { return }
+        taskAttachmentRows = rows
+    }
+
+    func openTaskLinkSheet(_ attachmentID: String? = nil) {
+        guard taskPresented, !taskEditor.flag("readOnly"), !busy, !retryNeeded, !taskRecoverySaving,
+              taskLinkSheet.isEmpty else { return }
+        var sheet: CoreObject = ["id": UUID().uuidString.lowercased(), "text": ""]
+        if let attachmentID {
+            guard let row = taskAttachmentRows.first(where: { $0.text("id") == attachmentID && $0.text("kind") == "link" }),
+                  let editText = row["editText"] as? String,
+                  let attachment = taskAttachments.first(where: { $0.text("id") == attachmentID }) else { return }
+            sheet["text"] = editText
+            sheet["editing"] = ["attachmentId": attachmentID, "title": attachment.text("title"), "uri": attachment.text("uri")]
+        }
+        taskLinkSheetError = nil
+        taskLinkSheet = sheet
+        taskRecoveryOwn(attachments: true)
+    }
+
+    func setTaskLinkText(_ text: String) {
+        guard taskLinkSheetActive, !taskRecoverySaving else { return }
+        taskLinkSheet["text"] = text
+        taskLinkSheetError = nil
+        taskRecoveryOwn(attachments: true)
+    }
+
+    func cancelTaskLinkSheet() {
+        guard taskLinkSheetActive, !taskRecoverySaving else { return }
+        taskLinkSheet = [:]
+        taskLinkSheetError = nil
+        taskRecoveryOwn(attachments: true)
+    }
+
+    func submitTaskLinkSheet() async {
+        guard taskPresented, taskLinkSheetActive, !taskLinkSubmitting, !taskEditor.flag("readOnly"),
+              !busy, !retryNeeded, !taskRecoverySaving else { return }
+        taskLinkSubmitting = true
+        defer { taskLinkSubmitting = false }
+        let id = viewedTaskID, session = taskRecoverySession, sheet = taskLinkSheet
+        let current = (try? json(taskAttachments)) ?? ""
+        guard !current.isEmpty else { return }
+        var request: CoreObject = ["owner": taskAttachmentOwner(),
+                                   "requestId": UUID().uuidString.lowercased(), "text": sheet.text("text")]
+        if let editing = sheet["editing"] as? CoreObject { request["editing"] = editing }
+        taskLinkSheetError = nil
+        do {
+            let result = try await query("taskAttachmentLinks", [try json(request)])
+            guard taskPresented, viewedTaskID == id, taskRecoverySession == session,
+                  taskLinkSheet.text("id") == sheet.text("id"),
+                  taskLinkSheet.text("text") == sheet.text("text"),
+                  try json(taskAttachments) == current else { return }
+            if result.text("kind") == "saved", let attachments = result["attachments"] as? [CoreObject] {
+                taskLinkSheet = [:]
+                taskLinkSheetError = nil
+                taskAttachments = attachments
+                taskRecoveryOwn(attachments: true)
+                try await refreshTaskAttachmentRows()
+            } else if result.text("kind") == "refused" {
+                taskLinkSheetError = result.text("message")
+            }
+        } catch {
+            if taskPresented, viewedTaskID == id, taskRecoverySession == session,
+               taskLinkSheet.text("id") == sheet.text("id") {
+                taskLinkSheetError = "The link could not be added. Try again."
+            }
+        }
+    }
+
+    func removeTaskLink(_ attachmentID: String) async {
+        guard taskPresented, !taskEditor.flag("readOnly"), !busy, !retryNeeded, !taskRecoverySaving,
+              taskLinkSheet.isEmpty,
+              taskAttachmentRows.contains(where: { $0.text("id") == attachmentID && $0.text("kind") == "link" }) else { return }
+        let id = viewedTaskID, session = taskRecoverySession
+        let current = (try? json(taskAttachments)) ?? ""
+        guard !current.isEmpty else { return }
+        do {
+            let result = try await query("taskAttachmentRemove", [try json([
+                "owner": taskAttachmentOwner(), "requestId": UUID().uuidString.lowercased(),
+                "attachmentId": attachmentID])])
+            guard taskPresented, viewedTaskID == id, taskRecoverySession == session,
+                  try json(taskAttachments) == current else { return }
+            if result.text("kind") == "saved", let attachments = result["attachments"] as? [CoreObject] {
+                taskAttachments = attachments
+                taskRecoveryOwn(attachments: true)
+                try await refreshTaskAttachmentRows()
+            } else if result.text("kind") == "refused" { taskError = result.text("message") }
+        } catch {
+            if taskPresented, viewedTaskID == id, taskRecoverySession == session {
+                taskError = "The link could not be removed. Try again."
+            }
+        }
+    }
     func setTaskInitialTab(_ tab: String) {
         guard ["task", "view"].contains(tab) else { return }
         taskInitialTab = tab
@@ -1992,6 +2123,8 @@ final class CoreModel: ObservableObject {
             || !taskDraftValuesEqual(taskDraft["relativeStartOffset"], taskOriginalDraft["relativeStartOffset"])
             || ["status", "focusedToday", "completedAt"].contains { !taskDraftValuesEqual(taskDraft[$0], taskOriginalDraft[$0]) }
             || !taskDraftValuesEqual(taskChecklist, taskOriginalChecklist)
+            || !taskDraftValuesEqual(taskAttachments, taskOriginalAttachments)
+            || !taskLinkSheet.isEmpty
             || taskChecklistInputs.contains { entry in
                 entry.key < taskChecklist.count && entry.value != taskChecklist[entry.key].text("title")
             }
@@ -12823,6 +12956,7 @@ final class CoreModel: ObservableObject {
         taskRecoveryCheckpointedGeneration = 0
         taskRecoveryTouched = []
         taskRecoveryChecklistTouched = false
+        taskRecoveryAttachmentsOwned = false
         taskRecoveryCheckpointError = nil
         taskRecoverySaving = false
         resetTaskDestination()
@@ -12834,6 +12968,12 @@ final class CoreModel: ObservableObject {
         taskView = [:]
         taskEditor = [:]
         taskOriginalDraft = [:]
+        taskOriginalAttachments = []
+        taskAttachments = []
+        taskAttachmentRows = []
+        taskLinkSheet = [:]
+        taskLinkSheetError = nil
+        taskLinkSubmitting = false
         taskTitleDraft = ""
         taskNoteDraft = ""
         taskEditorDraftDirection = ""
@@ -12899,6 +13039,7 @@ final class CoreModel: ObservableObject {
             taskRecoveryGateVisible = false
             taskRecoveryTouched = []
             taskRecoveryChecklistTouched = false
+            taskRecoveryAttachmentsOwned = false
             NSLog("Native iOS editor recovery outcome=discarded releaseCheck=v1.3.4/ios-editor-draft-recovery")
             if close && taskPresented { dismissTask() }
         } catch {
@@ -12940,7 +13081,7 @@ final class CoreModel: ObservableObject {
         defer { finishOperation() }
         do {
             let payload = try decode(snapshot.payloadJSON)
-            guard payload.number("version") == 1, payload.text("taskID") == snapshot.taskID,
+            guard [1, 2].contains(payload.number("version")), payload.text("taskID") == snapshot.taskID,
                   ["task", "view"].contains(payload.text("tab")),
                   let touchedBase = payload["touchedBase"] as? CoreObject,
                   let edited = payload["edited"] as? CoreObject,
@@ -12960,13 +13101,40 @@ final class CoreModel: ObservableObject {
                   raw["relativeOwned"] is Bool, raw["relativeCommitRequested"] is Bool else {
                 throw CocoaError(.coderReadCorrupt)
             }
+            let hasAttachments = payload.number("version") == 2
+            let savedAttachments = payload["attachmentsBase"] as? [CoreObject]
+            let editedAttachments = payload["attachments"] as? [CoreObject]
+            let savedLinkSheet = payload["linkSheet"] as? CoreObject
+            guard !hasAttachments || (payload["attachmentsOwned"] as? Bool == true
+                && savedAttachments != nil && editedAttachments != nil && savedLinkSheet != nil) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if let sheet = savedLinkSheet, !sheet.isEmpty {
+                guard Set(sheet.keys) == Set(sheet["editing"] == nil ? ["id", "text"] : ["id", "text", "editing"]),
+                      let sheetID = sheet["id"] as? String,
+                      sheetID == UUID(uuidString: sheetID)?.uuidString.lowercased(),
+                      let text = sheet["text"] as? String, text.utf16.count <= 32_000 else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                if let editing = sheet["editing"] as? CoreObject {
+                    guard Set(editing.keys) == Set(["attachmentId", "title", "uri"]),
+                          let target = editedAttachments?.first(where: { $0.text("id") == editing.text("attachmentId") }),
+                          target.text("kind") == "link", target.text("title") == editing.text("title"),
+                          target.text("uri") == editing.text("uri") else { throw CocoaError(.coderReadCorrupt) }
+                }
+            }
             var check: CoreObject = ["id": snapshot.taskID, "touchedBase": touchedBase]
             if let base = payload["scheduleBase"] { check["scheduleBase"] = base }
             if let base = payload["recurrenceBase"] { check["recurrenceBase"] = base }
             if let base = payload["checklistBase"] { check["checklistBase"] = base }
+            if let savedAttachments, let editedAttachments {
+                check["attachmentsBase"] = savedAttachments
+                check["attachments"] = editedAttachments
+            }
             let ready = try await query("taskEditorResumeCheck", [try json(check)])
             guard ready.text("kind") == "ready", let fresh = ready["freshDraft"] as? CoreObject,
                   let freshChecklist = ready["freshChecklistBase"] as? [CoreObject],
+                  let freshAttachments = ready["freshAttachmentsBase"] as? [CoreObject],
                   let freshSchedule = ready["freshScheduleBase"] as? CoreObject,
                   let freshRecurrence = ready["freshRecurrenceBase"] as? CoreObject else {
                 throw CocoaError(.coderReadCorrupt)
@@ -13016,6 +13184,7 @@ final class CoreModel: ObservableObject {
             taskRecoverySnapshot = snapshot
             taskRecoveryTouched = Set(touchedBase.keys)
             taskRecoveryChecklistTouched = payload["checklistBase"] != nil
+            taskRecoveryAttachmentsOwned = hasAttachments
             taskEditor = finalEditor
             taskOriginalDraft = fresh
             for (field, value) in touchedBase { taskOriginalDraft[field] = value }
@@ -13024,6 +13193,10 @@ final class CoreModel: ObservableObject {
             taskChecklistLoaded = true
             taskOriginalChecklist = payload["checklistBase"] as? [CoreObject] ?? freshChecklist
             taskChecklist = checklist
+            taskOriginalAttachments = savedAttachments ?? freshAttachments
+            taskAttachments = editedAttachments ?? freshAttachments
+            taskLinkSheet = savedLinkSheet ?? [:]
+            taskLinkSheetError = nil
             taskChecklistField = checklistResult.object("field")
             taskChecklistInputs = taskRecoveryChecklistTouched ? restoredInputs : [:]
             taskChecklistAppendInput = taskRecoveryChecklistTouched ? raw.text("checklistAppend") : ""
@@ -13070,6 +13243,7 @@ final class CoreModel: ObservableObject {
             taskRecoveryGateVisible = false
             taskRecoveryConflict = nil
             taskRecoveryReviewOptions = [:]
+            try await refreshTaskAttachmentRows()
             NSLog("Native iOS editor recovery outcome=resumed releaseCheck=v1.3.4/ios-editor-draft-recovery")
             for field in taskTokenFields { requestTaskTokenRead(field, delay: 0) }
             if taskScheduleFailure == nil { startTaskSchedulePump() }
@@ -13092,7 +13266,8 @@ final class CoreModel: ObservableObject {
         let id = viewedTaskID
         do {
             let view = try await query("taskView", [try json([
-                "id": id, "draft": taskDraft, "checklist": taskChecklist, "offset": 0, "limit": pageSize])])
+                "id": id, "draft": taskDraft, "checklist": taskChecklist,
+                "attachments": taskAttachments, "offset": 0, "limit": pageSize])])
             if taskPresented, taskRecoverySession == session, viewedTaskID == id { taskView = view }
         } catch { taskError = error.localizedDescription }
     }
@@ -13106,11 +13281,18 @@ final class CoreModel: ObservableObject {
         resetTaskTokens()
         resetTaskSchedule()
         resetTaskChecklistState()
+        taskOriginalAttachments = []
+        taskAttachments = []
+        taskAttachmentRows = []
+        taskLinkSheet = [:]
+        taskLinkSheetError = nil
+        taskLinkSubmitting = false
         viewedTaskID = ""
         taskRecoveryHydrating = false
         if taskRecoverySnapshot == nil {
             taskRecoveryTouched = []
             taskRecoveryChecklistTouched = false
+            taskRecoveryAttachmentsOwned = false
         }
         // Reset can commit while the editor stays open; Close and Discard must
         // also refresh the caller, including its status membership and counts.
@@ -13318,6 +13500,7 @@ final class CoreModel: ObservableObject {
 
     func saveTask() async {
         guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              !taskLinkSheetActive,
               !taskPersonCreateOwed, !taskPersonCreateNeedsReview,
               taskChecklistWriteKind == nil, !taskChecklistReadPending else { return }
         guard taskDirty else { await discardCleanTaskSnapshotAndClose(); return }
@@ -13385,8 +13568,9 @@ final class CoreModel: ObservableObject {
                 patch[field] = edited
             }
             let checklistChanged = !taskDraftValuesEqual(taskChecklist, taskOriginalChecklist)
+            let attachmentsChanged = !taskDraftValuesEqual(taskAttachments, taskOriginalAttachments)
             let checklistSave = checklistChanged || lifecycleChanged
-            guard !patch.isEmpty || checklistSave else {
+            guard !patch.isEmpty || checklistSave || attachmentsChanged else {
                 taskRecoverySaving = false
                 await discardCleanTaskSnapshotAndClose()
                 return
@@ -13397,6 +13581,9 @@ final class CoreModel: ObservableObject {
             if recurrenceChanged {
                 guard !taskOriginalRecurrence.isEmpty else { throw CocoaError(.coderReadCorrupt) }
                 request["recurrenceBase"] = taskOriginalRecurrence
+            }
+            if attachmentsChanged {
+                request["attachments"] = ["base": taskOriginalAttachments, "value": taskAttachments]
             }
             if checklistSave {
                 request["checklist"] = ["base": taskOriginalChecklist, "value": taskChecklist]
@@ -14483,7 +14670,9 @@ final class CoreModel: ObservableObject {
                     "recurrence.showFutureInCalendarHint", "recurrence.customTitle", "recurrence.onLabel",
                     "recurrence.lastDay", "recurrence.lastDayOfMonth", "recurrence.onDayOfMonth", "recurrence.onNthWeekday",
                     "recurrence.weekdayMonFri", "recurrence.ordinal.first", "recurrence.ordinal.second",
-                    "recurrence.ordinal.third", "recurrence.ordinal.fourth", "recurrence.ordinal.last"]
+                    "recurrence.ordinal.third", "recurrence.ordinal.fourth", "recurrence.ordinal.last",
+                    "attachments.title", "attachments.addLink", "attachments.remove",
+                    "attachments.linkPlaceholder", "attachments.linkBatchHint", "common.edit"]
         keys += options.objects("recurrences").map { $0.text("labelKey") }
         keys += (options["statuses"] as? [String] ?? []).map { "status." + $0 }
         keys += (options["priorities"] as? [String] ?? []).map { "priority." + $0 }
@@ -14529,19 +14718,28 @@ final class CoreModel: ObservableObject {
                 var draft = taskDraft
                 var firstInput: CoreObject = ["id": id, "draft": draft, "offset": 0, "limit": pageSize]
                 if taskChecklistLoaded { firstInput["checklist"] = taskChecklist }
+                if taskChecklistLoaded { firstInput["attachments"] = taskAttachments }
                 var next = try await query("taskView", [try json(firstInput)])
                 if !taskChecklistLoaded {
                     guard taskPresented, viewedTaskID == id, taskChecklistSession == session,
-                          next["checklistBase"] is [CoreObject] else { throw CocoaError(.coderReadCorrupt) }
+                          next["checklistBase"] is [CoreObject],
+                          let openingAttachments = next["attachmentsBase"] as? [CoreObject] else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
                     taskOriginalChecklist = next.objects("checklistBase")
                     taskChecklist = taskOriginalChecklist
+                    taskOriginalAttachments = openingAttachments
+                    taskAttachments = openingAttachments
+                    try await refreshTaskAttachmentRows()
                     _ = try await applyTaskChecklistEdit(nil, id: id, session: session)
                     taskChecklistLoaded = true
                     draft = taskDraft
                     next = try await query("taskView", [try json([
-                        "id": id, "draft": draft, "checklist": taskChecklist, "offset": 0, "limit": pageSize])])
+                        "id": id, "draft": draft, "checklist": taskChecklist,
+                        "attachments": taskAttachments, "offset": 0, "limit": pageSize])])
                 }
                 let checklist = taskChecklist
+                let attachments = taskAttachments
                 let revision = next.text("revision")
                 var rows = next.objects("rows")
                 if let index = rows.firstIndex(where: { $0.text("type") == "checklist" }) {
@@ -14550,7 +14748,7 @@ final class CoreModel: ObservableObject {
                     while entries.count < min(target, total) {
                         let limit = min(pageSize, min(target, total) - entries.count)
                         let window = try await query("taskView", [try json([
-                            "id": id, "draft": draft, "checklist": checklist,
+                            "id": id, "draft": draft, "checklist": checklist, "attachments": attachments,
                             "offset": entries.count, "limit": limit, "revision": revision])])
                         let checklist = window.objects("rows").first { $0.text("type") == "checklist" } ?? [:]
                         let page = checklist.objects("items")
@@ -14566,7 +14764,8 @@ final class CoreModel: ObservableObject {
                 guard taskPresented, viewedTaskID == id, taskChecklistSession == session else { return }
                 let draftChanged = (try json(draft)) != (try json(taskDraft))
                 if taskSchedulePending || draftChanged || !taskDraftValuesEqual(checklist, taskChecklist)
-                    || !taskChecklistInputs.isEmpty || !taskChecklistAppendInput.isEmpty {
+                    || !taskChecklistInputs.isEmpty || !taskChecklistAppendInput.isEmpty
+                    || !taskDraftValuesEqual(attachments, taskAttachments) {
                     // A final native input callback may arrive during the view
                     // or checklist reads. Regenerate before publishing Preview.
                     try await resolveTaskEditorInputs()

@@ -187,7 +187,7 @@ private final class Engine: @unchecked Sendable {
     private static let methods: [String: Int] = [
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
         "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1,
-        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
+        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
         "projects": 0, "projectDetail": 4, "projectNotes": 4, "projectCreateOptions": 0, "projectCreate": 1, "projectCreateRetryOutcome": 1,
         "projectSectionOptions": 1, "projectSectionCreate": 1, "projectSectionCreateRetryOutcome": 1,
         "projectSectionRenameOptions": 1, "projectSectionRename": 1, "projectSectionRenameRetryOutcome": 1,
@@ -239,6 +239,34 @@ private final class Engine: @unchecked Sendable {
     private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
+
+    private static func validTaskAttachmentList(_ value: Any?) -> Bool {
+        guard let rows = value as? [[String: Any]], rows.count <= 1_000,
+              let data = try? JSONSerialization.data(withJSONObject: rows), data.count <= 2_000_000 else { return false }
+        let ids = rows.compactMap { $0["id"] as? String }
+        return ids.count == rows.count && Set(ids).count == ids.count
+            && ids.allSatisfy { !$0.isEmpty && $0.utf16.count <= 500 }
+    }
+
+    private static func validTaskAttachmentHalf(_ value: Any?) -> Bool {
+        guard let half = value as? [String: Any], Set(half.keys) == Set(["base", "value"]) else { return false }
+        return validTaskAttachmentList(half["base"]) && validTaskAttachmentList(half["value"])
+    }
+
+    private static func validTaskAttachmentOwner(_ value: Any?) -> Bool {
+        guard let owner = value as? [String: Any], Set(owner.keys) == Set(["kind", "taskId", "attachments"]),
+              owner["kind"] as? String == "task", let taskID = owner["taskId"] as? String,
+              !taskID.isEmpty, taskID.utf16.count <= 500 else { return false }
+        return validTaskAttachmentList(owner["attachments"])
+    }
+
+    private static func validTaskLinkEditing(_ value: Any?) -> Bool {
+        guard let edit = value as? [String: Any], Set(edit.keys) == Set(["attachmentId", "title", "uri"]),
+              let id = edit["attachmentId"] as? String, !id.isEmpty, id.utf16.count <= 500,
+              let title = edit["title"] as? String, title.utf16.count <= 100_000,
+              let uri = edit["uri"] as? String, uri.utf16.count <= 100_000 else { return false }
+        return true
+    }
 
     init(queue: DispatchQueue, databaseURL: URL, bundleURL: URL, legacyStorage: LegacyRNStorage? = nil) {
         self.queue = queue
@@ -931,6 +959,9 @@ private final class Engine: @unchecked Sendable {
             } else {
                 do { value = try invoke(method, arguments: args) }
                 catch let failure as HostFailure {
+                    if ["taskAttachmentList", "taskAttachmentLinks", "taskAttachmentRemove"].contains(method) {
+                        throw HostFailure("Attachment draft command failed")
+                    }
                     guard method == "gtdTaskEditorPresetOptions", failure.message.hasPrefix("INVALID_INPUT:") else { throw failure }
                     throw CoreHostRejection(message: failure.message)
                 }
@@ -2741,6 +2772,13 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("taskEditorDurableApplied")
 #endif
             NSLog("Native iOS Task Editor save confirmed releaseCheck=v1.3.4/ios-editor-durable-save outcome=confirmed")
+        }
+        if ["draftCommit", "checklistPreparedCommit"].contains(command.method), case .success = terminal,
+           let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+           let encoded = args.first,
+           let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+           let request = envelope["request"] as? [String: Any], request["attachments"] != nil {
+            NSLog("Native iOS Task URL links saved releaseCheck=v1.3.4/ios-editor-url-links outcome=confirmed")
         }
         if ["draftCommit", "checklistPreparedCommit"].contains(command.method), case .success = terminal,
            let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
@@ -5151,11 +5189,13 @@ private final class Engine: @unchecked Sendable {
             return args
         }
         if command.method == "draftCommit" {
-            guard let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
                   let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
                   Set(input.keys) == Set(["request", "prepared"]), let request = input["request"] as? [String: Any],
-                  Set(request.keys) == Set(request["recurrenceBase"] == nil
-                    ? ["id", "base", "patch", "scheduleBase"] : ["id", "base", "patch", "scheduleBase", "recurrenceBase"]),
+                  Set(request.keys) == Set(["id", "base", "patch", "scheduleBase"]
+                    + (request["recurrenceBase"] == nil ? [] : ["recurrenceBase"])
+                    + (request["attachments"] == nil ? [] : ["attachments"])),
                   let prepared = input["prepared"] as? [String: Any],
                   (Self.isInteger(prepared["version"], equalTo: 1) || Self.isInteger(prepared["version"], equalTo: 2)),
                   let preparedRequest = prepared["request"] as? [String: Any],
@@ -5356,15 +5396,53 @@ private final class Engine: @unchecked Sendable {
             } else if !(argument is String) { throw HostFailure("Core arguments must be strings") }
         }
         if method == "taskEditorResumeCheck" {
-            guard let encoded = args.first as? String, encoded.utf8.count <= 1_000_000,
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
-                  Set(input.keys).isSubset(of: ["id", "touchedBase", "scheduleBase", "recurrenceBase", "checklistBase"]),
+                  Set(input.keys).isSubset(of: ["id", "touchedBase", "scheduleBase", "recurrenceBase", "checklistBase", "attachmentsBase", "attachments"]),
                   let id = input["id"] as? String, !id.isEmpty, id.utf16.count <= 500,
                   input["touchedBase"] is [String: Any],
                   input["scheduleBase"] == nil || input["scheduleBase"] is [String: Any],
                   input["recurrenceBase"] == nil || input["recurrenceBase"] is [String: Any],
-                  input["checklistBase"] == nil || input["checklistBase"] is [[String: Any]] else {
+                  input["checklistBase"] == nil || input["checklistBase"] is [[String: Any]],
+                  (input["attachmentsBase"] == nil) == (input["attachments"] == nil),
+                  input["attachments"] == nil || Self.validTaskAttachmentHalf([
+                    "base": input["attachmentsBase"]!, "value": input["attachments"]!]) else {
                 throw HostFailure("INVALID_INPUT: Editor resume check needs a bounded task and raw base")
+            }
+        }
+        if method == "taskView" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys).isSubset(of: ["id", "draft", "checklist", "attachments", "offset", "limit", "revision"]),
+                  let id = input["id"] as? String, !id.isEmpty, id.utf16.count <= 500,
+                  input["attachments"] == nil || Self.validTaskAttachmentList(input["attachments"]) else {
+                throw HostFailure("INVALID_INPUT: Task view needs bounded draft attachments")
+            }
+        }
+        if ["taskAttachmentList", "taskAttachmentLinks", "taskAttachmentRemove"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Self.validTaskAttachmentOwner(input["owner"]),
+                  Set(input.keys) == Set(method == "taskAttachmentList" ? ["owner"]
+                    : method == "taskAttachmentRemove" ? ["owner", "requestId", "attachmentId"]
+                    : ["owner", "requestId", "text"] + (input["editing"] == nil ? [] : ["editing"])) else {
+                throw HostFailure("INVALID_INPUT: Attachment draft needs a bounded Task owner")
+            }
+            if method != "taskAttachmentList" {
+                guard let requestID = input["requestId"] as? String,
+                      requestID == UUID(uuidString: requestID)?.uuidString.lowercased() else {
+                    throw HostFailure("INVALID_INPUT: Attachment draft needs a lowercase request UUID")
+                }
+            }
+            if method == "taskAttachmentLinks" {
+                guard (input["text"] as? String).map({ $0.utf16.count <= 32_000 }) == true,
+                      input["editing"] == nil || input["editing"] is NSNull || Self.validTaskLinkEditing(input["editing"]) else {
+                    throw HostFailure("INVALID_INPUT: Attachment link input is malformed")
+                }
+            } else if method == "taskAttachmentRemove" {
+                guard (input["attachmentId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true else {
+                    throw HostFailure("INVALID_INPUT: Attachment link target is malformed")
+                }
             }
         }
         if ["focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome"].contains(method) {
@@ -6388,11 +6466,12 @@ private final class Engine: @unchecked Sendable {
                         throw HostFailure("INVALID_INPUT: Checklist reset needs the saved list baseline")
                     }
                 } else {
-                    guard Set(input.keys) == Set(input["recurrenceBase"] == nil
-                        ? ["id", "requestId", "base", "patch", "scheduleBase", "checklist"]
-                        : ["id", "requestId", "base", "patch", "scheduleBase", "recurrenceBase", "checklist"]),
+                    guard Set(input.keys) == Set(["id", "requestId", "base", "patch", "scheduleBase", "checklist"]
+                        + (input["recurrenceBase"] == nil ? [] : ["recurrenceBase"])
+                        + (input["attachments"] == nil ? [] : ["attachments"])),
                           let base = input["base"] as? [String: Any], let patch = input["patch"] as? [String: Any],
                           Set(base.keys) == Set(patch.keys),
+                          input["attachments"] == nil || Self.validTaskAttachmentHalf(input["attachments"]),
                           let schedule = input["scheduleBase"] as? [String: Any], Set(schedule.keys) == Self.scheduleFields,
                           Self.isOffset(schedule["relativeStartOffset"]),
                           ["startTime", "dueDate", "reviewAt"].allSatisfy({ schedule[$0] is String || schedule[$0] is NSNull }),
@@ -6710,9 +6789,10 @@ private final class Engine: @unchecked Sendable {
             // enter only the prepared commit journal path.
             guard let json = args.first as? String,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any],
+                  input["attachments"] == nil || json.utf8.count <= 2_000_000,
                   input["id"] is String,
                   let base = input["base"] as? [String: Any], let patch = input["patch"] as? [String: Any],
-                  !patch.isEmpty, Set(base.keys) == Set(patch.keys) else {
+                  (!patch.isEmpty || input["attachments"] != nil), Set(base.keys) == Set(patch.keys) else {
                 throw HostFailure("INVALID_INPUT: Native editor requires matching supported draft fields")
             }
             let hasSchedule = !Self.scheduleFields.isDisjoint(with: patch.keys)
@@ -6724,8 +6804,10 @@ private final class Engine: @unchecked Sendable {
             var inputFields: Set<String> = ["id", "base", "patch"]
             if isPrepared && allowPreparedDates { inputFields.insert("scheduleBase") }
             if hasRecurrence && allowPreparedDates { inputFields.insert("recurrenceBase") }
+            if input["attachments"] != nil && allowPreparedDates { inputFields.insert("attachments") }
             guard Set(patch.keys).isSubset(of: allowed),
                   Set(input.keys) == inputFields,
+                  input["attachments"] == nil || (allowPreparedDates && Self.validTaskAttachmentHalf(input["attachments"])),
                   patch.keys.allSatisfy({ field in
                       if field == "relativeStartOffset" { return Self.isOffset(base[field]) && Self.isOffset(patch[field]) }
                       if field == "showFutureRecurrence" { return Self.isBoolean(base[field]) && Self.isBoolean(patch[field]) }

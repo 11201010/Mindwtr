@@ -56,6 +56,7 @@ import {
     patchAttachment,
     planAttachmentLinkBatch,
     planAttachmentLinkEdit,
+    mergeTaskDraftAttachments,
     planAttachmentOpen,
     resolveAttachmentAvailability,
     softDeleteAttachment,
@@ -82,6 +83,9 @@ import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { createNativeRequestReceipts, requestRowId, runStoreWrite, settleWrite, taskRevisionOf } from './native-request-receipts';
 import { useTaskStore } from './store';
 import type { Attachment, Project, Task } from './types';
+import { taskEditValuesEqual } from './json-value-equality';
+import { parseAttachmentLinkBatch } from './attachment-link-utils';
+import { isStatusListTaskReadOnly } from './menu-views-model';
 
 /** Core's mobile attachment modules, bound by the host to its file bridge. */
 export type NativeAttachmentsHost = {
@@ -176,6 +180,60 @@ export const readNativeAttachments = (value: unknown): Attachment[] | null => (
         : null
 );
 
+export type NativeTaskLinkHalf = { base: Attachment[]; value: Attachment[] };
+const ISO = (value: string): boolean => Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+const same = taskEditValuesEqual;
+const linkTextValid = (attachment: Attachment): boolean => {
+    if (attachment.kind !== 'link' || /[\r\n]/.test(attachment.uri)) return false;
+    const parsed = parseAttachmentLinkBatch(attachment.uri);
+    return parsed.invalidLine === null && parsed.entries.length === 1 && parsed.entries[0].uri === attachment.uri
+        && (attachment.title === attachment.title.trim().replace(/\s+/g, ' ')
+            || attachment.title === parsed.entries[0].title);
+};
+
+/** The iOS prepared editor owns only URL edits. Keep every old record, including tombstones. */
+export const readNativeTaskLinkHalf = (input: unknown, requireChanged = true): NativeTaskLinkHalf | null => {
+    if (!isObjectRecord(input) || Object.keys(input).length !== 2 || !('base' in input) || !('value' in input)) return null;
+    const base = readNativeAttachments(input.base), value = readNativeAttachments(input.value);
+    if (!base || !value) return null;
+    const byId = new Map(value.map((attachment) => [attachment.id, attachment]));
+    if (base.some((before) => !byId.has(before.id))) return null;
+    const old = new Map(base.map((attachment) => [attachment.id, attachment]));
+    let changed = false;
+    for (const after of value) {
+        const before = old.get(after.id);
+        if (!before) {
+            if (after.kind !== 'link' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(after.id)
+                || Object.keys(after).some((key) => !['id', 'kind', 'title', 'uri', 'createdAt', 'updatedAt', 'deletedAt'].includes(key))
+                || !ISO(after.createdAt) || !ISO(after.updatedAt)
+                || (after.deletedAt !== undefined && !ISO(after.deletedAt)) || !linkTextValid(after)) return null;
+            changed = true;
+        } else if (!same(before, after)) {
+            if (before.kind !== 'link' || after.kind !== 'link' || before.deletedAt
+                || ((before.title !== after.title || before.uri !== after.uri) && !linkTextValid(after))
+                || !ISO(after.updatedAt)
+                || Object.keys({ ...before, ...after }).some((key) => !['title', 'uri', 'updatedAt', 'deletedAt'].includes(key)
+                    && !same(before[key as keyof Attachment], after[key as keyof Attachment]))
+                || (after.deletedAt !== undefined && (!ISO(after.deletedAt) || before.deletedAt !== undefined))
+                || (after.title === before.title && after.uri === before.uri && after.deletedAt === before.deletedAt)) return null;
+            changed = true;
+        }
+    }
+    return changed || !requireChanged ? { base, value } : null;
+};
+
+/** Merge local URL edits onto latest saved rows, refusing even a forged base for a live file. */
+export const mergeNativeTaskLinkHalf = (stored: readonly Attachment[], half: NativeTaskLinkHalf): Attachment[] | null => {
+    const before = new Map(half.base.map((attachment) => [attachment.id, attachment]));
+    const value = new Map(half.value.map((attachment) => [attachment.id, attachment]));
+    if (stored.some((attachment) => attachment.kind === 'file' && before.get(attachment.id)?.kind === 'link'
+        || !before.has(attachment.id) && value.has(attachment.id))) return null;
+    const merged = mergeTaskDraftAttachments(stored, half.base, half.value);
+    if (stored.some((attachment) => attachment.kind === 'file'
+        && !same(attachment, merged.find((row) => row.id === attachment.id)))) return null;
+    return readNativeAttachments(merged);
+};
+
 const readOwner = (value: unknown): NativeAttachmentOwner | null => {
     if (!isObjectRecord(value)) return null;
     if (value.kind === 'project') {
@@ -236,6 +294,13 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
     });
     const unbound = (): NativeHostResult<never> => fail('ACTION_FAILED', 'Attachments are not available on this host');
     const ownerError = (): NativeHostResult<never> => fail('INVALID_INPUT', 'A task owner (its ID and the editor\'s attachment list) or a project owner (its ID) is required');
+    const mutableTask = (owner: NativeAttachmentOwner): boolean => {
+        if (owner.kind !== 'task') return false;
+        const state = useTaskStore.getState();
+        const task = state._tasksById.get(owner.taskId);
+        return Boolean(task && !task.deletedAt && !task.purgedAt
+            && !deps.isReadOnly(task) && !isStatusListTaskReadOnly(task, state._allProjects));
+    };
     const storedProject = (projectId: string): Project | undefined => useTaskStore.getState()._allProjects
         .find((project) => project.id === projectId && !project.deletedAt);
     const mutableProject = (projectId: string): Project | null => {
@@ -336,7 +401,7 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
                 const task = useTaskStore.getState()._tasksById.get(owner.taskId);
                 if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
                 attachments = owner.attachments;
-                canEdit = !deps.isReadOnly(task);
+                canEdit = mutableTask(owner);
             } else {
                 const project = storedProject(owner.projectId);
                 if (!project) return fail('STALE_REVISION', 'Project is unavailable; read the projects again');
@@ -425,6 +490,7 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
             owner: NativeAttachmentOwner;
             text: string;
             editing?: { attachmentId: string; title: string; uri: string } | null;
+            urlOnly?: boolean;
         }): Promise<NativeHostResult<NativeAttachmentChange>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
@@ -434,12 +500,17 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
             }
             const owner = readOwner(input.owner);
             if (!owner) return ownerError();
+            if (input.urlOnly && !mutableTask(owner)) return fail('INVALID_INPUT', 'Task cannot edit links');
             const editing = input.editing ?? null;
             if (editing !== null && (owner.kind !== 'task' || !isObjectRecord(editing) || !isText(editing.attachmentId, ID_LIMIT)
                 || !isText(editing.title, TEXT_LIMIT) || !isText(editing.uri, TEXT_LIMIT)
                 || owner.attachments.find((attachment) => attachment.id === editing.attachmentId)?.kind !== 'link')) {
                 return fail('INVALID_INPUT', 'Only a task draft\'s link can be edited, with its ID, title and uri when the sheet opened');
             }
+            if (input.urlOnly && editing && owner.kind === 'task'
+                && useTaskStore.getState()._tasksById.get(owner.taskId)?.attachments
+                    ?.some((attachment) => attachment.id === editing.attachmentId && attachment.kind === 'file'))
+                return fail('INVALID_INPUT', 'Only a link can be edited');
             const t = deps.t();
             const now = new Date().toISOString();
             const requestId = input.requestId.toLowerCase();
@@ -485,7 +556,7 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
         },
 
         /** Remove: a soft delete. Reuse `requestId` to retry a project's. */
-        async removeAttachment(input: { requestId: string; owner: NativeAttachmentOwner; attachmentId: string }): Promise<NativeHostResult<NativeAttachmentChange>> {
+        async removeAttachment(input: { requestId: string; owner: NativeAttachmentOwner; attachmentId: string; urlOnly?: boolean }): Promise<NativeHostResult<NativeAttachmentChange>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             if (!isObjectRecord(input) || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)
@@ -496,6 +567,11 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
             if (!owner) return ownerError();
             const { attachmentId } = input;
             const now = new Date().toISOString();
+            if (input.urlOnly && (!mutableTask(owner) || owner.kind !== 'task'
+                || owner.attachments.find((attachment) => attachment.id === attachmentId)?.kind !== 'link'
+                || useTaskStore.getState()._tasksById.get(owner.taskId)?.attachments
+                    ?.some((attachment) => attachment.id === attachmentId && attachment.kind === 'file')))
+                return fail('INVALID_INPUT', 'Only a link can be removed');
             if (owner.kind === 'task') {
                 const target = owner.attachments.find((attachment) => attachment.id === attachmentId);
                 return { ok: true, value: { kind: 'saved', ids: [attachmentId], attachments: !target || target.deletedAt

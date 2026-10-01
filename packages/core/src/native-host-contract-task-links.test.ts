@@ -1,0 +1,226 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
+import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import type { AppData, Attachment, Task } from './types';
+
+const at = '2026-10-01T12:00:00.000Z';
+const later = '2026-10-01T13:00:00.000Z';
+const scheduleBase = { startTime: null, dueDate: null, relativeStartOffset: null, reviewAt: null };
+const file: Attachment = { id: 'file', kind: 'file', title: 'Report', uri: 'file:///report.pdf', createdAt: at, updatedAt: at };
+const link: Attachment = { id: 'link', kind: 'link', title: 'Old', uri: 'https://example.org/old', createdAt: at, updatedAt: at };
+const task = (): Task => ({ id: 'edit', title: 'Task', status: 'next', taskMode: 'list', tags: [], contexts: [],
+    checklist: [{ id: 'check', title: 'Check', isCompleted: false }], attachments: [file, link],
+    createdAt: at, updatedAt: at, rev: 1, revBy: 'device-a' });
+const unwrap = <T,>(result: NativeHostResult<T>): T => {
+    if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+    return result.value;
+};
+
+describe('prepared Task URL draft', () => {
+    let durable: AppData;
+    let writes: ReturnType<typeof vi.fn>;
+    let host: ReturnType<typeof createNativeHostContract>;
+    const saved = () => durable.tasks[0];
+    const open = async () => {
+        resetForTests();
+        useTaskStore.setState({ _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
+            settings: {}, error: null, persistenceFailure: null, isLoading: false, editLockCount: 0, lastDataChangeAt: 0 });
+        host = createNativeHostContract();
+        expect(await host.activate({ writeSafetyReady: true, recoveryLoad: true })).toMatchObject({ ok: true });
+        await flushPendingSave();
+    };
+    const owner = (attachments: Attachment[]) => ({ kind: 'task' as const, taskId: 'edit', attachments });
+    const half = (value: Attachment[]) => ({ base: [file, link], value });
+    const request = (value: Attachment[]) => ({ id: 'edit', base: {}, patch: {}, scheduleBase, attachments: half(value) });
+    const add = async (attachments: Attachment[], text = 'Private | https://alice:secret-a@example.org/path?token=secret-b') => {
+        const result = unwrap(await host.submitAttachmentLinks({ owner: owner(attachments),
+            requestId: '00000000-0000-4000-8000-000000000001', text, urlOnly: true }));
+        expect(result.kind).toBe('saved');
+        if (result.kind !== 'saved' || !result.attachments) throw new Error('Missing draft list');
+        return result.attachments;
+    };
+
+    beforeEach(async () => {
+        durable = { tasks: [task()], projects: [], sections: [], areas: [], people: [], settings: { deviceId: 'device-a' } };
+        writes = vi.fn(async (next: AppData) => { durable = structuredClone(next); });
+        setStorageAdapter({ getData: async () => structuredClone(durable), saveData: writes });
+        await open();
+        writes.mockClear();
+    });
+    afterEach(async () => { await flushPendingSave(); resetForTests(); });
+
+    it('keeps add, edit and remove in one raw draft, then saves once through V2', async () => {
+        const opening = unwrap(host.getTaskView({ id: 'edit' }));
+        expect(opening.attachmentsBase).toEqual([file, link]);
+        let value = await add(opening.attachmentsBase);
+        const added = value[2];
+        expect(await add(value)).toEqual(value);
+        const changed = unwrap(await host.submitAttachmentLinks({ owner: owner(value),
+            requestId: '00000000-0000-4000-8000-000000000002', text: 'Edited | https://example.org/edited',
+            editing: { attachmentId: added.id, title: added.title, uri: added.uri }, urlOnly: true }));
+        expect(changed.kind).toBe('saved');
+        if (changed.kind !== 'saved' || !changed.attachments) return;
+        value = changed.attachments;
+        expect(await host.removeAttachment({ owner: owner(value), requestId: '00000000-0000-4000-8000-000000000003',
+            attachmentId: file.id, urlOnly: true })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const removed = unwrap(await host.removeAttachment({ owner: owner(value),
+            requestId: '00000000-0000-4000-8000-000000000004', attachmentId: link.id, urlOnly: true }));
+        expect(removed.kind).toBe('saved');
+        if (removed.kind !== 'saved' || !removed.attachments) return;
+        value = removed.attachments;
+        expect(unwrap(host.getTaskView({ id: 'edit', attachments: value })).rows
+            .find((row) => row.type === 'attachments')).toMatchObject({ items: [
+                expect.objectContaining({ id: file.id }), expect.objectContaining({ id: added.id }),
+            ] });
+        expect(saved().attachments).toEqual([file, link]);
+        expect(writes).not.toHaveBeenCalled();
+        const input = request(value);
+        const prepared = unwrap(await host.prepareTaskDraftSaveV2(input));
+        expect(prepared.kind).toBe('prepared');
+        if (prepared.kind !== 'prepared') return;
+        expect(unwrap(host.validatePreparedTaskDraftSave({ request: input, prepared: prepared.prepared })).version).toBe(2);
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: prepared.prepared })).toMatchObject({ ok: true });
+        expect(saved().attachments).toEqual(value);
+        const count = writes.mock.calls.length;
+        await open();
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: prepared.prepared })).toMatchObject({ ok: true });
+        expect(writes).toHaveBeenCalledTimes(count);
+    });
+
+    it('accepts an added then soft-removed link in the same unsaved draft', async () => {
+        const added = await add([file, link]);
+        const removed = unwrap(await host.removeAttachment({ owner: owner(added),
+            requestId: '00000000-0000-4000-8000-000000000008', attachmentId: added[2].id, urlOnly: true }));
+        expect(removed.kind).toBe('saved');
+        if (removed.kind !== 'saved' || !removed.attachments) return;
+        expect(removed.attachments[2].deletedAt).toBeDefined();
+        const input = request(removed.attachments);
+        const prepared = unwrap(await host.prepareTaskDraftSaveV2(input));
+        expect(prepared.kind).toBe('prepared');
+        if (prepared.kind !== 'prepared') return;
+        expect(prepared.prepared.effect.task.after.attachments).toEqual(removed.attachments);
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: prepared.prepared })).toMatchObject({ ok: true });
+    });
+
+    it('merges sync changes before prepare and refuses any mutation after prepare', async () => {
+        const value = await add([file, link]);
+        durable.tasks[0] = { ...saved(), attachments: [
+            { ...file, cloudKey: 'remote-file', contentRev: 3 },
+            { ...link, deletedAt: later, updatedAt: later },
+            { id: 'other', kind: 'link', title: 'Synced', uri: 'https://example.org/synced', createdAt: later, updatedAt: later },
+        ], rev: 2, updatedAt: later };
+        const input = request(value);
+        const prepared = unwrap(await host.prepareTaskDraftSaveV2(input));
+        expect(prepared.kind).toBe('prepared');
+        if (prepared.kind !== 'prepared') return;
+        expect(prepared.prepared.effect.task.after.attachments).toEqual([...saved().attachments!, value[2]]);
+        durable.tasks[0] = { ...saved(), title: 'Independent', rev: 3 };
+        const frozen = structuredClone(saved());
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: prepared.prepared }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(saved()).toEqual(frozen);
+        durable.tasks[0] = { ...structuredClone(prepared.prepared.effect.task.after), rev: 99 };
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: prepared.prepared }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    });
+
+    it('refuses forged file edits, malformed links, duplicate IDs and oversized lists without leaking URLs', async () => {
+        const value = await add([file, link]);
+        const malformed = unwrap(await host.submitAttachmentLinks({ owner: owner([file, link]),
+            requestId: '00000000-0000-4000-8000-000000000009',
+            text: 'https://example.org/good\nnot-a-url-secret-c', urlOnly: true }));
+        expect(malformed.kind).toBe('refused');
+        expect(JSON.stringify(malformed)).not.toContain('secret-c');
+        const forged = { ...file, kind: 'link' as const, title: 'Forged', uri: 'https://example.org/forged' };
+        const bad = [
+            { base: [{ ...file, kind: 'link' as const }, link], value: [forged, link] },
+            { base: [file, link], value: [file, link, { ...value[2], id: file.id }] },
+            { base: [file, link], value: [file, link, { ...value[2], uri: 'https://example.org/ok\ninvalid' }] },
+            { base: [file, link], value: [file, link, ...Array.from({ length: 1_000 }, (_, i) =>
+                ({ ...value[2], id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}` }))] },
+        ];
+        for (const attachments of bad) {
+            const result = await host.prepareTaskDraftSaveV2({ ...request(value), attachments });
+            expect(result).toMatchObject({ ok: false });
+            if (!result.ok) expect(JSON.stringify(result.error)).not.toMatch(/secret-a|secret-b|alice/);
+        }
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('binds URL edits into the checklist prepared Task effect and cold resume permits a newer saved list', async () => {
+        const value = await add([file, link]);
+        durable.tasks[0] = { ...saved(), attachments: [...saved().attachments!,
+            { id: 'other', kind: 'link', title: 'Synced', uri: 'https://example.org/synced', createdAt: later, updatedAt: later }],
+        rev: 2, updatedAt: later };
+        const resumed = await host.checkTaskEditorResume({ id: 'edit', touchedBase: {}, attachmentsBase: [file, link], attachments: value });
+        expect(resumed).toMatchObject({ ok: true, value: { kind: 'ready', freshAttachmentsBase: saved().attachments } });
+        await useTaskStore.getState().fetchData({ throwOnError: true });
+        const input = { ...request(value), requestId: '00000000-0000-4000-8000-000000000005',
+            checklist: { base: task().checklist!, value: [{ id: 'check', title: 'Changed', isCompleted: false }] } };
+        const prepared = unwrap(host.prepareTaskChecklistSave(input));
+        expect(prepared.kind).toBe('prepared');
+        if (prepared.kind !== 'prepared') return;
+        expect(prepared.prepared.effect.tasks.find((row) => row.after.id === 'edit')?.after.attachments)
+            .toEqual([...saved().attachments!, value[2]]);
+        expect(host.validatePreparedTaskChecklistWrite({ request: input, prepared: prepared.prepared }))
+            .toMatchObject({ ok: true });
+        expect(await host.commitPreparedTaskChecklistWrite({ request: input, prepared: prepared.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved().checklist?.[0].title).toBe('Changed');
+        const count = writes.mock.calls.length;
+        await open();
+        expect(await host.commitPreparedTaskChecklistWrite({ request: input, prepared: prepared.prepared }))
+            .toMatchObject({ ok: true });
+        expect(writes).toHaveBeenCalledTimes(count);
+    });
+
+    it('gives direct, V2 and unchanged-checklist Save the same link list', async () => {
+        const value = await add([file, link]);
+        const input = request(value);
+        const v2 = unwrap(await host.prepareTaskDraftSaveV2(input));
+        expect(v2.kind).toBe('prepared');
+        if (v2.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: v2.prepared })).toMatchObject({ ok: true });
+        const expected = structuredClone(saved().attachments);
+
+        durable.tasks = [task()];
+        await open();
+        expect(await host.saveTaskDraft({ id: 'edit', base: {}, patch: {}, attachments: half(value),
+            requestId: '00000000-0000-4000-8000-000000000006' })).toMatchObject({ ok: true });
+        expect(saved().attachments).toEqual(expected);
+
+        durable.tasks = [task()];
+        await open();
+        const checklist = { ...input, requestId: '00000000-0000-4000-8000-000000000007',
+            checklist: { base: task().checklist!, value: task().checklist! } };
+        const prepared = unwrap(host.prepareTaskChecklistSave(checklist));
+        expect(prepared.kind).toBe('prepared');
+        if (prepared.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskChecklistWrite({ request: checklist, prepared: prepared.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved().attachments).toEqual(expected);
+    });
+
+    it('accepts the shared planner title decoded from an unlabeled URL in both prepared routes', async () => {
+        const value = await add([file, link], 'https://example.org/a%20%20b');
+        expect(value[2].title).toContain('a  b');
+        const input = request(value);
+        const v2 = unwrap(await host.prepareTaskDraftSaveV2(input));
+        expect(v2.kind).toBe('prepared');
+        if (v2.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: v2.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved().attachments).toEqual(value);
+
+        durable.tasks = [task()];
+        await open();
+        const checklist = { ...input, requestId: '00000000-0000-4000-8000-000000000010',
+            checklist: { base: task().checklist!, value: task().checklist! } };
+        const prepared = unwrap(host.prepareTaskChecklistSave(checklist));
+        expect(prepared.kind).toBe('prepared');
+        if (prepared.kind !== 'prepared') return;
+        expect(await host.commitPreparedTaskChecklistWrite({ request: checklist, prepared: prepared.prepared }))
+            .toMatchObject({ ok: true });
+        expect(saved().attachments).toEqual(value);
+    });
+});

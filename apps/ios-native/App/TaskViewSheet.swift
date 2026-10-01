@@ -40,7 +40,8 @@ struct TaskViewSheet: View {
 
     private var rows: [CoreObject] { value.objects("rows") }
     private var modalPresented: Bool {
-        !model.taskDestinationKind.isEmpty || monthlyCustom != nil || waitingAssignment != nil || backdatedCompletion != nil
+        !model.taskDestinationKind.isEmpty || monthlyCustom != nil || waitingAssignment != nil
+            || backdatedCompletion != nil || model.taskLinkSheetActive
     }
 
     var body: some View {
@@ -64,6 +65,7 @@ struct TaskViewSheet: View {
                 TaskBackdatedCompletionDialog(model: model, palette: palette, initial: initial,
                     close: { backdatedCompletion = nil })
             }
+            if model.taskLinkSheetActive { taskLinkDialog }
         }
     }
 
@@ -93,7 +95,7 @@ struct TaskViewSheet: View {
                     } label: {
                         Text(strings.text("common.save")).rnFont(18, .bold).frame(minWidth: 44, minHeight: 44)
                     }
-                    .buttonStyle(.plain).disabled(frozen || model.taskPersonCreateNeedsReview).accessibilityIdentifier("task-editor-save")
+                    .buttonStyle(.plain).disabled(frozen || model.taskPersonCreateNeedsReview || model.taskLinkSheetActive).accessibilityIdentifier("task-editor-save")
                 }
             }
             .foregroundStyle(palette.tint).padding(.horizontal, 16).padding(.vertical, 8)
@@ -296,7 +298,7 @@ struct TaskViewSheet: View {
 
     @ViewBuilder private func editorSection(_ section: CoreObject) -> some View {
         let fields = (section["fields"] as? [String] ?? []).filter { field in
-            ["description", "location", "assignedTo", "priority", "energyLevel", "timeEstimate", "contexts", "tags", "startTime", "dueDate", "reviewAt", "recurrence", "checklist"].contains(field)
+            ["description", "location", "assignedTo", "priority", "energyLevel", "timeEstimate", "contexts", "tags", "startTime", "dueDate", "reviewAt", "recurrence", "checklist", "attachments"].contains(field)
                 || (section.text("id") == "basic" && field == "status" && model.taskEditor.object("layout").flag("showStatusField"))
                 || (section.text("id") == "basic" && field == model.taskDestination.object("destination").text("fieldId"))
                 || (section.text("id") == "basic" && field == "section" && model.taskDestination.object("section").flag("visible"))
@@ -415,6 +417,8 @@ struct TaskViewSheet: View {
                 openCustom: { monthlyCustom = $0 })
         } else if field == "checklist" {
             checklistEditor
+        } else if field == "attachments" {
+            attachmentEditor
         } else if field == "contexts" || field == "tags" || field == "assignedTo" {
             TaskTokenField(model: model, palette: palette, field: field, beforeAction: endEditingBeforeAction)
                 .disabled(model.taskScheduleUpdating)
@@ -927,6 +931,115 @@ struct TaskViewSheet: View {
     private func label(_ text: String) -> some View {
         Text(text).rnFont(12, .semibold).foregroundStyle(palette.secondary)
             .accessibilityAddTraits(.isHeader)
+    }
+
+    private var attachmentEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            label(strings.text("attachments.title"))
+            ForEach(model.taskAttachmentRows.indices, id: \.self) { index in
+                let entry = model.taskAttachmentRows[index]
+                HStack(spacing: 8) {
+                    Image(systemName: entry.text("kind") == "link" ? "link" : "paperclip")
+                        .foregroundStyle(palette.secondary).accessibilityHidden(true)
+                    Text(entry.text("title")).rnFont(14).frame(maxWidth: .infinity, alignment: .leading)
+                    if entry.text("kind") == "link" {
+                        Button {
+                            endEditingBeforeAction()
+                            model.openTaskLinkSheet(entry.text("id"))
+                        } label: {
+                            Image(systemName: "pencil").frame(width: 44, height: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(strings.text("common.edit") + " " + entry.text("title"))
+                        .accessibilityIdentifier("task-attachment-edit-" + entry.text("id"))
+                        Button {
+                            endEditingBeforeAction()
+                            Task { await model.removeTaskLink(entry.text("id")) }
+                        } label: {
+                            Image(systemName: "trash").frame(width: 44, height: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.danger)
+                        .accessibilityLabel(strings.text("attachments.remove") + " " + entry.text("title"))
+                        .accessibilityIdentifier("task-attachment-remove-" + entry.text("id"))
+                    }
+                }
+                .frame(minHeight: 44).padding(.leading, 12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("task-attachment-row-" + entry.text("id"))
+            }
+            Button {
+                endEditingBeforeAction()
+                model.openTaskLinkSheet()
+            } label: {
+                Label(strings.text("attachments.addLink"), systemImage: "link")
+                    .rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44)
+            }
+            .buttonStyle(.plain).foregroundStyle(palette.tint)
+            .accessibilityIdentifier("task-attachment-add-link")
+        }
+    }
+
+    private var taskLinkDialog: some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 12) {
+                Text(strings.text("attachments.addLink")).rnFont(18, .bold)
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: Binding(get: { model.taskLinkSheet.text("text") },
+                                             set: { model.setTaskLinkText($0) }))
+                        .rnFont(16).scrollContentBackground(.hidden)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .frame(minHeight: 130).padding(8)
+                        .accessibilityLabel(strings.text("attachments.linkPlaceholder"))
+                        .accessibilityHint(strings.text("attachments.linkBatchHint"))
+                        .accessibilityIdentifier("task-attachment-link-input")
+                    if model.taskLinkSheet.text("text").isEmpty {
+                        Text(strings.text("attachments.linkPlaceholder"))
+                            .rnFont(16).foregroundStyle(palette.secondary)
+                            .padding(.horizontal, 13).padding(.vertical, 15)
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }
+                .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                Text(strings.text("attachments.linkBatchHint")).rnFont(13).foregroundStyle(palette.secondary)
+                if model.taskLinkSheetProtected {
+                    Text("Draft saved on this device").rnFont(13).foregroundStyle(palette.secondary)
+                        .accessibilityIdentifier("task-attachment-link-protected")
+                }
+                if model.taskRecoveryCheckpointError != nil {
+                    HStack {
+                        Text("This link draft has not been saved for recovery.")
+                            .rnFont(13).foregroundStyle(palette.danger)
+                        Button(strings.text("common.retry")) {
+                            Task { await model.retryTaskDraftCheckpoint() }
+                        }
+                        .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityIdentifier("task-attachment-link-checkpoint-error")
+                }
+                if let error = model.taskLinkSheetError {
+                    Text(error).rnFont(13).foregroundStyle(palette.danger)
+                        .accessibilityIdentifier("task-attachment-link-error")
+                }
+                HStack {
+                    Button(strings.text("common.cancel")) { model.cancelTaskLinkSheet() }
+                        .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityIdentifier("task-attachment-link-cancel")
+                    Spacer()
+                    Button(strings.text("common.save")) { Task { await model.submitTaskLinkSheet() } }
+                        .frame(minWidth: 44, minHeight: 44)
+                        .disabled(model.taskLinkSubmitting || model.taskLinkSheet.text("text").isEmpty)
+                        .accessibilityIdentifier("task-attachment-link-save")
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint)
+            }
+            .foregroundStyle(palette.text)
+            .padding(20).frame(maxWidth: 500)
+            .background(palette.card, in: RoundedRectangle(cornerRadius: 18))
+            .padding(20)
+        }
+        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder private func pills(_ items: [CoreObject]) -> some View {

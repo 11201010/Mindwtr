@@ -22414,4 +22414,109 @@ final class CoreHostTests: XCTestCase {
         await cold.close()
     }
 
+    func testTaskURLLinkDraftBoundaryAndPreparedColdReplay() async throws {
+        let id = try await seedDestinationTask()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let editor = try object(await writer.call("editorModel", argumentsJSON: json([id])))
+        let view = try object(await writer.call("taskView", argumentsJSON: json([json(["id": id])])))
+        let base = try XCTUnwrap(view["attachmentsBase"] as? [[String: Any]])
+        XCTAssertEqual(base.count, 1)
+        let owner: [String: Any] = ["kind": "task", "taskId": id, "attachments": base]
+        let list = try object(await writer.call("taskAttachmentList", argumentsJSON: json([json(["owner": owner])])))
+        XCTAssertEqual((list["rows"] as? [[String: Any]])?.count, 1)
+        await expectFailure("Attachment draft command failed") {
+            _ = try await writer.call("taskAttachmentRemove", argumentsJSON: json([json([
+                "owner": owner, "requestId": UUID().uuidString.lowercased(), "attachmentId": "keep-file"])]))
+        }
+        let secret = "swift-link-secret-119"
+        let invalid = try object(await writer.call("taskAttachmentLinks", argumentsJSON: json([json([
+            "owner": owner, "requestId": UUID().uuidString.lowercased(),
+            "text": "https://example.com/?token=\(secret)\ninvalid"])])))
+        XCTAssertEqual(invalid["kind"] as? String, "refused")
+        XCTAssertFalse(try json(invalid).contains(secret))
+        let added = try object(await writer.call("taskAttachmentLinks", argumentsJSON: json([json([
+            "owner": owner, "requestId": UUID().uuidString.lowercased(),
+            "text": "Example | https://example.com/?token=\(secret)"])])))
+        XCTAssertEqual(added["kind"] as? String, "saved")
+        let value = try XCTUnwrap(added["attachments"] as? [[String: Any]])
+        XCTAssertEqual(value.count, 2)
+        XCTAssertEqual(try json(JSONSerialization.jsonObject(with: Data(XCTUnwrap(storedTask(id)["attachments"] as? String).utf8))), try json(base))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+
+        var forged = value
+        forged[0]["uri"] = "file:///forged.txt"
+        let request: [String: Any] = ["id": id, "base": [:], "patch": [:],
+                                      "scheduleBase": try XCTUnwrap(editor["scheduleBase"]),
+                                      "attachments": ["base": base, "value": value]]
+        var bad = request
+        bad["attachments"] = ["base": base, "value": forged]
+        await expectFailure("INVALID_INPUT") { _ = try await writer.call("saveDraft", argumentsJSON: json([json(bad)])) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected link COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("saveDraft", argumentsJSON: json([json(request)])) }
+        let frozen = try pendingDraftCommit()
+        XCTAssertEqual(try json(XCTUnwrap(frozen["request"])), try json(request))
+        let journalBefore = try Data(contentsOf: journal)
+        await writer.close()
+        let replay = host(bundleURL: try dateBundle(at: "2036-10-05T12:00:00.000Z", rejectingPreparation: true))
+        _ = try await replay.start()
+        let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(storedTask(id)["attachments"] as? String).utf8)) as? [[String: Any]])
+        XCTAssertEqual(saved.count, 2)
+        XCTAssertEqual(saved[0]["uri"] as? String, base[0]["uri"] as? String)
+        XCTAssertEqual(saved[1]["id"] as? String, value[1]["id"] as? String)
+        XCTAssertEqual(saved[1]["uri"] as? String, value[1]["uri"] as? String)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertFalse(String(decoding: journalBefore, as: UTF8.self).isEmpty)
+        await replay.close()
+    }
+
+    func testTaskURLLinkRawSheetCheckpointKeepsOriginalBaseAcrossColdResume() async throws {
+        let id = try await seedDestinationTask()
+        let writer = host()
+        _ = try await writer.start()
+        let view = try object(await writer.call("taskView", argumentsJSON: json([json(["id": id])])))
+        let base = try XCTUnwrap(view["attachmentsBase"] as? [[String: Any]])
+        let owner: [String: Any] = ["kind": "task", "taskId": id, "attachments": base]
+        let added = try object(await writer.call("taskAttachmentLinks", argumentsJSON: json([json([
+            "owner": owner, "requestId": UUID().uuidString.lowercased(),
+            "text": "First | https://example.com/first"])])))
+        let draft = try XCTUnwrap(added["attachments"] as? [[String: Any]])
+        let secret = "unfinished-sheet-secret-119"
+        let payload: [String: Any] = ["version": 2, "taskID": id, "attachmentsOwned": true,
+                                      "attachmentsBase": base, "attachments": draft,
+                                      "linkSheet": ["id": UUID().uuidString.lowercased(),
+                                                    "text": "https://example.com/?token=\(secret)"]]
+        let session = UUID().uuidString.lowercased()
+        try await writer.checkpointEditorDraft(EditorDraftSnapshot(
+            sessionID: session, taskID: id, generation: 1, payloadJSON: json(payload)))
+        await writer.close()
+
+        let synced: [String: Any] = ["id": UUID().uuidString.lowercased(), "kind": "link", "title": "Synced",
+                      "uri": "https://example.com/synced", "createdAt": "2026-01-02T12:00:00.000Z",
+                      "updatedAt": "2026-01-02T12:00:00.000Z"]
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE tasks SET attachments = ? WHERE id = ?", parametersJSON: json([json(base + [synced]), id]))
+        sqlite.close()
+
+        let cold = host()
+        _ = try await cold.start()
+        let pending = try await cold.readEditorDraft()
+        let restored = try XCTUnwrap(pending)
+        XCTAssertEqual(restored.sessionID, session)
+        let recoveredPayload = try object(restored.payloadJSON)
+        XCTAssertEqual(try json(XCTUnwrap(recoveredPayload["attachmentsBase"])), try json(base))
+        XCTAssertEqual(try json(XCTUnwrap(recoveredPayload["attachments"])), try json(draft))
+        XCTAssertEqual((recoveredPayload["linkSheet"] as? [String: Any])?["text"] as? String,
+                       "https://example.com/?token=\(secret)")
+        let resume = try object(await cold.call("taskEditorResumeCheck", argumentsJSON: json([json([
+            "id": id, "touchedBase": [:], "attachmentsBase": base, "attachments": draft])])))
+        XCTAssertEqual(resume["kind"] as? String, "ready")
+        XCTAssertEqual((resume["freshAttachmentsBase"] as? [[String: Any]])?.count, 2)
+        XCTAssertEqual(try json(XCTUnwrap(recoveredPayload["attachmentsBase"])), try json(base))
+        await cold.close()
+    }
+
 }

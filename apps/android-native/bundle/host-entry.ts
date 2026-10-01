@@ -250,6 +250,30 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
 };
+const editorJson = (json: string): unknown => {
+    try { if (json.length <= 2_000_000) return JSON.parse(json); }
+    catch { /* Never expose a parser's excerpt of a credential-bearing URL. */ }
+    throw new Error('Invalid bounded editor request');
+};
+const taskAttachmentInput = (json: string, fields: string[], optional: string[] = []): Record<string, unknown> => {
+    const input = editorJson(json);
+    if (!input || typeof input !== 'object' || Array.isArray(input)
+        || Object.keys(input).some((field) => !fields.includes(field) && !optional.includes(field))
+        || fields.some((field) => !(field in input)))
+        throw new Error('Invalid task attachment request');
+    const owner = (input as Record<string, unknown>).owner;
+    if (!owner || typeof owner !== 'object' || Array.isArray(owner)
+        || Object.keys(owner).length !== 3 || (owner as Record<string, unknown>).kind !== 'task'
+        || typeof (owner as Record<string, unknown>).taskId !== 'string'
+        || !Array.isArray((owner as Record<string, unknown>).attachments))
+        throw new Error('A task attachment owner is required');
+    const editing = (input as Record<string, unknown>).editing;
+    if (editing !== undefined && editing !== null && (typeof editing !== 'object' || Array.isArray(editing)
+        || Object.keys(editing).length !== 3
+        || ['attachmentId', 'title', 'uri'].some((field) => typeof (editing as Record<string, unknown>)[field] !== 'string')))
+        throw new Error('Invalid task link edit');
+    return input as Record<string, unknown>;
+};
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
     | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
     | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting'
@@ -773,7 +797,31 @@ globalThis.MindwtrHost = {
     taskView(json: string): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(contract.getTaskView(JSON.parse(json)));
+            return unwrap(contract.getTaskView(editorJson(json) as Parameters<typeof contract.getTaskView>[0]));
+        });
+    },
+    taskAttachmentList(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getAttachmentList(taskAttachmentInput(json, ['owner']) as Parameters<typeof contract.getAttachmentList>[0]));
+        });
+    },
+    taskAttachmentLinks(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            const input = taskAttachmentInput(json, ['owner', 'requestId', 'text'], ['editing']);
+            return unwrap(await contract.submitAttachmentLinks({
+                ...input, urlOnly: true,
+            } as Parameters<typeof contract.submitAttachmentLinks>[0]));
+        });
+    },
+    taskAttachmentRemove(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            const input = taskAttachmentInput(json, ['owner', 'requestId', 'attachmentId']);
+            return unwrap(await contract.removeAttachment({
+                ...input, urlOnly: true,
+            } as Parameters<typeof contract.removeAttachment>[0]));
         });
     },
     editorModel(id: string): string {
@@ -792,7 +840,7 @@ globalThis.MindwtrHost = {
     taskEditorResumeCheck(json: string): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(await contract.checkTaskEditorResume(JSON.parse(json)));
+            return unwrap(await contract.checkTaskEditorResume(editorJson(json) as Parameters<typeof contract.checkTaskEditorResume>[0]));
         });
     },
     destinationPicker(json: string): string {
@@ -1883,32 +1931,32 @@ globalThis.MindwtrHost = {
     draftPrepare(json: string): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(await contract.prepareTaskDraftSaveV2(JSON.parse(json)));
+            return unwrap(await contract.prepareTaskDraftSaveV2(editorJson(json) as Parameters<typeof contract.prepareTaskDraftSaveV2>[0]));
         });
     },
     /** Pure check for both legacy v1 and exact v2 Task Editor journals. */
     draftValidate(json: string): string {
-        return submit(async () => unwrap(contract.validatePreparedTaskDraftSave(JSON.parse(json))));
+        return submit(async () => unwrap(contract.validatePreparedTaskDraftSave(editorJson(json) as Parameters<typeof contract.validatePreparedTaskDraftSave>[0])));
     },
     /** Commit only the exact prepared editor envelope; recovery never prepares again. */
     draftCommit(json: string): string {
-        return submit(async () => taskResult('saveTaskDraft', await contract.commitPreparedTaskDraftSave(JSON.parse(json))));
+        return submit(async () => taskResult('saveTaskDraft', await contract.commitPreparedTaskDraftSave(editorJson(json) as Parameters<typeof contract.commitPreparedTaskDraftSave>[0])));
     },
     /** Pure checklist edit and field model; only the host's prepared save writes. */
     checklistEdit(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.editTaskChecklist(JSON.parse(json))); });
     },
     checklistSavePrepare(json: string): string {
-        return submit(async () => { requireSaved(); return unwrap(await contract.prepareTaskChecklistSave(JSON.parse(json))); });
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareTaskChecklistSave(editorJson(json) as Parameters<typeof contract.prepareTaskChecklistSave>[0])); });
     },
     checklistResetPrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.prepareTaskChecklistReset(JSON.parse(json))); });
     },
     checklistPreparedValidate(json: string): string {
-        return submit(async () => unwrap(contract.validatePreparedTaskChecklistWrite(JSON.parse(json))));
+        return submit(async () => unwrap(contract.validatePreparedTaskChecklistWrite(editorJson(json) as Parameters<typeof contract.validatePreparedTaskChecklistWrite>[0])));
     },
     checklistPreparedCommit(json: string): string {
-        return submit(async () => unwrap(await contract.commitPreparedTaskChecklistWrite(JSON.parse(json))));
+        return submit(async () => unwrap(await contract.commitPreparedTaskChecklistWrite(editorJson(json) as Parameters<typeof contract.commitPreparedTaskChecklistWrite>[0])));
     },
     /** The capture popup (RN's quick capture sheet): an empty draft with the starting options. */
     captureOpen(): string {

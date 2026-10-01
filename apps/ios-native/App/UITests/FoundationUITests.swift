@@ -16,6 +16,119 @@ final class FoundationUITests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    private func openTask119(_ library: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        boardEnabled(app.buttons["Task119 Links"], timeout: 30)
+        app.buttons["Task119 Links"].tap(); boardTap(app, "task-mode-edit")
+        return app
+    }
+
+    private func revealTask119(_ app: XCUIApplication, _ element: XCUIElement) {
+        revealPagedElement(app, element, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
+    }
+
+    private func addTask119Links(_ app: XCUIApplication, _ text: String) {
+        revealTask119(app, app.buttons["task-attachment-add-link"])
+        boardTap(app, "task-attachment-add-link")
+        let input = app.textViews["task-attachment-link-input"]
+        boardEnabled(input); input.tap(); input.typeText(text)
+        boardTap(app, "task-attachment-link-save")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: input)
+        waitForExpectations(timeout: 15)
+    }
+
+    func testTaskAttachmentLinksCombinedSaveAndRestart() {
+        let app = openTask119("84d24b9e-5f9c-4a7c-9883-38c2972b4235")
+        replaceProjectNotesText(app.textFields["task-editor-title"], with: "Task119 Saved")
+        let checklist = app.textFields["task-checklist-input-0"]
+        revealTask119(app, checklist)
+        replaceProjectNotesText(checklist, with: "Task119 checklist")
+        revealTask119(app, app.buttons["task-attachment-add-link"])
+        boardTap(app, "task-attachment-add-link")
+        let input = app.textViews["task-attachment-link-input"]
+        boardEnabled(input); input.tap()
+        input.typeText("Guide | https://example.com/guide\nnot a valid url")
+        boardTap(app, "task-attachment-link-save")
+        boardEnabled(app.staticTexts["task-attachment-link-error"])
+        XCTAssertTrue(input.exists)
+        replaceProjectNotesText(input, with: "Guide | https://example.com/guide\nSecond | https://example.com/second")
+        boardTap(app, "task-attachment-link-save")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: input)
+        waitForExpectations(timeout: 15)
+        XCTAssertFalse(app.buttons["task-attachment-edit-task119-file"].exists)
+        XCTAssertFalse(app.buttons["task-attachment-remove-task119-file"].exists)
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        boardTap(app, "task-editor-save")
+        boardEnabled(app.buttons["Task119 Saved"], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["Task119 Saved"], timeout: 30)
+        app.buttons["Task119 Saved"].tap(); boardTap(app, "task-mode-edit")
+        revealTask119(app, app.buttons["task-attachment-add-link"])
+        XCTAssertTrue(app.staticTexts["Guide"].exists)
+        XCTAssertTrue(app.staticTexts["Second"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Task URL links saved after restart"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "task-view-close")
+        XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+        app.terminate()
+    }
+
+    func testTaskAttachmentLinksEditRemoveSave() {
+        let app = openTask119("feef4d85-2ba5-404b-83f4-b23876529464")
+        revealTask119(app, app.buttons["task-attachment-add-link"])
+        let edit = app.buttons["task-attachment-edit-task119-edit"]
+        revealTask119(app, edit); edit.tap()
+        let input = app.textViews["task-attachment-link-input"]
+        boardEnabled(input)
+        XCTAssertEqual(input.value as? String, "Existing guide | https://example.com/original")
+        replaceProjectNotesText(input, with: "Edited guide | https://example.com/edited")
+        boardTap(app, "task-attachment-link-save")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: input)
+        waitForExpectations(timeout: 15)
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["task-editor-save"], timeout: 30)
+        XCTAssertFalse(app.textViews["task-attachment-link-input"].exists)
+        let remove = app.buttons["task-attachment-remove-task119-remove"]
+        revealTask119(app, remove); remove.tap()
+        addTask119Links(app, "Guide | https://example.com/guide")
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        boardTap(app, "task-editor-save")
+        boardEnabled(app.buttons["Task119 Links"], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["Task119 Links"], timeout: 30)
+        app.buttons["Task119 Links"].tap(); boardTap(app, "task-mode-edit")
+        revealTask119(app, app.buttons["task-attachment-add-link"])
+        XCTAssertTrue(app.staticTexts["Edited guide"].exists)
+        XCTAssertFalse(app.buttons["task-attachment-remove-task119-remove"].exists)
+        boardTap(app, "task-view-close"); app.terminate()
+    }
+
+    func testTaskAttachmentRawSheetColdRecoveryAndDiscard() {
+        let app = openTask119("7d2d5c29-6548-4a62-9d68-4271b2904222")
+        addTask119Links(app, "Guide | https://example.com/guide")
+        revealTask119(app, app.buttons["task-attachment-add-link"])
+        boardTap(app, "task-attachment-add-link")
+        let input = app.textViews["task-attachment-link-input"]
+        let raw = "Unfinished guide | https://example.com/unfinished\npartial"
+        boardEnabled(input); input.tap(); input.typeText(raw)
+        boardEnabled(app.staticTexts["task-attachment-link-protected"], timeout: 15)
+        app.terminate(); app.launch()
+        boardEnabled(input, timeout: 30)
+        XCTAssertEqual(input.value as? String, raw)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Raw link sheet restored after process death"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "task-attachment-link-cancel")
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard")
+        boardEnabled(app.buttons["Task119 Links"], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["Task119 Links"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate()
+    }
+
     func testTaskEditorAutomaticDirectionSaveAndRestart() {
         taskEditorAutomaticDirection(library: "3f44cd1d-3f44-46aa-bb76-bd6d77b63034", save: true)
     }

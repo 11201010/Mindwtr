@@ -18,6 +18,7 @@ import { countFocusedTasksBeforeBoundary } from './task-utils';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
 import { isStatusListTaskReadOnly } from './menu-views-model';
+import { mergeNativeTaskLinkHalf } from './native-host-contract-attachments';
 import { projectNextRecurringTask, type RecurrenceProjection } from './recurrence';
 import { generateUUID } from './uuid';
 
@@ -88,6 +89,7 @@ const isSave = (value: NativeChecklistWriteRequest): value is NativeChecklistSav
 const draftRequest = (request: NativeChecklistSaveRequest): NativeTaskDraftSaveRequest => ({
     id: request.id, base: request.base, patch: request.patch, scheduleBase: request.scheduleBase,
     ...(request.recurrenceBase ? { recurrenceBase: request.recurrenceBase } : {}),
+    ...(request.attachments ? { attachments: request.attachments } : {}),
 });
 const readRequest = (value: unknown, validateField: (field: TaskDraftField, value: unknown) => boolean): NativeChecklistWriteRequest | null => {
     const input = detach(value);
@@ -102,10 +104,11 @@ const readRequest = (value: unknown, validateField: (field: TaskDraftField, valu
     const base = readChecklist(input.checklist.base, true);
     const selected = readChecklist(input.checklist.value, true);
     const bare = { id: input.id, base: input.base, patch: input.patch, scheduleBase: input.scheduleBase,
-        ...(own(input, 'recurrenceBase') ? { recurrenceBase: input.recurrenceBase } : {}) };
-    const parsed = readNativeTaskDraftSaveRequest(bare, validateField, true);
+        ...(own(input, 'recurrenceBase') ? { recurrenceBase: input.recurrenceBase } : {}),
+        ...(own(input, 'attachments') ? { attachments: input.attachments } : {}) };
+    const parsed = readNativeTaskDraftSaveRequest(bare, validateField, true, false, true);
     if (!base || !selected || !parsed || !exact(input, ['id', 'requestId', 'base', 'patch', 'scheduleBase', 'checklist',
-        ...(parsed.recurrenceBase ? ['recurrenceBase'] : [])])) return null;
+        ...(parsed.recurrenceBase ? ['recurrenceBase'] : []), ...(parsed.attachments ? ['attachments'] : [])])) return null;
     return { ...parsed, requestId: input.requestId, checklist: { base, value: selected } };
 };
 
@@ -129,12 +132,16 @@ const validClears = (value: Partial<Task>, fields: string[]) => fields.every((fi
     typeof field === 'string' && field.length <= 100 && !own(value, field))
     && new Set(fields).size === fields.length;
 const directSaveUpdates = (source: Task, request: NativeChecklistSaveRequest): Partial<Task> | null => {
+    const attachments = request.attachments
+        ? mergeNativeTaskLinkHalf(source.attachments ?? [], request.attachments) : source.attachments;
+    if (attachments === null) return null;
     const draft = applyTaskDraftPatch(createTaskDraft(source), nativeTaskDraftPatchValues(draftRequest(request)));
     // Swift's sorted JSON keys must not turn an unchanged checklist into a draft edit.
     const editSource = { ...source, checklist: toChecklist(source.checklist) };
     const updates = buildTaskEditUpdatePatch({ draft, checklist: request.checklist.value,
-        attachments: source.attachments }, editSource);
+        attachments }, editSource);
     if (!updates) return null;
+    if (request.attachments && !same(source.attachments ?? [], attachments)) updates.attachments = attachments;
     for (const field of ['startTime', 'dueDate', 'relativeStartOffset', 'reviewAt'] as const) {
         if (own(request.patch, field)) Object.assign(updates, { [field]: draft[field] || undefined });
     }
@@ -425,8 +432,8 @@ export function createTaskChecklistSaveMethods(deps: {
                 return fail('INVALID_INPUT', 'Checklist effect cannot produce a valid prepared journal');
             }
             return { ok: true, value: { kind: 'prepared', prepared: frozen } };
-        } catch (error) {
-            return fail('INVALID_INPUT', error instanceof Error ? error.message : 'Checklist could not be prepared');
+        } catch {
+            return fail('INVALID_INPUT', 'Checklist could not be prepared');
         }
     };
     return {
