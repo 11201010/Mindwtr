@@ -9,7 +9,8 @@
 //   store, and node:http for its fetch: core running as a second device, bound exactly as the Android host binds it.
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createServer, request as httpRequest } from 'node:http';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -125,7 +126,7 @@ export const startCloud = async ({ repo, port, token, dataDir }) => {
  * only), and CoreHost's pumps: [call] waits on its own operation as callAsync does; an idle pump runs timers and settles
  * answers between calls, as CoreHost's does.
  */
-export const hostDevice = async ({ bundle, name, log = () => {} }) => {
+export const hostDevice = async ({ bundle, name, log = () => {}, filesRoot }) => {
     const { DatabaseSync } = await import('node:sqlite');
     const database = new DatabaseSync(':memory:');
     const keyValue = new Map();
@@ -204,6 +205,11 @@ export const hostDevice = async ({ bundle, name, log = () => {} }) => {
             setTimeout(() => answers.push({ json: JSON.stringify({ id, value: op === 'get' ? secrets.get(key) ?? null : null }) }), 2);
             return id;
         },
+        // HostFiles.kt's attachment file port and HostInstaller.kt's install and hash, on a folder of this computer: the second
+        // device's files/ and cache/ (each call answered through the pump, as on the phone).
+        fileDirectories: () => JSON.stringify({ document: `file://${files.dir}/`, cache: `file://${files.cache}/` }),
+        fileCall: (json) => files.answer(json, files.call),
+        installerCall: (json) => files.answer(json, files.install),
         ioNext: () => {
             const next = answers.shift();
             taken = next?.body ?? '';
@@ -211,6 +217,74 @@ export const hostDevice = async ({ bundle, name, log = () => {} }) => {
         },
         ioBody: () => taken,
     };
+    const root = filesRoot ?? mkdtempSync(resolve(tmpdir(), `mindwtr-${name}-`));
+    const files = {
+        dir: resolve(root, 'files'),
+        cache: resolve(root, 'cache'),
+        path: (uri) => {
+            if (!uri.startsWith('file:///')) throw new Error('Not an app file URI');
+            const path = decodeURIComponent(uri.slice('file://'.length));
+            if (!path.startsWith(`${root}/`)) throw new Error('Not an app file URI');
+            return path;
+        },
+        missing: () => Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }),
+        call: (request, bytes) => {
+            if (request.op === 'sha256') return { value: createHash('sha256').update(bytes ?? Buffer.alloc(0)).digest('hex') };
+            const path = files.path(request.uri);
+            switch (request.op) {
+                case 'sha256File': if (!existsSync(path)) throw files.missing(); return { value: createHash('sha256').update(readFileSync(path)).digest('hex') };
+                case 'getInfo': {
+                    if (!existsSync(path)) return { value: { exists: false, isDirectory: false, uri: request.uri } };
+                    const info = statSync(path);
+                    return { value: { exists: true, isDirectory: info.isDirectory(), uri: request.uri, size: info.isDirectory() ? 0 : info.size, modificationTime: Math.floor(info.mtimeMs) / 1000 } };
+                }
+                case 'makeDirectory': mkdirSync(path, { recursive: true }); return { value: null };
+                case 'readDirectory': if (!existsSync(path)) throw files.missing(); return { value: readdirSync(path) };
+                case 'readBytes': if (!existsSync(path)) throw files.missing(); return { bytes: readFileSync(path) };
+                case 'readBytesRange': if (!existsSync(path)) throw files.missing(); return { bytes: readFileSync(path).subarray(request.position, request.position + request.length) };
+                case 'writeBytes': writeFileSync(path, bytes ?? Buffer.alloc(0)); return { value: null };
+                case 'copy': copyFileSync(path, files.path(request.to)); return { value: null };
+                case 'move': if (!existsSync(path)) throw files.missing(); renameSync(path, files.path(request.to)); return { value: null };
+                case 'delete': rmSync(path, { recursive: true, force: true }); return { value: null };
+                default: throw new Error(`Unsupported file call ${request.op}`);
+            }
+        },
+        // RN's installer's outcomes for a fresh install: the staged bytes become the target unless another generation is there.
+        install: (request) => {
+            const sha = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
+            if (request.op === 'hash') {
+                const path = files.path(request.path.startsWith('file://') ? request.path : `file://${request.path}`);
+                const info = statSync(path);
+                return { value: { sha256: sha(path), size: info.size, modificationTimeMs: info.mtimeMs } };
+            }
+            const staged = files.path(request.staged.startsWith('file://') ? request.staged : `file://${request.staged}`);
+            const target = files.path(request.target.startsWith('file://') ? request.target : `file://${request.target}`);
+            if (sha(staged) !== request.expectedDownloadSha256) throw new Error('Staged attachment changed before native snapshot');
+            if (existsSync(target) && (request.expected.kind === 'absent' ? sha(target) !== request.expectedDownloadSha256 : sha(target) !== request.expected.sha256)) {
+                return { value: { status: 'conflict', preservedPath: `file://${staged}` } };
+            }
+            renameSync(staged, target);
+            return { value: { status: 'installed' } };
+        },
+        answer: (json, run) => {
+            const id = String(++ids);
+            setTimeout(() => {
+                const request = JSON.parse(json);
+                const bytes = request.base64 === undefined ? undefined : Buffer.from(request.base64, 'base64');
+                delete request.base64;
+                try {
+                    const result = run(request, bytes);
+                    answers.push(result.bytes ? { json: JSON.stringify({ id, value: null, body: true }), body: Buffer.from(result.bytes).toString('base64') }
+                        : { json: JSON.stringify({ id, value: result.value ?? null }) });
+                } catch (error) {
+                    answers.push({ json: JSON.stringify({ id, error: error.message }) });
+                }
+            }, 1);
+            return id;
+        },
+    };
+    mkdirSync(files.dir, { recursive: true });
+    mkdirSync(files.cache, { recursive: true });
     const context = vm.createContext({ console: {}, Intl: undefined, __mindwtrNative: bridge });
     vm.runInContext(readFileSync(bundle, 'utf8'), context);
     const host = context.MindwtrHost;
@@ -230,7 +304,7 @@ export const hostDevice = async ({ bundle, name, log = () => {} }) => {
         throw new Error(`${name}: ${method} timed out`);
     };
     const device = {
-        name, keyValue, secrets, events, lines,
+        name, keyValue, secrets, events, lines, files,
         call,
         stop: () => { clearInterval(pump); database.close(); },
         /** Boots on an empty database, reports the network online, and starts sync as ProcessCoreHost does. */

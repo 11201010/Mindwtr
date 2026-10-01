@@ -53,6 +53,8 @@ class WriteJournal(
             "disconnectDropbox" to "{requestId}", "runSyncEncryptionAction" to "{}",
             // Settings › AI's key and base URL: never on disk either (UNJOURNALED).
             "setAIKey" to "{requestId}", "setAIEndpoint" to "{requestId}",
+            // Attachments: Add file and Add photo, the link sheet's Save, Remove (a project's written at once through receipts).
+            "attachmentAddFile" to "{requestId}", "attachmentLinks" to "{requestId}", "attachmentRemove" to "{requestId,attachmentId}",
         ) + listOf("archiveAction", "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction",
             "boardCreate", "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd",
             "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "manageEditor", "manageDelete", "syncPreference", "setAISetting",

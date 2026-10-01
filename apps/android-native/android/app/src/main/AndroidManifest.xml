@@ -30,6 +30,18 @@
                 android:resource="@xml/diagnostics_paths" />
         </provider>
 
+        <!-- An attachment opened in another app or shared (Attachments.kt) is handed over under RN's provider authority
+             (expo-file-system's FileSystemFileProvider); only files/attachments/ is reachable, and only with a granted URI. -->
+        <provider
+            android:name=".AttachmentFileProvider"
+            android:authorities="${applicationId}.FileSystemFileProvider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/attachment_paths" />
+        </provider>
+
         <!-- singleTask, as RN's MainActivity: a link, share or note sent while the app runs reaches onNewIntent in the app's
              own task. Not exported: only its alias below, with RN's filters, starts it from outside the app. -->
         <activity

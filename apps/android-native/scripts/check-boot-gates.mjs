@@ -508,7 +508,7 @@ assert.match(rowUi, /val onDelete = actions\?\.delete\?\.takeIf \{ canEdit && !s
 assert.doesNotMatch(code(rowUi), /SwipeToDismissBox|combinedClickable\([^)]*\)[^\n]*openEditor/, 'no one-gesture swipe; the row\'s own long-press stays free');
 // Every failed command holds its exact retry, except an update or editor save core refused before writing.
 assert.match(model, /internal val UPDATE_REFUSALS = listOf\("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND"\)/);
-assert.match(model, /private val REFUSABLE = setOf\("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker"\) \+ MENU_KINDS \+ CAPTURE_MODAL_KINDS/);
+assert.match(model, /private val REFUSABLE = setOf\("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker"\) \+ MENU_KINDS \+ CAPTURE_MODAL_KINDS \+ ATTACHMENT_KINDS/);
 assert.match(model, /val refused = message\.startsWith\("STALE_REVISION"\) \|\| \(action\?\.kind in REFUSABLE && UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}\)/);
 // A command refused as stale wrote nothing: it is never owed (no retry loop on a revision that can never match), its lists are
 // read again, and nothing shows but the conflict line of the editor save, the status menu and an open draft's Save.
@@ -573,10 +573,13 @@ assert.match(editorUi, /put\("bases", JSONObject\(edited\.keys\.associateWith \{
 // An uncertain save's exact request is on disk before the call; after process death it is sent again before the draft unlocks.
 assert.match(model, /val action = saveDraftAction\(current\)\s+pendingSave = action\s+keepEditor\(current\)\s+sendDraft\(action\)/);
 // The pending save keeps its request UUID, so the re-send after process death answers core's receipt for the first send.
-assert.match(model, /pendingSave\?\.let \{\s+state\.put\("pending", JSONObject\(\)\.put\("base", JSONObject\(it\.base\)\)\.put\("patch", JSONObject\(it\.patch\)\)\.put\("checklist", it\.title\)\.put\("requestId", it\.requestId\)\)\s+\}\s+drafts\.write\(key, state\)/);
-assert.match(model, /val action = FailedAction\("saveDraft", restored\.id, pending\.optString\("checklist"\), base = map\("base"\), patch = map\("patch"\),\s+requestId = pending\.optString\("requestId"\)\)\s+failedAction = action\s+sendDraft\(action\)/);
+assert.match(model, /pendingSave\?\.let \{\s+state\.put\("pending", JSONObject\(\)\.put\("base", JSONObject\(it\.base\)\)\.put\("patch", JSONObject\(it\.patch\)\)\.put\("checklist", it\.title\)\.put\("requestId", it\.requestId\)\s+\.put\("attachments", it\.attachments\)\)\s+\}\s+drafts\.write\(key, state\)/);
+assert.match(model, /val action = FailedAction\("saveDraft", restored\.id, pending\.optString\("checklist"\), base = map\("base"\), patch = map\("patch"\),\s+requestId = pending\.optString\("requestId"\), attachments = pending\.optString\("attachments"\)\)\s+failedAction = action\s+sendDraft\(action\)/);
 // Unresolved typed text is an unsaved edit: Close asks, and Save waits for core, then saves.
-assert.match(editorUi, /val dirty get\(\) = patch\.isNotEmpty\(\) \|\| waiting \|\| checklistChanged/);
+assert.match(editorUi, /val dirty get\(\) = patch\.isNotEmpty\(\) \|\| waiting \|\| checklistChanged \|\| attachmentsChanged/);
+// The draft's attachments (pass A2) count as RN's areDraftAttachmentsDirty counts them: id, uri, title and removal.
+assert.match(editorUi, /listOf\(it\.getString\("id"\), it\.optString\("uri"\), it\.optString\("title"\), it\.optString\("deletedAt"\)\)/);
+assert.match(readFileSync(resolve(app, '../../packages/core/src/task-draft.ts'), 'utf8'), /`\$\{attachment\.id\}\\0\$\{attachment\.uri \?\? ''\}\\0\$\{attachment\.title \?\? ''\}\\0\$\{attachment\.deletedAt \?\? ''\}`/);
 assert.match(editorUi, /val leave = \{ if \(editor\.readOnly \|\| \(!editor\.dirty && !editsPending\)\) closeEditor\(\) else confirmLeave = true \}/);
 assert.match(model, /if \(current\.waiting \|\| editsPending\) \{ saveQueued = true; return \}/);
 assert.match(model, /if \(saveQueued && !resolved\.waiting && !editsPending\) \{ saveQueued = false; saveEditor\(\) \}/);
@@ -605,7 +608,11 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\), HostFiles\(app\.filesDir, app\.cacheDir\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\), HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+// RN's installer journal recovery runs at boot after the validated load and before the journal's replay, the first write that
+// can reach files/attachments (pass A2); it is RN's own Kotlin, compiled as it is.
+assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s*(?:\/\/[^\n]*\n\s*)*recoverInstalls\(installer\)\s*if \(replay\(runtime\)\) recovered\(app, runtime\)/);
+assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /include\(listOf\("AttachmentFileInstallerCore", "AndroidAttachmentInstallerFileOps"\)\.map \{ "main\/java\/\$installer\/\$it\.kt" \}\)/);
 // The Kotlin host journals every write, and says so at boot: core then requires each write's replay tokens. Only this
 // flag sets 'required'; iOS boots and recovers with none.
 assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)/);
@@ -679,7 +686,7 @@ assert.match(model, /pending\.editor\?\.let\(::keepEditor\)/);
 assert.match(model, /focus = pending\.focus\s+projects = pending\.projects\s+keepProject\(pending\.project\?\.projectId\)\s+project = pending\.project\s+show\(pending\.screen\)/);
 assert.equal(model.match(/ProcessCoreHost\.failure\?\.let \{ pending -> ui \{ host = runtime; restore\(pending, storedProcessing, storedCapture\) \}/g).length, 2);
 assert.match(model, /runtime\.completeTask\(id, taskRevision\)\s+acknowledged\(action\)/);
-assert.match(model, /runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\), action\.title, action\.requestId\)\s+\} catch \(failure: Exception\) \{[\s\S]{0,300}?throw failure\s+\}\s+acknowledged\(action\)\s+ui \{ closeEditor\(\) \}/);
+assert.match(model, /runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\), action\.title, action\.attachments, action\.requestId\)\s+\} catch \(failure: Exception\) \{[\s\S]{0,300}?throw failure\s+\}\s+acknowledged\(action\)\s+(?:\/\/[^\n]*\s+)*if \(action\.attachments\.isNotEmpty\(\)\) attachments\.settleSaved\(runtime, action\.id, JSONObject\(action\.attachments\)\)\s+ui \{ closeEditor\(settle = false\) \}/);
 // The new contract commands: each is a perform(action) with its exact retry, acknowledged only after core's reply.
 for (const [call, fn] of [
     ['runtime\\.setTaskFocus\\(id, focused, taskRevision\\)', 'fun setTaskFocus('], ['runtime\\.setProjectFocus\\(id, focused, projectRevision\\)', 'fun setProjectFocus('],
@@ -722,7 +729,10 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 26, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent and the queue\'s file calls: each guarded');
+assert.equal(bridgeCallbacks.length, 29, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls and the attachment file and installer calls: each guarded');
+// The attachment file port and the installer only start their call on the engine thread; HostIo's files thread runs it.
+assert(bridgeCallbacks.includes('bridge.setProperty("fileCall", guarded { args -> io.file(args[0] as String, files::call) })'));
+assert(bridgeCallbacks.includes('bridge.setProperty("installerCall", guarded { args -> io.file(args[0] as String, installer::call) })'));
 // The JS host's events (sync's badge and cycles, an automatic sync's warning): handed on as text, a listener's failure swallowed.
 assert(bridgeCallbacks.includes('bridge.setProperty("hostEvent", guarded { args -> runCatching { onEvent?.invoke(args[0] as String) }; null })'));
 for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\w+", guarded \{/);
@@ -771,7 +781,9 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.equal(hostIo.match(/calls\.remove\(id\)/g).length, 3);
     assert.match(hostIo, /fun close\(\) \{\s*calls\.values\.forEach \{ it\.cancel\(\) \}/);
     assert.match(hostIo, /secretThread\.execute \{\s*answers\.add\(runCatching \{/, 'a secret call runs on the secrets thread');
-    assert.equal(hostIo.match(/answers\.add\(/g).length, 3, 'the answer queue is the only way back');
+    // A file call (the attachment file port, the installer) runs on the files thread, its request read there too.
+    assert.match(hostIo, /fileThread\.execute \{\s*answers\.add\(runCatching \{\s*val request = JSONObject\(json\)/, 'a file call runs on the files thread');
+    assert.equal(hostIo.match(/answers\.add\(/g).length, 4, 'the answer queue is the only way back');
     // A body leaves apart from its answer's JSON (ioBody), and only for the answer just taken.
     assert.match(hostIo, /taken = answer\.body\s+return answer\.json/);
     assert.match(hostIo, /fun body\(\): String = \(taken \?: ""\)\.also \{ taken = null \}/);
@@ -783,7 +795,7 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.doesNotMatch(read, /catch|runCatching|getOrNull|getOrDefault|getOrElse|\?: ""|orEmpty/, 'HostIo.read swallows no IOException');
     // The only places HostIo catches: each turns the failure into the call's error answer, so fetch rejects.
     assert.doesNotMatch(hostIo, /catch \(|getOrNull|getOrDefault/);
-    assert.deepEqual(hostIo.match(/runCatching \{[\s\S]*?\}\.getOrElse \{ [^\n]*/g).map((line) => /getOrElse \{ (failure\(id, call, it\)|JSONObject\(\)\.put\("id", id\)\.put\("error")/.test(line)), [true, true]);
+    assert.deepEqual(hostIo.match(/runCatching \{[\s\S]*?\}\.getOrElse \{ [^\n]*/g).map((line) => /getOrElse \{ (failure\(id, call, it\)|(Answer\()?JSONObject\(\)\.put\("id", id\)\.put\("error")/.test(line)), [true, true, true]);
     // Review 5: the ceiling is core's largest limit (a sync document), bounded by a fifth of the heap; core applies its
     // smaller limits itself. The lower limit the net check uses exists only in a debug build (debugProperty is "" in release).
     const coreHttp = readFileSync(resolve(app, '../../packages/core/src/http-utils.ts'), 'utf8');
@@ -808,7 +820,7 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     const deadline = product(/const val OPERATION_DEADLINE_MS = ([^\n]+)/.exec(coreHost)[1]);
     assert(deadline >= product(/export const DEFAULT_TIMEOUT_MS = ([^;]+);/.exec(coreHttp)[1]) && deadline >= product(/const STORAGE_TIMEOUT_MS = ([^;]+);/.exec(coreStorage)[1]));
     assert.match(coreHost, /const val NETWORK_DEADLINE_MS = HostIo\.CALL_TIMEOUT_MS \+ OPERATION_DEADLINE_MS/);
-    assert.match(coreHost, /private fun callAsync\(method: String, vararg args: Any\?, deadlineMs: Long = OPERATION_DEADLINE_MS\): JSONObject = onEngine \{\s*stopped\?\.let \{ throw IllegalStateException\(it\) \}/);
+    assert.match(coreHost, /private fun callAsync\(method: String, vararg args: Any\?, deadlineMs: Long = deadlineOf\(method, args\.toList\(\)\)\): JSONObject = onEngine \{\s*stopped\?\.let \{ throw IllegalStateException\(it\) \}/);
     assert.match(coreHost, /val answer = pumpUntil\(id, deadlineMs\) \?: run \{[^}]*?call\("cancel", id\)\s*if \(pumpUntil\(id, DRAIN_MS\) == null\) \{[^}]*?stopped = reason[^}]*?closeOnEngine\(\)\s*throw IllegalStateException\(reason\)\s*\}\s*checkNotNull\(context\)\.globalObject\.getJSFunction\("__resumeHostCalls"\)\.call\(\)\s*schedulePump\(\)\s*throw IllegalStateException\("Core \$method timed out"\)/);
     assert.equal(coreHost.match(/pumpUntil\(/g).length, 3, 'callAsync pumps only through pumpUntil');
     assert.match(coreHost, /callAsync\("netCheck", port, deadlineMs = NETWORK_DEADLINE_MS\)/);
@@ -875,10 +887,12 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // The iOS host's prepared commits and its Calendar preference, Focus grouping, Someday section task and task attachment
     // link/remove writes: its own journal holds them, and Kotlin never calls them.
     const iosPreparedCommits = ['captureCommit', 'draftCommit'];
+    // The iOS host's task attachment link/remove methods (taskAttachmentLinks, taskAttachmentRemove) are its own; Kotlin sends
+    // the same core writes through MENU_COMMANDS and the journal (pass A2).
     const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment'];
-    // Core writes no host method calls yet (reminder actions, Settings › Calendar's edits, adding an attachment file):
+    // Core writes no host method calls yet (reminder actions, Settings › Calendar's edits):
     // wiring one into host-entry fails the write-list checks above until the journal takes it.
-    const unwiredWrites = ['completeReminderTask', 'snoozeReminder', 'setCalendarSetting', 'addCalendarFeed', 'addAttachmentFile'];
+    const unwiredWrites = ['completeReminderTask', 'snoozeReminder', 'setCalendarSetting', 'addCalendarFeed'];
     assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
     assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
@@ -903,7 +917,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         'setSyncPreference', 'openSyncSettings', 'closeSyncSettings', 'selectSyncBackend', 'saveSyncBackend', 'syncNow', 'testSyncConnection',
         'pickSyncFolder', 'connectDropbox', 'disconnectDropbox', 'runSyncEncryptionAction',
         // Settings › AI (pass C1): a control's change and the screen's open (receipts of their own), a key and a base URL (never journaled).
-        'setAISetting', 'openAISettings', 'setAIKey', 'setAIEndpoint', 'ingestPendingCaptures'];
+        'setAISetting', 'openAISettings', 'setAIKey', 'setAIEndpoint', 'ingestPendingCaptures',
+        // Attachments (pass A2): Add file and Add photo, the link sheet's Save, Remove (a project's written at once, receipts of their own).
+        'addAttachmentFile', 'submitAttachmentLinks', 'removeAttachment'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -915,6 +931,20 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.deepEqual(readCalls.filter((name) => coreWrites.includes(name)), [], 'no unjournaled host method calls a core write');
     // The AI's requests are reads too: they send task text to the provider and write nothing (an answer applies through the screen's edits).
     assert.deepEqual(called(table('AI_REQUESTS')).filter((name) => coreWrites.includes(name) || unwiredWrites.includes(name)), [], 'no AI request calls a core write');
+    // An attachment's Download, Open and draft settlement are long calls too (CoreHost.attachmentRequest), never a journaled write.
+    // A task draft's Add file, link Save and Remove write nothing (they answer the draft's next list), so they are never journaled
+    // (a replay would copy a file no draft owns): they go here too, each refused for any owner but a task.
+    const draftCommands = ['addAttachmentFile', 'submitAttachmentLinks', 'removeAttachment'];
+    assert.deepEqual(called(table('ATTACHMENT_REQUESTS')).sort(), ['addAttachmentFile', 'downloadAttachment', 'openAttachment', 'removeAttachment',
+        'settleTaskDraftAttachments', 'submitAttachmentLinks'], 'ATTACHMENT_REQUESTS are core\'s attachment downloads, opens, draft settlement and task draft commands');
+    assert.deepEqual(called(table('ATTACHMENT_REQUESTS')).filter((name) => !draftCommands.includes(name) && (coreWrites.includes(name) || unwiredWrites.includes(name))), [],
+        'no attachment request calls a core write but a task draft\'s');
+    for (const name of draftCommands) {
+        assert.match(table('ATTACHMENT_REQUESTS'), new RegExp(`\\n    \\w+: \\(input\\) => draftOnly\\(input, \\(\\) => contract\\.${name}\\(input\\)\\),`), `${name} runs unjournaled only for a task draft`);
+    }
+    assert.match(hostEntry, /const draftOnly = \(input: never, command: \(\) => Promise<Reply>\): Promise<Reply> => \(\(input as \{ owner\?: \{ kind\?: unknown \} \} \| null\)\?\.owner\?\.kind === 'task'\s*\? command\(\)\s*: Promise\.resolve\(\{ ok: false, error: \{ code: 'INVALID_INPUT', message: 'Only a task draft attachment command runs here' \} \}\)\);/);
+    assert.match(source('Attachments.kt'), /if \(owner\.kind == "task"\) \{[\s\S]{0,300}?runtime\.attachmentRequest\(DRAFT_REQUESTS\.getValue\(kind\)/, 'a task draft\'s commands are sent unjournaled');
+    assert.match(host, /attachmentRequest\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*const request = ATTACHMENT_REQUESTS\[name\];/);
     assert.deepEqual(called(table('AI_REQUESTS')).sort(), ['loadAIModels', 'requestAICopilot', 'requestInboxClarify', 'requestTaskEditorBreakdown',
         'requestTaskEditorClarify', 'requestTaskEditorCopilot', 'requestWeeklyReviewAnalysis'], 'AI_REQUESTS are core\'s AI requests');
     assert.match(host, /aiRequest\(name: string, json: string\): string \{\s*return submit\(async \(signal\) => \{\s*requireSaved\(\);\s*const request = AI_REQUESTS\[name\];[\s\S]{0,120}?const answer = await request\(JSON\.parse\(json\) as never, signal\);\s*if \(signal\.aborted\) throw new Error\('The AI request was cancelled'\);\s*return unwrap\(answer\);/);
@@ -936,7 +966,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     }
     // Core's AI device binds RN's stores (host-ai.ts): the refused secret calls (an AI key is no sync commit), RN's AsyncStorage.
     assert.match(hostEntry, /const nativeAI = nativeSync \? createNativeAI\(keyValue, \(\) => globalThis\.__mindwtrSecrets as HostSecrets\) : null;/);
-    assert.match(hostEntry, /createNativeHostContract\(\{ \.\.\.\(nativeSync \? \{ syncSettings: nativeSync\.settingsHost \} : \{\}\), \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\) \}\)/);
+    assert.match(hostEntry, /createNativeHostContract\(\{ \.\.\.\(nativeSync \? \{ syncSettings: nativeSync\.settingsHost \} : \{\}\), \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\),\s*\.\.\.\(nativeSync\?\.attachmentsHost \? \{ attachments: nativeSync\.attachmentsHost \} : \{\}\) \}\)/);
     assert.match(host, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];/);
     // An entry replays only while it fits its write as host-entry takes it (WriteJournal.SHAPES): a JSON object for `json`, a
     // boolean for a boolean, a Menu command for menuCommand's name, text for the rest; MENU names exactly host-entry's
@@ -1005,7 +1035,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // only an unjournaled write or a read, so no journaled write can skip the journal through it.
         assert.match(journalKt, /fun unjournaled\(method: String, args: List<Any\?>\): Boolean = method in WRITES && key\(method, args\) in UNJOURNALED/);
         assert.match(coreHost, /private fun callLong\(method: String, vararg args: Any\?, handle: LongCall = LongCall\(\)\): JSONObject \{\s+require\(method !in WriteJournal\.WRITES \|\| WriteJournal\.unjournaled\(method, args\.toList\(\)\)\)/);
-        assert.deepEqual([...coreHost.matchAll(/\bcallLong\("(\w+)"/g)].map((m) => m[1]), ['menuCommand', 'aiRequest'], 'only Settings › Sync\'s commands and the AI\'s requests take the long path');
+        assert.deepEqual([...coreHost.matchAll(/\bcallLong\("(\w+)"/g)].map((m) => m[1]), ['menuCommand', 'aiRequest', 'attachmentRequest'],
+            'only Settings › Sync\'s commands, the AI\'s requests and the attachments\' downloads take the long path');
+        assert.match(coreHost, /fun attachmentRequest\(name: String, json: String\): JSONObject = callLong\("attachmentRequest", name, json\)/);
+        assert(!writes.includes('attachmentRequest'), 'an attachment request is no journaled write');
         assert.match(coreHost, /fun syncCommand\(name: String, json: String\): JSONObject = callLong\("menuCommand", name, json\)/);
         assert.match(coreHost, /fun aiRequest\(name: String, json: String, handle: LongCall = LongCall\(\)\): JSONObject = callLong\("aiRequest", name, json, handle = handle\)/);
         // Review C1 5: a cancelled or timed-out AI request aborts its JS operation (the provider's fetch) through the host's abort.
@@ -1058,13 +1091,13 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // Replay: in journal order, one at a time, stopped by a kept entry or no reply; at boot after the validated load and the
     // language, before this boot hands the host to any screen (get() waits on the boot); a stop is the screens' owed retry.
     const replayFn = coreHost.slice(coreHost.indexOf('fun replayJournal()'), coreHost.indexOf('private fun journalStop('));
-    assert.match(replayFn, /for \(entry in journal\.pending\(\)\) \{[\s\S]*?answer\(entry\.method, entry\.args\.toTypedArray\(\), OPERATION_DEADLINE_MS\)\.also \{ if \(settle\(entry, it, replay = true\)\) dropped \+= 1 \}\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
+    assert.match(replayFn, /for \(entry in journal\.pending\(\)\) \{[\s\S]*?answer\(entry\.method, entry\.args\.toTypedArray\(\), deadlineOf\(entry\.method, entry\.args\)\)\.also \{ if \(settle\(entry, it, replay = true\)\) dropped \+= 1 \}\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
     assert.match(replayFn, /Log\.i\(TAG, "Native Android journal replay sent=/);
     assert(coreHost.indexOf('journal = WriteJournal(journalDir') < coreHost.indexOf('engine.evaluate(bundle'));
     assert.match(owner, /private fun replay\(runtime: CoreHost\): Boolean \{\s+val replay = runtime\.replayJournal\(\)\s+replay\.owed\?\.let \{ recordFailure\(PendingFailure\(FailedAction\("journal", ""\), it, null\)\); return false \}\s+(?:\/\/[^\n]*\s+)+if \(replay\.left > 0\) return true\s+runCatching \{ runtime\.pruneReceipts\(\) \}[\s\S]*?return true\s+\}/);
     // Sync (plan block 1): its triggers start only after the validated load, a replay that finished (no entry owed) and the queue
     // drain (ProcessCoreHost.recovered), or once the owed journal retry went through; nothing else starts them.
-    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
+    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/syncStart\(/g).length, 1, 'one start of the triggers, in startSync');
     assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 2, 'startSync only in recovered, after the drain (at once, or held for the first screen\'s content)');
     // Startup follow-up: the boot's start is held until the first screen shows its content: the Inbox's first rows (contentShown),
@@ -1101,7 +1134,7 @@ assert.match(coreHost, /fun taskView\(json: String\): JSONObject = callAsync\("t
 assert.match(coreHost, /fun editTaskChecklist\(id: String, draftJson: String, checklistJson: String, editJson: String\): JSONObject =\s*callAsync\("editChecklist"/);
 assert.match(coreHost, /fun resetTaskChecklist\(id: String, requestId: String, taskRevision: String\): JSONObject =\s*callAsync\("resetChecklist", JSONObject\(\)\.put\("id", id\)\.put\("requestId", requestId\)\.put\("taskRevision", taskRevision\)\.toString\(\)\)/);
 assert.match(coreHost, /fun editorSuggestions\(id: String, field: String, query: String, limit: Int\): JSONObject =\s*callAsync\("editorSuggestions", id, field, query, limit\)/);
-assert.match(coreHost, /fun saveTaskDraft\(id: String, baseJson: String, patchJson: String, checklistJson: String, requestId: String\): JSONObject =\s*callAsync\("saveDraft", JSONObject\(\)\.put\("id", id\)\.put\("base", JSONObject\(baseJson\)\)\.put\("patch", JSONObject\(patchJson\)\)\s*\.apply \{ if \(checklistJson\.isNotEmpty\(\)\) put\("checklist", JSONObject\(checklistJson\)\) \}\.put\("requestId", requestId\)\.toString\(\)\)/);
+assert.match(coreHost, /fun saveTaskDraft\(id: String, baseJson: String, patchJson: String, checklistJson: String, attachmentsJson: String, requestId: String\): JSONObject =\s*callAsync\("saveDraft", JSONObject\(\)\.put\("id", id\)\.put\("base", JSONObject\(baseJson\)\)\.put\("patch", JSONObject\(patchJson\)\)\s*\.apply \{ if \(checklistJson\.isNotEmpty\(\)\) put\("checklist", JSONObject\(checklistJson\)\) \}\s*\.apply \{ if \(attachmentsJson\.isNotEmpty\(\)\) put\("attachments", JSONObject\(attachmentsJson\)\) \}\.put\("requestId", requestId\)\.toString\(\)\)/);
 assert.match(coreHost, /fun updateTask\(id: String, baseJson: String, patchJson: String, requestId: String\): JSONObject =\s*callAsync\("update", JSONObject\(\)\.put\("id", id\)\.put\("base", JSONObject\(baseJson\)\)\.put\("patch", JSONObject\(patchJson\)\)\s*\.put\("requestId", requestId\)\.toString\(\)\)/);
 assert.doesNotMatch(coreHost + hostEntry, /taskEditor\(|getTaskEditor\(/, 'the seven-field editor reply is gone');
 assert.match(hostEntry, /editorModel\(id: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskEditorModel\(\{ id \}\)\);/);
@@ -1125,16 +1158,19 @@ assert.equal([activity, editorUi, focusUi, projectsUi, rowUi, areaUi, viewStateK
 // The save: exactly the changed draft fields, base = their loaded values, as a perform with its exact FailedAction; no change means no call.
 assert.match(editorUi, /val patch: Map<String, String\?> get\(\) = edited\.filter \{ \(field, literal\) -> literal != base\(field\) \}/);
 assert.match(editorUi, /val base: Map<String, String\?> get\(\) = patch\.keys\.associateWith \{ base\(it\) \}/);
-assert.match(model, /fun saveDraftAction\(current: TaskEditor\) =\s+withRequestId\(FailedAction\("saveDraft", current\.id, current\.checklistSave, base = current\.base, patch = current\.patch\), failedAction\)/);
+assert.match(model, /fun saveDraftAction\(current: TaskEditor\) =\s+withRequestId\(FailedAction\("saveDraft", current\.id, current\.checklistSave, base = current\.base, patch = current\.patch,\s+attachments = current\.attachmentsSave\), failedAction\)/);
 // An update and an editor save carry a request UUID (core's receipt answers a repeat with the first reply); the same command while
 // it is owed is the owed request itself, so its control sends the exact retry. Kotlin never derives a request UUID from the request.
 assert.match(model, /private fun withRequestId\(action: FailedAction, owed: FailedAction\?\) =\s+owed\?\.takeIf \{ it\.copy\(requestId = ""\) == action \} \?: action\.copy\(requestId = UUID\.randomUUID\(\)\.toString\(\)\)/);
 assert.match(model, /fun statusAction\(task: TaskRow, status: String\) =\s+withRequestId\(FailedAction\("update", task\.id, base = mapOf\("status" to task\.status\), patch = mapOf\("status" to status\)\), failedAction\)/);
-assert.match(model, /val current = editor \?: return\s+if \(current\.waiting \|\| editsPending\) \{ saveQueued = true; return \}\s+if \(current\.patch\.isEmpty\(\) && !current\.checklistChanged\) \{ closeEditor\(\); return \}/);
+assert.match(model, /val current = editor \?: return\s+if \(current\.waiting \|\| editsPending\) \{ saveQueued = true; return \}\s+if \(current\.patch\.isEmpty\(\) && !current\.checklistChanged && !current\.attachmentsChanged\) \{ closeEditor\(\); return \}/);
+// The attachments ride the same save (pass A2): the list the draft started from and the edited one, sent only when changed.
+assert.match(editorUi, /val attachmentsSave: String get\(\) = if \(!attachmentsChanged\) "" else\s+JSONObject\(\)\.put\("base", JSONArray\(attachmentsFrom \?: model\.attachmentsBase\)\)\.put\("value", JSONArray\(attachmentsNow\)\)\.toString\(\)/);
+assert.match(editorUi, /val attachmentsBase: String = content\.optJSONArray\("attachmentsBase"\)\?\.toString\(\) \?: "\[\]"/);
 // The checklist rides the same save: its base is the checklist the editor loaded (getTaskView's checklistBase), sent only when changed.
 assert.match(editorUi, /val checklistSave: String get\(\) = if \(!checklistChanged\) "" else JSONObject\(\)\.put\("base", JSONArray\(model\.checklistBase\)\)\.put\("value", JSONArray\(checklistNow\)\)\.toString\(\)/);
 assert.match(editorUi, /val checklistBase: String = content\.getJSONArray\("checklistBase"\)\.toString\(\)/);
-assert.match(model, /private fun sendDraft\(action: FailedAction\) = perform\(action\) \{ runtime ->\s+try \{\s+runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\), action\.title, action\.requestId\)/);
+assert.match(model, /private fun sendDraft\(action: FailedAction\) = perform\(action\) \{ runtime ->\s+try \{\s+runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\), action\.title, action\.attachments, action\.requestId\)/);
 // Draft values are core's own JSON, compared and sent as JSON text; null stays JSON null.
 assert.match(editorUi, /fun draftJson\(values: Map<String, String\?>\): String =\s*JSONObject\(\)\.apply \{ values\.forEach \{ \(field, literal\) -> put\(field, draftValue\(literal\)\) \} \}\.toString\(\)/);
 // Typed token and person text becomes core's draft value (getTaskEditorSuggestions), applied only while the text is unchanged; Save waits for it.
@@ -1164,7 +1200,12 @@ assert.match(model, /if \(inFlight != null \|\| current == null \|\| runtime == 
 assert.match(model, /val ticket = current\.session to next\.seq/);
 assert.match(model, /val now = editor\?\.takeIf \{ it\.session == ticket\.first && it\.pending\.firstOrNull\(\)\?\.seq == ticket\.second \}/);
 assert.match(editorUi, /val session: String = UUID\.randomUUID\(\)\.toString\(\)/);
-assert.match(model, /fun closeEditor\(\) \{\s+ai\.cancelEditor\(\)\s+inFlight = null/);
+assert.match(model, /fun closeEditor\(settle: Boolean = true\) \{[\s\S]{0,600}?attachments\.closed\(\)\s+ai\.cancelEditor\(\)\s+inFlight = null/);
+// A Discard settles the draft's attachments (core's settleTaskDraftAttachments, pass A2): baseline and committed are the list the
+// draft started from, at the revision the editor read; a Save settles its own after it landed (closeEditor(settle = false)).
+assert.match(model, /attachments\.settle\(closing\.id, closing\.model\.taskRevision, from, closing\.attachmentsNow, from\)/);
+// A close while a save is owed (a View-tab link) never settles: that save's own settlement runs when it lands (review 2).
+assert.match(model, /editor\?\.takeIf \{ settle && pendingSave == null && it\.attachments != null && !it\.readOnly \}\?\.let \{ closing ->/);
 // Pending edits are in the draft file before dispatch; each reply's draft and the removal of its edit are one write;
 // a restore sends them again in order.
 assert.match(model, /keepEditor\(current\.queued\(edit\.toString\(\), field\)\)\s+pumpEdits\(\)/);
@@ -1290,7 +1331,8 @@ assert.match(model, /screen = target\s+saved\["screen"\] = target\.name/);
 // Labels: every word on screen comes from core's getStrings. One Kotlin map of core keys, filled at boot and
 // read again right after setLanguage; it holds no text of its own (a key core lacks shows as the key).
 const enSource = readFileSync(resolve(app, '../../packages/core/src/i18n/locales/en.ts'), 'utf8');
-const enKeys = new Set([...enSource.matchAll(/^\s*'([^']+)':/gm)].map(([, name]) => name));
+// A key is quoted either way in en.ts (a value holding a quote is double-quoted, attachments.linkBatchHint).
+const enKeys = new Set([...enSource.matchAll(/^\s*(?:'([^']+)'|"([^"]+)"):/gm)].map(([, single, double]) => single ?? double));
 const labelBlock = labelsKt.slice(labelsKt.indexOf('val LABEL_KEYS = listOf('), labelsKt.indexOf('object Labels'));
 const labelKeys = [...code(labelBlock).matchAll(/"([^"]*)"/g)].map(([, name]) => name);
 assert(labelKeys.length > 0 && labelKeys.length <= 500 && new Set(labelKeys).size === labelKeys.length, 'LABEL_KEYS: unique, at most getStrings\' 500');
@@ -1300,7 +1342,7 @@ assert.match(labelsKt, /strings = LABEL_KEYS\.filter\(values::has\)\.associateWi
 assert.match(labelsKt, /if \(logged\.add\(name\)\) Log\.w\(/, 'a missing key is logged once');
 assert.equal(kotlinFiles.join('\n').match(/Labels\.load\(/g).length, 1);
 assert.match(owner, /runtime\.language\(stored \?: "", Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
-assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
+assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
 // After a finished replay (the boot's, the owed retry's, CoreWork's): the queue drain, then sync (StartOrder, StartOrderTest). Any
 // drain that did not finish becomes the screens' owed journal retry, holds sync back, and CoreWork retries it.
 assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost, deferSync: Boolean = false\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\)\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+(?:\/\/[^\n]*\s+)?startSync = \{ if \(deferSync\) deferredSync\.set \{ startSync\(app, runtime\) \} else startSync\(app, runtime\) \},\s+\)/);
@@ -1651,6 +1693,12 @@ assert.match(captureUi, /const val ADD_ANOTHER_KEY = "mindwtr:quickCapture:addAn
 // Every menu write is a perform(action) with its exact FailedAction; a failure keeps it (the banner's Try again re-sends it).
 assert.match(coreHost, /fun menuRead\(name: String, json: String\): JSONObject = callAsync\("menuRead", name, json\)/);
 assert.match(coreHost, /fun menuCommand\(name: String, json: String\): JSONObject = callAsync\("menuCommand", name, json\)/);
+// A project's attachment command copies a picked file, which can outlast the 30 s deadline: it gets a request's deadline, on its
+// first send and on the journal's replay alike, so a slow copy never stops the host (pass A2 review 1).
+assert.match(coreHost, /fun deadlineOf\(method: String, args: List<Any\?>\): Long =\s*if \(method == "menuCommand" && args\.firstOrNull\(\) in ATTACHMENT_COMMANDS\) NETWORK_DEADLINE_MS else OPERATION_DEADLINE_MS/);
+assert.match(coreHost, /answer\(entry\.method, entry\.args\.toTypedArray\(\), deadlineOf\(entry\.method, entry\.args\)\)/);
+assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)[1].matchAll(/"(\w+)"/g)].map((m) => m[1]),
+    [.../val ATTACHMENT_KINDS = setOf\(([^)]*)\)/.exec(source('Attachments.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]), 'CoreHost\'s long-deadline commands are the attachment commands');
 {
     // Settings' commands (pass 10) join the Menu tab's: MENU_KINDS is its own set plus SettingsModel.kt's SETTINGS_KINDS.
     // Pass 11's commands (Bulk organize's create, Mind Sweep's Add, a saved search's Delete) close the set.
@@ -1662,8 +1710,12 @@ assert.match(coreHost, /fun menuCommand\(name: String, json: String\): JSONObjec
     const syncKinds = [.../val SYNC_COMMANDS = setOf\(([^)]*)\)/.exec(source('SyncSettings.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
     // Settings › AI's screen writes too (its open, a key, a base URL), sent by AISettings.kt; its controls' setAISetting is a Settings kind.
     const aiKinds = [.../val AI_COMMANDS = setOf\(([^)]*)\)/.exec(source('AISettings.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
-    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds].sort(), 'every menu command kind is one host command, logged as its operation');
-    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand;`));
+    // Attachments' writes (pass A2), sent by Attachments.kt for the editor's draft and a project's list.
+    const attachmentKinds = [.../val ATTACHMENT_KINDS = setOf\(([^)]*)\)/.exec(source('Attachments.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
+    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds, ...attachmentKinds].sort(), 'every menu command kind is one host command, logged as its operation');
+    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand \\| AttachmentCommand;`));
+    assert.match(hostEntry, new RegExp(`type AttachmentCommand = ${attachmentKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
+    assert.doesNotMatch(menuModel, new RegExp(`"(${attachmentKinds.join('|')})"`), 'the Menu tab never sends an attachment command itself');
     assert.match(hostEntry, new RegExp(`type SyncScreenCommand = ${syncKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
     assert.match(hostEntry, new RegExp(`type AIScreenCommand = ${aiKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
     assert.doesNotMatch(menuModel, new RegExp(`"(${[...syncKinds, ...aiKinds].join('|')})"`), 'the Menu tab never sends a Sync or AI screen command itself');
@@ -2489,7 +2541,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(gradle, /buildConfigField\("String", "URL_SCHEME", "\\"\$scheme\\""\)\s+manifestPlaceholders\["urlScheme"\] = scheme/);
     for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
     assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
-    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, rnCaptureIntent\) \}/);
+    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, rnCaptureIntent, rnAttachmentInstaller\) \}/);
     // The bytecode cache's keys (BytecodeCache.kt): the engine version is the QuickJS dependency's, and the bundle carries the
     // SHA-256 of its own body in its first line, written with it in one file (build-bundle.mjs), so a bundle and a hash from
     // two builds cannot pair up. Every variant's merged assets are checked by verify-bundle.mjs before packaging.
@@ -3201,8 +3253,9 @@ export function logWarn() { throw new Error('diagnostic sink failed'); }
 `;
 // host-sync.ts's core imports: bound only on a host with the key-value bridge, which the stand-in bridge below lacks, so
 // they are bundled and never run here. Each one the fake does not define throws if anything calls it.
-const hostSyncTs = readFileSync(resolve(app, 'bundle/host-sync.ts'), 'utf8');
-const syncOnly = [.../^import \{([\s\S]*?)\} from '@mindwtr\/core';/m.exec(hostSyncTs)[1].matchAll(/^\s+(\w+),$/gm)].map((m) => m[1])
+// host-attachments.ts's too: host-sync.ts binds them on the same host only.
+const hostSyncTs = readFileSync(resolve(app, 'bundle/host-sync.ts'), 'utf8') + readFileSync(resolve(app, 'bundle/host-attachments.ts'), 'utf8');
+const syncOnly = [...hostSyncTs.matchAll(/^import \{([\s\S]*?)\} from '@mindwtr\/core';/gm)].flatMap((m) => [...m[1].matchAll(/^\s+(\w+),$/gm)].map((n) => n[1]))
     .filter((name) => !new RegExp(`export (?:async )?(?:function|const|class) ${name}\\b|export \\{[^}]*\\b${name}\\b`).test(fakeCore));
 assert(syncOnly.includes('createMobileSyncService') && syncOnly.includes('createMobileSyncTriggers'), 'host-sync.ts\'s core imports parsed');
 const fakeCoreWithSync = `${fakeCore}\n${syncOnly.map((name) => `export const ${name} = () => { throw new Error('${name}: sync is not bound in the gates'); };`).join('\n')}\n`;

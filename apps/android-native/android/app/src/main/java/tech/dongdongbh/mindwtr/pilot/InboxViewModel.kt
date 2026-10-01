@@ -60,7 +60,7 @@ data class TaskRow(
 enum class Screen(val label: String) { Inbox("tab.inbox"), Focus("tab.next"), Projects("nav.projects") }
 /**
  * A command whose outcome is unknown; only this exact command may run again. [requestId] is the request UUID of an update and an
- * editor save (the other commands keep theirs in [id] or [title]).
+ * editor save (the other commands keep theirs in [id] or [title]); [attachments] is an editor save's attachments half ("" for none).
  */
 data class FailedAction(
     val kind: String,
@@ -69,6 +69,7 @@ data class FailedAction(
     val base: Map<String, String?> = emptyMap(),
     val patch: Map<String, String?> = emptyMap(),
     val requestId: String = "",
+    val attachments: String = "",
 )
 
 /** [action] with a new request UUID, or the owed request [owed] when it is that same command: its control sends it again. */
@@ -83,7 +84,7 @@ internal val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_N
  */
 private val STALE_SHOWN = setOf("saveDraft", "update", "calendarCreate", "manageEditor")
 /** Commands core can refuse before writing: an update, an editor save, a saved search, a Process Inbox answer, and the Menu tab's commands. */
-private val REFUSABLE = setOf("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS + CAPTURE_MODAL_KINDS
+private val REFUSABLE = setOf("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS + CAPTURE_MODAL_KINDS + ATTACHMENT_KINDS
 
 private fun JSONObject.metaPart(): MetaPart = MetaPart(
     getString("kind"), getString("text"), getBoolean("detail"), text("dotColor"), text("tone"),
@@ -239,6 +240,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     val captureModal = CaptureModalModel(this, saved, File(app.noBackupFilesDir, "capture-modal"))
     /** RN's AI actions: the editor's copilot, Clarify and Break down, Process Inbox's Clarify, the review's analysis (AIActions.kt). */
     val ai = AIActionsModel(this)
+    /** The editor's and the project screen's attachments (Attachments.kt): rows, pickers, links, downloads, opening. */
+    val attachments = AttachmentsModel(this)
     /** A link, share or assistant note waiting to open (EntryPoints.kt). */
     val entries = EntryRouter(this, File(app.noBackupFilesDir, "entries"))
     /** A system capture's screen closed: MainActivity puts the app behind the previous one, as RN's returnToPreviousApp (#1169). */
@@ -394,7 +397,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val key = editorKey ?: UUID.randomUUID().toString().also(::keepKey)
         val state = value.state()
         pendingSave?.let {
-            state.put("pending", JSONObject().put("base", JSONObject(it.base)).put("patch", JSONObject(it.patch)).put("checklist", it.title).put("requestId", it.requestId))
+            state.put("pending", JSONObject().put("base", JSONObject(it.base)).put("patch", JSONObject(it.patch)).put("checklist", it.title).put("requestId", it.requestId)
+                .put("attachments", it.attachments))
         }
         drafts.write(key, state)
     }
@@ -409,7 +413,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         if (pending == null || failedAction != null) return
         fun map(name: String) = pending.getJSONObject(name).let { m -> m.keys().asSequence().associateWith<String, String?> { m.getString(it) } }
         val action = FailedAction("saveDraft", restored.id, pending.optString("checklist"), base = map("base"), patch = map("patch"),
-            requestId = pending.optString("requestId"))
+            requestId = pending.optString("requestId"), attachments = pending.optString("attachments"))
         failedAction = action
         sendDraft(action)
     }
@@ -627,6 +631,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val depth = taskViewDepth
         val input = JSONObject().put("id", current.id)
         if (!current.readOnly) input.put("draft", JSONObject(draftJson(current.fullDraft()))).put("checklist", JSONArray(current.checklistNow))
+        // The draft's attachments, as RN's View tab shows its merged task.
+        if (!current.readOnly && current.attachments != null) input.put("attachments", JSONArray(current.attachmentsNow))
         background(listOf(Part.TaskView), { runtime -> readView(runtime, input, depth) }) { view, mine ->
             if (fresh(mine, Part.TaskView) && editor?.id == current.id) taskView = view
         }
@@ -707,6 +713,11 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         pumpEdits()
     }
 
+    /** Core's answer to an attachment command on the open editor [taskId]: the draft's next list (JSON), kept with the draft. */
+    internal fun setDraftAttachments(taskId: String, next: String) {
+        editor?.takeIf { it.id == taskId }?.let { keepEditor(it.withAttachments(next)) }
+    }
+
     /** Typed text (title, notes, location) stays in the editor as typed; no core rule reads it while editing. */
     fun editText(field: String, text: String) { editor?.let { keepEditor(it.edit(mapOf(field to text))) } }
 
@@ -732,7 +743,17 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         }
     }
 
-    fun closeEditor() {
+    /**
+     * The editor closes. [settle]: a draft whose attachments changed and were not saved is discarded, so the managed copies it
+     * added go (core's settleTaskDraftAttachments, as RN's editor settles its draft); a Save settles its own after it landed.
+     */
+    fun closeEditor(settle: Boolean = true) {
+        // Never while a save is owed: its new copies are that save's, settled when it lands (sendDraft).
+        editor?.takeIf { settle && pendingSave == null && it.attachments != null && !it.readOnly }?.let { closing ->
+            val from = closing.attachmentsFrom ?: closing.model.attachmentsBase
+            attachments.settle(closing.id, closing.model.taskRevision, from, closing.attachmentsNow, from)
+        }
+        attachments.closed()
         ai.cancelEditor()
         inFlight = null
         editRefusal = null
@@ -768,7 +789,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
      * and a request UUID (the owed save's, when it is this one).
      */
     fun saveDraftAction(current: TaskEditor) =
-        withRequestId(FailedAction("saveDraft", current.id, current.checklistSave, base = current.base, patch = current.patch), failedAction)
+        withRequestId(FailedAction("saveDraft", current.id, current.checklistSave, base = current.base, patch = current.patch,
+            attachments = current.attachmentsSave), failedAction)
 
     /**
      * Sends only the changed draft fields with their loaded values, to core's saveTaskDraft. Nothing
@@ -778,7 +800,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun saveEditor() {
         val current = editor ?: return
         if (current.waiting || editsPending) { saveQueued = true; return }
-        if (current.patch.isEmpty() && !current.checklistChanged) { closeEditor(); return }
+        if (current.patch.isEmpty() && !current.checklistChanged && !current.attachmentsChanged) { closeEditor(); return }
         if (busy || (failedAction != null && failedAction != saveDraftAction(current))) return
         val action = saveDraftAction(current)
         pendingSave = action
@@ -789,14 +811,16 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** Core's saveTaskDraft with [action]'s exact request. A refusal wrote nothing, so no request is owed. */
     private fun sendDraft(action: FailedAction) = perform(action) { runtime ->
         try {
-            runtime.saveTaskDraft(action.id, draftJson(action.base), draftJson(action.patch), action.title, action.requestId)
+            runtime.saveTaskDraft(action.id, draftJson(action.base), draftJson(action.patch), action.title, action.attachments, action.requestId)
         } catch (failure: Exception) {
             // A restored request locked the draft before it was sent; a refusal unlocks it, as nothing is owed.
             if (UPDATE_REFUSALS.any { failure.message?.startsWith(it) == true }) ui { pendingSave = null; failedAction = null; editor?.let(::keepEditor) }
             throw failure
         }
         acknowledged(action)
-        ui { closeEditor() }
+        // The saved attachments settle the draft's copies: a file no saved attachment owns any more goes (RN's settleDraftAttachments).
+        if (action.attachments.isNotEmpty()) attachments.settleSaved(runtime, action.id, JSONObject(action.attachments))
+        ui { closeEditor(settle = false) }
     }
 
     fun reloadEditor() {
@@ -988,6 +1012,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 acknowledged(action)
                 ui { showLists(lists, ++issued) }
             }
+            // A project's attachment command (Attachments.kt) with its exact request.
+            in ATTACHMENT_KINDS -> attachments.retry(action)
             // The Menu tab's commands (MENU_KINDS) keep their exact request in MenuModel.
             else -> menu.retry(action)
         }

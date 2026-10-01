@@ -1,13 +1,17 @@
 package tech.dongdongbh.mindwtr.pilot.core
 
 import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 
 /** The pending-captures queue port's Kotlin side: list, read and delete, only under the app's files and cache folders. */
 class HostFilesTest {
@@ -67,4 +71,167 @@ class HostFilesTest {
     }
 
     private fun JSONArray.toList() = List(length()) { getString(it) }
+
+    // ---- Core's attachment file port (MobileAttachmentFileSystemPort), as expo-file-system answers it ----
+
+    private fun uri(file: File) = "file://${file.absolutePath}"
+    private fun call(files: HostFiles, op: String, file: File, extra: JSONObject.() -> Unit = {}, bytes: ByteArray? = null) =
+        files.call(JSONObject().put("op", op).put("uri", uri(file)).apply(extra).toString(), bytes)
+    private fun attachments() = File(filesDir, "attachments")
+
+    @Test fun theFoldersAreNamedAsExpoNamesThem() {
+        assertEquals("file://${filesDir.absolutePath}/", open().documentDirectory)
+        assertEquals("file://${cacheDir.absolutePath}/", open().cacheDirectory)
+    }
+
+    @Test fun getInfoAnswersExpoShapeWithSecondsAndAMissingFileAsNotExisting() {
+        val files = open()
+        val missing = call(files, "getInfo", File(attachments(), "a.pdf")).value as JSONObject
+        assertEquals(false, missing.getBoolean("exists"))
+        val file = File(attachments().apply { mkdirs() }, "a.pdf").apply { writeBytes(ByteArray(5)); setLastModified(1_700_000_123_000) }
+        val info = call(files, "getInfo", file).value as JSONObject
+        assertEquals(true, info.getBoolean("exists"))
+        assertEquals(false, info.getBoolean("isDirectory"))
+        assertEquals(5L, info.getLong("size"))
+        assertEquals(1_700_000_123.0, info.getDouble("modificationTime"), 0.0)
+    }
+
+    @Test fun makeDirectoryMakesParentsAndAnExistingFolderIsNoError() {
+        val files = open()
+        val nested = File(attachments(), "x/y")
+        call(files, "makeDirectory", nested)
+        call(files, "makeDirectory", nested)
+        assertTrue(nested.isDirectory)
+    }
+
+    @Test fun bytesAreWrittenReadAndReadByRangeExactly() {
+        val files = open()
+        attachments().mkdirs()
+        val file = File(attachments(), "a.bin")
+        val bytes = ByteArray(300) { (it * 7).toByte() }
+        call(files, "writeBytes", file, bytes = bytes)
+        assertArrayEquals(bytes, call(files, "readBytes", file).bytes)
+        assertArrayEquals(bytes.copyOfRange(10, 30), call(files, "readBytesRange", file, { put("position", 10).put("length", 20) }).bytes)
+        assertArrayEquals(bytes.copyOfRange(290, 300), call(files, "readBytesRange", file, { put("position", 290).put("length", 50) }).bytes)
+        // Synced: the write's folder.
+        assertTrue("attachments" in synced)
+        assertEquals(listOf("a.bin"), (call(files, "readDirectory", attachments()).value as JSONArray).toList())
+    }
+
+    @Test fun sha256HashesTheBytesItIsSent() {
+        // The SHA-256 of "abc" (FIPS 180-2's example).
+        assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            open().call(JSONObject().put("op", "sha256").toString(), "abc".toByteArray()).value)
+    }
+
+    @Test fun aFileIsHashedWhereItLiesInPiecesPastTheReadLimit() {
+        attachments().mkdirs()
+        val file = File(attachments(), "big.bin").apply { writeBytes(ByteArray(300_000) { (it % 251).toByte() }) }
+        // Larger than a whole read may be: the hash streams it and never holds the file.
+        val files = HostFiles(filesDir, cacheDir, syncDirectory = { }, maxReadBytes = 100_000)
+        val expected = java.security.MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
+        assertEquals(expected, call(files, "sha256File", file).value)
+        assertThrows(IOException::class.java) { call(files, "sha256File", File(attachments(), "gone.bin")) }
+    }
+
+    @Test fun aMissingFileReadsAsENOENT() {
+        val error = assertThrows(IOException::class.java) { call(open(), "readBytes", File(filesDir, "gone.bin")) }
+        assertTrue(error.message!!.contains("ENOENT"))
+        assertThrows(IOException::class.java) { call(open(), "readDirectory", File(filesDir, "gone")) }
+    }
+
+    @Test fun aReadPastTheLimitThrowsAndNeverAnswersShort() {
+        attachments().mkdirs()
+        val file = File(attachments(), "big.bin").apply { writeBytes(ByteArray(200_000)) }
+        val files = HostFiles(filesDir, cacheDir, syncDirectory = { }, maxReadBytes = 100_000)
+        assertThrows(IOException::class.java) { call(files, "readBytes", file) }
+    }
+
+    @Test fun aPickedDocumentCopiesInThroughTheContentSource() {
+        val picked = "content://com.android.providers.downloads.documents/document/42"
+        val bytes = "picked ✓".toByteArray()
+        val files = HostFiles(filesDir, cacheDir, syncDirectory = { synced += it.name }, content = object : HostFiles.ContentSource {
+            override fun open(uri: String) = if (uri == picked) bytes.inputStream() else throw IOException("gone")
+            override fun size(uri: String): Long? = if (uri == picked) bytes.size.toLong() else throw IOException("gone")
+        })
+        attachments().mkdirs()
+        val target = File(attachments(), "id.txt")
+        files.call(JSONObject().put("op", "copy").put("uri", picked).put("to", uri(target)).toString())
+        assertArrayEquals(bytes, target.readBytes())
+        assertEquals(bytes.size.toLong(), (files.call(JSONObject().put("op", "getInfo").put("uri", picked).toString()).value as JSONObject).getLong("size"))
+        assertArrayEquals(bytes, files.call(JSONObject().put("op", "readBytes").put("uri", picked).toString()).bytes)
+        // A document is only ever a source.
+        assertThrows(IllegalArgumentException::class.java) { files.call(JSONObject().put("op", "copy").put("uri", uri(target)).put("to", picked).toString()) }
+    }
+
+    @Test fun aMoveReplacesItsTargetAndADeleteIsIdempotentAndRecursive() {
+        val files = open()
+        attachments().mkdirs()
+        val temp = File(attachments(), ".tmp").apply { writeText("new") }
+        val target = File(attachments(), "a.txt").apply { writeText("old") }
+        call(files, "move", temp, { put("to", uri(target)) })
+        assertEquals("new", target.readText())
+        assertFalse(temp.exists())
+        File(attachments(), "dir/sub").mkdirs()
+        File(attachments(), "dir/sub/f").writeText("x")
+        call(files, "delete", File(attachments(), "dir"))
+        call(files, "delete", File(attachments(), "dir"))
+        assertFalse(File(attachments(), "dir").exists())
+    }
+
+    @Test fun noAttachmentUriLeavesTheAppFolders() {
+        val outside = File(folder.root, "outside.txt").apply { writeText("secret") }
+        attachments().mkdirs()
+        val link = File(attachments(), "link")
+        java.nio.file.Files.createSymbolicLink(link.toPath(), outside.toPath())
+        val files = open()
+        for (bad in listOf(uri(outside), "${uri(attachments())}/../../outside.txt", uri(link), "file://relative/x", "https://example.com/a", "/etc/hosts")) {
+            assertThrows(bad, IllegalArgumentException::class.java) { files.call(JSONObject().put("op", "readBytes").put("uri", bad).toString()) }
+            if (bad != uri(link)) assertThrows(bad, IllegalArgumentException::class.java) { files.call(JSONObject().put("op", "delete").put("uri", bad).toString()) }
+        }
+        // A link is deleted as a link: what it points to is never touched.
+        call(files, "delete", link)
+        assertFalse(java.nio.file.Files.exists(link.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS))
+        assertEquals("secret", outside.readText())
+    }
+
+    @Test fun aDeleteNeverFollowsALinkInsideTheFolders() {
+        attachments().mkdirs()
+        val kept = File(filesDir, "kept.txt").apply { writeText("kept") }
+        val keptDir = File(attachments(), "real").apply { mkdirs() }.also { File(it, "f").writeText("f") }
+        java.nio.file.Files.createSymbolicLink(File(attachments(), "to-file").toPath(), kept.toPath())
+        java.nio.file.Files.createSymbolicLink(File(attachments(), "to-dir").toPath(), keptDir.toPath())
+        val files = open()
+        call(files, "delete", File(attachments(), "to-file"))
+        call(files, "delete", File(attachments(), "to-dir"))
+        assertEquals("kept", kept.readText())
+        assertEquals("f", File(keptDir, "f").readText())
+    }
+
+    @Test fun writesStayUnderTheAttachmentsFolderAndTheCacheAndNeitherRootIsRemoved() {
+        attachments().mkdirs()
+        File(filesDir, "journal").mkdirs()
+        val journal = File(filesDir, "journal/0000000000000001.json").apply { writeText("{}") }
+        val files = open()
+        for (op in listOf("delete", "makeDirectory")) {
+            for (target in listOf(filesDir, cacheDir, File(filesDir, "journal"), journal)) {
+                assertThrows("$op ${target.name}", IllegalArgumentException::class.java) { call(files, op, target) }
+            }
+        }
+        for (dots in listOf("${uri(attachments())}/sub/..", "${uri(attachments())}/.", "${uri(attachments())}/")) {
+            assertThrows(dots, IllegalArgumentException::class.java) { files.call(JSONObject().put("op", "delete").put("uri", dots).toString()) }
+        }
+        assertTrue(attachments().isDirectory)
+        assertThrows(IllegalArgumentException::class.java) { call(files, "writeBytes", File(filesDir, "x.bin"), bytes = ByteArray(1)) }
+        assertThrows(IllegalArgumentException::class.java) { call(files, "move", journal, { put("to", uri(File(attachments(), "j"))) }) }
+        assertThrows(IllegalArgumentException::class.java) { call(files, "copy", File(attachments(), "a").apply { writeText("a") }, { put("to", uri(File(filesDir, "a"))) }) }
+        assertEquals("{}", journal.readText())
+        // The attachments folder and the cache take writes; the attachments folder itself can be made.
+        call(files, "makeDirectory", attachments())
+        call(files, "writeBytes", File(cacheDir.apply { mkdirs() }, "stage.bin"), bytes = ByteArray(2))
+        call(files, "writeBytes", File(attachments(), "b.bin"), bytes = ByteArray(2))
+        // A read may come from anywhere in the two folders.
+        assertEquals(2, (call(files, "getInfo", File(cacheDir, "stage.bin")).value as JSONObject).getLong("size"))
+        assertArrayEquals("{}".toByteArray(), call(files, "readBytes", journal).bytes)
+    }
 }

@@ -725,6 +725,31 @@
     // and a keystore call answers at once, so the timed-out call still ends.
     global.__mindwtrSyncSecrets = secrets(false);
 
+    // --- files --------------------------------------------------------------
+    // Core's attachment file port and RN's installer (host-attachments.ts) on the host's app-private files (HostFiles.kt,
+    // HostInstaller.kt): each call runs off the engine thread, one at a time in call order, and settles where a timer fires.
+    // `request` is `{ op, ... }`; `bytes` a write's bytes. It answers the call's value, or a read's bytes; a failure rejects
+    // with the host's text (a missing file names ENOENT). Refused once the host's deadline passed, as a fetch is, so a
+    // timed-out operation drains without more IO.
+    var fileChannel = function (method) {
+        return function (request, bytes) {
+            return new Promise(function (resolve, reject) {
+                refuseIfCancelled();
+                var payload = {};
+                for (var key in request) if (Object.prototype.hasOwnProperty.call(request, key)) payload[key] = request[key];
+                if (bytes !== undefined) payload.base64 = toBase64(bytesOf(bytes));
+                startIo(hostCall(native()[method](JSON.stringify(payload))), function (answer) {
+                    if (answer.error !== undefined) reject(new Error(answer.error));
+                    else resolve(answer.body ? fromBase64(answer.base64) : answer.value);
+                });
+            });
+        };
+    };
+    if (global.__mindwtrNative && typeof global.__mindwtrNative.fileCall === 'function') {
+        global.__mindwtrFileCall = fileChannel('fileCall');
+        global.__mindwtrInstallerCall = fileChannel('installerCall');
+    }
+
     // --- localStorage -------------------------------------------------------
     // In-memory only. The core stores the chosen language here; the experiment
     // never relies on it surviving a restart.

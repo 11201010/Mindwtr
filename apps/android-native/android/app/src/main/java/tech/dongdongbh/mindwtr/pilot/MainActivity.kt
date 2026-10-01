@@ -185,6 +185,8 @@ class MainActivity : FragmentActivity() {
                         }
                     }
                 }
+                // The attachments' alert, link sheet, image preview and audio player (the editor's and the project card's), over the screen.
+                if (writable) AttachmentOverlays(model)
             } } }
         }
     }

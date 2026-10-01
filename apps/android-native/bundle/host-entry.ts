@@ -307,7 +307,8 @@ const requireSync = (): NativeSync => {
 /** Settings › AI and the AI actions (host-ai.ts), on the same host: RN's AsyncStorage and SecureStore hold what RN's do. */
 const nativeAI = nativeSync ? createNativeAI(keyValue, () => globalThis.__mindwtrSecrets as HostSecrets) : null;
 
-const contract = createNativeHostContract({ ...(nativeSync ? { syncSettings: nativeSync.settingsHost } : {}), ...(nativeAI ? { ai: nativeAI } : {}) });
+const contract = createNativeHostContract({ ...(nativeSync ? { syncSettings: nativeSync.settingsHost } : {}), ...(nativeAI ? { ai: nativeAI } : {}),
+    ...(nativeSync?.attachmentsHost ? { attachments: nativeSync.attachmentsHost } : {}) });
 const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: string; message: string } }): T => {
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
@@ -354,7 +355,7 @@ const projectAttachmentInput = (json: string, withAttachmentId = false): { proje
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
     | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
     | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting'
-    | 'syncPreference' | 'setAISetting' | SyncScreenCommand | AIScreenCommand;
+    | 'syncPreference' | 'setAISetting' | SyncScreenCommand | AIScreenCommand | AttachmentCommand;
 /** Settings › Sync's screen commands: never journaled (core's NATIVE_UNJOURNALED_COMMANDS), sent by CoreHost.syncCommand. */
 type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncBackend' | 'saveSyncBackend' | 'syncNow' | 'testSyncConnection'
     | 'pickSyncFolder' | 'connectDropbox' | 'disconnectDropbox' | 'runSyncEncryptionAction';
@@ -363,6 +364,8 @@ type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncB
  * journaled: core's NATIVE_UNJOURNALED_COMMANDS, a key or a URL that may hold a password).
  */
 type AIScreenCommand = 'openAISettings' | 'setAIKey' | 'setAIEndpoint';
+/** Attachments' writes, sent by Attachments.kt (the editor's draft list, a project's list written at once). */
+type AttachmentCommand = 'attachmentAddFile' | 'attachmentLinks' | 'attachmentRemove';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
     | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | 'ingest' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
@@ -682,6 +685,33 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     aiSettings: () => contract.getAISettings(),
     aiSettingsClose: () => contract.closeAISettings(),
     taskEditorAI: (input) => contract.getTaskEditorAI(input),
+    // The editor's and the project screen's attachment rows, the link sheet's line check, and a task download's answer applied
+    // to the editor's draft list.
+    attachmentList: (input) => contract.getAttachmentList(input),
+    attachmentLinkCheck: (input) => contract.getAttachmentLinkCheck(input),
+    attachmentUpdate: (input) => {
+        const applied = contract.applyAttachmentUpdate(input);
+        return applied.ok ? { ok: true, value: { attachments: applied.value } } : applied;
+    },
+};
+/**
+ * The attachments' long calls (native-host-contract-attachments.ts): Download and Open wait on the network (a synced file's bytes),
+ * so CoreHost.attachmentRequest waits for them without holding the engine; the draft settlement after Save or Discard deletes only
+ * the editor's own copies. None is a store command a journal replays: a project download writes its availability fields, as React
+ * Native's does, identity-guarded and run again by the next Download or sync.
+ */
+const draftOnly = (input: never, command: () => Promise<Reply>): Promise<Reply> => ((input as { owner?: { kind?: unknown } } | null)?.owner?.kind === 'task'
+    ? command()
+    : Promise.resolve({ ok: false, error: { code: 'INVALID_INPUT', message: 'Only a task draft attachment command runs here' } }));
+const ATTACHMENT_REQUESTS: Record<string, (input: never) => Promise<Reply>> = {
+    // A task draft's Add file and Add photo, link Save and Remove: they answer the draft's next list and write nothing, so they are
+    // never journaled (a replay would copy a file no draft owns). A project's go through MENU_COMMANDS, journaled.
+    draftAddFile: (input) => draftOnly(input, () => contract.addAttachmentFile(input)),
+    draftLinks: (input) => draftOnly(input, () => contract.submitAttachmentLinks(input)),
+    draftRemove: (input) => draftOnly(input, () => contract.removeAttachment(input)),
+    downloadAttachment: (input) => contract.downloadAttachment(input),
+    openAttachment: (input) => contract.openAttachment(input),
+    settleTaskDraftAttachments: (input) => contract.settleTaskDraftAttachments(input),
 };
 /**
  * The AI's requests (native-host-contract-ai.ts): each waits on the provider (up to RN's 5 min request timeout), so
@@ -754,6 +784,11 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
     openAISettings: (input) => contract.openAISettings(input),
     setAIKey: (input) => contract.setAIKey(input),
     setAIEndpoint: (input) => contract.setAIEndpoint(input),
+    // Attachments (native-host-contract-attachments.ts): Add file and Add photo, the link sheet's Save, and Remove. A project's
+    // are written at once through receipts; a task's answer the editor's next draft list and write nothing.
+    attachmentAddFile: (input) => contract.addAttachmentFile(input),
+    attachmentLinks: (input) => contract.submitAttachmentLinks(input),
+    attachmentRemove: (input) => contract.removeAttachment(input),
 };
 
 let bootAdapter: ValidatedSqliteAdapter | null = null;
@@ -2684,6 +2719,15 @@ globalThis.MindwtrHost = {
             const answer = await request(JSON.parse(json) as never, signal);
             if (signal.aborted) throw new Error('The AI request was cancelled');
             return unwrap(answer);
+        });
+    },
+    /** `name` is one of ATTACHMENT_REQUESTS; `json` is that call's input. It writes no journaled command. */
+    attachmentRequest(name: string, json: string): string {
+        return submit(async () => {
+            requireSaved();
+            const request = ATTACHMENT_REQUESTS[name];
+            if (!request) throw new Error(`INVALID_INPUT: no attachment request ${name}`);
+            return unwrap(await request(JSON.parse(json) as never));
         });
     },
     /**

@@ -362,6 +362,8 @@ private fun ProjectDetailList(model: InboxViewModel, modifier: Modifier) = with(
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 4.dp).semantics { heading() })
         }
         LazyColumn(Modifier.weight(1f).background(c.bg), contentPadding = PaddingValues(12.dp)) {
+            // RN's project Attachments card (ProjectDetailModal's attachmentsContainer), above the project's tasks.
+            openProjectId?.let { id -> item(key = "attachments") { ProjectAttachments(model, id) } }
             for (entry in detail?.items.orEmpty()) when (entry) {
                 is DetailSection -> item(key = "section:${entry.id}") {
                     SectionTitle(entry.title, entry.count,

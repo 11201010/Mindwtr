@@ -110,7 +110,7 @@ fun EditorTabs(model: InboxViewModel, editor: TaskEditor) {
 @Composable
 fun TaskViewTab(model: InboxViewModel, editor: TaskEditor, locked: Boolean, pickStatus: () -> Unit, follow: (JSONObject) -> Unit, modifier: Modifier) = with(model) {
     val c = LocalTheme.current.colors
-    val draftKey = draftJson(editor.fullDraft()) + editor.checklistNow
+    val draftKey = draftJson(editor.fullDraft()) + editor.checklistNow + editor.attachments.orEmpty()
     LaunchedEffect(editor.id, draftKey, busy, failedAction) { if (!busy && failedAction == null) readTaskView() }
     val view = taskView?.takeIf { it.getString("id") == editor.id }
     Column(modifier.imePadding().verticalScroll(rememberScrollState()).padding(20.dp).testTag("task-view")) {
@@ -157,15 +157,21 @@ fun TaskViewTab(model: InboxViewModel, editor: TaskEditor, locked: Boolean, pick
             "checklist" -> ViewChecklist(model, row, labels, locked, follow)
             "attachments" -> Column(Modifier.padding(bottom = 16.dp)) {
                 ViewLabel(row.getString("label"))
-                // Listed read-only: the title and core's note (Loading, Download, Missing); the attachment viewer is not built.
+                // RN's attachment grid: an image's picture, else the title and core's note (Loading, Download, Missing); a tap opens it.
                 FlowRow(Modifier.padding(top = 8.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp), maxItemsInEachRow = 2) {
                     for (item in row.menuObjects("items")) {
                         val shape = RoundedCornerShape(12.dp)
-                        Column(Modifier.weight(1f).heightIn(min = 90.dp).clip(shape).background(c.cardBg).border(1.dp, c.border, shape).padding(10.dp),
+                        val enabled = !item.getBoolean("disabled")
+                        val owner = AttachmentOwner("task", editor.id)
+                        Column(Modifier.weight(1f).heightIn(min = 90.dp).clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
+                            .clickable(enabled = enabled, role = Role.Button) { attachments.open(owner, item.getString("id")) }.padding(10.dp),
                             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                            Text(item.getString("title"), style = rnText(12, 600), color = c.text, textAlign = TextAlign.Center, maxLines = 2)
-                            item.menuText("note")?.let { Text(it, style = rnText(11, 400), color = c.secondaryText, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp)) }
+                            if (item.getBoolean("image")) AttachmentThumbnail(item.getString("uri"), item.getString("title"))
+                            else {
+                                Text(item.getString("title"), style = rnText(12, 600), color = c.text, textAlign = TextAlign.Center, maxLines = 2)
+                                item.menuText("note")?.let { Text(it, style = rnText(11, 400), color = c.secondaryText, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp)) }
+                            }
                         }
                     }
                 }
