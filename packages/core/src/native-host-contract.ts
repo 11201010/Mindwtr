@@ -256,7 +256,7 @@ import { createQuickCaptureMethods } from './native-host-contract-quick-capture'
 import { createMindSweepMethods } from './native-host-contract-mind-sweep';
 import { createTaskDraftSaveMethods, getNativeTaskScheduleBase, getNativeTaskRecurrenceBase, type NativeTaskScheduleBase, type NativeTaskRecurrenceBase } from './native-host-contract-task-save';
 import { createTaskEditorResumeMethods } from './native-host-contract-task-editor-resume';
-import { createTaskChecklistSaveMethods } from './native-host-contract-task-checklist';
+import { canCancelNativeTask, createTaskChecklistSaveMethods } from './native-host-contract-task-checklist';
 import { createTaskFocusMethods } from './native-host-contract-task-focus';
 import { createFocusOrderMethods } from './native-host-contract-focus-order';
 import { createFocusSavedFilterMethods } from './native-host-contract-focus-saved-filter';
@@ -368,6 +368,8 @@ export type NativeTaskEditorModel = TaskEditorModel & {
     revision: string;
     id: string;
     readOnly: boolean;
+    canCancel: boolean;
+    cancelLabel: string;
     /** createTaskDraft(task). Fields whose value is undefined are absent over JSON. */
     draft: TaskDraft;
     backdatedCompletionStart: ReturnType<typeof getTaskEditorBackdatedCompletionStart>;
@@ -1508,6 +1510,10 @@ export function createNativeHostContract(options: {
             revision: `${revision()}:${displayRevision(now)}`,
             id: task.id,
             readOnly: isInArchivedProject(task),
+            canCancel: canCancelNativeTask(task, state._allProjects, isInArchivedProject(task)),
+            cancelLabel: task.recurrence
+                ? tFallback(translate, 'task.cancelRecurringSeries', 'Cancel recurring series')
+                : tFallback(translate, 'task.cancel', 'Cancel task'),
             draft,
             backdatedCompletionStart: getTaskEditorBackdatedCompletionStart(task, draft),
             focusStar: { ...focusStar, blockedText: getFocusStarBlockedText(translate, focusStar, focusTaskLimit) },
@@ -1568,7 +1574,7 @@ export function createNativeHostContract(options: {
         ...createTaskDraftSaveMethods({ readiness, save, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value) }),
         ...createTaskEditorResumeMethods({ readiness, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value),
             isReadOnly: isInArchivedProject }),
-        ...createTaskChecklistSaveMethods({ readiness, save,
+        ...createTaskChecklistSaveMethods({ readiness, save, language: () => language,
             validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value), isReadOnly: isInArchivedProject }),
         ...inboxProcessingMethods,
         // Settings › AI and the AI actions: native-host-contract-ai.ts.

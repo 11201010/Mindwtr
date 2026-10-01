@@ -4,16 +4,19 @@ import type { Task } from './types';
 
 type UndoResult = { success: true } | { success: false; error?: string; retryable: boolean };
 
+/** The saved lifecycle fields Cancel's Undo owns; other later edits stay intact. */
+export const taskCancellationRestoreFields = (before: Task): Partial<Task> => ({
+    status: before.status,
+    cancelledAt: before.cancelledAt,
+    completedAt: before.completedAt,
+    isFocusedToday: before.isFocusedToday,
+    focusOrder: before.focusOrder,
+    boardOrder: before.boardOrder,
+});
+
 /** Restore only the fields cancellation changes, leaving later edits alone. */
 export function createTaskCancellationUndo(before: Task, cancelledAt: string | undefined): () => Promise<UndoResult> {
-    const restoreFields: Partial<Task> = {
-        status: before.status,
-        cancelledAt: before.cancelledAt,
-        completedAt: before.completedAt,
-        isFocusedToday: before.isFocusedToday,
-        focusOrder: before.focusOrder,
-        boardOrder: before.boardOrder,
-    };
+    const restoreFields = taskCancellationRestoreFields(before);
     let written = false;
     let retryPersistence = false;
     let finished = false;

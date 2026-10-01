@@ -84,6 +84,23 @@ struct InboxScreen: View {
                                 Spacer()
                             }
                         }
+                        if !model.taskCancellationNotice.isEmpty && !model.taskPresented {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(model.taskCancellationNotice.text("message")).rnFont(14)
+                                    .accessibilityIdentifier("task-cancel-notice")
+                                if model.taskCancellationNotice.flag("undoEnabled") {
+                                    Button {
+                                        Task { await model.undoTaskCancellation() }
+                                    } label: {
+                                        Text(model.taskCancellationNotice.text("undoLabel"))
+                                            .frame(minWidth: 44, minHeight: 44)
+                                            .contentShape(Rectangle())
+                                    }.disabled(model.busy || model.retryNeeded)
+                                        .accessibilityIdentifier("task-cancel-undo")
+                                }
+                            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                                .foregroundStyle(palette.text).background(palette.filter)
+                        }
                         if !model.taskFocusNotice.isEmpty && !model.reviewGuidePresented {
                             TaskFocusNotice(model: model, palette: palette)
                         }

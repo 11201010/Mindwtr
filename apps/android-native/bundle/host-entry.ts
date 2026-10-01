@@ -2079,6 +2079,15 @@ globalThis.MindwtrHost = {
     checklistPreparedCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedTaskChecklistWrite(editorJson(json) as Parameters<typeof contract.commitPreparedTaskChecklistWrite>[0])));
     },
+    taskCancellationUndoPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareTaskCancellationUndo(editorJson(json) as Parameters<typeof contract.prepareTaskCancellationUndo>[0])); });
+    },
+    taskCancellationUndoValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTaskCancellationUndo(editorJson(json) as Parameters<typeof contract.validatePreparedTaskCancellationUndo>[0])));
+    },
+    taskCancellationUndoCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedTaskCancellationUndo(editorJson(json) as Parameters<typeof contract.commitPreparedTaskCancellationUndo>[0])));
+    },
     /** The capture popup (RN's quick capture sheet): an empty draft with the starting options. */
     captureOpen(): string {
         return submit(async () => {

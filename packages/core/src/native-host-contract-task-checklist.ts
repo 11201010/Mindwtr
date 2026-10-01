@@ -21,14 +21,21 @@ import { isStatusListTaskReadOnly } from './menu-views-model';
 import { mergeNativeTaskLinkHalf } from './native-host-contract-attachments';
 import { projectNextRecurringTask, type RecurrenceProjection } from './recurrence';
 import { generateUUID } from './uuid';
+import { getTranslator, resolveI18nText } from './i18n';
+import { isTaskActionable } from './task-status';
+import { isProjectedRecurringTaskId } from './recurrence';
+import { taskCancellationRestoreFields } from './undo-task-cancellation';
 
 export type NativeChecklistSaveRequest = NativeTaskDraftSaveRequest & {
     requestId: string;
     checklist: { base: ChecklistItem[]; value: ChecklistItem[] };
+    intent?: 'cancel';
 };
 export type NativeChecklistResetRequest = { id: string; requestId: string; checklistBase: ChecklistItem[] };
 export type NativeChecklistWriteRequest = NativeChecklistSaveRequest | NativeChecklistResetRequest;
 export type NativeChecklistResult = { id: string } | {
+    id: string; cancellation: { cancelledAt: string; undoEnabled: boolean; message: string; undoLabel: string };
+} | {
     id: string; checklistBase: ChecklistItem[]; status: Task['status']; completedAt: string | null; isFocusedToday: boolean;
 };
 type Lists = { tasks: Task[]; projects: Project[]; sections: Section[]; areas: Area[] };
@@ -50,6 +57,8 @@ type Witness = {
     direct: Partial<Task>;
     focusCount: number;
     focusLimit: number;
+    cancelMessage?: string;
+    cancelUndoLabel?: string;
 };
 export type NativePreparedChecklistWrite = {
     version: 1;
@@ -61,9 +70,28 @@ export type NativePreparedChecklistWrite = {
 };
 export type NativeChecklistPreparation = { kind: 'prepared'; prepared: NativePreparedChecklistWrite }
     | { kind: 'unchanged'; result: NativeChecklistResult };
+export type NativeChecklistCancellationEnvelope = {
+    request: NativeChecklistSaveRequest & { intent: 'cancel' };
+    prepared: NativePreparedChecklistWrite;
+};
+export type NativeTaskCancellationUndoRequest = { requestId: string; cancelRequestId: string };
+export type NativePreparedTaskCancellationUndo = {
+    version: 1; kind: 'undo'; request: NativeTaskCancellationUndoRequest;
+    cancel: NativeChecklistCancellationEnvelope;
+    witness: Witness; effect: PreparedChecklistEffect; result: { id: string };
+};
+export type NativeTaskCancellationUndoEnvelope = {
+    request: NativeTaskCancellationUndoRequest; prepared: NativePreparedTaskCancellationUndo;
+};
 
 const LIMIT_BYTES = 2_000_000;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const validCancelText = (value: unknown, maxLength: number): value is string =>
+    typeof value === 'string' && value.length > 0 && value.length <= maxLength
+    && value.trim() === value && Array.from(value).every((char) => {
+        const code = char.charCodeAt(0);
+        return code >= 32 && code !== 127;
+    });
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 const exact = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).length === keys.length && keys.every((key) => own(value, key));
@@ -86,6 +114,16 @@ const detach = <T>(value: T): T | null => {
     return isNativeJsonWithinBytes(value, LIMIT_BYTES) ? JSON.parse(encoded) as T : null;
 };
 const isSave = (value: NativeChecklistWriteRequest): value is NativeChecklistSaveRequest => 'checklist' in value;
+const readUndoRequest = (value: unknown): NativeTaskCancellationUndoRequest | null => {
+    const input = detach(value);
+    return isRecord(input) && exact(input, ['requestId', 'cancelRequestId'])
+        && typeof input.requestId === 'string' && UUID.test(input.requestId)
+        && typeof input.cancelRequestId === 'string' && UUID.test(input.cancelRequestId)
+        && input.requestId !== input.cancelRequestId ? input as NativeTaskCancellationUndoRequest : null;
+};
+export const canCancelNativeTask = (task: Task, projects: readonly Project[], readOnly = false): boolean =>
+    !readOnly && !task.deletedAt && !task.purgedAt && isTaskActionable(task)
+    && !isProjectedRecurringTaskId(task.id) && !isStatusListTaskReadOnly(task, projects);
 const draftRequest = (request: NativeChecklistSaveRequest): NativeTaskDraftSaveRequest => ({
     id: request.id, base: request.base, patch: request.patch, scheduleBase: request.scheduleBase,
     ...(request.recurrenceBase ? { recurrenceBase: request.recurrenceBase } : {}),
@@ -107,9 +145,12 @@ const readRequest = (value: unknown, validateField: (field: TaskDraftField, valu
         ...(own(input, 'recurrenceBase') ? { recurrenceBase: input.recurrenceBase } : {}),
         ...(own(input, 'attachments') ? { attachments: input.attachments } : {}) };
     const parsed = readNativeTaskDraftSaveRequest(bare, validateField, true, false, true);
-    if (!base || !selected || !parsed || !exact(input, ['id', 'requestId', 'base', 'patch', 'scheduleBase', 'checklist',
-        ...(parsed.recurrenceBase ? ['recurrenceBase'] : []), ...(parsed.attachments ? ['attachments'] : [])])) return null;
-    return { ...parsed, requestId: input.requestId, checklist: { base, value: selected } };
+    if (!base || !selected || !parsed || (own(input, 'intent') && input.intent !== 'cancel')
+        || !exact(input, ['id', 'requestId', 'base', 'patch', 'scheduleBase', 'checklist',
+            ...(parsed.recurrenceBase ? ['recurrenceBase'] : []), ...(parsed.attachments ? ['attachments'] : []),
+            ...(input.intent === 'cancel' ? ['intent'] : [])])) return null;
+    return { ...parsed, requestId: input.requestId, checklist: { base, value: selected },
+        ...(input.intent === 'cancel' ? { intent: 'cancel' as const } : {}) };
 };
 
 const futureBoundary = (preparedAt: string) => {
@@ -131,7 +172,7 @@ const restoreClears = (value: Partial<Task>, fields: string[]): Partial<Task> =>
 const validClears = (value: Partial<Task>, fields: string[]) => fields.every((field) =>
     typeof field === 'string' && field.length <= 100 && !own(value, field))
     && new Set(fields).size === fields.length;
-const directSaveUpdates = (source: Task, request: NativeChecklistSaveRequest): Partial<Task> | null => {
+const directSaveUpdates = (source: Task, request: NativeChecklistSaveRequest, preparedAt?: string): Partial<Task> | null => {
     const attachments = request.attachments
         ? mergeNativeTaskLinkHalf(source.attachments ?? [], request.attachments) : source.attachments;
     if (attachments === null) return null;
@@ -145,11 +186,15 @@ const directSaveUpdates = (source: Task, request: NativeChecklistSaveRequest): P
     for (const field of ['startTime', 'dueDate', 'relativeStartOffset', 'reviewAt'] as const) {
         if (own(request.patch, field)) Object.assign(updates, { [field]: draft[field] || undefined });
     }
+    if (request.intent === 'cancel') {
+        if (!preparedAt) return null;
+        Object.assign(updates, { status: 'archived', cancelledAt: preparedAt, completedAt: undefined });
+    }
     return updates;
 };
 const temporal = new Set(['startTime', 'dueDate', 'relativeStartOffset', 'reviewAt']);
 const directIsBound = (source: Task, request: NativeChecklistSaveRequest, witness: Witness): boolean => {
-    const expected = directSaveUpdates(source, request);
+    const expected = directSaveUpdates(source, request, witness.preparedAt);
     if (!expected || !validClears(witness.direct, witness.directClears)) return false;
     const frozen = restoreClears(witness.direct, witness.directClears);
     const names = new Set([...Object.keys(expected), ...Object.keys(frozen)]);
@@ -166,13 +211,27 @@ const directIsBound = (source: Task, request: NativeChecklistSaveRequest, witnes
     return true;
 };
 const deviceId = (witness: Witness) => witness.deviceIdBefore ?? witness.deviceIdToInitialize!;
-const effectResult = (kind: 'save' | 'reset', effect: PreparedChecklistEffect): NativeChecklistResult => {
+const effectResult = (kind: 'save' | 'reset', effect: PreparedChecklistEffect,
+    request: NativeChecklistWriteRequest, witness: Witness): NativeChecklistResult => {
     const updated = effect.tasks.find((row) => row.after.id === effect.sourceBefore.id)?.after;
     if (!updated) throw new Error('Missing checklist source effect');
-    return kind === 'reset' ? resetResult(updated) : { id: updated.id };
+    if (kind === 'reset') return resetResult(updated);
+    if (isSave(request) && request.intent === 'cancel') {
+        if (updated.status !== 'archived' || updated.cancelledAt !== witness.preparedAt
+            || !validCancelText(witness.cancelMessage, 512) || !validCancelText(witness.cancelUndoLabel, 80))
+            throw new Error('Invalid cancellation effect');
+        return { id: updated.id, cancellation: {
+            cancelledAt: updated.cancelledAt,
+            undoEnabled: witness.settings.undoNotificationsEnabled !== false,
+            message: witness.cancelMessage,
+            undoLabel: witness.cancelUndoLabel,
+        } };
+    }
+    return { id: updated.id };
 };
 
-const plan = (kind: 'save' | 'reset', request: NativeChecklistWriteRequest, witness: Witness, allowIds = false): {
+const plan = (kind: 'save' | 'reset', request: NativeChecklistWriteRequest, witness: Witness,
+    allowIds = false, undo = false): {
     effect: PreparedChecklistEffect; result: NativeChecklistResult;
 } => {
     const source = witness.source;
@@ -248,7 +307,7 @@ const plan = (kind: 'save' | 'reset', request: NativeChecklistWriteRequest, witn
     const effect: PreparedChecklistEffect = { sourceBefore: source, tasks: taskRows,
         projects: projectRows, sections: sectionRows, deviceIdBefore: witness.deviceIdBefore,
         deviceIdToInitialize: witness.deviceIdToInitialize, guards };
-    return { effect, result: effectResult(kind, effect) };
+    return { effect, result: undo ? { id: source.id } : effectResult(kind, effect, request, witness) };
 };
 
 /** Keep only rows the deterministic planner reads; never journal the library. */
@@ -305,6 +364,7 @@ const readPrepared = (
             'source', 'lists', 'settings', 'preparedAt', 'preparedLocalDay', 'preparedOffsetMinutes',
             'boundaryOffsetMinutes', 'futureBoundary', 'deviceIdBefore', 'deviceIdToInitialize',
             'recurrenceProjection', 'ids', 'directClears', 'direct', 'focusCount', 'focusLimit',
+            ...(isSave(request) && request.intent === 'cancel' ? ['cancelMessage', 'cancelUndoLabel'] : []),
         ]) || !isRecord(witness.source) || !isRecord(witness.lists) || !isRecord(witness.settings)
         || !exact(witness.lists, ['tasks', 'projects', 'sections', 'areas'])
         || !Array.isArray(witness.lists.tasks) || !Array.isArray(witness.lists.projects)
@@ -335,7 +395,13 @@ const readPrepared = (
             ? typeof witness.deviceIdToInitialize !== 'string' || !UUID.test(witness.deviceIdToInitialize)
             : witness.deviceIdToInitialize !== null)
         || !Number.isSafeInteger(witness.focusCount) || witness.focusCount < 0
-        || !Number.isSafeInteger(witness.focusLimit) || witness.focusLimit < 1) return null;
+        || !Number.isSafeInteger(witness.focusLimit) || witness.focusLimit < 1
+        || (isSave(request) && request.intent === 'cancel' && (!validCancelText(witness.cancelMessage, 512)
+            || !validCancelText(witness.cancelUndoLabel, 80) || !canCancelNativeTask(witness.source,
+                witness.lists.projects as Project[])
+            || witness.recurrenceProjection !== null
+            || (witness.settings.undoNotificationsEnabled !== undefined
+                && typeof witness.settings.undoNotificationsEnabled !== 'boolean')))) return null;
     if (isSave(request)) {
         if (!validNativeTaskDraftBases(witness.source, draftRequest(request))
             || !same(toChecklist(witness.source.checklist), request.checklist.base)
@@ -358,11 +424,80 @@ const readPrepared = (
     }
 };
 
+const readCancellation = (value: unknown,
+    validateField: (field: TaskDraftField, value: unknown) => boolean): NativeChecklistCancellationEnvelope | null => {
+    const envelope = detach(value);
+    if (!isRecord(envelope) || !exact(envelope, ['request', 'prepared'])) return null;
+    const prepared = readPrepared(envelope, validateField);
+    return prepared && prepared.kind === 'save' && isSave(prepared.request)
+        && prepared.request.intent === 'cancel' && isRecord(prepared.result)
+        && 'cancellation' in prepared.result && isRecord(prepared.result.cancellation)
+        ? envelope as NativeChecklistCancellationEnvelope : null;
+};
+
+const readPreparedUndo = (value: unknown,
+    validateField: (field: TaskDraftField, value: unknown) => boolean): NativeTaskCancellationUndoEnvelope | null => {
+    const envelope = detach(value);
+    if (!isRecord(envelope) || !exact(envelope, ['request', 'prepared']) || !isRecord(envelope.prepared)) return null;
+    const request = readUndoRequest(envelope.request);
+    const raw = envelope.prepared;
+    const cancel = readCancellation(raw.cancel, validateField);
+    if (!request || !exact(raw, ['version', 'kind', 'request', 'cancel', 'witness', 'effect', 'result'])
+        || raw.version !== 1 || raw.kind !== 'undo' || !same(raw.request, request)
+        || !cancel || request.cancelRequestId !== cancel.request.requestId
+        || !same(raw.cancel, cancel) || !isRecord(raw.witness) || !isRecord(raw.effect)
+        || !isRecord(raw.result) || !exact(raw.result, ['id'])) return null;
+    const prepared = raw as unknown as NativePreparedTaskCancellationUndo;
+    const witness = prepared.witness;
+    const cancelled = cancel.prepared.effect.tasks.find((row) => row.after.id === cancel.request.id)?.after;
+    if (!cancelled || !isRecord(witness.source) || !isRecord(witness.lists)
+        || !exact(witness as unknown as Record<string, unknown>, [
+            'source', 'lists', 'settings', 'preparedAt', 'preparedLocalDay', 'preparedOffsetMinutes',
+            'boundaryOffsetMinutes', 'futureBoundary', 'deviceIdBefore', 'deviceIdToInitialize',
+            'recurrenceProjection', 'ids', 'directClears', 'direct', 'focusCount', 'focusLimit',
+        ]) || !exact(witness.lists, ['tasks', 'projects', 'sections', 'areas'])
+        || !Array.isArray(witness.lists.tasks) || !Array.isArray(witness.lists.projects)
+        || !Array.isArray(witness.lists.sections) || !Array.isArray(witness.lists.areas)
+        || !isRecord(witness.settings) || !isRecord(witness.direct)
+        || !Array.isArray(witness.directClears) || !validClears(witness.direct, witness.directClears)
+        || !Array.isArray(witness.ids) || witness.ids.length !== 0 || witness.recurrenceProjection !== null
+        || witness.source.id !== cancel.request.id || witness.source.deletedAt || witness.source.purgedAt
+        || witness.source.status !== 'archived' || witness.source.cancelledAt !== cancelled.cancelledAt
+        || (witness.source.rev ?? 0) < (cancelled.rev ?? 0)
+        || isStatusListTaskReadOnly(witness.source, witness.lists.projects)
+        || witness.lists.tasks.filter((row) => row.id === witness.source.id).length !== 1
+        || !same(witness.lists.tasks.find((row) => row.id === witness.source.id), witness.source)
+        || typeof witness.preparedAt !== 'string' || !Number.isFinite(Date.parse(witness.preparedAt))
+        || new Date(witness.preparedAt).toISOString() !== witness.preparedAt
+        || typeof witness.preparedLocalDay !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(witness.preparedLocalDay)
+        || !Number.isInteger(witness.preparedOffsetMinutes) || Math.abs(witness.preparedOffsetMinutes) > 840
+        || !Number.isInteger(witness.boundaryOffsetMinutes) || Math.abs(witness.boundaryOffsetMinutes) > 840
+        || new Date(Date.parse(witness.preparedAt) - witness.preparedOffsetMinutes * 60_000).toISOString().slice(0, 10)
+            !== witness.preparedLocalDay
+        || new Date(Date.parse(`${witness.preparedLocalDay}T23:59:59.999Z`)
+            + witness.boundaryOffsetMinutes * 60_000).toISOString() !== witness.futureBoundary
+        || witness.deviceIdBefore !== (witness.settings.deviceId ?? null)
+        || (witness.deviceIdBefore === null
+            ? typeof witness.deviceIdToInitialize !== 'string' || !UUID.test(witness.deviceIdToInitialize)
+            : witness.deviceIdToInitialize !== null)
+        || !Number.isSafeInteger(witness.focusCount) || witness.focusCount < 0
+        || !Number.isSafeInteger(witness.focusLimit) || witness.focusLimit < 1
+        || !same(restoreClears(witness.direct, witness.directClears),
+            taskCancellationRestoreFields(cancel.prepared.witness.source))
+        || prepared.result.id !== witness.source.id) return null;
+    try {
+        const planned = plan('save', cancel.request, witness, false, true);
+        return same(planned.effect, prepared.effect) && same(planned.result, prepared.result)
+            ? envelope as NativeTaskCancellationUndoEnvelope : null;
+    } catch { return null; }
+};
+
 export function createTaskChecklistSaveMethods(deps: {
     readiness: () => NativeHostResult<null>;
     save: () => Promise<NativeHostResult<null>>;
     validateField: (field: TaskDraftField, value: unknown) => boolean;
     isReadOnly: (task: Task) => boolean;
+    language: () => string;
 }) {
     const prepare = (kind: 'save' | 'reset', input: unknown): NativeHostResult<NativeChecklistPreparation> => {
         const ready = deps.readiness();
@@ -378,6 +513,8 @@ export function createTaskChecklistSaveMethods(deps: {
             return fail('INVALID_INPUT', 'Task is read-only while its project is archived or deleted');
         }
         if (isSave(request)) {
+            if (request.intent === 'cancel' && !canCancelNativeTask(task, state._allProjects, deps.isReadOnly(task)))
+                return fail('INVALID_INPUT', 'Task cannot be cancelled');
             if (!validNativeTaskDraftBases(task, draftRequest(request))
                 || !same(toChecklist(task.checklist), request.checklist.base)) {
                 return fail('STALE_REVISION', 'Task changed while editing');
@@ -400,12 +537,15 @@ export function createTaskChecklistSaveMethods(deps: {
             const preparedAt = new Date().toISOString();
             const boundary = futureBoundary(preparedAt);
             const device = ensureDeviceId(state.settings);
-            const direct = isSave(request) ? directSaveUpdates(task, request) : {};
+            const direct = isSave(request) ? directSaveUpdates(task, request, preparedAt) : {};
             if (!direct) return fail('INVALID_INPUT', 'Checklist edit cannot produce a task update');
             const source = JSON.parse(JSON.stringify(task)) as Task;
             const settings = JSON.parse(JSON.stringify({ deviceId: state.settings.deviceId,
                 gtd: { autoArchiveDays: state.settings.gtd?.autoArchiveDays,
-                    focusTaskLimit: state.settings.gtd?.focusTaskLimit } })) as AppData['settings'];
+                    focusTaskLimit: state.settings.gtd?.focusTaskLimit },
+                ...(isSave(request) && request.intent === 'cancel'
+                    ? { undoNotificationsEnabled: state.settings.undoNotificationsEnabled } : {}) })) as AppData['settings'];
+            const cancelTranslator = isSave(request) && request.intent === 'cancel' ? getTranslator(deps.language()) : null;
             const witness: Witness = {
                 source, lists: { tasks: state._allTasks, projects: state._allProjects,
                     sections: state._allSections, areas: state._allAreas },
@@ -416,11 +556,13 @@ export function createTaskChecklistSaveMethods(deps: {
                     .toISOString().slice(0, 10),
                 deviceIdBefore: state.settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null,
-                recurrenceProjection: isSave(request) && request.patch.status === 'done' && task.status !== 'done'
+                recurrenceProjection: isSave(request) && request.intent !== 'cancel' && request.patch.status === 'done' && task.status !== 'done'
                     && task.status !== 'archived' ? projectNextRecurringTask(task, preparedAt) : null,
                 ids: [], directClears: cleared(direct), direct: JSON.parse(JSON.stringify(direct)),
                 focusCount: countFocusedTasksBeforeBoundary(state.tasks, boundary),
                 focusLimit: normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit),
+                ...(cancelTranslator ? { cancelMessage: resolveI18nText(cancelTranslator, 'task.cancelledWithRestore'),
+                    cancelUndoLabel: resolveI18nText(cancelTranslator, 'common.undo') } : {}),
             };
             const first = plan(kind, request, witness, true);
             reduceWitness(witness, first.effect, state);
@@ -436,6 +578,17 @@ export function createTaskChecklistSaveMethods(deps: {
             return fail('INVALID_INPUT', 'Checklist could not be prepared');
         }
     };
+    const commitEffect = async <T>(effect: PreparedChecklistEffect, result: T): Promise<NativeHostResult<T>> => {
+        const applied = await useTaskStore.getState().commitPreparedChecklistEffect(effect);
+        if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared task change conflicts with current data');
+        try {
+            if (useTaskStore.getState().persistenceFailure) await useTaskStore.getState().retryPersistence();
+        } catch (error) {
+            return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
+        }
+        const saved = await deps.save();
+        return saved.ok ? { ok: true, value: result } : saved;
+    };
     return {
         prepareTaskChecklistSave: (request: NativeChecklistSaveRequest): NativeHostResult<NativeChecklistPreparation> => prepare('save', request),
         prepareTaskChecklistReset: (request: NativeChecklistResetRequest): NativeHostResult<NativeChecklistPreparation> => prepare('reset', request),
@@ -450,16 +603,71 @@ export function createTaskChecklistSaveMethods(deps: {
             if (!ready.ok) return ready;
             const prepared = readPrepared(input, deps.validateField);
             if (!prepared) return fail('INVALID_INPUT', 'Prepared checklist request or journal does not match');
-            const applied = await useTaskStore.getState().commitPreparedChecklistEffect(prepared.effect);
-            if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared checklist change conflicts with current data');
+            return commitEffect(prepared.effect, prepared.result);
+        },
+        prepareTaskCancellationUndo(input: { request: NativeTaskCancellationUndoRequest; cancel: NativeChecklistCancellationEnvelope }): NativeHostResult<
+            { kind: 'prepared'; prepared: NativePreparedTaskCancellationUndo }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const request = readUndoRequest(input?.request);
+            const cancel = readCancellation(input?.cancel, deps.validateField);
+            if (!request || !cancel || request.cancelRequestId !== cancel.request.requestId)
+                return fail('INVALID_INPUT', 'A confirmed cancellation and new Undo UUID are required');
+            const state = useTaskStore.getState();
+            const matches = state._allTasks.filter((row) => row.id === cancel.request.id);
+            const task = matches.length === 1 ? matches[0] : null;
+            const cancelled = cancel.prepared.effect.tasks.find((row) => row.after.id === cancel.request.id)?.after;
+            if (!task || !cancelled || task.deletedAt || task.purgedAt || task.status !== 'archived'
+                || task.cancelledAt !== cancelled.cancelledAt
+                || isStatusListTaskReadOnly(task, state._allProjects) || deps.isReadOnly(task))
+                return fail('STALE_REVISION', 'Cancellation was superseded');
             try {
-                if (useTaskStore.getState().persistenceFailure) await useTaskStore.getState().retryPersistence();
-            } catch (error) {
-                return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
-            }
-            const saved = await deps.save();
-            if (!saved.ok) return saved;
-            return { ok: true, value: prepared.result };
+                const preparedAt = new Date().toISOString();
+                const boundary = futureBoundary(preparedAt);
+                const device = ensureDeviceId(state.settings);
+                const direct = taskCancellationRestoreFields(cancel.prepared.witness.source);
+                const witness: Witness = {
+                    source: JSON.parse(JSON.stringify(task)) as Task,
+                    lists: { tasks: state._allTasks, projects: state._allProjects,
+                        sections: state._allSections, areas: state._allAreas },
+                    settings: JSON.parse(JSON.stringify({ deviceId: state.settings.deviceId,
+                        gtd: { autoArchiveDays: state.settings.gtd?.autoArchiveDays,
+                            focusTaskLimit: state.settings.gtd?.focusTaskLimit } })) as AppData['settings'],
+                    preparedAt, futureBoundary: boundary,
+                    preparedOffsetMinutes: new Date(preparedAt).getTimezoneOffset(),
+                    boundaryOffsetMinutes: new Date(boundary).getTimezoneOffset(),
+                    preparedLocalDay: new Date(Date.parse(preparedAt) - new Date(preparedAt).getTimezoneOffset() * 60_000)
+                        .toISOString().slice(0, 10),
+                    deviceIdBefore: state.settings.deviceId ?? null,
+                    deviceIdToInitialize: device.updated ? device.deviceId : null,
+                    recurrenceProjection: null, ids: [], directClears: cleared(direct),
+                    direct: JSON.parse(JSON.stringify(direct)),
+                    focusCount: countFocusedTasksBeforeBoundary(state.tasks, boundary),
+                    focusLimit: normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit),
+                };
+                const first = plan('save', cancel.request, witness, true, true);
+                if (witness.ids.length !== 0) return fail('INVALID_INPUT', 'Undo cannot create recurring tasks');
+                reduceWitness(witness, first.effect, state);
+                const bounded = plan('save', cancel.request, witness, false, true);
+                if (!same(first, bounded)) return fail('INVALID_INPUT', 'Undo effect exceeds the bounded witness');
+                const prepared = detach(JSON.parse(JSON.stringify({ version: 1, kind: 'undo' as const, request, cancel, witness,
+                    effect: bounded.effect, result: bounded.result }))) as NativePreparedTaskCancellationUndo | null;
+                if (!prepared) return fail('INVALID_INPUT', 'Undo cannot produce a valid bounded journal');
+                return readPreparedUndo({ request, prepared }, deps.validateField)
+                    ? { ok: true, value: { kind: 'prepared', prepared } }
+                    : fail('INVALID_INPUT', 'Undo cannot produce a valid bounded journal');
+            } catch { return fail('INVALID_INPUT', 'Undo could not be prepared'); }
+        },
+        validatePreparedTaskCancellationUndo(input: NativeTaskCancellationUndoEnvelope): NativeHostResult<{ id: string }> {
+            const envelope = readPreparedUndo(input, deps.validateField);
+            return envelope ? { ok: true, value: envelope.prepared.result }
+                : fail('INVALID_INPUT', 'Prepared cancellation Undo is malformed');
+        },
+        async commitPreparedTaskCancellationUndo(input: NativeTaskCancellationUndoEnvelope): Promise<NativeHostResult<{ id: string }>> {
+            const envelope = readPreparedUndo(input, deps.validateField);
+            if (!envelope) return fail('INVALID_INPUT', 'Prepared cancellation Undo is malformed');
+            const ready = deps.readiness();
+            return ready.ok ? commitEffect(envelope.prepared.effect, envelope.prepared.result) : ready;
         },
     };
 }

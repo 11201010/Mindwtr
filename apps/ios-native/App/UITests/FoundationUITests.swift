@@ -17,6 +17,65 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testTaskCancellationNormal() { taskCancellationFlow(library: "95b8592d-6203-4189-b3a1-8683fff86df9") }
+    func testTaskCancellationLargestText() { taskCancellationFlow(library: "89b31166-aae3-470e-b645-77eebfd6c8eb") }
+
+    private func beginTaskCancellation(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+        let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText("Task133 scheduled")
+        boardTap(app, "search-task-task133-task"); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]; boardEnabled(title)
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap(); title.typeText(" draft")
+        XCTAssertEqual(title.value as? String, "Task133 scheduled task draft")
+        boardTap(app, "task-more"); boardTap(app, "task-cancel")
+    }
+
+    private func taskCancellationFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); beginTaskCancellation(app)
+        boardEnabled(app.buttons["task-cancel-undo"], timeout: 30)
+        XCTAssertGreaterThanOrEqual(app.buttons["task-cancel-undo"].frame.width, 44)
+        XCTAssertGreaterThanOrEqual(app.buttons["task-cancel-undo"].frame.height, 44)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task cancellation Undo"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "task-cancel-undo")
+        boardTap(app, "search-task-task133-task"); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]; boardEnabled(title)
+        XCTAssertEqual(title.value as? String, "Task133 scheduled task draft")
+        XCTAssertTrue(app.buttons["task-editor-status-next"].isSelected)
+        boardTap(app, "task-view-close")
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists); app.terminate()
+    }
+
+    func testTaskCancellationNoUndoPreference() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "5eb2f3db-41b6-4dec-a637-3508b009d3c1"]
+        app.launch(); beginTaskCancellation(app)
+        XCTAssertTrue(app.staticTexts["task-cancel-notice"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["task-cancel-undo"].exists)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30); app.terminate()
+    }
+
+    func testTaskCancellationFailureRetainsDraft() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "8642bd67-f6d6-4f2b-aee4-28e1f36f47c6"]
+        app.launch(); beginTaskCancellation(app)
+        boardEnabled(app.buttons["task-view-retry"], timeout: 30)
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task133 scheduled task draft")
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["task-view-close"].isEnabled)
+            boardTap(app, "task-view-retry"); boardEnabled(app.buttons["task-view-retry"], timeout: 30)
+        }
+        app.terminate()
+    }
+
+    func testTaskCancellationColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "8642bd67-f6d6-4f2b-aee4-28e1f36f47c6"]
+        app.launch(); boardEnabled(app.buttons["history-tab-archived"], timeout: 30)
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "archive-task-", "task133-task")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30); app.terminate()
+    }
+
     func testTaskDuplicateNormal() { taskDuplicateFlow(library: "a10dd636-e182-4b35-94d9-d8678f674bbe") }
     func testTaskDuplicateLargestText() { taskDuplicateFlow(library: "778122ec-5c49-436d-8453-ebdbc454a6dd") }
 

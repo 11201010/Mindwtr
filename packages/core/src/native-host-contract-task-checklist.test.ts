@@ -3,6 +3,7 @@ import { createNativeHostContract, type NativeHostResult } from './native-host-c
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppData, Area, Project, Section, Task } from './types';
 import { createTaskDraft } from './task-draft';
+import { en } from './i18n/locales/en';
 
 const clock = '2026-09-27T15:00:00.000Z';
 const item = (id: string, title: string, isCompleted = false) => ({ id, title, isCompleted });
@@ -11,6 +12,187 @@ const source = (overrides: Partial<Task> = {}): Task => ({
     createdAt: '2026-09-01T10:00:00.000Z', updatedAt: '2026-09-01T10:00:00.000Z',
     rev: 3, revBy: 'device-a', tags: [], contexts: [],
     checklist: [item('one', 'First'), item('two', 'Second')], ...overrides,
+});
+
+describe('prepared task cancellation and Undo', () => {
+    const cancelId = '00000000-0000-4000-8000-000000000322';
+    const undoId = '00000000-0000-4000-8000-000000000323';
+    const cancelRequest = (task: Task, patch: Record<string, unknown> = {}, base: Record<string, unknown> = {}) => ({
+        id: task.id, requestId: cancelId, intent: 'cancel' as const, base, patch, scheduleBase,
+        checklist: { base: task.checklist!, value: task.checklist! },
+    });
+    const preparedCancel = (host: Awaited<ReturnType<typeof open>>['host'], request: ReturnType<typeof cancelRequest>) => {
+        const plan = unwrap(host.prepareTaskChecklistSave(request));
+        expect(plan.kind).toBe('prepared');
+        if (plan.kind !== 'prepared') throw new Error('Expected prepared cancellation');
+        return plan.prepared;
+    };
+
+    it('cancels a clean recurring task at the frozen clock without completion or another occurrence', async () => {
+        const original = source({ recurrence: 'daily', isFocusedToday: true, focusOrder: 2 });
+        const { host } = await open(original);
+        const editor = unwrap(host.getTaskEditorModel({ id: original.id }));
+        expect(editor).toMatchObject({ canCancel: true, cancelLabel: 'Cancel recurring series' });
+        const request = cancelRequest(original);
+        const prepared = preparedCancel(host, request);
+        expect(prepared.result).toEqual({ id: original.id, cancellation: {
+            cancelledAt: prepared.witness.preparedAt, undoEnabled: true,
+            message: 'Task cancelled. You can restore it from Archive.', undoLabel: 'Undo',
+        } });
+        expect(unwrap(host.validatePreparedTaskChecklistWrite({ request, prepared }))).toEqual(prepared.result);
+        expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared }))).toEqual(prepared.result);
+        expect(savedTask()).toMatchObject({ status: 'archived', cancelledAt: prepared.witness.preparedAt,
+            isFocusedToday: false });
+        expect(savedTask().completedAt).toBeUndefined();
+        expect(useTaskStore.getState()._allTasks).toHaveLength(1);
+    });
+
+    it('saves the whole draft before cancellation, then Undo retains a later unrelated edit', async () => {
+        const original = source({ isFocusedToday: true, focusOrder: 3, boardOrder: 7 });
+        const { host } = await open(original);
+        const request = cancelRequest(original, { title: 'Edited in draft' }, { title: original.title });
+        const prepared = preparedCancel(host, request);
+        expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared }))).toEqual(prepared.result);
+        expect(savedTask()).toMatchObject({ title: 'Edited in draft', status: 'archived' });
+        await useTaskStore.getState().updateTask(original.id, { description: 'Later unrelated edit' });
+        await flushPendingSave();
+        const cancel = { request, prepared };
+        const undoRequest = { requestId: undoId, cancelRequestId: cancelId };
+        const undo = unwrap(host.prepareTaskCancellationUndo({ request: undoRequest, cancel }));
+        expect(undo.kind).toBe('prepared');
+        expect(unwrap(host.validatePreparedTaskCancellationUndo({ request: undoRequest, prepared: undo.prepared })))
+            .toEqual({ id: original.id });
+        expect(unwrap(await host.commitPreparedTaskCancellationUndo({ request: undoRequest, prepared: undo.prepared })))
+            .toEqual({ id: original.id });
+        expect(savedTask()).toMatchObject({ title: 'Edited in draft', description: 'Later unrelated edit',
+            status: original.status, isFocusedToday: true, focusOrder: 3, boardOrder: 7 });
+        expect(savedTask().cancelledAt).toBeUndefined();
+        const cold = createNativeHostContract();
+        unwrap(await cold.activate({ writeSafetyReady: true, recoveryLoad: true }));
+        expect(unwrap(await cold.commitPreparedTaskCancellationUndo({ request: undoRequest, prepared: undo.prepared })))
+            .toEqual({ id: original.id });
+    });
+
+    it('rejects forged cancellation clocks and Undo proofs before writes', async () => {
+        const original = source();
+        const { host, saves } = await open(original);
+        const request = cancelRequest(original);
+        const prepared = preparedCancel(host, request);
+        const forged = structuredClone(prepared);
+        forged.effect.tasks.find((row) => row.after.id === original.id)!.after.cancelledAt = '2030-01-01T00:00:00.000Z';
+        expect(host.validatePreparedTaskChecklistWrite({ request, prepared: forged }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(host.prepareTaskChecklistSave({ ...request, intent: 'other' } as never))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const before = saves();
+        unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared }));
+        const undoRequest = { requestId: undoId, cancelRequestId: cancelId };
+        const undo = unwrap(host.prepareTaskCancellationUndo({ request: undoRequest, cancel: { request, prepared } }));
+        const badUndo = structuredClone(undo.prepared);
+        badUndo.cancel.prepared.witness.source.status = 'waiting';
+        expect(host.validatePreparedTaskCancellationUndo({ request: undoRequest, prepared: badUndo }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(saves()).toBe(before + 1);
+    });
+
+    it('refuses Undo after a newer cancellation or deletion', async () => {
+        const original = source();
+        const { host } = await open(original);
+        const request = cancelRequest(original);
+        const prepared = preparedCancel(host, request);
+        unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared }));
+        const undoRequest = { requestId: undoId, cancelRequestId: cancelId };
+        await useTaskStore.getState().updateTask(original.id, { cancelledAt: '2030-01-01T00:00:00.000Z' });
+        await flushPendingSave();
+        expect(host.prepareTaskCancellationUndo({ request: undoRequest, cancel: { request, prepared } }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        await useTaskStore.getState().deleteTask(original.id);
+        await flushPendingSave();
+        expect(host.prepareTaskCancellationUndo({ request: undoRequest, cancel: { request, prepared } }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    });
+
+    it('retries failed cancellation and Undo persistence with their original prepared envelopes', async () => {
+        let failSave = false;
+        const original = source({ isFocusedToday: true, focusOrder: 4 });
+        const { host, saved } = await open(original, { saveData: async () => {
+            if (failSave) throw new Error('disk unavailable');
+        } });
+        const request = cancelRequest(original, { title: 'Saved draft' }, { title: original.title });
+        const prepared = preparedCancel(host, request);
+        failSave = true;
+        expect(await host.commitPreparedTaskChecklistWrite({ request, prepared }))
+            .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(savedTask()).toMatchObject({ title: 'Saved draft', status: 'archived', rev: 4 });
+        expect(saved().tasks[0]).toMatchObject({ title: original.title, status: original.status, rev: 3 });
+        failSave = false;
+        expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared }))).toEqual(prepared.result);
+        expect(saved().tasks[0]).toMatchObject({ title: 'Saved draft', status: 'archived', rev: 4 });
+
+        const undoRequest = { requestId: undoId, cancelRequestId: cancelId };
+        const undo = unwrap(host.prepareTaskCancellationUndo({ request: undoRequest, cancel: { request, prepared } }));
+        failSave = true;
+        expect(await host.commitPreparedTaskCancellationUndo({ request: undoRequest, prepared: undo.prepared }))
+            .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(savedTask()).toMatchObject({ title: 'Saved draft', status: original.status, rev: 5 });
+        expect(saved().tasks[0]).toMatchObject({ title: 'Saved draft', status: 'archived', rev: 4 });
+        failSave = false;
+        expect(unwrap(await host.commitPreparedTaskCancellationUndo({ request: undoRequest, prepared: undo.prepared })))
+            .toEqual({ id: original.id });
+        expect(saved().tasks[0]).toMatchObject({ title: 'Saved draft', status: original.status, rev: 5 });
+        const cold = await open(saved().tasks[0]);
+        expect(unwrap(cold.host.validatePreparedTaskCancellationUndo({ request: undoRequest, prepared: undo.prepared })))
+            .toEqual({ id: original.id });
+        expect(unwrap(await cold.host.commitPreparedTaskCancellationUndo({ request: undoRequest, prepared: undo.prepared })))
+            .toEqual({ id: original.id });
+        expect(savedTask()).toMatchObject({ title: 'Saved draft', status: original.status, rev: 5 });
+    }, 20_000);
+
+    it('freezes the Undo notification setting and rejects an archived parent', async () => {
+        const original = source();
+        const { host } = await open(original);
+        useTaskStore.setState({ settings: { ...useTaskStore.getState().settings, undoNotificationsEnabled: false } });
+        const request = cancelRequest(original);
+        const prepared = preparedCancel(host, request);
+        expect(prepared.result).toMatchObject({ cancellation: { undoEnabled: false } });
+        useTaskStore.setState({ settings: { ...useTaskStore.getState().settings, undoNotificationsEnabled: true } });
+        expect(unwrap(host.validatePreparedTaskChecklistWrite({ request, prepared }))).toEqual(prepared.result);
+
+        const archived: Project = { id: 'archived-parent', title: 'Old', status: 'archived', color: '#94a3b8',
+            order: 0, tagIds: [], createdAt: clock, updatedAt: clock };
+        const child = source({ projectId: archived.id });
+        const blocked = await open(child, { projects: [archived] });
+        expect(unwrap(blocked.host.getTaskEditorModel({ id: child.id })).canCancel).toBe(false);
+        expect(blocked.host.prepareTaskChecklistSave(cancelRequest(child)))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    it('validates and replays cancellation and Undo after translation text changes', async () => {
+        const original = source();
+        const { host } = await open(original);
+        const request = cancelRequest(original);
+        const prepared = preparedCancel(host, request);
+        const frozen = structuredClone(prepared.result);
+        const priorMessage = en['task.cancelledWithRestore'];
+        const priorUndo = en['common.undo'];
+        try {
+            en['task.cancelledWithRestore'] = 'Updated cancellation wording';
+            en['common.undo'] = 'Revert';
+            const cold = createNativeHostContract();
+            unwrap(await cold.activate({ writeSafetyReady: true, recoveryLoad: true }));
+            expect(unwrap(cold.validatePreparedTaskChecklistWrite({ request, prepared }))).toEqual(frozen);
+            expect(unwrap(await cold.commitPreparedTaskChecklistWrite({ request, prepared }))).toEqual(frozen);
+            const undoRequest = { requestId: undoId, cancelRequestId: cancelId };
+            const undo = unwrap(cold.prepareTaskCancellationUndo({ request: undoRequest, cancel: { request, prepared } }));
+            expect(unwrap(cold.validatePreparedTaskCancellationUndo({ request: undoRequest, prepared: undo.prepared })))
+                .toEqual({ id: original.id });
+            expect(unwrap(await cold.commitPreparedTaskCancellationUndo({ request: undoRequest, prepared: undo.prepared })))
+                .toEqual({ id: original.id });
+        } finally {
+            en['task.cancelledWithRestore'] = priorMessage;
+            en['common.undo'] = priorUndo;
+        }
+    });
 });
 const unwrap = <T,>(result: NativeHostResult<T>): T => {
     if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);

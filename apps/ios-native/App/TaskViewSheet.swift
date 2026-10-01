@@ -111,6 +111,12 @@ struct TaskViewSheet: View {
                 Spacer()
                 if !readOnly && !model.taskEditor.isEmpty {
                     Menu {
+                        if model.taskEditor.flag("canCancel") {
+                            Button(model.taskEditor.text("cancelLabel"), role: .destructive) {
+                                endEditingBeforeAction()
+                                Task { await model.saveTask(cancel: true) }
+                            }.accessibilityIdentifier("task-cancel")
+                        }
                         Button(strings.text("taskEdit.duplicateTask")) {
                             endEditingBeforeAction()
                             Task { await model.duplicateTask() }

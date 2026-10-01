@@ -61,6 +61,105 @@ final class EditorDraftRecoveryHostTests: XCTestCase {
         ])])
     }
 
+    private func cancellationArguments(_ id: String, requestID: String, opening: [String: Any]) throws -> String {
+        try json([json(["id": id, "requestId": requestID, "intent": "cancel",
+            "base": ["title": "Before edit"], "patch": ["title": "Cancelled draft title"],
+            "scheduleBase": try XCTUnwrap(opening["scheduleBase"]),
+            "checklist": ["base": [], "value": []]])])
+    }
+
+    func testTaskCancellationFailedCommitRetainsDraftAndColdAppliesOnce() async throws {
+        let faults = HostIOFaults(), first = host()
+        _ = try await first.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(first, id: id)
+        await first.close()
+        let writing = host(faults)
+        _ = try await writing.start()
+        let before = try json(task(id))
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: id,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Cancelled draft title"}}"#)
+        try await writing.checkpointEditorDraft(draft)
+        let args = try cancellationArguments(id, requestID: UUID().uuidString.lowercased(), opening: opening)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected cancel COMMIT") } }
+        do {
+            _ = try await writing.saveEditorDraft("checklistSave", argumentsJSON: args,
+                expectedSession: draft.sessionID, expectedGeneration: 1)
+            XCTFail("Expected failed cancellation")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED"), error.localizedDescription) }
+        XCTAssertEqual(try json(task(id)), before)
+        XCTAssertEqual(try EditorDraftStore(databaseURL: database).read()?.snapshot, draft)
+        let owed = try json(JSONSerialization.jsonObject(with: Data(contentsOf: journal)))
+        do { _ = try await writing.retryPending(); XCTFail("Expected repeated failure") } catch {}
+        XCTAssertEqual(try json(JSONSerialization.jsonObject(with: Data(contentsOf: journal))), owed)
+        await writing.close()
+        let recovered = host()
+        let startup = try object(await recovered.start())
+        let result = try XCTUnwrap((startup["recovery"] as? [String: Any])?["result"] as? [String: Any])
+        let cancelledAt = try XCTUnwrap((result["cancellation"] as? [String: Any])?["cancelledAt"] as? String)
+        let saved = try task(id)
+        XCTAssertEqual(saved["status"] as? String, "archived")
+        XCTAssertEqual(saved["title"] as? String, "Cancelled draft title")
+        XCTAssertEqual(saved["cancelledAt"] as? String, cancelledAt)
+        XCTAssertTrue(saved["completedAt"] is NSNull)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await recovered.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(try json(task(id)), try json(saved))
+    }
+
+    func testTaskCancellationUndoRequiresConfirmedProofAndColdRetriesExactly() async throws {
+        let faults = HostIOFaults(), core = host()
+        _ = try await core.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(core, id: id)
+        await core.close()
+        let writing = host(faults); _ = try await writing.start()
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: id,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Cancelled draft title"}}"#)
+        try await writing.checkpointEditorDraft(draft)
+        let cancellationID = UUID().uuidString.lowercased()
+        let result = try object(await writing.saveEditorDraft("checklistSave",
+            argumentsJSON: cancellationArguments(id, requestID: cancellationID, opening: opening),
+            expectedSession: draft.sessionID, expectedGeneration: 1))
+        XCTAssertNotNil(result["cancellation"])
+        let cancelled = try json(task(id))
+        do {
+            _ = try await writing.call("taskCancellationUndo", argumentsJSON: json([json([
+                "requestId": UUID().uuidString.lowercased(), "cancelRequestId": UUID().uuidString.lowercased()])]))
+            XCTFail("Expected unconfirmed Undo refusal")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("INVALID_INPUT")) }
+        XCTAssertEqual(try json(task(id)), cancelled)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let undoArguments = try json([json([
+            "requestId": UUID().uuidString.lowercased(), "cancelRequestId": cancellationID])])
+        faults.journalWrite = { throw HostFailure("Injected Undo pre-journal failure") }
+        do {
+            _ = try await writing.call("taskCancellationUndo", argumentsJSON: undoArguments)
+            XCTFail("Expected pre-journal Undo failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Injected Undo pre-journal failure")) }
+        XCTAssertEqual(try json(task(id)), cancelled)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        faults.journalWrite = nil
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Undo COMMIT") } }
+        do {
+            _ = try await writing.retryPending()
+            XCTFail("Expected failed Undo")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED"), error.localizedDescription) }
+        XCTAssertEqual(try json(task(id)), cancelled)
+        await writing.close()
+        let recovered = host(); _ = try await recovered.start()
+        let restored = try task(id)
+        XCTAssertEqual(restored["status"] as? String, "inbox")
+        XCTAssertEqual(restored["title"] as? String, "Cancelled draft title")
+        XCTAssertTrue(restored["cancelledAt"] is NSNull)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await recovered.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(try json(task(id)), try json(restored))
+    }
+
     func testTaskDuplicateKeepsFrozenDraftUntilColdCommitAndCopiesSavedSource() async throws {
         let faults = HostIOFaults()
         let first = host(faults)
@@ -78,7 +177,7 @@ final class EditorDraftRecoveryHostTests: XCTestCase {
             _ = try await first.saveEditorDraft("boardAction", argumentsJSON: args,
                 expectedSession: snapshot.sessionID, expectedGeneration: snapshot.generation)
             XCTFail("Expected failed duplicate")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED")) }
+        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED"), error.localizedDescription) }
         let frozen = try XCTUnwrap(EditorDraftStore(databaseURL: database).read())
         XCTAssertEqual(frozen.snapshot, snapshot)
         XCTAssertEqual(frozen.attempt?.method, "boardAction")
@@ -177,7 +276,7 @@ final class EditorDraftRecoveryHostTests: XCTestCase {
         do {
             _ = try await first.call("managePersonCreate", argumentsJSON: json([json(request)]))
             XCTFail("Expected failed Person write")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED")) }
+        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED"), error.localizedDescription) }
         XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
         XCTAssertEqual(try json(task(taskID)), before)
         await first.close()
