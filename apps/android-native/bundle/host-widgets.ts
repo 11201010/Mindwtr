@@ -9,12 +9,19 @@ import {
     setFocusWidgetFilter,
     useTaskStore,
     type FilterCriteria,
+    type Language,
     type SortField,
     type WidgetSystemColorScheme,
 } from '@mindwtr/core';
 
 /** What the publication reads from the device (HostWidgets.kt): what RN's widget service reads from React Native. */
-export type WidgetInputs = { systemColorScheme: WidgetSystemColorScheme; systemLocale: string; listSelections: string[] };
+export type WidgetInputs = {
+    systemColorScheme: WidgetSystemColorScheme;
+    systemLocale: string;
+    listSelections: string[];
+    /** Debug builds only (check-widgets-device.mjs): the widgets' language, in place of the app's. */
+    language?: Language;
+};
 
 /** Kotlin's half of RN's widget module (HostWidgets.kt): the device's inputs, and setPayload + updateWidgets in one call. */
 export type WidgetBridge = {
@@ -49,7 +56,7 @@ export const createWidgetPublisher = (bridge: WidgetBridge) => {
         const state = useTaskStore.getState();
         const data = { tasks: state._allTasks, projects: state._allProjects, sections: state._allSections, areas: state._allAreas, settings: state.settings ?? {} };
         const input = bridge.inputs();
-        const language = resolveWidgetLanguage(bridge.storedLanguage(), data.settings.language, resolveLanguageFromLocale(input.systemLocale));
+        const language = input.language ?? resolveWidgetLanguage(bridge.storedLanguage(), data.settings.language, resolveLanguageFromLocale(input.systemLocale));
         const publication = buildAndroidWidgetPublication(data, language, {
             systemColorScheme: input.systemColorScheme,
             focusFilter: getFocusWidgetFilter(),

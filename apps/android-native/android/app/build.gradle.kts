@@ -23,6 +23,8 @@ fun com.android.build.api.dsl.ApplicationBuildType.urlScheme() {
     val scheme = urlSchemes.getValue(name)
     buildConfigField("String", "URL_SCHEME", "\"$scheme\"")
     manifestPlaceholders["urlScheme"] = scheme
+    // The widget module's manifest names RN's widgets with the build's launcher label.
+    manifestPlaceholders["widgetLabel"] = widgetLabels.getValue(name)
 }
 
 android {
@@ -80,14 +82,13 @@ android {
     // RN's app shortcuts, generated per build type (buildShortcuts below).
     sourceSets { urlSchemes.keys.forEach { getByName(it).res.srcDir(layout.buildDirectory.dir("generated/shortcuts/$it/res")) } }
     // RN's attachment installer Kotlin, with its JVM tests, compiled as it is (rnAttachmentInstaller below); RN's widget
-    // components, generated per build type from RN's plugins (buildWidgets below): the manifest entries, their XML and resources,
-    // the legacy widget class and the Quick Settings tile.
+    // components' files, generated per build type from RN's plugins (buildWidgets below): their XML and resources, the legacy
+    // widget class and the Quick Settings tile. Their manifest entries are the widget module's.
     sourceSets {
         getByName("main").java.srcDir(layout.buildDirectory.dir("generated/rnInstaller/main/java"))
         getByName("test").java.srcDir(layout.buildDirectory.dir("generated/rnInstaller/test/java"))
         urlSchemes.keys.forEach { type ->
             val widgets = layout.buildDirectory.dir("generated/widgets/$type").get().asFile
-            getByName(type).manifest.srcFile(widgets.resolve("AndroidManifest.xml"))
             getByName(type).res.srcDir(widgets.resolve("res"))
             getByName(type).java.srcDir(widgets.resolve("java"))
         }

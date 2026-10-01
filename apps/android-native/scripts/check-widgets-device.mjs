@@ -13,7 +13,8 @@
 // (5) a ring tap whose CoreWork job is held back (debug core_work_delay_ms), the app killed after the queue file is written: the
 // task is still open, then JobScheduler runs the job in a new process and completes it once, and a relaunch writes nothing
 // more; (6) RN's quick capture dialog (through the debug-only exported alias; RN's activity is not exported) stores its capture
-// once; (7) with the app's language set to German, then Chinese (debug `language`), the payload equals core's for that language,
+// once; (7) with the widgets' language set to German, then Chinese (debug `widget_language`; the synced setting is left alone),
+// the payload equals core's for that language,
 // its dates from the phone's ICU. Titles are 94 + a 12-digit run id + 1 to 6 (check-projects-device.mjs --prune-old removes
 // earlier runs'). It grants this package widget binding (`appwidget grantbind`) and revokes it at the end, types only digits,
 // never launches over another app, and leaves the device on its home screen. It needs host `bun` and `sqlite3`. Exit 0 = pass,
@@ -48,7 +49,7 @@ const WIDGET = 'tech.dongdongbh.mindwtr.androidwidget';
 const PROVIDERS = [`${WIDGET}.TasksWidgetProvider`, `${WIDGET}.CompactWidgetProvider`, `${WIDGET}.QuickCaptureWidgetProvider`, `${PKG}.widget.TasksWidget`];
 const TILE = 'tech.dongdongbh.mindwtr.quicksettings.CaptureTileService';
 const TAG = 'MindwtrNativeDev';
-const PROPS = ['core_work_delay_ms', 'language'];
+const PROPS = ['core_work_delay_ms', 'widget_language'];
 const DB = 'mindwtr-native-dev.db';
 const QUEUE = 'files/pending-captures';
 const UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
@@ -98,7 +99,7 @@ const storedPayload = () => {
  * Core's own Android publication on a copy of the app's database (host-side core with bun, in the phone's time zone): the
  * payload RN's widget service would hand setPayload for that data, [language] and [inputs].
  */
-const corePublication = (language, inputs) => execFileSync('bun', ['-e', `
+const corePublication = (language, inputs) => { execFileSync('bun', ['-e', `
     import { Database } from 'bun:sqlite';
     import { SqliteAdapter, buildAndroidWidgetPublication, createNativeHostContract, getFocusWidgetFilter, setStorageAdapter, useTaskStore } from '${coreSrc}/index.ts';
     const db = new Database(process.env.CHECK_DB);
@@ -114,9 +115,13 @@ const corePublication = (language, inputs) => execFileSync('bun', ['-e', `
     const data = { tasks: state._allTasks, projects: state._allProjects, sections: state._allSections, areas: state._allAreas, settings: state.settings ?? {} };
     // The Focus screen's filter as a new process has it (the app starts on the Inbox and never opened Focus).
     const inputs = { ...JSON.parse(process.env.CHECK_INPUTS), focusFilter: getFocusWidgetFilter() };
-    process.stdout.write(JSON.stringify(buildAndroidWidgetPublication(data, process.env.CHECK_LANGUAGE, inputs)));
+    // A file, not stdout: core's own log lines go to the console.
+    await Bun.write(process.env.CHECK_OUT, JSON.stringify(buildAndroidWidgetPublication(data, process.env.CHECK_LANGUAGE, inputs)));
     process.exit(0);
-`], { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, TZ: phoneZone, CHECK_DB: pullDatabase(), CHECK_LANGUAGE: language, CHECK_INPUTS: JSON.stringify(inputs) } });
+`], { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, TZ: phoneZone, CHECK_DB: pullDatabase(), CHECK_LANGUAGE: language, CHECK_INPUTS: JSON.stringify(inputs),
+    CHECK_OUT: resolve(work, 'core-publication.json') } });
+    return readFileSync(resolve(work, 'core-publication.json'), 'utf8');
+};
 
 // ---- the log ----
 const allLogs = () => execFileSync(adbBin, ['-s', serial, 'logcat', '-d', '-s', `${TAG}:*`], { encoding: 'utf8', maxBuffer: 64 << 20 }).replace(/\\/g, '');
@@ -127,7 +132,8 @@ const INGESTED = ['Native Android core work', '"job":"ingest","outcome":"success
 /** The inputs the last publication used, from its log line's context (core's logger: a JSON string). */
 const lastInputs = () => {
     const line = allLogs().split('\n').filter((text) => text.includes(PUBLISHED)).pop() ?? fail('no publication line');
-    return JSON.parse(line.slice(line.indexOf('{', line.indexOf(PUBLISHED))));
+    // Core's logger puts the context in as a JSON string; allLogs drops its escapes.
+    return JSON.parse(/"context":"(\{.*?\})"/.exec(line)?.[1] ?? fail(`no context in ${line}`));
 };
 const waitUntil = async (description, predicate, timeoutMs = 60_000, everyMs = 1000) => {
     const deadline = Date.now() + timeoutMs;
@@ -180,12 +186,23 @@ const ringFor = (nodes, text) => {
         return t <= (top + bottom) / 2 && (top + bottom) / 2 <= b;
     }) ?? fail(`no check-off ring beside ${text}`);
 };
+/** The hosted widget's screen with row [text] in view: the widget's list scrolls (earlier runs' rows can come first). */
+const revealRow = async (text) => {
+    let nodes = await screen();
+    for (let step = 0; step < 15 && !hostedRows(nodes).includes(text); step += 1) {
+        const list = nodes.find((node) => resourceId(node) === 'mindwtr_widget_list') ?? fail('no widget list');
+        const [x1, y1, x2, y2] = box(list);
+        const x = Math.round((x1 + x2) / 2);
+        sh(`input swipe ${x} ${Math.round(y1 + (y2 - y1) * 0.8)} ${x} ${Math.round(y1 + (y2 - y1) * 0.3)} 400`);
+        await sleep(800);
+        nodes = await screen();
+    }
+    return hostedRows(nodes).includes(text) ? nodes : null;
+};
 const hostWidget = async (expected) => {
     start(HOST);
-    return waitUntil(`the hosted widget to draw ${expected}`, async () => {
-        const nodes = await screen();
-        return hostedRows(nodes).includes(expected) ? nodes : null;
-    }, 30_000);
+    await waitUntil('the hosted widget to draw its list', async () => (await screen()).some((node) => resourceId(node) === 'mindwtr_widget_item_title'), 30_000);
+    return (await revealRow(expected)) ?? fail(`the hosted widget never showed ${expected}`);
 };
 const tapRing = async (nodes, text) => {
     if (!front().includes(`${PKG}/`)) throw new Stopped(`the widget host is not in front: ${front().trim()}`);
@@ -248,8 +265,11 @@ try {
     {
         const providers = sh('dumpsys appwidget');
         for (const name of PROVIDERS) check(providers.includes(`ComponentInfo{${PKG}/${name}}`), `(1) dumpsys appwidget lists ${name}`);
-        const tiles = sh('cmd package query-services -a android.service.quicksettings.action.QS_TILE');
-        check(tiles.includes(`${PKG}/${TILE}`), `(1) the Quick Settings tile ${TILE} answers QS_TILE`);
+        // The package's service resolver table: the action, then each component that answers it.
+        const services = sh(`dumpsys package ${PKG}`);
+        const qsTile = services.slice(services.indexOf('android.service.quicksettings.action.QS_TILE:'));
+        check(services.includes('android.service.quicksettings.action.QS_TILE:') && qsTile.split('\n').slice(1, 4).some((line) => line.includes(`${PKG}/${TILE}`)),
+            `(1) the Quick Settings tile ${TILE} answers QS_TILE`);
     }
 
     // (2) Three captures queued while the app is closed: the boot stores them, and the payload Kotlin stored is core's.
@@ -272,10 +292,9 @@ try {
     let nodes = await hostWidget(title(1));
     {
         const payload = JSON.parse(storedPayload());
-        const shown = hostedRows(nodes);
-        check(shown.includes(title(1)) && shown.includes(title(2)), `(3) the widget draws RN's Focus rows: ${shown.join(', ')}`);
-        const focusTitle = payload.lists.focus.title;
-        check(nodes.some((node) => node.text === focusTitle), `(3) the widget's header shows the list "${focusTitle}"`);
+        check(hostedRows(nodes).includes(title(1)) && Boolean(await revealRow(title(2))), `(3) the widget draws RN's Focus rows ${title(1)} and ${title(2)}`);
+        check(nodes.some((node) => node.text === payload.dateLabel) && nodes.some((node) => node.text === payload.subtitle),
+            `(3) the widget's header shows the payload's "${payload.dateLabel}" and "${payload.subtitle}"`);
         writeFileSync(resolve(work, 'widget.png'), device.adbRaw('exec-out', 'screencap', '-p'));
         console.log(`info - the hosted widget: ${resolve(work, 'widget.png')}`);
     }
@@ -284,16 +303,16 @@ try {
     {
         const [before] = stored(title(1));
         const jobs = count(allLogs(), ...INGESTED);
+        nodes = (await revealRow(title(1))) ?? fail(`no row ${title(1)}`);
         await tapRing(nodes, title(1));
         await waitUntil('CoreWork to store the check-off', () => count(allLogs(), ...INGESTED) > jobs && stored(title(1))[0]?.status === 'done', 60_000, 2000);
         await sleep(3000);
         const [after] = stored(title(1));
         check(after.status === 'done' && after.rev === before.rev + 1 && queuedFor(before.id).length === 0, `(4) the ring tap completed ${title(1)} once (rev ${before.rev} to ${after.rev}), the queue empty`);
-        nodes = await waitUntil('the widget to drop the completed row', async () => {
-            const current = await screen();
-            return hostedRows(current).includes(title(1)) ? null : current;
-        }, 30_000);
-        check(hostedRows(nodes).includes(title(2)), '(4) CoreWork\'s refresh redrew the widget without the completed row');
+        await waitUntil('the payload to drop the completed task', () => !storedPayload().includes(`"id":"${before.id}"`), 30_000);
+        await sleep(2000);
+        nodes = await revealRow(title(1));
+        check(nodes === null, '(4) CoreWork\'s refresh redrew the widget without the completed row');
     }
 
     // (5) A ring tap whose CoreWork job is held back, and the app killed once the queue file is written.
@@ -301,6 +320,7 @@ try {
         const [before] = stored(title(2));
         setProp('core_work_delay_ms', '3600000');
         try {
+            nodes = (await revealRow(title(2))) ?? fail(`no row ${title(2)}`);
             await tapRing(nodes, title(2));
             const [file] = await waitUntil('RN\'s sweep to queue the check-off', () => queuedFor(before.id).length > 0 && queuedFor(before.id), 30_000);
             check(true, `(5) RN's CheckoffStore queued the completion (${file}) after its Undo window`);
@@ -350,14 +370,15 @@ try {
     // (7) German, then Chinese: the payload is core's for that language, its dates from the phone's ICU.
     for (const language of ['de', 'zh']) {
         await killApp();
-        setProp('language', language);
+        // The widgets' own language (a debug property): the app's synced language setting stays as it is.
+        setProp('widget_language', language);
         await openApp();
         const { payload, context } = parity(`(7 ${language})`);
         check(context.language === language, `(7 ${language}) the widget is in ${language}`);
         console.log(`info - (7 ${language}) header "${payload.dateLabel}", Today "${payload.sections.find((section) => section.key === 'schedule')?.detail}", `
             + `${title(3)} due "${payload.lists.next.items.find((item) => item.title === title(3))?.dueLabel}"`);
     }
-    setProp('language', '');
+    setProp('widget_language', '');
     await killApp();
     await openApp();
     sh('input keyevent KEYCODE_HOME');

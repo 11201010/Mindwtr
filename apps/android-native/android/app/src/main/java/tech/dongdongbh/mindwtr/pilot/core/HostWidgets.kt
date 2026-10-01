@@ -28,6 +28,8 @@ class HostWidgets(private val app: Context) {
             .put("systemColorScheme", if (night) "dark" else "light")
             .put("systemLocale", Locale.getDefault().toLanguageTag())
             .put("listSelections", JSONArray(WidgetListStore.selections(app)))
+            // Debug builds only (check-widgets-device.mjs): the widgets' language, whatever the synced setting says.
+            .apply { debugProperty("widget_language").takeIf { it.isNotEmpty() }?.let { put("language", it) } }
             .toString()
     }
 

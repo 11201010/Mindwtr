@@ -2977,7 +2977,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
 {
     // The main manifest and the debug build's widget overlay (RN's plugins' entries, scripts/build-widgets.mjs; pass W1).
     const { buildManifest } = await import('./build-widgets.mjs');
-    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + buildManifest('tech.dongdongbh.mindwtr.nativeclient.dev', 'Mindwtr Native Dev');
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + buildManifest();
     const gradle = readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8');
     const widgetGradle = readFileSync(resolve(app, 'android/widget/build.gradle.kts'), 'utf8');
     const rnWidget = (name) => readFileSync(resolve(app, '../mobile/modules/android-widget/android/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
@@ -3116,14 +3116,17 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // configure, tap and peek activities, the list service, the capture receiver and the tile, under RN's names, in the app's one
     // process. Exported: exactly RN's, plus the debug build's two entries for the device check.
     const { buildManifest, buildTileSource, TILE_PACKAGE } = await import('./build-widgets.mjs');
-    const overlay = buildManifest('tech.dongdongbh.mindwtr.nativeclient.dev', 'Mindwtr Native Dev');
+    // The widget module's manifest, with the app's placeholders for the package and each build's launcher label.
+    const overlay = buildManifest();
+    assert.match(overlay, /android:name="\$\{applicationId\}\.widget\.TasksWidget" android:label="\$\{widgetLabel\}"/);
+    assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /manifestPlaceholders\["widgetLabel"\] = widgetLabels\.getValue\(name\)/);
     const merged = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + overlay;
     const exportedNames = (text) => [...text.matchAll(/<(?:activity-alias|activity|receiver|service|provider)\s[^>]*?android:name="([^"]+)"[^>]*?android:exported="true"/g)].map((m) => m[1]).sort();
     assert.deepEqual(exportedNames(merged), ['${applicationId}.MainActivity', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
         'tech.dongdongbh.mindwtr.androidwidget.CompactWidgetProvider', 'tech.dongdongbh.mindwtr.androidwidget.QuickCaptureWidgetProvider',
         'tech.dongdongbh.mindwtr.androidwidget.TasksWidgetProvider', 'tech.dongdongbh.mindwtr.androidwidget.WidgetConfigureActivity',
-        'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver', 'tech.dongdongbh.mindwtr.nativeclient.dev.widget.TasksWidget',
-        'tech.dongdongbh.mindwtr.quicksettings.CaptureTileService'], 'only RN\'s exported components');
+        'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver', 'tech.dongdongbh.mindwtr.quicksettings.CaptureTileService',
+        '${applicationId}.widget.TasksWidget'].sort(), 'only RN\'s exported components');
     const debugManifest = readFileSync(resolve(app, 'android/app/src/debug/AndroidManifest.xml'), 'utf8');
     assert.deepEqual(exportedNames(debugManifest), ['${applicationId}.DebugQuickCapture', 'tech.dongdongbh.mindwtr.pilot.WidgetHostActivity'], 'the debug build adds only the check\'s two entries');
     assert(!existsSync(resolve(app, 'android/app/src/release')) && !existsSync(resolve(app, 'android/app/src/upgradetest')), 'no other build type adds an entry');
