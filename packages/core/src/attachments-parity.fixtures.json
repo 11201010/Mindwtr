@@ -1,0 +1,5708 @@
+{
+ "provenance": {
+  "command": "cd apps/mobile && MINDWTR_CAPTURE_ATTACHMENTS=1 MINDWTR_CAPTURE_ATTACHMENTS_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run tests/attachments.parity.test.tsx",
+  "capturedAt": "d7e5635103b4194651d416924f054529bf577295",
+  "sourceState": "Every file under apps/ and packages/ was at HEAD except this attachments parity harness and its fixture.",
+  "rendering": "use-task-edit-attachments.ts (task task-1, visible, its draft in React state) and use-project-attachments.ts (project project-1, the selected project in React state, updateProject writing the store) mounted with react-test-renderer under a fake Date, English strings, request-ordered UUIDs (00000000-0000-4000-8000-<n>, from 1 per scenario) and Platform.OS web. The pickers, persistAttachmentLocally (copies to file:///data/files/attachments/<id><title extension>, or returns the attachment unchanged when unreadable), ensureAttachmentAvailableDetailed, Linking, Sharing, the Android viewer, the audio player, the log and Alert are replaced; the availability identity and patch rules are core's. Each step lists, in order, what the hook did, then the draft or project attachments and the screen state."
+ },
+ "timeZone": "UTC",
+ "now": "2026-09-30T10:00:00.000Z",
+ "taskId": "task-1",
+ "projectId": "project-1",
+ "scenarios": [
+  {
+   "name": "task: add a file",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "addFile",
+     "ports": {
+      "pickDocument": {
+       "canceled": false,
+       "assets": [
+        {
+         "name": "Report.pdf",
+         "uri": "content://picker/report",
+         "mimeType": "application/pdf",
+         "size": 1234
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: a canceled file pick adds nothing",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "addFile"
+    }
+   ]
+  },
+  {
+   "name": "task: a file too large is refused",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "addFile",
+     "ports": {
+      "pickDocument": {
+       "canceled": false,
+       "assets": [
+        {
+         "name": "Huge.zip",
+         "uri": "content://picker/huge",
+         "mimeType": "application/zip",
+         "size": 62914560
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: a blocked file type is refused",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "addFile",
+     "ports": {
+      "pickDocument": {
+       "canceled": false,
+       "assets": [
+        {
+         "name": "run.exe",
+         "uri": "content://picker/run",
+         "mimeType": "application/x-msdownload",
+         "size": 10
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: a file without a size or name is still added",
+   "surface": "task",
+   "attachments": [],
+   "steps": [
+    {
+     "action": "addFile",
+     "ports": {
+      "pickDocument": {
+       "canceled": false,
+       "assets": [
+        {
+         "name": "",
+         "uri": "content://picker/blob",
+         "mimeType": "<undefined>"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: a file that cannot be read is refused",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "addFile",
+     "ports": {
+      "pickDocument": {
+       "canceled": false,
+       "assets": [
+        {
+         "name": "Report.pdf",
+         "uri": "content://picker/report",
+         "mimeType": "application/pdf",
+         "size": 1234
+        }
+       ]
+      },
+      "persist": "unreadable"
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: add an image",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "addImage",
+     "ports": {
+      "pickImage": {
+       "canceled": false,
+       "assets": [
+        {
+         "fileName": "Photo.jpg",
+         "uri": "file:///cache/ImagePicker/photo.jpg",
+         "mimeType": "image/jpeg",
+         "fileSize": 4096
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: an image without a name takes its file name, and only fileSize is kept",
+   "surface": "task",
+   "attachments": [],
+   "steps": [
+    {
+     "action": "addImage",
+     "ports": {
+      "pickImage": {
+       "canceled": false,
+       "assets": [
+        {
+         "fileName": null,
+         "uri": "file:///cache/ImagePicker/IMG_7.heic",
+         "mimeType": "image/heic",
+         "size": 512
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: sandbox refuses every attachment action",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "addFile",
+     "ports": {
+      "sandbox": true,
+      "pickDocument": {
+       "canceled": false,
+       "assets": [
+        {
+         "name": "Report.pdf",
+         "uri": "content://picker/report",
+         "mimeType": "application/pdf",
+         "size": 1234
+        }
+       ]
+      }
+     }
+    },
+    {
+     "action": "addImage",
+     "ports": {
+      "sandbox": true
+     }
+    },
+    {
+     "action": "openAddLink",
+     "ports": {
+      "sandbox": true
+     }
+    },
+    {
+     "action": "open:file-1",
+     "ports": {
+      "sandbox": true
+     }
+    },
+    {
+     "action": "download:file-1",
+     "ports": {
+      "sandbox": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: add links, one per line, with titles",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "openAddLink"
+    },
+    {
+     "action": "setLinkInput:https://one.example\n\nTwo | https://two.example/x\n[Three](www.three.example)"
+    },
+    {
+     "action": "confirmLink"
+    }
+   ]
+  },
+  {
+   "name": "task: a file path line is not a link",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "openAddLink"
+    },
+    {
+     "action": "setLinkInput:https://one.example\n/Users/me/notes.md"
+    },
+    {
+     "action": "confirmLink"
+    }
+   ]
+  },
+  {
+   "name": "task: an invalid line refuses the whole paste",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "openAddLink"
+    },
+    {
+     "action": "setLinkInput:https://three.example\ninvalid line"
+    },
+    {
+     "action": "confirmLink"
+    },
+    {
+     "action": "closeLinkModal"
+    }
+   ]
+  },
+  {
+   "name": "task: an empty link marks the field touched",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "openAddLink"
+    },
+    {
+     "action": "setLinkInput:   "
+    },
+    {
+     "action": "confirmLink"
+    }
+   ]
+  },
+  {
+   "name": "task: edit a link",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "editLink:link-old"
+    },
+    {
+     "action": "setLinkInput:New title | https://new.example/page"
+    },
+    {
+     "action": "confirmLink"
+    },
+    {
+     "action": "editLink:file-1"
+    }
+   ]
+  },
+  {
+   "name": "task: an invalid edited link is refused",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "link-bare",
+     "kind": "link",
+     "title": "https://bare.example",
+     "uri": "https://bare.example",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "editLink:link-bare"
+    },
+    {
+     "action": "setLinkInput:not a link"
+    },
+    {
+     "action": "confirmLink"
+    }
+   ]
+  },
+  {
+   "name": "task: remove a synced attachment",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "file-synced",
+     "kind": "file",
+     "title": "file-synced.pdf",
+     "uri": "file:///data/files/attachments/file-synced.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/file-synced.pdf",
+     "fileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "remove:file-synced"
+    }
+   ]
+  },
+  {
+   "name": "task: open a missing file downloads it first",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "remote-1",
+     "kind": "file",
+     "title": "remote-1.pdf",
+     "uri": "",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "missing",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/remote-1.pdf",
+     "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "contentRev": 1
+    }
+   ],
+   "steps": [
+    {
+     "action": "open:remote-1",
+     "ports": {
+      "ensure": {
+       "status": "available",
+       "attachment": {
+        "id": "remote-1",
+        "kind": "file",
+        "title": "remote-1.pdf",
+        "uri": "file:///data/files/attachments/remote-1.pdf",
+        "mimeType": "application/pdf",
+        "size": 2048,
+        "localStatus": "available",
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "updatedAt": "2026-09-01T00:00:00.000Z",
+        "cloudKey": "attachments/remote-1.pdf",
+        "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "contentRev": 1
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: open a missing file through the share sheet",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "remote-2",
+     "kind": "file",
+     "title": "remote-2.pdf",
+     "uri": "",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "missing",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/remote-2.pdf",
+     "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "contentRev": 1
+    }
+   ],
+   "steps": [
+    {
+     "action": "open:remote-2",
+     "ports": {
+      "ensure": {
+       "status": "available",
+       "attachment": {
+        "id": "remote-2",
+        "kind": "file",
+        "title": "remote-2.pdf",
+        "uri": "file:///data/files/attachments/remote-2.pdf",
+        "mimeType": "application/pdf",
+        "size": 2048,
+        "localStatus": "available",
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "updatedAt": "2026-09-01T00:00:00.000Z",
+        "cloudKey": "attachments/remote-2.pdf",
+        "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "contentRev": 1
+       }
+      },
+      "shareAvailable": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: a failed download keeps the file missing",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "remote-3",
+     "kind": "file",
+     "title": "remote-3.pdf",
+     "uri": "",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "missing",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/remote-3.pdf",
+     "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "contentRev": 1
+    }
+   ],
+   "steps": [
+    {
+     "action": "download:remote-3",
+     "ports": {
+      "ensure": {
+       "status": "unavailable"
+      }
+     }
+    },
+    {
+     "action": "open:remote-3",
+     "ports": {
+      "ensure": {
+       "status": "unavailable"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: a download conflict",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "remote-4",
+     "kind": "file",
+     "title": "remote-4.pdf",
+     "uri": "",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "missing",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/remote-4.pdf",
+     "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "contentRev": 1
+    }
+   ],
+   "steps": [
+    {
+     "action": "download:remote-4",
+     "ports": {
+      "ensure": {
+       "status": "generation-conflict"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: a file the remote no longer has",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "remote-5",
+     "kind": "file",
+     "title": "remote-5.pdf",
+     "uri": "",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "missing",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/remote-5.pdf",
+     "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "contentRev": 1
+    }
+   ],
+   "steps": [
+    {
+     "action": "download:remote-5",
+     "ports": {
+      "ensure": {
+       "status": "unrecoverable",
+       "attachment": {
+        "id": "remote-5",
+        "kind": "file",
+        "title": "remote-5.pdf",
+        "uri": "",
+        "mimeType": "application/pdf",
+        "size": 2048,
+        "localStatus": "missing",
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "updatedAt": "2026-09-30T10:00:00.000Z",
+        "cloudKey": "<undefined>",
+        "fileHash": "<undefined>",
+        "contentRev": 1,
+        "deletedAt": "2026-09-30T10:00:00.000Z"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: a download for an attachment the draft no longer matches is dropped",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "remote-6",
+     "kind": "file",
+     "title": "remote-6.pdf",
+     "uri": "",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "missing",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/remote-6.pdf",
+     "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "contentRev": 1
+    }
+   ],
+   "stored": [
+    {
+     "id": "remote-6",
+     "kind": "file",
+     "title": "remote-6.pdf",
+     "uri": "",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "missing",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/remote-6.pdf",
+     "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "contentRev": 2
+    }
+   ],
+   "steps": [
+    {
+     "action": "download:remote-6",
+     "ports": {
+      "ensure": {
+       "status": "available",
+       "attachment": {
+        "id": "remote-6",
+        "kind": "file",
+        "title": "remote-6.pdf",
+        "uri": "file:///data/files/attachments/remote-6.pdf",
+        "mimeType": "application/pdf",
+        "size": 2048,
+        "localStatus": "available",
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "updatedAt": "2026-09-01T00:00:00.000Z",
+        "cloudKey": "attachments/remote-6.pdf",
+        "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "contentRev": 1
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "task: open links",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "web",
+     "kind": "link",
+     "title": "https://example.com/doc",
+     "uri": "https://example.com/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "desktop",
+     "kind": "link",
+     "title": "D:\\Docs\\a$&b$$.docx",
+     "uri": "D:\\Docs\\a$&b$$.docx",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-url",
+     "kind": "link",
+     "title": "file:///home/me/report.pdf",
+     "uri": "file:///home/me/report.pdf",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "open:web"
+    },
+    {
+     "action": "open:web",
+     "ports": {
+      "openUrlFails": true
+     }
+    },
+    {
+     "action": "open:desktop"
+    },
+    {
+     "action": "open:file-url"
+    }
+   ]
+  },
+  {
+   "name": "task: open an image, an audio file and a document",
+   "surface": "task",
+   "attachments": [
+    {
+     "id": "image-1",
+     "kind": "file",
+     "title": "Photo.png",
+     "uri": "file:///data/files/attachments/image-1.png",
+     "mimeType": "image/png",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "audio-1",
+     "kind": "file",
+     "title": "Memo.m4a",
+     "uri": "file:///data/files/attachments/audio-1.m4a",
+     "mimeType": "<undefined>",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "doc-1",
+     "kind": "file",
+     "title": "doc-1.pdf",
+     "uri": "file:///data/files/attachments/doc-1.pdf",
+     "mimeType": "<undefined>",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "open:image-1"
+    },
+    {
+     "action": "open:audio-1"
+    },
+    {
+     "action": "open:doc-1",
+     "ports": {
+      "viewer": true
+     }
+    },
+    {
+     "action": "open:doc-1",
+     "ports": {
+      "openUrlFails": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "project: add a file",
+   "surface": "project",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "addFile",
+     "ports": {
+      "pickDocument": {
+       "canceled": false,
+       "assets": [
+        {
+         "name": "Report.pdf",
+         "uri": "content://picker/report",
+         "mimeType": "application/pdf",
+         "size": 1234
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "project: a file that cannot be read is refused",
+   "surface": "project",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "addFile",
+     "ports": {
+      "pickDocument": {
+       "canceled": false,
+       "assets": [
+        {
+         "name": "Report.pdf",
+         "uri": "content://picker/report",
+         "mimeType": "application/pdf",
+         "size": 1234
+        }
+       ]
+      },
+      "persist": "unreadable"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project: a file too large is refused",
+   "surface": "project",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "addFile",
+     "ports": {
+      "pickDocument": {
+       "canceled": false,
+       "assets": [
+        {
+         "name": "Huge.zip",
+         "uri": "content://picker/huge",
+         "mimeType": "application/zip",
+         "size": 62914560
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "project: add links",
+   "surface": "project",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "setLinkInput:https://one.example\nTwo | https://two.example"
+    },
+    {
+     "action": "confirmLink"
+    },
+    {
+     "action": "setLinkInput:https://three.example\ninvalid line"
+    },
+    {
+     "action": "confirmLink"
+    }
+   ]
+  },
+  {
+   "name": "project: an archived project takes nothing",
+   "surface": "project",
+   "attachments": [
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "projectStatus": "archived",
+   "steps": [
+    {
+     "action": "addFile",
+     "ports": {
+      "pickDocument": {
+       "canceled": false,
+       "assets": [
+        {
+         "name": "Report.pdf",
+         "uri": "content://picker/report",
+         "mimeType": "application/pdf",
+         "size": 1234
+        }
+       ]
+      }
+     }
+    },
+    {
+     "action": "setLinkInput:https://one.example"
+    },
+    {
+     "action": "confirmLink"
+    },
+    {
+     "action": "remove:file-1"
+    },
+    {
+     "action": "open:file-1"
+    }
+   ]
+  },
+  {
+   "name": "project: remove a synced attachment",
+   "surface": "project",
+   "attachments": [
+    {
+     "id": "file-synced",
+     "kind": "file",
+     "title": "file-synced.pdf",
+     "uri": "file:///data/files/attachments/file-synced.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/file-synced.pdf",
+     "fileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+     "id": "link-old",
+     "kind": "link",
+     "title": "Old doc",
+     "uri": "https://old.example/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "file-1",
+     "kind": "file",
+     "title": "file-1.pdf",
+     "uri": "file:///data/files/attachments/file-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "remove:file-synced"
+    }
+   ]
+  },
+  {
+   "name": "project: open a missing file downloads it first",
+   "surface": "project",
+   "attachments": [
+    {
+     "id": "remote-1",
+     "kind": "file",
+     "title": "remote-1.pdf",
+     "uri": "",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "missing",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/remote-1.pdf",
+     "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "contentRev": 1
+    }
+   ],
+   "steps": [
+    {
+     "action": "open:remote-1",
+     "ports": {
+      "ensure": {
+       "status": "available",
+       "attachment": {
+        "id": "remote-1",
+        "kind": "file",
+        "title": "remote-1.pdf",
+        "uri": "file:///data/files/attachments/remote-1.pdf",
+        "mimeType": "application/pdf",
+        "size": 2048,
+        "localStatus": "available",
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "updatedAt": "2026-09-01T00:00:00.000Z",
+        "cloudKey": "attachments/remote-1.pdf",
+        "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "contentRev": 1
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "project: a failed download keeps the file missing",
+   "surface": "project",
+   "attachments": [
+    {
+     "id": "remote-3",
+     "kind": "file",
+     "title": "remote-3.pdf",
+     "uri": "",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "missing",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/remote-3.pdf",
+     "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "contentRev": 1
+    }
+   ],
+   "steps": [
+    {
+     "action": "download:remote-3",
+     "ports": {
+      "ensure": {
+       "status": "unavailable"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "project: a file the remote no longer has",
+   "surface": "project",
+   "attachments": [
+    {
+     "id": "remote-5",
+     "kind": "file",
+     "title": "remote-5.pdf",
+     "uri": "",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "missing",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z",
+     "cloudKey": "attachments/remote-5.pdf",
+     "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "contentRev": 1
+    }
+   ],
+   "steps": [
+    {
+     "action": "download:remote-5",
+     "ports": {
+      "ensure": {
+       "status": "unrecoverable",
+       "attachment": {
+        "id": "remote-5",
+        "kind": "file",
+        "title": "remote-5.pdf",
+        "uri": "",
+        "mimeType": "application/pdf",
+        "size": 2048,
+        "localStatus": "missing",
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "updatedAt": "2026-09-30T10:00:00.000Z",
+        "cloudKey": "<undefined>",
+        "fileHash": "<undefined>",
+        "contentRev": 1,
+        "deletedAt": "2026-09-30T10:00:00.000Z"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "project: open links, an image and a document",
+   "surface": "project",
+   "attachments": [
+    {
+     "id": "web",
+     "kind": "link",
+     "title": "https://example.com/doc",
+     "uri": "https://example.com/doc",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "desktop",
+     "kind": "link",
+     "title": "D:\\Docs\\a.docx",
+     "uri": "D:\\Docs\\a.docx",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "image-1",
+     "kind": "file",
+     "title": "Photo.png",
+     "uri": "file:///data/files/attachments/image-1.png",
+     "mimeType": "image/png",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+     "id": "doc-1",
+     "kind": "file",
+     "title": "doc-1.pdf",
+     "uri": "file:///data/files/attachments/doc-1.pdf",
+     "mimeType": "application/pdf",
+     "size": 2048,
+     "localStatus": "available",
+     "createdAt": "2026-09-01T00:00:00.000Z",
+     "updatedAt": "2026-09-01T00:00:00.000Z"
+    }
+   ],
+   "steps": [
+    {
+     "action": "open:web",
+     "ports": {
+      "openUrlFails": true
+     }
+    },
+    {
+     "action": "open:desktop"
+    },
+    {
+     "action": "open:image-1"
+    },
+    {
+     "action": "open:doc-1",
+     "ports": {
+      "shareAvailable": true
+     }
+    }
+   ]
+  }
+ ],
+ "observations": {
+  "task: add a file": [
+   {
+    "action": "addFile",
+    "events": [
+     [
+      "getDocumentAsync",
+      {
+       "copyToCacheDirectory": false,
+       "multiple": false
+      }
+     ],
+     [
+      "persistAttachmentLocally",
+      {
+       "id": "00000000-0000-4000-8000-000000000001",
+       "kind": "file",
+       "title": "Report.pdf",
+       "uri": "content://picker/report",
+       "mimeType": "application/pdf",
+       "size": 1234,
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z",
+       "localStatus": "available"
+      }
+     ],
+     [
+      "setAttachments",
+      null
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "kind": "file",
+      "title": "Report.pdf",
+      "uri": "file:///data/files/attachments/00000000-0000-4000-8000-000000000001.pdf",
+      "mimeType": "application/pdf",
+      "size": 1234,
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z",
+      "localStatus": "available"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: a canceled file pick adds nothing": [
+   {
+    "action": "addFile",
+    "events": [
+     [
+      "getDocumentAsync",
+      {
+       "copyToCacheDirectory": false,
+       "multiple": false
+      }
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: a file too large is refused": [
+   {
+    "action": "addFile",
+    "events": [
+     [
+      "getDocumentAsync",
+      {
+       "copyToCacheDirectory": false,
+       "multiple": false
+      }
+     ],
+     [
+      "alert",
+      "Attachments",
+      "File is too large to upload."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: a blocked file type is refused": [
+   {
+    "action": "addFile",
+    "events": [
+     [
+      "getDocumentAsync",
+      {
+       "copyToCacheDirectory": false,
+       "multiple": false
+      }
+     ],
+     [
+      "alert",
+      "Attachments",
+      "Unsupported file type."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: a file without a size or name is still added": [
+   {
+    "action": "addFile",
+    "events": [
+     [
+      "getDocumentAsync",
+      {
+       "copyToCacheDirectory": false,
+       "multiple": false
+      }
+     ],
+     [
+      "persistAttachmentLocally",
+      {
+       "id": "00000000-0000-4000-8000-000000000001",
+       "kind": "file",
+       "title": "file",
+       "uri": "content://picker/blob",
+       "mimeType": "<undefined>",
+       "size": "<undefined>",
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z",
+       "localStatus": "available"
+      }
+     ],
+     [
+      "setAttachments",
+      null
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "kind": "file",
+      "title": "file",
+      "uri": "file:///data/files/attachments/00000000-0000-4000-8000-000000000001",
+      "mimeType": "<undefined>",
+      "size": "<undefined>",
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z",
+      "localStatus": "available"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: a file that cannot be read is refused": [
+   {
+    "action": "addFile",
+    "events": [
+     [
+      "getDocumentAsync",
+      {
+       "copyToCacheDirectory": false,
+       "multiple": false
+      }
+     ],
+     [
+      "persistAttachmentLocally",
+      {
+       "id": "00000000-0000-4000-8000-000000000001",
+       "kind": "file",
+       "title": "Report.pdf",
+       "uri": "content://picker/report",
+       "mimeType": "application/pdf",
+       "size": 1234,
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z",
+       "localStatus": "available"
+      }
+     ],
+     [
+      "alert",
+      "Attachments",
+      "Couldn't read this file, so it was not attached. Move it to a different folder and try again."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: add an image": [
+   {
+    "action": "addImage",
+    "events": [
+     [
+      "launchImageLibraryAsync",
+      {
+       "mediaTypes": "Images",
+       "quality": 0.9,
+       "allowsMultipleSelection": false
+      }
+     ],
+     [
+      "persistAttachmentLocally",
+      {
+       "id": "00000000-0000-4000-8000-000000000001",
+       "kind": "file",
+       "title": "Photo.jpg",
+       "uri": "file:///cache/ImagePicker/photo.jpg",
+       "mimeType": "image/jpeg",
+       "size": 4096,
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z",
+       "localStatus": "available"
+      }
+     ],
+     [
+      "setAttachments",
+      null
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "kind": "file",
+      "title": "Photo.jpg",
+      "uri": "file:///data/files/attachments/00000000-0000-4000-8000-000000000001.jpg",
+      "mimeType": "image/jpeg",
+      "size": 4096,
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z",
+      "localStatus": "available"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: an image without a name takes its file name, and only fileSize is kept": [
+   {
+    "action": "addImage",
+    "events": [
+     [
+      "launchImageLibraryAsync",
+      {
+       "mediaTypes": "Images",
+       "quality": 0.9,
+       "allowsMultipleSelection": false
+      }
+     ],
+     [
+      "persistAttachmentLocally",
+      {
+       "id": "00000000-0000-4000-8000-000000000001",
+       "kind": "file",
+       "title": "IMG_7.heic",
+       "uri": "file:///cache/ImagePicker/IMG_7.heic",
+       "mimeType": "image/heic",
+       "size": "<undefined>",
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z",
+       "localStatus": "available"
+      }
+     ],
+     [
+      "setAttachments",
+      null
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "kind": "file",
+      "title": "IMG_7.heic",
+      "uri": "file:///data/files/attachments/00000000-0000-4000-8000-000000000001.heic",
+      "mimeType": "image/heic",
+      "size": "<undefined>",
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z",
+      "localStatus": "available"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: sandbox refuses every attachment action": [
+   {
+    "action": "addFile",
+    "events": [
+     [
+      "alert",
+      "Attachments",
+      "Unavailable in sandbox"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "addImage",
+    "events": [
+     [
+      "alert",
+      "Attachments",
+      "Unavailable in sandbox"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "openAddLink",
+    "events": [
+     [
+      "alert",
+      "Attachments",
+      "Unavailable in sandbox"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "open:file-1",
+    "events": [
+     [
+      "alert",
+      "Attachments",
+      "Unavailable in sandbox"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "download:file-1",
+    "events": [
+     [
+      "alert",
+      "Attachments",
+      "Unavailable in sandbox"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: add links, one per line, with titles": [
+   {
+    "action": "openAddLink",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "setLinkInput:https://one.example\n\nTwo | https://two.example/x\n[Three](www.three.example)",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "https://one.example\n\nTwo | https://two.example/x\n[Three](www.three.example)",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "confirmLink",
+    "events": [
+     [
+      "setAttachments",
+      null
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "kind": "link",
+      "title": "one.example",
+      "uri": "https://one.example",
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "kind": "link",
+      "title": "Two",
+      "uri": "https://two.example/x",
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "kind": "link",
+      "title": "Three",
+      "uri": "https://www.three.example",
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: a file path line is not a link": [
+   {
+    "action": "openAddLink",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "setLinkInput:https://one.example\n/Users/me/notes.md",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "https://one.example\n/Users/me/notes.md",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "confirmLink",
+    "events": [
+     [
+      "alert",
+      "Attachments",
+      "Line 2: enter a valid link."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "https://one.example\n/Users/me/notes.md",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: an invalid line refuses the whole paste": [
+   {
+    "action": "openAddLink",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "setLinkInput:https://three.example\ninvalid line",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "https://three.example\ninvalid line",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "confirmLink",
+    "events": [
+     [
+      "alert",
+      "Attachments",
+      "Line 2: enter a valid link."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "https://three.example\ninvalid line",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "closeLinkModal",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: an empty link marks the field touched": [
+   {
+    "action": "openAddLink",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "setLinkInput:   ",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "   ",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "confirmLink",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "   ",
+     "linkInputTouched": true,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: edit a link": [
+   {
+    "action": "editLink:link-old",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "Old doc | https://old.example/doc",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": "link-old",
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "setLinkInput:New title | https://new.example/page",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "New title | https://new.example/page",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": "link-old",
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "confirmLink",
+    "events": [
+     [
+      "setAttachments",
+      null
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "New title",
+      "uri": "https://new.example/page",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "editLink:file-1",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "New title",
+      "uri": "https://new.example/page",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: an invalid edited link is refused": [
+   {
+    "action": "editLink:link-bare",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-bare",
+      "kind": "link",
+      "title": "https://bare.example",
+      "uri": "https://bare.example",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "https://bare.example",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": "link-bare",
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "setLinkInput:not a link",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-bare",
+      "kind": "link",
+      "title": "https://bare.example",
+      "uri": "https://bare.example",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "not a link",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": "link-bare",
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "confirmLink",
+    "events": [
+     [
+      "alert",
+      "Attachments",
+      "Please enter a valid URL."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-bare",
+      "kind": "link",
+      "title": "https://bare.example",
+      "uri": "https://bare.example",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": true,
+     "linkInput": "not a link",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": "link-bare",
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: remove a synced attachment": [
+   {
+    "action": "remove:file-synced",
+    "events": [
+     [
+      "setAttachments",
+      null
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "file-synced",
+      "kind": "file",
+      "title": "file-synced.pdf",
+      "uri": "file:///data/files/attachments/file-synced.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z",
+      "cloudKey": "attachments/file-synced.pdf",
+      "fileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "deletedAt": "2026-09-30T10:00:00.000Z"
+     },
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: open a missing file downloads it first": [
+   {
+    "action": "open:remote-1",
+    "events": [
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "remote-1",
+       "kind": "file",
+       "title": "remote-1.pdf",
+       "uri": "",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "missing",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z",
+       "cloudKey": "attachments/remote-1.pdf",
+       "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "contentRev": 1
+      }
+     ],
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "tryOpenWithAndroidViewer",
+      "file:///data/files/attachments/remote-1.pdf",
+      "application/pdf"
+     ],
+     [
+      "sharingAvailable"
+     ],
+     [
+      "openURL",
+      "file:///data/files/attachments/remote-1.pdf"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "remote-1",
+      "kind": "file",
+      "title": "remote-1.pdf",
+      "uri": "file:///data/files/attachments/remote-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "cloudKey": "attachments/remote-1.pdf",
+      "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contentRev": 1
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: open a missing file through the share sheet": [
+   {
+    "action": "open:remote-2",
+    "events": [
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "remote-2",
+       "kind": "file",
+       "title": "remote-2.pdf",
+       "uri": "",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "missing",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z",
+       "cloudKey": "attachments/remote-2.pdf",
+       "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "contentRev": 1
+      }
+     ],
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "tryOpenWithAndroidViewer",
+      "file:///data/files/attachments/remote-2.pdf",
+      "application/pdf"
+     ],
+     [
+      "sharingAvailable"
+     ],
+     [
+      "shareAsync",
+      "file:///data/files/attachments/remote-2.pdf"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "remote-2",
+      "kind": "file",
+      "title": "remote-2.pdf",
+      "uri": "file:///data/files/attachments/remote-2.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "cloudKey": "attachments/remote-2.pdf",
+      "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contentRev": 1
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: a failed download keeps the file missing": [
+   {
+    "action": "download:remote-3",
+    "events": [
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "remote-3",
+       "kind": "file",
+       "title": "remote-3.pdf",
+       "uri": "",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "missing",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z",
+       "cloudKey": "attachments/remote-3.pdf",
+       "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "contentRev": 1
+      }
+     ],
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "alert",
+      "Attachments",
+      "Missing file"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "remote-3",
+      "kind": "file",
+      "title": "remote-3.pdf",
+      "uri": "",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "missing",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "cloudKey": "attachments/remote-3.pdf",
+      "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contentRev": 1
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "open:remote-3",
+    "events": [
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "remote-3",
+       "kind": "file",
+       "title": "remote-3.pdf",
+       "uri": "",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "missing",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z",
+       "cloudKey": "attachments/remote-3.pdf",
+       "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "contentRev": 1
+      }
+     ],
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "alert",
+      "Attachments",
+      "Missing file"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "remote-3",
+      "kind": "file",
+      "title": "remote-3.pdf",
+      "uri": "",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "missing",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "cloudKey": "attachments/remote-3.pdf",
+      "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contentRev": 1
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: a download conflict": [
+   {
+    "action": "download:remote-4",
+    "events": [
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "remote-4",
+       "kind": "file",
+       "title": "remote-4.pdf",
+       "uri": "",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "missing",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z",
+       "cloudKey": "attachments/remote-4.pdf",
+       "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "contentRev": 1
+      }
+     ],
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "alert",
+      "Attachments",
+      "This attachment changed during download. Your local file was kept. Sync again to resolve the conflict."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "remote-4",
+      "kind": "file",
+      "title": "remote-4.pdf",
+      "uri": "",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "missing",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "cloudKey": "attachments/remote-4.pdf",
+      "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contentRev": 1
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: a file the remote no longer has": [
+   {
+    "action": "download:remote-5",
+    "events": [
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "remote-5",
+       "kind": "file",
+       "title": "remote-5.pdf",
+       "uri": "",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "missing",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z",
+       "cloudKey": "attachments/remote-5.pdf",
+       "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "contentRev": 1
+      }
+     ],
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "alert",
+      "Attachments",
+      "This attachment is no longer available in synced storage. Its broken reference was removed."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "remote-5",
+      "kind": "file",
+      "title": "remote-5.pdf",
+      "uri": "",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "missing",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z",
+      "cloudKey": "<undefined>",
+      "fileHash": "<undefined>",
+      "contentRev": 1,
+      "deletedAt": "2026-09-30T10:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: a download for an attachment the draft no longer matches is dropped": [
+   {
+    "action": "download:remote-6",
+    "events": [],
+    "attachments": [
+     {
+      "id": "remote-6",
+      "kind": "file",
+      "title": "remote-6.pdf",
+      "uri": "",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "missing",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "cloudKey": "attachments/remote-6.pdf",
+      "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contentRev": 1
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: open links": [
+   {
+    "action": "open:web",
+    "events": [
+     [
+      "openURL",
+      "https://example.com/doc"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "web",
+      "kind": "link",
+      "title": "https://example.com/doc",
+      "uri": "https://example.com/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "desktop",
+      "kind": "link",
+      "title": "D:\\Docs\\a$&b$$.docx",
+      "uri": "D:\\Docs\\a$&b$$.docx",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-url",
+      "kind": "link",
+      "title": "file:///home/me/report.pdf",
+      "uri": "file:///home/me/report.pdf",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "open:web",
+    "events": [
+     [
+      "openURL",
+      "https://example.com/doc"
+     ],
+     [
+      "logError",
+      "No Activity found to handle Intent",
+      {
+       "message": "Failed to open attachment URL",
+       "error": "No Activity found to handle Intent"
+      }
+     ],
+     [
+      "alert",
+      "Attachments",
+      "Could not open this link."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "web",
+      "kind": "link",
+      "title": "https://example.com/doc",
+      "uri": "https://example.com/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "desktop",
+      "kind": "link",
+      "title": "D:\\Docs\\a$&b$$.docx",
+      "uri": "D:\\Docs\\a$&b$$.docx",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-url",
+      "kind": "link",
+      "title": "file:///home/me/report.pdf",
+      "uri": "file:///home/me/report.pdf",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "open:desktop",
+    "events": [
+     [
+      "alert",
+      "Attachments",
+      "This link points to a file on another device: D:\\Docs\\a$&b$$.docx. Open it there, or attach the file instead of linking it."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "web",
+      "kind": "link",
+      "title": "https://example.com/doc",
+      "uri": "https://example.com/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "desktop",
+      "kind": "link",
+      "title": "D:\\Docs\\a$&b$$.docx",
+      "uri": "D:\\Docs\\a$&b$$.docx",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-url",
+      "kind": "link",
+      "title": "file:///home/me/report.pdf",
+      "uri": "file:///home/me/report.pdf",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   },
+   {
+    "action": "open:file-url",
+    "events": [
+     [
+      "openURL",
+      "file:///home/me/report.pdf"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "web",
+      "kind": "link",
+      "title": "https://example.com/doc",
+      "uri": "https://example.com/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "desktop",
+      "kind": "link",
+      "title": "D:\\Docs\\a$&b$$.docx",
+      "uri": "D:\\Docs\\a$&b$$.docx",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-url",
+      "kind": "link",
+      "title": "file:///home/me/report.pdf",
+      "uri": "file:///home/me/report.pdf",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": null,
+     "audio": null
+    }
+   }
+  ],
+  "task: open an image, an audio file and a document": [
+   {
+    "action": "open:image-1",
+    "events": [
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "image-1",
+       "kind": "file",
+       "title": "Photo.png",
+       "uri": "file:///data/files/attachments/image-1.png",
+       "mimeType": "image/png",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ],
+     [
+      "setAttachments",
+      false
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "image-1",
+      "kind": "file",
+      "title": "Photo.png",
+      "uri": "file:///data/files/attachments/image-1.png",
+      "mimeType": "image/png",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "audio-1",
+      "kind": "file",
+      "title": "Memo.m4a",
+      "uri": "file:///data/files/attachments/audio-1.m4a",
+      "mimeType": "<undefined>",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "doc-1",
+      "kind": "file",
+      "title": "doc-1.pdf",
+      "uri": "file:///data/files/attachments/doc-1.pdf",
+      "mimeType": "<undefined>",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": "image-1",
+     "audio": null
+    }
+   },
+   {
+    "action": "open:audio-1",
+    "events": [
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "audio-1",
+       "kind": "file",
+       "title": "Memo.m4a",
+       "uri": "file:///data/files/attachments/audio-1.m4a",
+       "mimeType": "<undefined>",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ],
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "audioReplace",
+      {
+       "uri": "file:///data/files/attachments/audio-1.m4a"
+      }
+     ],
+     [
+      "audioPlay"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "image-1",
+      "kind": "file",
+      "title": "Photo.png",
+      "uri": "file:///data/files/attachments/image-1.png",
+      "mimeType": "image/png",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "audio-1",
+      "kind": "file",
+      "title": "Memo.m4a",
+      "uri": "file:///data/files/attachments/audio-1.m4a",
+      "mimeType": "<undefined>",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "doc-1",
+      "kind": "file",
+      "title": "doc-1.pdf",
+      "uri": "file:///data/files/attachments/doc-1.pdf",
+      "mimeType": "<undefined>",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": "image-1",
+     "audio": "audio-1"
+    }
+   },
+   {
+    "action": "open:doc-1",
+    "events": [
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "doc-1",
+       "kind": "file",
+       "title": "doc-1.pdf",
+       "uri": "file:///data/files/attachments/doc-1.pdf",
+       "mimeType": "<undefined>",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ],
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "tryOpenWithAndroidViewer",
+      "file:///data/files/attachments/doc-1.pdf",
+      null
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "image-1",
+      "kind": "file",
+      "title": "Photo.png",
+      "uri": "file:///data/files/attachments/image-1.png",
+      "mimeType": "image/png",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "audio-1",
+      "kind": "file",
+      "title": "Memo.m4a",
+      "uri": "file:///data/files/attachments/audio-1.m4a",
+      "mimeType": "<undefined>",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "doc-1",
+      "kind": "file",
+      "title": "doc-1.pdf",
+      "uri": "file:///data/files/attachments/doc-1.pdf",
+      "mimeType": "<undefined>",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": "image-1",
+     "audio": "audio-1"
+    }
+   },
+   {
+    "action": "open:doc-1",
+    "events": [
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "doc-1",
+       "kind": "file",
+       "title": "doc-1.pdf",
+       "uri": "file:///data/files/attachments/doc-1.pdf",
+       "mimeType": "<undefined>",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ],
+     [
+      "setAttachments",
+      false
+     ],
+     [
+      "tryOpenWithAndroidViewer",
+      "file:///data/files/attachments/doc-1.pdf",
+      null
+     ],
+     [
+      "sharingAvailable"
+     ],
+     [
+      "openURL",
+      "file:///data/files/attachments/doc-1.pdf"
+     ],
+     [
+      "logError",
+      "No Activity found to handle Intent",
+      {
+       "message": "Failed to open attachment URL",
+       "error": "No Activity found to handle Intent"
+      }
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "image-1",
+      "kind": "file",
+      "title": "Photo.png",
+      "uri": "file:///data/files/attachments/image-1.png",
+      "mimeType": "image/png",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "audio-1",
+      "kind": "file",
+      "title": "Memo.m4a",
+      "uri": "file:///data/files/attachments/audio-1.m4a",
+      "mimeType": "<undefined>",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "doc-1",
+      "kind": "file",
+      "title": "doc-1.pdf",
+      "uri": "file:///data/files/attachments/doc-1.pdf",
+      "mimeType": "<undefined>",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "linkInputTouched": false,
+     "editingLinkAttachmentId": null,
+     "imagePreview": "image-1",
+     "audio": "audio-1"
+    }
+   }
+  ],
+  "project: add a file": [
+   {
+    "action": "addFile",
+    "events": [
+     [
+      "getDocumentAsync",
+      {
+       "copyToCacheDirectory": false,
+       "multiple": false
+      }
+     ],
+     [
+      "persistAttachmentLocally",
+      {
+       "id": "00000000-0000-4000-8000-000000000001",
+       "kind": "file",
+       "title": "Report.pdf",
+       "uri": "content://picker/report",
+       "mimeType": "application/pdf",
+       "size": 1234,
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z",
+       "localStatus": "available"
+      }
+     ],
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "link-old",
+         "kind": "link",
+         "title": "Old doc",
+         "uri": "https://old.example/doc",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "file-1",
+         "kind": "file",
+         "title": "file-1.pdf",
+         "uri": "file:///data/files/attachments/file-1.pdf",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "available",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "00000000-0000-4000-8000-000000000001",
+         "kind": "file",
+         "title": "Report.pdf",
+         "uri": "file:///data/files/attachments/00000000-0000-4000-8000-000000000001.pdf",
+         "mimeType": "application/pdf",
+         "size": 1234,
+         "createdAt": "2026-09-30T10:00:00.000Z",
+         "updatedAt": "2026-09-30T10:00:00.000Z",
+         "localStatus": "available"
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "kind": "file",
+      "title": "Report.pdf",
+      "uri": "file:///data/files/attachments/00000000-0000-4000-8000-000000000001.pdf",
+      "mimeType": "application/pdf",
+      "size": 1234,
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z",
+      "localStatus": "available"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "00000000-0000-4000-8000-000000000001",
+       "kind": "file",
+       "title": "Report.pdf",
+       "uri": "file:///data/files/attachments/00000000-0000-4000-8000-000000000001.pdf",
+       "mimeType": "application/pdf",
+       "size": 1234,
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z",
+       "localStatus": "available"
+      }
+     ]
+    }
+   }
+  ],
+  "project: a file that cannot be read is refused": [
+   {
+    "action": "addFile",
+    "events": [
+     [
+      "getDocumentAsync",
+      {
+       "copyToCacheDirectory": false,
+       "multiple": false
+      }
+     ],
+     [
+      "persistAttachmentLocally",
+      {
+       "id": "00000000-0000-4000-8000-000000000001",
+       "kind": "file",
+       "title": "Report.pdf",
+       "uri": "content://picker/report",
+       "mimeType": "application/pdf",
+       "size": 1234,
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z",
+       "localStatus": "available"
+      }
+     ],
+     [
+      "alert",
+      "Attachments",
+      "Couldn't read this file, so it was not attached. Move it to a different folder and try again."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   }
+  ],
+  "project: a file too large is refused": [
+   {
+    "action": "addFile",
+    "events": [
+     [
+      "getDocumentAsync",
+      {
+       "copyToCacheDirectory": false,
+       "multiple": false
+      }
+     ],
+     [
+      "alert",
+      "Attachments",
+      "File is too large to upload."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   }
+  ],
+  "project: add links": [
+   {
+    "action": "setLinkInput:https://one.example\nTwo | https://two.example",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "https://one.example\nTwo | https://two.example",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   },
+   {
+    "action": "confirmLink",
+    "events": [
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "link-old",
+         "kind": "link",
+         "title": "Old doc",
+         "uri": "https://old.example/doc",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "file-1",
+         "kind": "file",
+         "title": "file-1.pdf",
+         "uri": "file:///data/files/attachments/file-1.pdf",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "available",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "00000000-0000-4000-8000-000000000001",
+         "kind": "link",
+         "title": "one.example",
+         "uri": "https://one.example",
+         "createdAt": "2026-09-30T10:00:00.000Z",
+         "updatedAt": "2026-09-30T10:00:00.000Z"
+        },
+        {
+         "id": "00000000-0000-4000-8000-000000000002",
+         "kind": "link",
+         "title": "Two",
+         "uri": "https://two.example",
+         "createdAt": "2026-09-30T10:00:00.000Z",
+         "updatedAt": "2026-09-30T10:00:00.000Z"
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "kind": "link",
+      "title": "one.example",
+      "uri": "https://one.example",
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "kind": "link",
+      "title": "Two",
+      "uri": "https://two.example",
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "00000000-0000-4000-8000-000000000001",
+       "kind": "link",
+       "title": "one.example",
+       "uri": "https://one.example",
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z"
+      },
+      {
+       "id": "00000000-0000-4000-8000-000000000002",
+       "kind": "link",
+       "title": "Two",
+       "uri": "https://two.example",
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z"
+      }
+     ]
+    }
+   },
+   {
+    "action": "setLinkInput:https://three.example\ninvalid line",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "kind": "link",
+      "title": "one.example",
+      "uri": "https://one.example",
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "kind": "link",
+      "title": "Two",
+      "uri": "https://two.example",
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "https://three.example\ninvalid line",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "00000000-0000-4000-8000-000000000001",
+       "kind": "link",
+       "title": "one.example",
+       "uri": "https://one.example",
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z"
+      },
+      {
+       "id": "00000000-0000-4000-8000-000000000002",
+       "kind": "link",
+       "title": "Two",
+       "uri": "https://two.example",
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z"
+      }
+     ]
+    }
+   },
+   {
+    "action": "confirmLink",
+    "events": [
+     [
+      "alert",
+      "Attachments",
+      "Line 2: enter a valid link."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "kind": "link",
+      "title": "one.example",
+      "uri": "https://one.example",
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z"
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "kind": "link",
+      "title": "Two",
+      "uri": "https://two.example",
+      "createdAt": "2026-09-30T10:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "https://three.example\ninvalid line",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "00000000-0000-4000-8000-000000000001",
+       "kind": "link",
+       "title": "one.example",
+       "uri": "https://one.example",
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z"
+      },
+      {
+       "id": "00000000-0000-4000-8000-000000000002",
+       "kind": "link",
+       "title": "Two",
+       "uri": "https://two.example",
+       "createdAt": "2026-09-30T10:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z"
+      }
+     ]
+    }
+   }
+  ],
+  "project: an archived project takes nothing": [
+   {
+    "action": "addFile",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   },
+   {
+    "action": "setLinkInput:https://one.example",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "https://one.example",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   },
+   {
+    "action": "confirmLink",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "https://one.example",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   },
+   {
+    "action": "remove:file-1",
+    "events": [],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "https://one.example",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   },
+   {
+    "action": "open:file-1",
+    "events": [
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ],
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "link-old",
+         "kind": "link",
+         "title": "Old doc",
+         "uri": "https://old.example/doc",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "file-1",
+         "kind": "file",
+         "title": "file-1.pdf",
+         "uri": "file:///data/files/attachments/file-1.pdf",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "available",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ],
+     [
+      "tryOpenWithAndroidViewer",
+      "file:///data/files/attachments/file-1.pdf",
+      "application/pdf"
+     ],
+     [
+      "sharingAvailable"
+     ],
+     [
+      "openURL",
+      "file:///data/files/attachments/file-1.pdf"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   }
+  ],
+  "project: remove a synced attachment": [
+   {
+    "action": "remove:file-synced",
+    "events": [
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "file-synced",
+         "kind": "file",
+         "title": "file-synced.pdf",
+         "uri": "file:///data/files/attachments/file-synced.pdf",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "available",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-30T10:00:00.000Z",
+         "cloudKey": "attachments/file-synced.pdf",
+         "fileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+         "deletedAt": "2026-09-30T10:00:00.000Z"
+        },
+        {
+         "id": "link-old",
+         "kind": "link",
+         "title": "Old doc",
+         "uri": "https://old.example/doc",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "file-1",
+         "kind": "file",
+         "title": "file-1.pdf",
+         "uri": "file:///data/files/attachments/file-1.pdf",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "available",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "file-synced",
+      "kind": "file",
+      "title": "file-synced.pdf",
+      "uri": "file:///data/files/attachments/file-synced.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z",
+      "cloudKey": "attachments/file-synced.pdf",
+      "fileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "deletedAt": "2026-09-30T10:00:00.000Z"
+     },
+     {
+      "id": "link-old",
+      "kind": "link",
+      "title": "Old doc",
+      "uri": "https://old.example/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "file-1",
+      "kind": "file",
+      "title": "file-1.pdf",
+      "uri": "file:///data/files/attachments/file-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "file-synced",
+       "kind": "file",
+       "title": "file-synced.pdf",
+       "uri": "file:///data/files/attachments/file-synced.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z",
+       "cloudKey": "attachments/file-synced.pdf",
+       "fileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+       "deletedAt": "2026-09-30T10:00:00.000Z"
+      },
+      {
+       "id": "link-old",
+       "kind": "link",
+       "title": "Old doc",
+       "uri": "https://old.example/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "file-1",
+       "kind": "file",
+       "title": "file-1.pdf",
+       "uri": "file:///data/files/attachments/file-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   }
+  ],
+  "project: open a missing file downloads it first": [
+   {
+    "action": "open:remote-1",
+    "events": [
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "remote-1",
+         "kind": "file",
+         "title": "remote-1.pdf",
+         "uri": "",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "downloading",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z",
+         "cloudKey": "attachments/remote-1.pdf",
+         "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "contentRev": 1
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ],
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "remote-1",
+       "kind": "file",
+       "title": "remote-1.pdf",
+       "uri": "",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "missing",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z",
+       "cloudKey": "attachments/remote-1.pdf",
+       "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "contentRev": 1
+      }
+     ],
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "remote-1",
+         "kind": "file",
+         "title": "remote-1.pdf",
+         "uri": "file:///data/files/attachments/remote-1.pdf",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "available",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z",
+         "cloudKey": "attachments/remote-1.pdf",
+         "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "contentRev": 1
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ],
+     [
+      "tryOpenWithAndroidViewer",
+      "file:///data/files/attachments/remote-1.pdf",
+      "application/pdf"
+     ],
+     [
+      "sharingAvailable"
+     ],
+     [
+      "openURL",
+      "file:///data/files/attachments/remote-1.pdf"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "remote-1",
+      "kind": "file",
+      "title": "remote-1.pdf",
+      "uri": "file:///data/files/attachments/remote-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "cloudKey": "attachments/remote-1.pdf",
+      "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contentRev": 1
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "remote-1",
+       "kind": "file",
+       "title": "remote-1.pdf",
+       "uri": "file:///data/files/attachments/remote-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z",
+       "cloudKey": "attachments/remote-1.pdf",
+       "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "contentRev": 1
+      }
+     ]
+    }
+   }
+  ],
+  "project: a failed download keeps the file missing": [
+   {
+    "action": "download:remote-3",
+    "events": [
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "remote-3",
+         "kind": "file",
+         "title": "remote-3.pdf",
+         "uri": "",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "downloading",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z",
+         "cloudKey": "attachments/remote-3.pdf",
+         "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "contentRev": 1
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ],
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "remote-3",
+       "kind": "file",
+       "title": "remote-3.pdf",
+       "uri": "",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "missing",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z",
+       "cloudKey": "attachments/remote-3.pdf",
+       "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "contentRev": 1
+      }
+     ],
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "remote-3",
+         "kind": "file",
+         "title": "remote-3.pdf",
+         "uri": "",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "missing",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z",
+         "cloudKey": "attachments/remote-3.pdf",
+         "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "contentRev": 1
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ],
+     [
+      "alert",
+      "Attachments",
+      "Missing file"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "remote-3",
+      "kind": "file",
+      "title": "remote-3.pdf",
+      "uri": "",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "missing",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "cloudKey": "attachments/remote-3.pdf",
+      "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contentRev": 1
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "remote-3",
+       "kind": "file",
+       "title": "remote-3.pdf",
+       "uri": "",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "missing",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z",
+       "cloudKey": "attachments/remote-3.pdf",
+       "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "contentRev": 1
+      }
+     ]
+    }
+   }
+  ],
+  "project: a file the remote no longer has": [
+   {
+    "action": "download:remote-5",
+    "events": [
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "remote-5",
+         "kind": "file",
+         "title": "remote-5.pdf",
+         "uri": "",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "downloading",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z",
+         "cloudKey": "attachments/remote-5.pdf",
+         "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "contentRev": 1
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ],
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "remote-5",
+       "kind": "file",
+       "title": "remote-5.pdf",
+       "uri": "",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "missing",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z",
+       "cloudKey": "attachments/remote-5.pdf",
+       "fileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "contentRev": 1
+      }
+     ],
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "remote-5",
+         "kind": "file",
+         "title": "remote-5.pdf",
+         "uri": "",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "missing",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-30T10:00:00.000Z",
+         "cloudKey": "<undefined>",
+         "fileHash": "<undefined>",
+         "contentRev": 1,
+         "deletedAt": "2026-09-30T10:00:00.000Z"
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ],
+     [
+      "alert",
+      "Attachments",
+      "This attachment is no longer available in synced storage. Its broken reference was removed."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "remote-5",
+      "kind": "file",
+      "title": "remote-5.pdf",
+      "uri": "",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "missing",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-30T10:00:00.000Z",
+      "cloudKey": "<undefined>",
+      "fileHash": "<undefined>",
+      "contentRev": 1,
+      "deletedAt": "2026-09-30T10:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "remote-5",
+       "kind": "file",
+       "title": "remote-5.pdf",
+       "uri": "",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "missing",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-30T10:00:00.000Z",
+       "cloudKey": "<undefined>",
+       "fileHash": "<undefined>",
+       "contentRev": 1,
+       "deletedAt": "2026-09-30T10:00:00.000Z"
+      }
+     ]
+    }
+   }
+  ],
+  "project: open links, an image and a document": [
+   {
+    "action": "open:web",
+    "events": [
+     [
+      "openURL",
+      "https://example.com/doc"
+     ],
+     [
+      "logProjectError",
+      "Failed to open attachment URL",
+      "No Activity found to handle Intent"
+     ],
+     [
+      "alert",
+      "Attachments",
+      "Could not open this link."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "web",
+      "kind": "link",
+      "title": "https://example.com/doc",
+      "uri": "https://example.com/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "desktop",
+      "kind": "link",
+      "title": "D:\\Docs\\a.docx",
+      "uri": "D:\\Docs\\a.docx",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "image-1",
+      "kind": "file",
+      "title": "Photo.png",
+      "uri": "file:///data/files/attachments/image-1.png",
+      "mimeType": "image/png",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "doc-1",
+      "kind": "file",
+      "title": "doc-1.pdf",
+      "uri": "file:///data/files/attachments/doc-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "web",
+       "kind": "link",
+       "title": "https://example.com/doc",
+       "uri": "https://example.com/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "desktop",
+       "kind": "link",
+       "title": "D:\\Docs\\a.docx",
+       "uri": "D:\\Docs\\a.docx",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "image-1",
+       "kind": "file",
+       "title": "Photo.png",
+       "uri": "file:///data/files/attachments/image-1.png",
+       "mimeType": "image/png",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "doc-1",
+       "kind": "file",
+       "title": "doc-1.pdf",
+       "uri": "file:///data/files/attachments/doc-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   },
+   {
+    "action": "open:desktop",
+    "events": [
+     [
+      "alert",
+      "Attachments",
+      "This link points to a file on another device: D:\\Docs\\a.docx. Open it there, or attach the file instead of linking it."
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "web",
+      "kind": "link",
+      "title": "https://example.com/doc",
+      "uri": "https://example.com/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "desktop",
+      "kind": "link",
+      "title": "D:\\Docs\\a.docx",
+      "uri": "D:\\Docs\\a.docx",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "image-1",
+      "kind": "file",
+      "title": "Photo.png",
+      "uri": "file:///data/files/attachments/image-1.png",
+      "mimeType": "image/png",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "doc-1",
+      "kind": "file",
+      "title": "doc-1.pdf",
+      "uri": "file:///data/files/attachments/doc-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": null,
+     "storedAttachments": [
+      {
+       "id": "web",
+       "kind": "link",
+       "title": "https://example.com/doc",
+       "uri": "https://example.com/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "desktop",
+       "kind": "link",
+       "title": "D:\\Docs\\a.docx",
+       "uri": "D:\\Docs\\a.docx",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "image-1",
+       "kind": "file",
+       "title": "Photo.png",
+       "uri": "file:///data/files/attachments/image-1.png",
+       "mimeType": "image/png",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "doc-1",
+       "kind": "file",
+       "title": "doc-1.pdf",
+       "uri": "file:///data/files/attachments/doc-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   },
+   {
+    "action": "open:image-1",
+    "events": [
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "image-1",
+       "kind": "file",
+       "title": "Photo.png",
+       "uri": "file:///data/files/attachments/image-1.png",
+       "mimeType": "image/png",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ],
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "web",
+         "kind": "link",
+         "title": "https://example.com/doc",
+         "uri": "https://example.com/doc",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "desktop",
+         "kind": "link",
+         "title": "D:\\Docs\\a.docx",
+         "uri": "D:\\Docs\\a.docx",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "image-1",
+         "kind": "file",
+         "title": "Photo.png",
+         "uri": "file:///data/files/attachments/image-1.png",
+         "mimeType": "image/png",
+         "size": 2048,
+         "localStatus": "available",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "doc-1",
+         "kind": "file",
+         "title": "doc-1.pdf",
+         "uri": "file:///data/files/attachments/doc-1.pdf",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "available",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "web",
+      "kind": "link",
+      "title": "https://example.com/doc",
+      "uri": "https://example.com/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "desktop",
+      "kind": "link",
+      "title": "D:\\Docs\\a.docx",
+      "uri": "D:\\Docs\\a.docx",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "image-1",
+      "kind": "file",
+      "title": "Photo.png",
+      "uri": "file:///data/files/attachments/image-1.png",
+      "mimeType": "image/png",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "doc-1",
+      "kind": "file",
+      "title": "doc-1.pdf",
+      "uri": "file:///data/files/attachments/doc-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": "image-1",
+     "storedAttachments": [
+      {
+       "id": "web",
+       "kind": "link",
+       "title": "https://example.com/doc",
+       "uri": "https://example.com/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "desktop",
+       "kind": "link",
+       "title": "D:\\Docs\\a.docx",
+       "uri": "D:\\Docs\\a.docx",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "image-1",
+       "kind": "file",
+       "title": "Photo.png",
+       "uri": "file:///data/files/attachments/image-1.png",
+       "mimeType": "image/png",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "doc-1",
+       "kind": "file",
+       "title": "doc-1.pdf",
+       "uri": "file:///data/files/attachments/doc-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   },
+   {
+    "action": "open:doc-1",
+    "events": [
+     [
+      "ensureAttachmentAvailableDetailed",
+      {
+       "id": "doc-1",
+       "kind": "file",
+       "title": "doc-1.pdf",
+       "uri": "file:///data/files/attachments/doc-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ],
+     [
+      "updateProject",
+      "project-1",
+      {
+       "attachments": [
+        {
+         "id": "web",
+         "kind": "link",
+         "title": "https://example.com/doc",
+         "uri": "https://example.com/doc",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "desktop",
+         "kind": "link",
+         "title": "D:\\Docs\\a.docx",
+         "uri": "D:\\Docs\\a.docx",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "image-1",
+         "kind": "file",
+         "title": "Photo.png",
+         "uri": "file:///data/files/attachments/image-1.png",
+         "mimeType": "image/png",
+         "size": 2048,
+         "localStatus": "available",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        },
+        {
+         "id": "doc-1",
+         "kind": "file",
+         "title": "doc-1.pdf",
+         "uri": "file:///data/files/attachments/doc-1.pdf",
+         "mimeType": "application/pdf",
+         "size": 2048,
+         "localStatus": "available",
+         "createdAt": "2026-09-01T00:00:00.000Z",
+         "updatedAt": "2026-09-01T00:00:00.000Z"
+        }
+       ]
+      }
+     ],
+     [
+      "setSelectedProject",
+      "project-1"
+     ],
+     [
+      "tryOpenWithAndroidViewer",
+      "file:///data/files/attachments/doc-1.pdf",
+      "application/pdf"
+     ],
+     [
+      "sharingAvailable"
+     ],
+     [
+      "shareAsync",
+      "file:///data/files/attachments/doc-1.pdf"
+     ]
+    ],
+    "attachments": [
+     {
+      "id": "web",
+      "kind": "link",
+      "title": "https://example.com/doc",
+      "uri": "https://example.com/doc",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "desktop",
+      "kind": "link",
+      "title": "D:\\Docs\\a.docx",
+      "uri": "D:\\Docs\\a.docx",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "image-1",
+      "kind": "file",
+      "title": "Photo.png",
+      "uri": "file:///data/files/attachments/image-1.png",
+      "mimeType": "image/png",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     },
+     {
+      "id": "doc-1",
+      "kind": "file",
+      "title": "doc-1.pdf",
+      "uri": "file:///data/files/attachments/doc-1.pdf",
+      "mimeType": "application/pdf",
+      "size": 2048,
+      "localStatus": "available",
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+     }
+    ],
+    "screen": {
+     "linkModalVisible": false,
+     "linkInput": "",
+     "imagePreview": "image-1",
+     "storedAttachments": [
+      {
+       "id": "web",
+       "kind": "link",
+       "title": "https://example.com/doc",
+       "uri": "https://example.com/doc",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "desktop",
+       "kind": "link",
+       "title": "D:\\Docs\\a.docx",
+       "uri": "D:\\Docs\\a.docx",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "image-1",
+       "kind": "file",
+       "title": "Photo.png",
+       "uri": "file:///data/files/attachments/image-1.png",
+       "mimeType": "image/png",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      },
+      {
+       "id": "doc-1",
+       "kind": "file",
+       "title": "doc-1.pdf",
+       "uri": "file:///data/files/attachments/doc-1.pdf",
+       "mimeType": "application/pdf",
+       "size": 2048,
+       "localStatus": "available",
+       "createdAt": "2026-09-01T00:00:00.000Z",
+       "updatedAt": "2026-09-01T00:00:00.000Z"
+      }
+     ]
+    }
+   }
+  ]
+ }
+}
