@@ -24,6 +24,8 @@ use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
@@ -211,6 +213,9 @@ const FLATPAK_INSTANCE_SOCKET_FILE_NAME: &str = "instance.sock";
 #[cfg(target_os = "linux")]
 const TRAY_ICON_DIR_NAME: &str = "tray-icon";
 const QUICK_ADD_WINDOW_LABEL: &str = "quick-add";
+
+#[cfg(target_os = "macos")]
+static RENDERER_RECOVERY_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 const QUICK_ADD_WINDOW_URL: &str = "index.html?quickAddWindow=1";
 const QUICK_ADD_TARGET_MAIN: &str = "main";
 const QUICK_ADD_TARGET_WINDOW: &str = "quick-add-window";
@@ -1267,6 +1272,92 @@ pub(crate) fn allow_webview_clipboard_read(window: &tauri::WebviewWindow) {
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn allow_webview_clipboard_read(_window: &tauri::WebviewWindow) {}
 
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn mindwtr_macos_install_renderer_recovery(
+        webview: *mut std::ffi::c_void,
+        window_kind: i32,
+        callback: extern "C" fn(i32, i32),
+    ) -> bool;
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn renderer_recovery_event(window_kind: i32, event: i32) {
+    let window = match window_kind {
+        0 => "main",
+        1 => "quick-add",
+        _ => return,
+    };
+    let outcome = match event {
+        0 => "installed",
+        1 => "auto-reload-started",
+        2 => "reload-finished",
+        3 => "reload-unavailable",
+        4 => "manual-reload-required",
+        5 => "manual-reload-started",
+        6 => "fallback-dismissed",
+        7 => "reload-failed",
+        8 => "fallback-unavailable",
+        9 => "install-unavailable",
+        _ => return,
+    };
+    let Some(app) = RENDERER_RECOVERY_APP.get() else {
+        return;
+    };
+    let line = serde_json::json!({
+        "ts": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
+        "level": if event == 2 || event == 0 { "info" } else { "warn" },
+        "scope": "webkit",
+        "message": "WebKit renderer recovery",
+        "context": {
+            "source": "native",
+            "releaseCheck": "v1.3.4/webkit-renderer-recovery",
+            "window": window,
+            "outcome": outcome,
+        },
+    });
+    if let Err(error) = append_log_line(app.clone(), format!("{line}\n")) {
+        log::warn!("WebKit renderer recovery diagnostic write failed: {error}");
+    }
+    if event == 0 || event == 2 {
+        log::info!(
+            "WebKit renderer recovery window={window} outcome={outcome} extra.releaseCheck=v1.3.4/webkit-renderer-recovery"
+        );
+    } else {
+        log::warn!(
+            "WebKit renderer recovery window={window} outcome={outcome} extra.releaseCheck=v1.3.4/webkit-renderer-recovery"
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn install_renderer_recovery(window: &tauri::WebviewWindow) {
+    let window_kind = if window.label() == QUICK_ADD_WINDOW_LABEL {
+        1
+    } else {
+        0
+    };
+    if window
+        .with_webview(move |webview| {
+            if !unsafe {
+                mindwtr_macos_install_renderer_recovery(
+                    webview.inner(),
+                    window_kind,
+                    renderer_recovery_event,
+                )
+            } {
+                renderer_recovery_event(window_kind, 9);
+            }
+        })
+        .is_err()
+    {
+        renderer_recovery_event(window_kind, 9);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn install_renderer_recovery(_window: &tauri::WebviewWindow) {}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -1437,6 +1528,8 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            let _ = RENDERER_RECOVERY_APP.set(app.handle().clone());
             ensure_data_file(&app.handle()).ok();
 
             // #913: read back rather than re-derive — this is the exact value
@@ -1536,6 +1629,7 @@ pub fn run() {
                 // Restoring here keeps all of that off screen.
                 main_window_builder = main_window_builder.visible(false);
                 let main_window = main_window_builder.build()?;
+                install_renderer_recovery(&main_window);
                 crate::window_state::restore(&main_window);
                 reveal_main_window_after_timeout(&app.handle());
             }

@@ -109,6 +109,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'reason', 'detail',
     // android-native-widget (apps/mobile/lib/widget-service.ts) / android-widget-checkoff (pending-captures.ts)
     'items', 'outcome',
+    // webkit-renderer-recovery: fixed native window kind, never page contents.
+    'window',
     // android-widget-provider-compat (apps/mobile/lib/widget-service.ts)
     'legacyWidgetCount',
     // widget-focus-today (curated Android widget publication, #1173)
