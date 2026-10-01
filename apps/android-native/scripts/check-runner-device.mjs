@@ -15,9 +15,9 @@
 // death between an item's store write and its file delete (debug property `queue_stop`), for a capture and for a check-off: the
 // next boot's journal replay stores nothing twice and removes the file; (6a) a check-off stored and saved whose RKStorage record
 // write fails (debug property `fail_kv_set`): the drain is owed, the file is removed anyway, and CoreWork's retry replays the entry
-// with no tap, the check-off written once; (6b) a drain whose save fails (`fail_commit`) under a context trigger's job while the
-// app shows: file and journal entry kept, a newer Mark Done on the screen is never sent and the owed retry shows, the trigger
-// posts nothing, and the job's retry replays the journal first (the check-off written once and recorded), then posts;
+// with no tap, the check-off written once; (6b) a drain whose file cannot be removed (the queue folder read-only) under a context
+// trigger's job while the app shows: file and journal entry kept, a newer Mark Done on the screen is never sent and the owed retry
+// shows, the trigger posts nothing, and the job's retry replays the journal first (the check-off written once), then posts;
 // (7) a context broadcast with a 12 KB context is dropped with no crash. At the end Automation capture is off again. It grants
 // the development app the notification permission (and keeps it). Titles are 80 + a 12-digit run id + one digit
 // (check-projects-device.mjs --prune-old removes earlier runs'). It never launches over another app and leaves the device on its
@@ -54,7 +54,7 @@ const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/dev/tty';
 // Where the other checks (and this one's earlier runs) wrote the screen; removed at the start and the end.
 const SHARED_UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
-const PROPS = ['core_work_delay_ms', 'queue_stop', 'fail_kv_set', 'fail_commit'];
+const PROPS = ['core_work_delay_ms', 'queue_stop', 'fail_kv_set'];
 const DB = 'mindwtr-native-dev.db';
 const QUEUE = 'files/pending-captures';
 const CONFIG = 'no_backup/android-capture-intent.json';
@@ -97,6 +97,10 @@ const lastApplied = () => {
     return row ? JSON.parse(row.value) : {};
 };
 const queued = () => runAs(`ls ${QUEUE} 2>/dev/null || true`).split(/\s+/).filter(Boolean).sort();
+/** The queue folder read-only (a file in it cannot be removed), then back to its own mode; the restore puts it back too. */
+let queueMode = null;
+const lockQueue = () => { queueMode = runAs(`stat -c %a ${QUEUE}`); runAs(`chmod 500 ${QUEUE}`); };
+const unlockQueue = () => { if (queueMode) runAs(`chmod ${queueMode} ${QUEUE}`); queueMode = null; };
 /** One queue item, written as RN's writer does (a temporary name, then a rename): the ingest reads only `*.json`. */
 const enqueue = (name, text) => {
     const bytes = Buffer.from(text, 'utf8').toString('base64');
@@ -223,12 +227,18 @@ const leftovers = [];
 const restore = async () => {
     for (const name of PROPS) { try { setProp(name, ''); } catch { /* device gone */ } }
     try { if (leftovers.length > 0) runAs(`rm -f ${leftovers.map((name) => `${QUEUE}/${name}`).join(' ')}`); } catch { /* device gone */ }
-    // An owed retry a stopped step (6) left: Try again first (fail_kv_set is off now), so the Menu is usable.
-    try {
-        if (!front().includes(`${PKG}/`)) device.launch(ACTIVITY);
-        const nodes = await toTabs();
-        if (owedRetry(nodes)) await tapExpecting(owedRetry(nodes), (current) => !owedRetry(current), 'Try again');
-    } catch { /* the steps below report what stays */ }
+    try { unlockQueue(); } catch { /* device gone */ }
+    // An owed retry a stopped step (6) left: Try again first (the faults are off now), so the Menu is usable. The search screen's
+    // Back leaves the app while a retry is owed, so the app is launched again as often as that happens.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            if (!front().includes(`${PKG}/`)) device.launch(ACTIVITY);
+            const nodes = await toTabs();
+            if (!owedRetry(nodes)) break;
+            await device.tap(owedRetry(nodes));
+            await sleep(5000);
+        } catch { /* launched again above */ }
+    }
     // Automation capture off, as a development app nobody set up has it.
     try {
         if (storedToken()) await setAutomationCapture(false);
@@ -450,8 +460,13 @@ try {
     const replayLine = 'journal replay sent=1 dropped=1 left=0 owed=none';
     const lines = () => allLogs();
     const clearOwedRetry = async () => {
-        const nodes = await toTabs();
-        if (owedRetry(nodes)) await tapExpecting(owedRetry(nodes), (current) => !owedRetry(current), 'Try again');
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const nodes = await toTabs();
+            if (!owedRetry(nodes)) return;
+            await device.tap(owedRetry(nodes));
+            if (await waitFor('the owed retry to clear', (current) => !owedRetry(current), 20_000).then(() => true, () => false)) return;
+        }
+        fail('the owed retry did not clear');
     };
     {
         const token = storedToken() ?? fail('Automation capture went off');
@@ -482,8 +497,10 @@ try {
         await clearOwedRetry();
     }
 
-    // (6b) A drain owed while its save fails (debug fail_commit), under a context trigger's job while the app shows: a newer edit
-    // waits behind it, the trigger posts nothing, and the job's retry replays the journal first, then posts.
+    // (6b) A drain owed because its file cannot be removed (the queue folder made read-only through run-as), under a context
+    // trigger's job while the app shows: a newer edit waits behind it, the trigger posts nothing, and once the folder is writable
+    // again the job's retry replays the journal first, then posts. (A failed save, `fail_commit`, would also fail every read, so
+    // no screen could show the edit that waits.)
     {
         const [target] = stored(title(1));
         const [other] = stored(title(2));
@@ -492,13 +509,14 @@ try {
         const id = randomUUID();
         const [jobsBefore, postedBefore, replaysBefore] = [count(lines(), ...CONTEXT_DONE), count(lines(), ...POSTED), count(lines(), replayLine)];
         const retriesBefore = count(lines(), 'Native Android core work', '"job":"context","outcome":"retry"');
-        setProp('fail_commit', '1');
+        enqueue(id, JSON.stringify({ kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
+        lockQueue();
         try {
-            enqueue(id, JSON.stringify({ kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
             contextTrigger('ACTIVATE_CONTEXT', context);
             await waitUntil('the trigger\'s job to wait for the owed drain', () => count(lines(), 'Native Android core work', '"job":"context","outcome":"retry"') > retriesBefore);
             const [atFailure] = stored(title(1));
-            check(atFailure.rev === target.rev && atFailure.status === target.status, '(6b) the drain\'s save failed: nothing of it is on disk');
+            check(atFailure.status === 'done' && atFailure.rev === target.rev + 1 && lastApplied()[target.id]?.id === id,
+                `(6b) the check-off is stored, saved and recorded (rev ${target.rev} → ${atFailure.rev}), but its file cannot go: owed`);
             check(queued().includes(`${id}.json`) && journal().some((entry) => entry.method === 'ingest'), '(6b) its file and the drain\'s journal entry stay');
             check(count(lines(), ...POSTED) === postedBefore, '(6b) the trigger posted nothing from unfinished state');
 
@@ -525,7 +543,7 @@ try {
             await waitFor('the owed retry on the tabs', (current) => Boolean(owedRetry(current)), 10_000);
             check(true, '(6b) the screen offers the owed retry');
         } finally {
-            setProp('fail_commit', '');
+            unlockQueue();
         }
         // The job's own retry recovers with no tap: the journal's replay first, then the drain, then the trigger's notification.
         await waitUntil('the trigger\'s retry to recover and post', () => count(lines(), ...CONTEXT_DONE) > jobsBefore, 400_000, 5000);
@@ -534,8 +552,8 @@ try {
             '(6b) the job\'s retry replayed the owed journal entry before its job');
         check(count(text, ...POSTED) === postedBefore + 1, '(6b) and then posted the trigger\'s notification');
         const [recovered] = stored(title(1));
-        check(recovered.status === 'done' && recovered.rev === target.rev + 1 && !queued().includes(`${id}.json`) && journal().length === 0
-            && lastApplied()[target.id]?.id === id, `(6b) recovered: the check-off written once (rev ${recovered.rev}) and recorded, its file and entry gone`);
+        check(recovered.status === 'done' && recovered.rev === target.rev + 1 && !queued().includes(`${id}.json`) && journal().length === 0,
+            `(6b) recovered: the check-off written once (rev ${recovered.rev}), its file and entry gone`);
         // The screen's Try again: nothing is left to replay or drain, so the owed retry clears.
         await clearOwedRetry();
         check(!owedRetry(await screen()), '(6b) Try again cleared the owed retry');
