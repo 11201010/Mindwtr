@@ -11258,11 +11258,11 @@ final class FoundationUITests: XCTestCase {
     }
 
     func testTaskAssignedToSuggestionsSaveDiscardAndRestart() {
-        taskAssignedToEditor(library: "6cf1eaad-8b3c-48ec-9e23-a275b06ac1bb")
+        taskAssignedToEditor(library: "ebe5ade8-cfae-4615-a8c0-015975ebe90d")
     }
 
     func testTaskAssignedToSuggestionsLargestTextAndRestart() {
-        taskAssignedToEditor(library: "631d0565-de3c-4594-a5d5-81a1b1692cf0")
+        taskAssignedToEditor(library: "4bcc858f-5793-4a19-b15e-7df203d0e896")
     }
 
     private func taskAssignedToEditor(library: String) {
@@ -11285,9 +11285,11 @@ final class FoundationUITests: XCTestCase {
                 let above = element.exists && element.frame.minY < frame.minY
                 if app.keyboards.firstMatch.exists {
                     let origin = app.coordinate(withNormalizedOffset: .zero)
-                    let start = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (above ? 0.2 : 0.8)))
-                    let end = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (above ? 0.8 : 0.2)))
-                    start.press(forDuration: 0, thenDragTo: end, withVelocity: .fast, thenHoldForDuration: 0)
+                    let distance = min(frame.height * 0.5, max(20, abs(element.frame.midY - frame.midY)))
+                    let startY = frame.minY + frame.height * (above ? 0.25 : 0.75)
+                    let start = origin.withOffset(CGVector(dx: frame.midX, dy: startY))
+                    let end = origin.withOffset(CGVector(dx: frame.midX, dy: startY + (above ? distance : -distance)))
+                    start.press(forDuration: 0, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
                 } else if above { scroll.swipeDown() }
                 else { scroll.swipeUp() }
             }
@@ -11305,6 +11307,17 @@ final class FoundationUITests: XCTestCase {
             }
             let input = app.textFields["task-editor-assignedTo"]; reveal(input); return input
         }
+        func replaceAssignment(with text: String) {
+            let input = assignment(); input.tap()
+            boardEnabled(app.keyboards.firstMatch)
+            reveal(input)
+            // One text-field paragraph: triple-tap selects all without a floating menu.
+            input.tap(withNumberOfTaps: 3, numberOfTouches: 1)
+            input.typeText(XCUIKeyboardKey.delete.rawValue)
+            XCTAssertTrue((input.value as? String ?? "").isEmpty || input.value as? String == input.placeholderValue)
+            if !text.isEmpty { input.typeText(text) }
+            XCTAssertTrue(input.value as? String == text || (text.isEmpty && input.value as? String == input.placeholderValue))
+        }
         func restart() { app.terminate(); app.launch() }
         openTask("task112-waiting", title: "Task112 Waiting")
         let input = assignment(); XCTAssertEqual(input.label, "Assigned To"); XCTAssertFalse((input.placeholderValue ?? "").isEmpty); input.tap(); input.typeText("Person112 A")
@@ -11315,7 +11328,7 @@ final class FoundationUITests: XCTestCase {
         boardTap(app, "task-editor-save")
         restart(); openTask("task112-waiting", title: "Task112 Waiting")
         XCTAssertEqual(assignment().value as? String, "Person112 Ada")
-        replaceProjectNotesText(assignment(), with: "  Freeform112  ")
+        replaceAssignment(with: "  Freeform112  ")
         boardTap(app, "task-mode-view")
         XCTAssertTrue(app.staticTexts["Freeform112"].waitForExistence(timeout: 10))
         boardTap(app, "task-mode-edit")
@@ -11324,11 +11337,11 @@ final class FoundationUITests: XCTestCase {
         restart(); openTask("task112-waiting", title: "Task112 Waiting")
         XCTAssertEqual(assignment().value as? String, "Freeform112")
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Saved Assigned To editor"; shot.lifetime = .keepAlways; add(shot)
-        replaceProjectNotesText(assignment(), with: "Discard112")
+        replaceAssignment(with: "Discard112")
         boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard"); boardTap(app, "search-close")
         openTask("task112-waiting", title: "Task112 Waiting")
         XCTAssertEqual(assignment().value as? String, "Freeform112")
-        replaceProjectNotesText(assignment(), with: "")
+        replaceAssignment(with: "")
         boardTap(app, "task-editor-save")
         restart(); openTask("task112-waiting", title: "Task112 Waiting")
         let cleared = assignment(); XCTAssertEqual(cleared.value as? String, cleared.placeholderValue)
