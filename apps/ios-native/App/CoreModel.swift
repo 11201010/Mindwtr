@@ -667,6 +667,8 @@ final class CoreModel: ObservableObject {
     private var taskTokenNeedsRead: Set<String> = []
     private var taskTokenCommitDisplay: Set<String> = []
     private var taskTokenEdited: Set<String> = []
+    private var taskTokenFocused: Set<String> = []
+    private var taskTokenSuppressNextBlur: Set<String> = []
     private var taskDestinationGeneration = 0
     private var taskDestinationReadTask: Task<Void, Never>?
     private var taskDestinationNeedsRead = false
@@ -12694,6 +12696,15 @@ final class CoreModel: ObservableObject {
 
     var taskEditorSession: Int { taskScheduleSession }
 
+    var taskBackdatedCompletionMinutesSeed: String {
+        if taskTimeSpentPending { return taskTimeSpentInput }
+        if let minutes = taskEditor.object("backdatedCompletionStart")["initialTimeSpentMinutes"] as? NSNumber,
+           CFGetTypeID(minutes) != CFBooleanGetTypeID() {
+            return minutes.stringValue
+        }
+        return ""
+    }
+
     func taskStatusEditable(_ status: String) -> Bool {
         let statusVisible = taskEditor.object("layout").flag("showStatusField")
             && taskEditor.object("layout").objects("sections").contains(where: {
@@ -12739,6 +12750,39 @@ final class CoreModel: ObservableObject {
             }
             do { try await refreshTaskDestination() }
             catch { taskError = error.localizedDescription }
+            return true
+        } catch {
+            taskError = error.localizedDescription
+            return false
+        }
+    }
+
+    func editTaskBackdatedCompletion(_ completedAt: String, timeSpentText: String?,
+                                    expectedID: String, expectedSession: Int) async -> Bool {
+        guard taskStatusEditable("done"), viewedTaskID == expectedID,
+              taskScheduleSession == expectedSession,
+              timeSpentText == nil || taskEditor.object("fields").object("timeSpent").flag("enabled") else { return false }
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            try await resolveTaskEditorInputs()
+            guard taskPresented, viewedTaskID == expectedID, taskScheduleSession == expectedSession,
+                  !taskEditor.flag("readOnly") else { throw CancellationError() }
+            var edit: CoreObject = ["type": "backdatedCompletion", "completedAt": completedAt]
+            if let timeSpentText { edit["timeSpentText"] = timeSpentText }
+            let editor = try await query("editDraft", [try json(taskEditRequest(edit))])
+            guard taskPresented, viewedTaskID == expectedID, taskScheduleSession == expectedSession else {
+                throw CancellationError()
+            }
+            taskEditor = editor
+            if timeSpentText != nil { resetTaskTimeSpentInput() }
+            NSLog("Native iOS backdated completion draft confirmed releaseCheck=v1.3.4/ios-editor-backdate outcome=confirmed")
+            do { try await refreshTaskDestination() }
+            catch { taskError = error.localizedDescription }
+            guard taskPresented, viewedTaskID == expectedID, taskScheduleSession == expectedSession else {
+                throw CancellationError()
+            }
             return true
         } catch {
             taskError = error.localizedDescription
@@ -13157,8 +13201,21 @@ final class CoreModel: ObservableObject {
 
     func taskTokenFocusChanged(_ field: String, focused: Bool) {
         guard taskTokenFields.contains(field), taskPresented, !taskEditor.flag("readOnly") else { return }
-        if focused { taskTokenCommitDisplay.remove(field) }
-        else { commitTaskTokenInput(field) }
+        if focused {
+            taskTokenFocused.insert(field)
+            taskTokenSuppressNextBlur.remove(field)
+            taskTokenCommitDisplay.remove(field)
+        } else {
+            taskTokenFocused.remove(field)
+            if taskTokenSuppressNextBlur.remove(field) == nil { commitTaskTokenInput(field) }
+        }
+    }
+
+    func preserveTaskTokenInputForTransientModal() {
+        guard taskPresented, !taskEditor.flag("readOnly") else { return }
+        // Resigning the first responder can deliver FocusState's blur later than
+        // the modal's Cancel callback. Suppress that one blur, not future edits.
+        taskTokenSuppressNextBlur.formUnion(taskTokenFocused)
     }
 
     func commitTaskTokenInput(_ field: String) {
@@ -13198,6 +13255,8 @@ final class CoreModel: ObservableObject {
         taskTokenErrors = [:]
         taskTokenCommitDisplay = []
         taskTokenEdited = []
+        taskTokenFocused = []
+        taskTokenSuppressNextBlur = []
     }
 
     private func initializeTaskTokens() {
@@ -13486,6 +13545,7 @@ final class CoreModel: ObservableObject {
                     "taskEdit.contextsLabel", "taskEdit.contextsPlaceholder", "taskEdit.tagsLabel", "taskEdit.tagsPlaceholder",
                     "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder", "taskEdit.statusLabel", "reference.convertToAction",
                     "taskEdit.timeSpentLabel", "taskEdit.timeSpentPlaceholder",
+                    "task.completedAtPromptTitle",
                     "process.waitingFor", "process.waitingForDesc", "common.cancel", "common.save",
                     "taskEdit.startDateLabel", "taskEdit.dueDateLabel", "taskEdit.reviewDateLabel", "taskEdit.dateOnly",
                     "taskEdit.startModeAbsolute", "taskEdit.startModeRelative", "taskEdit.relativeStartAmount",

@@ -25,7 +25,9 @@ import {
     buildTaskEditorModel,
     buildTaskEditUpdatePatch,
     clearInvalidTaskDraftSection,
+    getTaskEditorBackdatedCompletionStart,
     getTaskEditorSuggestions,
+    resolveTaskEditorBackdatedCompletion,
     TASK_EDITOR_ENERGY_LEVEL_OPTIONS,
     TASK_EDITOR_PRIORITY_OPTIONS,
     TASK_EDITOR_STATUS_OPTIONS,
@@ -363,6 +365,7 @@ export type NativeTaskEditorModel = TaskEditorModel & {
     readOnly: boolean;
     /** createTaskDraft(task). Fields whose value is undefined are absent over JSON. */
     draft: TaskDraft;
+    backdatedCompletionStart: ReturnType<typeof getTaskEditorBackdatedCompletionStart>;
     focusStar: FocusStarAction & { queued: boolean; blockedText: string | null };
     /** Keep the opening raw baseline through edit refreshes; never rebuild it from display strings. */
     scheduleBase: NativeTaskScheduleBase;
@@ -766,7 +769,9 @@ export type NativeTaskDraftEdit =
     /** The Custom… estimate input as typed; text that does not parse leaves the estimate. */
     | { type: 'timeEstimate'; text: string }
     /** The Time Spent input as typed. */
-    | { type: 'timeSpent'; text: string };
+    | { type: 'timeSpent'; text: string }
+    /** A completion picker confirmation, applied to the unsaved draft as one edit. */
+    | { type: 'backdatedCompletion'; completedAt: string; timeSpentText?: string };
 
 export type NativeTaskDraftRecurrenceEdit =
     | Exclude<TaskDraftRecurrenceEdit, { kind: 'interval' } | { kind: 'weekdays' }>
@@ -892,6 +897,14 @@ const applyNativeTaskDraftEdit = (
         }
         case 'timeSpent':
             return isInputText(edit.text) ? withPatch({ timeSpentMinutes: parseTaskEditorTimeSpent(edit.text) }) : null;
+        case 'backdatedCompletion': {
+            if (edit.timeSpentText !== undefined && !isInputText(edit.timeSpentText)) return null;
+            const patch = resolveTaskEditorBackdatedCompletion({
+                completedAt: edit.completedAt as string,
+                timeSpentText: edit.timeSpentText as string | undefined,
+            });
+            return patch ? applyTaskDraftPatch(draft, patch) : null;
+        }
         default:
             return null;
     }
@@ -1488,6 +1501,7 @@ export function createNativeHostContract(options: {
             id: task.id,
             readOnly: isInArchivedProject(task),
             draft,
+            backdatedCompletionStart: getTaskEditorBackdatedCompletionStart(task, draft),
             focusStar: { ...focusStar, blockedText: getFocusStarBlockedText(translate, focusStar, focusTaskLimit) },
             scheduleBase: getNativeTaskScheduleBase(task),
             recurrenceBase: getNativeTaskRecurrenceBase(task),

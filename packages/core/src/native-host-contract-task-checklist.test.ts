@@ -272,8 +272,10 @@ describe('prepared native checklist Save and Reset', () => {
         const original = source({ timeSpentMinutes: 17, recurrence: { rule: 'daily', strategy: 'strict', rrule: 'FREQ=DAILY' },
             dueDate: '2026-09-27', checklist: [item('one', 'First', true), item('two', 'Second')] });
         const { host } = await open(original);
-        const request = { id: original.id, requestId: id, base: { title: 'Before', status: 'next', dueDate: '2026-09-27', timeSpentMinutes: 17 },
-            patch: { title: 'After', status: 'done', dueDate: '2026-09-28', timeSpentMinutes: 25 },
+        const completedAt = '2026-09-20T10:15:30.123Z';
+        const request = { id: original.id, requestId: id, base: { title: 'Before', status: 'next',
+            completedAt: '', dueDate: '2026-09-27', timeSpentMinutes: 17 },
+            patch: { title: 'After', status: 'done', completedAt, dueDate: '2026-09-28', timeSpentMinutes: 25 },
             scheduleBase: { ...scheduleBase, dueDate: '2026-09-27' },
             checklist: { base: original.checklist!, value: original.checklist!.map((entry) => ({ ...entry, isCompleted: true })) } };
         const prepared = unwrap(host.prepareTaskChecklistSave(request));
@@ -284,7 +286,8 @@ describe('prepared native checklist Save and Reset', () => {
         expect(child?.checklist?.every((entry) => !entry.isCompleted)).toBe(true);
         expect(child?.id).not.toBe(original.id);
         expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: prepared.prepared }))).toEqual({ id: original.id });
-        expect(savedTask()).toMatchObject({ title: 'After', status: 'done', dueDate: '2026-09-28', timeSpentMinutes: 25, rev: 4 });
+        expect(savedTask()).toMatchObject({ title: 'After', status: 'done', completedAt,
+            dueDate: '2026-09-28', timeSpentMinutes: 25, rev: 4 });
         expect(useTaskStore.getState()._allTasks.filter((entry) => entry.id === child?.id)).toHaveLength(1);
         expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared: prepared.prepared }))).toEqual({ id: original.id });
         expect(useTaskStore.getState()._allTasks.filter((entry) => entry.id === child?.id)).toHaveLength(1);

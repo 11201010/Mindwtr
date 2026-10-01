@@ -704,6 +704,8 @@ describe('TaskEditModal', () => {
     });
 
     const picker = tree.root.findByType('CompletedAtPicker' as any);
+    expect(picker.props.initialValue).toBeUndefined();
+    expect(picker.props.initialTimeSpentMinutes).toBeUndefined();
     act(() => {
       picker.props.onConfirm(completedAt);
     });

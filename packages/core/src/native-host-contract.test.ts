@@ -1557,6 +1557,7 @@ describe('native host contract', () => {
                 id: 'edit',
                 readOnly: false,
                 draft,
+                backdatedCompletionStart: { initialValue: null, initialTimeSpentMinutes: null },
                 focusStar: expect.objectContaining({ isFocused: false, canToggle: false, queued: false, blockedReason: 'deferred' }),
                 scheduleBase: { startTime: null, dueDate: '2026-09-25', relativeStartOffset: null, reviewAt: null },
                 recurrenceBase: { recurrence: stored.recurrence ?? null, showFutureRecurrence: stored.showFutureRecurrence ?? null },
@@ -2149,6 +2150,37 @@ describe('native host contract', () => {
                 expect(edited(host, draft).options.sections.map(({ id }) => id)).toEqual(['s-ship', 's-plan']);
                 // Nothing is written.
                 expect(storedTask()?.status).toBe('next');
+            });
+
+            it('applies one backdated draft edit while leaving storage and omitted minutes alone', async () => {
+                freezeClock();
+                const host = await activateEditor([editTask({ timeSpentMinutes: 35 })]);
+                saveData.mockClear();
+                const draft = openDraft(host);
+                const instant = '2026-09-20T10:15:30.123Z';
+                const opening = host.getTaskEditorModel({ id: 'edit' });
+                if (!opening.ok) throw new Error(opening.error.message);
+                expect(opening.value.backdatedCompletionStart).toEqual({
+                    initialValue: null, initialTimeSpentMinutes: 35,
+                });
+                const withoutMinutes = edited(host, draft, { type: 'backdatedCompletion', completedAt: instant });
+                expect(withoutMinutes.draft).toMatchObject({ status: 'done', completedAt: instant, timeSpentMinutes: 35 });
+                expect(withoutMinutes.backdatedCompletionStart.initialValue).toBe(instant);
+                const cleared = edited(host, draft, { type: 'backdatedCompletion', completedAt: instant, timeSpentText: '' });
+                expect(cleared.draft.status).toBe('done');
+                expect(cleared.draft.timeSpentMinutes).toBeUndefined();
+                const capped = edited(host, draft, { type: 'backdatedCompletion', completedAt: instant, timeSpentText: '100001' });
+                expect(capped.draft.timeSpentMinutes).toBe(100_000);
+                for (const edit of [
+                    { type: 'backdatedCompletion', completedAt: '2026-09-20' },
+                    { type: 'backdatedCompletion', completedAt: '2026-02-30T10:15:30.123Z' },
+                    { type: 'backdatedCompletion', completedAt: instant, timeSpentText: '1'.repeat(201) },
+                ]) {
+                    expect(host.editTaskDraft({ id: 'edit', draft, edit: edit as NativeTaskDraftEdit }))
+                        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+                }
+                expect(storedTask('edit')).toMatchObject({ status: 'next', timeSpentMinutes: 35 });
+                expect(saveData).not.toHaveBeenCalled();
             });
 
             it('round-trips date input baselines through JSON without weakening prepared raw date intent', async () => {

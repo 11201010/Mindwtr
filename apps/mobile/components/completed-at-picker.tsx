@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { normalizeTimeSpentMinutes, tFallback } from '@mindwtr/core';
+import { normalizeTimeSpentMinutes, resolveTaskEditorBackdatedCompletion, tFallback } from '@mindwtr/core';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 
 type CompletedAtPickerProps = {
@@ -40,6 +40,16 @@ export function CompletedAtPicker({
     );
     const [androidStep, setAndroidStep] = useState<'date' | 'time' | 'details'>('date');
 
+    const confirm = (date: Date) => {
+        const patch = resolveTaskEditorBackdatedCompletion({
+            completedAt: date.toISOString(),
+            ...(showTimeSpent ? { timeSpentText: timeSpentDraft } : {}),
+        });
+        if (!patch) return;
+        if (showTimeSpent) onConfirm(patch.completedAt, patch.timeSpentMinutes);
+        else onConfirm(patch.completedAt);
+    };
+
     if (Platform.OS === 'android' && androidStep !== 'details') {
         return (
             <DateTimePicker
@@ -66,7 +76,7 @@ export function CompletedAtPicker({
                         setAndroidStep('details');
                         return;
                     }
-                    onConfirm(next.toISOString());
+                    confirm(next);
                 }}
             />
         );
@@ -128,12 +138,7 @@ export function CompletedAtPicker({
                             </Text>
                         </Pressable>
                         <Pressable
-                            onPress={() => onConfirm(
-                                draft.toISOString(),
-                                showTimeSpent
-                                    ? normalizeTimeSpentMinutes(Number(timeSpentDraft))
-                                    : undefined
-                            )}
+                            onPress={() => confirm(draft)}
                             accessibilityRole="button"
                             accessibilityLabel={tFallback(t, 'common.save', 'Save')}
                             style={styles.actionButton}
