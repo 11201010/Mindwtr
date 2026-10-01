@@ -16,6 +16,144 @@ final class FoundationUITests: XCTestCase {
         try super.tearDownWithError()
     }
 
+
+    private func openProject122(_ library: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        boardTap(app, "project-open-task122-active"); boardTap(app, "project-details-toggle")
+        return app
+    }
+
+    private func tapProject122(_ app: XCUIApplication, _ element: XCUIElement) {
+        revealPagedElement(app, element, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+        boardEnabled(element); XCTAssertGreaterThanOrEqual(element.frame.height + 0.000001, 44)
+        element.tap()
+    }
+
+    func testProjectURLAttachmentsAddRemoveAndColdRead() {
+        let library = "62cc0029-8181-41cd-a488-2d59ee03b3de"
+        var app = openProject122(library)
+        XCTAssertEqual(app.buttons["project-attachment-add-link"].label, "Add link")
+        tapProject122(app, app.buttons["project-attachment-add-link"])
+        XCTAssertGreaterThanOrEqual(app.buttons["project-attachment-link-save"].frame.height, 44)
+        XCTAssertGreaterThanOrEqual(app.buttons["project-attachment-link-cancel"].frame.height, 44)
+        let input = app.textViews["project-attachment-link-input"]
+        boardEnabled(input); input.tap(); input.typeText("Task122 First | https://example.com/#task122-first\ninvalid link")
+        boardTap(app, "project-attachment-link-save")
+        XCTAssertTrue(app.staticTexts["project-attachment-link-error"].waitForExistence(timeout: 10))
+        XCTAssertTrue(input.exists)
+        replaceProjectNotesText(input, with: "Task122 First | https://example.com/#task122-first\nTask122 Second | https://example.org/#task122-second")
+        boardTap(app, "project-attachment-link-save")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: input)
+        waitForExpectations(timeout: 20)
+        XCTAssertFalse(app.buttons["project-attachment-remove-task122-file"].exists)
+        app.terminate(); app = openProject122(library)
+        let first = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "project-attachment-open-", "Task122 First")).firstMatch
+        tapProject122(app, first)
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        XCTAssertTrue(safari.wait(for: .runningForeground, timeout: 20))
+        let browserShot = XCTAttachment(screenshot: safari.screenshot())
+        browserShot.name = "Saved Project URL opened after restart"; browserShot.lifetime = .keepAlways; add(browserShot)
+        app.activate(); boardEnabled(app.buttons["project-back"], timeout: 20)
+        let removeID = first.identifier.replacingOccurrences(of: "project-attachment-open-", with: "project-attachment-remove-")
+        tapProject122(app, app.buttons[removeID])
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: first)
+        waitForExpectations(timeout: 20)
+        app.terminate(); app = openProject122(library)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "project-attachment-open-", "Task122 First")).firstMatch.exists)
+        let second = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "project-attachment-open-", "Task122 Second")).firstMatch
+        revealPagedElement(app, second, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+        boardEnabled(second)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Project link soft removal retained after restart"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "project-back")
+        let archived = app.buttons["projects-section-archived"]
+        revealPagedElement(app, archived, in: app.scrollViews["projects-scroll"])
+        if archived.value as? String == "Expand" { archived.tap() }
+        let row = app.buttons["project-open-task122-archived"]
+        revealPagedElement(app, row, in: app.scrollViews["projects-scroll"]); boardEnabled(row); row.tap()
+        boardTap(app, "project-details-toggle")
+        XCTAssertFalse(app.buttons["project-attachment-add-link"].exists && app.buttons["project-attachment-add-link"].isEnabled)
+        XCTAssertFalse(app.buttons["project-attachment-remove-task122-web"].exists && app.buttons["project-attachment-remove-task122-web"].isEnabled)
+        app.terminate()
+    }
+
+    func testProjectURLAttachmentAddFlushesNotes() {
+        let library = "062f21f2-8432-49ce-8ba2-e58e4069cbcc"
+        var app = openProject122(library)
+        tapProject122(app, app.buttons["project-notes-toggle"])
+        if app.buttons["project-notes-mode-edit"].isEnabled { tapProject122(app, app.buttons["project-notes-mode-edit"]) }
+        let notes = app.textViews["project-notes-input"]
+        boardEnabled(notes); notes.tap(); notes.typeText("Task122 Notes before attachment")
+        XCTAssertEqual(app.buttons["project-attachment-add-link"].label, "Add link")
+        tapProject122(app, app.buttons["project-attachment-add-link"])
+        XCTAssertGreaterThanOrEqual(app.buttons["project-attachment-link-save"].frame.height, 44)
+        XCTAssertGreaterThanOrEqual(app.buttons["project-attachment-link-cancel"].frame.height, 44)
+        let input = app.textViews["project-attachment-link-input"]
+        boardEnabled(input); input.tap(); input.typeText("Task122 Notes link | https://example.com/#task122-notes")
+        boardTap(app, "project-attachment-link-save")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: input)
+        waitForExpectations(timeout: 20)
+        app.terminate(); app = openProject122(library)
+        tapProject122(app, app.buttons["project-notes-toggle"])
+        if app.buttons["project-notes-mode-preview"].isEnabled { tapProject122(app, app.buttons["project-notes-mode-preview"]) }
+        let text = app.staticTexts["Task122 Notes before attachment"]
+        revealPagedElement(app, text, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+        XCTAssertTrue(text.exists)
+        let link = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "project-attachment-open-", "Task122 Notes link")).firstMatch
+        revealPagedElement(app, link, in: app.scrollViews["project-detail-scroll"], outerEdge: true); boardEnabled(link)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Project Notes and added URL retained after restart"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+
+    func testProjectURLAttachmentFailureKeepsDraft() {
+        let app = openProject122("1dbeec29-287c-4089-876c-c0d8f72f59b5")
+        XCTAssertEqual(app.buttons["project-attachment-add-link"].label, "Add link")
+        tapProject122(app, app.buttons["project-attachment-add-link"])
+        XCTAssertGreaterThanOrEqual(app.buttons["project-attachment-link-save"].frame.height, 44)
+        XCTAssertGreaterThanOrEqual(app.buttons["project-attachment-link-cancel"].frame.height, 44)
+        let input = app.textViews["project-attachment-link-input"]
+        let raw = "Task122 Recovery | https://example.com/#task122-recovery"
+        boardEnabled(input); input.tap(); input.typeText(raw)
+        boardTap(app, "project-attachment-link-save")
+        let retries = app.buttons.matching(identifier: "project-attachment-write-retry")
+        XCTAssertTrue(retries.firstMatch.waitForExistence(timeout: 20))
+        guard let retry = retries.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
+            return XCTFail("The pending link sheet must expose its Retry button")
+        }
+        boardEnabled(retry, timeout: 20)
+        XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+        for _ in 0..<2 {
+            XCTAssertEqual(input.value as? String, raw)
+            XCTAssertFalse(input.isEnabled)
+            XCTAssertFalse(app.buttons["project-attachment-link-save"].isEnabled)
+            XCTAssertFalse(app.buttons["project-attachment-link-cancel"].isEnabled)
+            retry.tap(); boardEnabled(retry, timeout: 20)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Failed Project attachment save retains exact draft"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testProjectURLAttachmentColdRecovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "1dbeec29-287c-4089-876c-c0d8f72f59b5"]
+        app.launch()
+        boardEnabled(app.textFields["projects-create-title"], timeout: 30)
+        boardTap(app, "project-open-task122-active"); boardTap(app, "project-details-toggle")
+        let link = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "project-attachment-open-", "Task122 Recovery"))
+        revealPagedElement(app, link.firstMatch, in: app.scrollViews["project-detail-scroll"], outerEdge: true)
+        XCTAssertEqual(link.count, 1); boardEnabled(link.firstMatch)
+        XCTAssertFalse(app.buttons["project-attachment-write-retry"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Project attachment journal recovered once"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
     func testProjectURLAttachmentsOpenAndColdRead() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-ui-test-library", "8010d4e9-a4b9-46a9-8bdb-0e80f9490485"]

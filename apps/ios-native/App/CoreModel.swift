@@ -421,6 +421,12 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectAttachmentError: String?
     @Published private(set) var projectAttachmentOpening = false
     @Published private(set) var projectAttachmentOpenError: String?
+    @Published private(set) var projectAttachmentLinkPresented = false
+    @Published private(set) var projectAttachmentLinkDraft = ""
+    @Published private(set) var projectAttachmentLinkError: String?
+    @Published private(set) var projectAttachmentWriteError: String?
+    @Published private(set) var projectAttachmentEditReadError: String?
+    @Published private(set) var projectAttachmentEditOpening = false
     @Published var collapsedProjectAreas: Set<String> = []
     @Published var expandedProjectSections: Set<String> = []
     @Published private(set) var contexts: CoreObject = [:]
@@ -828,6 +834,15 @@ final class CoreModel: ObservableObject {
     private var projectAttachmentProjectID = ""
     private var projectAttachmentRevision = ""
     private var projectAttachmentOpenClaim = UUID()
+    private var projectAttachmentEditClaim = UUID()
+    private var projectAttachmentEditOptions: CoreObject = [:]
+    private var projectAttachmentEditOptionsCurrent = false
+    private var projectAttachmentOpeningRaw: String?
+    private var projectAttachmentOpeningRowsRaw: String?
+    private var projectAttachmentOpeningRevision = ""
+    private var projectAttachmentWriteRequest: String?
+    private var projectAttachmentWriteExpectedID: String?
+    private var projectAttachmentWriteSession = 0
     private var projectCreateAreaFilterValue: String?
     private var pendingProjectTagFilter: String?
     private var projectCreateRequest: String?
@@ -1105,11 +1120,35 @@ final class CoreModel: ObservableObject {
             && projectAttachmentRevision == projectDetail.text("mutationRevision")
     }
     var projectAttachmentsVisible: Bool { projectAttachmentScopeCurrent && projectAttachmentsCurrent }
+    var projectAttachmentWritePending: Bool { projectAttachmentWriteRequest != nil }
+    var projectAttachmentAddOpenEnabled: Bool {
+        projectViewOpenEnabled && !projectDetail.flag("readOnly") && !appLock.concealed
+            && projectAttachmentsVisible && !projectAttachmentLoading && !projectAttachmentEditOpening
+            && !projectAttachmentLinkPresented && !projectAttachmentWritePending
+    }
+    var projectAttachmentLinkInputEnabled: Bool {
+        projectAttachmentLinkPresented && !appLock.concealed && !busy && !retryNeeded
+            && !projectAttachmentWritePending && projectAttachmentEditOptionsCurrent
+            && projectAttachmentEditOptions.flag("canEdit") && projectAttachmentEditReadError == nil
+    }
+    var projectAttachmentLinkCanSave: Bool {
+        projectAttachmentLinkInputEnabled && !projectAttachmentEditOpening
+            && !projectAttachmentLinkDraft.isEmpty
+    }
+    var projectAttachmentNeedsRead: Bool {
+        projectAttachmentLinkPresented && !projectAttachmentWritePending
+            && (!projectAttachmentEditOptionsCurrent
+                || projectAttachmentEditOptions.text("revision") != projectDetail.text("mutationRevision"))
+    }
+    var projectAttachmentRemoveEnabled: Bool {
+        projectAttachmentAddOpenEnabled && !projectAttachmentLinkPresented
+    }
     var projectViewOpenEnabled: Bool {
         projectActionsEnabled && pendingProjectView == nil && projectFilterPendingEdit == nil
             && !projectFilterNeedsRead && !capturePresented && !areaPickerPresented
             && !areaManagerPresented && !morePresented && !projectSectionsPresented && !projectAreaPresented
             && !projectTagsPresented && projectDateField == nil && !projectStatusOpen
+            && !projectAttachmentLinkPresented && !projectAttachmentEditOpening
     }
     var projectViewReadPending: Bool {
         pendingProjectView != nil || projectFilterPendingEdit != nil || projectFilterNeedsRead
@@ -2502,7 +2541,7 @@ final class CoreModel: ObservableObject {
                 calendarComposerRecoveredResult = recovery.object("result")
             } else if recovery.text("method") == "mindSweepCommit" {
                 mindSweepRecoveredResult = recovery.object("result")
-            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit", "projectTagsWriteCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit", "areaRenameCommit",
+            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit", "areaRenameCommit",
                        "areaDeleteCommit"].contains(recovery.text("method")) {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
@@ -3135,7 +3174,8 @@ final class CoreModel: ObservableObject {
                     "appLock.title", "appLock.description", "appLock.prompt", "appLock.enablePrompt", "appLock.unlock",
                     "appLock.authenticating", "appLock.useDevicePasscode", "appLock.unavailable", "appLock.cancelled", "appLock.failed",
                     "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading", "common.ok",
-                    "attachments.title", "attachments.missing", "attachments.download",
+                    "attachments.title", "attachments.missing", "attachments.download", "attachments.addLink",
+                    "attachments.remove", "attachments.linkPlaceholder", "attachments.linkBatchHint",
                     "task.aria.changeStatus", "task.aria.changeStatusHint", "quickAdd.audioRecord",
                     "common.more", "agenda.reviewDueProjects", "agenda.laterToday",
                     "agenda.addToFocus", "agenda.removeFromFocus",
@@ -11781,6 +11821,7 @@ final class CoreModel: ObservableObject {
     private func resetProjectAttachments() {
         projectAttachmentReadGeneration += 1
         projectAttachmentOpenClaim = UUID()
+        projectAttachmentEditClaim = UUID()
         projectAttachmentProjectID = ""
         projectAttachmentRevision = ""
         projectAttachmentRows = []
@@ -11789,6 +11830,17 @@ final class CoreModel: ObservableObject {
         projectAttachmentError = nil
         projectAttachmentOpening = false
         projectAttachmentOpenError = nil
+        projectAttachmentLinkPresented = false
+        projectAttachmentLinkDraft = ""
+        projectAttachmentLinkError = nil
+        projectAttachmentWriteError = nil
+        projectAttachmentEditReadError = nil
+        projectAttachmentEditOpening = false
+        projectAttachmentEditOptions = [:]
+        projectAttachmentEditOptionsCurrent = false
+        projectAttachmentOpeningRaw = nil
+        projectAttachmentOpeningRowsRaw = nil
+        projectAttachmentOpeningRevision = ""
     }
 
     func openProject(_ row: CoreObject, descriptionSourceID: String? = nil) async {
@@ -11994,7 +12046,8 @@ final class CoreModel: ObservableObject {
         guard await flushProjectNotesEdit() else { return }
         guard selectedSurface == .project, !busy, !retryNeeded, !taskPresented,
               !projectRenameEditing && !projectSectionsPresented && !projectAreaPresented
-              && !projectTagsPresented else { return }
+              && !projectTagsPresented && !projectAttachmentLinkPresented
+              && !projectAttachmentEditOpening && !projectAttachmentWritePending else { return }
         projectFilterSession += 1
         projectFilterReadTask?.cancel()
         resetProjectAttachments()
@@ -12399,6 +12452,9 @@ final class CoreModel: ObservableObject {
                 if projectTagsOptions.text("revision") != next.text("mutationRevision") {
                     projectTagsOptionsCurrent = false
                 }
+                if projectAttachmentEditOptions.text("revision") != next.text("mutationRevision") {
+                    projectAttachmentEditOptionsCurrent = false
+                }
                 if projectSectionOptions.text("revision") != next.text("mutationRevision") {
                     projectSectionOptionsCurrent = false
                 }
@@ -12714,6 +12770,275 @@ final class CoreModel: ObservableObject {
     }
 
     func dismissProjectAttachmentOpenError() { projectAttachmentOpenError = nil }
+
+    private func projectAttachmentEditContext(_ id: String, session: Int) -> Bool {
+        selectedSurface == .project && projectCurrent && projectFilterSession == session
+            && projectHeader.text("id") == id && projectDetail.text("projectId") == id
+            && !projectDetail.flag("readOnly") && !appLock.concealed
+    }
+
+    private func readProjectAttachmentEditOptions(projectID id: String, session: Int) async throws {
+        projectAttachmentEditOptionsCurrent = false
+        guard projectAttachmentEditContext(id, session: session) else { throw CocoaError(.coderReadCorrupt) }
+        let revision = projectDetail.text("mutationRevision")
+        let options = try await query("projectAttachmentEditOptions", [try json(["projectId": id])])
+        let project = options.object("project")
+        guard projectAttachmentEditContext(id, session: session),
+              options.count == 3, options.text("revision") == revision,
+              project.count == 7, project.text("id") == id,
+              let canEdit = options["canEdit"] as? NSNumber,
+              CFGetTypeID(canEdit) == CFBooleanGetTypeID(), canEdit.boolValue,
+              (project["title"] as? String).map({ $0.utf16.count <= 100_000 }) == true,
+              ["active", "waiting", "someday"].contains(project.text("status")),
+              project["attachments"] is NSNull || project["attachments"] is [CoreObject],
+              project["rev"] is NSNull || (project["rev"] as? Int).map({ $0 >= 0 }) == true,
+              project["revBy"] is NSNull || (project["revBy"] as? String)
+                .map({ $0.utf16.count <= 500 }) == true,
+              TaskDatePickerComponents.instant(project.text("updatedAt")) != nil,
+              let attachments = project["attachments"],
+              let attachmentsRaw = try? json(["attachments": attachments]), attachmentsRaw.utf8.count <= 2_000_000,
+              projectAttachmentOpeningRevision.isEmpty || projectAttachmentOpeningRevision == revision,
+              projectAttachmentOpeningRaw == nil || projectAttachmentOpeningRaw == attachmentsRaw else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        projectAttachmentOpeningRevision = revision
+        projectAttachmentOpeningRaw = attachmentsRaw
+        projectAttachmentEditOptions = options
+        projectAttachmentEditOptionsCurrent = true
+        projectAttachmentEditReadError = nil
+    }
+
+    func openProjectAttachmentLinkSheet() {
+        guard projectAttachmentAddOpenEnabled,
+              let rowsRaw = try? json(projectAttachmentRows) else { return }
+        let id = projectHeader.text("id"), session = projectFilterSession
+        let claim = UUID()
+        projectAttachmentEditClaim = claim
+        projectAttachmentEditOpening = true
+        projectAttachmentOpeningRowsRaw = rowsRaw
+        projectAttachmentOpeningRaw = nil
+        projectAttachmentOpeningRevision = ""
+        projectAttachmentLinkError = nil
+        projectAttachmentWriteError = nil
+        projectAttachmentEditReadError = nil
+        Task { await performProjectAttachmentLinkOpen(projectID: id, session: session, claim: claim) }
+    }
+
+    private func performProjectAttachmentLinkOpen(projectID id: String, session: Int, claim: UUID) async {
+        defer { if projectAttachmentEditClaim == claim { projectAttachmentEditOpening = false } }
+        guard await flushProjectNotesEdit(), projectAttachmentEditClaim == claim,
+              projectAttachmentEditContext(id, session: session),
+              !projectNotesDirty && !projectNotesWritePending else { return }
+        if !projectAttachmentsVisible || projectAttachmentLoading { await readProjectAttachments(force: true) }
+        guard projectAttachmentsVisible, !projectAttachmentLoading,
+              (try? json(projectAttachmentRows)) == projectAttachmentOpeningRowsRaw else {
+            projectAttachmentEditReadError = "Project links changed. Try again."
+            return
+        }
+        do {
+            try await readProjectAttachmentEditOptions(projectID: id, session: session)
+            guard projectAttachmentEditClaim == claim, !projectNotesDirty && !projectNotesWritePending else { return }
+            projectAttachmentLinkDraft = ""
+            projectAttachmentLinkPresented = true
+        } catch {
+            if projectAttachmentEditClaim == claim { projectAttachmentEditReadError = "Project links could not be loaded. Try again." }
+        }
+    }
+
+    func cancelProjectAttachmentLinkSheet() {
+        guard projectAttachmentLinkPresented, !busy, !retryNeeded, !projectAttachmentWritePending,
+              !projectAttachmentEditOpening else { return }
+        projectAttachmentLinkPresented = false
+        projectAttachmentLinkDraft = ""
+        projectAttachmentLinkError = nil
+        projectAttachmentWriteError = nil
+        projectAttachmentEditReadError = nil
+        projectAttachmentEditOptions = [:]
+        projectAttachmentEditOptionsCurrent = false
+        projectAttachmentOpeningRaw = nil
+        projectAttachmentOpeningRowsRaw = nil
+        projectAttachmentOpeningRevision = ""
+    }
+
+    func setProjectAttachmentLinkDraft(_ value: String) {
+        guard projectAttachmentLinkInputEnabled, value.utf16.count <= 100_000 else { return }
+        projectAttachmentLinkDraft = value
+        projectAttachmentLinkError = nil
+    }
+
+    func saveProjectAttachmentLinks() async {
+        guard projectAttachmentLinkCanSave else { return }
+        let id = projectHeader.text("id"), session = projectFilterSession
+        let text = projectAttachmentLinkDraft
+        guard projectAttachmentEditContext(id, session: session),
+              !projectNotesDirty && !projectNotesWritePending else { return }
+        projectAttachmentEditOpening = true
+        defer { projectAttachmentEditOpening = false }
+        await performProjectAttachmentWrite(["kind": "add", "text": text], projectID: id,
+                                            session: session, submittedText: text)
+    }
+
+    func removeProjectAttachmentLink(_ attachmentID: String) {
+        guard projectAttachmentRemoveEnabled,
+              projectAttachmentRows.contains(where: { $0.text("id") == attachmentID && $0.text("kind") == "link" }),
+              let rowsRaw = try? json(projectAttachmentRows) else { return }
+        let id = projectHeader.text("id"), session = projectFilterSession
+        let claim = UUID()
+        projectAttachmentEditClaim = claim
+        projectAttachmentEditOpening = true
+        projectAttachmentOpeningRowsRaw = rowsRaw
+        projectAttachmentOpeningRaw = nil
+        projectAttachmentOpeningRevision = ""
+        projectAttachmentWriteError = nil
+        projectAttachmentEditReadError = nil
+        Task { await performProjectAttachmentRemove(attachmentID, projectID: id, session: session, claim: claim) }
+    }
+
+    private func performProjectAttachmentRemove(_ attachmentID: String, projectID id: String,
+                                                session: Int, claim: UUID) async {
+        defer { if projectAttachmentEditClaim == claim { projectAttachmentEditOpening = false } }
+        guard await flushProjectNotesEdit(), projectAttachmentEditClaim == claim,
+              projectAttachmentEditContext(id, session: session),
+              !projectNotesDirty && !projectNotesWritePending else { return }
+        if !projectAttachmentsVisible || projectAttachmentLoading { await readProjectAttachments(force: true) }
+        guard projectAttachmentsVisible, !projectAttachmentLoading,
+              (try? json(projectAttachmentRows)) == projectAttachmentOpeningRowsRaw,
+              projectAttachmentRows.contains(where: { $0.text("id") == attachmentID && $0.text("kind") == "link" }) else {
+            projectAttachmentEditReadError = "Project links changed. Try again."
+            return
+        }
+        await performProjectAttachmentWrite(["kind": "remove", "attachmentId": attachmentID],
+                                            projectID: id, session: session)
+    }
+
+    private func performProjectAttachmentWrite(_ intent: CoreObject, projectID id: String,
+                                               session: Int, submittedText: String? = nil) async {
+        guard projectAttachmentEditContext(id, session: session), !projectNotesDirty,
+              !projectNotesWritePending, !busy, !retryNeeded, projectAttachmentWriteRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await readProjectAttachmentEditOptions(projectID: id, session: session)
+            guard projectAttachmentEditOptionsCurrent, projectAttachmentEditOptions.flag("canEdit"),
+                  !projectNotesDirty && !projectNotesWritePending,
+                  submittedText == nil || projectAttachmentLinkDraft == submittedText,
+                  projectAttachmentEditContext(id, session: session) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let project = projectAttachmentEditOptions.object("project")
+            let expected: CoreObject = ["title": project.text("title"), "status": project.text("status"),
+                                        "attachments": project["attachments"]!, "rev": project["rev"]!,
+                                        "revBy": project["revBy"]!, "updatedAt": project.text("updatedAt")]
+            projectAttachmentWriteRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                                                      "projectId": id, "intent": intent, "expected": expected])
+            projectAttachmentWriteExpectedID = id
+            projectAttachmentWriteSession = session
+        } catch {
+            projectAttachmentEditReadError = "Project links changed. Try again."
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectAttachmentWrite", [projectAttachmentWriteRequest!]) }
+        catch { await handleProjectAttachmentWriteError(error); return }
+        do {
+            let accepted = try acknowledgeProjectAttachmentWrite(result)
+            if accepted { try await refreshProjectAttachmentsAfterWrite(projectID: id, session: session) }
+        } catch {
+            if projectAttachmentWriteRequest != nil { await handleProjectAttachmentWriteError(error) }
+            else { projectAttachmentEditReadError = "Project links could not be refreshed. Try again." }
+        }
+    }
+
+    @discardableResult private func acknowledgeProjectAttachmentWrite(_ result: CoreObject) throws -> Bool {
+        guard projectAttachmentWriteRequest != nil, let id = projectAttachmentWriteExpectedID else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        if result.count == 1, let message = result["message"] as? String, !message.isEmpty {
+            projectAttachmentWriteRequest = nil
+            projectAttachmentWriteExpectedID = nil
+            retryNeeded = false
+            projectAttachmentLinkError = message
+            projectAttachmentWriteError = message
+            error = nil
+            return false
+        }
+        if result.count == 1 && result["blocked"] as? String == "" {
+            projectAttachmentWriteRequest = nil
+            projectAttachmentWriteExpectedID = nil
+            projectAttachmentEditOptionsCurrent = false
+            retryNeeded = false
+            projectAttachmentWriteError = "Project links are no longer editable."
+            projectAttachmentLinkError = projectAttachmentWriteError
+            projectAttachmentEditReadError = projectAttachmentWriteError
+            error = nil
+            return false
+        }
+        guard result.count == 2, result.text("id") == id,
+              let ids = result["attachmentIds"] as? [String], ids.count <= 500,
+              Set(ids).count == ids.count,
+              ids.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 500 }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        projectAttachmentWriteRequest = nil
+        projectAttachmentWriteExpectedID = nil
+        projectAttachmentLinkPresented = false
+        projectAttachmentLinkDraft = ""
+        projectAttachmentLinkError = nil
+        projectAttachmentWriteError = nil
+        projectAttachmentEditReadError = nil
+        projectAttachmentEditOptions = [:]
+        projectAttachmentEditOptionsCurrent = false
+        projectAttachmentOpeningRaw = nil
+        projectAttachmentOpeningRowsRaw = nil
+        projectAttachmentOpeningRevision = ""
+        retryNeeded = false
+        error = nil
+        return true
+    }
+
+    private func refreshProjectAttachmentsAfterWrite(projectID id: String, session: Int) async throws {
+        try await readSelectedSurface()
+        guard projectAttachmentEditContext(id, session: session) else { throw CocoaError(.coderReadCorrupt) }
+        await readProjectAttachments(force: true)
+        guard projectAttachmentsVisible else { throw CocoaError(.coderReadCorrupt) }
+    }
+
+    private func handleProjectAttachmentWriteError(_ failure: Error) async {
+        if projectAttachmentWriteRequest != nil && isDefiniteRejection(failure) {
+            projectAttachmentWriteRequest = nil
+            projectAttachmentWriteExpectedID = nil
+            projectAttachmentEditOptionsCurrent = false
+            retryNeeded = false
+            projectAttachmentWriteError = "Project links could not be saved. Try again."
+            projectAttachmentLinkError = projectAttachmentWriteError
+            projectAttachmentEditReadError = projectAttachmentWriteError
+            error = nil
+        } else {
+            retryNeeded = projectAttachmentWriteRequest != nil
+            projectAttachmentWriteError = "Project links could not be saved. Retry the pending write."
+            projectAttachmentLinkError = projectAttachmentWriteError
+            error = projectAttachmentWriteError
+        }
+    }
+
+    func retryProjectAttachmentEditRead() async {
+        guard selectedSurface == .project, !busy, !retryNeeded, !projectAttachmentWritePending else { return }
+        let id = projectHeader.text("id"), session = projectFilterSession
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await readSelectedSurface()
+            guard projectAttachmentEditContext(id, session: session) else { throw CocoaError(.coderReadCorrupt) }
+            await readProjectAttachments(force: true)
+            guard projectAttachmentsVisible else { throw CocoaError(.coderReadCorrupt) }
+            projectAttachmentOpeningRowsRaw = try json(projectAttachmentRows)
+            projectAttachmentOpeningRaw = nil
+            projectAttachmentOpeningRevision = ""
+            try await readProjectAttachmentEditOptions(projectID: id, session: session)
+            projectAttachmentEditReadError = nil
+            projectAttachmentWriteError = nil
+        } catch { projectAttachmentEditReadError = "Project links could not be loaded. Try again." }
+    }
 
     func flushProjectNotesEdit() async -> Bool {
         if let task = projectNotesFlushTask { return await task.value }
@@ -15900,6 +16225,19 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = projectAttachmentWriteRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectAttachmentWriteRetryOutcome", [request]) }
+                let id = projectAttachmentWriteExpectedID ?? ""
+                let session = projectAttachmentWriteSession
+                let accepted = try acknowledgeProjectAttachmentWrite(result)
+                if accepted {
+                    do { try await refreshProjectAttachmentsAfterWrite(projectID: id, session: session) }
+                    catch { projectAttachmentEditReadError = "Project links could not be refreshed. Try again." }
+                }
+                return
+            }
             if let request = projectSectionRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -16303,6 +16641,10 @@ final class CoreModel: ObservableObject {
             }
             if projectTagsRequest != nil {
                 await handleProjectTagsWriteError(error)
+                return
+            }
+            if projectAttachmentWriteRequest != nil {
+                await handleProjectAttachmentWriteError(error)
                 return
             }
             if projectSectionRequest != nil {

@@ -152,6 +152,17 @@ export type PreparedProjectTagsWrite = {
     updateAt: string;
 };
 
+export type ProjectAttachmentIntent = { kind: 'add'; text: string } | { kind: 'remove'; attachmentId: string };
+
+/** One frozen native Project URL attachment change and its complete Project receipt. */
+export type PreparedProjectAttachmentWrite = {
+    scope: { project: Project };
+    effect: { project: { before: Project; after: Project } };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    updateAt: string;
+};
+
 /** One frozen nonarchived Project status change and its complete Project receipt. */
 export type PreparedProjectStatus = {
     scope: { project: Project };
@@ -578,6 +589,7 @@ export interface TaskStore {
     commitPreparedProjectTaskSort: (input: PreparedProjectTaskSort & { request: { projectId: string; sortBy: import('./types').TaskSortBy } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectNotesWrite: (input: PreparedProjectNotesWrite & { request: { projectId: string; text: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectTagsWrite: (input: PreparedProjectTagsWrite & { request: { projectId: string; intent: import('./project-tags').ProjectTagsIntent } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectAttachmentWrite: (input: PreparedProjectAttachmentWrite & { request: { projectId: string; requestId: string; intent: ProjectAttachmentIntent }; result: { id: string; attachmentIds: string[] } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectStatus: (input: PreparedProjectStatus & { request: { projectId: string; status: 'active' | 'waiting' | 'someday' } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDate: (input: PreparedProjectDate & { request: { projectId: string; field: 'startDate' | 'dueDate' | 'reviewAt'; value: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectArea: (input: PreparedProjectArea & { request: { projectId: string; areaId: string | null } }) => Promise<PreparedTaskEditResult>;

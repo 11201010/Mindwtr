@@ -375,7 +375,7 @@ const logLegacyImport = (plan: ReturnType<typeof planLegacyJsonImport>, rnState:
 // wait for the exact retry, so no screen treats those changes as stored.
 const requireSaved = () => {
     const failure = useTaskStore.getState().persistenceFailure;
-    if (failure) throw new Error(`SAVE_FAILED: ${failure.message}`);
+    if (failure) throw new Error('SAVE_FAILED: Previous changes could not be saved; retry before continuing');
 };
 
 /** host-polyfills.js's secret calls (SecretStore.kt). */
@@ -1816,6 +1816,31 @@ globalThis.MindwtrHost = {
     },
     projectTagsWriteCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectTagsWrite(JSON.parse(json))));
+    },
+    projectAttachmentEditOptions(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getProjectAttachmentEditOptions(projectAttachmentInput(json)));
+        });
+    },
+    projectAttachmentWriteRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeProjectAttachmentWriteOutcome(editorJson(json)));
+        });
+    },
+    /** Private iOS preparation and commit; Swift owns the durable journal. */
+    projectAttachmentWritePrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.prepareProjectAttachmentWrite(editorJson(json)));
+        });
+    },
+    projectAttachmentWriteValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedProjectAttachmentWrite(editorJson(json))));
+    },
+    projectAttachmentWriteCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedProjectAttachmentWrite(editorJson(json))));
     },
     projectStatusOptions(json: string): string {
         return submit(async () => {

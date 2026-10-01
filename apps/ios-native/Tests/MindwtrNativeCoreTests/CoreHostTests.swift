@@ -10986,6 +10986,15 @@ final class CoreHostTests: XCTestCase {
                 "expected": project.filter { $0.key != "id" }]
     }
 
+    private func projectAttachmentWriteRequest(_ core: CoreHost, intent: [String: Any],
+                                               projectID: String = "focus-target") async throws -> [String: Any] {
+        let options = try object(await core.call("projectAttachmentEditOptions", argumentsJSON: json([json([
+            "projectId": projectID])])))
+        let project = try XCTUnwrap(options["project"] as? [String: Any])
+        return ["requestId": UUID().uuidString.lowercased(), "projectId": projectID, "intent": intent,
+                "expected": project.filter { $0.key != "id" }]
+    }
+
     private func projectStatusRequest(_ core: CoreHost, status: String,
                                       projectID: String = "focus-target") async throws -> [String: Any] {
         let options = try object(await core.call("projectStatusOptions", argumentsJSON: json([json(["projectId": projectID])])))
@@ -22630,6 +22639,265 @@ final class CoreHostTests: XCTestCase {
         check.close()
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
         await writer.close()
+    }
+
+    func testProjectAttachmentWriteFailedCommitColdReplayPreservesFileAndOtherTables() async throws {
+        try await seedProjectFocusRows()
+        let at = "2026-01-01T12:00:00.000Z"
+        let file: [String: Any] = ["id": "project-file", "kind": "file", "title": "Retained file",
+                                   "uri": "file:///retained.txt", "cloudKey": "attachments/retained.txt",
+                                   "createdAt": at, "updatedAt": at]
+        let existing: [String: Any] = ["id": "project-link", "kind": "link", "title": "Existing",
+                                       "uri": "https://example.com/old", "createdAt": at, "updatedAt": at]
+        let setup = try SQLiteBridge(url: database)
+        _ = try setup.execute("UPDATE projects SET attachments = ? WHERE id = 'focus-target'",
+                              parametersJSON: json([json([file, existing])]))
+        setup.close()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectAttachmentWriteRequest(writer, intent: ["kind": "add", "text":
+            "First | https://example.com/one\nSecond | https://example.com/two"])
+        let rowBefore = try XCTUnwrap(projectRows("focus-target").first)
+        let siblingsBefore = try projectRows().filter { $0["id"] as? String != "focus-target" }
+        let baseline = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(baseline)
+        baseline.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project URL link COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectAttachmentWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertEqual(try object(String(contentsOf: journal))["method"] as? String,
+                       "projectAttachmentWriteCommit")
+        let rolledBack = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(rolledBack), before)
+        rolledBack.close()
+        await writer.close()
+
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        var writeSQL: [String] = []
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:projects|tasks|sections|areas|people|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil {
+                writes += 1
+                writeSQL.append(sql)
+            }
+        }
+        let restarted = host(replayFaults)
+        let startup = try object(await restarted.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "projectAttachmentWriteCommit")
+        let ids = try XCTUnwrap((recovery["result"] as? [String: Any])?["attachmentIds"] as? [String])
+        XCTAssertEqual(ids.count, 2)
+        XCTAssertEqual(Set(ids).count, 2)
+        // The Project save upserts the unchanged Settings row in the same flush.
+        XCTAssertEqual(writes, 2, "Replay SQL statements (no parameters): \(writeSQL)")
+        XCTAssertEqual(writeSQL.filter { $0.range(of: #"(?i)^\s*INSERT INTO projects\b"#, options: .regularExpression) != nil }.count, 1)
+        XCTAssertEqual(writeSQL.filter { $0.range(of: #"(?i)^\s*INSERT INTO settings\b"#, options: .regularExpression) != nil }.count, 1)
+        let rowAfter = try XCTUnwrap(projectRows("focus-target").first)
+        XCTAssertEqual(try json(projectRows().filter { $0["id"] as? String != "focus-target" }),
+                       try json(siblingsBefore))
+        XCTAssertEqual(rowAfter["rev"] as? Int, (rowBefore["rev"] as? Int ?? 0) + 1)
+        let stored = try XCTUnwrap(NativeJSON.jsonObject(with: Data(XCTUnwrap(rowAfter["attachments"] as? String).utf8)) as? [[String: Any]])
+        XCTAssertEqual(stored.count, 4)
+        XCTAssertEqual(try json(stored[0]), try json(file))
+        XCTAssertEqual(try json(stored[1]), try json(existing))
+        XCTAssertEqual(stored.suffix(2).compactMap { $0["id"] as? String }, ids)
+        for (field, value) in rowBefore where !["attachments", "rev", "revBy", "updatedAt"].contains(field) {
+            XCTAssertEqual(try json([rowAfter[field] ?? NSNull()]), try json([value]), field)
+        }
+        let check = try SQLiteBridge(url: database)
+        let after = try nineTableSnapshot(check)
+        check.close()
+        for index in before.indices where index != 1 { XCTAssertEqual(after[index], before[index]) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await restarted.close()
+        let again = host()
+        let secondStart = try object(await again.start())
+        XCTAssertNil(secondStart["recovery"])
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("focus-target").first)), try json(rowAfter))
+        await again.close()
+    }
+
+    func testProjectAttachmentWriteForgedJournalAndInterveningRowRefuseBeforeSQL() async throws {
+        try await seedProjectFocusRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectAttachmentWriteRequest(writer, intent: ["kind": "add", "text":
+            "Safe | https://example.com/safe"])
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project URL link pending write") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectAttachmentWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try object(String(contentsOf: journal))
+        let arguments = try XCTUnwrap(NativeJSON.jsonObject(with: Data(XCTUnwrap(pending["argumentsJSON"] as? String).utf8)) as? [String])
+        let envelope = try object(XCTUnwrap(arguments.first))
+        await writer.close()
+        for corruption in ["after", "terminal", "oversized"] {
+            var forged = pending
+            if corruption == "after" {
+                var payload = envelope
+                var prepared = try XCTUnwrap(payload["prepared"] as? [String: Any])
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                var pair = try XCTUnwrap(effect["project"] as? [String: Any])
+                var after = try XCTUnwrap(pair["after"] as? [String: Any])
+                after["title"] = "Forged title"
+                pair["after"] = after; effect["project"] = pair; prepared["effect"] = effect
+                payload["prepared"] = prepared
+                forged["argumentsJSON"] = try json([json(payload)])
+            } else if corruption == "terminal" {
+                forged["terminal"] = ["success": ["_0": try json(["id": "focus-target", "attachmentIds": ["forged"]])]]
+            } else {
+                forged["argumentsJSON"] = String(repeating: "x", count: 12_000_001)
+            }
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var statements = 0, removals = 0
+            blockedFaults.beforeSQL = { _ in statements += 1 }
+            blockedFaults.journalRemove = { removals += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(statements, 0, corruption)
+            XCTAssertEqual(removals, 0, corruption)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes)
+            await blocked.close()
+        }
+        try Data(try json(pending).utf8).write(to: journal)
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET title = 'Intervening edit' WHERE id = 'focus-target'")
+        edit.close()
+        let conflictFaults = HostIOFaults()
+        var writes = 0
+        conflictFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:projects|tasks|sections|areas|people|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let conflict = host(conflictFaults)
+        await expectFailure("STALE_REVISION") { _ = try await conflict.start() }
+        XCTAssertEqual(writes, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+        await conflict.close()
+    }
+
+    func testProjectAttachmentWriteNoopRefusalArchivedAndNonlinkDoNotJournal() async throws {
+        try await seedProjectFocusRows()
+        let at = "2026-01-01T12:00:00.000Z"
+        let file: [String: Any] = ["id": "project-file", "kind": "file", "title": "Retained file",
+                                   "uri": "file:///retained.txt", "createdAt": at, "updatedAt": at]
+        let setup = try SQLiteBridge(url: database)
+        _ = try setup.execute("UPDATE projects SET attachments = ? WHERE id = 'focus-target'",
+                              parametersJSON: json([json([file])]))
+        _ = try setup.execute("UPDATE projects SET status = 'archived' WHERE id = 'focus-other-0'")
+        setup.close()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let baseline = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(baseline)
+        baseline.close()
+        var writes = 0, journals = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:projects|tasks|sections|areas|people|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        faults.journalWrite = { journals += 1 }
+        let blank = try await projectAttachmentWriteRequest(core, intent: ["kind": "add", "text": "  \n "])
+        let noChange = try object(await core.call("projectAttachmentWrite", argumentsJSON: json([json(blank)])))
+        XCTAssertEqual(noChange["attachmentIds"] as? [String], [])
+        let invalid = try await projectAttachmentWriteRequest(core, intent: ["kind": "add", "text": "not a URL"])
+        let refused = try object(await core.call("projectAttachmentWrite", argumentsJSON: json([json(invalid)])))
+        XCTAssertFalse((refused["message"] as? String ?? "").isEmpty)
+        let removeFile = try await projectAttachmentWriteRequest(core, intent: ["kind": "remove", "attachmentId": "project-file"])
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("projectAttachmentWrite", argumentsJSON: json([json(removeFile)]))
+        }
+        let archived = try await projectAttachmentWriteRequest(core, intent: ["kind": "add", "text": "https://example.com/no"],
+                                                               projectID: "focus-other-0")
+        let blocked = try object(await core.call("projectAttachmentWrite", argumentsJSON: json([json(archived)])))
+        XCTAssertEqual(blocked["blocked"] as? String, "")
+        var malformed = blank
+        malformed["extra"] = "secret-creds-123"
+        do {
+            _ = try await core.call("projectAttachmentWrite", argumentsJSON: json([json(malformed)]))
+            XCTFail("Malformed Project link request must fail")
+        } catch {
+            XCTAssertFalse(error.localizedDescription.contains("secret-creds-123"))
+        }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        await core.close()
+    }
+
+    func testProjectAttachmentWriteRemoveSoftDeletesLinkAndKeepsFile() async throws {
+        try await seedProjectFocusRows()
+        let at = "2026-01-01T12:00:00.000Z"
+        let file: [String: Any] = ["id": "project-file", "kind": "file", "title": "Retained file",
+                                   "uri": "file:///retained.txt", "createdAt": at, "updatedAt": at]
+        let link: [String: Any] = ["id": "project-link", "kind": "link", "title": "Remove this",
+                                   "uri": "https://example.com/remove", "createdAt": at, "updatedAt": at]
+        let setup = try SQLiteBridge(url: database)
+        _ = try setup.execute("UPDATE projects SET attachments = ? WHERE id = 'focus-target'",
+                              parametersJSON: json([json([file, link])]))
+        setup.close()
+        let core = host()
+        _ = try await core.start()
+        let request = try await projectAttachmentWriteRequest(core, intent: ["kind": "remove",
+                                                                       "attachmentId": "project-link"])
+        let before = try XCTUnwrap(projectRows("focus-target").first)
+        let result = try object(await core.call("projectAttachmentWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(result["attachmentIds"] as? [String], ["project-link"])
+        let after = try XCTUnwrap(projectRows("focus-target").first)
+        XCTAssertEqual(after["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
+        let stored = try XCTUnwrap(NativeJSON.jsonObject(with: Data(XCTUnwrap(after["attachments"] as? String).utf8)) as? [[String: Any]])
+        XCTAssertEqual(stored.count, 2)
+        XCTAssertEqual(try json(stored[0]), try json(file))
+        XCTAssertNotNil(stored[1]["deletedAt"])
+        let list = try object(await core.call("projectAttachmentList", argumentsJSON: json([json([
+            "projectId": "focus-target"])])))
+        let visible = try XCTUnwrap(list["rows"] as? [[String: Any]])
+        XCTAssertEqual(visible.compactMap { $0["id"] as? String }, ["project-file"])
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("projectAttachmentWrite", argumentsJSON: json([json(request)]))
+        }
+        await core.close()
+    }
+
+    func testProjectAttachmentWriteColdReceiptRefusesNewerWholeRow() async throws {
+        try await seedProjectFocusRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectAttachmentWriteRequest(writer, intent: ["kind": "add", "text":
+            "Receipt | https://example.com/receipt"])
+        var journalWrites = 0
+        faults.journalWrite = {
+            journalWrites += 1
+            if journalWrites == 2 { throw HostFailure("Injected Project URL link lost reply") }
+        }
+        await expectFailure("lost reply") {
+            _ = try await writer.call("projectAttachmentWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET title = 'Later edit', rev = rev + 1 WHERE id = 'focus-target'")
+        let before = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:projects|tasks|sections|areas|people|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+        XCTAssertEqual(writes, 0)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
     }
 
 }

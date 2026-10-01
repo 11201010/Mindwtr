@@ -19,9 +19,10 @@ import { DEFAULT_PROJECT_COLOR } from '../color-constants';
 import { findSelectableProjectByTitleAndArea, normalizeProjectTaskSortBy } from '../project-utils';
 import { PROJECT_SQLITE_COLUMNS, projectToSqliteRow } from '../project-sync-schema';
 import { taskEditValuesEqual } from '../json-value-equality';
+import { planAttachmentLinkBatch, softDeleteAttachment } from '../attachment-editor-model';
 import type { Area, TaskSortBy } from '../types';
 import type { Project, ProjectCoreActions, ProjectActionContext, Task, TaskStatus } from './shared';
-import type { PreparedProjectArea, PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, ProjectFlowAction, TaskStore } from '../store-types';
+import type { PreparedProjectArea, PreparedProjectAttachmentWrite, PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, ProjectAttachmentIntent, ProjectFlowAction, TaskStore } from '../store-types';
 import { projectTagsForIntent, type ProjectTagsIntent } from '../project-tags';
 import type { PendingRemoteAttachmentDelete } from '../types';
 import {
@@ -219,6 +220,27 @@ export const projectTagsWriteEffect = (project: Project, intent: ProjectTagsInte
     const tagIds = projectTagsForIntent(project.tagIds ?? [], intent);
     if (taskEditValuesEqual(project.tagIds ?? [], tagIds)) return null;
     const transition = applyProjectLifecycleTransition(project, { tagIds }, [], [], now, deviceId);
+    return { project: { before: project, after: normalizeProjectLifecycleFields({
+        ...project, ...transition.projectUpdates,
+        updatedAt: now, rev: nextRevision(project.rev), revBy: deviceId,
+    }) } };
+};
+
+/** RN updateProject's URL-only attachment change, with IDs fixed by the prepared request. */
+export const projectAttachmentWriteEffect = (project: Project, intent: ProjectAttachmentIntent, ids: string[],
+    deviceId: string, now: string): PreparedProjectAttachmentWrite['effect'] | null => {
+    let attachments: NonNullable<Project['attachments']>;
+    if (intent.kind === 'add') {
+        let index = 0;
+        const batch = planAttachmentLinkBatch(intent.text, { newId: () => ids[index++] ?? '', now, t: (key) => key });
+        if (batch.kind !== 'add' || index !== ids.length || ids.some((id) => (project.attachments ?? []).some((row) => row.id === id))) return null;
+        attachments = [...(project.attachments ?? []), ...batch.added];
+    } else {
+        const target = project.attachments?.find((row) => row.id === intent.attachmentId);
+        if (ids.length !== 1 || ids[0] !== intent.attachmentId || target?.kind !== 'link' || target.deletedAt) return null;
+        attachments = softDeleteAttachment(project.attachments ?? [], intent.attachmentId, now);
+    }
+    const transition = applyProjectLifecycleTransition(project, { attachments }, [], [], now, deviceId);
     return { project: { before: project, after: normalizeProjectLifecycleFields({
         ...project, ...transition.projectUpdates,
         updatedAt: now, rev: nextRevision(project.rev), revBy: deviceId,
@@ -601,6 +623,35 @@ export const createProjectCoreActions = ({
                 || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
                 || !sameProjectSqliteRow(current, input.scope.project)) return state;
             const planned = projectTagsWriteEffect(current, input.request.intent,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!planned || !taskEditValuesEqual(planned, input.effect)) return state;
+            const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { projects,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allProjects: projects, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedProjectAttachmentWrite: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project attachment edit conflicts with current data' };
+        set((state) => {
+            const current = state._projectsById.get(input.request.projectId);
+            if (current && (!input.deviceIdToInitialize || state.settings.deviceId === input.deviceIdToInitialize)
+                && sameProjectSqliteRow(current, input.effect.project.after)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            if (!current || current.deletedAt || current.purgedAt || current.status === 'archived'
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || !sameProjectSqliteRow(current, input.scope.project)) return state;
+            const planned = projectAttachmentWriteEffect(current, input.request.intent, input.result.attachmentIds,
                 input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
             if (!planned || !taskEditValuesEqual(planned, input.effect)) return state;
             const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);

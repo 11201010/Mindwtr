@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-project-url-links`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Project URL attachments saved` with `outcome=saved` follows a durably acknowledged Add/Remove URL attachment write. A rejected/no-op edit must not emit this line. No titles, URLs, identifiers or raw errors are logged.
+
 - **`v1.3.4/ios-project-notes-layout`** — `apps/ios-native/App/ProjectsScreen.swift`. `Native iOS Project Notes panel rendered` with `outcome=rendered` confirms the extracted Notes view appeared after expanding Project Details. This checks the iOS 17 metadata-stack crash fix. No Notes text or identifiers are logged.
 
 - **`v1.3.4/ios-project-link-open`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS Project URL opened` with `outcome=opened` follows a successful iOS handoff from a Project attachment title, after any pending Notes save has completed. Active and archived Project links may open; file cards stay inert. Shared alerts and failed handoffs must not emit the line. No titles, URLs, identifiers or raw errors are logged.

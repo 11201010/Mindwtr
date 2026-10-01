@@ -1149,6 +1149,12 @@ struct ProjectDetailScreen: View {
                 .presentationDetents([.large])
                 .interactiveDismissDisabled(!model.projectTagsCloseEnabled)
         }
+        .sheet(isPresented: Binding(get: { model.projectAttachmentLinkPresented },
+                                    set: { if !$0 && !model.appLock.concealed { model.cancelProjectAttachmentLinkSheet() } })) {
+            ProjectAttachmentLinkSheet(model: model, palette: palette)
+                .presentationDetents([.large])
+                .interactiveDismissDisabled(model.busy || model.retryNeeded || model.projectAttachmentWritePending)
+        }
         .sheet(isPresented: Binding(get: { model.projectSectionsPresented },
                                     set: { if !$0 && !model.appLock.concealed { model.closeProjectSections() } })) {
             projectSectionsSheet
@@ -1743,6 +1749,36 @@ struct ProjectDetailScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(model.label("attachments.title")).rnFont(15, .semibold)
                 .foregroundStyle(palette.text).accessibilityAddTraits(.isHeader)
+            Button {
+                model.openProjectAttachmentLinkSheet()
+                resignProjectNotesInput()
+            } label: {
+                Label(model.label("attachments.addLink"), systemImage: "link")
+                    .rnFont(14, .semibold).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(palette.tint)
+            .disabled(!model.projectAttachmentAddOpenEnabled)
+            .accessibilityIdentifier("project-attachment-add-link")
+            if let message = model.projectAttachmentWriteError ?? model.projectAttachmentEditReadError {
+                Text(message).rnFont(13).foregroundStyle(palette.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+                if model.projectAttachmentWritePending && model.retryNeeded {
+                    Button { Task { await model.retry() } } label: {
+                        Text(model.label("common.retry")).rnFont(14, .semibold)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy)
+                    .accessibilityIdentifier("project-attachment-write-retry")
+                } else if model.projectAttachmentEditReadError != nil {
+                    Button { Task { await model.retryProjectAttachmentEditRead() } } label: {
+                        Text(model.label("common.retry")).rnFont(14, .semibold)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+                    .accessibilityIdentifier("project-attachment-edit-retry")
+                }
+            }
             if model.projectAttachmentScopeCurrent, let error = model.projectAttachmentError {
                 Text(error).rnFont(13).foregroundStyle(palette.danger)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1776,6 +1812,17 @@ struct ProjectDetailScreen: View {
                                 || model.appLock.concealed || entry.flag("downloading"))
                             .accessibilityLabel(entry.text("title"))
                             .accessibilityIdentifier("project-attachment-open-" + entry.text("id"))
+                            Button {
+                                model.removeProjectAttachmentLink(entry.text("id"))
+                                resignProjectNotesInput()
+                            } label: {
+                                Text(model.label("attachments.remove")).rnFont(13, .semibold)
+                                    .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).foregroundStyle(palette.danger)
+                            .disabled(!model.projectAttachmentRemoveEnabled)
+                            .accessibilityIdentifier("project-attachment-remove-" + entry.text("id"))
                         } else {
                             Text(entry.text("title")).rnFont(14).foregroundStyle(palette.text)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1795,6 +1842,7 @@ struct ProjectDetailScreen: View {
         }
         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
         .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("project-attachments")
     }
 
@@ -2030,6 +2078,95 @@ private struct ProjectNotesPreview: View {
                 }
             } else if model.busy {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 44)
+            }
+        }
+    }
+}
+
+private struct ProjectAttachmentLinkSheet: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+
+    var body: some View {
+        Group {
+            if model.appLock.concealed {
+                palette.card.ignoresSafeArea()
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(model.label("attachments.addLink")).rnFont(18, .bold)
+                            .foregroundStyle(palette.text).accessibilityAddTraits(.isHeader)
+                        ZStack(alignment: .topLeading) {
+                            TextEditor(text: Binding(get: { model.projectAttachmentLinkDraft },
+                                                     set: { model.setProjectAttachmentLinkDraft($0) }))
+                                .rnFont(16).scrollContentBackground(.hidden)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                .frame(minHeight: 130).padding(8)
+                                .disabled(!model.projectAttachmentLinkInputEnabled)
+                                .accessibilityLabel(model.label("attachments.linkPlaceholder"))
+                                .accessibilityHint(model.label("attachments.linkBatchHint"))
+                                .accessibilityIdentifier("project-attachment-link-input")
+                            if model.projectAttachmentLinkDraft.isEmpty {
+                                Text(model.label("attachments.linkPlaceholder"))
+                                    .rnFont(16).foregroundStyle(palette.secondary)
+                                    .padding(.horizontal, 13).padding(.vertical, 15)
+                                    .allowsHitTesting(false).accessibilityHidden(true)
+                            }
+                        }
+                        .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                        Text(model.label("attachments.linkBatchHint"))
+                            .rnFont(13).foregroundStyle(palette.secondary)
+                        if let message = model.projectAttachmentLinkError
+                            ?? model.projectAttachmentEditReadError
+                            ?? (model.projectAttachmentNeedsRead ? "Project links changed. Try again." : nil) {
+                            Text(message).rnFont(13).foregroundStyle(palette.danger)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("project-attachment-link-error")
+                        }
+                        if model.projectAttachmentWritePending && model.retryNeeded {
+                            Button { Task { await model.retry() } } label: {
+                                Text(model.label("common.retry"))
+                                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                            }
+                                .disabled(model.busy)
+                                .accessibilityIdentifier("project-attachment-write-retry")
+                        } else if model.projectAttachmentEditReadError != nil || model.projectAttachmentNeedsRead {
+                            Button {
+                                Task { await model.retryProjectAttachmentEditRead() }
+                            } label: {
+                                Text(model.label("common.retry"))
+                                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                            }
+                            .disabled(model.busy || model.retryNeeded)
+                            .accessibilityIdentifier("project-attachment-edit-retry")
+                        }
+                        HStack {
+                            Button { model.cancelProjectAttachmentLinkSheet() } label: {
+                                Text(model.label("common.cancel"))
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                                .disabled(model.busy || model.retryNeeded || model.projectAttachmentWritePending)
+                                .accessibilityIdentifier("project-attachment-link-cancel")
+                            Spacer()
+                            Button {
+                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                                                to: nil, from: nil, for: nil)
+                                Task { await model.saveProjectAttachmentLinks() }
+                            } label: {
+                                Text(model.label("common.save"))
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .disabled(!model.projectAttachmentLinkCanSave)
+                            .accessibilityIdentifier("project-attachment-link-save")
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint)
+                    }
+                    .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .background(palette.card)
             }
         }
     }
