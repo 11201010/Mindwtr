@@ -30,8 +30,10 @@ final class LegacyRNUpgradeTests: XCTestCase {
 
     func testJSONAheadImportRetainsDataAfterInterruptedMarkerAcknowledgment() async throws {
         let at = "2026-09-20T10:00:00.000Z"
+        // The due date must stay in the future: once it arrives, every load
+        // promotes this Inbox task to Next (rev + 1) and the reopen rows differ.
         let live: [String: Any] = ["id": "rn-live", "title": "Unsynced RN task ü 😀", "description": "Keep notes\nline two",
-            "status": "inbox", "tags": ["#tag"], "contexts": ["@home"], "dueDate": "2026-10-01",
+            "status": "inbox", "tags": ["#tag"], "contexts": ["@home"], "dueDate": "2099-10-01",
             "createdAt": at, "updatedAt": at, "rev": 4, "revBy": "rn-device"]
         var deleted = live
         deleted["id"] = "rn-tombstone"
@@ -61,7 +63,7 @@ final class LegacyRNUpgradeTests: XCTestCase {
         let before = try inspect.execute("SELECT id, title, description, dueDate, deletedAt, rev FROM tasks ORDER BY id")
         XCTAssertTrue(before.contains("rn-live"))
         XCTAssertTrue(before.contains("rn-tombstone"))
-        XCTAssertTrue(before.contains("2026-10-01"))
+        XCTAssertTrue(before.contains("2099-10-01"))
         inspect.close()
         try FileManager.default.removeItem(at: checkpoint) // only this test's injected obstruction
         let retry = try host()
