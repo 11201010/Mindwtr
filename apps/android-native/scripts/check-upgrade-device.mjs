@@ -28,6 +28,9 @@
 //   6   an RN user's WebDAV sync: RN v1.3.2 configures WebDAV in its own Sync screen against a local
 //       folder (sync-harness.mjs, through adb reverse); the native app finds RN's keys in RKStorage and
 //       the password in RN's secret store, shows them on its Sync screen, and syncs with them.
+//   7   an RN user's reminder alarms: RN v1.3.2 sets its alarm for a task due tomorrow (`dumpsys alarm`: one alarm to its
+//       library's AlarmReceiver); the native app's first start cancels it, deletes RN's alarm database and map, and sets its own
+//       alarm for the same task: RN's gone, the native one present, once each.
 //
 // RN writes every seed row through its own code: queued captures in
 // files/pending-captures, which RN imports at launch (tasks, a +Project task,
@@ -47,7 +50,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { bootFailure, box, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, inboxCount, tab, tagged, withDescription } from './device.mjs';
 import { serveWebdav, webdavDocument } from './sync-harness.mjs';
 
-const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6'];
+const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6', '7'];
 const USAGE = `usage: node check-upgrade-device.mjs <adb-serial> [--only=${SCENARIOS.join(',')}] [--keep]`;
 const args = process.argv.slice(2);
 const serials = args.filter((arg) => !arg.startsWith('--'));
@@ -826,6 +829,60 @@ const scenarioSync = async () => {
     }
 };
 
+// ---- 7: RN's reminder alarms at the upgrade ----
+const RN_RECEIVER = 'com.emekalites.react.alarm.notification.AlarmReceiver';
+const NATIVE_FIRE = 'tech.dongdongbh.mindwtr.reminder.FIRE';
+/** This package's pending alarms (`dumpsys alarm`): RN's (its library's receiver) and the native app's (its FIRE action), with when each fires. */
+const packageAlarms = () => sh('dumpsys alarm').split(/\n(?=\s*(?:RTC_WAKEUP|RTC|ELAPSED_WAKEUP|ELAPSED) #\d+: Alarm\{)/)
+    .filter((block) => block.includes(PKG))
+    .map((block) => ({ rn: block.includes(RN_RECEIVER), native: block.includes(`*walarm*:${NATIVE_FIRE}`), at: Number(/origWhen[= ](\d+)/.exec(block)?.[1] ?? NaN) }))
+    .filter((alarm) => alarm.rn || alarm.native);
+/** The process gone without a force-stop (a force-stop would drop the alarms this scenario is about). */
+const killWithoutStop = async () => {
+    if (front().includes(`${PKG}/`)) sh('input keyevent KEYCODE_HOME');
+    for (let attempt = 0; attempt < 20 && pid(); attempt += 1) {
+        try { runAs(`kill -9 ${pid()}`); } catch { /* gone meanwhile */ }
+        await sleep(500);
+    }
+    if (pid()) fail('the app process did not end');
+};
+const scenarioAlarms = async () => {
+    console.log('\n# 7 reminder alarms: RN\'s cancelled, the native app\'s set, once each');
+    fresh();
+    const zone = sh('getprop persist.sys.timezone') || 'UTC';
+    const dueAt = Math.ceil((Number(sh('date +%s')) * 1000 + 26 * 3600_000) / 60_000) * 60_000;
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit',
+        minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(dueAt)).map((part) => [part.type, part.value]));
+    const title = `77${run}`;
+    const item = { id: randomUUID(), title: `${title} /due:${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`, createdAt: new Date().toISOString(), source: 'android-quick-capture' };
+    queue([item]);
+    device.launch(RN_ACTIVITY);
+    await drained([item], 'the timed capture');
+    await until('RN\'s alarm for the task', () => packageAlarms().some((alarm) => alarm.rn && alarm.at === dueAt), 60_000);
+    await killWithoutStop();
+    const before = packageAlarms();
+    const rnMap = JSON.parse(asyncStorage('7-rn').get('mindwtr:local:alarms:v1') ?? '{}');
+    check(before.filter((alarm) => alarm.rn && alarm.at === dueAt).length === 1 && !before.some((alarm) => alarm.native),
+        `(7) before: RN holds one alarm for ${title} at its due time, to its library's AlarmReceiver; the native app none`);
+    check(Number.isInteger(rnMap[`task:${item.id}`]?.id) && runAs('ls databases').split(/\s+/).includes('rnandb'), '(7) RN\'s alarm map and alarm database name it');
+    sh('logcat -c');
+    install(APKS.native153, true);
+    device.launch(NATIVE_ACTIVITY);
+    check(!unavailable(await nativeScreen()), '(7) native boot succeeded');
+    await until('the native alarm', () => packageAlarms().some((alarm) => alarm.native && alarm.at === dueAt), 60_000);
+    await sleep(3000);
+    const after = packageAlarms();
+    check(!after.some((alarm) => alarm.rn), '(7) after: RN\'s alarm is gone');
+    check(after.filter((alarm) => alarm.native && alarm.at === dueAt).length === 1, '(7) after: the native app holds one alarm for the task, at its due time');
+    check(!runAs('ls databases').split(/\s+/).some((name) => name.startsWith('rnandb')), '(7) RN\'s alarm database is deleted');
+    const nativeMap = JSON.parse(asyncStorage('7-native').get('mindwtr:local:alarms:v1') ?? '{}');
+    const entry = nativeMap[`task:${item.id}`];
+    check(Number.isInteger(entry?.id) && !entry.pending && entry.id !== rnMap[`task:${item.id}`].id,
+        `(7) the alarm map is the native plan's: the task under core's id ${entry?.id}, not RN's row ${rnMap[`task:${item.id}`].id}`);
+    check(adbRaw('logcat', '-d', '-s', `${TAG}:*`).toString('utf8').includes('rnCancelled=1'), '(7) the native start logged one RN alarm cancelled');
+    await killWithoutStop();
+};
+
 let blocked4 = '';
 try {
     rmSync(work, { recursive: true, force: true });
@@ -861,6 +918,7 @@ try {
     if (want('5')) await scenarioMissing();
     if (want('5b')) await scenarioMissingWithBackup();
     if (want('6')) await scenarioSync();
+    if (want('7')) await scenarioAlarms();
     console.log(`\nUpgrade device check passed${blocked4 ? '; scenario 4 BLOCKED (see above)' : ''}`);
 } catch (error) {
     evidenced(error);

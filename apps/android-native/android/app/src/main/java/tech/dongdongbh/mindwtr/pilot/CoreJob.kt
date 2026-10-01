@@ -13,7 +13,7 @@ internal object CoreJob {
     const val INGEST = "ingest"
     /** An automation trigger's notification (the ACTIVATE_CONTEXT and DEACTIVATE_CONTEXT broadcasts): `action` and `context`. */
     const val CONTEXT = "context"
-    /** Core's reminder plan applied again (Reminders.kt's reschedule receiver): `mode` "cycle", or "exact" to remake every alarm. */
+    /** Core's reminder plan applied again (Reminders.kt's reschedule receiver): `mode` "cycle", or "rebuild" to remake every alarm. */
     const val REMINDERS = "reminders"
     /** A reminder's Done: `requestId` (made when the notification was posted) and `taskId`; then the plan again. */
     const val REMINDER_DONE = "reminderDone"
@@ -33,7 +33,7 @@ internal object CoreJob {
         fun drain(): Boolean
         /** Core's runContextAutomation with [json] (`{ action, context }`): `{ notification }`, null for none. */
         fun contextAutomation(json: String): JSONObject
-        /** Core's reminder plan applied now ([mode] "cycle" or "exact"). */
+        /** Core's reminder plan applied now ([mode] "cycle" or "rebuild"). */
         fun reminders(mode: String): JSONObject = throw UnsupportedOperationException("reminders")
         /** Core's completeReminderTask, journaled under [requestId]. */
         fun reminderDone(requestId: String, taskId: String): JSONObject = throw UnsupportedOperationException("reminderDone")

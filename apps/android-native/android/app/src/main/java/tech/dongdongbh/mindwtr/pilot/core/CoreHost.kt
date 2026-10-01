@@ -522,7 +522,7 @@ class CoreHost(
      */
     fun remindersStart(): JSONObject = callAsync("remindersStart")
 
-    /** Core's reminder plan applied now: [mode] "cycle", or "exact" to remake every alarm (exact alarms were just allowed). */
+    /** Core's reminder plan applied now: [mode] "cycle", or "rebuild" to remake every alarm (a reboot dropped them, exact alarms were just allowed). */
     fun remindersCycle(mode: String): JSONObject = callAsync("remindersCycle", mode)
 
     /** A reminder's Done (core's completeReminderTask), journaled under [requestId]: a retry or a replay writes nothing twice. */

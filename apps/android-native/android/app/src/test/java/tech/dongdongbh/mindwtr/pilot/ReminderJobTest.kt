@@ -65,7 +65,7 @@ class ReminderJobTest {
     }
 
     @Test fun aRescheduleRunsCoresPlanInItsMode() {
-        assertEquals(CoreJob.Outcome.Success, run(CoreJob.REMINDERS, mapOf("mode" to "exact")))
-        assertEquals(listOf("boot", "recover", "drain", "reminders exact", "widgets"), events)
+        assertEquals(CoreJob.Outcome.Success, run(CoreJob.REMINDERS, mapOf("mode" to "rebuild")))
+        assertEquals(listOf("boot", "recover", "drain", "reminders rebuild", "widgets"), events)
     }
 }

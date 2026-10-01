@@ -277,27 +277,24 @@ class ReminderActionReceiver : BroadcastReceiver() {
 }
 
 /**
- * Plans the alarms again after a reboot, a clock or time zone change, or an update (RN's library re-arms only after a reboot), and
- * remakes them exact once Android allows exact alarms (RN's rescheduleLocalAlarmsAsExact). Exported as RN's boot receiver is: each
- * of these actions only the system sends. CoreWork runs core's plan; nothing here decides an alarm.
+ * Remakes every alarm after a reboot (Android dropped them all; RN's library re-arms its rows then), a clock or time zone change, an
+ * update, and once Android allows exact alarms (RN's rescheduleLocalAlarmsAsExact). A remake, not a plain plan: the stored map says
+ * each alarm is held, and only a remake re-arms one Android dropped. Exported as RN's boot receiver is: each of these actions only
+ * the system sends. CoreWork runs core's plan; nothing here decides an alarm.
  */
 class ReminderRescheduleReceiver : BroadcastReceiver() {
     companion object {
-        /** Debug builds only (check-reminders-device.mjs): the same path as a reboot (`mode` cycle) or an exact-alarm grant (exact). */
+        /** Debug builds only (check-reminders-device.mjs): the same path, for a reboot or a time change the test phone cannot have. */
         const val DEBUG_RESCHEDULE = "tech.dongdongbh.mindwtr.debug.RESCHEDULE_REMINDERS"
-        private val CYCLE = setOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_MY_PACKAGE_REPLACED)
+        private val ACTIONS = setOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED,
+            Intent.ACTION_MY_PACKAGE_REPLACED, AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
-        val mode = when {
-            action in CYCLE -> "cycle"
-            action == AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED -> "exact"
-            action == DEBUG_RESCHEDULE && BuildConfig.DEBUG -> intent.getStringExtra("mode")?.takeIf { it == "exact" } ?: "cycle"
-            else -> return
-        }
-        Log.i(CoreHost.TAG, "Native Android reminders reschedule action=$action mode=$mode")
-        runCatching { CoreWork.enqueue(context, CoreJob.REMINDERS, mapOf("mode" to mode)) }
+        if (action !in ACTIONS && !(action == DEBUG_RESCHEDULE && BuildConfig.DEBUG)) return
+        Log.i(CoreHost.TAG, "Native Android reminders reschedule action=$action")
+        runCatching { CoreWork.enqueue(context, CoreJob.REMINDERS, mapOf("mode" to "rebuild")) }
             .onFailure { Log.w(CoreHost.TAG, "Native Android reminders reschedule not queued", it) }
     }
 }

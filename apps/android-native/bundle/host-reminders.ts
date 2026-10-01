@@ -8,8 +8,9 @@
  * - a store change that shouldRescheduleReminderAlarms accepts plans again REMINDER_STORE_RESCHEDULE_DELAY_MS after the last
  *   one (one store subscription; no polling), the capped one-shot window tops up after the plan's topUpDelayMs, and a tap on a
  *   task's or project's notification plans again after REMINDER_NOTIFICATION_EVENT_RESCHEDULE_DELAY_MS;
- * - an exact rebuild (Android just allowed exact alarms) plans with every held alarm marked pending, core's mark for "not made
- *   yet": core makes each again under its own id, which replaces it, and keeps or withdraws what it delivered by core's reason;
+ * - a rebuild (a reboot dropped every alarm, a clock change, Android just allowed exact alarms) plans with every held alarm marked
+ *   pending, core's mark for "not made yet": core makes each again under its own id, which replaces it, and keeps or withdraws what
+ *   it delivered by core's reason;
  * - React Native's own alarms are cancelled once (Kotlin's RnAlarmCleanup) before this host's first plan;
  * - none of this runs in sandbox mode, as RN's notification service does not.
  */
@@ -76,12 +77,12 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
     let topUpTimer: ReturnType<typeof setTimeout> | null = null;
     let eventTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const runCycle = async (exact: boolean) => {
+    const runCycle = async (rebuild: boolean) => {
         // RN's alarms go before the first plan; until that succeeds no plan runs (the next cycle tries again).
         if (rnCancelled === null) rnCancelled = bindings.cleanupRn();
         const stored = await bindings.readStored();
         const permissionGranted = bindings.permissionGranted();
-        const result = await bindings.plan({ storedAlarms: exact ? allPending(stored) : stored, permissionGranted });
+        const result = await bindings.plan({ storedAlarms: rebuild ? allPending(stored) : stored, permissionGranted });
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         const plan = result.value;
         bindings.apply(JSON.stringify({ ...plan, channelName: REMINDER_NOTIFICATION_CHANNEL_NAME }));
@@ -92,7 +93,7 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
         }, plan.topUpDelayMs);
         const summary = {
             mode: plan.mode,
-            exact,
+            rebuild,
             scheduled: plan.schedule.length,
             withdrawn: plan.cancel.filter((item) => item.reason === 'withdrawn').length,
             expired: plan.cancel.filter((item) => item.reason === 'expired').length,
@@ -103,13 +104,13 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
     };
 
     /** One cycle after the ones queued before it (RN's queueRescheduleCycle); the queue itself never rejects. */
-    const cycle = (exact: boolean) => {
-        const next = queue.catch(() => undefined).then(() => runCycle(exact));
+    const cycle = (rebuild: boolean) => {
+        const next = queue.catch(() => undefined).then(() => runCycle(rebuild));
         queue = next.catch(() => undefined);
         return next;
     };
-    const enqueue = (exact: boolean) => {
-        cycle(exact).catch((error) => log('Native Android reminder cycle failed', { error: error instanceof Error ? error.message : String(error) }, true));
+    const enqueue = (rebuild: boolean) => {
+        cycle(rebuild).catch((error) => log('Native Android reminder cycle failed', { error: error instanceof Error ? error.message : String(error) }, true));
     };
 
     return {
@@ -135,10 +136,10 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
             const permissionGranted = bindings.permissionGranted();
             return { ...first, rnCancelled, active, permissionGranted, ask: active && !permissionGranted };
         },
-        /** One cycle now (a resume, Done, a reboot or a clock change); `exact` remakes every alarm. */
-        async cycle(exact: boolean) {
+        /** One cycle now (a resume, Done, a reboot or a clock change); `rebuild` remakes every alarm. */
+        async cycle(rebuild: boolean) {
             if (isSandboxMode()) return { mode: 'sandbox' };
-            return cycle(exact);
+            return cycle(rebuild);
         },
         /** A tap on a task's or project's notification: one cycle shortly after (RN's notification event re-arm). */
         event() {

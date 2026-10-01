@@ -2757,9 +2757,9 @@ globalThis.MindwtrHost = {
     remindersStart(): string {
         return submit(async () => requireReminders().start());
     },
-    /** One plan applied now: `mode` "exact" remakes every alarm (Android just allowed exact alarms), else "cycle". */
+    /** One plan applied now: `mode` "rebuild" remakes every alarm (a reboot dropped them, exact alarms were just allowed), else "cycle". */
     remindersCycle(mode: string): string {
-        return submit(async () => requireReminders().cycle(mode === 'exact'));
+        return submit(async () => requireReminders().cycle(mode === 'rebuild'));
     },
     /** A reminder's Done (core's completeReminderTask): a journaled write under the request UUID its notification was posted with. */
     reminderDone(requestId: string, taskId: string): string {

@@ -4016,7 +4016,7 @@ console.log('Entry points: RN\'s alias, links on the build\'s scheme, text share
         'android.intent.action.TIME_SET', 'android.intent.action.TIMEZONE_CHANGED', 'android.intent.action.MY_PACKAGE_REPLACED',
         'android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED']);
     assert.doesNotMatch(manifest, /android:process=/, 'one process: two hosts on one database reject each other\'s writes');
-    assert.match(remindersKt, /action == DEBUG_RESCHEDULE && BuildConfig\.DEBUG ->/, 'the debug reschedule only in a debug build');
+    assert.match(remindersKt, /action == DEBUG_RESCHEDULE && BuildConfig\.DEBUG\)\) return/, 'the debug reschedule only in a debug build');
     // Kotlin decides no alarm: no timer, no reason and no id of its own (core's id is the request code and the notification's id).
     assert.doesNotMatch(code(remindersKt + notificationsKt), /postDelayed|Handler\(|Timer\(|"expired"|hashCode\(\)|Random\(/);
     assert.match(remindersKt, /PendingIntent\.getBroadcast\(context, alarm\.getInt\("id"\), fireIntent\(context\)/);
@@ -4087,7 +4087,7 @@ globalThis.standStore = useTaskStore;
     calls.length = 0;
     await Promise.all([reminders.cycle(false), reminders.cycle(false)]);
     assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders', `plan ${stored} false`, 'apply Mindwtr reminders']);
-    // The exact rebuild marks every held alarm pending.
+    // The rebuild (a reboot, a clock change, exact alarms allowed) marks every held alarm pending.
     calls.length = 0;
     await reminders.cycle(true);
     assert.deepEqual(calls, ['plan {"task:a":{"id":7,"signature":"s","pending":true}} false', 'apply Mindwtr reminders']);
