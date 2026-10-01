@@ -87,7 +87,7 @@ import { isSupportedLanguage } from './i18n/i18n-constants';
 import { loadTranslations } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import type { Language } from './i18n/i18n-types';
-import type { Area, ChecklistItem, Project, RecurrenceWeekday, RelativeStartOffsetUnit, Task, TaskPriority, TaskStatus, TimeEstimate } from './types';
+import type { Area, Attachment, ChecklistItem, Project, RecurrenceWeekday, RelativeStartOffsetUnit, Task, TaskPriority, TaskStatus, TimeEstimate } from './types';
 import { generateUUID } from './uuid';
 import {
     isNativeInboxWriteRequest,
@@ -330,6 +330,8 @@ import { createTaskViewMethods, isNativeJsonWithinBytes, readChecklist, sameChec
 import { createSavedSearchMethods } from './native-host-contract-saved-search';
 import { createCaptureIngestMethods } from './native-host-contract-capture-ingest';
 import { createReminderMethods } from './native-host-contract-reminders';
+import { createAttachmentMethods, readNativeAttachments, type NativeAttachmentsHost } from './native-host-contract-attachments';
+import { mergeTaskDraftAttachments } from './attachment-editor-model';
 import { createCaptureModalMethods } from './native-host-contract-capture-modal';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
@@ -923,6 +925,8 @@ export function createNativeHostContract(options: {
     syncSettings?: NativeSyncSettingsHost;
     calendar?: NativeCalendarHost;
     ai?: NativeAIHost;
+    /** Core's mobile attachment modules on the host's file bridge (native-host-contract-attachments.ts). */
+    attachments?: NativeAttachmentsHost;
     replayTokens?: NativeReplayTokens;
 } = {}) {
     // A new host: request IDs an earlier one held in memory are not this one's (its disk receipts stay).
@@ -1740,6 +1744,9 @@ export function createNativeHostContract(options: {
         ...createCaptureIngestMethods({ readiness, save, t: () => translate, requestIdPattern: CAPTURE_ID_PATTERN }),
         // Reminder alarms and notification taps: native-host-contract-reminders.ts.
         ...createReminderMethods({ readiness, save, language: () => language, requestIdPattern: CAPTURE_ID_PATTERN }),
+        // The task editor's and the project screen's attachments: native-host-contract-attachments.ts.
+        ...createAttachmentMethods({ readiness, save, t: () => translate, requestIdPattern: CAPTURE_ID_PATTERN,
+            isReadOnly: isInArchivedProject, host: () => options.attachments ?? null }),
         // The capture confirmation screen links, shares and notes open: native-host-contract-capture-modal.ts.
         ...createCaptureModalMethods({
             readiness,
@@ -2762,12 +2769,17 @@ export function createNativeHostContract(options: {
          * checklistBase), `value` the edited one; it conflicts like a field, and empty items
          * are dropped (read getTaskView again for the new base). A list task's status comes
          * from the draft (editTaskChecklist sets it); send it in the same call.
+         * `attachments` saves the editor's attachment list the same way: `base` is the list the
+         * editor loaded, `value` the edited one (native-host-contract-attachments.ts). Only the
+         * attachments the editor changed or added are written over the saved list
+         * (mergeTaskDraftAttachments), so a sync's change to another attachment stays.
          */
         async saveTaskDraft(input: {
             id: string;
             base: Partial<TaskDraft>;
             patch: Partial<TaskDraft>;
             checklist?: { base: ChecklistItem[]; value: ChecklistItem[] };
+            attachments?: { base: Attachment[]; value: Attachment[] };
             requestId?: string;
         }): Promise<NativeHostResult<{ id: string; draft: TaskDraft }>> {
             const ready = readiness();
@@ -2785,8 +2797,17 @@ export function createNativeHostContract(options: {
                 }
                 checklistHalf = { base: checklistBase, value: checklistValue };
             }
+            let attachmentsHalf: { base: Attachment[]; value: Attachment[] } | undefined;
+            if (input.attachments !== undefined) {
+                const half: Record<string, unknown> = isObjectRecord(input.attachments) ? input.attachments : {};
+                const [attachmentsBase, attachmentsValue] = [readNativeAttachments(half.base), readNativeAttachments(half.value)];
+                if (!attachmentsBase || !attachmentsValue) {
+                    return fail('INVALID_INPUT', 'attachments needs a base and a value, each a list of at most 1,000 attachments');
+                }
+                attachmentsHalf = { base: attachmentsBase, value: attachmentsValue };
+            }
             const fields = Object.keys(input.patch) as TaskDraftField[];
-            if (fields.length === 0 && !checklistHalf) return fail('INVALID_INPUT', 'patch must include a draft field');
+            if (fields.length === 0 && !checklistHalf && !attachmentsHalf) return fail('INVALID_INPUT', 'patch must include a draft field');
             if (fields.some((field) => !DRAFT_FIELD_SET.has(field))) {
                 return fail('INVALID_INPUT', 'patch fields must be task draft fields');
             }
@@ -2806,7 +2827,8 @@ export function createNativeHostContract(options: {
             const focusedBefore = useTaskStore.getState()._tasksById.get(input.id)?.isFocusedToday === true;
             // A repeat answers from the request's receipt: the store may rewrite fields it saved (a
             // recurrence's series stamp, a deferred star), so comparing fields cannot recognise it.
-            const payload = JSON.stringify(['saveTaskDraft', input.id, input.base, input.patch, checklistHalf ?? null]);
+            const payload = JSON.stringify(['saveTaskDraft', input.id, input.base, input.patch, checklistHalf ?? null,
+                ...(attachmentsHalf ? [attachmentsHalf] : [])]);
             const write = async (): Promise<NativeHostResult<{ id: string; draft: TaskDraft }> | NativeUnsavedWrite<{ id: string; draft: TaskDraft }>> => {
                 const state = useTaskStore.getState();
                 const task = state._tasksById.get(input.id);
@@ -2888,7 +2910,9 @@ export function createNativeHostContract(options: {
                 const updates = buildTaskEditUpdatePatch({
                     draft,
                     checklist: checklistChanges ? checklistChanges.value : task.checklist,
-                    attachments: task.attachments,
+                    attachments: attachmentsHalf
+                        ? mergeTaskDraftAttachments(task.attachments ?? [], attachmentsHalf.base, attachmentsHalf.value)
+                        : task.attachments,
                 }, task);
                 if (!updates) return fail('INVALID_INPUT', 'title must not be blank');
                 if (Object.keys(updates).length === 0) return { ok: true, value: { id: input.id, draft: current } };

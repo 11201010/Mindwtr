@@ -2,27 +2,28 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Alert } from 'react-native';
 import {
   Attachment,
+  addPickedAttachment,
+  findProjectAttachmentForIdentity,
   generateUUID,
+  getAttachmentOpenLinkFailedMessage,
+  getAttachmentResolutionMessage,
   isSandboxMode,
-  parseAttachmentLinkBatch,
+  patchAttachment,
+  planAttachmentLinkBatch,
+  planAttachmentOpen,
   Project,
+  resolveAttachmentAvailability,
+  softDeleteAttachment,
+  type AttachmentResolution,
   useTaskStore,
-  validateAttachmentForUpload, tFallback, formatI18nTemplate } from '@mindwtr/core';
+} from '@mindwtr/core';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Linking from 'expo-linking';
-import { isLikelyFilePath } from '@/lib/sync-service-utils';
 import * as Sharing from 'expo-sharing';
 
-import { resolveAttachmentValidationMessage } from './projects-screen.utils';
 import { persistAttachmentLocally } from '../../lib/attachment-sync';
-import {
-  ensureAttachmentAvailableDetailed,
-  getAttachmentAvailabilityPatch,
-  getAttachmentDownloadIdentity,
-  getAttachmentUnrecoverablePatch,
-  hasAttachmentDownloadIdentity,
-  type AttachmentAvailabilityOutcome,
-} from '../../lib/attachment-sync-availability';
+import { hasAttachmentDownloadIdentity } from '../../lib/attachment-sync-availability';
+import { attachmentAvailabilityPort } from '../../lib/attachment-availability-port';
 import { logWarn } from '../../lib/app-log';
 import { tryOpenWithAndroidViewer } from '../../lib/open-file-externally';
 
@@ -63,18 +64,14 @@ export function useProjectAttachments({
     projectId: string,
     attachmentId: string,
     identity: string,
-  ): { project: Project; attachment: Attachment } | null => {
-    const selected = selectedProjectRef.current;
-    if (!selected || selected.id !== projectId) return null;
-    const selectedAttachment = selected.attachments?.find((item) => item.id === attachmentId);
-    if (!hasAttachmentDownloadIdentity(selectedAttachment, identity)) return null;
-    if (!selectedAttachment.cloudKey) return { project: selected, attachment: selectedAttachment };
-
-    const currentProject = useTaskStore.getState()._allProjects.find((item) => item.id === projectId);
-    const currentAttachment = currentProject?.attachments?.find((item) => item.id === attachmentId);
-    if (!currentProject || !hasAttachmentDownloadIdentity(currentAttachment, identity)) return null;
-    return { project: currentProject, attachment: currentAttachment };
-  }, []);
+  ): { project: Project; attachment: Attachment } | null => findProjectAttachmentForIdentity({
+    selected: selectedProjectRef.current,
+    stored: (id) => useTaskStore.getState()._allProjects.find((item) => item.id === id),
+    projectId,
+    attachmentId,
+    identity,
+    has: (attachment, expected): attachment is Attachment => hasAttachmentDownloadIdentity(attachment, expected),
+  }), []);
 
   const updateProjectAttachmentIfCurrent = useCallback((
     projectId: string,
@@ -85,9 +82,7 @@ export function useProjectAttachments({
     const current = currentProjectAttachmentForIdentity(projectId, attachmentId, identity);
     if (!current) return null;
     const nextAttachment = { ...current.attachment, ...patch };
-    const nextAttachments = (current.project.attachments || []).map((item): Attachment =>
-      item.id === attachmentId ? { ...item, ...patch } : item
-    );
+    const nextAttachments = patchAttachment(current.project.attachments || [], attachmentId, patch);
     updateProject(projectId, { attachments: nextAttachments });
     const selected = selectedProjectRef.current;
     const selectedAttachment = selected?.attachments?.find((item) => item.id === attachmentId);
@@ -97,73 +92,19 @@ export function useProjectAttachments({
     return nextAttachment;
   }, [currentProjectAttachmentForIdentity, setSelectedProject, updateProject]);
 
-  type ProjectAttachmentResolution = AttachmentAvailabilityOutcome | { status: 'stale' };
-
-  const resolveProjectAttachment = useCallback(async (
+  const resolveProjectAttachment = useCallback((
     projectId: string,
     attachment: Attachment,
-  ): Promise<ProjectAttachmentResolution> => {
-    if (attachment.kind !== 'file') return { status: 'available', attachment };
-    const identity = getAttachmentDownloadIdentity(attachment);
-    if (!currentProjectAttachmentForIdentity(projectId, attachment.id, identity)) return { status: 'stale' };
-    const shouldDownload = Boolean(
-      attachment.cloudKey && (attachment.localStatus === 'missing' || !attachment.uri)
-    );
-    if (shouldDownload && attachment.localStatus !== 'downloading') {
-      updateProjectAttachmentIfCurrent(projectId, attachment.id, identity, { localStatus: 'downloading' });
-    }
-    const outcome = await ensureAttachmentAvailableDetailed(attachment);
-    if (outcome.status === 'available') {
-      const current = currentProjectAttachmentForIdentity(projectId, attachment.id, identity);
-      if (!current) return { status: 'stale' };
-      const resolved = updateProjectAttachmentIfCurrent(
-        projectId,
-        attachment.id,
-        identity,
-        getAttachmentAvailabilityPatch(current.attachment, outcome.attachment),
-      );
-      return resolved
-        ? { status: 'available', attachment: resolved }
-        : { status: 'stale' };
-    }
-    if (outcome.status === 'unrecoverable') {
-      const resolved = updateProjectAttachmentIfCurrent(
-        projectId,
-        attachment.id,
-        identity,
-        getAttachmentUnrecoverablePatch(outcome.attachment),
-      );
-      return resolved
-        ? { status: 'unrecoverable', attachment: resolved }
-        : { status: 'stale' };
-    }
-    if (shouldDownload) {
-      const restored = updateProjectAttachmentIfCurrent(
-        projectId,
-        attachment.id,
-        identity,
-        { localStatus: 'missing' },
-      );
-      if (!restored) return { status: 'stale' };
-    }
-    return outcome;
-  }, [currentProjectAttachmentForIdentity, updateProjectAttachmentIfCurrent]);
+  ): Promise<AttachmentResolution> => resolveAttachmentAvailability(attachment, {
+    availability: attachmentAvailabilityPort,
+    current: (attachmentId, identity) => currentProjectAttachmentForIdentity(projectId, attachmentId, identity)?.attachment ?? null,
+    update: (attachmentId, identity, patch) => updateProjectAttachmentIfCurrent(projectId, attachmentId, identity, patch),
+  }), [currentProjectAttachmentForIdentity, updateProjectAttachmentIfCurrent]);
 
-  const showAttachmentResolutionError = useCallback((resolution: ProjectAttachmentResolution) => {
-    if (resolution.status === 'available' || resolution.status === 'stale') return;
-    const message = resolution.status === 'generation-conflict'
-      ? t('attachments.downloadConflict')
-      : resolution.status === 'unrecoverable'
-        ? t('attachments.unrecoverable')
-        : t('attachments.missing');
-    Alert.alert(t('attachments.title'), message);
+  const showAttachmentResolutionError = useCallback((resolution: AttachmentResolution) => {
+    const message = getAttachmentResolutionMessage(resolution, t);
+    if (message) Alert.alert(t('attachments.title'), message);
   }, [t]);
-
-  const isImageAttachment = useCallback((attachment: Attachment) => {
-    const mime = attachment.mimeType?.toLowerCase();
-    if (mime?.startsWith('image/')) return true;
-    return /\.(png|jpg|jpeg|gif|webp|heic|heif)$/i.test(attachment.uri);
-  }, []);
 
   const openAttachment = useCallback(async (attachment: Attachment) => {
     if (isSandboxMode()) {
@@ -176,30 +117,27 @@ export function useProjectAttachments({
       showAttachmentResolutionError(resolution);
       return;
     }
-    const resolved = resolution.attachment;
-
-    if (resolved.kind === 'link') {
-        // A "Link to file…" made on the desktop keeps that computer's path (for
-        // example D:\\Documents\\x.docx) and is never uploaded; handing it to the
-        // OS as a URL failed silently (#1001).
-        if (isLikelyFilePath(resolved.uri) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(resolved.uri)) {
-            Alert.alert(t('attachments.title'), formatI18nTemplate(tFallback(t, 'attachments.linkedFileElsewhere', 'This link points to a file on another device: {{path}}. Open it there, or attach the file instead of linking it.'), { path: resolved.uri }));
-            return;
-        }
-        Linking.openURL(resolved.uri).catch((error) => {
-            logProjectError('Failed to open attachment URL', error);
-            Alert.alert(t('attachments.title'), tFallback(t, 'attachments.openLinkFailed', 'Could not open this link.'));
-        });
-        return;
+    const plan = planAttachmentOpen(resolution.attachment, { audio: false, t });
+    if (plan.kind === 'alert') {
+      Alert.alert(t('attachments.title'), plan.message);
+      return;
     }
-    if (isImageAttachment(resolved)) {
-      setImagePreviewAttachment(resolved);
+    if (plan.kind === 'link') {
+      Linking.openURL(plan.uri).catch((error) => {
+        logProjectError('Failed to open attachment URL', error);
+        Alert.alert(t('attachments.title'), getAttachmentOpenLinkFailedMessage(t));
+      });
+      return;
+    }
+    // `audio: false`: the project screen has no player, so audio opens as a file.
+    if (plan.kind !== 'file') {
+      setImagePreviewAttachment(plan.attachment);
       return;
     }
 
     // Android: a real ACTION_VIEW open first — the share sheet below only
     // reaches send/save targets, so a PDF "open" only offered saving it.
-    if (await tryOpenWithAndroidViewer(resolved.uri, resolved.mimeType)) return;
+    if (await tryOpenWithAndroidViewer(plan.uri, plan.mimeType ?? undefined)) return;
     const available = await Sharing.isAvailableAsync().catch((error) => {
       void logWarn('[Sharing] availability check failed', {
         scope: 'project',
@@ -208,11 +146,11 @@ export function useProjectAttachments({
       return false;
     });
     if (available) {
-      Sharing.shareAsync(resolved.uri).catch((error) => logProjectError('Failed to share attachment', error));
+      Sharing.shareAsync(plan.uri).catch((error) => logProjectError('Failed to share attachment', error));
     } else {
-      Linking.openURL(resolved.uri).catch((error) => logProjectError('Failed to open attachment URL', error));
+      Linking.openURL(plan.uri).catch((error) => logProjectError('Failed to open attachment URL', error));
     }
-  }, [isImageAttachment, logProjectError, resolveProjectAttachment, selectedProject, showAttachmentResolutionError, showSandboxUnavailable, t]);
+  }, [logProjectError, resolveProjectAttachment, selectedProject, showAttachmentResolutionError, showSandboxUnavailable, t]);
 
   useEffect(() => {
     if (!selectedProject) {
@@ -246,46 +184,20 @@ export function useProjectAttachments({
       multiple: false,
     });
     if (result.canceled) return;
-    const asset = result.assets[0];
-    const size = asset.size;
-    if (typeof size === 'number') {
-      const validation = await validateAttachmentForUpload(
-        {
-          id: 'pending',
-          kind: 'file',
-          title: asset.name || 'file',
-          uri: asset.uri,
-          mimeType: asset.mimeType,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        size
-      );
-      if (!validation.valid) {
-        Alert.alert(t('attachments.title'), resolveAttachmentValidationMessage(validation.error, t));
-        return;
-      }
-    }
-    const now = new Date().toISOString();
-    const attachment: Attachment = {
-      id: generateUUID(),
-      kind: 'file',
-      title: asset.name || 'file',
-      uri: asset.uri,
-      mimeType: asset.mimeType,
-      size: asset.size,
-      createdAt: now,
-      updatedAt: now,
-      localStatus: 'available',
-    };
-    const cached = await persistAttachmentLocally(attachment);
-    if (cached.uri === attachment.uri) {
-      Alert.alert(t('attachments.title'), t('attachments.fileNotReadable'));
+    const outcome = await addPickedAttachment({
+      source: 'file',
+      asset: result.assets[0],
+      newId: () => generateUUID(),
+      persist: (attachment) => persistAttachmentLocally(attachment),
+      t,
+    });
+    if (outcome.kind === 'refused') {
+      Alert.alert(t('attachments.title'), outcome.message);
       return;
     }
     const current = getMutableSelectedProject(projectAtStart.id);
     if (!current) return;
-    const next = [...(current.attachments || []), cached];
+    const next = [...(current.attachments || []), outcome.attachment];
     updateProject(current.id, { attachments: next });
     setSelectedProject({ ...current, attachments: next });
   }, [getMutableSelectedProject, setSelectedProject, showSandboxUnavailable, t, updateProject]);
@@ -297,22 +209,13 @@ export function useProjectAttachments({
     }
     const current = getMutableSelectedProject();
     if (!current) return;
-    const batch = parseAttachmentLinkBatch(linkInput);
-    if (batch.invalidLine !== null) {
-      Alert.alert(t('attachments.title'), formatI18nTemplate(t('attachments.invalidLinkLine'), { line: batch.invalidLine }));
+    const batch = planAttachmentLinkBatch(linkInput, { newId: () => generateUUID(), now: new Date().toISOString(), t });
+    if (batch.kind === 'refused') {
+      Alert.alert(t('attachments.title'), batch.message);
       return;
     }
-    if (batch.entries.length === 0) return;
-    const now = new Date().toISOString();
-    const added: Attachment[] = batch.entries.map((entry) => ({
-      id: generateUUID(),
-      kind: entry.kind,
-      title: entry.title,
-      uri: entry.uri,
-      createdAt: now,
-      updatedAt: now,
-    }));
-    const next = [...(current.attachments || []), ...added];
+    if (batch.kind === 'nothing') return;
+    const next = [...(current.attachments || []), ...batch.added];
     updateProject(current.id, { attachments: next });
     setSelectedProject({ ...current, attachments: next });
     setLinkModalVisible(false);
@@ -322,10 +225,7 @@ export function useProjectAttachments({
   const removeProjectAttachment = useCallback((id: string) => {
     const current = getMutableSelectedProject();
     if (!current) return;
-    const now = new Date().toISOString();
-    const next = (current.attachments || []).map((attachment) =>
-      attachment.id === id ? { ...attachment, deletedAt: now, updatedAt: now } : attachment
-    );
+    const next = softDeleteAttachment(current.attachments || [], id, new Date().toISOString());
     updateProject(current.id, { attachments: next });
     setSelectedProject({ ...current, attachments: next });
   }, [getMutableSelectedProject, setSelectedProject, updateProject]);

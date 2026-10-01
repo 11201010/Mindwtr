@@ -853,9 +853,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // holds them, and Kotlin never calls them.
     const iosPreparedCommits = ['captureCommit', 'draftCommit'];
     const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask'];
-    // Core writes no host method calls yet (reminder actions, Settings › Calendar's edits):
+    // Core writes no host method calls yet (reminder actions, Settings › Calendar's edits, a project's attachment edits):
     // wiring one into host-entry fails the write-list checks above until the journal takes it.
-    const unwiredWrites = ['completeReminderTask', 'snoozeReminder', 'setCalendarSetting', 'addCalendarFeed'];
+    const unwiredWrites = ['completeReminderTask', 'snoozeReminder', 'setCalendarSetting', 'addCalendarFeed',
+        'addAttachmentFile', 'submitAttachmentLinks', 'removeAttachment'];
     assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
     assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
