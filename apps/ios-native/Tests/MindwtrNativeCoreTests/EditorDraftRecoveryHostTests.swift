@@ -61,6 +61,50 @@ final class EditorDraftRecoveryHostTests: XCTestCase {
         ])])
     }
 
+    func testInterruptedPersonCreatePreservesUnsavedTaskCheckpointAcrossColdReplay() async throws {
+        let faults = HostIOFaults()
+        let first = host(faults)
+        _ = try await first.start()
+        let taskID = UUID().uuidString.lowercased()
+        _ = try await seed(first, id: taskID)
+        let before = try json(task(taskID))
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: taskID,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Unsaved title","assignedTo":"  Inline Person  "}}"#)
+        try await first.checkpointEditorDraft(draft)
+        let personID = UUID().uuidString.lowercased()
+        let request: [String: Any] = ["requestId": personID, "expectedPersonId": personID,
+                                     "name": "  Inline Person  ", "note": "", "referenceLink": ""]
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Person COMMIT failure") } }
+        do {
+            _ = try await first.call("managePersonCreate", argumentsJSON: json([json(request)]))
+            XCTFail("Expected failed Person write")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED")) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try json(task(taskID)), before)
+        await first.close()
+
+        let second = host()
+        let startup = try object(await second.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "managePersonCreateCommit")
+        let retained = try await second.readEditorDraft()
+        XCTAssertEqual(retained, draft)
+        XCTAssertNil(try EditorDraftStore(databaseURL: database).read()?.attempt)
+        XCTAssertEqual(try json(task(taskID)), before)
+        let resolved = try object(await second.call("managePersonCreateResolve", argumentsJSON: json([
+            json(["requestId": personID, "name": "  Inline Person  "])])))
+        XCTAssertEqual(resolved["expectedPersonId"] as? String, personID)
+        XCTAssertEqual(resolved["displayName"] as? String, "Inline Person")
+        XCTAssertEqual(resolved["taken"] as? Bool, true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await second.close()
+
+        let third = host()
+        _ = try await third.start()
+        XCTAssertEqual(try json(task(taskID)), before)
+        let stillRetained = try await third.readEditorDraft()
+        XCTAssertEqual(stillRetained, draft)
+    }
+
     func testSnapshotStrictIdentityCorruptionAndPrivacy() throws {
         let store = EditorDraftStore(databaseURL: database)
         let session = UUID().uuidString.lowercased()

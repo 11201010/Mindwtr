@@ -50,7 +50,7 @@ describe('prepared native Person create', () => {
         useTaskStore.setState({ settings: { theme: 'dark' } });
         const input = request({ name: '  Alex   Smith  ', note: '  Lead  ', referenceLink: ' obsidian://Alex ' });
         expect(original.methods.resolvePersonCreateName({ requestId, name: input.name })).toEqual({ ok: true,
-            value: { expectedPersonId: requestId, taken: false, normalizedName: 'alex smith' } });
+            value: { expectedPersonId: requestId, taken: false, normalizedName: 'alex smith', displayName: 'Alex Smith' } });
         const frozen = freeze(original.methods, input);
         expect(original.saves()).toBe(0);
         expect(useTaskStore.getState().settings.deviceId).toBeUndefined();
@@ -60,6 +60,8 @@ describe('prepared native Person create', () => {
         expect(await cold.methods.commitPreparedPersonCreate(frozen)).toEqual({ ok: true, value: { id: requestId, created: true } });
         expect(cold.data().people).toEqual([{ ...frozen.prepared.effect.person.after }]);
         expect(cold.data().people?.[0]).toMatchObject({ id: requestId, name: 'Alex Smith', note: 'Lead', referenceLink: 'obsidian://Alex', rev: 1 });
+        expect(cold.methods.resolvePersonCreateName({ requestId, name: input.name })).toEqual({ ok: true,
+            value: { expectedPersonId: requestId, taken: true, normalizedName: 'alex smith', displayName: 'Alex Smith' } });
         expect(cold.data().settings).toEqual({ theme: 'dark', deviceId: frozen.prepared.deviceIdToInitialize });
         const saved = structuredClone(cold.data());
         const replay = await open(saved);
@@ -72,11 +74,11 @@ describe('prepared native Person create', () => {
 
     it('live duplicates win over tombstones and ignore note/link with no device initialization or writes', async () => {
         const old = person('deleted', { deletedAt: now });
-        const live = person('live', { note: 'Original', referenceLink: 'old://link' });
+        const live = person('live', { name: 'ALEX Smith', note: 'Original', referenceLink: 'old://link' });
         const { methods, saves } = await open({ people: [old, live], settings: {} });
         useTaskStore.setState({ settings: {} });
         expect(methods.resolvePersonCreateName({ requestId, name: ' alex   SMITH ' })).toMatchObject({ ok: true,
-            value: { expectedPersonId: 'live', taken: true, normalizedName: 'alex smith' } });
+            value: { expectedPersonId: 'live', taken: true, normalizedName: 'alex smith', displayName: 'ALEX Smith' } });
         const input = request({ expectedPersonId: 'live', name: ' alex   SMITH ', note: 'Replacement', referenceLink: 'new://link' });
         expect(methods.preparePersonCreate(input)).toEqual({ ok: true, value: { kind: 'existing', result: { id: 'live', created: false } } });
         expect(methods.probePersonCreateOutcome(input)).toEqual({ ok: true, value: { id: 'live', created: false } });
@@ -90,6 +92,8 @@ describe('prepared native Person create', () => {
         const task = { ...TASK_SYNC_SCHEMA_FIXTURE, id: 'linked', assignedTo: old.name, deletedAt: now };
         const rn = await open({ people: [old], tasks: [task] });
         const input = request({ expectedPersonId: old.id, name: ' alex   SMITH ', note: '  ', referenceLink: ' ' });
+        expect(rn.methods.resolvePersonCreateName({ requestId, name: input.name })).toEqual({ ok: true,
+            value: { expectedPersonId: old.id, taken: false, normalizedName: 'alex smith', displayName: 'alex SMITH' } });
         const frozen = freeze(rn.methods, input);
         const added = await useTaskStore.getState().addPerson(input.name);
         await flushPendingSave();
@@ -100,6 +104,8 @@ describe('prepared native Person create', () => {
         const loadedSettings = structuredClone(useTaskStore.getState().settings);
         expect(await cold.methods.commitPreparedPersonCreate(frozen)).toMatchObject({ ok: true, value: { id: old.id, created: true } });
         expect(cold.data().people?.[0]).toMatchObject({ ...frozen.prepared.effect.person.after, rev: 9 });
+        expect(cold.methods.resolvePersonCreateName({ requestId, name: input.name })).toEqual({ ok: true,
+            value: { expectedPersonId: old.id, taken: true, normalizedName: 'alex smith', displayName: 'alex SMITH' } });
         expect(cold.data().tasks).toEqual(loadedTasks);
         expect(cold.data().settings).toEqual(loadedSettings);
     });
@@ -109,6 +115,21 @@ describe('prepared native Person create', () => {
         const added = await useTaskStore.getState().addPerson('  Pat   Lee ', { id: 'custom-id', createdAt: now,
             note: ' Note ', referenceLink: ' custom://link ', rev: 99, revBy: 'overridden' });
         expect(added).toMatchObject({ id: 'custom-id', name: 'Pat Lee', createdAt: now, note: 'Note', referenceLink: 'custom://link', rev: 1, revBy: 'person-device' });
+    });
+
+    it('re-resolving after rename or replacement exposes the current identity and name without writing', async () => {
+        const original = person('original');
+        const { methods, saves } = await open({ people: [original] });
+        const lookup = { requestId, name: ' alex   SMITH ' };
+        const expected = { expectedPersonId: original.id, taken: true, normalizedName: 'alex smith', displayName: original.name };
+        expect(methods.resolvePersonCreateName(lookup)).toEqual({ ok: true, value: expected });
+        useTaskStore.setState({ _allPeople: [{ ...original, name: 'Renamed' }] });
+        expect(methods.resolvePersonCreateName(lookup)).toEqual({ ok: true, value: {
+            expectedPersonId: requestId, taken: false, normalizedName: 'alex smith', displayName: 'alex SMITH' } });
+        useTaskStore.setState({ _allPeople: [{ ...original, name: 'Renamed' }, person('replacement', { name: 'Alex SMITH' })] });
+        expect(methods.resolvePersonCreateName(lookup)).toEqual({ ok: true, value: {
+            expectedPersonId: 'replacement', taken: true, normalizedName: 'alex smith', displayName: 'Alex SMITH' } });
+        expect(saves()).toBe(0);
     });
 
     it.each([false, true])('preserves RN restoration ID override semantics when the replacement row exists: %s', async (replacementExists) => {

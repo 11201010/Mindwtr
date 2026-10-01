@@ -16,6 +16,93 @@ final class FoundationUITests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    func testTaskAssignedPersonCreateThenDiscardRetainsPerson() {
+        createAssignedPerson(library: "9dbb1998-07ba-450a-ada0-d7d63fa692f7", save: false, restart: false)
+    }
+
+    func testTaskAssignedPersonCreateThenSave() {
+        createAssignedPerson(library: "e9a269e6-5bad-483f-84f8-777cc5237c7e", save: true, restart: false)
+    }
+
+    func testTaskAssignedPersonCreateColdDraftDiscardRetainsPerson() {
+        createAssignedPerson(library: "00d9599e-8ead-4977-96de-392351d8e08d", save: false, restart: true)
+    }
+
+    func testTaskAssignedPersonCreateReadRetryBlocksSave() {
+        createAssignedPerson(library: "b2909fdd-b8f6-417c-975e-741372fea13a", save: false, restart: false, readRetry: true)
+    }
+
+    private func createAssignedPerson(library: String, save: Bool, restart: Bool, readRetry: Bool = false) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        if readRetry { app.launchArguments.append("--native-manage-person-create-read-failure") }
+        app.launch()
+        boardEnabled(app.buttons["Task117 Person"], timeout: 30)
+        app.buttons["Task117 Person"].tap()
+        boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]
+        boardEnabled(title)
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+        title.typeText(" draft")
+        let scroll = app.scrollViews["task-editor-scroll"]
+        let assignment = app.textFields["task-editor-assignedTo"]
+        boardEnabled(assignment)
+        revealPagedElement(app, assignment, in: scroll, outerEdge: true)
+        assignment.tap()
+        assignment.typeText("  Task117 Inline Person  ")
+        XCTAssertEqual(assignment.value as? String, "  Task117 Inline Person  ")
+        let create = app.buttons["task-assignedTo-create"]
+        boardEnabled(create)
+        XCTAssertEqual(create.label, "New Person: Task117 Inline Person")
+        revealPagedElement(app, create, in: scroll, outerEdge: true)
+        XCTAssertGreaterThanOrEqual(create.frame.height, 43.99)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Inline Person create action"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        create.tap()
+        if readRetry {
+            for _ in 0..<2 {
+                boardEnabled(app.staticTexts["task-assignedTo-create-error"], timeout: 20)
+                XCTAssertFalse(app.buttons["task-editor-save"].isEnabled)
+                XCTAssertEqual(assignment.value as? String, "  Task117 Inline Person  ")
+                let retry = app.buttons["task-assignedTo-create-retry"]
+                boardEnabled(retry)
+                revealPagedElement(app, retry, in: scroll, outerEdge: true)
+                retry.tap()
+            }
+        }
+        expectation(for: NSPredicate(format: "value == %@", "Task117 Inline Person"), evaluatedWith: assignment)
+        waitForExpectations(timeout: 20)
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        XCTAssertFalse(app.staticTexts["task-assignedTo-error"].exists)
+        // RN still offers creation for an exact name omitted from suggestions;
+        // the shared Person writer must reuse it without another row or revision.
+        boardEnabled(create)
+        revealPagedElement(app, create, in: scroll, outerEdge: true)
+        create.tap()
+        boardEnabled(app.buttons["task-editor-save"], timeout: 20)
+        if restart {
+            app.terminate(); app.launch()
+            boardEnabled(title, timeout: 30)
+            XCTAssertEqual(title.value as? String, "Task117 Person draft")
+            boardEnabled(assignment)
+            XCTAssertEqual(assignment.value as? String, "Task117 Inline Person")
+        }
+        if save {
+            boardTap(app, "task-editor-save")
+        } else {
+            boardTap(app, "task-view-close")
+            boardTap(app, "task-editor-discard")
+        }
+        let savedTitle = save ? "Task117 Person draft" : "Task117 Person"
+        boardEnabled(app.buttons[savedTitle], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons[savedTitle], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate() // The external oracle compares all nine saved tables and the created Person.
+    }
+
     func testTaskDraftRecoveryExternalUnrelatedSeed() {
         seedTaskDraftRecoveryExternal(library: "0b2ea631-a75b-4864-b90b-00e06635a082")
     }

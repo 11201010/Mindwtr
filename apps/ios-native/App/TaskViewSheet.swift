@@ -22,7 +22,7 @@ struct TaskViewSheet: View {
     private var busy: Bool { model.busy }
     private var error: String? { model.taskError }
     private var readOnly: Bool { model.taskEditor.flag("readOnly") }
-    private var frozen: Bool { busy || model.retryNeeded || model.taskChecklistReadPending }
+    private var frozen: Bool { busy || model.retryNeeded || model.taskChecklistReadPending || model.taskPersonCreateOwed }
 
     private var rows: [CoreObject] { value.objects("rows") }
     private var modalPresented: Bool {
@@ -79,7 +79,7 @@ struct TaskViewSheet: View {
                     } label: {
                         Text(strings.text("common.save")).rnFont(18, .bold).frame(minWidth: 44, minHeight: 44)
                     }
-                    .buttonStyle(.plain).disabled(frozen).accessibilityIdentifier("task-editor-save")
+                    .buttonStyle(.plain).disabled(frozen || model.taskPersonCreateNeedsReview).accessibilityIdentifier("task-editor-save")
                 }
             }
             .foregroundStyle(palette.tint).padding(.horizontal, 16).padding(.vertical, 8)
@@ -2002,9 +2002,23 @@ private struct TaskTokenField: View {
                 }
                 .accessibilityLabel(label).accessibilityHint(placeholder)
                 .accessibilityIdentifier("task-editor-" + field)
-            if current && !suggestions.objects("matches").isEmpty {
+            if current && (!suggestions.objects("matches").isEmpty || field == "assignedTo" && model.taskPersonCreateCanSubmit) {
                 let matches = suggestions.objects("matches")
                 VStack(spacing: 0) {
+                    if field == "assignedTo" && model.taskPersonCreateCanSubmit {
+                        let name = (model.taskTokenInputs[field] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        Button {
+                            Task { await model.createTaskPerson() }
+                        } label: {
+                            Text("+ " + model.label("people.new") + " \"" + name + "\"").rnFont(14, .medium)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12).padding(.vertical, 10).frame(minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint)
+                        .accessibilityLabel(model.label("people.new") + ": " + name)
+                        .accessibilityIdentifier("task-assignedTo-create")
+                        if !matches.isEmpty { Divider().overlay(palette.border) }
+                    }
                     ForEach(matches.indices, id: \.self) { index in
                         Button {
                             model.chooseTaskToken(field, kind: "matches", value: matches[index].text("value"))
@@ -2056,6 +2070,17 @@ private struct TaskTokenField: View {
                 }
                 .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.busy || model.retryNeeded)
                 .accessibilityIdentifier("task-" + field + "-retry")
+            }
+            if field == "assignedTo", let error = model.taskPersonCreateReadError {
+                Text(error).rnFont(14).foregroundStyle(palette.danger).textSelection(.enabled)
+                    .accessibilityIdentifier("task-assignedTo-create-error")
+                if model.taskPersonCreateCanRetryRead {
+                    Button(model.label("common.retry")) {
+                        Task { await model.retryTaskPersonCreateRead() }
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.tint).frame(minWidth: 44, minHeight: 44)
+                    .accessibilityIdentifier("task-assignedTo-create-retry")
+                }
             }
         }
     }

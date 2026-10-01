@@ -95,7 +95,7 @@ export function createPersonCreateMethods(deps: {
 }) {
     return {
         resolvePersonCreateName(input: { requestId: string; name: string }): NativeHostResult<{
-            expectedPersonId: string; taken: boolean; normalizedName: string }> {
+            expectedPersonId: string; taken: boolean; normalizedName: string; displayName: string }> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const value = detach<Record<string, unknown>>(input);
@@ -104,7 +104,8 @@ export function createPersonCreateMethods(deps: {
                 return fail('INVALID_INPUT', 'A bounded Person name and lowercase UUID are required');
             const found = resolvePersonAddition(useTaskStore.getState()._allPeople, value.name);
             return { ok: true, value: { expectedPersonId: found?.id ?? value.requestId,
-                taken: Boolean(found && !found.deletedAt), normalizedName: getPersonNameKey(value.name) } };
+                taken: Boolean(found && !found.deletedAt), normalizedName: getPersonNameKey(value.name),
+                displayName: found && !found.deletedAt ? found.name : normalizePersonName(value.name) } };
         },
 
         /** Read-only outcome after the host confirms no journal remains; never authorizes a write. */

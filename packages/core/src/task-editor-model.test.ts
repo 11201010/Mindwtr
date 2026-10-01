@@ -345,6 +345,21 @@ describe('task editor model parity: Someday sections and suggestions', () => {
         }).matches.map(({ value }) => value)]));
         expect(people).toEqual(snapshot.people);
     });
+
+    it('matches RN creation eligibility, including exact names omitted from suggestions', () => {
+        for (const [text, expected] of [
+            ['', false], ['   ', false], ['Ada', true], [' ada ', true],
+            ['İpek', true], ['i\u0307pek', true], ['New Person', true],
+        ] as const) {
+            const people = ['Ada', 'İpek'].map((name, index) => ({
+                id: String(index), name, createdAt: CREATED, updatedAt: CREATED,
+            }));
+            const result = getTaskEditorSuggestions({
+                field: 'assignedTo', text, limit: 4, knownTokens: [], usage: [], people, tasks: [],
+            });
+            expect(result.canCreatePerson).toBe(expected);
+        }
+    });
 });
 
 describe('task editor model rules', () => {

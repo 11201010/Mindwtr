@@ -528,6 +528,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var taskRecurrenceInputs: [String: String] = [:]
     @Published private(set) var taskTokenInputs: [String: String] = [:]
     @Published private(set) var taskTokenSuggestions: [String: CoreObject] = [:]
+    @Published private(set) var taskPersonCreateReadError: String?
     @Published private(set) var taskTokenErrors: [String: String] = [:]
     @Published var draft = ""
     @Published var noteDraft = ""
@@ -690,6 +691,19 @@ final class CoreModel: ObservableObject {
     private var taskRecoveryBackgroundGeneration = 0
     private var taskRecoveryHydrating = false
     private var taskRecoverySaving = false
+    private struct TaskPersonCreateRequest {
+        let taskID: String
+        let session: String
+        let rawName: String
+        let requestID: String
+        let requestJSON: String
+        let expectedID: String
+    }
+    @Published private var taskPersonCreatePending: TaskPersonCreateRequest?
+    private var taskPersonCreateReadRetry: TaskPersonCreateRequest?
+    var taskPersonCreateOwed: Bool { taskPersonCreatePending != nil }
+    var taskPersonCreateNeedsReview: Bool { taskPersonCreateReadRetry != nil }
+    var taskPersonCreateCanRetryRead: Bool { taskPersonCreateReadRetry != nil && !busy && !retryNeeded }
     var taskRecoveryAvailable: Bool { taskRecoverySnapshot != nil || taskRecoveryCorrupt }
     var taskRecoveryProtected: Bool {
         taskRecoverySnapshot != nil && taskRecoveryCheckpointError == nil
@@ -7016,7 +7030,8 @@ final class CoreModel: ObservableObject {
         let request: String
         do {
             let resolved = try await query("managePersonCreateResolve", [try json(["requestId": id, "name": name])])
-            guard resolved.count == 3, resolved["taken"] is Bool, resolved["normalizedName"] is String,
+            guard resolved.count == 4, resolved["taken"] is Bool, resolved["normalizedName"] is String,
+                  resolved["displayName"] is String,
                   !resolved.text("expectedPersonId").isEmpty else { throw CocoaError(.coderReadCorrupt) }
             let expected = resolved.text("expectedPersonId")
             request = try json(["requestId": id, "name": name, "note": note,
@@ -12779,6 +12794,8 @@ final class CoreModel: ObservableObject {
     }
 
     private func prepareTaskPresentation(_ id: String, initialTab: String = "view") {
+        taskPersonCreateReadRetry = nil
+        taskPersonCreateReadError = nil
         taskRecoverySession = UUID().uuidString.lowercased()
         taskRecoveryGeneration = 0
         taskRecoveryCheckpointedGeneration = 0
@@ -12807,14 +12824,14 @@ final class CoreModel: ObservableObject {
     }
 
     func closeTask() {
-        guard !busy, !retryNeeded, !taskSavePending, taskChecklistWriteKind == nil,
+        guard !busy, !retryNeeded, !taskPersonCreateOwed, !taskSavePending, taskChecklistWriteKind == nil,
               !taskChecklistReadPending, !taskScheduleUpdating else { return }
         guard !taskDirty else { return }
         Task { await discardCleanTaskSnapshotAndClose() }
     }
 
     func discardTask() {
-        guard !busy, !retryNeeded, !taskSavePending, taskChecklistWriteKind == nil,
+        guard !busy, !retryNeeded, !taskPersonCreateOwed, !taskSavePending, taskChecklistWriteKind == nil,
               !taskChecklistReadPending, !taskScheduleUpdating else { return }
         Task { await discardTaskRecoveryDraft(close: true) }
     }
@@ -13278,6 +13295,7 @@ final class CoreModel: ObservableObject {
 
     func saveTask() async {
         guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              !taskPersonCreateOwed, !taskPersonCreateNeedsReview,
               taskChecklistWriteKind == nil, !taskChecklistReadPending else { return }
         guard taskDirty else { await discardCleanTaskSnapshotAndClose(); return }
         let id = viewedTaskID
@@ -13944,10 +13962,132 @@ final class CoreModel: ObservableObject {
             && taskTokenErrors[field] == nil && taskTokenSuggestions[field] != nil
     }
 
+    var taskPersonCreateCanSubmit: Bool {
+        guard ready, taskTokenChoicesCurrent("assignedTo"), !taskPersonCreateOwed,
+              taskPersonCreateReadRetry == nil, !taskRecoverySaving,
+              let raw = taskTokenInputs["assignedTo"] else { return false }
+        return raw.utf16.count <= 500 && taskTokenSuggestions["assignedTo"]?.flag("canCreatePerson") == true
+    }
+
+    func createTaskPerson() async {
+        guard taskPersonCreateCanSubmit, !busy, !retryNeeded, host != nil else { return }
+        let taskID = viewedTaskID
+        let session = taskRecoverySession
+        let rawName = taskTokenInputs["assignedTo"] ?? ""
+        let requestID = UUID().uuidString.lowercased()
+        busy = true
+        taskError = nil
+        taskPersonCreateReadError = nil
+        defer { finishOperation() }
+        taskRecoveryOwn(["assignedTo"])
+        await flushTaskDraftCheckpoint()
+        guard taskPresented, viewedTaskID == taskID, taskRecoverySession == session,
+              taskTokenInputs["assignedTo"] == rawName,
+              taskRecoverySnapshot?.sessionID == session, taskRecoverySnapshot?.taskID == taskID,
+              taskRecoveryProtected else {
+            taskPersonCreateReadError = taskRecoveryCheckpointError ?? "The task draft could not be saved for recovery."
+            return
+        }
+        let frozen: TaskPersonCreateRequest
+        do {
+            let resolved = try await resolveTaskPersonCreate(requestID: requestID, name: rawName)
+            guard taskPresented, viewedTaskID == taskID, taskRecoverySession == session,
+                  taskTokenInputs["assignedTo"] == rawName else { return }
+            let expected = resolved.text("expectedPersonId")
+            let request = try json(["requestId": requestID, "name": rawName, "note": "",
+                                    "referenceLink": "", "expectedPersonId": expected])
+            frozen = TaskPersonCreateRequest(taskID: taskID, session: session, rawName: rawName,
+                                             requestID: requestID, requestJSON: request, expectedID: expected)
+            taskPersonCreatePending = frozen
+        } catch {
+            taskPersonCreateReadError = error.localizedDescription
+            return
+        }
+        do {
+            let result = try await query("managePersonCreate", [frozen.requestJSON])
+            try acknowledgeTaskPersonCreate(result)
+        } catch {
+            handleTaskPersonCreateWriteError(error)
+            return
+        }
+        await finishTaskPersonCreateRead(frozen)
+    }
+
+    private func resolveTaskPersonCreate(requestID: String, name: String) async throws -> CoreObject {
+        let result = try await query("managePersonCreateResolve", [try json(["requestId": requestID, "name": name])])
+        guard result.count == 4, result["taken"] is Bool, result["normalizedName"] is String,
+              result["displayName"] is String, !result.text("expectedPersonId").isEmpty else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        return result
+    }
+
+    private func acknowledgeTaskPersonCreate(_ result: CoreObject) throws {
+        guard let frozen = taskPersonCreatePending, result.count == 2,
+              result["created"] is Bool, result.text("id") == frozen.expectedID else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        taskPersonCreateReadRetry = frozen
+        taskPersonCreatePending = nil
+        retryNeeded = false
+        taskError = nil
+        error = nil
+        NSLog("Native iOS editor Person create confirmed releaseCheck=v1.3.4/ios-editor-person-create outcome=%@",
+              result.flag("created") ? "created" : "reused")
+    }
+
+    private func handleTaskPersonCreateWriteError(_ failure: Error) {
+        if taskPersonCreatePending != nil && isDefiniteRejection(failure) {
+            taskPersonCreatePending = nil
+            retryNeeded = false
+            error = nil
+            requestTaskTokenRead("assignedTo", delay: 0)
+        } else {
+            retryNeeded = taskPersonCreatePending != nil
+            error = failure.localizedDescription
+        }
+        taskError = failure.localizedDescription
+    }
+
+    private func finishTaskPersonCreateRead(_ frozen: TaskPersonCreateRequest) async {
+        do {
+            let resolved = try await resolveTaskPersonCreate(requestID: frozen.requestID, name: frozen.rawName)
+            guard taskPresented, viewedTaskID == frozen.taskID, taskRecoverySession == frozen.session,
+                  taskTokenInputs["assignedTo"] == frozen.rawName else {
+                taskPersonCreateReadRetry = nil
+                return
+            }
+            guard resolved.flag("taken"), resolved.text("expectedPersonId") == frozen.expectedID else {
+                taskPersonCreateReadError = "Person changed after creation. Review the assignment before saving."
+                return
+            }
+            taskPersonCreateReadRetry = nil
+            taskPersonCreateReadError = nil
+            setTaskTokenInput("assignedTo", text: resolved.text("displayName"))
+            await flushTaskDraftCheckpoint()
+        } catch {
+            guard taskPresented, viewedTaskID == frozen.taskID, taskRecoverySession == frozen.session,
+                  taskTokenInputs["assignedTo"] == frozen.rawName else { return }
+            taskPersonCreateReadError = error.localizedDescription
+        }
+    }
+
+    func retryTaskPersonCreateRead() async {
+        guard taskPersonCreateCanRetryRead, let frozen = taskPersonCreateReadRetry else { return }
+        busy = true
+        defer { finishOperation() }
+        await finishTaskPersonCreateRead(frozen)
+    }
+
     func setTaskTokenInput(_ field: String, text: String) {
-        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !retryNeeded, !taskSavePending, !taskRecoverySaving,
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !retryNeeded,
+              !taskPersonCreateOwed, !taskSavePending, !taskRecoverySaving,
               taskTokenFields.contains(field), taskTokenInputs[field] != text else { return }
         taskTokenInputs[field] = text
+        if field == "assignedTo" {
+            taskPersonCreateReadRetry = nil
+            taskPersonCreateReadError = nil
+        }
         taskTokenEdited.insert(field)
         taskRecoveryOwn([field])
         requestTaskTokenRead(field)
@@ -13973,7 +14113,7 @@ final class CoreModel: ObservableObject {
     }
 
     func commitTaskTokenInput(_ field: String) {
-        guard taskPresented, !taskEditor.flag("readOnly"), !retryNeeded, !taskRecoverySaving,
+        guard taskPresented, !taskEditor.flag("readOnly"), !retryNeeded, !taskPersonCreateOwed, !taskRecoverySaving,
               taskTokenFields.contains(field) else { return }
         taskTokenEdited.insert(field)
         taskTokenCommitDisplay.insert(field)
@@ -14306,7 +14446,7 @@ final class CoreModel: ObservableObject {
         var keys = ["common.none", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
                     "taskEdit.scheduling", "taskEdit.organization", "taskEdit.details",
                     "taskEdit.contextsLabel", "taskEdit.contextsPlaceholder", "taskEdit.tagsLabel", "taskEdit.tagsPlaceholder",
-                    "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder", "taskEdit.statusLabel", "reference.convertToAction",
+                    "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder", "people.new", "taskEdit.statusLabel", "reference.convertToAction",
                     "taskEdit.timeSpentLabel", "taskEdit.timeSpentPlaceholder",
                     "task.completedAtPromptTitle",
                     "process.waitingFor", "process.waitingForDesc", "common.cancel", "common.save",
@@ -15151,6 +15291,14 @@ final class CoreModel: ObservableObject {
         }
         do {
             let acknowledgment = try await host!.retryPending()
+            if let frozen = taskPersonCreatePending {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("managePersonCreateRetryOutcome", [frozen.requestJSON]) }
+                try acknowledgeTaskPersonCreate(result)
+                await finishTaskPersonCreateRead(frozen)
+                return
+            }
             if taskRecoverySaving {
                 if let acknowledgment {
                     let result = try decode(acknowledgment)
@@ -15833,6 +15981,10 @@ final class CoreModel: ObservableObject {
             }
             if settingsPersonCreateRequest != nil {
                 await handleSettingsPersonCreateWriteError(error)
+                return
+            }
+            if taskPersonCreatePending != nil {
+                handleTaskPersonCreateWriteError(error)
                 return
             }
             if areaCreateRequest != nil {
@@ -16747,6 +16899,11 @@ final class CoreModel: ObservableObject {
            managePersonEditTestRefusals > 0 {
             managePersonEditTestRefusals -= 1
             throw SimulatedManageAreaRefusal()
+        }
+        if method == "managePersonCreateResolve", taskPersonCreateReadRetry != nil,
+           managePersonCreateTestReadFailures > 0 {
+            managePersonCreateTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
         }
         if method == "menuRead", args.first as? String == "manageSettings",
            settingsPersonCreateAcknowledged, managePersonCreateTestReadFailures > 0 {

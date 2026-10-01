@@ -503,6 +503,8 @@ export type TaskEditorSuggestions = {
     matches: Array<{ value: string; text: string }>;
     /** Contexts and tags only: the quick chips, most used first; `text` is the input after tapping one. */
     quick: Array<{ value: string; selected: boolean; text: string }>;
+    /** Assigned To only: RN's create action checks the displayed matches. */
+    canCreatePerson?: boolean;
 };
 
 /** A token or person field's suggestions for its input text, as the editor shows them. */
@@ -519,10 +521,13 @@ export function getTaskEditorSuggestions(input: {
 }): TaskEditorSuggestions {
     const { text, limit } = input;
     if (input.field === 'assignedTo') {
+        const names = getPersonSuggestionNames(input.people, input.tasks, text, limit);
+        const name = text.trim();
         return {
             draftValue: text,
-            matches: getPersonSuggestionNames(input.people, input.tasks, text, limit).map((name) => ({ value: name, text: name })),
+            matches: names.map((name) => ({ value: name, text: name })),
             quick: [],
+            canCreatePerson: name.length > 0 && !names.some((value) => value.trim().toLowerCase() === name.toLowerCase()),
         };
     }
     const prefix: TokenPrefix = input.field === 'contexts' ? '@' : '#';
