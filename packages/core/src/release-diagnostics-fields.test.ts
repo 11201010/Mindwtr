@@ -58,6 +58,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // sqlite-snapshot-statements reuses releaseCheck and count below.
     // sqlite-kept-omitted-live-rows: SQLite table name; reuses releaseCheck and count below.
     // project-attachment-open-no-write reuses releaseCheck below.
+    // editor-attachment-save-merge reuses releaseCheck and outcome below.
     'table',
     // pending-capture-unfinished: owed or queued; reuses releaseCheck.
     'state',

@@ -1,7 +1,7 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task } from '@mindwtr/core';
+import { useTaskStore, type Task } from '@mindwtr/core';
 
 import { useTaskEditState } from './use-task-edit-state';
 
@@ -614,6 +614,64 @@ describe('useTaskEditState', () => {
             baselineAttachments: undefined,
             draftAttachments: [added],
             committedAttachments: [added],
+        });
+    });
+
+    it('saves the draft\'s attachments over the task as stored now, so a cloudKey sync recorded meanwhile stays', async () => {
+        let state!: ReturnType<typeof useTaskEditState>;
+        const onSave = vi.fn().mockResolvedValue({ success: true });
+        const file = {
+            id: 'file-1',
+            kind: 'file' as const,
+            title: 'report.pdf',
+            uri: 'file:///documents/attachments/file-1.pdf',
+            createdAt: '2026-08-27T00:00:00.000Z',
+            updatedAt: '2026-08-27T00:00:00.000Z',
+        };
+        const link = {
+            id: 'link-1',
+            kind: 'link' as const,
+            title: 'Docs',
+            uri: 'https://docs.example',
+            createdAt: '2026-08-28T00:00:00.000Z',
+            updatedAt: '2026-08-28T00:00:00.000Z',
+        };
+        const withFile: Task = { ...task, attachments: [file] };
+
+        function Probe() {
+            state = useTaskEditState({
+                onClose: vi.fn(),
+                onSave,
+                onSaveError: vi.fn(),
+                resetCopilotStateRef: { current: vi.fn() },
+                settleAttachmentDraft: vi.fn(),
+                sections: [],
+                task: withFile,
+                tasks: [withFile],
+                visible: true,
+            });
+            return null;
+        }
+
+        renderer.act(() => {
+            renderer.create(React.createElement(Probe));
+        });
+        renderer.act(() => state.setAttachments([file, link]));
+        // While the editor is open, sync records the file's upload.
+        const uploaded = { ...file, cloudKey: 'attachments/file-1.pdf' };
+        const previous = useTaskStore.getState()._allTasks;
+        useTaskStore.setState({ _allTasks: [{ ...withFile, attachments: [uploaded] }] });
+        try {
+            await renderer.act(async () => {
+                expect(await state.draftLifecycle.save()).toBe(true);
+            });
+        } finally {
+            useTaskStore.setState({ _allTasks: previous });
+        }
+        expect(onSave).toHaveBeenCalledWith(task.id, expect.objectContaining({ attachments: [uploaded, link] }));
+        expect(logInfoMock).toHaveBeenCalledWith('Editor attachment save kept a newer stored change', {
+            scope: 'task-edit',
+            extra: { releaseCheck: 'v1.3.4/editor-attachment-save-merge', outcome: 'merged' },
         });
     });
 
