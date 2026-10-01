@@ -30,6 +30,8 @@ describe('Task View reference target', () => {
         view, revision, blockIndex, ...(itemIndex === undefined ? {} : { itemIndex }), inlineIndex,
     });
     const checklistInput = (checklistIndex: number, inlineIndex: number) => ({ view, revision, checklistIndex, inlineIndex });
+    const projectInput = () => ({ view, revision, field: 'project' as const });
+    const tokenInput = (field: 'contexts' | 'tags', tokenIndex: number) => ({ view, revision, field, tokenIndex });
     const read = (request: Parameters<typeof host.getTaskViewReferenceTarget>[0]) => host.getTaskViewReferenceTarget(request);
     const saved = () => useTaskStore.getState()._tasksById.get('source') as Task;
     const refresh = () => { revision = value(host.getTaskView(view)).revision; };
@@ -71,6 +73,97 @@ describe('Task View reference target', () => {
         expect(read(input(4, 0, 1))).toEqual({ ok: true, value: { kind: 'project', id: 'archived-project' } });
         expect(read(input(6, 0, 0))).toEqual({ ok: true, value: { kind: 'task', id: 'source' } });
         expect(read(input(8, 0, 0))).toEqual({ ok: true, value: { kind: 'task', id: 'live' } });
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('resolves only the rendered Project and exact context and tag tokens', () => {
+        changeTask('source', { projectId: 'target', contexts: ['  Deep Work  ', 'same', 'same'], tags: ['MiXeD', 'same', 'same'] });
+        view = { ...view, draft: createTaskDraft(saved()) };
+        refresh();
+        const rows = value(host.getTaskView(view)).rows;
+        expect(rows.find((row) => row.type === 'field' && row.field === 'project'))
+            .toMatchObject({ project: { id: 'target' } });
+        expect(rows.find((row) => row.type === 'tokens' && row.field === 'contexts'))
+            .toMatchObject({ items: [{ value: '@Deep Work' }, { value: '@same' }, { value: '@same' }] });
+        expect(read(projectInput())).toEqual({ ok: true, value: { kind: 'project', id: 'target' } });
+        expect(read(tokenInput('contexts', 0))).toEqual({ ok: true, value: { kind: 'context', id: '@Deep Work' } });
+        expect(read(tokenInput('contexts', 2))).toEqual({ ok: true, value: { kind: 'context', id: '@same' } });
+        expect(read(tokenInput('tags', 0))).toEqual({ ok: true, value: { kind: 'tag', id: '#MiXeD' } });
+        expect(read(tokenInput('tags', 2))).toEqual({ ok: true, value: { kind: 'tag', id: '#same' } });
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('follows Reference visibility and archived rendering', () => {
+        changeTask('source', { status: 'reference', projectId: 'target', contexts: ['hidden'], tags: ['visible'] });
+        view = { ...view, draft: createTaskDraft(saved()) };
+        refresh();
+        expect(read(tokenInput('contexts', 0))).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(read(tokenInput('tags', 0))).toEqual({ ok: true, value: { kind: 'tag', id: '#visible' } });
+        expect(read(projectInput())).toEqual({ ok: true, value: { kind: 'project', id: 'target' } });
+        changeTask('source', { status: 'archived', projectId: 'archived-project' });
+        view = { ...view, draft: createTaskDraft(saved()) };
+        refresh();
+        expect(value(host.getTaskView(view)).readOnly).toBe(true);
+        expect(read(projectInput())).toEqual({ ok: true, value: { kind: 'project', id: 'archived-project' } });
+        expect(read(tokenInput('contexts', 0))).toEqual({ ok: true, value: { kind: 'context', id: 'hidden' } });
+        expect(read(tokenInput('tags', 0))).toEqual({ ok: true, value: { kind: 'tag', id: 'visible' } });
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('refuses absent, deleted and purged metadata targets or sources', () => {
+        expect(read(projectInput())).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(read(tokenInput('contexts', 0))).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        changeTask('source', { projectId: 'target', contexts: ['value'], tags: ['tag'] });
+        view = { ...view, draft: createTaskDraft(saved()) };
+        refresh();
+        for (const index of [1, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+            expect(read(tokenInput('contexts', index))).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        for (const field of ['deletedAt', 'purgedAt'] as const) {
+            useTaskStore.setState((state) => ({ _allProjects: state._allProjects.map((row) => row.id === 'target'
+                ? { ...row, [field]: at } : row) }));
+            refresh();
+            expect(read(projectInput())).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            useTaskStore.setState((state) => ({ _allProjects: state._allProjects.map((row) => row.id === 'target'
+                ? { ...row, [field]: undefined } : row) }));
+            refresh();
+        }
+        for (const field of ['deletedAt', 'purgedAt'] as const) {
+            changeTask('source', { [field]: at });
+            expect(read(tokenInput('tags', 0))).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+            changeTask('source', { [field]: undefined });
+            refresh();
+        }
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('refuses stale metadata rows, forged shapes and unsaved host state', () => {
+        changeTask('source', { projectId: 'target', contexts: ['saved'], tags: ['saved-tag'] });
+        view = { ...view, draft: createTaskDraft(saved()) };
+        refresh();
+        const malformed: unknown[] = [
+            { ...projectInput(), tokenIndex: 0 }, { ...projectInput(), inlineIndex: 0 },
+            { ...projectInput(), targetId: 'target' }, { ...projectInput(), field: 'section' },
+            { ...tokenInput('contexts', 0), blockIndex: 0 }, { ...tokenInput('tags', 0), checklistIndex: 0 },
+            { ...tokenInput('tags', 0), value: 'saved-tag' }, { ...tokenInput('tags', 0), tokenIndex: null },
+            { ...tokenInput('tags', 0), view: { ...view, offset: 0 } },
+            { ...tokenInput('tags', 0), revision: 'é'.repeat(1_000_000) },
+        ];
+        for (const candidate of malformed) {
+            expect(host.getTaskViewReferenceTarget(candidate as never))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        view = { ...view, draft: { ...view.draft!, contexts: 'draft-only' } };
+        expect(read(tokenInput('contexts', 0))).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        view = { ...view, draft: createTaskDraft(saved()) };
+        changeTask('source', { contexts: ['new-saved'] });
+        expect(read(tokenInput('contexts', 0))).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        refresh();
+        expect(read(tokenInput('contexts', 0))).toEqual({ ok: true, value: { kind: 'context', id: '@saved' } });
+        useTaskStore.setState({ persistenceFailure: { message: 'private disk failure', failedAt: at, retrying: false } });
+        expect(read(projectInput())).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(createNativeHostContract().getTaskViewReferenceTarget(projectInput()))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(writes).not.toHaveBeenCalled();
     });
 

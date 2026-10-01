@@ -542,7 +542,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var taskLinkSubmitting = false
     @Published private(set) var taskReferenceOpening = false
     @Published private(set) var taskReferenceError: String?
-    @Published private(set) var taskReferenceFromChecklist = false
+    @Published private(set) var taskReferenceSection = "description"
     @Published private(set) var taskAttachmentOpening = false
     @Published private(set) var taskAttachmentOpenError: String?
     private var taskAttachmentOpenClaim = UUID()
@@ -2081,10 +2081,11 @@ final class CoreModel: ObservableObject {
             && taskChecklistWriteKind == nil && !taskChecklistReadPending && !taskScheduleUpdating
     }
 
-    func openTaskViewReference(sourceID: String, revision: String, blockIndex: Int? = nil, itemIndex: Int? = nil,
-                               checklistIndex: Int? = nil, inlineIndex: Int) async {
+    func openTaskViewReference(sourceID: String, revision: String, position: CoreObject) async {
         guard taskReferenceEnabled, viewedTaskID == sourceID, taskView.text("revision") == revision else { return }
-        taskReferenceFromChecklist = checklistIndex != nil
+        let section = position["checklistIndex"] != nil ? "checklist"
+            : ["project", "contexts", "tags"].contains(position.text("field")) ? position.text("field") : "description"
+        taskReferenceSection = section
         guard !taskDirty else {
             taskReferenceError = "Save or discard this task's changes before opening an internal link."
             return
@@ -2106,12 +2107,11 @@ final class CoreModel: ObservableObject {
                               "attachments": taskAttachments])) == identity
         }
         do {
-            var input: CoreObject = ["view": view, "revision": revision, "inlineIndex": inlineIndex]
-            if let blockIndex { input["blockIndex"] = blockIndex }
-            if let checklistIndex { input["checklistIndex"] = checklistIndex }
-            if let itemIndex { input["itemIndex"] = itemIndex }
+            var input = position
+            input["view"] = view
+            input["revision"] = revision
             let target = try await query("taskViewReferenceTarget", [try json(input)])
-            guard sourceCurrent(), target.count == 2, ["task", "project"].contains(target.text("kind")),
+            guard sourceCurrent(), target.count == 2, ["task", "project", "context", "tag"].contains(target.text("kind")),
                   !target.text("id").isEmpty else { throw CocoaError(.coderReadCorrupt) }
             if target.text("kind") == "task" && target.text("id") == id { return }
             // Reuse Close's exact clean-draft cleanup before replacing the editor.
@@ -2123,12 +2123,19 @@ final class CoreModel: ObservableObject {
                 prepareTaskPresentation(target.text("id"))
                 await readTaskView()
                 if taskError == nil && taskPresented && viewedTaskID == target.text("id") {
-                    NSLog("Native iOS Task preview reference opened releaseCheck=v1.3.4/ios-task-preview-links destination=task source=\(checklistIndex == nil ? "description" : "checklist")")
+                    NSLog("Native iOS Task preview reference opened releaseCheck=v1.3.4/ios-task-preview-links destination=task source=\(section)")
                 }
-            } else {
+            } else if target.text("kind") == "project" {
                 await presentProject(["id": target.text("id")], caller: caller == .project ? projectCaller : caller)
                 if projectCurrent && projectHeader.text("id") == target.text("id") {
-                    NSLog("Native iOS Task preview reference opened releaseCheck=v1.3.4/ios-task-preview-links destination=project source=\(checklistIndex == nil ? "description" : "checklist")")
+                    NSLog("Native iOS Task preview reference opened releaseCheck=v1.3.4/ios-task-preview-links destination=project source=\(section)")
+                }
+            } else {
+                contextsIntents.append(["kind": "focus", "value": target.text("id")])
+                contextsLoadedDepth = pageSize
+                await openContexts()
+                if selectedSurface == .contexts && contextsCurrent {
+                    NSLog("Native iOS Task preview reference opened releaseCheck=v1.3.4/ios-task-preview-links destination=contexts source=\(section)")
                 }
             }
         } catch {
@@ -9784,7 +9791,12 @@ final class CoreModel: ObservableObject {
 
     func openContexts() async {
         guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
-        if selectedSurface != .contexts { contextsCaller = selectedSurface }
+        if selectedSurface == .project && projectCaller == .contexts {
+            // Reuse the existing Contexts route instead of creating a Back loop.
+            NSLog("Native iOS Contexts caller reused releaseCheck=v1.3.4/ios-task-preview-links destination=contexts source=project-return")
+        } else if selectedSurface != .contexts {
+            contextsCaller = selectedSurface
+        }
         morePresented = false
         selectedSurface = .contexts
         await refresh()
@@ -11988,7 +12000,13 @@ final class CoreModel: ObservableObject {
         projectTaskOrderView = [:]
         projectTaskOrderError = nil
         projectTaskOrderCurrent = false
-        projectCaller = caller
+        if caller == .contexts && contextsCaller == .project {
+            // Reuse the existing Project route, as RN navigate does. Otherwise
+            // Project Back and Contexts Back would point at each other.
+            NSLog("Native iOS Project caller reused releaseCheck=v1.3.4/ios-task-preview-links destination=project source=contexts-return")
+        } else {
+            projectCaller = caller
+        }
         projectFilterSession += 1
         projectFilterReadTask?.cancel()
         resetProjectAttachments()

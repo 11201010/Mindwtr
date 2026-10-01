@@ -19668,7 +19668,7 @@ final class CoreHostTests: XCTestCase {
         var checklist: [[String: Any]] = (0..<102).map { ["id": "duplicate", "title": "Plain \($0)", "isCompleted": false] }
         checklist[0]["title"] = "[[task:\(target)|Checklist task]]"
         checklist[101]["title"] = "[[project:focus-target|Checklist project]]"
-        _ = try sqlite.execute("UPDATE tasks SET description = ?, checklist = ? WHERE id = ?", parametersJSON: json([notes, json(checklist), source]))
+        _ = try sqlite.execute("UPDATE tasks SET description = ?, checklist = ?, projectId = ?, contexts = ?, tags = ? WHERE id = ?", parametersJSON: json([notes, json(checklist), "focus-target", json(["@phone"]), json(["#work"]), source]))
         let before = try nineTableSnapshot(sqlite)
         sqlite.close()
         for _ in 0..<2 {
@@ -19698,9 +19698,22 @@ final class CoreHostTests: XCTestCase {
                 let result = try object(await active.call("taskViewReferenceTarget", argumentsJSON: json([json(checklistRequest(index))])))
                 XCTAssertEqual(try json(result), try json(["kind": kind, "id": id]))
             }
+            func fieldRequest(_ field: String, _ index: Any? = nil) -> [String: Any] {
+                var input: [String: Any] = ["view": view, "revision": revision, "field": field]
+                if let index { input["tokenIndex"] = index }
+                return input
+            }
+            for (input, kind, id) in [(fieldRequest("project"), "project", "focus-target"),
+                                      (fieldRequest("contexts", 0), "context", "@phone"),
+                                      (fieldRequest("tags", 0), "tag", "#work")] {
+                let result = try object(await active.call("taskViewReferenceTarget", argumentsJSON: json([json(input)])))
+                XCTAssertEqual(try json(result), try json(["kind": kind, "id": id]))
+            }
             var malformed = [request(4), request(6), request(100), request(0, 0),
                              checklistRequest(true), checklistRequest(-1), checklistRequest(0.5),
-                             checklistRequest(1), checklistRequest(102)]
+                             checklistRequest(1), checklistRequest(102), fieldRequest("project", 0),
+                             fieldRequest("contexts"), fieldRequest("contexts", true), fieldRequest("tags", -1),
+                             fieldRequest("tags", 1), fieldRequest("assignedTo")]
             var mixed = checklistRequest(0); mixed["blockIndex"] = 0; malformed.append(mixed)
             for (field, value) in [("blockIndex", true as Any), ("inlineIndex", -1 as Any),
                                    ("itemIndex", NSNull()), ("id", target as Any), ("view", ["id": source, "offset": 0] as Any)] {

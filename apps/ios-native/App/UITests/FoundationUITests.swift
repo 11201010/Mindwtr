@@ -17,6 +17,102 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testTaskPreviewMetadataNavigation() {
+        taskPreviewMetadataNavigation(library: "44a14eb4-a035-4354-b8f6-56e9444669e0")
+    }
+
+    func testTaskPreviewMetadataNavigationLargestText() {
+        taskPreviewMetadataNavigation(library: "6a77dd4c-6b60-4d26-9484-0d1c12e2b194")
+    }
+
+    func testTaskPreviewMetadataReturnDoesNotCycle() {
+        taskPreviewMetadataNavigation(library: "2d2682b9-85a8-47a6-8454-e26e3a8a1030", roundTrip: true)
+    }
+
+    func testTaskPreviewMetadataInverseReturnDoesNotCycle() {
+        taskPreviewMetadataNavigation(library: "b84dff23-7a90-460a-9b34-f03fba24ac97", roundTrip: true, contextsFirst: true)
+    }
+
+    private func taskPreviewMetadataNavigation(library: String, roundTrip: Bool = false, contextsFirst: Bool = false) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        func project() {
+            app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+            boardTap(app, "project-open-task126-source")
+        }
+        func source() {
+            let row = app.buttons["task-title-task126-task"]
+            revealPagedElement(app, row, in: app.scrollViews["project-detail-scroll"])
+            boardEnabled(row); row.tap(); boardEnabled(app.buttons["task-view-close"])
+            if !app.buttons["task-mode-view"].isSelected { boardTap(app, "task-mode-view") }
+        }
+        func follow(_ id: String) {
+            let button = app.buttons[id]
+            revealPagedElement(app, button, in: app.scrollViews["task-editor-scroll"])
+            boardEnabled(button)
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            if id == "task-view-contexts-0" { XCTAssertTrue(button.label.hasSuffix(": @a")) }
+            if id == "task-view-tags-0" { XCTAssertTrue(button.label.hasSuffix(": #b")) }
+            button.tap()
+            let retry = app.buttons["task-reference-retry"]
+            if retry.waitForExistence(timeout: 1) {
+                revealPagedElement(app, retry, in: app.scrollViews["task-editor-scroll"])
+                boardEnabled(retry); retry.tap()
+                revealPagedElement(app, button, in: app.scrollViews["task-editor-scroll"])
+                boardEnabled(button); button.tap()
+            }
+        }
+        project()
+        if contextsFirst {
+            boardTap(app, "project-back")
+            boardTap(app, "tab-menu"); boardTap(app, "menu-contexts")
+            boardTap(app, "task-project-task126-task-task126-source")
+        }
+        source(); follow("task-view-project-open")
+        boardEnabled(app.buttons["project-back"])
+        XCTAssertTrue(app.staticTexts["Task126 Source"].exists)
+        source(); follow("task-view-contexts-0")
+        boardEnabled(app.buttons["contexts-back"])
+        expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["contexts-chip-@a"])
+        waitForExpectations(timeout: 15)
+        if roundTrip {
+            let task = app.buttons["task-title-task126-task"]
+            revealPagedElement(app, task, in: app.scrollViews.containing(.button, identifier: "task-title-task126-task").firstMatch)
+            boardEnabled(task); task.tap(); boardEnabled(app.buttons["task-view-close"])
+            if !app.buttons["task-mode-view"].isSelected { boardTap(app, "task-mode-view") }
+            follow("task-view-project-open")
+            boardEnabled(app.buttons["project-back"]); boardTap(app, "project-back")
+            if contextsFirst {
+                boardEnabled(app.buttons["contexts-back"]); boardTap(app, "contexts-back")
+            }
+            boardEnabled(app.buttons["project-open-task126-source"])
+            app.terminate(); return
+        }
+        boardTap(app, "contexts-back"); boardEnabled(app.buttons["project-back"])
+        source(); follow("task-view-tags-0")
+        boardEnabled(app.buttons["contexts-back"])
+        expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["contexts-chip-#b"])
+        waitForExpectations(timeout: 15)
+        let selection = XCTAttachment(screenshot: app.screenshot())
+        selection.name = "Task tag opens selected Contexts filter"; selection.lifetime = .keepAlways; add(selection)
+        boardTap(app, "contexts-back"); boardEnabled(app.buttons["project-back"])
+        app.terminate(); project(); source()
+        boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]
+        replaceProjectNotesText(title, with: "Task126 unsaved title")
+        boardTap(app, "task-mode-view"); follow("task-view-contexts-0")
+        let error = app.staticTexts["task-reference-error"]
+        revealPagedElement(app, error, in: app.scrollViews["task-editor-scroll"])
+        XCTAssertTrue(error.exists)
+        boardTap(app, "task-mode-edit")
+        revealPagedElement(app, title, in: app.scrollViews["task-editor-scroll"])
+        XCTAssertEqual(title.value as? String, "Task126 unsaved title")
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard")
+        boardEnabled(app.buttons["project-back"]); app.terminate()
+    }
+
     func testTaskChecklistInternalReferencesAndToggle() {
         taskChecklistInternalReferences(library: "77bb58c4-46f1-4c29-b8f2-4523178548b8")
     }

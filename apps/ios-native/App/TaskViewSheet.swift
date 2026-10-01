@@ -844,9 +844,10 @@ struct TaskViewSheet: View {
     }
 
     @ViewBuilder private func row(_ item: CoreObject) -> some View {
+        let sourceID = value.text("id"), revision = value.text("revision")
         switch item.text("type") {
         case "title", "status", "field":
-            VStack(alignment: .leading, spacing: 6) {
+            let content = VStack(alignment: .leading, spacing: 6) {
                 label(item.text("label"))
                 if item.text("type") == "title" {
                     Text(item.text("value")).rnFont(17, .bold)
@@ -861,24 +862,37 @@ struct TaskViewSheet: View {
             .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
             .accessibilityElement(children: .combine)
+            if item.text("field") == "project" && !item.object("project").text("id").isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    if model.taskReferenceSection == "project" { referenceError }
+                    Button {
+                        Task { await model.openTaskViewReference(sourceID: sourceID, revision: revision, position: ["field": "project"]) }
+                    } label: { content.frame(minHeight: 44).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).disabled(!model.taskReferenceEnabled || modalPresented || discardConfirm)
+                    .accessibilityLabel(item.text("label") + ": " + item.text("value"))
+                    .accessibilityIdentifier("task-view-project-open")
+                }
+            } else { content }
         case "tokens":
             VStack(alignment: .leading, spacing: 8) {
                 label(item.text("label"))
+                if model.taskReferenceSection == item.text("field") { referenceError }
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { pills(item.objects("items")) }
-                    VStack(alignment: .leading, spacing: 8) { pills(item.objects("items")) }
+                    HStack(spacing: 8) { pills(item.objects("items"), field: item.text("field"), fieldLabel: item.text("label")) }
+                    VStack(alignment: .leading, spacing: 8) { pills(item.objects("items"), field: item.text("field"), fieldLabel: item.text("label")) }
                 }
             }
         case "description":
             VStack(alignment: .leading, spacing: 8) {
                 label(item.text("label"))
-                if !model.taskReferenceFromChecklist { referenceError }
+                if model.taskReferenceSection == "description" { referenceError }
                 let sourceID = value.text("id"), sourceRevision = value.text("revision")
                 NativeMarkdownContent(blocks: item.objects("blocks"), labels: value.object("markdownLabels"),
                                       strings: strings, palette: palette,
                                       onReference: model.taskReferenceEnabled && !modalPresented && !discardConfirm ? { block, item, inline in
-                    Task { await model.openTaskViewReference(sourceID: sourceID, revision: sourceRevision, blockIndex: block,
-                                                            itemIndex: item, inlineIndex: inline) }
+                    var position: CoreObject = ["blockIndex": block, "inlineIndex": inline]
+                    if let item { position["itemIndex"] = item }
+                    Task { await model.openTaskViewReference(sourceID: sourceID, revision: sourceRevision, position: position) }
                 } : nil)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(12)
                 .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
@@ -887,7 +901,7 @@ struct TaskViewSheet: View {
         case "checklist":
             VStack(alignment: .leading, spacing: 6) {
                 label(item.text("label"))
-                if model.taskReferenceFromChecklist { referenceError }
+                if model.taskReferenceSection == "checklist" { referenceError }
                 let entries = item.objects("items")
                 ForEach(entries.indices, id: \.self) { index in
                     checklistEntry(entries[index], bullets: item.flag("bullets"), tappable: item.flag("tappable"))
@@ -1090,12 +1104,22 @@ struct TaskViewSheet: View {
         .accessibilityElement(children: .contain)
     }
 
-    @ViewBuilder private func pills(_ items: [CoreObject]) -> some View {
+    @ViewBuilder private func pills(_ items: [CoreObject], field: String, fieldLabel: String) -> some View {
+        let sourceID = value.text("id"), revision = value.text("revision")
         ForEach(items.indices, id: \.self) { index in
-            Text(items[index].text("value")).rnFont(12, .semibold)
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(palette.input, in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1))
+            Button {
+                Task { await model.openTaskViewReference(sourceID: sourceID, revision: revision,
+                                                        position: ["field": field, "tokenIndex": index]) }
+            } label: {
+                Text(items[index].text("value")).rnFont(12, .semibold)
+                    .padding(.horizontal, 10).padding(.vertical, 6).frame(minWidth: 44, minHeight: 44)
+                    .background(palette.input, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(!model.taskReferenceEnabled || modalPresented || discardConfirm)
+            .accessibilityLabel(fieldLabel + ": " + items[index].text("value"))
+            .accessibilityIdentifier("task-view-\(field)-\(index)")
         }
     }
 
@@ -1137,7 +1161,7 @@ struct TaskViewSheet: View {
             NativeMarkdownInline(runs: runs, labels: value.object("markdownLabels"), palette: palette, size: 14,
                                  onReference: model.taskReferenceEnabled && !modalPresented && !discardConfirm ? { inline in
                 Task { await model.openTaskViewReference(sourceID: sourceID, revision: revision,
-                                                        checklistIndex: index, inlineIndex: inline) }
+                                                        position: ["checklistIndex": index, "inlineIndex": inline]) }
             } : nil)
         }
         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)

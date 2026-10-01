@@ -5556,7 +5556,10 @@ private final class Engine: @unchecked Sendable {
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
                   Set(input.keys) == Set(["view", "revision", "blockIndex", "inlineIndex"])
                     || Set(input.keys) == Set(["view", "revision", "blockIndex", "itemIndex", "inlineIndex"])
-                    || Set(input.keys) == Set(["view", "revision", "checklistIndex", "inlineIndex"]),
+                    || Set(input.keys) == Set(["view", "revision", "checklistIndex", "inlineIndex"])
+                    || (input["field"] as? String == "project" && Set(input.keys) == Set(["view", "revision", "field"]))
+                    || (["contexts", "tags"].contains(input["field"] as? String ?? "")
+                        && Set(input.keys) == Set(["view", "revision", "field", "tokenIndex"])),
                   let view = input["view"] as? [String: Any],
                   Set(view.keys).isSubset(of: ["id", "draft", "checklist", "attachments"]),
                   let id = view["id"] as? String, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -5565,7 +5568,8 @@ private final class Engine: @unchecked Sendable {
                   view["checklist"] == nil || view["checklist"] is [[String: Any]],
                   view["attachments"] == nil || Self.validTaskAttachmentList(view["attachments"]),
                   let revision = input["revision"] as? String, !revision.isEmpty,
-                  [input["checklistIndex"] == nil ? "blockIndex" : "checklistIndex", "inlineIndex"].allSatisfy({
+                  (input["field"] == nil ? [input["checklistIndex"] == nil ? "blockIndex" : "checklistIndex", "inlineIndex"]
+                    : input["field"] as? String == "project" ? [] : ["tokenIndex"]).allSatisfy({
                       Self.isInteger(input[$0]) && (input[$0] as? Double ?? -1) >= 0
                         && (input[$0] as? Double ?? .infinity) <= 9_007_199_254_740_991
                   }),

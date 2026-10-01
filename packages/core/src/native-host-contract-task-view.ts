@@ -319,13 +319,16 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
             };
         },
 
-        /** Resolve only the internal link at the position the current View tab rendered. */
+        /** Resolve only the saved target at the position the current View tab rendered. */
         getTaskViewReferenceTarget(input: {
             view: { id: string; draft?: TaskDraft; checklist?: ChecklistItem[]; attachments?: Attachment[] };
             revision: string;
-            inlineIndex: number;
-        } & ({ blockIndex: number; itemIndex?: number; checklistIndex?: never }
-            | { checklistIndex: number; blockIndex?: never; itemIndex?: never })): NativeHostResult<{ kind: 'task' | 'project'; id: string }> {
+        } & (
+            | { inlineIndex: number; blockIndex: number; itemIndex?: number; checklistIndex?: never; field?: never; tokenIndex?: never }
+            | { inlineIndex: number; checklistIndex: number; blockIndex?: never; itemIndex?: never; field?: never; tokenIndex?: never }
+            | { field: 'project'; tokenIndex?: never; inlineIndex?: never; blockIndex?: never; itemIndex?: never; checklistIndex?: never }
+            | { field: 'contexts' | 'tags'; tokenIndex: number; inlineIndex?: never; blockIndex?: never; itemIndex?: never; checklistIndex?: never }
+        )): NativeHostResult<{ kind: 'task' | 'project' | 'context' | 'tag'; id: string }> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const persistence = getPersistenceStatus();
@@ -333,20 +336,27 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
             if (persistence.queued || persistence.inFlight || persistence.immediate || persistence.retrying) {
                 return fail('NOT_READY', 'Task view is still saving');
             }
+            const field = isRecord(input) ? input.field : undefined;
             const checklistIndex = isRecord(input) ? input.checklistIndex : undefined;
+            const keys = field === 'project' ? ['view', 'revision', 'field']
+                : field === 'contexts' || field === 'tags' ? ['view', 'revision', 'field', 'tokenIndex']
+                    : checklistIndex === undefined
+                        ? ['view', 'revision', 'blockIndex', 'inlineIndex', ...(isRecord(input) && input.itemIndex !== undefined ? ['itemIndex'] : [])]
+                        : ['view', 'revision', 'checklistIndex', 'inlineIndex'];
             if (!isRecord(input) || !isNativeJsonWithinBytes(input)
-                || Object.keys(input).length !== (checklistIndex === undefined && input.itemIndex !== undefined ? 5 : 4)
-                || Object.keys(input).some((key) => !['view', 'revision', 'inlineIndex',
-                    ...(checklistIndex === undefined ? ['blockIndex', 'itemIndex'] : ['checklistIndex'])].includes(key))
+                || Object.keys(input).length !== keys.length
+                || Object.keys(input).some((key) => !keys.includes(key))
                 || !isRecord(input.view)
                 || Object.keys(input.view).some((key) => !['id', 'draft', 'checklist', 'attachments'].includes(key))
                 || typeof input.view.id !== 'string' || !input.view.id.trim() || input.view.id.length > 500
                 || typeof input.revision !== 'string' || !input.revision
-                || !Number.isSafeInteger(input.inlineIndex) || input.inlineIndex < 0
-                || (checklistIndex === undefined
-                    ? input.blockIndex === undefined || !Number.isSafeInteger(input.blockIndex) || input.blockIndex < 0
-                        || (input.itemIndex !== undefined && (!Number.isSafeInteger(input.itemIndex) || input.itemIndex < 0))
-                    : !Number.isSafeInteger(checklistIndex) || checklistIndex < 0)) {
+                || (field === 'project' ? false : field === 'contexts' || field === 'tags'
+                    ? !Number.isSafeInteger(input.tokenIndex) || input.tokenIndex! < 0
+                    : !Number.isSafeInteger(input.inlineIndex) || input.inlineIndex! < 0
+                        || (checklistIndex === undefined
+                            ? input.blockIndex === undefined || !Number.isSafeInteger(input.blockIndex) || input.blockIndex < 0
+                                || (input.itemIndex !== undefined && (!Number.isSafeInteger(input.itemIndex) || input.itemIndex < 0))
+                            : !Number.isSafeInteger(checklistIndex) || checklistIndex < 0))) {
                 return fail('INVALID_INPUT', 'A bounded Task View reference position is required');
             }
             const source = findTask(input.view.id);
@@ -354,6 +364,20 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
             if (source.purgedAt) return fail('TASK_NOT_FOUND', 'Task not found');
             const view = this.getTaskView({ ...input.view, offset: checklistIndex ?? 0, limit: 1, revision: input.revision });
             if (!view.ok) return view;
+            if (field === 'project') {
+                const row = view.value.rows.find((item) => item.type === 'field' && item.field === 'project');
+                const id = row?.type === 'field' ? row.project?.id : undefined;
+                const project = useTaskStore.getState()._allProjects.find((item) => item.id === id);
+                return id && project && !project.deletedAt && !project.purgedAt
+                    ? { ok: true, value: { kind: 'project', id } }
+                    : fail('INVALID_INPUT', 'Task View reference is unavailable');
+            }
+            if (field === 'contexts' || field === 'tags') {
+                const row = view.value.rows.find((item) => item.type === 'tokens' && item.field === field);
+                const id = row?.type === 'tokens' ? row.items[input.tokenIndex!]?.value : undefined;
+                return id ? { ok: true, value: { kind: field === 'contexts' ? 'context' : 'tag', id } }
+                    : fail('INVALID_INPUT', 'Task View reference is unavailable');
+            }
             const description = view.value.rows.find((row) => row.type === 'description');
             const block = checklistIndex === undefined && input.blockIndex !== undefined
                 ? description?.blocks[input.blockIndex] : undefined;
@@ -366,7 +390,7 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
             const item = checklist?.items[0];
             const inline = checklistIndex === undefined ? descriptionInline
                 : item?.index === checklistIndex ? item.inline : undefined;
-            const run = inline?.[input.inlineIndex];
+            const run = inline?.[input.inlineIndex!];
             if (run?.type !== 'link' || run.target.kind === 'external') {
                 return fail('INVALID_INPUT', 'Task View reference is unavailable');
             }
