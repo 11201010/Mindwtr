@@ -146,8 +146,11 @@ private class Stepped(val view: EditorModel, val checklist: String?, val focusId
 
 /** How deep each list is shown, so a refresh reads it again as deep; [controls] is Focus's control state (FocusModel) as JSON. */
 private data class Depth(val focus: Map<String, Int>, val project: String?, val projectItems: Int, val controls: String)
-/** The lists one full read gives; the Inbox tab is MenuModel's list on core's getInboxView, read with the open Menu list. */
-private class Lists(val focus: FocusView, val projects: ProjectsView, val projectId: String?, val project: ProjectDetail?, val areas: AreaFilter)
+/**
+ * The lists one full read gives; the Inbox tab is MenuModel's list on core's getInboxView, read with the open Menu list. The
+ * boot's read leaves Focus, and Projects with the open project, null when their tab is not on screen (read later).
+ */
+private class Lists(val focus: FocusView?, val projects: ProjectsView?, val projectId: String?, val project: ProjectDetail?, val areas: AreaFilter)
 
 /**
  * Inbox, Focus, Projects, and editor screen state. It survives Activity recreation,
@@ -303,8 +306,9 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 // RN's app lock, before any screen shows data (an owed save does not block it).
                 lock.boot(runtime)
                 ProcessCoreHost.failure?.let { pending -> ui { host = runtime; restore(pending, storedProcessing, storedCapture) }; return@Thread }
+                // Only the tab on screen: Focus and Projects are read once first content is drawn ([contentShown]) or their tab opens.
                 val lists = try {
-                    read(runtime, at)
+                    read(runtime, at, screen)
                 } catch (failure: Throwable) {
                     // A save that failed while this screen opened blocks reads; show its retry.
                     ProcessCoreHost.failure?.let { pending -> ui { host = runtime; restore(pending, storedProcessing, storedCapture) }; return@Thread }
@@ -319,6 +323,9 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 }
                 ui {
                     host = runtime; showLists(lists, ++issued); writable = true; loading = false
+                    // A tab chosen while the boot ran, whose list the boot left for later (no Inbox draws, so [contentShown] never runs).
+                    if (screen == Screen.Focus && lists.focus == null) refreshFocus()
+                    if (screen == Screen.Projects && lists.projects == null) refreshProjects()
                     restored?.let { resumeEditor(it, savedDraft.optJSONObject("pending")) }
                     // Control edits core had not answered before the process died are sent again, in order.
                     pumpEdits()
@@ -350,8 +357,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         if (attaches > 1) ProcessCoreHost.logHostReuse("activity-recreate", attaches, busy)
     }
 
-    /** First content is on screen: the host may do the boot's deferred work (its bytecode cache). */
-    fun contentShown() = ProcessCoreHost.contentShown()
+    /** First content is on screen: the lists the boot left for later are read, and the host may do its deferred work (its bytecode cache). */
+    fun contentShown() {
+        if (focus == null) refreshFocus()
+        if (projects == null) refreshProjects()
+        ProcessCoreHost.contentShown()
+    }
 
     /** The editor opens over this list, so Save and Cancel return to it. */
     fun show(target: Screen) {
@@ -1691,20 +1702,26 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         return view
     }
 
-    /** Every list from offset 0, as deep as it is shown: after boot and after every command (the Inbox tab reads with MenuModel). */
-    private fun read(runtime: CoreHost, at: Depth) = Lists(
-        readFocus(runtime, null, at.focus, at.controls),
-        ProjectsView.parse(runtime.projects()),
+    /**
+     * Every list from offset 0, as deep as it is shown: after every command (the Inbox tab reads with MenuModel). The boot reads
+     * only [shown]'s: Focus and Projects cost most on a large library, and first content waits for the boot.
+     */
+    private fun read(runtime: CoreHost, at: Depth, shown: Screen? = null) = Lists(
+        if (shown == null || shown == Screen.Focus) readFocus(runtime, null, at.focus, at.controls) else null,
+        if (shown == null || shown == Screen.Projects) ProjectsView.parse(runtime.projects()) else null,
         at.project,
-        readOpen(runtime, at),
+        if (shown == null || shown == Screen.Projects) readOpen(runtime, at) else null,
         AreaFilter.parse(runtime.areaFilter()),
     )
 
     /** A full read, each list applied on its own: a list a newer read already showed keeps the newer rows. */
     private fun showLists(lists: Lists, mine: Long) {
-        if (fresh(mine, Part.Focus)) { showFocus(lists.focus); readSucceeded() }
-        if (fresh(mine, Part.Projects)) projects = lists.projects
-        if (fresh(mine, Part.Project)) showProject(lists.projectId, lists.project)
+        lists.focus?.let { if (fresh(mine, Part.Focus)) { showFocus(it); readSucceeded() } }
+        // Projects not read (the boot left them for later): the open project stays open.
+        lists.projects?.let { read ->
+            if (fresh(mine, Part.Projects)) projects = read
+            if (fresh(mine, Part.Project)) showProject(lists.projectId, lists.project)
+        }
         if (fresh(mine, Part.Areas)) areaFilter = lists.areas
     }
 
