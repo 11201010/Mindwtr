@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
@@ -254,13 +254,44 @@ test("iOS 27 smoke scopes and verifies simulator URL-scheme approval", () => {
 
   const installIndex = smokeScript.indexOf('xcrun simctl install "$SIMULATOR_UDID" "$APP_PATH"');
   const approvalIndex = smokeScript.lastIndexOf("\napprove_url_scheme\n");
-  const firstOpenIndex = smokeScript.indexOf('xcrun simctl openurl "$SIMULATOR_UDID"');
+  const firstOpenIndex = smokeScript.indexOf('open_url "$COLD_URL"');
   expect(installIndex).toBeGreaterThan(-1);
   expect(approvalIndex).toBeGreaterThan(installIndex);
   expect(firstOpenIndex).toBeGreaterThan(approvalIndex);
-  expect(smokeScript.match(/xcrun simctl openurl/g)).toHaveLength(2);
+  expect(smokeScript.match(/xcrun simctl openurl/g)).toHaveLength(1);
+  expect(smokeScript).toContain('open_url "$WARM_URL"');
   expect(smokeScript).not.toContain("xcrun simctl launch");
   expect(smokeScript).not.toContain("com.apple.launchservices.schemeapproval.plist");
+});
+
+test("iOS 27 smoke accepts only openurl status 60 while requiring delivery proof", () => {
+  const smokeScript = readFileSync("scripts/ci/smoke-ios27-simulator.sh", "utf8");
+  const helper = smokeScript.match(/^open_url\(\) \{[\s\S]*?^\}/m)?.[0];
+  expect(helper).toBeDefined();
+  const directory = mkdtempSync(join(tmpdir(), "mindwtr-ios-openurl-"));
+  try {
+    const calls = join(directory, "calls");
+    for (const status of [0, 60, 42]) {
+      for (const url of ["mindwtr://capture", "mindwtr://open-feature"]) {
+        writeFileSync(calls, "");
+        const result = spawnSync("bash", ["-euc", `${helper}\nxcrun() { printf '%s\\n' "$*" >> "$OPENURL_CALLS"; return "$OPENURL_STATUS"; }\nSIMULATOR_UDID=smoke-sim\nopen_url "$SMOKE_URL"`], {
+          env: { ...process.env, OPENURL_CALLS: calls, OPENURL_STATUS: String(status), SMOKE_URL: url },
+          encoding: "utf8",
+        });
+        expect(result.status).toBe(status === 42 ? 42 : 0);
+        expect(readFileSync(calls, "utf8")).toBe(`simctl openurl smoke-sim ${url}\n`);
+      }
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+
+  expect(smokeScript).toContain('COLD_PID="$(wait_for_pid)"');
+  expect(smokeScript).toContain('if [ "$STABLE_COLD_PID" != "$COLD_PID" ]');
+  expect(smokeScript).toContain('if [ "$WARM_PID" != "$COLD_PID" ]');
+  expect(smokeScript).toContain("wait_for_marker '[MindwtrScene] stage=coldDelivery deliveryKind=url count='");
+  expect(smokeScript).toContain("wait_for_marker '[MindwtrScene] stage=warmDelivery deliveryKind=url count='");
+  expect(smokeScript).toContain("wait_for_marker_count '[MindwtrScene] stage=bridgeReady deliveryKind=none count=' 2");
 });
 
 test("native CI typechecks all maintained widgets before the expensive host build", () => {

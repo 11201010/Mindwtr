@@ -159,6 +159,16 @@ wait_for_pid() {
   return 1
 }
 
+open_url() {
+  local status=0
+  xcrun simctl openurl "$SIMULATOR_UDID" "$1" || status=$?
+  if [ "$status" -ne 0 ] && [ "$status" -ne 60 ]; then
+    echo "::error::simctl openurl failed with exit status $status."
+    return "$status"
+  fi
+  return 0
+}
+
 REQUEST_ID="ios27-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
 COLD_URL="mindwtr://capture?title=CI%20iOS%2027%20Smoke&requestId=$REQUEST_ID"
 WARM_URL='mindwtr://open-feature?feature=waiting'
@@ -172,7 +182,7 @@ WARM_URL='mindwtr://open-feature?feature=waiting'
 } > "$ARTIFACTS_DIR/simulator-smoke.txt"
 
 xcrun simctl terminate "$SIMULATOR_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
-xcrun simctl openurl "$SIMULATOR_UDID" "$COLD_URL"
+open_url "$COLD_URL"
 COLD_PID="$(wait_for_pid)" || {
   echo "::error::Mindwtr did not remain running after the cold deep-link launch."
   exit 1
@@ -191,7 +201,7 @@ wait_for_marker '[MindwtrScene] stage=coldDelivery deliveryKind=url count='
 wait_for_marker '[MindwtrScene] stage=bridgeReady deliveryKind=none count='
 xcrun simctl io "$SIMULATOR_UDID" screenshot "$ARTIFACTS_DIR/cold-link-screen.png"
 
-xcrun simctl openurl "$SIMULATOR_UDID" "$WARM_URL"
+open_url "$WARM_URL"
 sleep 5
 WARM_PID="$(running_pid)"
 if [ "$WARM_PID" != "$COLD_PID" ]; then
