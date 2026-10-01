@@ -363,6 +363,8 @@ export type PreparedBoardTask = {
     before: Task;
     after: Task;
     deviceIdToInitialize: string | null;
+    /** Calendar Delete refuses a newly archived parent inside the atomic commit. */
+    respectReadOnly?: true;
 };
 
 /** One frozen Calendar scheduling row; its complete after-row is the receipt. */

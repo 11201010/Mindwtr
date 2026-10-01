@@ -1988,6 +1988,15 @@ globalThis.MindwtrHost = {
     calendarComposerEdit(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.editCalendarComposer(JSON.parse(json))); });
     },
+    calendarDeletePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareCalendarDelete(JSON.parse(json))); });
+    },
+    calendarDeleteValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedCalendarDelete(JSON.parse(json))));
+    },
+    calendarDeleteCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedCalendarDelete(JSON.parse(json))));
+    },
     calendarUnschedulePrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.prepareCalendarUnschedule(JSON.parse(json))); });
     },

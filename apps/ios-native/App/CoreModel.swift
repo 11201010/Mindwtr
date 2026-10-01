@@ -659,7 +659,7 @@ final class CoreModel: ObservableObject {
     private var calendarNeedsRead = false
     private var calendarReadTask: Task<Void, Never>?
     private var calendarItemTaskID = ""
-    private var calendarUnscheduleRequest: String?
+    private var calendarItemWriteRequest: (method: String, payload: String)?
     private var calendarPreferenceValues: CoreObject = [:]
     private var calendarPreferencePending = false
     private var calendarPreferenceTarget: CoreObject?
@@ -2662,7 +2662,7 @@ final class CoreModel: ObservableObject {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
                 selectedSurface = .projects
-            } else if recovery.text("method") == "calendarUnscheduleCommit" {
+            } else if ["calendarUnscheduleCommit", "calendarDeleteCommit"].contains(recovery.text("method")) {
                 selectedSurface = .calendar
             } else if recovery.text("method") == "savedSearchCommit" {
                 selectedSurface = .inbox
@@ -9571,11 +9571,12 @@ final class CoreModel: ObservableObject {
         let id = calendarItemTaskID
         if action == "edit" { closeCalendarItem(); await openTask(id) }
         else if action == "done" { closeCalendarItem(); await complete(id) }
-        else if action == "unschedule" { await unscheduleCalendarItem() }
+        else if action == "unschedule" { await writeCalendarItem("calendarUnschedule") }
+        else if action == "delete" { await writeCalendarItem("calendarDelete") }
     }
 
-    private func unscheduleCalendarItem() async {
-        guard !busy, !retryNeeded, calendarUnscheduleRequest == nil,
+    private func writeCalendarItem(_ method: String) async {
+        guard !busy, !retryNeeded, calendarItemWriteRequest == nil,
               !calendarItemSheet.text("taskRevision").isEmpty else { return }
         busy = true
         defer { finishOperation() }
@@ -9583,27 +9584,32 @@ final class CoreModel: ObservableObject {
         do {
             let request = try json(["requestId": UUID().uuidString.lowercased(),
                 "taskId": calendarItemTaskID, "taskRevision": calendarItemSheet.text("taskRevision")])
-            calendarUnscheduleRequest = request
-            let result = try await query("calendarUnschedule", [request])
-            try await acknowledgeCalendarUnschedule(result)
+            calendarItemWriteRequest = (method, request)
+            let result = try await query(method, [request])
+            try await acknowledgeCalendarItemWrite(result)
         } catch {
             if isDefiniteRejection(error) {
-                calendarUnscheduleRequest = nil
+                calendarItemWriteRequest = nil
                 calendarItemSheet = [:]
                 calendarItemError = error.localizedDescription
             } else {
-                retryNeeded = calendarUnscheduleRequest != nil
+                retryNeeded = calendarItemWriteRequest != nil
                 self.error = error.localizedDescription
             }
         }
     }
 
-    private func acknowledgeCalendarUnschedule(_ result: CoreObject) async throws {
-        guard result.text("taskId") == calendarItemTaskID, result["changed"] is Bool,
-              ["toast", "next", "scrollToMinutes", "composer"].allSatisfy({ result[$0] is NSNull }) else {
-            throw CocoaError(.coderReadCorrupt)
+    private func acknowledgeCalendarItemWrite(_ result: CoreObject) async throws {
+        if calendarItemWriteRequest?.method == "calendarDelete" {
+            guard Set(result.keys) == Set(["changed", "open"]), result["changed"] as? Bool == true,
+                  result["open"] is NSNull else { throw CocoaError(.coderReadCorrupt) }
+        } else {
+            guard result.text("taskId") == calendarItemTaskID, result["changed"] is Bool,
+                  ["toast", "next", "scrollToMinutes", "composer"].allSatisfy({ result[$0] is NSNull }) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
         }
-        calendarUnscheduleRequest = nil
+        calendarItemWriteRequest = nil
         calendarItemPresented = false
         calendarItemSheet = [:]
         calendarItemTaskID = ""
@@ -17090,9 +17096,9 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
-            if calendarUnscheduleRequest != nil {
+            if calendarItemWriteRequest != nil {
                 guard let acknowledgment else { throw CocoaError(.coderValueNotFound) }
-                try await acknowledgeCalendarUnschedule(try decode(acknowledgment))
+                try await acknowledgeCalendarItemWrite(try decode(acknowledgment))
                 return
             }
             if calendarComposerSaveRequest != nil {
@@ -17330,8 +17336,8 @@ final class CoreModel: ObservableObject {
                     mindSweepAddFailed = true
                     self.error = nil
                 }
-                if calendarUnscheduleRequest != nil {
-                    calendarUnscheduleRequest = nil
+                if calendarItemWriteRequest != nil {
+                    calendarItemWriteRequest = nil
                     calendarItemSheet = [:]
                     calendarItemError = error.localizedDescription
                     self.error = nil

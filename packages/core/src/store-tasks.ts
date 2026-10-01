@@ -866,7 +866,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
     },
 
     // The contract validates action authority before this guarded one-row commit.
-    commitPreparedBoardTask: async ({ kind, before, after, deviceIdToInitialize }) => {
+    commitPreparedBoardTask: async ({ kind, before, after, deviceIdToInitialize, respectReadOnly }) => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Board action conflicts with current data' };
         const persisted = (task: Task) => {
             const values = taskToSqliteRow(task);
@@ -884,6 +884,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             const source = state._tasksById.get(before.id);
             if (!source || !matches(source, before) || source.deletedAt || source.purgedAt
                 || (kind === 'duplicateTask' && target)) return state;
+            if (respectReadOnly && kind === 'trashTask' && isStatusListTaskReadOnly(source, state._allProjects)) return state;
             if (kind === 'duplicateTask') {
                 // Recheck only the scalar reservations the pure builder read.
                 // Exact target replay above deliberately precedes these guards.

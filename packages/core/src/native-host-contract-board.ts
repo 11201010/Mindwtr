@@ -54,7 +54,9 @@ import {
     type NativeHostResult,
     type NativeTaskRow,
 } from './native-host-contract';
-import { createNativeRequestReceipts, isRevision, refuseStale, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
+import { createNativeRequestReceipts, isRevision, refuseStale, runStoreWrite, settleWrite, taskRevisionOf, type NativeUnsavedWrite } from './native-request-receipts';
+import { isProjectedRecurringTaskId } from './recurrence';
+import { isStatusListTaskReadOnly } from './menu-views-model';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { useTaskStore } from './store';
 import type { Task } from './types';
@@ -146,7 +148,7 @@ export type NativeBoardAction =
 /** Durable native stage: Move needs a separate frozen lifecycle/order planner. */
 export type NativeBoardWriteRequest = {
     requestId: string;
-    action: Extract<NativeBoardAction, { type: 'duplicateTask' | 'trashTask' }>;
+    action: { type: 'duplicateTask' | 'trashTask'; taskId: string };
 };
 export type NativePreparedBoardAction = {
     version: 1;
@@ -169,10 +171,33 @@ export type NativeBoardActionResult = {
     open: { taskId: string; projectId: string | null; tab: 'task' } | null;
 };
 
+export type NativeCalendarDeleteRequest = { requestId: string; taskId: string; taskRevision: string };
+export type NativePreparedCalendarDelete = {
+    version: 1;
+    request: NativeCalendarDeleteRequest;
+    board: { request: NativeBoardWriteRequest; prepared: NativePreparedBoardAction };
+};
+export type NativeCalendarDeletePreparation = { kind: 'prepared'; prepared: NativePreparedCalendarDelete };
+
 const fail = (code: NativeHostErrorCode, message: string): NativeHostResult<never> => ({ ok: false, error: { code, message } });
 const isObjectRecord = (value: unknown): value is Record<string, unknown> => (
     typeof value === 'object' && value !== null && !Array.isArray(value)
 );
+const utf8Within = (text: string, limit: number): boolean => {
+    let bytes = 0;
+    for (let index = 0; index < text.length; index++) {
+        const code = text.charCodeAt(index);
+        if (code < 0x80) bytes++;
+        else if (code < 0x800) bytes += 2;
+        else if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length
+            && text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff) {
+            bytes += 4;
+            index++;
+        } else bytes += 3;
+        if (bytes > limit) return false;
+    }
+    return true;
+};
 const isText = (value: unknown, max = 500): value is string => typeof value === 'string' && value.length <= max;
 const isTextList = (value: unknown): value is string[] => (
     Array.isArray(value) && value.length <= NATIVE_HOST_MAX_WINDOW && value.every((entry) => isText(entry))
@@ -508,9 +533,77 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         const prepared = readPrepared(input.prepared);
         return request && prepared && taskEditValuesEqual(request, prepared.request) ? prepared : null;
     };
+    const readCalendarDeleteRequest = (input: unknown): NativeCalendarDeleteRequest | null => (
+        isObjectRecord(input) && exactKeys(input, ['requestId', 'taskId', 'taskRevision'])
+        && typeof input.requestId === 'string' && deps.requestIdPattern.test(input.requestId)
+        && typeof input.taskId === 'string' && input.taskId.length > 0 && input.taskId.length <= 200
+        && typeof input.taskRevision === 'string' && input.taskRevision.length > 0 && input.taskRevision.length <= 200
+            ? input as NativeCalendarDeleteRequest : null
+    );
+    const readPreparedCalendarDelete = (input: unknown): NativePreparedCalendarDelete | null => {
+        try {
+            const json = JSON.stringify(input);
+            if (typeof json !== 'string' || !utf8Within(json, 2_000_000)
+                || !isObjectRecord(input) || !exactKeys(input, ['request', 'prepared'])
+                || !isObjectRecord(input.prepared) || !exactKeys(input.prepared, ['version', 'request', 'board'])
+                || input.prepared.version !== 1 || !isObjectRecord(input.prepared.board)
+                || !exactKeys(input.prepared.board, ['request', 'prepared'])) return null;
+            const request = readCalendarDeleteRequest(input.request);
+            const wrapped = readCalendarDeleteRequest(input.prepared.request);
+            const board = readPreparedCommand(input.prepared.board);
+            if (!request || !wrapped || !board || !taskEditValuesEqual(request, wrapped)
+                || board.request.requestId !== request.requestId || board.request.action.type !== 'trashTask'
+                || board.request.action.taskId !== request.taskId || board.before.id !== request.taskId
+                || taskRevisionOf(board.before) !== request.taskRevision
+                || board.before.deletedAt || board.before.purgedAt || board.before.status === 'reference'
+                || isProjectedRecurringTaskId(request.taskId)
+                || !taskEditValuesEqual(board.result, { changed: true, open: null })) return null;
+            return input.prepared as NativePreparedCalendarDelete;
+        } catch { return null; }
+    };
     // Object order changes when a native host encodes its journal; array order never does.
     const canonicalJSON = (input: unknown): string => JSON.stringify(input, (_name, value) =>
         isObjectRecord(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : value);
+
+    const prepareBoardActionBody = (input: NativeBoardWriteRequest): NativeHostResult<NativeBoardPrepareResult> => {
+        const ready = deps.readiness();
+        if (!ready.ok) return ready;
+        const request = readWriteRequest(detach(input));
+        if (!request) return fail('INVALID_INPUT', 'A request UUID and a supported Board action are required');
+        const state = useTaskStore.getState();
+        const source = state._tasksById.get(request.action.taskId);
+        if (!source || source.purgedAt || (source.deletedAt && request.action.type === 'duplicateTask')) return fail('TASK_NOT_FOUND', 'Task not found');
+        if (source.deletedAt) return { ok: true, value: { kind: 'noop', result: { changed: false, open: null } } };
+        if (request.action.type === 'duplicateTask' && state._tasksById.has(request.requestId)) {
+            return fail('INVALID_INPUT', 'The duplicate request ID is already in use; retry its prepared command');
+        }
+        const before = detach(source);
+        if (!taskRecord(before)) return fail('INVALID_INPUT', 'Task cannot fit a valid bounded Board journal');
+        const device = ensureDeviceId(state.settings);
+        const now = new Date().toISOString();
+        const after = request.action.type === 'trashTask'
+            ? { ...before, deletedAt: now, updatedAt: now, rev: nextRevision(before.rev), revBy: device.deviceId }
+            : buildDuplicateTask({ sourceTask: before, copyId: request.requestId, now, deviceId: device.deviceId,
+                projectOrder: before.projectId ? createProjectOrderReserver(state._allTasks)(before.projectId) : undefined,
+                boardOrder: boardOrderForDuplicate(before.boardOrder, state._allTasks.filter((task) => task.status === before.status && !task.deletedAt)) });
+        const result: NativeBoardActionResult = { changed: true, open: request.action.type === 'duplicateTask'
+            ? { taskId: after.id, projectId: after.projectId ?? null, tab: 'task' } : null };
+        const prepared = readPrepared({ version: 1, request, before, after, deviceIdToInitialize: device.updated ? device.deviceId : null, result });
+        return prepared ? { ok: true, value: { kind: 'prepared', prepared } }
+            : fail('INVALID_INPUT', 'Board action cannot produce a valid bounded journal');
+    };
+
+    const commitPreparedBoard = (prepared: NativePreparedBoardAction, receiptKind: 'preparedBoard' | 'preparedCalendarDelete', respectReadOnly = false) => (
+        receipts.run(prepared.request.requestId, canonicalJSON([receiptKind, prepared]), async () => {
+            const result = await useTaskStore.getState().commitPreparedBoardTask({
+                kind: prepared.request.action.type, before: prepared.before, after: prepared.after,
+                deviceIdToInitialize: prepared.deviceIdToInitialize,
+                ...(respectReadOnly ? { respectReadOnly: true as const } : {}),
+            });
+            if (!result.success) return fail(result.reason === 'conflict' ? 'STALE_REVISION' : 'INVALID_INPUT', result.error ?? 'Prepared Board action refused');
+            return { ok: true as const, value: prepared.result };
+        })
+    );
 
     // Request IDs that entered the receipts, with their payloads, so a retry reaches its receipt first.
     const entered = new Map<string, string>();
@@ -586,31 +679,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
 
         /** Pure planning for the bounded native Trash/Duplicate journal. */
         prepareBoardAction(input: NativeBoardWriteRequest): NativeHostResult<NativeBoardPrepareResult> {
-            const ready = deps.readiness();
-            if (!ready.ok) return ready;
-            const request = readWriteRequest(detach(input));
-            if (!request) return fail('INVALID_INPUT', 'A request UUID and a supported Board action are required');
-            const state = useTaskStore.getState();
-            const source = state._tasksById.get(request.action.taskId);
-            if (!source || source.purgedAt || (source.deletedAt && request.action.type === 'duplicateTask')) return fail('TASK_NOT_FOUND', 'Task not found');
-            if (source.deletedAt) return { ok: true, value: { kind: 'noop', result: { changed: false, open: null } } };
-            if (request.action.type === 'duplicateTask' && state._tasksById.has(request.requestId)) {
-                return fail('INVALID_INPUT', 'The duplicate request ID is already in use; retry its prepared command');
-            }
-            const before = detach(source);
-            if (!taskRecord(before)) return fail('INVALID_INPUT', 'Task cannot fit a valid bounded Board journal');
-            const device = ensureDeviceId(state.settings);
-            const now = new Date().toISOString();
-            const after = request.action.type === 'trashTask'
-                ? { ...before, deletedAt: now, updatedAt: now, rev: nextRevision(before.rev), revBy: device.deviceId }
-                : buildDuplicateTask({ sourceTask: before, copyId: request.requestId, now, deviceId: device.deviceId,
-                    projectOrder: before.projectId ? createProjectOrderReserver(state._allTasks)(before.projectId) : undefined,
-                    boardOrder: boardOrderForDuplicate(before.boardOrder, state._allTasks.filter((task) => task.status === before.status && !task.deletedAt)) });
-            const result: NativeBoardActionResult = { changed: true, open: request.action.type === 'duplicateTask'
-                ? { taskId: after.id, projectId: after.projectId ?? null, tab: 'task' } : null };
-            const prepared = readPrepared({ version: 1, request, before, after, deviceIdToInitialize: device.updated ? device.deviceId : null, result });
-            return prepared ? { ok: true, value: { kind: 'prepared', prepared } }
-                : fail('INVALID_INPUT', 'Board action cannot produce a valid bounded journal');
+            return prepareBoardActionBody(input);
         },
 
         /** Pure immutable authority check, including before activation/SQLite open.
@@ -625,17 +694,45 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             if (!ready.ok) return ready;
             const prepared = readPreparedCommand(input);
             if (!prepared) return fail('INVALID_INPUT', 'Prepared Board request or journal does not match');
-            const request = prepared.request;
-            // Immutable authority is checked before receipt lookup; mutable source
-            // checks only run when no known receipt already owes its save.
-            return receipts.run(request.requestId, canonicalJSON(['preparedBoard', prepared]), async () => {
-                const result = await useTaskStore.getState().commitPreparedBoardTask({
-                    kind: request.action.type, before: prepared.before, after: prepared.after,
-                    deviceIdToInitialize: prepared.deviceIdToInitialize,
-                });
-                if (!result.success) return fail(result.reason === 'conflict' ? 'STALE_REVISION' : 'INVALID_INPUT', result.error ?? 'Prepared Board action refused');
-                return { ok: true, value: prepared.result };
-            });
+            return commitPreparedBoard(prepared, 'preparedBoard');
+        },
+
+        /** Calendar's Delete uses the Board Trash journal, with a visible-row revision and read-only parent guard. */
+        prepareCalendarDelete(input: NativeCalendarDeleteRequest): NativeHostResult<NativeCalendarDeletePreparation> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const request = readCalendarDeleteRequest(input);
+            if (!request) return fail('INVALID_INPUT', 'A Calendar task and view revision are required');
+            const state = useTaskStore.getState();
+            const task = state._tasksById.get(request.taskId);
+            if (!task || task.deletedAt || task.purgedAt || task.status === 'reference'
+                || isProjectedRecurringTaskId(request.taskId) || isStatusListTaskReadOnly(task, state._allProjects)) {
+                return fail('TASK_NOT_FOUND', 'Task is not deletable');
+            }
+            if (taskRevisionOf(task) !== request.taskRevision) return fail('STALE_REVISION', 'Task changed since the Calendar view');
+            const boardRequest: NativeBoardWriteRequest = { requestId: request.requestId, action: { type: 'trashTask', taskId: request.taskId } };
+            const board = prepareBoardActionBody(boardRequest);
+            if (!board.ok) return board;
+            if (board.value.kind !== 'prepared') return fail('TASK_NOT_FOUND', 'Task is not deletable');
+            const prepared: NativePreparedCalendarDelete = { version: 1, request, board: { request: boardRequest, prepared: board.value.prepared } };
+            return readPreparedCalendarDelete({ request, prepared })
+                ? { ok: true, value: { kind: 'prepared', prepared } }
+                : fail('INVALID_INPUT', 'Calendar Delete could not produce a valid prepared journal');
+        },
+
+        /** Pure authority check for the journal before native storage opens. */
+        validatePreparedCalendarDelete(input: { request: NativeCalendarDeleteRequest; prepared: NativePreparedCalendarDelete }): NativeHostResult<NativeBoardActionResult> {
+            const prepared = readPreparedCalendarDelete(input);
+            return prepared ? { ok: true, value: prepared.board.prepared.result }
+                : fail('INVALID_INPUT', 'Prepared Calendar Delete request or journal does not match');
+        },
+
+        async commitPreparedCalendarDelete(input: { request: NativeCalendarDeleteRequest; prepared: NativePreparedCalendarDelete }): Promise<NativeHostResult<NativeBoardActionResult>> {
+            const prepared = readPreparedCalendarDelete(input);
+            if (!prepared) return fail('INVALID_INPUT', 'Prepared Calendar Delete request or journal does not match');
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            return commitPreparedBoard(prepared.board.prepared, 'preparedCalendarDelete', true);
         },
 
         /**

@@ -701,6 +701,7 @@ private struct CalendarItemLabel: View {
 private struct CalendarAction: View {
     let title: String
     var selected = false
+    var destructive = false
     let enabled: Bool
     let palette: AppPalette
     let id: String
@@ -708,7 +709,7 @@ private struct CalendarAction: View {
     var body: some View {
         Button(action: action) {
             Text(title).rnFont(12, .semibold).fixedSize(horizontal: false, vertical: true)
-                .foregroundStyle(selected ? palette.onTint : palette.tint).padding(.horizontal, 12)
+                .foregroundStyle(destructive ? palette.danger : selected ? palette.onTint : palette.tint).padding(.horizontal, 12)
                 .frame(minWidth: 44, minHeight: 44).background(selected ? palette.tint : palette.filter, in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
         }
@@ -735,10 +736,10 @@ struct CalendarItemSheet: View {
                             CalendarAction(title: model.label("common.retry"), enabled: !model.busy && !model.retryNeeded,
                                 palette: palette, id: "calendar-item-retry") { Task { await model.retryCalendarItem() } }
                         }
-                        let actions = model.calendarItemSheet.objects("buttons").filter { ["edit", "unschedule", "done", "cancel", "ok"].contains($0.text("id")) }
+                        let actions = model.calendarItemSheet.objects("buttons").filter { ["edit", "unschedule", "done", "delete", "cancel", "ok"].contains($0.text("id")) }
                         ForEach(actions.indices, id: \.self) { index in
                             let action = actions[index]
-                            CalendarAction(title: action.text("label"), enabled: !model.busy && !model.retryNeeded,
+                            CalendarAction(title: action.text("label"), destructive: action.text("style") == "destructive", enabled: !model.busy && !model.retryNeeded,
                                 palette: palette, id: "calendar-action-" + action.text("id")) {
                                 Task { await model.performCalendarItemAction(action.text("id")) }
                             }

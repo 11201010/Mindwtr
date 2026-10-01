@@ -78,6 +78,60 @@ final class FoundationUITests: XCTestCase {
         }
     }
 
+    private func deleteCalendarItem(_ app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "calendar-item-", "Task130 scheduled task")).firstMatch
+    }
+
+    func testCalendarDeleteNormal() { calendarDeleteFlow(library: "6d41bd63-676b-4506-a6ec-01aad008a123") }
+    func testCalendarDeleteLargestText() { calendarDeleteFlow(library: "948625f3-bf33-4ad1-82af-6678c6ba6944") }
+
+    private func calendarDeleteFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); openUnscheduleCalendar(app)
+        let item = deleteCalendarItem(app); boardEnabled(item); item.tap()
+        boardEnabled(app.buttons["calendar-action-delete"])
+        boardTap(app, "calendar-action-cancel"); boardEnabled(item); item.tap()
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Calendar Delete"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "calendar-action-delete"); boardEnabled(app.buttons["calendar-today"])
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: item); waitForExpectations(timeout: 15)
+        assertCalendarDeletedTaskInTrash(app)
+        app.terminate(); app.launch(); openUnscheduleCalendar(app)
+        XCTAssertFalse(deleteCalendarItem(app).exists); assertCalendarDeletedTaskInTrash(app); app.terminate()
+    }
+
+    func testCalendarDeleteFailureRetainsExactRequest() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "c6f3b657-988a-4048-8ed2-f0cd006442a0"]
+        app.launch(); openUnscheduleCalendar(app)
+        let item = deleteCalendarItem(app); boardEnabled(item); item.tap(); boardTap(app, "calendar-action-delete")
+        XCTAssertTrue(app.staticTexts["persistence-error"].waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["calendar-action-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["calendar-action-delete"].isEnabled)
+            boardTap(app, "persistence-retry"); boardEnabled(app.buttons["persistence-retry"])
+        }
+        app.terminate()
+    }
+
+    func testCalendarDeleteColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "c6f3b657-988a-4048-8ed2-f0cd006442a0"]
+        for _ in 0..<2 {
+            app.launch(); openUnscheduleCalendar(app); XCTAssertFalse(deleteCalendarItem(app).exists)
+            assertCalendarDeletedTaskInTrash(app); app.terminate()
+        }
+    }
+
+    private func assertCalendarDeletedTaskInTrash(_ app: XCUIApplication) {
+        boardTap(app, "tab-menu")
+        let trash = app.buttons["menu-trash"]
+        if !trash.isHittable {
+            revealPagedElement(app, trash, in: app.scrollViews.containing(.button, identifier: "menu-trash").firstMatch)
+        }
+        boardTap(app, "menu-trash")
+        XCTAssertTrue(app.staticTexts["Task130 scheduled task"].waitForExistence(timeout: 15))
+        boardTap(app, "trash-back")
+    }
+
     func testSavedSearchWriteNormal() { savedSearchWriteFlow(library: "0178bb87-1319-49f1-afec-40c38368d28d") }
     func testSavedSearchWriteLargestText() { savedSearchWriteFlow(library: "b43325de-3d8f-432f-bb65-607ae71f5f7e") }
 
@@ -2733,7 +2787,7 @@ final class FoundationUITests: XCTestCase {
         calendarTask(title).tap()
         enabled(app.buttons["calendar-action-edit"])
         XCTAssertFalse(app.buttons["calendar-mode-month"].isHittable)
-        XCTAssertFalse(app.buttons["calendar-action-delete"].exists)
+        XCTAssertTrue(app.buttons["calendar-action-delete"].exists)
         XCTAssertTrue(app.buttons["calendar-action-unschedule"].exists)
         tap("calendar-action-edit")
         let viewTitle = app.staticTexts.matching(identifier: "task-view-task-title").firstMatch
