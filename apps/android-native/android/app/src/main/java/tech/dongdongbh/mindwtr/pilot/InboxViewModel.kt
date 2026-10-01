@@ -139,6 +139,8 @@ const val RELATIVE_AMOUNT = "relativeAmount"
 const val WAITING_PROMPT = "waitingFor"
 /** RN's editor shows 4 matches (MAX_VISIBLE_SUGGESTIONS). */
 private const val SUGGESTIONS = 4
+/** The boot's sync start waits at most this long after the boot for the Inbox's first rows (ProcessCoreHost.startDeferredSync). */
+private const val SYNC_FALLBACK_MS = 3_000L
 /** Core windows the View tab's checklist by NATIVE_HOST_MAX_WINDOW. */
 private const val VIEW_WINDOW = 100
 
@@ -327,6 +329,10 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     // A tab chosen while the boot ran, whose list the boot left for later (no Inbox draws, so [contentShown] never runs).
                     if (screen == Screen.Focus && lists.focus == null) refreshFocus()
                     if (screen == Screen.Projects && lists.projects == null) refreshProjects()
+                    // The boot's held sync start: now when the boot read was this screen's content (not the Inbox, whose first rows
+                    // report it: contentShown); a fallback covers an Inbox read that never draws.
+                    if (screen != Screen.Inbox) ProcessCoreHost.startDeferredSync()
+                    main.postDelayed(ProcessCoreHost::startDeferredSync, SYNC_FALLBACK_MS)
                     restored?.let { resumeEditor(it, savedDraft.optJSONObject("pending")) }
                     // Control edits core had not answered before the process died are sent again, in order.
                     pumpEdits()

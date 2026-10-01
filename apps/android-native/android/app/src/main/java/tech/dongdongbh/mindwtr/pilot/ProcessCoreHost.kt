@@ -21,6 +21,7 @@ import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.FutureTask
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The one CoreHost of this process.
@@ -111,7 +112,7 @@ internal object ProcessCoreHost {
             runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)
             loadTheme(runtime, legacy?.theme)
-            if (replay(runtime)) recovered(app, runtime)
+            if (replay(runtime)) recovered(app, runtime, deferSync = true)
             return runtime
         } catch (failure: Throwable) {
             runCatching { runtime.close() }
@@ -131,8 +132,21 @@ internal object ProcessCoreHost {
 
     /** After first content (MainActivity's report): a start that ran the source caches its bytecode now, off the critical path. */
     fun contentShown() {
+        startDeferredSync()
         val task = synchronized(this) { boot } ?: return
         if (task.isDone) runCatching { task.get() }.getOrNull()?.cacheBytecode()
+    }
+
+    /** The boot's sync start, held until the first screen shows its content ([startDeferredSync]); null once it ran. */
+    private val deferredSync = AtomicReference<(() -> Unit)?>(null)
+
+    /**
+     * The first screen shows its content (the Inbox's first rows, another tab's boot read, or the screen's fallback): the boot's
+     * held sync start runs now, on the sync thread. It stays after the boot's journal replay and queue drain, as before; only
+     * the first screen no longer waits for it.
+     */
+    fun startDeferredSync() {
+        deferredSync.getAndSet(null)?.let { start -> syncThread.execute { start() } }
     }
 
     /**
@@ -160,6 +174,8 @@ internal object ProcessCoreHost {
     @Volatile private var appState = "background"
     /** Set once sync started; its app state and network changes go through [syncThread], in order. */
     @Volatile private var syncHost: CoreHost? = null
+    /** One sync start at a time: the boot's held start (sync thread) and CoreWork's (its worker) may meet. */
+    private val syncLock = Any()
     private val syncThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-sync-events") }
     private val syncListeners = CopyOnWriteArraySet<(JSONObject) -> Unit>()
     /** The last sync badge and finished-cycle count (host-sync.ts's `sync` event), for a screen that opens later. */
@@ -181,7 +197,7 @@ internal object ProcessCoreHost {
      * ([recovered]). The network state goes first, then core's triggers start and ask for the app's first sync. A failure
      * here never fails the boot: the app runs without automatic sync, and Settings › Sync still opens.
      */
-    private fun startSync(app: Application, runtime: CoreHost) {
+    private fun startSync(app: Application, runtime: CoreHost): Unit = synchronized(syncLock) {
         if (syncHost != null) return
         runtime.onEvent = { text -> runCatching { dispatch(JSONObject(text)) } }
         runCatching {
@@ -203,11 +219,12 @@ internal object ProcessCoreHost {
      * boot's order (StartOrder). A drain that did not finish becomes the screens' owed "journal" retry, so no screen edits until
      * it goes through, sync waits, and CoreWork retries it with its back-off. True once drained.
      */
-    fun recovered(app: Application, runtime: CoreHost): Boolean = StartOrder.afterReplay(
+    fun recovered(app: Application, runtime: CoreHost, deferSync: Boolean = false): Boolean = StartOrder.afterReplay(
         drain = { drain(runtime, queue(app)) },
         owe = { message -> recordFailure(PendingFailure(FailedAction("journal", ""), message, null)) },
         retryLater = { runCatching { CoreWork.retryDrain(app) }.onFailure { Log.w(CoreHost.TAG, "Native Android drain retry not queued", it) } },
-        startSync = { startSync(app, runtime) },
+        // The boot's start waits for the first screen's content (startDeferredSync); CoreWork's and a retry's start at once.
+        startSync = { if (deferSync) deferredSync.set { startSync(app, runtime) } else startSync(app, runtime) },
     )
 
     /** MainActivity resumed ("active") or paused ("background"): core's triggers sync on resume and on leaving. */
