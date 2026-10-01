@@ -9,6 +9,7 @@ internal const val INSTALLER_LOCK_NAME = ".mindwtr-attachment-installer.lock"
 internal const val INSTALLER_PRESERVED_PREFIX = ".mindwtr-preserved-"
 internal const val INSTALLER_RETIREMENT_SUFFIX = ".retiring"
 internal val SHA256_HEX_PATTERN = Regex("^[a-f0-9]{64}$")
+private val INSTALL_JOURNAL_NAME = Regex("^\\.mindwtr-install-[a-f0-9]{32}\\.journal$")
 
 // Immutable publication protects against crashes and cooperating Mindwtr
 // writers by retaining a private namespace and exact descriptors. A malicious
@@ -531,6 +532,18 @@ private data class InstallArtifacts(
   val preservationPrefix: String,
 )
 
+/**
+ * One install journal a boot found: `completed` (the interrupted install finished; [preservedFile] holds a displaced generation),
+ * `restored` (rolled back to the generation before it), `conflict` (every generation kept; [preservedFile] names one), or `kept`
+ * (left on disk as it is: unreadable, or not naming the target its own name derives from; [error] says why).
+ */
+internal data class InterruptedInstallRecovery(
+  val journal: File,
+  val outcome: String,
+  val preservedFile: File? = null,
+  val error: String? = null,
+)
+
 private sealed class JournalRecovery {
   data object Continue : JournalRecovery()
   data class Completed(val stagedFile: File, val preservedFile: File?) : JournalRecovery()
@@ -615,6 +628,40 @@ internal class AttachmentFileInstallerCore(
           candidateSha256,
           artifacts,
         )
+      }
+    }
+  }
+
+  /**
+   * Boot recovery, for a host that recovers before any attachment write (the native app): each install journal under the
+   * managed root is finished or rolled back by the same rules [install] applies to its own target before it starts, under
+   * the same lock. A journal that cannot be read, or that does not name the target its own name derives from, is kept as it
+   * is: never deleted blindly. React Native recovers a target's journal at that target's next install only.
+   */
+  fun recoverInterruptedInstalls(): List<InterruptedInstallRecovery> {
+    if (ops.nodeKind(targetRoot) != InstallerNodeKind.DIRECTORY) return emptyList()
+    val journals = targetRoot.listFiles().orEmpty().filter { INSTALL_JOURNAL_NAME.matches(it.name) }.sortedBy { it.name }
+    if (journals.isEmpty()) return emptyList()
+    return ops.withExclusiveLock(File(targetRoot, INSTALLER_LOCK_NAME)) {
+      journals.map { file ->
+        try {
+          if (ops.nodeKind(file) != InstallerNodeKind.REGULAR_FILE) {
+            throw AttachmentInstallerFailure("Attachment install journal is not a regular file")
+          }
+          val target = ops.canonical(File(parseJournal(file).targetPath))
+          validateTargetPath(target)
+          val artifacts = artifactsFor(target)
+          if (artifacts.journal.name != file.name) {
+            throw AttachmentInstallerFailure("Attachment install journal names another target")
+          }
+          when (val recovery = recoverJournal(target, artifacts)) {
+            is JournalRecovery.Completed -> InterruptedInstallRecovery(file, "completed", recovery.preservedFile)
+            is JournalRecovery.Conflict -> InterruptedInstallRecovery(file, "conflict", recovery.preservedFile)
+            JournalRecovery.Continue -> InterruptedInstallRecovery(file, "restored")
+          }
+        } catch (error: Exception) {
+          InterruptedInstallRecovery(file, "kept", error = error.message ?: error.javaClass.simpleName)
+        }
       }
     }
   }

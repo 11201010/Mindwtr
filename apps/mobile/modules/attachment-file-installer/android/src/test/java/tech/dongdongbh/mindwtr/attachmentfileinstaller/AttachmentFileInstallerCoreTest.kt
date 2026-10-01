@@ -497,6 +497,73 @@ class AttachmentFileInstallerCoreTest {
   }
 
   @Test
+  fun bootRecoveryRestoresTheOldGenerationAfterACrashBeforeTheSwap() = withFixture { fixture ->
+    val staged = fixture.stage("new generation")
+    val target = fixture.target("boot-before-swap.bin").apply { writeText("old generation") }
+    try {
+      fixture.installer(JournalFaultOps(ops)).install(staged, target, ExpectedAttachmentGeneration.Present(ops.sha256(target)))
+      fail("initial journal fault must interrupt the install")
+    } catch (_: IllegalStateException) {
+    }
+    assertTrue(fixture.internalArtifacts().any { it.name.endsWith(".journal") })
+
+    val recovered = fixture.installer(ops).recoverInterruptedInstalls()
+
+    assertEquals(listOf("restored"), recovered.map { it.outcome })
+    assertEquals("old generation", target.readText())
+    assertTrue(fixture.internalArtifacts().isEmpty())
+    // Nothing is left for a second boot.
+    assertTrue(fixture.installer(ops).recoverInterruptedInstalls().isEmpty())
+  }
+
+  @Test
+  fun bootRecoveryCompletesAnInstallWhoseSwapLandedAndKeepsTheDisplacedGeneration() = withFixture { fixture ->
+    val staged = fixture.stage("new generation")
+    val target = fixture.target("boot-after-swap.bin").apply { writeText("old generation") }
+    try {
+      fixture.installer(LinkBeforeUnlinkFaultOps(ops, failMove = 2)).install(
+        staged,
+        target,
+        ExpectedAttachmentGeneration.Present(ops.sha256(target)),
+      )
+      fail("swap link-before-unlink fault must interrupt the install")
+    } catch (_: IllegalStateException) {
+    }
+
+    val recovered = fixture.installer(ops).recoverInterruptedInstalls().single()
+
+    assertEquals("completed", recovered.outcome)
+    assertEquals("new generation", target.readText())
+    assertEquals("old generation", recovered.preservedFile?.readText())
+    assertTrue(fixture.internalArtifacts().isEmpty())
+    assertFalse(staged.exists())
+  }
+
+  @Test
+  fun bootRecoveryKeepsAJournalItCannotProveAsItIs() = withFixture { fixture ->
+    val staged = fixture.stage("new generation")
+    val target = fixture.target("boot-foreign.bin").apply { writeText("old generation") }
+    try {
+      fixture.installer(JournalFaultOps(ops)).install(staged, target, ExpectedAttachmentGeneration.Present(ops.sha256(target)))
+      fail("initial journal fault must interrupt the install")
+    } catch (_: IllegalStateException) {
+    }
+    val journal = fixture.internalArtifacts().single { it.name.endsWith(".journal") }
+    // A journal under a name that is not its target's, and one that cannot be read: both stay, byte for byte.
+    val renamed = journal.resolveSibling("$INSTALLER_ARTIFACT_PREFIX${"0".repeat(32)}.journal")
+    Files.move(journal.toPath(), renamed.toPath())
+    val garbled = journal.resolveSibling("$INSTALLER_ARTIFACT_PREFIX${"f".repeat(32)}.journal").apply { writeText("not a journal") }
+    val before = renamed.readText()
+
+    val recovered = fixture.installer(ops).recoverInterruptedInstalls()
+
+    assertEquals(listOf("kept", "kept"), recovered.map { it.outcome })
+    assertEquals(before, renamed.readText())
+    assertEquals("not a journal", garbled.readText())
+    assertEquals("old generation", target.readText())
+  }
+
+  @Test
   fun linkBeforeUnlinkCrashRecoversAndRetriesWithoutPermanentConflict() = withFixture { fixture ->
     val staged = fixture.stage("new generation")
     val target = fixture.target("link-crash.bin").apply { writeText("old generation") }
