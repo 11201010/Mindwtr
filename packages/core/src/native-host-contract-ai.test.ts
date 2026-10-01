@@ -933,6 +933,32 @@ describe('native host contract: AI keys stay out of views, errors and logs', () 
         expect(seen[0].signal?.aborted).toBe(true);
     });
 
+    // Review C1 verification B: a cancelled model list frees its request, so the same request later fetches again.
+    it('fetches a model list again after its earlier load was cancelled (endpoint A, B, then A while A loads)', async () => {
+        await seed({ settings: { ai: { enabled: true, provider: 'openai', baseUrl: 'http://a/v1' } } });
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const dev = createDevice({ queues: { models: [async () => { await held; return { error: 'aborted' }; }, { value: ['a-model'] }] } });
+        dev.secrets.set('mindwtr-ai-key_openai', 'sk-1');
+        const contract = await openHost(dev.host);
+        let view = value(await contract.openAISettings({ requestId: generateUUID() }));
+        const atA = view.modelLists.assistant.request!;
+        const first = new AbortController();
+        const loading = contract.loadAIModels({ list: 'assistant', request: atA }, { signal: first.signal });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        value(await contract.setAIEndpoint({ requestId: generateUUID(), field: 'assistant', value: 'http://b/v1' }));
+        expect(value(contract.getAISettings()).modelLists.assistant.request).not.toBe(atA);
+        value(await contract.setAIEndpoint({ requestId: generateUUID(), field: 'assistant', value: 'http://a/v1' }));
+        expect(value(contract.getAISettings()).modelLists.assistant.request).toBe(atA);
+        // The host cancels A's first load before it asks again.
+        first.abort();
+        view = value(await contract.loadAIModels({ list: 'assistant', request: atA }, { signal: new AbortController().signal }));
+        release();
+        await loading;
+        expect(device.calls.filter((call) => call[0] === 'fetchModels')).toHaveLength(2);
+        expect(JSON.stringify(view)).toContain('a-model');
+    });
+
     it('answers an unreadable keystore with an alert, and the screen shows no key', async () => {
         const tasks = [{ id: 't1', title: 'Plan the trip', status: 'next', contexts: [], tags: [], createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }] as Task[];
         await seed({ tasks, settings: { ai: { enabled: true, provider: 'gemini' } } });

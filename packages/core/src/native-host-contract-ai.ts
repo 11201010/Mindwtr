@@ -350,7 +350,8 @@ const mask = (key: string) => '•'.repeat(key.length);
 const same = (left: unknown, right: unknown) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 const isOneOf = <T,>(values: readonly T[]) => (value: unknown): value is T => values.includes(value as T);
 
-type ModelList = { request: string; models: string[] | null };
+/** A model list asked for; `signal` is its load's, so a cancelled load never stands in for a later one. */
+type ModelList = { request: string; models: string[] | null; signal?: AbortSignal };
 type Visit = {
     /** The key each field shows (by provider, as React Native loaded it); in memory only. */
     keys: { assistant: { provider: AIProviderId; value: string } | null; speech: { provider: SpeechProviderChoice; value: string } | null };
@@ -1043,15 +1044,17 @@ export function createAIMethods(deps: AIDeps) {
             if (!visit) return fail('ACTION_FAILED', 'Open Settings › AI first');
             const opened = visit;
             const wanted = modelRequests(host.platform.isFossBuild)[input.list];
-            if (wanted && wanted.request === input.request && opened.models[input.list]?.request !== input.request) {
-                const slot: ModelList = { request: input.request, models: null };
+            const current = opened.models[input.list];
+            if (wanted && wanted.request === input.request && (current?.request !== input.request || current.signal?.aborted)) {
+                const slot: ModelList = { request: input.request, models: null, signal: options.signal };
                 opened.models[input.list] = slot;
                 try {
                     slot.models = await fetchProviderModelsCached(wanted.provider, {
                         apiKey: wanted.apiKey, baseUrl: wanted.baseUrl, kind: wanted.kind, fetchImpl: abortable(host.fetch ?? globalThis.fetch, options.signal),
                     });
                 } catch {
-                    // The built-in list stays; nothing to tell the user.
+                    // The built-in list stays; nothing to tell the user. A cancelled load frees its request for the next ask.
+                    if (options.signal?.aborted && opened.models[input.list] === slot) opened.models[input.list] = null;
                 }
             }
             return visit ? { ok: true, value: buildView(host) } : fail('ACTION_FAILED', 'Settings › AI was closed');
