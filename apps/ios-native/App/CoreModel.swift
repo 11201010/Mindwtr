@@ -33,7 +33,7 @@ extension Dictionary where Key == String, Value == Any {
 
 @MainActor
 final class CoreModel: ObservableObject {
-    enum Surface: Equatable { case inbox, focus, review, calendar, board, search, projects, project, waiting, someday, reference, history, trash, contexts, settings }
+    enum Surface: Equatable { case inbox, focus, review, calendar, board, search, projects, project, waiting, someday, reference, history, trash, contexts, savedSearch, settings }
 
     @Published private(set) var selectedSurface: Surface = .inbox {
         didSet {
@@ -433,6 +433,17 @@ final class CoreModel: ObservableObject {
     @Published var expandedProjectSections: Set<String> = []
     @Published private(set) var contexts: CoreObject = [:]
     @Published private(set) var contextsSearchText = ""
+    @Published private(set) var savedSearch: CoreObject = [:]
+    @Published private(set) var savedSearchCurrent = false
+    @Published private(set) var savedSearchError: String?
+    private var savedSearchID = ""
+    private var savedSearchCaller: Surface = .inbox
+    private var savedSearchLoadedDepth = 50
+    var savedSearchActionsEnabled: Bool {
+        ready && selectedSurface == .savedSearch && savedSearchCurrent && !busy && !retryNeeded
+            && !taskPresented && !capturePresented && !areaPickerPresented
+    }
+
     @Published private(set) var contextsCurrent = false
     @Published private(set) var contextsLoading = false
     @Published private(set) var contextsError: String?
@@ -2767,6 +2778,38 @@ final class CoreModel: ObservableObject {
             morePresented = true
             error = nil
         } catch { self.error = error.localizedDescription }
+    }
+
+    func loadMoreSavedSearchMenu() async {
+        let count = moreMenu.object("savedSearches").objects("items").count
+        guard morePresented, !busy, !retryNeeded, count < moreMenu.object("savedSearches").number("total") else { return }
+        busy = true
+        defer { finishOperation() }
+        for attempt in 0..<2 {
+            do {
+                var next = try await query("menuRead", ["more", "{}"])
+                var window = next.object("savedSearches")
+                var items = window.objects("items")
+                let target = min(count + 100, window.number("total"))
+                while items.count < target {
+                    let limit = min(100, target - items.count)
+                    let page = try await query("menuRead", ["collection", try json([
+                        "view": "more", "collection": "savedSearches", "offset": items.count,
+                        "limit": limit, "revision": next.text("revision")])])
+                    guard page.text("revision") == next.text("revision"), page.number("total") == window.number("total"),
+                          page.objects("items").count == limit else { throw CocoaError(.coderReadCorrupt) }
+                    items += page.objects("items")
+                }
+                guard morePresented, Set(items.map { $0.text("id") }).count == items.count else { return }
+                window["items"] = items
+                next["savedSearches"] = window
+                moreMenu = next
+                error = nil
+                return
+            } catch {
+                if attempt == 1 { self.error = error.localizedDescription }
+            }
+        }
     }
 
     func closeMore() {
@@ -11327,6 +11370,98 @@ final class CoreModel: ObservableObject {
         }
     }
 
+    func openSavedSearch(_ item: CoreObject) async {
+        guard ready, morePresented, !busy, !retryNeeded, !taskPresented, !capturePresented, !areaPickerPresented,
+              moreMenu.object("savedSearches").objects("items").contains(where: {
+                  $0.text("id") == item.text("id") && $0.text("route") == item.text("route")
+              }), item.text("route").hasPrefix("/saved-search/") else { return }
+        savedSearchCaller = selectedSurface == .savedSearch ? savedSearchCaller : selectedSurface
+        savedSearchID = item.text("id")
+        savedSearch = [:]
+        savedSearchCurrent = false
+        savedSearchLoadedDepth = pageSize
+        morePresented = false
+        selectedSurface = .savedSearch
+        await refresh()
+        if savedSearchCurrent {
+            NSLog("Native iOS saved search opened releaseCheck=v1.3.4/ios-saved-search-read")
+        }
+    }
+
+    func closeSavedSearch() async {
+        guard selectedSurface == .savedSearch, !busy, !retryNeeded, !taskPresented else { return }
+        selectedSurface = savedSearchCaller
+        await refresh()
+    }
+
+    func savedSearchGoInbox() async {
+        guard savedSearchActionsEnabled, !savedSearch.object("empty").object("actions").isEmpty else { return }
+        await selectSurface(.inbox)
+    }
+
+    func retrySavedSearch() async {
+        guard selectedSurface == .savedSearch, !busy, !retryNeeded, !taskPresented else { return }
+        await refresh()
+    }
+
+    func loadMoreSavedSearch() async {
+        guard savedSearchActionsEnabled, savedSearch.objects("rows").count < savedSearch.number("total") else { return }
+        savedSearchLoadedDepth = savedSearch.objects("rows").count + pageSize
+        busy = true
+        defer { finishOperation() }
+        await readSavedSearch()
+    }
+
+    func focusSavedSearchToken(_ token: String) {
+        guard savedSearchActionsEnabled, savedSearch.objects("rows").contains(where: { row in
+            row.object("meta").objects("parts").contains(where: {
+                ["context", "tag"].contains($0.text("kind")) && $0.text("text") == token
+            })
+        }) else { return }
+        contextsIntents.append(["kind": "focus", "value": token])
+        contextsLoadedDepth = pageSize
+        Task { await openContexts() }
+    }
+
+    private func readSavedSearch() async {
+        let id = savedSearchID
+        savedSearchCurrent = false
+        savedSearchError = nil
+        func current() -> Bool { !Task.isCancelled && selectedSurface == .savedSearch && savedSearchID == id && !taskPresented && !retryNeeded }
+        for attempt in 0..<2 {
+            do {
+                var next = try await query("menuRead", ["savedSearch", try json(["id": id, "offset": 0, "limit": pageSize])])
+                guard current() else { return }
+                guard next.number("version") == 1, next.text("id") == id, !next.text("revision").isEmpty,
+                      next.number("total") >= 0, next.objects("rows").count == min(pageSize, next.number("total")) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                var rows = next.objects("rows")
+                let target = min(savedSearchLoadedDepth, next.number("total"))
+                while rows.count < target {
+                    let limit = min(pageSize, target - rows.count)
+                    let page = try await query("menuRead", ["savedSearch", try json([
+                        "id": id, "offset": rows.count, "limit": limit, "revision": next.text("revision")])])
+                    guard current() else { return }
+                    guard page.text("id") == id, page.text("revision") == next.text("revision"),
+                          page.number("total") == next.number("total"), page.objects("rows").count == limit else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    rows += page.objects("rows")
+                }
+                guard Set(rows.map { $0.text("id") }).count == rows.count,
+                      rows.allSatisfy({ !$0.text("id").isEmpty }) else { throw CocoaError(.coderReadCorrupt) }
+                next["rows"] = rows
+                savedSearch = next
+                savedSearchCurrent = true
+                return
+            } catch {
+                guard current() else { return }
+                if attempt == 1 { savedSearchError = error.localizedDescription }
+            }
+        }
+    }
+
     func openTrash() async {
         guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !taskPresented, !capturePresented, !areaPickerPresented else { return }
         if selectedSurface != .trash { trashCaller = selectedSurface }
@@ -11982,6 +12117,13 @@ final class CoreModel: ObservableObject {
         }
         if selectedSurface == .contexts {
             guard contextsActionsEnabled, contexts.objects("rows").contains(where: { task in
+                task.object("meta").objects("parts").contains(where: {
+                    $0.text("kind") == "project" && $0.text("projectId") == row.text("id")
+                })
+            }) else { return }
+        }
+        if selectedSurface == .savedSearch {
+            guard savedSearchActionsEnabled, savedSearch.objects("rows").contains(where: { task in
                 task.object("meta").objects("parts").contains(where: {
                     $0.text("kind") == "project" && $0.text("projectId") == row.text("id")
                 })
@@ -13630,6 +13772,9 @@ final class CoreModel: ObservableObject {
         }
         if selectedSurface == .contexts {
             guard contextsActionsEnabled, contexts.objects("rows").contains(where: { $0.text("id") == id }) else { return }
+        }
+        if selectedSurface == .savedSearch {
+            guard savedSearchActionsEnabled, savedSearch.objects("rows").contains(where: { $0.text("id") == id }) else { return }
         }
         if selectedSurface == .history {
             guard historyActionsEnabled, history.objects("items").contains(where: {
@@ -16209,6 +16354,11 @@ final class CoreModel: ObservableObject {
                 $0.text("type") == "task" && $0.object("row").text("id") == id
             }) else { return }
         }
+        if selectedSurface == .savedSearch {
+            guard savedSearchActionsEnabled, savedSearch.objects("rows").contains(where: {
+                $0.text("id") == id && !$0.flag("readOnly") && !$0.object("meta").text("statusLabel").isEmpty
+            }) else { return }
+        }
         busy = true
         invalidatePreview()
         defer { finishOperation() }
@@ -17648,6 +17798,7 @@ final class CoreModel: ObservableObject {
         if selectedSurface == .reference { referenceCurrent = false }
         if selectedSurface == .history { historyCurrent = false }
         if selectedSurface == .trash { trashCurrent = false }
+        if selectedSurface == .savedSearch { savedSearchCurrent = false }
         if selectedSurface == .contexts {
             contextsReadTask?.cancel()
             contextsGeneration += 1
@@ -17692,6 +17843,7 @@ final class CoreModel: ObservableObject {
         case .reference: await readReference()
         case .history: await readHistory()
         case .trash: await readTrash()
+        case .savedSearch: await readSavedSearch()
         case .search:
             invalidateSearch()
             await readSearch(generation: searchGeneration, ownsOperation: true)

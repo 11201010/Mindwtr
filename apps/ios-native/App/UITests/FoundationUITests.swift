@@ -17,6 +17,80 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testSavedSearchNavigationAndDiscard() {
+        savedSearchNavigation(library: "2eadc8a3-4717-4e05-a4c0-ece40b254027")
+    }
+
+    func testSavedSearchNavigationLargestText() {
+        savedSearchNavigation(library: "1ce606d2-0429-4784-9c3b-fecafe704c4d")
+    }
+
+    private func savedSearchNavigation(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        func open() {
+            app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-task127-search")
+            boardEnabled(app.buttons["saved-search-back"])
+            XCTAssertEqual(app.staticTexts["saved-search-query"].label, "Task127")
+        }
+        open()
+        boardTap(app, "task-title-task127-task"); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]
+        replaceProjectNotesText(title, with: "Task127 discarded edit")
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard")
+        boardEnabled(app.buttons["saved-search-back"])
+        boardTap(app, "task-project-task127-task-task127-source")
+        boardEnabled(app.buttons["project-back"]); boardTap(app, "project-back")
+        boardEnabled(app.buttons["saved-search-back"])
+        boardTap(app, "task-token-task127-task-@a")
+        boardEnabled(app.buttons["contexts-back"])
+        expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["contexts-chip-@a"])
+        waitForExpectations(timeout: 15)
+        boardTap(app, "contexts-back"); boardEnabled(app.buttons["saved-search-back"])
+        boardTap(app, "search-open"); boardTap(app, "search-close")
+        boardEnabled(app.buttons["saved-search-back"])
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Saved search results"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "saved-search-back"); boardTap(app, "tab-menu"); boardTap(app, "menu-task127-empty")
+        XCTAssertTrue(app.otherElements["saved-search-empty"].waitForExistence(timeout: 15))
+        boardTap(app, "saved-search-back")
+        app.terminate(); open()
+        XCTAssertTrue(app.buttons["task-title-task127-task"].exists)
+        app.terminate()
+    }
+
+    func testSavedSearchPagingAndMenuPaging() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "1dc6830c-a245-4c79-8ee5-1b58f81a19f1"]
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu")
+        let strip = app.scrollViews["menu-saved-search-scroll"]
+        let more = app.buttons["menu-saved-search-more"]
+        for _ in 0..<120 {
+            if more.exists && more.isHittable { break }
+            strip.swipeLeft()
+        }
+        boardTap(app, "menu-saved-search-more")
+        let last = app.buttons["menu-task127-search-102"]
+        for _ in 0..<12 {
+            if last.exists && last.isHittable { break }
+            strip.swipeLeft()
+        }
+        boardEnabled(last); last.tap(); boardEnabled(app.buttons["saved-search-back"])
+        for _ in 0..<2 {
+            let more = app.buttons["saved-search-more"]
+            revealPagedElement(app, more, in: app.scrollViews["saved-search-scroll"])
+            boardEnabled(more); more.tap()
+        }
+        let task = app.buttons["task-title-task127-page-102"]
+        revealPagedElement(app, task, in: app.scrollViews["saved-search-scroll"])
+        boardEnabled(task); task.tap(); boardEnabled(app.buttons["task-view-close"])
+        boardTap(app, "task-view-close"); boardEnabled(app.buttons["saved-search-back"])
+        revealPagedElement(app, task, in: app.scrollViews["saved-search-scroll"])
+        XCTAssertTrue(task.exists)
+        app.terminate()
+    }
+
     func testTaskPreviewMetadataNavigation() {
         taskPreviewMetadataNavigation(library: "44a14eb4-a035-4354-b8f6-56e9444669e0")
     }

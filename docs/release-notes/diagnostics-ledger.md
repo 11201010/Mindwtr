@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-saved-search-read`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS saved search opened` confirms an existing Menu saved search reached a current shared-core result view. No query, title, identifier or result text is logged.
+
 - **`v1.3.4/archive-retention`** — `packages/core/src/store-archive-retention.ts`. `Archive retention cleanup saved` follows durable persistence of an eligible Archive expiration batch. Fields `taskCount`, `projectCount`, and `sectionCount` show only aggregate purged rows. A no-op, blocked edit, or failed save emits no success line. Verify expired standalone archived tasks and complete archived project groups leave Archive and cannot return from Trash; a newer child keeps its project group. No titles, identifiers, attachments, or URLs are logged.
 
 - **`v1.3.4/ios-task-preview-links`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS Task preview reference opened` with `destination=task`, `destination=project` or `destination=contexts` confirms an accepted saved-preview reference opened its destination. `source=description`, `source=checklist`, `source=project`, `source=contexts` or `source=tags` distinguishes the rendered source. `Native iOS Project caller reused` with `source=contexts-return` confirms the Project-to-Contexts round trip retained the original Project return destination. `Native iOS Contexts caller reused` with `source=project-return` confirms the inverse route retained the original Contexts return destination. Dirty, stale, unavailable and self references emit no opened line. No task text, titles, identifiers or URLs are logged.

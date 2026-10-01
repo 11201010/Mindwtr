@@ -6779,10 +6779,20 @@ private final class Engine: @unchecked Sendable {
             }
         }
         if method == "menuRead" {
-            guard let name = args[0] as? String, ["more", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
+            guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
                   let json = args[1] as? String,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
+            }
+            if name == "savedSearch" {
+                guard json.utf8.count <= 2_000_000,
+                      Set(input.keys).isSubset(of: ["id", "offset", "limit", "revision"]),
+                      let id = input["id"] as? String, !id.isEmpty, id.utf16.count <= 200,
+                      (input["offset"] == nil || Self.isInteger(input["offset"]) && (0...9_007_199_254_740_991).contains((input["offset"] as? NSNumber)?.doubleValue ?? -1)),
+                      (input["limit"] == nil || Self.isInteger(input["limit"]) && (1...100).contains((input["limit"] as? NSNumber)?.intValue ?? 0)),
+                      (input["revision"] == nil || input["revision"] is String) else {
+                    throw HostFailure("INVALID_INPUT: Unsupported native saved search input")
+                }
             }
             if name == "generalSettings" {
                 guard input.isEmpty, json.utf8.count <= 4_096 else { throw HostFailure("Unsupported native General Settings input") }
@@ -6980,12 +6990,20 @@ private final class Engine: @unchecked Sendable {
                 }
             }
             if name == "collection" {
-                let collections = ["waiting": ["people", "deferredProjects"],
+                let collections = ["more": ["savedSearches"], "waiting": ["people", "deferredProjects"],
                                    "someday": ["tokens", "projects", "sections", "deferredProjects"],
                                    "reference": ["tokens", "projects"], "done": ["tokens"]]
                 guard let view = input["view"] as? String, let collection = input["collection"] as? String,
                       collections[view]?.contains(collection) == true else {
                     throw HostFailure("Unsupported native menu collection")
+                }
+                if view == "more" {
+                    guard json.utf8.count <= 2_000_000,
+                          Set(input.keys) == Set(["view", "collection", "offset", "limit", "revision"]),
+                          Self.isInteger(input["offset"]), Self.isInteger(input["limit"]),
+                          (0...9_007_199_254_740_991).contains((input["offset"] as? NSNumber)?.doubleValue ?? -1),
+                          (1...100).contains((input["limit"] as? NSNumber)?.intValue ?? 0),
+                          input["revision"] is String else { throw HostFailure("INVALID_INPUT: Unsupported saved search Menu page") }
                 }
             }
         }

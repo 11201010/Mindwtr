@@ -19655,6 +19655,75 @@ final class CoreHostTests: XCTestCase {
         await replay.close()
     }
 
+    func testSavedSearchPagesAndMenuAreReadOnlyAcrossFreshHosts() async throws {
+        let source = try dateBundle(at: "2026-10-01T12:00:00.000Z")
+        let initializer = host(bundleURL: source)
+        _ = try await initializer.start(); await initializer.close()
+        let sqlite = try SQLiteBridge(url: database)
+        let at = "2026-10-01T12:00:00.000Z"
+        for index in 0..<105 {
+            let id = String(format: "saved-search-task-%03d", index)
+            _ = try sqlite.execute("INSERT INTO tasks (id, title, status, tags, contexts, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                   parametersJSON: json([id, "Task127 \(id)", "next", "[]", "[]", at, at, 1]))
+        }
+        let settingsRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sqlite.execute("SELECT data FROM settings WHERE id = 1").utf8)) as? [[String: Any]])
+        var settings = try object(XCTUnwrap(settingsRows.first?["data"] as? String))
+        settings["taskSortBy"] = "title"
+        settings["savedSearches"] = (0..<103).map { index in
+            ["id": "saved-search-\(index)", "name": "Search \(index)", "query": index == 1 ? "missing text" : "Task127", "createdAt": at]
+        }
+        _ = try sqlite.execute("UPDATE settings SET data = ? WHERE id = 1", parametersJSON: json([json(settings)]))
+        sqlite.close()
+        // Settle ordinary startup once, then prove read-only behavior on fresh hosts.
+        let settle = host(bundleURL: source); _ = try await settle.start(); await settle.close()
+        let initial = try SQLiteBridge(url: database); let before = try nineTableSnapshot(initial); initial.close()
+        for _ in 0..<2 {
+            let faults = HostIOFaults(); let active = host(faults, bundleURL: source)
+            _ = try await active.start()
+            var statements = 0, journals = 0
+            faults.beforeSQL = { _ in statements += 1 }; faults.journalWrite = { journals += 1 }
+            func read(_ input: [String: Any]) async throws -> [String: Any] {
+                try object(await active.call("menuRead", argumentsJSON: json(["savedSearch", json(input)])))
+            }
+            let first = try await read(["id": "saved-search-102", "limit": 50])
+            XCTAssertEqual(first["found"] as? Bool, true); XCTAssertEqual(first["total"] as? Int, 105)
+            XCTAssertEqual(first["title"] as? String, "Search 102")
+            let revision = try XCTUnwrap(first["revision"] as? String)
+            var rows = try XCTUnwrap(first["rows"] as? [[String: Any]])
+            for offset in [50, 100] {
+                let page = try await read(["id": "saved-search-102", "offset": offset, "limit": 50, "revision": revision])
+                rows += try XCTUnwrap(page["rows"] as? [[String: Any]])
+            }
+            XCTAssertEqual(rows.compactMap { $0["id"] as? String }, (0..<105).map { String(format: "saved-search-task-%03d", $0) })
+            let empty = try await read(["id": "saved-search-1"])
+            XCTAssertEqual(empty["total"] as? Int, 0); XCTAssertEqual(empty["found"] as? Bool, true)
+            let missing = try await read(["id": "gone"])
+            XCTAssertEqual(missing["found"] as? Bool, false)
+            XCTAssertNotNil((missing["empty"] as? [String: Any])?["actions"] as? [String: Any])
+            let menu = try object(await active.call("menuRead", argumentsJSON: json(["more", "{}"])))
+            XCTAssertEqual((menu["savedSearches"] as? [String: Any])?["total"] as? Int, 103)
+            let later = try object(await active.call("menuRead", argumentsJSON: json(["collection", json([
+                "view": "more", "collection": "savedSearches", "offset": 100, "limit": 100,
+                "revision": try XCTUnwrap(menu["revision"] as? String)])])))
+            XCTAssertEqual((later["items"] as? [[String: Any]])?.last?["id"] as? String, "saved-search-102")
+            let invalid: [[String: Any]] = [["id": ""], ["id": "saved-search-0", "offset": true],
+                                         ["id": "saved-search-0", "offset": -1], ["id": "saved-search-0", "limit": 101],
+                                         ["id": "saved-search-0", "extra": true], ["id": "saved-search-0", "offset": 50]]
+            for input in invalid {
+                await expectFailure { _ = try await read(input) }
+            }
+            _ = try await active.call("language", argumentsJSON: json(["de", "de-DE"]))
+            await expectFailure("STALE_REVISION") {
+                _ = try await read(["id": "saved-search-102", "offset": 50, "limit": 50, "revision": revision])
+            }
+            XCTAssertEqual(statements, 0); XCTAssertEqual(journals, 0)
+            await active.close()
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), before); check.close()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        }
+    }
+
     func testTaskViewReferenceTargetsAreReadOnlyAcrossFreshHosts() async throws {
         try await seedProjectFocusRows()
         let setup = host()

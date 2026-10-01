@@ -21,7 +21,7 @@ struct InboxScreen: View {
         model.morePresented || !model.somedayPanel.isEmpty || !model.referencePanel.isEmpty || !model.historyPanel.isEmpty
     }
     private var menuListPrefix: String {
-        model.selectedSurface == .contexts ? "contexts" : model.selectedSurface == .trash ? "trash" : model.selectedSurface == .history ? "history" : model.selectedSurface == .reference ? "reference" : model.selectedSurface == .someday ? "someday" : "waiting"
+        model.selectedSurface == .savedSearch ? "saved-search" : model.selectedSurface == .contexts ? "contexts" : model.selectedSurface == .trash ? "trash" : model.selectedSurface == .history ? "history" : model.selectedSurface == .reference ? "reference" : model.selectedSurface == .someday ? "someday" : "waiting"
     }
 
     var body: some View {
@@ -51,6 +51,10 @@ struct InboxScreen: View {
                                 .accessibilityAction(.escape) { Task { await model.closeSomeday() } }
                         } else if model.selectedSurface == .settings {
                             SettingsScreen(model: model, palette: palette)
+                        } else if model.selectedSurface == .savedSearch {
+                            menuListHeader
+                            SavedSearchScreen(model: model, palette: palette)
+                                .accessibilityAction(.escape) { Task { await model.closeSavedSearch() } }
                         } else if model.selectedSurface == .trash {
                             menuListHeader
                             TrashScreen(model: model, palette: palette)
@@ -104,7 +108,7 @@ struct InboxScreen: View {
                 }
                 if model.selectedSurface != .search && model.selectedSurface != .project && model.selectedSurface != .waiting
                     && model.selectedSurface != .someday && model.selectedSurface != .reference && model.selectedSurface != .history
-                    && model.selectedSurface != .trash
+                    && model.selectedSurface != .trash && model.selectedSurface != .savedSearch
                     && (model.selectedSurface != .contexts || model.quickAccessView == "contexts")
                     && model.selectedSurface != .settings {
                     tabBar
@@ -746,6 +750,7 @@ struct InboxScreen: View {
                 endContextsInput()
                 Task {
                     if model.selectedSurface == .contexts { await model.closeContexts() }
+                    else if model.selectedSurface == .savedSearch { await model.closeSavedSearch() }
                     else if model.selectedSurface == .trash { await model.closeTrash() }
                     else if model.selectedSurface == .history { await model.closeHistory() }
                     else if model.selectedSurface == .reference { await model.closeReference() }
@@ -762,7 +767,7 @@ struct InboxScreen: View {
     }
 
     private var menuListTitle: some View {
-        Text(model.selectedSurface == .reference && !model.reference.text("title").isEmpty
+        Text(model.selectedSurface == .savedSearch ? (model.savedSearch.text("title").isEmpty ? model.label("search.savedSearches") : model.savedSearch.text("title")) : model.selectedSurface == .reference && !model.reference.text("title").isEmpty
              ? model.reference.text("title") : model.label(menuListPrefix == "history" || menuListPrefix == "trash" || menuListPrefix == "contexts" ? "nav." + menuListPrefix : menuListPrefix + ".title")).rnFont(17, .bold)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)

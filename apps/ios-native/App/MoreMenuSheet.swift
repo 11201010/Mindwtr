@@ -47,9 +47,16 @@ struct MoreMenuSheet: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
                         ForEach(saved.indices, id: \.self) { index in compactItem(saved[index]).frame(width: dynamicTypeSize.isAccessibilitySize ? 180 : 76) }
+                        if saved.count < model.moreMenu.object("savedSearches").number("total") {
+                            Button(model.label("common.more")) { Task { await model.loadMoreSavedSearchMenu() } }
+                                .rnFont(12, .semibold).frame(minWidth: 44, minHeight: 58)
+                                .disabled(model.busy || model.retryNeeded)
+                                .accessibilityIdentifier("menu-saved-search-more")
+                        }
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("menu-saved-search-scroll")
             }
             palette.border.frame(height: 0.5).padding(.vertical, 12)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: dynamicTypeSize.isAccessibilitySize ? 1 : 3), spacing: 10) {
@@ -66,12 +73,14 @@ struct MoreMenuSheet: View {
         let isTrash = item.text("id") == "trash" && item.text("route") == "/trash"
         let isBoard = item.text("id") == "board" && item.text("route") == "/board"
         let isSettings = item.text("id") == "settings" && item.text("route") == "/settings"
-        let supported = isHistory || isTrash || isBoard || isSettings
+        let isSavedSearch = item.text("route").hasPrefix("/saved-search/")
+        let supported = isHistory || isTrash || isBoard || isSettings || isSavedSearch
         return Button {
             if isHistory { Task { await model.openHistory() } }
             else if isTrash { Task { await model.openTrash() } }
             else if isBoard { Task { await model.openBoard() } }
             else if isSettings { Task { await model.openSettings() } }
+            else if isSavedSearch { Task { await model.openSavedSearch(item) } }
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: item.text("icon")).font(.system(size: 18))
