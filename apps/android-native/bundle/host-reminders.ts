@@ -85,7 +85,9 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
         const result = await bindings.plan({ storedAlarms: rebuild ? allPending(stored) : stored, permissionGranted });
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         const plan = result.value;
-        bindings.apply(JSON.stringify({ ...plan, channelName: REMINDER_NOTIFICATION_CHANNEL_NAME }));
+        // Nothing to make, cancel or store: the stored map already says it (none stored reads as an empty map).
+        const unchanged = plan.schedule.length === 0 && plan.cancel.length === 0 && (plan.alarms === stored || (stored === null && plan.alarms === '{}'));
+        bindings.apply(JSON.stringify({ ...plan, channelName: REMINDER_NOTIFICATION_CHANNEL_NAME, unchanged }));
         if (topUpTimer) clearTimeout(topUpTimer);
         topUpTimer = plan.topUpDelayMs === null ? null : setTimeout(() => {
             topUpTimer = null;

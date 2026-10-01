@@ -53,6 +53,16 @@ class ReminderPlanTest {
         assertEquals(listOf("cancel 7", "store {after}"), events)
     }
 
+    @Test fun aPlanThatChangesNothingWritesNothing() {
+        ReminderPlan.apply(plan(null, emptyList(), emptyList()).put("unchanged", true), port)
+        assertEquals(emptyList<String>(), events)
+    }
+
+    @Test fun reactNativesMapsAreRemovedOnlyWhenTheyExist() {
+        RnAlarmCleanup.run(rows = { emptyList() }, cancel = { events += "cancel $it" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
+        assertEquals(listOf("forget", "delete"), events)
+    }
+
     @Test fun noPermissionClearsTheDeliveredRemindersBeforeTheEmptyMapIsStored() {
         ReminderPlan.apply(plan(null, listOf(7 to "withdrawn"), emptyList(), clearDelivered = true), port)
         assertEquals(listOf("remove 7", "cancel 7", "clear", "store {after}"), events)

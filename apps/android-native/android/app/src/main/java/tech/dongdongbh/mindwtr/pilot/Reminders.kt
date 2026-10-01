@@ -48,7 +48,8 @@ internal object ReminderPlan {
 
     /**
      * [plan] (core's NativeReminderAlarmPlan): `writeAhead` stored (on disk), then each cancel, then each alarm made, then `alarms`
-     * stored. A withdrawn alarm's delivered notification goes before its cancel; an expired one's stays. A failed removal never
+     * stored (not when `unchanged`: the stored map already says it). A withdrawn alarm's delivered notification goes before its
+     * cancel; an expired one's stays. A failed removal never
      * stops a cancel. A refused alarm throws before `alarms` is stored: the next plan, from `writeAhead`, makes the pending alarms
      * again under the same ids, so nothing is made twice or left behind. [checkpoint] names each point a process death is safe at.
      */
@@ -72,7 +73,8 @@ internal object ReminderPlan {
         }
         checkpoint("scheduled")
         if (plan.optBoolean("clearDelivered")) runCatching { port.clearDelivered() }
-        port.store(plan.getString("alarms"))
+        // As RN's saveAlarmMap: a map that did not change is not written again (#766).
+        if (!plan.optBoolean("unchanged")) port.store(plan.getString("alarms"))
     }
 
     /**
@@ -179,7 +181,9 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
     override fun permissionGranted() = permissionGranted(context)
 
     override fun cleanupRn(): Int = RnAlarmCleanup.run(rows = ::rnAlarmIds, cancel = ::cancelRn,
-        forgetMaps = { keyValue.multiRemove(listOf(ReminderPlan.MAP_KEY, POMODORO_KEY)); Unit },
+        // Only maps that exist: an RN user who never had reminders keeps RKStorage untouched.
+        forgetMaps = { keyValue.multiGet(listOf(ReminderPlan.MAP_KEY, POMODORO_KEY)).filterValues { it != null }.keys.toList()
+            .takeIf { it.isNotEmpty() }?.let(keyValue::multiRemove); Unit },
         deleteTable = { check(context.deleteDatabase(RN_DATABASE) || !context.getDatabasePath(RN_DATABASE).exists()) { "Cannot delete $RN_DATABASE" } })
 
     override fun store(map: String) { keyValue.set(ReminderPlan.MAP_KEY, map) }
