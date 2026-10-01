@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
-import { dismissOnboarding, seedAppData } from './seed';
+import { dismissOnboarding, localDateKey, seedAppData } from './seed';
 
 async function sectionGeometry(header: Locator) {
     return header.evaluate((button) => {
@@ -33,7 +33,7 @@ for (const presentation of ['inline', 'modal']) {
             await page.setViewportSize({ width: 1280, height: 900 });
             await dismissOnboarding(page);
             await seedAppData(page, {
-                tasks: [{ id: 'editor-task', title: 'Plan the garden', status: 'inbox', startTime: '2026-10-01' }],
+                tasks: [{ id: 'editor-task', title: 'Plan the garden', status: 'inbox', startTime: localDateKey(7) }],
                 settings: { gtd: { taskEditor: { presentation } } },
             });
             await page.goto('/');
