@@ -466,18 +466,17 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
                     ? owner.attachments
                     : [...owner.attachments, ...batch.added] } };
             }
-            // As React Native's project screen: an archived project takes no link, and asks nothing.
-            if (!mutableProject(owner.projectId)) return { ok: true, value: { kind: 'blocked' } };
             const batch = planAttachmentLinkBatch(input.text, { newId, now, t });
-            if (batch.kind !== 'add') return { ok: true, value: batch };
-            const ids = batch.added.map((attachment) => attachment.id);
+            const ids = batch.kind === 'add' ? batch.added.map((attachment) => attachment.id) : [];
+            // Inside the receipt, so a retry answers its first reply even once the project is archived.
             return receipts.run<NativeAttachmentChange>(requestId, JSON.stringify(['attachmentLinks', owner.projectId, input.text]), async () => {
-                const stored = storedProject(owner.projectId);
-                if (stored?.attachments?.some((attachment) => ids.includes(attachment.id))) {
+                if (storedProject(owner.projectId)?.attachments?.some((attachment) => ids.includes(attachment.id))) {
                     return { ok: true, value: { kind: 'saved', ids, attachments: null } };
                 }
+                // As React Native's project screen: an archived project takes no link, and asks nothing.
                 const project = mutableProject(owner.projectId);
                 if (!project) return { ok: true, value: { kind: 'blocked' } };
+                if (batch.kind !== 'add') return { ok: true, value: batch };
                 return writeProject(project.id, [...(project.attachments ?? []), ...batch.added], ids);
             });
         },

@@ -276,6 +276,18 @@ describe('native host contract: attachments, crash safety', () => {
         expect(stored().attachments).toHaveLength(2);
     });
 
+    it('answers a project link batch\'s retry from its receipt after the project was archived', async () => {
+        env = await openSqliteHost({ projects: [seedProject()] }, undefined, { attachments: fakeHost({ ports: {}, log: [] }) });
+        const input = { requestId: '00000000-0000-4000-8000-00000000a004', owner: projectOwner, text: 'https://one.example' };
+        const first = ok(await env.host.submitAttachmentLinks(input));
+        expect(first).toEqual({ kind: 'saved', ids: [requestRowId(input.requestId, 'link:0')], attachments: null });
+        await later(() => useTaskStore.getState().updateProject('p1', { status: 'archived' }));
+        expect(ok(await env.host.submitAttachmentLinks(input))).toEqual(first);
+        const replay = await env.replay((host) => host.submitAttachmentLinks(input));
+        expect(replay.result).toEqual({ ok: true, value: first });
+        expect(replay.wrote).toBe(false);
+    });
+
     it('removes a synced project attachment once: a replay after a restart writes nothing', async () => {
         const synced = pdf('synced', { cloudKey: 'attachments/synced.pdf', fileHash: 'b'.repeat(64) });
         env = await openSqliteHost({ projects: [seedProject([synced])] }, undefined, { attachments: fakeHost({ ports: {}, log: [] }) });
