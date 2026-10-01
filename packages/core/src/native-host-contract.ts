@@ -2771,8 +2771,8 @@ export function createNativeHostContract(options: {
          * from the draft (editTaskChecklist sets it); send it in the same call.
          * `attachments` saves the editor's attachment list the same way: `base` is the list the
          * editor loaded, `value` the edited one (native-host-contract-attachments.ts). Only the
-         * attachments the editor changed or added are written over the saved list
-         * (mergeTaskDraftAttachments), so a sync's change to another attachment stays.
+         * fields the editor changed are written over the saved records, and only new attachments
+         * are added (mergeTaskDraftAttachments), so a sync's removal, cloudKey or new content stays.
          */
         async saveTaskDraft(input: {
             id: string;

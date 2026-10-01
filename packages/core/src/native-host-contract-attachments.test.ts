@@ -351,6 +351,21 @@ describe('native host contract: attachments, crash safety', () => {
         expect(replay.wrote).toBe(false);
         expect(useTaskStore.getState()._tasksById.get('t1')?.attachments?.[1]?.deletedAt).toBe(CREATED);
     });
+
+    it('never brings back an attachment sync removed after the editor downloaded it', async () => {
+        const state = { ports: {} as Ports, log: [] as unknown[][] };
+        const task: Task = { id: 't1', title: 'Task', status: 'next', tags: [], contexts: [], attachments: [remote('r1')], createdAt: CREATED, updatedAt: CREATED };
+        env = await openSqliteHost({ tasks: [task] }, undefined, { attachments: fakeHost(state) });
+        const base = [remote('r1')];
+        state.ports.ensure = { status: 'available', attachment: { ...remote('r1'), uri: 'file:///data/files/attachments/r1.pdf', localStatus: 'available' } };
+        const answer = ok(await env.host.downloadAttachment({ owner: { kind: 'task', taskId: 't1', attachments: base }, attachmentId: 'r1' }));
+        const draft = ok(env.host.applyAttachmentUpdate({ attachments: base, update: answer.update! }));
+        const tombstone = { ...remote('r1'), deletedAt: '2026-09-02T00:00:00.000Z', updatedAt: '2026-09-02T00:00:00.000Z' };
+        await later(() => useTaskStore.getState().updateTask('t1', { attachments: [tombstone] }));
+        expect(await env.host.saveTaskDraft({ id: 't1', base: {}, patch: {}, attachments: { base, value: draft },
+            requestId: '00000000-0000-4000-8000-00000000c002' })).toMatchObject({ ok: true });
+        expect(useTaskStore.getState()._tasksById.get('t1')?.attachments).toEqual([tombstone]);
+    });
 });
 
 describe('native host contract: attachments, the list and the editor\'s helpers', () => {

@@ -376,11 +376,25 @@ export const getAttachmentRowState = (attachment: Attachment): AttachmentRowStat
     };
 };
 
+// The fields that describe an attachment's bytes. The editor changes them only by a download
+// (or its terminal "unrecoverable" mark), which belongs to the content it started on.
+const CONTENT_FIELDS = new Set<string>(['uri', 'cloudKey', 'fileHash', 'contentRev', 'contentMtimeMs', 'contentSize',
+    'size', 'mimeType', 'pendingContentUpload', 'localStatus']);
+
+const sameAttachmentContent = (left: Attachment, right: Attachment): boolean => (
+    left.cloudKey === right.cloudKey && left.fileHash === right.fileHash && (left.contentRev ?? 0) === (right.contentRev ?? 0)
+);
+
 /**
- * The task's attachments after the editor's save: each attachment the editor changed or added
- * (`value` against `base`, the list the editor loaded) applied onto the stored list. Every
- * other stored attachment keeps its stored version, so a sync that recorded a cloudKey or
- * brought another device's attachment while the editor was open is not undone.
+ * The task's attachments after the editor's save: the fields the editor changed on each
+ * attachment (`value` against `base`, the list the editor loaded), applied onto the stored
+ * record as it is now. Everything else keeps its stored value, so a sync that recorded a
+ * cloudKey, a new content revision or another device's attachment while the editor was open
+ * is not undone. A record removed in storage stays removed; one storage no longer has is not
+ * added back; only an attachment new to the editor is appended. A download (or its terminal
+ * mark) made for content storage has since replaced is dropped: those bytes are the old
+ * content's. With nothing concurrent the result equals the editor's list, as React Native's
+ * replace saved it.
  */
 export function mergeTaskDraftAttachments(
     stored: readonly Attachment[],
@@ -388,12 +402,29 @@ export function mergeTaskDraftAttachments(
     value: readonly Attachment[],
 ): Attachment[] {
     const baseById = new Map(base.map((attachment) => [attachment.id, attachment]));
-    const changed = new Map(value
-        .filter((attachment) => !taskEditValuesEqual(baseById.get(attachment.id), attachment))
-        .map((attachment) => [attachment.id, attachment]));
-    const merged = stored.map((attachment) => changed.get(attachment.id) ?? attachment);
+    const valueById = new Map(value.map((attachment) => [attachment.id, attachment]));
+    const merged = stored.map((record) => {
+        const before = baseById.get(record.id);
+        const after = valueById.get(record.id);
+        if (!before || !after || record.deletedAt) return record;
+        const keys = new Set([...Object.keys(before), ...Object.keys(after)] as (keyof Attachment)[]);
+        let changed = [...keys].filter((key) => !taskEditValuesEqual(before[key], after[key]));
+        if (!sameAttachmentContent(record, before)) {
+            if (changed.includes('cloudKey')) return record;
+            changed = changed.filter((key) => !CONTENT_FIELDS.has(key));
+        }
+        if (changed.length === 0) return record;
+        const next: Record<string, unknown> = { ...record };
+        for (const key of changed) {
+            if (after[key] === undefined) delete next[key];
+            else next[key] = after[key];
+        }
+        return next as unknown as Attachment;
+    });
     const storedIds = new Set(stored.map((attachment) => attachment.id));
-    for (const attachment of changed.values()) if (!storedIds.has(attachment.id)) merged.push(attachment);
+    for (const attachment of value) {
+        if (!storedIds.has(attachment.id) && !baseById.has(attachment.id)) merged.push(attachment);
+    }
     return merged;
 }
 
