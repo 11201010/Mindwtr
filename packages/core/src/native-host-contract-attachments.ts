@@ -22,8 +22,9 @@
  *   attachment's ID is the request UUID, so its managed copy (files/attachments/<id><ext>)
  *   is the same file on a retry and the attachment is added once.
  * - submitAttachmentLinks: the link sheet's Save. Each link's ID derives from the request
- *   UUID (requestRowId), so a retry adds none twice. With `editingAttachmentId` (task only),
- *   saves that link's new text.
+ *   UUID (requestRowId), so a retry adds none twice. With `editing` (task only: the link's
+ *   ID and its title and uri when the sheet opened), saves that link's new text,
+ *   compare-and-set: a link that no longer holds those values is refused (STALE_REVISION).
  * - removeAttachment: a soft delete (sync removes the remote file); one already removed
  *   stays as it is.
  * - downloadAttachment and openAttachment: the bytes first, then (open) what to do with
@@ -420,7 +421,7 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
             requestId: string;
             owner: NativeAttachmentOwner;
             text: string;
-            editingAttachmentId?: string | null;
+            editing?: { attachmentId: string; title: string; uri: string } | null;
         }): Promise<NativeHostResult<NativeAttachmentChange>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
@@ -430,10 +431,11 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
             }
             const owner = readOwner(input.owner);
             if (!owner) return ownerError();
-            const editing = input.editingAttachmentId ?? null;
-            if (editing !== null && (owner.kind !== 'task' || !isText(editing, ID_LIMIT)
-                || owner.attachments.find((attachment) => attachment.id === editing)?.kind !== 'link')) {
-                return fail('INVALID_INPUT', 'Only a task draft\'s link can be edited');
+            const editing = input.editing ?? null;
+            if (editing !== null && (owner.kind !== 'task' || !isObjectRecord(editing) || !isText(editing.attachmentId, ID_LIMIT)
+                || !isText(editing.title, TEXT_LIMIT) || !isText(editing.uri, TEXT_LIMIT)
+                || owner.attachments.find((attachment) => attachment.id === editing.attachmentId)?.kind !== 'link')) {
+                return fail('INVALID_INPUT', 'Only a task draft\'s link can be edited, with its ID, title and uri when the sheet opened');
             }
             const t = deps.t();
             const now = new Date().toISOString();
@@ -445,12 +447,16 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
                 if (editing !== null) {
                     const edit = planAttachmentLinkEdit(input.text, now, t);
                     if (edit.kind === 'refused') return { ok: true, value: edit };
-                    const before = owner.attachments.find((attachment) => attachment.id === editing)!;
-                    // Target-state: a retry whose link already holds the text changes nothing.
-                    const attachments = before.title === edit.patch.title && before.uri === edit.patch.uri
-                        ? owner.attachments
-                        : patchAttachment(owner.attachments, editing, edit.patch);
-                    return { ok: true, value: { kind: 'saved', ids: [editing], attachments } };
+                    const before = owner.attachments.find((attachment) => attachment.id === editing.attachmentId)!;
+                    // Compare-and-set: a retry whose link already holds the text changes nothing; a
+                    // link changed since the sheet opened (a later edit) is never undone.
+                    if (before.title === edit.patch.title && before.uri === edit.patch.uri) {
+                        return { ok: true, value: { kind: 'saved', ids: [before.id], attachments: owner.attachments } };
+                    }
+                    if (before.title !== editing.title || before.uri !== editing.uri) {
+                        return fail('STALE_REVISION', 'The link changed since the sheet opened; read the list again');
+                    }
+                    return { ok: true, value: { kind: 'saved', ids: [before.id], attachments: patchAttachment(owner.attachments, before.id, edit.patch) } };
                 }
                 const batch = planAttachmentLinkBatch(input.text, { newId, now, t });
                 if (batch.kind !== 'add') return { ok: true, value: batch };

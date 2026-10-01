@@ -103,7 +103,7 @@ describe('native host contract: attachments, against React Native\'s frozen pari
             const t = (key: string) => key === 'attachments.title' ? 'Attachments' : key;
             let draft = scenario.attachments;
             let ids = 0;
-            const sheet = { visible: false, text: '', touched: false, editing: null as string | null };
+            const sheet = { visible: false, text: '', touched: false, editing: null as { attachmentId: string; title: string; uri: string } | null };
             let imagePreview: string | null = null;
             let audio: string | null = null;
             const owner = (): NativeAttachmentOwner => (scenario.surface === 'task'
@@ -150,14 +150,17 @@ describe('native host contract: attachments, against React Native\'s frozen pari
                         break;
                     case 'editLink': {
                         const row = ok(host.getAttachmentList({ owner: owner() })).rows.find((entry) => entry.id === arg);
-                        if (row?.editText != null) Object.assign(sheet, { visible: true, text: row.editText, touched: false, editing: arg });
+                        const link = draft.find((entry) => entry.id === arg);
+                        if (row?.editText != null && link) {
+                            Object.assign(sheet, { visible: true, text: row.editText, touched: false, editing: { attachmentId: arg, title: link.title, uri: link.uri } });
+                        }
                         break;
                     }
                     case 'setLinkInput':
                         sheet.text = arg;
                         break;
                     case 'confirmLink':
-                        change(await host.submitAttachmentLinks({ requestId: rnId(1000 + index), owner: owner(), text: sheet.text, editingAttachmentId: sheet.editing }));
+                        change(await host.submitAttachmentLinks({ requestId: rnId(1000 + index), owner: owner(), text: sheet.text, editing: sheet.editing }));
                         break;
                     case 'closeLinkModal':
                         Object.assign(sheet, { visible: false, text: '', touched: false, editing: null });
@@ -196,7 +199,7 @@ describe('native host contract: attachments, against React Native\'s frozen pari
                 const frozen = fixture.observations[scenario.name][index];
                 const screen = scenario.surface === 'task'
                     ? { linkModalVisible: sheet.visible, linkInput: sheet.text, linkInputTouched: sheet.touched,
-                        editingLinkAttachmentId: sheet.editing, imagePreview, audio }
+                        editingLinkAttachmentId: sheet.editing?.attachmentId ?? null, imagePreview, audio }
                     : { linkModalVisible: frozen.screen.linkModalVisible, linkInput: frozen.screen.linkInput, imagePreview };
                 const frozenScreen = scenario.surface === 'task'
                     ? frozen.screen
@@ -330,6 +333,32 @@ describe('native host contract: attachments, crash safety', () => {
         expect(ok(await restarted.removeAttachment({ requestId: '00000000-0000-4000-8000-00000000b004', owner: owner(draft), attachmentId: fileRequest })))
             .toEqual({ kind: 'saved', ids: [fileRequest], attachments: draft });
         expect(state.log).toEqual([]);
+    });
+
+    it('edits a task link compare-and-set: an old edit replayed after a restart never undoes a later one', async () => {
+        const task: Task = { id: 't1', title: 'Task', status: 'next', tags: [], contexts: [], createdAt: CREATED, updatedAt: CREATED };
+        env = await openSqliteHost({ tasks: [task] }, undefined, { attachments: fakeHost({ ports: {}, log: [] }) });
+        const a: Attachment = { id: 'l1', kind: 'link', title: 'A', uri: 'https://a.example', createdAt: CREATED, updatedAt: CREATED };
+        const owner = (attachments: Attachment[]): NativeAttachmentOwner => ({ kind: 'task', taskId: 't1', attachments });
+        const edit = (requestId: string, draft: Attachment[], text: string) => {
+            const link = draft.find((item) => item.id === 'l1')!;
+            return env!.host.submitAttachmentLinks({ requestId, owner: owner(draft), text, editing: { attachmentId: 'l1', title: link.title, uri: link.uri } });
+        };
+        const first = { requestId: '00000000-0000-4000-8000-00000000b011', draft: [a], text: 'B | https://b.example' };
+        const toB = ok(await edit(first.requestId, first.draft, first.text));
+        if (toB.kind !== 'saved') throw new Error('not edited');
+        const toC = ok(await edit('00000000-0000-4000-8000-00000000b012', toB.attachments!, 'C | https://c.example'));
+        if (toC.kind !== 'saved') throw new Error('not edited');
+        expect(toC.attachments![0]).toMatchObject({ title: 'C', uri: 'https://c.example' });
+
+        const restarted = await env.restart();
+        // The first request, retried with its own original values against the draft that now holds C.
+        const replay = await restarted.submitAttachmentLinks({ requestId: first.requestId, owner: owner(toC.attachments!), text: first.text,
+            editing: { attachmentId: 'l1', title: 'A', uri: 'https://a.example' } });
+        expect(replay).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        // A retry whose draft already holds its text changes nothing.
+        expect(ok(await restarted.submitAttachmentLinks({ requestId: first.requestId, owner: owner(toB.attachments!), text: first.text,
+            editing: { attachmentId: 'l1', title: 'A', uri: 'https://a.example' } }))).toEqual({ kind: 'saved', ids: ['l1'], attachments: toB.attachments });
     });
 
     it('saves the editor\'s attachments with the draft once, over a sync\'s change to another attachment', async () => {
