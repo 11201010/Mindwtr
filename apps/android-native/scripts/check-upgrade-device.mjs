@@ -28,7 +28,7 @@
 //   6   an RN user's WebDAV sync: RN v1.3.2 configures WebDAV in its own Sync screen against a local
 //       folder (sync-harness.mjs, through adb reverse); the native app finds RN's keys in RKStorage and
 //       the password in RN's secret store, shows them on its Sync screen, and syncs with them.
-//   7   an RN user's reminder alarms: RN v1.3.2 sets its alarm for a task due tomorrow (`dumpsys alarm`: one alarm to its
+//   7   an RN user's reminder alarms (task reminders turned on in RN's database): RN v1.3.2 sets its alarm for a task due in two hours (`dumpsys alarm`: one alarm to its
 //       library's AlarmReceiver); the native app's first start cancels it, deletes RN's alarm database and map, and sets its own
 //       alarm for the same task: RN's gone, the native one present, once each.
 //
@@ -850,15 +850,37 @@ const scenarioAlarms = async () => {
     console.log('\n# 7 reminder alarms: RN\'s cancelled, the native app\'s set, once each');
     fresh();
     const zone = sh('getprop persist.sys.timezone') || 'UTC';
-    const dueAt = Math.ceil((Number(sh('date +%s')) * 1000 + 26 * 3600_000) / 60_000) * 60_000;
+    const dueAt = Math.ceil((Number(sh('date +%s')) * 1000 + 2 * 3600_000) / 60_000) * 60_000;
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit',
         minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(dueAt)).map((part) => [part.type, part.value]));
     const title = `77${run}`;
-    const item = { id: randomUUID(), title: `${title} /due:${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`, createdAt: new Date().toISOString(), source: 'android-quick-capture' };
+    const item = { id: randomUUID(), title: `${title} /next /due:${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`, createdAt: new Date().toISOString(), source: 'android-quick-capture' };
+    // RN's first launch makes its database with task reminders off (its default); they are turned on in that database, as RN's
+    // Settings › Notifications would, before RN reads it again.
+    device.launch(RN_ACTIVITY);
+    await until('RN\'s settings row', () => rows(pullDatabase('7-first'), 'SELECT id FROM settings WHERE id = 1').length === 1, 60_000);
+    await stopApp();
+    const db = pullDatabase('7-reminders-on');
+    execFileSync('bun', ['-e', `
+        import { Database } from 'bun:sqlite';
+        const db = new Database(process.env.CHECK_DB);
+        db.query("UPDATE settings SET data = json_set(data, '$.notificationsEnabled', json('true')) WHERE id = 1").run();
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+        db.close();
+    `], { env: { ...process.env, CHECK_DB: db } });
+    pushPrivate(db, DB);
+    runAs(`rm -f ${DB}-wal ${DB}-shm`);
     queue([item]);
     device.launch(RN_ACTIVITY);
     await drained([item], 'the timed capture');
-    await until('RN\'s alarm for the task', () => packageAlarms().some((alarm) => alarm.rn && alarm.at === dueAt), 60_000);
+    try {
+        await until('RN\'s alarm for the task', () => packageAlarms().some((alarm) => alarm.rn && alarm.at === dueAt), 60_000);
+    } catch (error) {
+        console.log(`evidence - due ${dueAt} (${item.title}); this package's alarm lines:\n${sh('dumpsys alarm').split('\n').filter((line) => line.includes(PKG) || /origWhen/.test(line)).slice(0, 30).join('\n')}`);
+        console.log(`evidence - RN's map: ${asyncStorage('7-evidence').get('mindwtr:local:alarms:v1')}`);
+        console.log(`evidence - RN's task: ${JSON.stringify(rows(pullDatabase('7-evidence'), `SELECT title, dueDate, status FROM tasks WHERE id = '${item.id}'`))}`);
+        throw error;
+    }
     await killWithoutStop();
     const before = packageAlarms();
     const rnMap = JSON.parse(asyncStorage('7-rn').get('mindwtr:local:alarms:v1') ?? '{}');
