@@ -67,7 +67,7 @@ struct EditorDraftStore {
         if let attempt = value.attempt {
             guard validUUID(attempt.id), attempt.sessionID == snapshot.sessionID,
                   attempt.taskID == snapshot.taskID, attempt.generation == snapshot.generation,
-                  ["saveDraft", "checklistSave"].contains(attempt.method),
+                  ["saveDraft", "checklistSave", "boardAction"].contains(attempt.method),
                   attempt.argumentsJSON.utf8.count <= 2_000_000,
                   let arguments = try? JSONSerialization.jsonObject(with: Data(attempt.argumentsJSON.utf8)) as? [String],
                   arguments.count == 1, validObject(arguments[0], limit: 2_000_000) else {

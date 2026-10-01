@@ -17,6 +17,55 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testTaskDuplicateNormal() { taskDuplicateFlow(library: "a10dd636-e182-4b35-94d9-d8678f674bbe") }
+    func testTaskDuplicateLargestText() { taskDuplicateFlow(library: "778122ec-5c49-436d-8453-ebdbc454a6dd") }
+
+    private func startTaskDuplicate(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["search-open"], timeout: 30)
+        boardTap(app, "search-open")
+        let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText("Task132 scheduled")
+        boardTap(app, "search-task-task132-task"); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]; boardEnabled(title)
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap(); title.typeText(" draft")
+        XCTAssertEqual(title.value as? String, "Task132 scheduled task draft")
+        boardTap(app, "task-more"); boardTap(app, "task-duplicate")
+    }
+
+    private func taskDuplicateFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); startTaskDuplicate(app)
+        boardEnabled(app.buttons["task-mode-edit"], timeout: 30); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]; boardEnabled(title)
+        XCTAssertEqual(title.value as? String, "Task132 scheduled task")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task Duplicate"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "task-view-close")
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate()
+    }
+
+    func testTaskDuplicateFailureRetainsDraft() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "ab2a66d9-3ac1-4da8-82c0-e2c3537cc131"]
+        app.launch(); startTaskDuplicate(app)
+        boardEnabled(app.buttons["task-view-retry"], timeout: 30)
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task132 scheduled task draft")
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["task-view-close"].isEnabled)
+            boardTap(app, "task-view-retry"); boardEnabled(app.buttons["task-view-retry"], timeout: 30)
+        }
+        app.terminate()
+    }
+
+    func testTaskDuplicateColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "ab2a66d9-3ac1-4da8-82c0-e2c3537cc131"]
+        app.launch(); boardEnabled(app.buttons["task-mode-edit"], timeout: 30); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]; boardEnabled(title)
+        XCTAssertEqual(title.value as? String, "Task132 scheduled task")
+        boardTap(app, "task-view-close")
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists); app.terminate()
+    }
+
     func testTaskShareNormal() { taskShareFlow(library: "3f8071b2-c76d-4eeb-a914-bd2a31f59bb8") }
     func testTaskShareLargestText() { taskShareFlow(library: "d272fef2-b00d-428a-9e72-377ca731121c") }
 

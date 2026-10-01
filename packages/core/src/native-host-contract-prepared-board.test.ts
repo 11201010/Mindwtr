@@ -44,6 +44,24 @@ afterEach(async () => {
 });
 
 describe('native prepared Board actions', () => {
+    it('duplicates the saved source while an unrelated editor draft remains unsaved', async () => {
+        const { host } = await open();
+        const source = clone(useTaskStore.getState()._tasksById.get('n-draft'));
+        const opening = value(host.getTaskEditorModel({ id: 'n-draft' }));
+        const edited = value(host.editTaskDraft({ id: 'n-draft', draft: opening.draft,
+            edit: { type: 'fields', patch: { title: 'Unsaved editor title', description: 'Unsaved editor note' } } }));
+        expect(edited.draft.title).toBe('Unsaved editor title');
+        expect(useTaskStore.getState()._tasksById.get('n-draft')).toEqual(source);
+
+        const prepared = prepare(host, 'duplicateTask');
+        expect(prepared.before).toEqual(source);
+        expect(prepared.after.title).toBe(source.title);
+        expect(prepared.after.description).toBe(source.description);
+        expect(value(await commit(host, prepared))).toEqual(prepared.result);
+        expect(useTaskStore.getState()._tasksById.get('n-draft')).toEqual(source);
+        expect(useTaskStore.getState()._tasksById.get(requestId)).toEqual(prepared.after);
+    });
+
     it('prepares without writes and refuses re-deleting a later restored task', async () => {
         const { host, recorder } = await open();
         const before = clone(useTaskStore.getState()._allTasks);
@@ -194,6 +212,29 @@ describe('native prepared Board actions', () => {
         await flushPendingSave();
         const before = clone(useTaskStore.getState()._allTasks);
         expect(await commit(host, prepared)).toMatchObject({ ok: false });
+        expect(useTaskStore.getState()._allTasks).toEqual(before);
+        expect(useTaskStore.getState()._tasksById.has(requestId)).toBe(false);
+    });
+
+    it.each(['archived', 'completed'] as const)('refuses a duplicate when its destination project becomes %s before commit', async (status) => {
+        const { host } = await open();
+        const prepared = prepare(host, 'duplicateTask');
+        useTaskStore.setState((state) => ({ _allProjects: state._allProjects.map((project) => project.id === prepared.before.projectId
+            ? { ...project, status, rev: (project.rev ?? 0) + 1 } : project) }));
+        await useTaskStore.getState().persistSnapshot();
+        const before = clone(useTaskStore.getState()._allTasks);
+        expect(await commit(host, prepared)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(useTaskStore.getState()._allTasks).toEqual(before);
+        expect(useTaskStore.getState()._tasksById.has(requestId)).toBe(false);
+    });
+
+    it('refuses a duplicate if the saved source was deleted before the copy exists', async () => {
+        const { host } = await open();
+        const prepared = prepare(host, 'duplicateTask');
+        expect((await useTaskStore.getState().deleteTask('n-draft')).success).toBe(true);
+        await flushPendingSave();
+        const before = clone(useTaskStore.getState()._allTasks);
+        expect(await commit(await restart(), prepared)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         expect(useTaskStore.getState()._allTasks).toEqual(before);
         expect(useTaskStore.getState()._tasksById.has(requestId)).toBe(false);
     });

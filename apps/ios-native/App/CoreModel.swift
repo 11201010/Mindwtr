@@ -14615,6 +14615,60 @@ final class CoreModel: ObservableObject {
         catch { taskError = error.localizedDescription }
     }
 
+    private var taskDuplicateRequest: String?
+
+    func duplicateTask() async {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              !taskScheduleUpdating, !taskAttachmentOpening, !taskLinkSheetActive,
+              !taskPersonCreateOwed, !taskPersonCreateNeedsReview,
+              taskChecklistWriteKind == nil, !taskChecklistReadPending, let host else { return }
+        // RN duplicates the saved source, not the unsaved editor. Freeze even a
+        // clean editor so success and cold replay settle the same owned snapshot.
+        taskRecoveryOwn(["title"])
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            checkpointTaskDraft(force: true)
+            await flushTaskDraftCheckpoint()
+            guard taskRecoveryCheckpointError == nil, let snapshot = taskRecoverySnapshot else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    "action": ["type": "duplicateTask", "taskId": viewedTaskID]])
+            taskDuplicateRequest = request
+            taskRecoverySaving = true
+            let result = try decode(try await host.saveEditorDraft("boardAction",
+                argumentsJSON: try json([request]), expectedSession: snapshot.sessionID,
+                expectedGeneration: snapshot.generation))
+            try await acknowledgeTaskDuplicate(result)
+        } catch {
+            if isDefiniteRejection(error) { taskDuplicateRequest = nil }
+            retryNeeded = taskDuplicateRequest != nil
+            taskRecoverySaving = retryNeeded
+            taskError = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeTaskDuplicate(_ result: CoreObject) async throws {
+        guard let request = taskDuplicateRequest, let host,
+              result.flag("changed"), result.object("open").text("tab") == "task",
+              result.object("open").text("taskId") == (try decode(request)).text("requestId") else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        taskRecoverySnapshot = try await host.readEditorDraft()
+        guard taskRecoverySnapshot == nil else { throw CocoaError(.coderReadCorrupt) }
+        let copiedID = result.object("open").text("taskId")
+        taskDuplicateRequest = nil
+        taskRecoverySaving = false
+        retryNeeded = false
+        taskError = nil
+        dismissTask(refreshCaller: false)
+        do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+        prepareTaskPresentation(copiedID, initialTab: "task")
+        Task { await readTaskView() }
+    }
+
     func saveTask() async {
         guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
               !taskAttachmentOpening,
@@ -15771,7 +15825,7 @@ final class CoreModel: ObservableObject {
 
     private func readTaskEditorLabels(_ editor: CoreObject) async throws {
         let options = editor.object("options")
-        var keys = ["common.none", "common.share", "common.more", "share.unavailable", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
+        var keys = ["taskEdit.duplicateTask", "task.updateFailed", "common.none", "common.share", "common.more", "share.unavailable", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
                     "taskEdit.scheduling", "taskEdit.organization", "taskEdit.details",
                     "taskEdit.contextsLabel", "taskEdit.contextsPlaceholder", "taskEdit.tagsLabel", "taskEdit.tagsPlaceholder",
                     "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder", "people.new", "taskEdit.statusLabel", "reference.convertToAction",
@@ -16644,6 +16698,20 @@ final class CoreModel: ObservableObject {
                 await finishTaskPersonCreateRead(frozen)
                 return
             }
+            if taskDuplicateRequest != nil {
+                if let acknowledgment {
+                    try await acknowledgeTaskDuplicate(try decode(acknowledgment))
+                } else {
+                    // No journal means the invocation never reached its write.
+                    taskRecoverySnapshot = try await host!.readEditorDraft()
+                    guard taskRecoverySnapshot != nil else { throw CocoaError(.coderReadCorrupt) }
+                    taskDuplicateRequest = nil
+                    taskRecoverySaving = false
+                    retryNeeded = false
+                    taskError = label("task.updateFailed")
+                }
+                return
+            }
             if taskRecoverySaving {
                 if let acknowledgment {
                     let result = try decode(acknowledgment)
@@ -17386,6 +17454,10 @@ final class CoreModel: ObservableObject {
                 capturePending = false
                 taskSavePending = false
                 boardActionRequest = nil
+                if taskDuplicateRequest != nil {
+                    taskDuplicateRequest = nil
+                    taskRecoverySaving = false
+                }
                 if mindSweepRequest != nil {
                     mindSweepRequest = nil
                     mindSweepRequestID = nil

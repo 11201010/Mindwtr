@@ -61,6 +61,105 @@ final class EditorDraftRecoveryHostTests: XCTestCase {
         ])])
     }
 
+    func testTaskDuplicateKeepsFrozenDraftUntilColdCommitAndCopiesSavedSource() async throws {
+        let faults = HostIOFaults()
+        let first = host(faults)
+        _ = try await first.start()
+        let sourceID = UUID().uuidString.lowercased()
+        _ = try await seed(first, id: sourceID)
+        let before = try json(task(sourceID))
+        let snapshot = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: sourceID,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Unsaved source title"}}"#)
+        try await first.checkpointEditorDraft(snapshot)
+        let copyID = UUID().uuidString.lowercased()
+        let args = try json([json(["requestId": copyID, "action": ["type": "duplicateTask", "taskId": sourceID]])])
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Duplicate COMMIT failure") } }
+        do {
+            _ = try await first.saveEditorDraft("boardAction", argumentsJSON: args,
+                expectedSession: snapshot.sessionID, expectedGeneration: snapshot.generation)
+            XCTFail("Expected failed duplicate")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED")) }
+        let frozen = try XCTUnwrap(EditorDraftStore(databaseURL: database).read())
+        XCTAssertEqual(frozen.snapshot, snapshot)
+        XCTAssertEqual(frozen.attempt?.method, "boardAction")
+        XCTAssertEqual(try json(task(sourceID)), before)
+        let owed = try json(JSONSerialization.jsonObject(with: Data(contentsOf: journal)))
+        do { _ = try await first.retryPending(); XCTFail("Expected failed retry") } catch {}
+        XCTAssertEqual(try json(JSONSerialization.jsonObject(with: Data(contentsOf: journal))), owed)
+        await first.close()
+
+        let second = host()
+        let startup = try object(await second.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "boardCommit")
+        let result = try XCTUnwrap(recovery["result"] as? [String: Any])
+        XCTAssertEqual((result["open"] as? [String: Any])?["taskId"] as? String, copyID)
+        XCTAssertEqual(try task(copyID)["title"] as? String, "Before edit")
+        XCTAssertEqual(try json(task(sourceID)), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let copy = try json(task(copyID))
+        await second.close()
+        let third = host()
+        _ = try await third.start()
+        XCTAssertEqual(try json(task(copyID)), copy)
+        XCTAssertEqual(try json(task(sourceID)), before)
+    }
+
+    func testTaskDuplicateRejectsWrongSourceAndTrashWithoutConsumingDraft() async throws {
+        let core = host()
+        _ = try await core.start()
+        let sourceID = UUID().uuidString.lowercased()
+        _ = try await seed(core, id: sourceID)
+        let before = try json(task(sourceID))
+        let snapshot = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: sourceID,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Unsaved"}}"#)
+        try await core.checkpointEditorDraft(snapshot)
+        for action in [["type": "duplicateTask", "taskId": "wrong-source"], ["type": "trashTask", "taskId": sourceID]] {
+            do {
+                _ = try await core.saveEditorDraft("boardAction",
+                    argumentsJSON: json([json(["requestId": UUID().uuidString.lowercased(), "action": action])]),
+                    expectedSession: snapshot.sessionID, expectedGeneration: 1)
+                XCTFail("Expected identity refusal")
+            } catch {}
+            XCTAssertEqual(try EditorDraftStore(databaseURL: database).read()?.snapshot, snapshot)
+            XCTAssertNil(try EditorDraftStore(databaseURL: database).read()?.attempt)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            XCTAssertEqual(try json(task(sourceID)), before)
+        }
+    }
+
+    func testTaskDuplicateLostAcknowledgmentRemovesOnlyItsDraftWithoutSecondWrite() async throws {
+        let faults = HostIOFaults()
+        let first = host(faults)
+        _ = try await first.start()
+        let sourceID = UUID().uuidString.lowercased()
+        _ = try await seed(first, id: sourceID)
+        let snapshot = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: sourceID,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Unsaved"}}"#)
+        try await first.checkpointEditorDraft(snapshot)
+        let copyID = UUID().uuidString.lowercased()
+        faults.editorDraftRemove = { throw HostFailure("Injected draft cleanup failure") }
+        do {
+            _ = try await first.saveEditorDraft("boardAction",
+                argumentsJSON: json([json(["requestId": copyID, "action": ["type": "duplicateTask", "taskId": sourceID]])]),
+                expectedSession: snapshot.sessionID, expectedGeneration: 1)
+            XCTFail("Expected cleanup failure")
+        } catch {}
+        let copy = try json(task(copyID))
+        XCTAssertNotNil(try EditorDraftStore(databaseURL: database).read()?.attempt)
+        await first.close()
+        let replayFaults = HostIOFaults()
+        replayFaults.beforeSQL = { sql in
+            if sql == "COMMIT" { throw HostFailure("Replay must not write") }
+        }
+        let second = host(replayFaults)
+        _ = try await second.start()
+        XCTAssertEqual(try json(task(copyID)), copy)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
     func testInterruptedPersonCreatePreservesUnsavedTaskCheckpointAcrossColdReplay() async throws {
         let faults = HostIOFaults()
         let first = host(faults)

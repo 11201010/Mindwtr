@@ -60,6 +60,8 @@ Expanded Project Details shows the shared attachment list and opens URL titles, 
 
 Not yet established: replacement installs, credentials/preferences migration, sync, attachments, extensions, background behavior or production readiness. A separate native development build now runs on an iPhone 12 with iOS 17.5.1; its focused workflow evidence does not establish full physical-device parity. Simulator and macOS package evidence must be reported separately from physical-device evidence.
 
+Task editor More → Duplicate copies the saved Task and opens that copy, matching RN. Unsaved source edits are discarded only after the prepared copy is durably confirmed. Failure retains the source draft and exact command; cold recovery creates at most one copy and opens it.
+
 Task editor More → Share opens the native activity sheet with RN’s shared plain-text formatter. It includes current unsaved fields, protects the draft before leaving the app, and keeps the editor open when sharing is canceled. Read-only editors hide the action. Sharing does not save the Task.
 
 Task editor title and Notes automatically share RN's text direction, using both raw inputs and the selected language. The shared core owns the rule; native controls apply it without changing saved text. iOS 26 and later use explicit layout-based alignment to preserve this behavior across Apple's newer text-input defaults. See the parity ledger for runtime validation and remaining editor work.

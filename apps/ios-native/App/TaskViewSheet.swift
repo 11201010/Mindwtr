@@ -111,6 +111,10 @@ struct TaskViewSheet: View {
                 Spacer()
                 if !readOnly && !model.taskEditor.isEmpty {
                     Menu {
+                        Button(strings.text("taskEdit.duplicateTask")) {
+                            endEditingBeforeAction()
+                            Task { await model.duplicateTask() }
+                        }.accessibilityIdentifier("task-duplicate")
                         Button(strings.text("common.share")) {
                             endEditingBeforeAction()
                             Task { await model.shareTask() }

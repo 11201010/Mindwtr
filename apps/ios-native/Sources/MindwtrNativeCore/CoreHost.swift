@@ -845,16 +845,27 @@ private final class Engine: @unchecked Sendable {
         try editorDrafts.discardCorrupt()
     }
 
+    private static func editorRequestTaskID(_ method: String, _ request: [String: Any]) -> String? {
+        if method == "boardAction" {
+            guard Set(request.keys) == Set(["requestId", "action"]),
+                  let action = request["action"] as? [String: Any],
+                  Set(action.keys) == Set(["type", "taskId"]),
+                  action["type"] as? String == "duplicateTask" else { return nil }
+            return action["taskId"] as? String
+        }
+        return request["id"] as? String
+    }
+
     func saveEditorDraft(_ method: String, argumentsJSON: String,
                          expectedSession: String, expectedGeneration: Int) throws -> String {
         dispatchPrecondition(condition: .onQueue(queue))
-        guard started, !closed, pending == nil, ["saveDraft", "checklistSave"].contains(method) else {
+        guard started, !closed, pending == nil, ["saveDraft", "checklistSave", "boardAction"].contains(method) else {
             throw HostFailure("Editor Save is not ready")
         }
         let args = try arguments(method, argumentsJSON)
         guard let encoded = args.first as? String,
               let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
-              let id = request["id"] as? String,
+              let id = Self.editorRequestTaskID(method, request),
               method != "saveDraft" || request["scheduleBase"] != nil,
               let current = try editorDrafts.read(), current.snapshot.taskID == id else {
             throw HostFailure("Editor Save request does not match its draft")
@@ -2572,7 +2583,8 @@ private final class Engine: @unchecked Sendable {
                 }
                 let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
                 let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
-                command = PendingCommand(version: 2, method: "boardCommit", argumentsJSON: encoded)
+                command = PendingCommand(version: 2, method: "boardCommit", argumentsJSON: encoded,
+                                         editorDraft: editorAttempt)
                 _ = try journalArguments(command)
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "captureSubmit" {
@@ -2981,6 +2993,12 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("taskEditorTimeSpentApplied")
 #endif
             NSLog("Native iOS Task Editor time spent saved releaseCheck=v1.3.4/ios-editor-time-spent outcome=confirmed")
+        }
+        if command.method == "boardCommit", command.editorDraft?.method == "boardAction", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("taskDuplicate")
+#endif
+            NSLog("Native iOS Task duplicated releaseCheck=v1.3.4/ios-task-duplicate outcome=confirmed")
         }
         if command.method == "boardCommit", case .success = terminal, !boardActionLogged {
             boardActionLogged = true
@@ -4856,12 +4874,13 @@ private final class Engine: @unchecked Sendable {
                   !attempt.taskID.isEmpty, attempt.taskID.utf8.count <= 500,
                   attempt.generation > 0,
                   (attempt.method == "saveDraft" && command.method == "draftCommit")
-                    || (attempt.method == "checklistSave" && command.method == "checklistPreparedCommit"),
+                    || (attempt.method == "checklistSave" && command.method == "checklistPreparedCommit")
+                    || (attempt.method == "boardAction" && command.method == "boardCommit"),
                   attempt.argumentsJSON.utf8.count <= 2_000_000,
                   let originalArgs = try NativeJSON.jsonObject(with: Data(attempt.argumentsJSON.utf8)) as? [String],
                   originalArgs.count == 1,
                   let original = try NativeJSON.jsonObject(with: Data(originalArgs[0].utf8)) as? [String: Any],
-                  original["id"] as? String == attempt.taskID,
+                  Self.editorRequestTaskID(attempt.method, original) == attempt.taskID,
                   let preparedArgs = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
                   preparedArgs.count == 1,
                   let envelope = try NativeJSON.jsonObject(with: Data(preparedArgs[0].utf8)) as? [String: Any],
