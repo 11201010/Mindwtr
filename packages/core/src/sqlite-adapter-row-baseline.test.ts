@@ -1,0 +1,98 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { openScratchSqlite } from './screen-parity.replay';
+import { SqliteAdapter } from './sqlite-adapter';
+import type { AppData, Person, Task } from './types';
+
+// readRowBaseline: the native boot's check after activation (apps/android-native/bundle/host-entry.ts, activateAndVerify) reads
+// row versions instead of whole rows. It must leave the adapter as a full getData() would, or return null.
+
+const AT = '2026-09-01T00:00:00.000Z';
+const task = (id: string): Task => ({ id, title: id, status: 'next', tags: [], contexts: [], createdAt: AT, updatedAt: AT, rev: 1, revBy: 'device-a' });
+const person = (id: string): Person => ({ id, name: id, createdAt: AT, updatedAt: AT, rev: 1, revBy: 'device-a' });
+const empty: AppData = { tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} };
+
+type Known = Map<string, Map<string, { rowId: number | null; rev: number | null; updatedAt: string | null }>>;
+/** The deletion baseline (private): what a later save may delete by omission, and under which rowid and version. */
+const known = (adapter: SqliteAdapter) => (adapter as unknown as { lastKnownRowVersions: Known | null }).lastKnownRowVersions;
+const plain = (map: Known | null) => (map ? Object.fromEntries([...map].map(([table, rows]) => [table, Object.fromEntries(rows)])) : null);
+
+describe('SqliteAdapter.readRowBaseline', () => {
+    const dirs: string[] = [];
+    const closers: (() => void)[] = [];
+    afterEach(() => {
+        closers.splice(0).forEach((close) => close());
+        dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true }));
+    });
+    const file = () => {
+        const dir = mkdtempSync(join(tmpdir(), 'mindwtr-row-baseline-'));
+        dirs.push(dir);
+        return join(dir, 'mindwtr.db');
+    };
+    const connect = (path: string) => {
+        const opened = openScratchSqlite(path);
+        closers.push(opened.close);
+        return opened.client;
+    };
+
+    it('after a save that created rows, leaves the baseline a full read leaves (their real rowids)', async () => {
+        const path = file();
+        const adapter = new SqliteAdapter(connect(path), { rejectConcurrentWrites: true });
+        await adapter.getData();
+        // As an activation that backfills a person: the save knows its new rows only as submitted (no rowid).
+        await adapter.saveData({ ...empty, tasks: [task('t1')], people: [person('p1')] });
+        expect(known(adapter)?.get('people')?.get('p1')?.rowId).toBeNull();
+
+        const light = await adapter.readRowBaseline();
+        const full = new SqliteAdapter(connect(path), { rejectConcurrentWrites: true });
+        const data = await full.getData();
+        expect(light?.ids).toEqual({
+            tasks: data.tasks.map((row) => row.id), projects: [], sections: [], areas: [], people: data.people.map((row) => row.id),
+        });
+        expect(plain(known(adapter))).toEqual(plain(known(full)));
+        expect(known(adapter)?.get('people')?.get('p1')?.rowId).toEqual(expect.any(Number));
+        // The epoch it accepted is the one its last full read saw: the next save is not refused as an external change.
+        await adapter.saveData({ ...data, tasks: [...data.tasks, task('t2')] });
+    });
+
+    it('returns null and changes nothing after another connection committed since the last read', async () => {
+        const path = file();
+        const adapter = new SqliteAdapter(connect(path), { rejectConcurrentWrites: true });
+        await adapter.getData();
+        await adapter.saveData({ ...empty, tasks: [task('t1')] });
+        const before = known(adapter);
+        const other = new SqliteAdapter(connect(path));
+        await other.saveTask(task('t2'));
+
+        expect(await adapter.readRowBaseline()).toBeNull();
+        expect(known(adapter)).toBe(before);
+        // Only a full read is a current baseline now; after it, writes go on.
+        const data = await adapter.getData();
+        expect(data.tasks.map((row) => row.id).sort()).toEqual(['t1', 't2']);
+        await adapter.saveData({ ...data, tasks: [...data.tasks, task('t3')] });
+    });
+
+    it('returns null without a full read before it (no accepted epoch)', async () => {
+        const adapter = new SqliteAdapter(connect(file()), { rejectConcurrentWrites: true });
+        expect(await adapter.readRowBaseline()).toBeNull();
+    });
+
+    it('maps the settings row and the saved filters table as getData does', async () => {
+        const path = file();
+        const client = connect(path);
+        const adapter = new SqliteAdapter(client, { rejectConcurrentWrites: true });
+        await adapter.getData();
+        await client.run('INSERT OR REPLACE INTO settings (id, data) VALUES (1, ?)', [JSON.stringify({ theme: 'dark', ai: { provider: 'openai', apiKey: 'stored' } })]);
+        const filter = (id: string, name: string) => [id, name, 'focus', '{}', AT, AT];
+        for (const row of [filter('f1', 'One'), filter('f2', 'Two'), filter('', 'Blank id')]) {
+            await client.run('INSERT INTO saved_filters (id, name, view, criteria, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)', row);
+        }
+        const data = await adapter.getData();
+        const light = await adapter.readRowBaseline();
+        expect(light?.settings).toEqual(data.settings);
+        // A blank id maps to nothing, so the table's count (3) and the mapped list (2) differ: the host's check sees it.
+        expect(light?.settings.savedFilters?.map((saved) => saved.id)).toEqual(['f1', 'f2']);
+    });
+});

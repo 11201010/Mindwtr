@@ -2963,6 +2963,16 @@ export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLogg
 export function setLogger(logger) { globalThis.coreLogger = logger; }
 export function consoleLogger() {}
 export class SqliteAdapter {
+  async ensureSchema() { globalThis.events.push('schema'); }
+  // core's row-version read after activation: the ids and the mapped settings a full read would give (rowBaseline overrides;
+  // rowBaselineNull is another connection's commit since the last full read).
+  async readRowBaseline() {
+    globalThis.events.push('baseline');
+    if (globalThis.rowBaselineNull) return null;
+    const data = globalThis.fakeData;
+    return globalThis.rowBaseline || { ids: Object.fromEntries(['tasks', 'projects', 'sections', 'areas', 'people'].map((table) =>
+      [table, data[table].map((row) => row.id)])), settings: data.settings };
+  }
   async getData() {
     globalThis.events.push('load');
     globalThis.lastLoaded = globalThis.fakeDataSequence.shift() || globalThis.fakeData;
@@ -3211,6 +3221,7 @@ const makeState = (taskCount, fakeDataSequence = []) => {
                 if (sql.includes('COUNT(*)') && sql.includes('tasks')) {
                     return JSON.stringify([{ n: taskCount === 'auto' ? state.lastLoaded.tasks.length : taskCount }]);
                 }
+                if (sql.includes('COUNT(*)') && sql.includes('saved_filters')) return JSON.stringify([{ n: state.filterCount ?? 0 }]);
                 if (sql.includes('COUNT(*)')) return '[{"n":0}]';
                 return '[]';
             },
@@ -3260,7 +3271,8 @@ assert.match((await poll(state, state.MindwtrHost.languageSaved('', 'en-US'))).e
 
 const full = { tasks: [{ id: 'first' }], projects: [], sections: [], areas: [], people: [], settings: {} };
 const partial = { ...full, tasks: [] };
-const secondRead = makeState(1, [full, partial]);
+// Startup #4: a non-legacy boot reads whole rows first in the activation, whose validated read fails the boot before any save.
+const secondRead = makeState(1, [partial]);
 const secondResult = await poll(secondRead, secondRead.MindwtrHost.boot());
 assert.equal(secondResult.ok, false);
 assert.match(secondResult.error, /Incomplete tasks load/);
@@ -3270,8 +3282,45 @@ assert.equal(secondRead.saveCount, 0);
 const ready = makeState(0);
 assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
 assert.equal(ready.activationCount, 1);
-// Activation may write (core backfills a person per assignee): the store is checked against a load taken after its save.
-assert.deepEqual(ready.events.slice(ready.events.lastIndexOf('activate')), ['activate', 'load', 'flush', 'load']);
+// Startup #4: a non-legacy boot sets the schema up, and the activation's validated read is its first full read. Activation may
+// write (core backfills a person per assignee): the store is checked against the database after its save, by id, from core's
+// row-version read, which also refreshes the deletion baseline (rowids of rows the save created) under the accepted epoch.
+assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline']);
+{
+    // Ids, not counts: a lost row and a duplicated one leave the count equal.
+    const lost = makeState(2);
+    lost.fakeData = { ...full, tasks: [{ id: 'a' }, { id: 'b' }] };
+    lost.rowBaseline = { ids: { tasks: ['a', 'c'], projects: [], sections: [], areas: [], people: [] }, settings: {} };
+    assert.match((await poll(lost, lost.MindwtrHost.boot())).error, /Incomplete tasks activation/);
+    const twice = makeState(2);
+    twice.fakeData = { ...full, tasks: [{ id: 'a' }, { id: 'a' }] };
+    twice.rowBaseline = { ids: { tasks: ['a', 'b'], projects: [], sections: [], areas: [], people: [] }, settings: {} };
+    assert.match((await poll(twice, twice.MindwtrHost.boot())).error, /Incomplete tasks activation/);
+    // Another connection committed since the activation's read: a full validated read instead (today's check).
+    const moved = makeState(0);
+    moved.rowBaselineNull = true;
+    assert.equal((await poll(moved, moved.MindwtrHost.boot())).ok, true);
+    assert.deepEqual(moved.events, ['schema', 'activate', 'load', 'flush', 'baseline', 'load']);
+    // The settings row is compared with what core maps from it, never with the store: a recovery load that drops ai.apiKey
+    // from the store (unsaved) still boots; a row that maps differently does not.
+    const stripped = makeState(0);
+    stripped.fakeData = { ...full, tasks: [], settings: { ai: { provider: 'openai', apiKey: 'stored' } } };
+    stripped.settings = { ai: { provider: 'openai' } };
+    assert.equal((await poll(stripped, stripped.MindwtrHost.boot())).ok, true);
+    const remapped = makeState(0);
+    remapped.fakeData = { ...full, tasks: [], settings: { theme: 'dark' } };
+    remapped.rowBaseline = { ids: { tasks: [], projects: [], sections: [], areas: [], people: [] }, settings: { theme: 'light' } };
+    assert.match((await poll(remapped, remapped.MindwtrHost.boot())).error, /Incomplete settings load/);
+    // Saved filters keep their mapping check: a blank id maps to nothing, so 3 rows mapping to 2 filters fail the boot.
+    // The activation loaded 3 (the store's list); then one row's id went blank: the table still counts 3, core now maps 2.
+    const blank = makeState(0);
+    const three = { savedFilters: [{ id: 'f1' }, { id: 'f2' }, { id: 'f3' }] };
+    blank.fakeData = { ...full, tasks: [], settings: three };
+    blank.settings = three;
+    blank.filterCount = 3;
+    blank.rowBaseline = { ids: { tasks: [], projects: [], sections: [], areas: [], people: [] }, settings: { savedFilters: [{ id: 'f1' }, { id: 'f2' }] } };
+    assert.match((await poll(blank, blank.MindwtrHost.boot())).error, /Incomplete saved filters load/);
+}
 // Replay tokens and durable receipts: iOS keeps tokens optional but loads only App lock's exact receipts; Android's
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
