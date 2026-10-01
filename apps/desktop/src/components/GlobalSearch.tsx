@@ -43,7 +43,11 @@ import { useFutureStartRevealTick, useLocalDayKey } from '../hooks/useLocalDayKe
 import { runAfterTaskEditExit } from './Task/task-edit-session';
 
 interface GlobalSearchProps {
-    onNavigate: (view: string, itemId?: string) => void;
+    /**
+     * `highlightTaskId` is applied by the caller once `view` is the screen on
+     * display, so the screen being left never scrolls to the task first.
+     */
+    onNavigate: (view: string, itemId?: string, options?: { highlightTaskId?: string }) => void;
     /**
      * Start with "Include Done and Archived tasks" already on. Passed when the
      * search opens over the Done or Archived view — searching there and not
@@ -93,7 +97,7 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
     const inputRef = useRef<HTMLInputElement>(null);
     const resultsRef = useRef<HTMLDivElement>(null);
     const isOpenRef = useRef(false);
-    const { _allTasks, _tasksById, projects, areas, settings, updateSettings, setHighlightTask } = useTaskStore(
+    const { _allTasks, _tasksById, projects, areas, settings, updateSettings } = useTaskStore(
         (state) => ({
             _allTasks: state._allTasks,
             _tasksById: state._tasksById,
@@ -101,7 +105,6 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
             areas: state.areas,
             settings: state.settings,
             updateSettings: state.updateSettings,
-            setHighlightTask: state.setHighlightTask,
         }),
         shallow
     );
@@ -426,17 +429,16 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
             } else {
                 // Map task status to appropriate view
                 const task = result.item;
-                setHighlightTask(task.id);
                 // A finished task is invisible in its project — the workspace never
                 // lists archived tasks and hides done ones unless the project has
                 // them switched on — so it goes to Done/Archived, which do reveal it.
                 if (task.projectId && !isTaskFinished(task as Task)) {
                     setProjectView({ selectedProjectId: task.projectId });
-                    onNavigate('projects', task.id);
+                    onNavigate('projects', task.id, { highlightTaskId: task.id });
                     return;
                 }
                 const targetView = resolveGlobalSearchTaskView(task as Task);
-                onNavigate(targetView, task.id);
+                onNavigate(targetView, task.id, { highlightTaskId: task.id });
             }
         });
     };

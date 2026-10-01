@@ -301,7 +301,7 @@ describe('GlobalSearch', () => {
             'Switched to All Areas so the selected item is visible.',
             'info',
         );
-        expect(onNavigate).toHaveBeenCalledWith('next', 'task-home');
+        expect(onNavigate).toHaveBeenCalledWith('next', 'task-home', { highlightTaskId: 'task-home' });
     });
 
     it('waits for the edit-exit decision before selecting a search project', async () => {
@@ -553,19 +553,19 @@ describe('GlobalSearch', () => {
         it('opens a live task in its project', async () => {
             const onNavigate = await selectZeta(projectTask);
 
-            expect(onNavigate).toHaveBeenCalledWith('projects', projectTask.id);
+            expect(onNavigate).toHaveBeenCalledWith('projects', projectTask.id, { highlightTaskId: projectTask.id });
         });
 
         it('sends a done task to Done instead', async () => {
             const onNavigate = await selectZeta({ ...projectTask, status: 'done', completedAt: now });
 
-            expect(onNavigate).toHaveBeenCalledWith('done', projectTask.id);
+            expect(onNavigate).toHaveBeenCalledWith('done', projectTask.id, { highlightTaskId: projectTask.id });
         });
 
         it('sends an archived task to Archive instead', async () => {
             const onNavigate = await selectZeta({ ...projectTask, status: 'archived', completedAt: now });
 
-            expect(onNavigate).toHaveBeenCalledWith('archived', projectTask.id);
+            expect(onNavigate).toHaveBeenCalledWith('archived', projectTask.id, { highlightTaskId: projectTask.id });
         });
     });
 
