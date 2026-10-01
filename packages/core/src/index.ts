@@ -127,6 +127,7 @@ export * from './completion-grouping';
 export * from './filter-criteria';
 export * from './task-filter-selections';
 export * from './task-draft';
+export * from './task-share';
 export {
     type TaskTokenUsage,
     createTaskTokenUsageAccumulator,

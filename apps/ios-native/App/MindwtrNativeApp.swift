@@ -239,6 +239,7 @@ private struct AppLockRoot: View {
             if next == .active && !lock.concealed { Task { await model.refresh() } }
         }
         .onChange(of: lock.concealed) { concealed in
+            if concealed { model.dismissTaskShare() }
             if !concealed && phase == .active { Task { await model.refresh() } }
         }
         .task(id: "\(model.ready)-\(lock.nonce)-\(phase == .active)-\(lock.authenticating)") {

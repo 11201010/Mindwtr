@@ -869,6 +869,12 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getTaskEditorModel({ id }));
         });
     },
+    taskShare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getTaskShare(JSON.parse(json)));
+        });
+    },
     taskEditorDraftDirection(json: string): string {
         return submit(async () => {
             requireSaved();

@@ -191,7 +191,7 @@ private final class Engine: @unchecked Sendable {
     private static let methods: [String: Int] = [
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
         "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1,
-        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "taskViewReferenceTarget": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentOpen": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
+        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "taskShare": 1, "taskViewReferenceTarget": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentOpen": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
         "projects": 0, "projectDetail": 4, "projectNotes": 4, "projectAttachmentList": 1, "projectAttachmentOpen": 1, "projectCreateOptions": 0, "projectCreate": 1, "projectCreateRetryOutcome": 1,
         "projectSectionOptions": 1, "projectSectionCreate": 1, "projectSectionCreateRetryOutcome": 1,
         "projectSectionRenameOptions": 1, "projectSectionRename": 1, "projectSectionRenameRetryOutcome": 1,
@@ -1009,6 +1009,15 @@ private final class Engine: @unchecked Sendable {
                     }
                     guard method == "gtdTaskEditorPresetOptions", failure.message.hasPrefix("INVALID_INPUT:") else { throw failure }
                     throw CoreHostRejection(message: failure.message)
+                }
+            }
+            if method == "taskShare" {
+                guard value.utf8.count <= 2_000_000,
+                      let share = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(share.keys) == Set(["title", "message"]),
+                      share["title"] is String || share["title"] is NSNull,
+                      let message = share["message"] as? String, !message.isEmpty else {
+                    throw HostFailure("Malformed Task Share response")
                 }
             }
             if method == "appLockOptions" {
@@ -5824,6 +5833,16 @@ private final class Engine: @unchecked Sendable {
                     && (input["itemIndex"] as? Double ?? -1) >= 0
                     && (input["itemIndex"] as? Double ?? .infinity) <= 9_007_199_254_740_991) else {
                 throw HostFailure("INVALID_INPUT: Task reference needs a bounded source view, revision and indices")
+            }
+        }
+        if method == "taskShare" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["id", "taskRevision", "draft", "checklist"]),
+                  let id = input["id"] as? String, !id.isEmpty, id.utf16.count <= 200,
+                  let revision = input["taskRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 200,
+                  input["draft"] is [String: Any], input["checklist"] is [[String: Any]] else {
+                throw HostFailure("INVALID_INPUT: Task Share needs a bounded task, revision, draft and checklist")
             }
         }
         if method == "taskView" {

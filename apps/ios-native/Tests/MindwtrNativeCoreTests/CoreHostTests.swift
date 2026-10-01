@@ -9193,6 +9193,39 @@ final class CoreHostTests: XCTestCase {
         return ["requestId": requestID, "composer": composer]
     }
 
+    func testTaskShareUsesUnsavedDraftWithoutWritingAndRejectsStaleRevision() async throws {
+        let id = try await seedBoardActionFixture()
+        let core = host(); _ = try await core.start()
+        let editor = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        var draft = try XCTUnwrap(editor["draft"] as? [String: Any])
+        draft["title"] = "  Shared draft العربية  "
+        draft["description"] = "  Unsaved **notes**\nsecond line  "
+        let checklist: [[String: Any]] = [["id": "share-item", "title": "Check this", "isCompleted": true]]
+        let view = try object(await core.call("taskView", argumentsJSON: json([json(["id": id])])))
+        let revision = try XCTUnwrap(view["taskRevision"] as? String)
+        let request: [String: Any] = ["id": id, "taskRevision": revision, "draft": draft, "checklist": checklist]
+        let db = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(db)
+        let result = try object(await core.call("taskShare", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(result["title"] as? String, "Shared draft العربية")
+        let message = try XCTUnwrap(result["message"] as? String)
+        XCTAssertTrue(message.hasPrefix("Shared draft العربية\n"))
+        XCTAssertTrue(message.contains("Unsaved **notes**\nsecond line"))
+        XCTAssertTrue(message.contains("[x] Check this"))
+        XCTAssertEqual(try nineTableSnapshot(db), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        var stale = request; stale["taskRevision"] = "stale"
+        await expectFailure("STALE_REVISION") { _ = try await core.call("taskShare", argumentsJSON: json([json(stale)])) }
+        var malformed = request; malformed["unexpected"] = true
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("taskShare", argumentsJSON: json([json(malformed)])) }
+        await core.close()
+        let fresh = host(); _ = try await fresh.start()
+        let repeated = try object(await fresh.call("taskShare", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(repeated), try json(result))
+        XCTAssertEqual(try nineTableSnapshot(db), before)
+        db.close()
+    }
+
     private func calendarUnscheduleInput(_ core: CoreHost, taskID: String) async throws -> String {
         let sheet = try object(await core.call("menuRead", argumentsJSON: json(["calendarItem", json(["taskId": taskID])])))
         return try json([json(["requestId": UUID().uuidString.lowercased(), "taskId": taskID,

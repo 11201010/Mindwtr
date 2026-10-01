@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text } from 'react-native';
+import { Share, Text } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useTaskStore, type StoreActionResult, type Task } from '@mindwtr/core';
@@ -51,6 +51,7 @@ let cancelHandle: () => Promise<void>;
 let deleteHandle: () => Promise<void>;
 let resetHandle: () => Promise<void>;
 let convertToSectionHandle: () => Promise<void>;
+let shareHandle: () => Promise<void>;
 
 function SaveProbe({
     onSave,
@@ -115,6 +116,7 @@ function SaveProbe({
     cancelHandle = actions.handleCancelTask;
     resetHandle = actions.handleResetChecklist;
     convertToSectionHandle = actions.handleConvertToSection;
+    shareHandle = actions.handleShare;
     return <Text>probe</Text>;
 }
 
@@ -150,7 +152,21 @@ async function renderActions(overrides: Partial<Harness> = {}) {
 }
 
 describe('task editor save results', () => {
-    afterEach(() => useTaskStore.setState(initialTaskState, true));
+    afterEach(() => {
+        useTaskStore.setState(initialTaskState, true);
+        vi.restoreAllMocks();
+    });
+    it('keeps the exact native Share payload from the unsaved title and raw checklist', async () => {
+        const share = vi.spyOn(Share, 'share').mockResolvedValue({ action: 'sharedAction' } as never);
+        await renderActions();
+
+        await act(async () => { await shareHandle(); });
+
+        expect(share).toHaveBeenCalledExactlyOnceWith({
+            title: 'Plan launch v2',
+            message: 'Plan launch v2\ntaskEdit.statusLabel: status.next\n\ntaskEdit.checklist:\n[x] Ship it',
+        });
+    });
     it('shows an error when the store write resolves to a failure', async () => {
         const onSave = vi.fn(() => Promise.resolve({ success: false, error: 'Task is deleted' }));
 

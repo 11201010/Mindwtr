@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import LinkPresentation
 
 private struct TaskDraftDirection: ViewModifier {
     let direction: LayoutDirection
@@ -36,7 +37,7 @@ struct TaskViewSheet: View {
     private var busy: Bool { model.busy }
     private var error: String? { model.taskError }
     private var readOnly: Bool { model.taskEditor.flag("readOnly") }
-    private var frozen: Bool { busy || model.retryNeeded || model.taskChecklistReadPending || model.taskPersonCreateOwed || model.taskAttachmentOpening || model.taskReferenceOpening }
+    private var frozen: Bool { busy || model.retryNeeded || model.taskChecklistReadPending || model.taskPersonCreateOwed || model.taskAttachmentOpening || model.taskReferenceOpening || model.taskSharePayload != nil }
 
     private var rows: [CoreObject] { value.objects("rows") }
     private var modalPresented: Bool {
@@ -66,6 +67,17 @@ struct TaskViewSheet: View {
                     close: { backdatedCompletion = nil })
             }
             if model.taskLinkSheetActive { taskLinkDialog }
+        }
+        .sheet(item: Binding(get: { model.taskSharePayload }, set: { if $0 == nil { model.dismissTaskShare() } })) { payload in
+            TaskActivitySheet(payload: payload)
+        }
+        .alert(strings.text("common.share"), isPresented: Binding(
+            get: { model.taskShareError != nil },
+            set: { if !$0 { model.dismissTaskShareError() } })) {
+            Button(strings.text("common.ok")) { model.dismissTaskShareError() }
+                .accessibilityIdentifier("task-share-error-dismiss")
+        } message: {
+            Text(model.taskShareError ?? "").accessibilityIdentifier("task-share-error")
         }
         .alert(strings.text("attachments.title"), isPresented: Binding(
             get: { model.taskAttachmentOpenError != nil },
@@ -98,6 +110,16 @@ struct TaskViewSheet: View {
                 .accessibilityLabel(strings.text("common.close")).accessibilityIdentifier("task-view-close")
                 Spacer()
                 if !readOnly && !model.taskEditor.isEmpty {
+                    Menu {
+                        Button(strings.text("common.share")) {
+                            endEditingBeforeAction()
+                            Task { await model.shareTask() }
+                        }.accessibilityIdentifier("task-share")
+                    } label: {
+                        Image(systemName: "ellipsis").frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .disabled(frozen || modalPresented || model.taskScheduleUpdating || model.taskPersonCreateNeedsReview)
+                    .accessibilityLabel(strings.text("common.more")).accessibilityIdentifier("task-more")
                     Button {
                         endEditingBeforeAction()
                         Task { await model.saveTask() }
@@ -2475,4 +2497,27 @@ private struct TaskDestinationChoice: Identifiable {
     let kind: String
     // Lazy stacks flatten nested ForEach children; group-local indices collide.
     var id: String { kind + "-" + value.text("id") }
+}
+
+private final class TaskActivityItem: NSObject, UIActivityItemSource {
+    let payload: TaskSharePayload
+    init(_ payload: TaskSharePayload) { self.payload = payload }
+    func activityViewControllerLinkMetadata(_ activityViewController: UIActivityViewController) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = payload.title ?? payload.message
+        return metadata
+    }
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any { payload.message }
+    func activityViewController(_ activityViewController: UIActivityViewController, itemForActivityType activityType: UIActivity.ActivityType?) -> Any? { payload.message }
+    func activityViewController(_ activityViewController: UIActivityViewController, subjectForActivityType activityType: UIActivity.ActivityType?) -> String { payload.title ?? "" }
+}
+
+private struct TaskActivitySheet: UIViewControllerRepresentable {
+    let payload: TaskSharePayload
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: [TaskActivityItem(payload)], applicationActivities: nil)
+        NSLog("Native iOS Task share sheet opened releaseCheck=v1.3.4/ios-task-share outcome=presented")
+        return controller
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

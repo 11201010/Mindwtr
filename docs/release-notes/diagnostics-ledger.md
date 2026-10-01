@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- `ios-task-share` — `apps/ios-native/App/TaskViewSheet.swift`: `Native iOS Task share sheet opened` with `outcome=presented` proves the native activity sheet was created after the core text read and any owed draft checkpoint; no task content or destination is logged.
+
 - **`v1.3.4/ios-calendar-delete`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Calendar task deleted` with `outcome=confirmed` proves the prepared soft deletion completed durably. No Task text, identifiers or dates are logged.
 
 - **`v1.3.4/ios-calendar-unschedule`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Calendar unscheduled` with `outcome=confirmed` proves the prepared Unschedule command completed durable persistence and acknowledgment. No Task text, identifiers or dates are logged.

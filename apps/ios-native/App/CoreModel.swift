@@ -21,6 +21,12 @@ private struct SimulatedManageAreaRefusal: LocalizedError {
 }
 #endif
 
+struct TaskSharePayload: Identifiable {
+    let id = UUID()
+    let title: String?
+    let message: String
+}
+
 typealias CoreObject = [String: Any]
 
 extension Dictionary where Key == String, Value == Any {
@@ -577,6 +583,8 @@ final class CoreModel: ObservableObject {
     @Published private(set) var taskReferenceSection = "description"
     @Published private(set) var taskAttachmentOpening = false
     @Published private(set) var taskAttachmentOpenError: String?
+    @Published private(set) var taskSharePayload: TaskSharePayload?
+    @Published private(set) var taskShareError: String?
     private var taskAttachmentOpenClaim = UUID()
     @Published private(set) var taskChecklistField: CoreObject = [:]
     @Published private(set) var taskChecklistInputs: [Int: String] = [:]
@@ -2187,6 +2195,51 @@ final class CoreModel: ObservableObject {
     private func taskAttachmentOwner() -> CoreObject {
         ["kind": "task", "taskId": viewedTaskID, "attachments": taskAttachments]
     }
+
+    func shareTask() async {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !appLock.concealed,
+              !busy, !retryNeeded, !taskAttachmentOpening, !taskReferenceOpening,
+              !taskRecoverySaving, !taskSavePending, !taskPersonCreateOwed, !taskPersonCreateNeedsReview,
+              !taskLinkSubmitting, taskLinkSheet.isEmpty, taskDestinationKind.isEmpty,
+              taskChecklistWriteKind == nil, !taskChecklistReadPending, !taskScheduleUpdating,
+              taskChecklistLoaded, taskSharePayload == nil else { return }
+        let id = viewedTaskID, session = taskRecoverySession, checklistSession = taskChecklistSession
+        let current = { [self] in
+            taskPresented && viewedTaskID == id && taskRecoverySession == session
+                && !appLock.concealed && !retryNeeded && !taskSavePending && !taskRecoverySaving
+        }
+        busy = true
+        taskShareError = nil
+        defer { finishOperation() }
+        do {
+            try await resolveTaskEditorInputs()
+            try await flushTaskChecklistInputs(id: id, session: checklistSession)
+            guard current() else { return }
+            let request = try json(["id": id, "taskRevision": taskView.text("taskRevision"),
+                                    "draft": taskDraft, "checklist": taskChecklist])
+            let generation = taskRecoveryGeneration
+            if taskRecoverySnapshot != nil || taskDirty {
+                await flushTaskDraftCheckpoint()
+                guard current() else { return }
+                guard taskRecoveryProtected else { throw CocoaError(.fileWriteUnknown) }
+            }
+            let result = try await query("taskShare", [request])
+            guard current(), taskRecoveryGeneration == generation,
+                  request == (try json(["id": id, "taskRevision": taskView.text("taskRevision"),
+                                        "draft": taskDraft, "checklist": taskChecklist])) else { return }
+            guard Set(result.keys) == Set(["title", "message"]),
+                  result["title"] is String || result["title"] is NSNull,
+                  let message = result["message"] as? String, !message.isEmpty else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            taskSharePayload = TaskSharePayload(title: result["title"] as? String, message: message)
+        } catch {
+            if current() { taskShareError = label("share.unavailable") }
+        }
+    }
+
+    func dismissTaskShare() { taskSharePayload = nil }
+    func dismissTaskShareError() { taskShareError = nil }
 
     func openTaskAttachment(_ attachmentID: String) async {
         guard taskPresented, !taskEditor.isEmpty, !appLock.concealed,
@@ -14027,6 +14080,8 @@ final class CoreModel: ObservableObject {
         taskLinkSheet = [:]
         taskLinkSheetError = nil
         taskLinkSubmitting = false
+        taskSharePayload = nil
+        taskShareError = nil
         taskAttachmentOpenClaim = UUID()
         taskAttachmentOpening = false
         taskAttachmentOpenError = nil
@@ -14344,6 +14399,8 @@ final class CoreModel: ObservableObject {
         taskLinkSheet = [:]
         taskLinkSheetError = nil
         taskLinkSubmitting = false
+        taskSharePayload = nil
+        taskShareError = nil
         taskAttachmentOpenClaim = UUID()
         taskAttachmentOpening = false
         taskAttachmentOpenError = nil
@@ -15714,7 +15771,7 @@ final class CoreModel: ObservableObject {
 
     private func readTaskEditorLabels(_ editor: CoreObject) async throws {
         let options = editor.object("options")
-        var keys = ["common.none", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
+        var keys = ["common.none", "common.share", "common.more", "share.unavailable", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
                     "taskEdit.scheduling", "taskEdit.organization", "taskEdit.details",
                     "taskEdit.contextsLabel", "taskEdit.contextsPlaceholder", "taskEdit.tagsLabel", "taskEdit.tagsPlaceholder",
                     "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder", "people.new", "taskEdit.statusLabel", "reference.convertToAction",

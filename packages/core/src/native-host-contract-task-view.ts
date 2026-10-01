@@ -18,7 +18,9 @@ import { isPaging, page, paramsKey } from './native-host-contract-menu-views';
 import { createNativeRequestReceipts, isRevision, refuseStaleTasks, runStoreWrite, settleWrite, taskRevisionOf } from './native-request-receipts';
 import { getProjectSectionsForView } from './project-utils';
 import { resolveFeatureFlags } from './resolve-feature-flags';
+import { isProjectedRecurringTaskId } from './recurrence';
 import { getPersistenceStatus, useTaskStore } from './store';
+import { buildTaskShare } from './task-share';
 import { createTaskDraft, setTaskDraftField, taskDraftToUpdatePatch, type TaskDraft } from './task-draft';
 import {
     applyTaskChecklistEdit,
@@ -187,6 +189,46 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
     const isTask = (value: Task | NativeHostResult<never>): value is Task => !('ok' in value);
 
     return {
+        /** Plain-text Share preview of the current unsaved editor form; no task write or receipt. */
+        getTaskShare(input: { id: string; taskRevision: string; draft: TaskDraft; checklist: ChecklistItem[] }): NativeHostResult<{ title: string | null; message: string }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isRecord(input) || Object.keys(input).length !== 4
+                || !['id', 'taskRevision', 'draft', 'checklist'].every((key) => Object.prototype.hasOwnProperty.call(input, key))
+                || !isNativeJsonWithinBytes(input)
+                || typeof input.id !== 'string' || !input.id || input.id.length > 200
+                || typeof input.taskRevision !== 'string' || !input.taskRevision || input.taskRevision.length > 200) {
+                return fail('INVALID_INPUT', 'A bounded task, revision, draft, and checklist are required');
+            }
+            const draft = deps.readDraft(input.draft);
+            const checklist = readChecklist(input.checklist, true);
+            if (!draft || !checklist) return fail('INVALID_INPUT', 'A whole draft and checklist are required');
+            const state = useTaskStore.getState();
+            const task = state._tasksById.get(input.id);
+            if (!task || task.deletedAt || task.purgedAt || isProjectedRecurringTaskId(input.id)
+                || deps.isReadOnly(task)) return fail('TASK_NOT_FOUND', 'Task is not shareable');
+            if (taskRevisionOf(task) !== input.taskRevision) return fail('STALE_REVISION', 'Task changed since the editor opened');
+            const shown: Task = {
+                ...task,
+                ...(taskDraftToUpdatePatch(draft, task, { attachments: task.attachments }) ?? {}),
+                checklist,
+            };
+            const t = deps.t();
+            const format = createDateFormatter(deps.dateFormatting());
+            const notSet = t('common.notSet');
+            const flags = resolveFeatureFlags(state.settings);
+            const content = buildTaskShare({ task, mergedTask: shown, rawTitle: draft.title,
+                prioritiesEnabled: flags.priorities, timeEstimatesEnabled: flags.timeEstimates, t,
+                formatDate: (value) => formatTaskEditorDate(value, format, notSet),
+                formatDueDate: (value) => formatTaskEditorDate(value, format, notSet, { due: true }),
+                formatTimeEstimateLabel: (value) => formatTimeEstimateLabel(value, { t }),
+            });
+            if (!content) return fail('INVALID_INPUT', 'Task Share has no message');
+            const result = { title: content.title ?? null, message: content.message };
+            return isNativeJsonWithinBytes(result) ? { ok: true, value: result }
+                : fail('INVALID_INPUT', 'Task Share exceeds the native response bound');
+        },
+
         /**
          * The View tab. Send the editor's unsaved `draft` and `checklist` to show them, as
          * the React Native editor does; without them it shows the saved task. A read-only
