@@ -11184,7 +11184,7 @@ final class FoundationUITests: XCTestCase {
     }
 
     func testTaskStatusWaitingCancelCascadesAndRestart() {
-        taskStatusEditor(library: "167c681e-3f2a-4d61-91f0-e5ebd6d40fa8")
+        taskStatusEditor(library: "ce387a12-ec26-41a4-81c7-e7e5c75f5bb4")
     }
 
     func testTaskStatusWaitingLargestTextAndRestart() {
@@ -11197,6 +11197,11 @@ final class FoundationUITests: XCTestCase {
         func open(_ suffix: String) {
             boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
             let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText("Task113 " + suffix)
+            boardTap(app, "search-filters-open")
+            let completed = app.buttons["search-include-completed"]
+            boardEnabled(completed)
+            if !completed.isSelected { completed.tap() }
+            boardTap(app, "search-filters-close")
             boardTap(app, "search-task-task113-" + suffix.lowercased()); boardTap(app, "task-mode-edit")
             expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["task-mode-edit"])
             waitForExpectations(timeout: 10)
