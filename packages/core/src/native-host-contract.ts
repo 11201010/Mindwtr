@@ -2573,6 +2573,26 @@ export function createNativeHostContract(options: {
             };
         },
 
+        getTaskEditorDraftDirection(input: { id: string; title: string; description: string }): NativeHostResult<{ direction: 'ltr' | 'rtl' }> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input !== 'object' || Array.isArray(input)
+                || Object.keys(input).length !== 3 || !Object.prototype.hasOwnProperty.call(input, 'id')
+                || !Object.prototype.hasOwnProperty.call(input, 'title')
+                || !Object.prototype.hasOwnProperty.call(input, 'description')
+                || typeof input.id !== 'string' || !input.id || input.id.length > 500
+                || typeof input.title !== 'string' || typeof input.description !== 'string'
+                || !isNativeJsonWithinBytes(input)) {
+                return fail('INVALID_INPUT', 'A bounded Task Editor draft is required');
+            }
+            const task = useTaskStore.getState()._tasksById.get(input.id);
+            if (!task || task.deletedAt || task.purgedAt)
+                return fail('STALE_REVISION', 'Task is unavailable; refresh before editing');
+            return { ok: true, value: {
+                direction: resolveAutoTextDirection(`${input.title}\n${input.description}`.trim(), language),
+            } };
+        },
+
         async updateTask(input: {
             id: string;
             base: Partial<NativeEditableFields>;

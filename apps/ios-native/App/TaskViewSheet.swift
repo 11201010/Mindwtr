@@ -1,6 +1,20 @@
 import SwiftUI
 import UIKit
 
+private struct TaskDraftDirection: ViewModifier {
+    let direction: LayoutDirection
+
+    @ViewBuilder func body(content: Content) -> some View {
+        let view = content.multilineTextAlignment(.leading).environment(\.layoutDirection, direction)
+        if #available(iOS 26.0, *) {
+            view.multilineTextAlignment(strategy: .layoutBased)
+                .writingDirection(strategy: .layoutBased)
+        } else {
+            view
+        }
+    }
+}
+
 /// Core owns field layout, draft edits, preview formatting and acknowledged saves.
 struct TaskViewSheet: View {
     @ObservedObject var model: CoreModel
@@ -239,6 +253,8 @@ struct TaskViewSheet: View {
                 TextField(strings.text("taskEdit.titleLabel"), text: Binding(
                     get: { model.taskTitleDraft }, set: { model.setTaskTitleDraft($0) }), axis: .vertical)
                     .rnFont(16).lineLimit(2...6).padding(12)
+                    .modifier(TaskDraftDirection(direction: model.taskEditorDraftDirection == "rtl"
+                        ? .rightToLeft : .leftToRight))
                     .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
                     .accessibilityIdentifier("task-editor-title")
@@ -261,6 +277,10 @@ struct TaskViewSheet: View {
             ForEach(sections.indices, id: \.self) { index in editorSection(sections[index]) }
         }
         .disabled(frozen)
+        .task(id: [model.taskEditor.text("id"), String(model.taskEditorSession),
+                   model.taskTitleDraft, model.taskNoteDraft, model.currentLanguage]) {
+            await model.refreshTaskEditorDraftDirection()
+        }
     }
 
     private func initializeSections() {
@@ -364,6 +384,8 @@ struct TaskViewSheet: View {
                 label(strings.text("taskEdit.descriptionLabel"))
                 TextEditor(text: Binding(get: { model.taskNoteDraft }, set: { model.setTaskNoteDraft($0) }))
                     .rnFont(16).scrollContentBackground(.hidden).frame(minHeight: 220)
+                    .modifier(TaskDraftDirection(direction: model.taskEditorDraftDirection == "rtl"
+                        ? .rightToLeft : .leftToRight))
                     .padding(8).background(palette.input, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
                     .accessibilityLabel(strings.text("taskEdit.descriptionLabel"))

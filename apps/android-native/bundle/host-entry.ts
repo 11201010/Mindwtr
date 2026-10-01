@@ -782,6 +782,12 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getTaskEditorModel({ id }));
         });
     },
+    taskEditorDraftDirection(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getTaskEditorDraftDirection(JSON.parse(json)));
+        });
+    },
     /** Strict read of an editor snapshot's touched opening bases, including unresolved raw-only inputs. */
     taskEditorResumeCheck(json: string): string {
         return submit(async () => {

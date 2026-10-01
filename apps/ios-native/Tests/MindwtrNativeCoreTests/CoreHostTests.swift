@@ -19731,6 +19731,41 @@ final class CoreHostTests: XCTestCase {
         await core.close()
     }
 
+    func testTaskEditorDraftDirectionUsesRawPairAndNeverWrites() async throws {
+        try await seedTaskFocusRows()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let baseline = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(baseline)
+        baseline.close()
+        var statements = 0, journalWrites = 0
+        faults.beforeSQL = { _ in statements += 1 }
+        faults.journalWrite = { journalWrites += 1 }
+        for (title, notes, expected) in [("English", "English", "ltr"), ("English", "مرحبا", "rtl"), ("שלום", "English", "rtl")] {
+            let result = try object(await core.call("taskEditorDraftDirection", argumentsJSON: json([json([
+                "id": "task-focus-target", "title": title, "description": notes,
+            ])])))
+            XCTAssertEqual(result["direction"] as? String, expected)
+        }
+        for input in [["id": "task-focus-target", "title": "English"],
+                      ["id": "task-focus-target", "title": "English", "description": "", "extra": "field"],
+                      ["id": "task-focus-target", "title": "English", "description": String(repeating: "漢", count: 700_000)]] {
+            await expectFailure("INVALID_INPUT") {
+                _ = try await core.call("taskEditorDraftDirection", argumentsJSON: json([json(input)]))
+            }
+        }
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("taskEditorDraftDirection", argumentsJSON: json([json(["id": "missing", "title": "English", "description": ""])]))
+        }
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journalWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        await core.close()
+    }
+
     func testProjectNotesDraftDirectionUsesRawDraftAndNeverWrites() async throws {
         try await seedProjectFocusRows()
         let stage = try SQLiteBridge(url: database)

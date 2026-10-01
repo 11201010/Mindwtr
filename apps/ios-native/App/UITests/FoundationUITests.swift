@@ -16,6 +16,86 @@ final class FoundationUITests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    func testTaskEditorAutomaticDirectionSaveAndRestart() {
+        taskEditorAutomaticDirection(library: "3f44cd1d-3f44-46aa-bb76-bd6d77b63034", save: true)
+    }
+
+    func testTaskEditorAutomaticDirectionDiscard() {
+        taskEditorAutomaticDirection(library: "8706cd0a-2857-471a-87ee-b88f59881807", save: false)
+    }
+
+    private func taskEditorAutomaticDirection(library: String, save: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        boardEnabled(app.buttons["Task118 Direction"], timeout: 30)
+        app.buttons["Task118 Direction"].tap()
+        boardTap(app, "task-mode-edit")
+        let scroll = app.scrollViews["task-editor-scroll"]
+        let title = app.textFields["task-editor-title"]
+        let note = app.textViews["task-editor-note"]
+        func reveal(_ field: XCUIElement) {
+            // Off-screen SwiftUI input frames may be infinite. The title precedes Notes.
+            for _ in 0..<25 {
+                let viewport = scroll.frame.intersection(app.frame)
+                let bottom = app.keyboards.firstMatch.exists ? app.keyboards.firstMatch.frame.minY : viewport.maxY
+                let frame = field.exists ? field.frame : CGRect.null
+                if field.exists && field.isHittable && frame.minY >= viewport.minY && frame.minY < bottom - 40 { return }
+                let upward = field.identifier == "task-editor-title"
+                let top = viewport.minY + (bottom - viewport.minY) * 0.3
+                let end = viewport.minY + (bottom - viewport.minY) * 0.7
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                origin.withOffset(CGVector(dx: viewport.minX + 4, dy: upward ? top : end))
+                    .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: viewport.minX + 4, dy: upward ? end : top)),
+                           withVelocity: .slow, thenHoldForDuration: 0.2)
+            }
+            XCTFail("Could not reveal \(field.identifier)")
+        }
+        func capture(_ name: String) {
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = name; shot.lifetime = .keepAlways; add(shot)
+        }
+        reveal(note)
+        note.tap(); note.typeText("مرحبا بالعالم")
+        XCTAssertEqual(note.value as? String, "مرحبا بالعالم")
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        capture("Arabic Notes draft")
+        reveal(title)
+        capture("Latin title with Arabic Notes")
+        reveal(note)
+        replaceProjectNotesText(note, with: "English notes")
+        reveal(title)
+        capture("Latin title after English Notes")
+        replaceProjectNotesText(title, with: "مرحبا")
+        reveal(note)
+        capture("English Notes with Arabic title")
+        reveal(title)
+        replaceProjectNotesText(title, with: "Task118 Saved")
+        reveal(note)
+        replaceProjectNotesText(note, with: "مرحبا بالعالم")
+        if save {
+            boardTap(app, "task-editor-save")
+        } else {
+            boardTap(app, "task-view-close")
+            boardTap(app, "task-editor-discard")
+        }
+        let expectedTitle = save ? "Task118 Saved" : "Task118 Direction"
+        boardEnabled(app.buttons[expectedTitle], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons[expectedTitle], timeout: 30)
+        app.buttons[expectedTitle].tap(); boardTap(app, "task-mode-edit")
+        XCTAssertEqual(title.value as? String, expectedTitle)
+        if save {
+            capture("Saved Latin title with Arabic Notes after restart")
+            reveal(note)
+            XCTAssertEqual(note.value as? String, "مرحبا بالعالم")
+            capture("Saved Arabic Notes after restart")
+        }
+        boardTap(app, "task-view-close")
+        XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+        app.terminate()
+    }
+
     func testTaskAssignedPersonCreateThenDiscardRetainsPerson() {
         createAssignedPerson(library: "9dbb1998-07ba-450a-ada0-d7d63fa692f7", save: false, restart: false)
     }

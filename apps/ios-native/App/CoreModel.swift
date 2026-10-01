@@ -490,6 +490,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var theme: CoreObject = [:]
     @Published private(set) var area: CoreObject = [:]
     @Published private(set) var strings: CoreObject = [:]
+    @Published private(set) var currentLanguage = ""
     @Published private(set) var capture: CoreObject = [:]
     @Published private(set) var ready = false
     @Published private(set) var busy = false
@@ -511,6 +512,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var taskDestinationError: String?
     @Published var taskTitleDraft = ""
     @Published var taskNoteDraft = ""
+    @Published private(set) var taskEditorDraftDirection = ""
     @Published var taskLocationDraft = ""
     @Published var taskEstimateInput = ""
     @Published var taskTimeSpentInput = ""
@@ -1941,6 +1943,25 @@ final class CoreModel: ObservableObject {
         taskNoteDraft = text
         taskRecoveryOwn(["description"])
     }
+    func refreshTaskEditorDraftDirection() async {
+        let id = taskEditor.text("id")
+        let session = taskRecoverySession
+        let title = taskTitleDraft
+        let description = taskNoteDraft
+        let language = currentLanguage
+        guard taskPresented, !id.isEmpty, !language.isEmpty, !Task.isCancelled else { return }
+        do {
+            let result = try await query("taskEditorDraftDirection", [try json([
+                "id": id, "title": title, "description": description])])
+            guard !Task.isCancelled, taskPresented, taskEditor.text("id") == id,
+                  taskRecoverySession == session, taskTitleDraft == title,
+                  taskNoteDraft == description, currentLanguage == language,
+                  result.count == 1, ["ltr", "rtl"].contains(result.text("direction")) else { return }
+            taskEditorDraftDirection = result.text("direction")
+        } catch {
+            // Presentation reads must not interrupt editing or change write/retry state.
+        }
+    }
     func setTaskLocationDraft(_ text: String) {
         guard !taskRecoverySaving else { return }
         taskLocationDraft = text
@@ -2886,6 +2907,7 @@ final class CoreModel: ObservableObject {
         // UI translation and the actual regional locale remain separate shared inputs.
         _ = try await query("language", [uiLanguage, Locale.current.identifier])
         try await readStrings()
+        currentLanguage = uiLanguage
         if !writes.isEmpty {
             let key = devicePreferencePrefix + "mindwtr-language"
             if preferenceDefaults.object(forKey: key) as? String != uiLanguage { preferenceDefaults.set(uiLanguage, forKey: key) }
@@ -12814,6 +12836,7 @@ final class CoreModel: ObservableObject {
         taskOriginalDraft = [:]
         taskTitleDraft = ""
         taskNoteDraft = ""
+        taskEditorDraftDirection = ""
         taskLocationDraft = ""
         taskEstimateInput = ""
         taskEstimateResolvedInput = ""
