@@ -841,15 +841,20 @@ final class FoundationUITests: XCTestCase {
     }
 
     private func boardEnabled(_ element: XCUIElement, timeout: TimeInterval = 10) {
-        XCTAssertTrue(element.waitForExistence(timeout: timeout))
-        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: element)
-        waitForExpectations(timeout: timeout)
+        if !element.exists { XCTAssertTrue(element.waitForExistence(timeout: timeout)) }
+        if !element.isEnabled {
+            expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: element)
+            waitForExpectations(timeout: timeout)
+        }
     }
 
     private func boardTap(_ app: XCUIApplication, _ id: String) {
         let element = app.buttons.matching(identifier: id).firstMatch
         boardEnabled(element)
-        XCTAssertTrue(element.isHittable, id)
+        if !element.isHittable {
+            expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: element)
+            waitForExpectations(timeout: 10)
+        }
         element.tap()
     }
 
@@ -902,7 +907,8 @@ final class FoundationUITests: XCTestCase {
             let distance = min(max(44, needed + 24), frame.height * (exists ? 0.4 : 0.7))
             let endY = startY + (above ? distance : -distance)
             let origin = app.coordinate(withNormalizedOffset: .zero)
-            let x = outerEdge ? frame.maxX - 4 : frame.midX
+            // The leading gutter avoids both controls and the trailing scroll indicator hit area.
+            let x = outerEdge ? frame.minX + 4 : frame.midX
             origin.withOffset(CGVector(dx: x, dy: startY)).press(forDuration: 0.05,
                 thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY)),
                 withVelocity: .slow, thenHoldForDuration: 0.2)
@@ -11252,6 +11258,248 @@ final class FoundationUITests: XCTestCase {
         XCTAssertEqual(minutes().value as? String, "41")
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Saved Time Spent editor"; shot.lifetime = .keepAlways; add(shot)
         boardTap(app, "task-view-close"); XCTAssertFalse(app.buttons["task-editor-discard"].exists); app.terminate()
+    }
+
+    func testTaskBackdatedCompletionDraftSaveDiscardAndRestart() {
+        taskBackdatedCompletionEditor(
+            library: "fb7f8d24-7bbc-4280-9975-a4398510fa2b",
+            hiddenLibrary: "86738a5a-6748-476c-bfba-f10b7071e291")
+    }
+
+    func testTaskBackdatedCompletionLargestTextAndRestart() {
+        taskBackdatedCompletionEditor(library: "677f0ed5-c775-4cee-9a9f-c0e4d51b06f7")
+    }
+
+    func testTaskTransientModalCancelPreservesFocusedTokenRawInput() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "40213e3e-7c7e-4b82-998e-e08bd6fb61be"]
+        app.launch()
+        func open() {
+            boardEnabled(app.buttons["search-open"], timeout: 30)
+            boardTap(app, "search-open")
+            let query = app.textFields["search-input"]
+            boardEnabled(query); query.tap(); query.typeText("Task115 Token Blur")
+            boardTap(app, "search-task-task115-token-blur")
+            boardTap(app, "task-mode-edit")
+            expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["task-mode-edit"])
+            waitForExpectations(timeout: 10)
+        }
+        func typeFocusedContext(_ raw: String, modalAction: String) {
+            let input = app.textFields["task-editor-contexts"]
+            boardEnabled(input)
+            XCTAssertTrue(app.buttons[modalAction].isHittable, "Fixture keeps the modal action beside the context field")
+            input.tap(); input.typeText(raw)
+            XCTAssertEqual(input.value as? String, raw)
+            XCTAssertTrue(app.keyboards.firstMatch.exists, "Token keyboard is still open before tapping the modal action")
+            XCTAssertTrue(app.buttons[modalAction].isHittable)
+            boardTap(app, modalAction)
+        }
+        func assertRawThenCommit(_ raw: String, canonical: String) {
+            let input = app.textFields["task-editor-contexts"]
+            boardEnabled(input)
+            XCTAssertEqual(input.value as? String, raw, "Cancel preserves the parent's unresolved display text")
+            XCTAssertTrue(app.buttons["task-editor-status-next"].isSelected)
+            boardTap(app, "task-mode-view")
+            boardTap(app, "task-mode-edit")
+            boardEnabled(input)
+            XCTAssertEqual(input.value as? String, canonical, "An explicit editor action still resolves the token")
+            boardTap(app, "task-view-close")
+            boardTap(app, "task-editor-discard")
+            boardTap(app, "search-close")
+        }
+
+        open()
+        typeFocusedContext("home", modalAction: "task-editor-backdate")
+        boardTap(app, "task-backdate-cancel")
+        assertRawThenCommit("home", canonical: "@home")
+
+        open()
+        typeFocusedContext("office", modalAction: "task-editor-status-waiting")
+        boardTap(app, "task-waiting-cancel")
+        assertRawThenCommit("office", canonical: "@office")
+        app.terminate()
+    }
+
+    func testTaskBackdatedCompletionNextSaveDiscardAndRestart() {
+        taskBackdatedCompletionEditor(library: "ecf0f373-4105-4ddc-974c-25df1cd296c0", checkDone: false)
+    }
+
+    private func taskBackdatedCompletionEditor(library: String, hiddenLibrary: String? = nil, checkDone: Bool = true) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        func launch(_ fixture: String) {
+            app.launchArguments = ["--native-ui-test-library", fixture]
+            app.launch()
+        }
+        func open(_ id: String, title: String) {
+            boardEnabled(app.buttons["search-open"], timeout: 30)
+            boardTap(app, "search-open")
+            let query = app.textFields["search-input"]
+            boardEnabled(query); query.tap(); query.typeText(title)
+            boardTap(app, "search-filters-open")
+            let completed = app.buttons["search-include-completed"]
+            boardEnabled(completed)
+            if !completed.isSelected { completed.tap() }
+            boardTap(app, "search-filters-close")
+            boardTap(app, "search-task-" + id)
+            if app.buttons["task-mode-edit"].exists {
+                boardTap(app, "task-mode-edit")
+                expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["task-mode-edit"])
+                waitForExpectations(timeout: 10)
+            }
+        }
+        func close(clean: Bool = true) {
+            boardTap(app, "task-view-close")
+            if clean { XCTAssertFalse(app.buttons["task-editor-discard"].exists) }
+            else { boardTap(app, "task-editor-discard") }
+            boardTap(app, "search-close")
+        }
+        func restart() { app.terminate(); launch(library) }
+        func minutes() -> XCUIElement {
+            let header = app.buttons["task-editor-section-organization"]
+            boardEnabled(header)
+            revealPagedElement(app, header, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
+            if header.value as? String == "Expand" {
+                header.tap()
+                expectation(for: NSPredicate(format: "value == %@", "Collapse"), evaluatedWith: header)
+                waitForExpectations(timeout: 10)
+            }
+            let field = app.textFields["task-editor-timeSpent-input"]
+            boardEnabled(field)
+            revealPagedElement(app, field, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
+            return field
+        }
+        func replace(_ field: XCUIElement, with value: String) {
+            if field.identifier == "task-backdate-minutes" {
+                revealPagedElement(app, field, in: app.scrollViews["task-backdate-scroll"], outerEdge: true)
+            }
+            field.tap(); boardEnabled(app.keyboards.firstMatch)
+            if let old = field.value as? String, old != field.placeholderValue, !old.isEmpty {
+                field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
+                field.typeText(XCUIKeyboardKey.delete.rawValue)
+            }
+            if !value.isEmpty { field.typeText(value) }
+            XCTAssertTrue(field.value as? String == value || (value.isEmpty && field.value as? String == field.placeholderValue))
+        }
+        func openBackdate(showMinutes: Bool = true) -> XCUIElement? {
+            let action = app.buttons["task-editor-backdate"]
+            boardEnabled(action)
+            revealPagedElement(app, action, in: app.scrollViews["task-editor-scroll"], outerEdge: true)
+            XCTAssertFalse(action.label.isEmpty)
+            XCTAssertGreaterThanOrEqual(action.frame.height, 44)
+            XCTAssertGreaterThanOrEqual(action.frame.width, 44)
+            action.tap()
+            let picker = app.descendants(matching: .any).matching(identifier: "task-backdate-picker").firstMatch
+            XCTAssertTrue(picker.waitForExistence(timeout: 10))
+            XCTAssertFalse(picker.label.isEmpty)
+            XCTAssertGreaterThanOrEqual(picker.frame.height, 44)
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-backdate-scroll").firstMatch.exists)
+            XCTAssertFalse(app.buttons["task-editor-save"].isHittable, "The parent editor cannot be activated while the dialog is open")
+            for id in ["task-backdate-cancel", "task-backdate-confirm"] {
+                let button = app.buttons[id]
+                boardEnabled(button)
+                XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+                XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+                XCTAssertFalse(button.label.isEmpty)
+            }
+            let field = app.textFields["task-backdate-minutes"]
+            XCTAssertEqual(field.exists, showMinutes)
+            if showMinutes {
+                XCTAssertFalse(field.label.isEmpty)
+                XCTAssertGreaterThanOrEqual(field.frame.height, 44)
+                return field
+            }
+            return nil
+        }
+        func finishBackdate(confirm: Bool) {
+            boardTap(app, confirm ? "task-backdate-confirm" : "task-backdate-cancel")
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["task-backdate-confirm"])
+            waitForExpectations(timeout: 10)
+        }
+
+        if let hiddenLibrary {
+            launch(hiddenLibrary)
+            open("task115-done", title: "Task115 Done")
+            _ = openBackdate(showMinutes: false)
+            finishBackdate(confirm: false)
+            close(); app.terminate()
+        }
+
+        launch(library)
+        if checkDone {
+            open("task115-readonly", title: "Task115 Readonly")
+            XCTAssertFalse(app.buttons["task-mode-edit"].exists)
+            XCTAssertFalse(app.buttons["task-editor-backdate"].exists)
+            close()
+
+            open("task115-done", title: "Task115 Done")
+            XCTAssertTrue(app.buttons["task-editor-status-done"].isSelected)
+            let untouched = openBackdate()!
+            XCTAssertEqual(untouched.value as? String, "17")
+            finishBackdate(confirm: false)
+            close() // Opening and cancelling the dialog did not dirty the draft.
+
+            open("task115-done", title: "Task115 Done")
+            _ = openBackdate()
+            finishBackdate(confirm: true)
+            XCTAssertTrue(app.buttons["task-editor-status-done"].isSelected)
+            boardTap(app, "task-editor-save") // Root's persisted oracle checks the original .678 milliseconds.
+            boardEnabled(app.textFields["search-input"])
+            boardTap(app, "search-close")
+            restart()
+            open("task115-done", title: "Task115 Done")
+            XCTAssertEqual(minutes().value as? String, "17")
+            close()
+
+            open("task115-done", title: "Task115 Done")
+            replace(minutes(), with: "23")
+            let local = openBackdate()!
+            XCTAssertEqual(local.value as? String, "23")
+            replace(local, with: "41")
+            finishBackdate(confirm: false)
+            XCTAssertEqual(minutes().value as? String, "23")
+            close(clean: false)
+            restart()
+            open("task115-done", title: "Task115 Done")
+            XCTAssertEqual(minutes().value as? String, "17")
+            close()
+
+        }
+
+        open("task115-next", title: "Task115 Next")
+        XCTAssertTrue(app.buttons["task-editor-status-next"].isSelected)
+        let next = openBackdate()!
+        replace(next, with: "41")
+        finishBackdate(confirm: true)
+        expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["task-editor-status-done"])
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(minutes().value as? String, "41")
+        boardTap(app, "task-mode-view")
+        boardTap(app, "task-mode-edit")
+        XCTAssertTrue(app.buttons["task-editor-status-done"].isSelected)
+        XCTAssertEqual(minutes().value as? String, "41")
+        close(clean: false)
+        restart()
+        open("task115-next", title: "Task115 Next")
+        XCTAssertTrue(app.buttons["task-editor-status-next"].isSelected)
+        let blank = minutes()
+        XCTAssertTrue((blank.value as? String ?? "").isEmpty || blank.value as? String == blank.placeholderValue)
+        let finalMinutes = openBackdate()!
+        replace(finalMinutes, with: "41")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Backdated completion dialog"
+        shot.lifetime = .keepAlways
+        add(shot)
+        finishBackdate(confirm: true)
+        boardTap(app, "task-editor-save")
+        boardEnabled(app.textFields["search-input"])
+        boardTap(app, "search-close")
+        restart()
+        open("task115-next", title: "Task115 Next")
+        XCTAssertTrue(app.buttons["task-editor-status-done"].isSelected)
+        XCTAssertEqual(minutes().value as? String, "41")
+        close(); app.terminate()
     }
 
     func testTaskStatusWaitingCancelCascadesAndRestart() {

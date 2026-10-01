@@ -13,6 +13,7 @@ struct TaskViewSheet: View {
     @State private var datePickerValue = Date.distantPast
     @State private var monthlyCustom: CoreObject?
     @State private var waitingAssignment: String?
+    @State private var backdatedCompletion: TaskBackdatedCompletionDraft?
     @State private var checklistReordering = false
     @FocusState private var focusedChecklistIndex: Int?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -24,7 +25,9 @@ struct TaskViewSheet: View {
     private var frozen: Bool { busy || model.retryNeeded || model.taskChecklistReadPending }
 
     private var rows: [CoreObject] { value.objects("rows") }
-    private var modalPresented: Bool { !model.taskDestinationKind.isEmpty || monthlyCustom != nil || waitingAssignment != nil }
+    private var modalPresented: Bool {
+        !model.taskDestinationKind.isEmpty || monthlyCustom != nil || waitingAssignment != nil || backdatedCompletion != nil
+    }
 
     var body: some View {
         ZStack {
@@ -42,6 +45,10 @@ struct TaskViewSheet: View {
                 TaskWaitingAssignmentDialog(model: model, palette: palette, initial: initial,
                     taskID: model.taskEditor.text("id"), session: model.taskEditorSession,
                     beforeAction: endEditingBeforeAction, close: { waitingAssignment = nil })
+            }
+            if let initial = backdatedCompletion {
+                TaskBackdatedCompletionDialog(model: model, palette: palette, initial: initial,
+                    close: { backdatedCompletion = nil })
             }
         }
     }
@@ -145,8 +152,9 @@ struct TaskViewSheet: View {
             editing = model.taskInitialTab == "task"
             initializeSections()
         }
-        .onChange(of: model.taskEditor.text("id")) { _ in waitingAssignment = nil; initializeSections() }
-        .onChange(of: model.taskEditorSession) { _ in waitingAssignment = nil }
+        .onChange(of: model.taskEditor.text("id")) { _ in waitingAssignment = nil; backdatedCompletion = nil; initializeSections() }
+        .onChange(of: model.taskEditorSession) { _ in waitingAssignment = nil; backdatedCompletion = nil }
+        .onDisappear { backdatedCompletion = nil }
         .onChange(of: model.taskChecklistFocusIndex) { index in focusedChecklistIndex = index }
     }
 
@@ -277,6 +285,7 @@ struct TaskViewSheet: View {
                             guard model.taskStatusEditable(status) else { return }
                             if status == "waiting" && !selected {
                                 let current = model.taskTokenInputs["assignedTo"] ?? model.taskEditor.object("draft").text("assignedTo")
+                                model.preserveTaskTokenInputForTransientModal()
                                 _ = UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                                 waitingAssignment = current
                             } else {
@@ -296,6 +305,17 @@ struct TaskViewSheet: View {
                         .accessibilityAddTraits(selected ? .isSelected : [])
                         .accessibilityIdentifier("task-editor-status-" + status)
                     }
+                }
+                if (model.taskEditor.object("options")["statuses"] as? [String] ?? []).contains("done") {
+                    Button {
+                        openTaskBackdatedCompletion()
+                    } label: {
+                        Text(strings.text("task.completedAtPromptTitle")).rnFont(14, .semibold)
+                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.tint)
+                    .disabled(!model.taskStatusEditable("done"))
+                    .accessibilityIdentifier("task-editor-backdate")
                 }
             }
         } else if field == "description" {
@@ -380,6 +400,21 @@ struct TaskViewSheet: View {
                 }
             }
         }
+    }
+
+    private func openTaskBackdatedCompletion() {
+        guard model.taskStatusEditable("done") else { return }
+        let start = model.taskEditor.object("backdatedCompletionStart")
+        let initialValue = start["initialValue"] as? String
+        let date = initialValue.flatMap(TaskDatePickerComponents.instant) ?? Date()
+        let draft = TaskBackdatedCompletionDraft(
+            taskID: model.taskEditor.text("id"), session: model.taskEditorSession,
+            date: date, instant: initialValue ?? TaskDatePickerComponents.instantString(date),
+            minutesText: model.taskBackdatedCompletionMinutesSeed,
+            showMinutes: model.taskEditor.object("fields").object("timeSpent").flag("enabled"))
+        model.preserveTaskTokenInputForTransientModal()
+        _ = UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        backdatedCompletion = draft
     }
 
     private var checklistEditor: some View {
@@ -1475,6 +1510,129 @@ private struct TaskRecurrenceField: View {
             }), displayedComponents: .date)
                 .datePickerStyle(.wheel).labelsHidden().tint(palette.tint)
                 .accessibilityLabel(model.label("recurrence.endsOnDate")).accessibilityIdentifier("task-recurrence-until-picker")
+        }
+    }
+}
+
+private struct TaskBackdatedCompletionDraft {
+    let taskID: String
+    let session: Int
+    let date: Date
+    let instant: String
+    let minutesText: String
+    let showMinutes: Bool
+}
+
+private struct TaskBackdatedCompletionDialog: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let initial: TaskBackdatedCompletionDraft
+    let close: () -> Void
+    @State private var date: Date
+    @State private var minutesText: String
+    @State private var dateChanged = false
+    @State private var confirming = false
+    @State private var attempted = false
+    private var frozen: Bool { model.busy || model.retryNeeded || confirming }
+
+    init(model: CoreModel, palette: AppPalette, initial: TaskBackdatedCompletionDraft,
+         close: @escaping () -> Void) {
+        self.model = model
+        self.palette = palette
+        self.initial = initial
+        self.close = close
+        _date = State(initialValue: initial.date)
+        _minutesText = State(initialValue: initial.minutesText)
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { cancel() }.accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 12) {
+                    ScrollView { form }
+                    .scrollDismissesKeyboard(.interactively)
+                    // Keep this one form mounted as the keyboard changes the
+                    // available height; replacing it loses the focused input.
+                    .frame(maxHeight: max(120, min(dynamicTypeSize.isAccessibilitySize ? .infinity : 360, geometry.size.height - 132)))
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("task-backdate-scroll")
+                    HStack {
+                        Spacer()
+                        Button(action: cancel) {
+                            Text(model.label("common.cancel"))
+                                .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.secondary)
+                        .disabled(frozen).accessibilityIdentifier("task-backdate-cancel")
+                        Button(action: confirm) {
+                            Text(model.label("common.save"))
+                                .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint)
+                        .disabled(frozen).accessibilityIdentifier("task-backdate-confirm")
+                    }
+                }
+                .padding(16).frame(maxWidth: 420)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(16)
+            }
+            .foregroundStyle(palette.text).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) { cancel() }
+        }
+    }
+
+    private var form: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.label("task.completedAtPromptTitle")).rnFont(18, .bold)
+                .accessibilityAddTraits(.isHeader)
+            DatePicker(model.label("task.completedAtPromptTitle"), selection: Binding(
+                get: { date }, set: { next in
+                    guard TaskDatePickerComponents.string(next, time: false) != TaskDatePickerComponents.string(date, time: false)
+                        || TaskDatePickerComponents.string(next, time: true) != TaskDatePickerComponents.string(date, time: true) else { return }
+                    date = next
+                    dateChanged = true
+                }), displayedComponents: [.date, .hourAndMinute])
+                .datePickerStyle(.wheel).labelsHidden().tint(palette.tint)
+                .accessibilityLabel(model.label("task.completedAtPromptTitle"))
+                .accessibilityIdentifier("task-backdate-picker").disabled(frozen)
+            if initial.showMinutes {
+                Text(model.label("taskEdit.timeSpentLabel").uppercased()).rnFont(14)
+                    .foregroundStyle(palette.secondary).accessibilityAddTraits(.isHeader)
+                TextField(model.label("taskEdit.timeSpentPlaceholder"), text: $minutesText)
+                    .rnFont(16).keyboardType(.numberPad).submitLabel(.done)
+                    .padding(12).frame(minHeight: 44)
+                    .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+                    .accessibilityLabel(model.label("taskEdit.timeSpentLabel"))
+                    .accessibilityIdentifier("task-backdate-minutes").disabled(frozen)
+            }
+            if attempted, let error = model.taskError {
+                Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                    .accessibilityIdentifier("task-backdate-error")
+            }
+        }
+    }
+
+    private func cancel() {
+        guard !frozen else { return }
+        _ = UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        close()
+    }
+
+    private func confirm() {
+        guard !frozen else { return }
+        _ = UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        confirming = true
+        attempted = true
+        let instant = dateChanged ? TaskDatePickerComponents.instantString(date) : initial.instant
+        let text = initial.showMinutes ? minutesText : nil
+        Task {
+            if await model.editTaskBackdatedCompletion(instant, timeSpentText: text,
+                                                       expectedID: initial.taskID, expectedSession: initial.session) { close() }
+            else { confirming = false }
         }
     }
 }

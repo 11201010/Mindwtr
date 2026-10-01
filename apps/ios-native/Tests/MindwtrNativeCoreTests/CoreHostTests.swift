@@ -10216,6 +10216,95 @@ final class CoreHostTests: XCTestCase {
                 "checklist": ["base": try checklistItems(id), "value": checklist]]
     }
 
+    func testEditorBackdateDraftCommitFailureColdReplayAndCorrection() async throws {
+        let id = try await seedDestinationTask()
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE tasks SET recurrence = ?, timeSpentMinutes = 17 WHERE id = ?",
+                               parametersJSON: json([json(["rule": "daily", "strategy": "strict", "count": 3, "seriesId": id]), id]))
+        func comparable(_ row: [String: Any], excluding fields: Set<String> = []) throws -> String {
+            try datePreservedFields(object(recurrenceComparableRow(row)), excluding: fields)
+        }
+        func snapshot() throws -> [String] {
+            var tables = try nineTableSnapshot(sqlite)
+            let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(tables[0].utf8)) as? [[String: Any]])
+            // Activation may reorder JSON object keys; preserve every value and array position.
+            tables[0] = try json(rows.map { try object(comparable($0)) })
+            return tables
+        }
+        let faults = HostIOFaults()
+        let core = host(faults, bundleURL: try dateBundle(at: "2036-10-04T12:00:00.000Z"))
+        _ = try await core.start()
+        _ = try await core.call("captureSubmit", argumentsJSON: capture(core, title: "Backdate sibling", id: UUID().uuidString.lowercased()))
+        let opening = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        let before = try snapshot()
+        let original = try storedTask(id)
+        let count = try taskCount()
+        let completion = "2036-10-02T18:23:45.678Z"
+        let edited = try object(await core.call("editDraft", argumentsJSON: json([json([
+            "id": id, "draft": try XCTUnwrap(opening["draft"]),
+            "edit": ["type": "backdatedCompletion", "completedAt": completion, "timeSpentText": "4.2 minutes"],
+        ])])))
+        let draft = try XCTUnwrap(edited["draft"] as? [String: Any])
+        XCTAssertEqual(draft["status"] as? String, "done")
+        XCTAssertEqual(draft["completedAt"] as? String, completion)
+        XCTAssertEqual(draft["timeSpentMinutes"] as? Int, 42)
+        XCTAssertEqual(try snapshot(), before, "Picker confirmation edits only the draft")
+        let request = try checklistSaveRequest(id, opening: opening, checklist: checklistItems(id),
+                                              patch: ["status": "done", "completedAt": completion, "timeSpentMinutes": 42])
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected backdate COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("checklistSave", argumentsJSON: json([json(request)])) }
+        let pending = try Data(contentsOf: journal)
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        try assertJournalContentUnchanged(pending)
+        XCTAssertEqual(try snapshot(), before)
+        await core.close()
+        let replay = host(bundleURL: try dateBundle(at: "2036-10-04T13:00:00.000Z", suffix:
+            "MindwtrHost.checklistSavePrepare = function () { throw new Error('Backdate replay must not prepare'); };"))
+        _ = try await replay.start()
+        let saved = try storedTask(id)
+        XCTAssertEqual(saved["completedAt"] as? String, completion)
+        XCTAssertEqual(saved["timeSpentMinutes"] as? Int, 42)
+        XCTAssertEqual(saved["rev"] as? Int, (original["rev"] as? Int ?? 0) + 1)
+        XCTAssertEqual(try taskCount(), count + 1)
+        let changed: Set<String> = ["status", "completedAt", "timeSpentMinutes", "isFocusedToday", "focusOrder", "recurrence", "rev", "revBy", "updatedAt"]
+        XCTAssertEqual(try datePreservedFields(saved, excluding: changed), try datePreservedFields(original, excluding: changed))
+        let after = try snapshot()
+        XCTAssertEqual(Array(after.dropFirst()), Array(before.dropFirst()))
+        let oldTasks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[0].utf8)) as? [[String: Any]])
+        let newTasks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(after[0].utf8)) as? [[String: Any]])
+        let siblingIDs = Set(oldTasks.compactMap { $0["id"] as? String }.filter { $0 != id })
+        XCTAssertEqual(try json(oldTasks.filter { siblingIDs.contains($0["id"] as? String ?? "") }),
+                       try json(newTasks.filter { siblingIDs.contains($0["id"] as? String ?? "") }))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await replay.close()
+        let cold = host(bundleURL: try dateBundle(at: "2036-10-04T14:00:00.000Z")); _ = try await cold.start()
+        XCTAssertEqual(try snapshot(), after)
+        let reopened = try object(await cold.call("editorModel", argumentsJSON: json([id])))
+        let correctedAt = "2036-10-01T17:02:03.456Z"
+        let corrected = try object(await cold.call("editDraft", argumentsJSON: json([json([
+            "id": id, "draft": try XCTUnwrap(reopened["draft"]),
+            "edit": ["type": "backdatedCompletion", "completedAt": correctedAt],
+        ])])))
+        XCTAssertEqual((corrected["draft"] as? [String: Any])?["timeSpentMinutes"] as? Int, 42)
+        let correction = try checklistSaveRequest(id, opening: reopened, checklist: checklistItems(id), patch: ["completedAt": correctedAt])
+        _ = try await cold.call("checklistSave", argumentsJSON: json([json(correction)]))
+        XCTAssertEqual(try storedTask(id)["completedAt"] as? String, correctedAt)
+        XCTAssertEqual(try storedTask(id)["timeSpentMinutes"] as? Int, 42)
+        XCTAssertEqual(try taskCount(), count + 1, "Correcting an already Done task creates no second recurrence child")
+        let final = try snapshot()
+        XCTAssertEqual(Array(final.dropFirst()), Array(after.dropFirst()))
+        let finalTasks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(final[0].utf8)) as? [[String: Any]])
+        XCTAssertEqual(try json(newTasks.filter { $0["id"] as? String != id }),
+                       try json(finalTasks.filter { $0["id"] as? String != id }))
+        XCTAssertEqual(try comparable(storedTask(id), excluding: ["completedAt", "rev", "revBy", "updatedAt"]),
+                       try comparable(saved, excluding: ["completedAt", "rev", "revBy", "updatedAt"]))
+        await cold.close()
+        let finalHost = host(bundleURL: try dateBundle(at: "2036-10-04T15:00:00.000Z")); _ = try await finalHost.start()
+        XCTAssertEqual(try snapshot(), final)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await finalHost.close(); sqlite.close()
+    }
+
     func testEditorTimeSpentTransportRecoveryAndCombinedClear() async throws {
         let id = try await seedDestinationTask()
         let faults = HostIOFaults()

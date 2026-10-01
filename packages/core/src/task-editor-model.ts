@@ -44,6 +44,7 @@ import {
     getTaskEditorTimeEstimate,
     getTaskEditorWeekdayButtons,
     isTaskEditorTimeSpentEnabled,
+    parseTaskEditorTimeSpent,
     type TaskEditorDatePart,
     type TaskEditorMonthlyCustom,
     type TaskEditorRecurrenceDetails,
@@ -51,6 +52,7 @@ import {
     type TaskEditorReminders,
     type TaskEditorTimeEstimate,
 } from './task-editor-schedule';
+import { normalizeTimeSpentMinutes } from './time-spent';
 import { getFrequentTaskTokensFromUsage, getTaskContextMatches, type TaskTokenUsage } from './task-token-usage';
 import { compareAreasByOrder } from './task-utils';
 import { resolveTaskViewSection, setTaskViewSectionId, sortViewSectionDefinitions } from './view-sections';
@@ -380,6 +382,35 @@ export function applyTaskDraftPatch(draft: TaskDraft, patch: Partial<TaskDraft>)
         }
     }
     return next;
+}
+
+/** Null initialValue asks the picker to sample the current instant when it opens. */
+export function getTaskEditorBackdatedCompletionStart(
+    task: Pick<Task, 'status' | 'updatedAt'>,
+    draft: Pick<TaskDraft, 'completedAt' | 'timeSpentMinutes'>,
+): { initialValue: string | null; initialTimeSpentMinutes: number | null } {
+    const raw = draft.completedAt || (task.status === 'done' ? task.updatedAt : null);
+    const parsed = raw ? new Date(raw) : null;
+    return {
+        initialValue: parsed && Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null,
+        initialTimeSpentMinutes: normalizeTimeSpentMinutes(draft.timeSpentMinutes) ?? null,
+    };
+}
+
+/** The picker confirms one instant and, when offered, one normalized minutes value. */
+export function resolveTaskEditorBackdatedCompletion(input: {
+    completedAt: string;
+    timeSpentText?: string;
+}): Pick<TaskDraft, 'status' | 'completedAt'> & Partial<Pick<TaskDraft, 'timeSpentMinutes'>> | null {
+    if (!input || typeof input.completedAt !== 'string'
+        || safeParseDate(input.completedAt)?.toISOString() !== input.completedAt
+        || (input.timeSpentText !== undefined && typeof input.timeSpentText !== 'string')) return null;
+    return {
+        status: 'done', completedAt: input.completedAt,
+        ...(input.timeSpentText !== undefined
+            ? { timeSpentMinutes: normalizeTimeSpentMinutes(parseTaskEditorTimeSpent(input.timeSpentText)) }
+            : {}),
+    };
 }
 
 /** How many quick chips a token field offers. */

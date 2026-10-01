@@ -12,6 +12,7 @@ import { Task,
     getTaskEditorMonthlyCustom,
     getRetainedTaskContexts,
     isTaskEditorTimeSpentEnabled,
+    getTaskEditorBackdatedCompletionStart,
     resolveAutoTextDirection,
     DEFAULT_PROJECT_COLOR,
     getLocalizedWeekdayButtons,
@@ -34,7 +35,7 @@ import {
     normalizeFocusTaskLimit,
     resolveTaskEditorFocusStar,
 } from '@mindwtr/core';
-import { taskDraftToUpdatePatch } from '@mindwtr/core/task-draft';
+import { createTaskDraft, taskDraftToUpdatePatch } from '@mindwtr/core/task-draft';
 import { useLanguage } from '../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useAdaptiveWindow } from '@/components/adaptive-window-context';
@@ -618,6 +619,9 @@ function TaskEditModalInner({
             checklist: taskEditDraft.checklist,
         };
     }, [task, taskEditDraft]);
+    const backdatedCompletionStart = useMemo(() => task
+        ? getTaskEditorBackdatedCompletionStart(task, taskEditDraft?.draft ?? createTaskDraft(task))
+        : null, [task, taskEditDraft?.draft]);
     const focusStar = useMemo(() => {
         if (!task || !taskEditDraft || readOnly || task.deletedAt || task.status === 'archived') return undefined;
         const limit = normalizeFocusTaskLimit(settings.gtd?.focusTaskLimit);
@@ -1418,8 +1422,8 @@ function TaskEditModalInner({
         </Modal>
         {visible && !readOnly && completedAtPickerVisible ? (
             <CompletedAtPicker
-                initialValue={mergedTask.completedAt ?? (task.status === 'done' ? task.updatedAt : undefined)}
-                initialTimeSpentMinutes={mergedTask.timeSpentMinutes}
+                initialValue={backdatedCompletionStart?.initialValue ?? undefined}
+                initialTimeSpentMinutes={backdatedCompletionStart?.initialTimeSpentMinutes ?? undefined}
                 showTimeSpent={timeSpentEnabled}
                 onCancel={() => setCompletedAtPickerVisible(false)}
                 onConfirm={confirmBackdatedCompletion}

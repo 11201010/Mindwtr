@@ -20,7 +20,9 @@ import {
     getTaskEditorMonthlyPattern,
     getTaskEditorProjectSections,
     getTaskEditorSuggestions,
+    getTaskEditorBackdatedCompletionStart,
     getTaskEditorTimeEstimateValues,
+    resolveTaskEditorBackdatedCompletion,
     toggleTaskEditorToken,
     resolveTaskEditorMonthlyAnchorDate,
     TASK_EDITOR_ENERGY_LEVEL_OPTIONS,
@@ -83,6 +85,50 @@ const liveProjects = fixture.projects.filter((project) => !project.deletedAt);
 const liveSections = fixture.sections.filter((section) => !section.deletedAt);
 const tasksById = new Map(fixture.tasks.map((task) => [task.id, task]));
 const snapshot = fixture.mobileSnapshot;
+
+describe('backdated completion picker policy', () => {
+    const next: Task = { id: 'backdate', title: 'Task', status: 'next', tags: [], contexts: [],
+        createdAt: CREATED, updatedAt: '2026-09-20T11:15:30.123Z' };
+
+    it('starts from draft completion, saved Done update time, or a fresh clock at open', () => {
+        const draft = createTaskDraft(next);
+        expect(getTaskEditorBackdatedCompletionStart(next, draft)).toEqual({
+            initialValue: null, initialTimeSpentMinutes: null,
+        });
+        const done = { ...next, status: 'done' as const };
+        expect(getTaskEditorBackdatedCompletionStart(done, createTaskDraft(done)).initialValue).toBe(done.updatedAt);
+        const imported = { ...done, updatedAt: '2026-09-20T07:15:30.123-04:00' };
+        expect(getTaskEditorBackdatedCompletionStart(imported, createTaskDraft(imported)).initialValue)
+            .toBe(done.updatedAt);
+        expect(getTaskEditorBackdatedCompletionStart({ ...done, updatedAt: 'not-a-date' }, draft).initialValue)
+            .toBeNull();
+        const picked = applyTaskDraftPatch(draft, { status: 'done', completedAt: '2026-09-18T09:30:45.321Z',
+            timeSpentMinutes: 100_001 });
+        expect(getTaskEditorBackdatedCompletionStart(next, picked)).toEqual({
+            initialValue: '2026-09-18T09:30:45.321Z', initialTimeSpentMinutes: 100_000,
+        });
+        const reverted = applyTaskDraftPatch(picked, { status: 'next' });
+        expect(getTaskEditorBackdatedCompletionStart(done, reverted).initialValue).toBe(done.updatedAt);
+    });
+
+    it('resolves an instant and optional digits without changing an unoffered total', () => {
+        const instant = '2026-09-18T09:30:45.321Z';
+        expect(resolveTaskEditorBackdatedCompletion({ completedAt: instant })).toEqual({
+            status: 'done', completedAt: instant,
+        });
+        expect(resolveTaskEditorBackdatedCompletion({ completedAt: instant, timeSpentText: '45 minutes' }))
+            .toMatchObject({ timeSpentMinutes: 45 });
+        expect(resolveTaskEditorBackdatedCompletion({ completedAt: instant, timeSpentText: '' }))
+            .toEqual({ status: 'done', completedAt: instant, timeSpentMinutes: undefined });
+        expect(resolveTaskEditorBackdatedCompletion({ completedAt: instant, timeSpentText: '0' })?.timeSpentMinutes)
+            .toBeUndefined();
+        expect(resolveTaskEditorBackdatedCompletion({ completedAt: instant, timeSpentText: '100001' })?.timeSpentMinutes)
+            .toBe(100_000);
+        expect(resolveTaskEditorBackdatedCompletion({ completedAt: '2026-09-18' })).toBeNull();
+        expect(resolveTaskEditorBackdatedCompletion({ completedAt: '2026-02-30T09:30:00.000Z' })).toBeNull();
+        expect(resolveTaskEditorBackdatedCompletion({ completedAt: instant, timeSpentText: null as never })).toBeNull();
+    });
+});
 
 // Mirrors the capture: the edit's draft ops, list buffers and typed inputs.
 const applyEdit = (task: Task, edit: Edit) => {
