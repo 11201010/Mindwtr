@@ -134,36 +134,27 @@ describe('runCalendarPushFullSync', () => {
         expect(harness.deleteSyncEntry).not.toHaveBeenCalled();
     });
 
-    it('expands opted-in unscheduled monthly recurrence before calendar eligibility', async () => {
-        const harness = createHarness();
+    it.each([
+        { recurrence: { rule: 'monthly', strategy: 'strict', byMonthDay: [20] }, dates: ['2026-07-20', '2026-08-20'] },
+        { recurrence: 'daily', dates: ['2026-07-14', '2026-07-15'] },
+        { recurrence: { rule: 'weekly', byDay: ['WE', 'FR'] }, dates: ['2026-07-15', '2026-07-17'] },
+    ] satisfies { recurrence: Task['recurrence']; dates: string[] }[])(
+        'exports current and next date-less $recurrence occurrences (#1322)', async ({ recurrence, dates }) => {
+            const harness = createHarness();
+            const source = makeTask({ dueDate: undefined, recurrence, showFutureRecurrence: true });
+            const result = await runCalendarPushFullSync({
+                tasks: [source], target: { id: 'calendar-1' }, ports: harness.ports,
+            });
 
-        const result = await runCalendarPushFullSync({
-            tasks: [makeTask({
-                dueDate: undefined,
-                startTime: undefined,
-                recurrence: { rule: 'monthly', strategy: 'strict', byMonthDay: [20] },
-                showFutureRecurrence: true,
-            })],
-            target: { id: 'calendar-1' },
-            ports: harness.ports,
-        });
-
-        expect(harness.createEvent).toHaveBeenCalledTimes(2);
-        expect(harness.createEvent).toHaveBeenCalledWith(expect.objectContaining({
-            id: 'task-1',
-            startTime: '2026-07-20',
-        }));
-        expect(harness.createEvent).toHaveBeenCalledWith(expect.objectContaining({
-            id: 'task-1:projected-recurrence',
-            startTime: '2026-08-20',
-        }));
-        expect(result).toEqual({
-            total: 2,
-            failed: 0,
-            stale: 0,
-            staleFailed: 0,
-        });
-    });
+            expect(harness.createEvent.mock.calls.map(([event]) => event)).toEqual([
+                expect.objectContaining({ id: 'task-1', startTime: dates[0] }),
+                expect.objectContaining({ id: 'task-1:projected-recurrence', startTime: dates[1] }),
+            ]);
+            expect(result).toEqual({ total: 2, failed: 0, stale: 0, staleFailed: 0 });
+            expect(source.startTime).toBeUndefined();
+            expect(source.dueDate).toBeUndefined();
+        },
+    );
 
     it('reconciles a mixed inventory through the initial mapping snapshot', async () => {
         const harness = createHarness();

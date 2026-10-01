@@ -131,6 +131,21 @@ describe('buildCalendarFeed', () => {
         expect(ics).toContain('SUMMARY:Ship\\, the\\; feed');
     });
 
+    it.each([
+        { recurrence: 'daily', dates: ['20260504', '20260505'] },
+        { recurrence: { rule: 'weekly', byDay: ['WE', 'FR'] }, dates: ['20260506', '20260508'] },
+    ] satisfies { recurrence: Task['recurrence']; dates: string[] }[])(
+        'exports current and next date-less $recurrence as all-day events (#1322)', ({ recurrence, dates }) => {
+            const source = task({ recurrence, showFutureRecurrence: true });
+            const ics = buildCalendarFeed({ tasks: [source] }, { now: NOW });
+            expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(2);
+            for (const date of dates) expect(ics).toContain(`DTSTART;VALUE=DATE:${date}`);
+            expect(ics).not.toContain('RRULE:');
+            expect(source.startTime).toBeUndefined();
+            expect(buildCalendarFeedEvents({ tasks: [{ ...source, showFutureRecurrence: false }] }, { now: NOW })).toEqual([]);
+        },
+    );
+
     it('writes a date-only deadline as an all-day event spanning one day', () => {
         const ics = buildCalendarFeed({ tasks: [task({ id: 'a', dueDate: '2026-05-07' })] }, { now: NOW });
         expect(ics).toContain('DTSTART;VALUE=DATE:20260507');

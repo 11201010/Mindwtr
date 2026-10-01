@@ -2033,6 +2033,117 @@ describe('expandCalendarRecurringTasksInRange', () => {
         ...overrides,
     });
 
+    it.each([
+        { interval: 1, dates: ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05'] },
+        { interval: 2, dates: ['2026-10-01', '2026-10-03', '2026-10-05'] },
+    ])('starts date-less daily interval $interval on today (#1322)', ({ interval, dates }) => {
+        const task = rangeTask({
+            recurrence: { rule: 'daily', strategy: 'strict', rrule: `FREQ=DAILY;INTERVAL=${interval}` },
+        });
+        const expanded = expandCalendarRecurringTasksInRange(
+            task,
+            { startIso: '2026-09-27', endIso: '2026-10-05' },
+            '2026-10-01T12:00:00',
+        );
+
+        expect(expanded.map((occurrence) => occurrence.startTime?.slice(0, 10))).toEqual(dates);
+        expect(expanded.every((occurrence) => /^\d{4}-\d{2}-\d{2}$/.test(occurrence.startTime ?? ''))).toBe(true);
+        expect(task.startTime).toBeUndefined();
+    });
+
+    it.each([
+        {
+            label: 'MO/WE includes today', now: '2026-10-05T12:00:00',
+            recurrence: { rule: 'weekly', byDay: ['MO', 'WE'], strategy: 'strict' },
+            dates: ['2026-10-05', '2026-10-07', '2026-10-12', '2026-10-14', '2026-10-19', '2026-10-21'],
+        },
+        {
+            label: 'interval 2 starts at the next match', now: '2026-10-01T12:00:00',
+            recurrence: { rule: 'weekly', strategy: 'strict', rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE;WKST=MO' },
+            dates: ['2026-10-05', '2026-10-07', '2026-10-19', '2026-10-21'],
+        },
+        {
+            label: 'interval 2 respects Sunday week start', now: '2026-10-04T12:00:00',
+            recurrence: { rule: 'weekly', strategy: 'strict', rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=SU,MO;WKST=SU' },
+            dates: ['2026-10-04', '2026-10-05', '2026-10-18', '2026-10-19'],
+        },
+    ] satisfies { label: string; now: string; recurrence: Task['recurrence']; dates: string[] }[])(
+        'projects date-less weekly $label (#1322)', ({ now, recurrence, dates }) => {
+            const task = rangeTask({ recurrence });
+            const expanded = expandCalendarRecurringTasksInRange(
+                task, { startIso: '2026-09-27', endIso: '2026-10-21' }, now,
+            );
+
+            expect(expanded.map((occurrence) => occurrence.startTime?.slice(0, 10))).toEqual(dates);
+            expect(expanded.every((occurrence) => /^\d{4}-\d{2}-\d{2}$/.test(occurrence.startTime ?? ''))).toBe(true);
+            expect(task.startTime).toBeUndefined();
+        },
+    );
+
+    it.each(['weekly', 'yearly', 'monthly'] as const)('leaves date-less %s without selectors unscheduled (#1322)', (rule) => {
+        const task = rangeTask({ recurrence: rule });
+        expect(expandCalendarRecurringTasksInRange(
+            task, { startIso: '2026-10-01', endIso: '2026-11-01' }, '2026-10-01T12:00:00',
+        )).toEqual([task]);
+    });
+
+    it.each([
+        'daily',
+        { rule: 'weekly', byDay: ['MO', 'WE'] },
+    ] satisfies Task['recurrence'][])('keeps date-less recurrence %j disabled with the toggle off (#1322)', (recurrence) => {
+        const task = rangeTask({ recurrence, showFutureRecurrence: false });
+        expect(expandCalendarRecurringTasksInRange(
+            task, { startIso: '2026-10-01', endIso: '2026-11-01' }, '2026-10-01T12:00:00',
+        )).toEqual([task]);
+        expect(expandCalendarRecurringTasks(task, '2026-10-01T12:00:00')).toEqual([task]);
+    });
+
+    it.each([
+        { completedOccurrences: 0, until: undefined, dates: ['2026-10-01', '2026-10-02', '2026-10-03'] },
+        { completedOccurrences: 2, until: undefined, dates: ['2026-10-01'] },
+        { completedOccurrences: 3, until: undefined, dates: [] },
+        { completedOccurrences: 0, until: '2026-10-02', dates: ['2026-10-01', '2026-10-02'] },
+        { completedOccurrences: 0, until: '2026-09-30', dates: [] },
+    ])('bounds date-less daily COUNT=3, completed=$completedOccurrences, UNTIL=$until (#1322)', ({ completedOccurrences, until, dates }) => {
+        const task = rangeTask({ recurrence: { rule: 'daily', count: 3, completedOccurrences, until } });
+        const expanded = expandCalendarRecurringTasksInRange(
+            task, { startIso: '2026-10-01', endIso: '2026-11-01' }, '2026-10-01T12:00:00',
+        );
+        expect(expanded.filter((occurrence) => occurrence.startTime).map((occurrence) => occurrence.startTime?.slice(0, 10))).toEqual(dates);
+    });
+
+    it.each([
+        {
+            rule: 'daily', rrule: 'FREQ=DAILY;INTERVAL=2',
+            dates: ['2026-10-01', '2026-10-03', '2026-10-05', '2026-10-07', '2026-10-09', '2026-10-11', '2026-10-13'],
+        },
+        {
+            rule: 'weekly', rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE',
+            dates: ['2026-10-05', '2026-10-14'],
+        },
+    ] as const)('keeps existing fluid stepping after the date-less $rule current occurrence (#1322)', ({ rule, rrule, dates }) => {
+        const task = rangeTask({ recurrence: { rule, strategy: 'fluid', rrule } });
+        const expanded = expandCalendarRecurringTasksInRange(
+            task, { startIso: '2026-10-01', endIso: '2026-10-14' }, '2026-10-01T12:00:00',
+        );
+        expect(expanded.map((occurrence) => occurrence.startTime?.slice(0, 10))).toEqual(dates);
+    });
+
+    it('preserves monthly exclusion of today when its date-less rule matches (#1322)', () => {
+        const task = rangeTask({ recurrence: { rule: 'monthly', byMonthDay: [1] } });
+        expect(createCurrentRecurringCalendarTask(task, '2026-10-01T12:00:00')?.startTime).toBe('2026-11-01');
+    });
+
+    it('keeps per-task and total caps for date-less daily projections (#1322)', () => {
+        const tasks = Array.from({ length: 20 }, (_, index) => rangeTask({ id: `dateless-${index}`, recurrence: 'daily' }));
+        const range = { startIso: '2026-10-01', endIso: '2027-01-01' };
+        const now = '2026-10-01T12:00:00';
+        expect(expandCalendarRecurringTasksInRange(tasks[0], range, now).filter(isProjectedRecurringTask))
+            .toHaveLength(CALENDAR_RANGE_PROJECTION_PER_TASK_CAP);
+        expect(expandCalendarRecurringTaskSetInRange(tasks, range, now).filter(isProjectedRecurringTask))
+            .toHaveLength(CALENDAR_RANGE_PROJECTION_TOTAL_CAP);
+    });
+
     it('paints a daily task into every visible day and includes exact range-boundary occurrences', () => {
         const task = rangeTask({
             id: 't-range-daily',
@@ -2790,6 +2901,17 @@ describe('getRecurringTaskPreviewDate', () => {
         createdAt: nowIso,
         updatedAt: nowIso,
     };
+
+    it.each([
+        { recurrence: 'daily', date: '2026-07-03' },
+        { recurrence: { rule: 'daily', rrule: 'FREQ=DAILY;INTERVAL=2' }, date: '2026-07-03' },
+        { recurrence: { rule: 'weekly', byDay: ['MO', 'WE'] }, date: '2026-07-06' },
+        { recurrence: { rule: 'weekly', byDay: ['FR'] }, date: '2026-07-03' },
+    ] satisfies { recurrence: Task['recurrence']; date: string }[])(
+        'previews date-less $recurrence as $date with the toggle off (#1322)', ({ recurrence, date }) => {
+            expect(getRecurringTaskPreviewDate({ ...base, recurrence, showFutureRecurrence: false }, '2026-07-03T12:00:00')).toBe(date);
+        },
+    );
 
     it('shows the first upcoming occurrence for an unscheduled day-of-month rule without the calendar toggle', () => {
         const task: Task = {
