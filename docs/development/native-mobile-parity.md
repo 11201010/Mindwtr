@@ -526,6 +526,7 @@ The maintainer approved these native Android behaviors that differ from the Reac
 - Settings › AI: non-secret text fields send their change 500 ms after typing pauses (RN writes every keystroke). The key and base URL fields write each change at once, in order.
 - Process Inbox's AI toast "Open" closes Process Inbox, then opens Settings › AI (RN pushes the route under its modal; that RN behavior is a suspected bug, not yet verified).
 - A Settings row's text wraps about 12 dp wider than RN's.
+- Attachments (approved 2026-10-01): a picked image keeps its original bytes; RN's picker re-encodes it at quality 0.9.
 
 
 Task Editor backdated completion (2026-10-01, Task115): the native editor offers an accessible secondary completion-time action with a native date/time wheel. Shared TypeScript helpers own opening fallback, instant validation and optional minutes normalization, and RN consumes the same helpers. Open and Cancel preserve parent draft inputs; Confirm resolves parent inputs and applies one session-fenced draft edit. Save uses the existing prepared checklist transaction. Unchanged picker values retain seconds and milliseconds. No new writer, schema or dependency.
