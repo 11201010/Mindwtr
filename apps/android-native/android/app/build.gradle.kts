@@ -72,13 +72,18 @@ android {
 
     // RN's app shortcuts, generated per build type (buildShortcuts below).
     sourceSets { urlSchemes.keys.forEach { getByName(it).res.srcDir(layout.buildDirectory.dir("generated/shortcuts/$it/res")) } }
-    // RN's capture intent Kotlin and its attachment installer, with their JVM tests, compiled as they are (rnCaptureIntent and
-    // rnAttachmentInstaller below).
+    // RN's attachment installer Kotlin, with its JVM tests, compiled as it is (rnAttachmentInstaller below); RN's widget
+    // components, generated per build type from RN's plugins (buildWidgets below): the manifest entries, their XML and resources,
+    // the legacy widget class and the Quick Settings tile.
     sourceSets {
-        getByName("main").java.srcDir(layout.buildDirectory.dir("generated/rnKotlin/main/java"))
-        getByName("test").java.srcDir(layout.buildDirectory.dir("generated/rnKotlin/test/java"))
         getByName("main").java.srcDir(layout.buildDirectory.dir("generated/rnInstaller/main/java"))
         getByName("test").java.srcDir(layout.buildDirectory.dir("generated/rnInstaller/test/java"))
+        urlSchemes.keys.forEach { type ->
+            val widgets = layout.buildDirectory.dir("generated/widgets/$type").get().asFile
+            getByName(type).manifest.srcFile(widgets.resolve("AndroidManifest.xml"))
+            getByName(type).res.srcDir(widgets.resolve("res"))
+            getByName(type).java.srcDir(widgets.resolve("java"))
+        }
     }
     // Its core-host.js replaces main's in benchmarkTrace only (a build type's assets win over main's).
     sourceSets { getByName("benchmarkTrace").assets.srcDir(tracedBundleAssets) }
@@ -119,6 +124,8 @@ dependencies {
     implementation("androidx.fragment:fragment:1.8.9")
     // CoreWork (D7): work after the app closes, on the WorkManager RN ships (expo-background-task's version).
     implementation("androidx.work:work-runtime:2.9.1")
+    // RN's home-screen widgets, quick capture dialog and capture intent (apps/mobile/modules/android-widget, widget/build.gradle.kts).
+    implementation(project(":widget"))
     // JVM unit tests of plain Kotlin (the entry queue, WriteJournalTest); Android's org.json is a stub there.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
@@ -169,16 +176,28 @@ val buildShortcuts by tasks.registering(Exec::class) {
     inputs.property("urlSchemes", urlSchemes.toString())
     outputs.dir(out)
 }
-// RN's capture intent (apps/mobile/modules/android-widget): the token store, the request check, the queue writer and the audio
-// draft types the writer names, with RN's tests of the first two. RN's receiver is not among them: this app's own copy
-// (androidwidget/CaptureIntentReceiver.kt) also starts CoreWork. The widgets pass brings the rest of the module.
-val rnCaptureIntent by tasks.registering(Sync::class) {
-    val widget = "tech/dongdongbh/mindwtr/androidwidget"
-    from(rootProject.projectDir.resolve("../../mobile/modules/android-widget/android/src")) {
-        include(listOf("CaptureIntentProcessor", "CaptureIntentConfigStore", "PendingCaptureWriter", "QuickCaptureAudioRecorder").map { "main/java/$widget/$it.kt" })
-        include(listOf("CaptureIntentProcessorTest", "CaptureIntentConfigStoreTest").map { "test/java/$widget/$it.kt" })
-    }
-    into(layout.buildDirectory.dir("generated/rnKotlin"))
+// RN's widgets and tile for each build type (scripts/build-widgets.mjs, from RN's plugins), labelled as the build's launcher icon.
+val widgetIdentities = mapOf(
+    "debug" to "tech.dongdongbh.mindwtr.nativeclient.dev:Mindwtr Native Dev",
+    "upgradetest" to "tech.dongdongbh.mindwtr.upgradetest:Mindwtr Native Dev",
+    "release" to "tech.dongdongbh.mindwtr.nativeclient.dev:Mindwtr",
+    "benchmark" to "tech.dongdongbh.mindwtr.nativeclient.dev.benchmark:Mindwtr",
+    "benchmarkSeed" to "tech.dongdongbh.mindwtr.nativeclient.dev.benchmark:Mindwtr",
+    "benchmarkTrace" to "tech.dongdongbh.mindwtr.nativeclient.dev.benchmark:Mindwtr",
+)
+val buildWidgets by tasks.registering(Exec::class) {
+    workingDir = rootProject.projectDir.resolve("../../..")
+    val out = layout.buildDirectory.dir("generated/widgets").get().asFile
+    commandLine(listOf("node", "apps/android-native/scripts/build-widgets.mjs", out.path) + widgetIdentities.map { (type, identity) -> "$type=$identity" })
+    inputs.files(
+        fileTree(workingDir.resolve("apps/mobile/plugins")),
+        fileTree(workingDir.resolve("apps/mobile/modules/android-widget/android/src/main/res/layout")),
+        workingDir.resolve("apps/mobile/app.json"),
+        fileTree(workingDir.resolve("apps/mobile/assets/images")) { include("widget-*.png") },
+        workingDir.resolve("apps/android-native/scripts/build-widgets.mjs"),
+    )
+    inputs.property("widgetIdentities", widgetIdentities.toString())
+    outputs.dir(out)
 }
 // RN's attachment installer (apps/mobile/modules/attachment-file-installer): its install, hash and journal recovery policy and its
 // Android file operations, with RN's JVM tests of both (the hard-link fallback and its errno names, #1139, included). The native publisher (C++) that only File Sync's immutable publication
@@ -191,5 +210,7 @@ val rnAttachmentInstaller by tasks.registering(Sync::class) {
     }
     into(layout.buildDirectory.dir("generated/rnInstaller"))
 }
-tasks.named("preBuild") { dependsOn(buildCoreBundle, buildShortcuts, rnCaptureIntent, rnAttachmentInstaller) }
+tasks.named("preBuild") { dependsOn(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller) }
 tasks.matching { it.name == "preBenchmarkTraceBuild" }.configureEach { dependsOn(buildTracedCoreBundle) }
+// The widget module's RN tests (Robolectric) run with the app's.
+tasks.matching { it.name == "testDebugUnitTest" }.configureEach { dependsOn(":widget:testDebugUnitTest") }

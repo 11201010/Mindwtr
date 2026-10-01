@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -2563,7 +2563,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(gradle, /buildConfigField\("String", "URL_SCHEME", "\\"\$scheme\\""\)\s+manifestPlaceholders\["urlScheme"\] = scheme/);
     for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
     assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
-    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, rnCaptureIntent, rnAttachmentInstaller\) \}/);
+    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller\) \}/);
     // The bytecode cache's keys (BytecodeCache.kt): the engine version is the QuickJS dependency's, and the bundle carries the
     // SHA-256 of its own body in its first line, written with it in one file (build-bundle.mjs), so a bundle and a hash from
     // two builds cannot pair up. Every variant's merged assets are checked by verify-bundle.mjs before packaging.
@@ -2975,14 +2975,19 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
 // Pass B2 (E2 native): CoreWork, the queue's ports, RN's capture intent and context automation receivers under RN's class names,
 // RN's capture intent Kotlin compiled as it is, and GTD › Capture's automation card.
 {
-    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+    // The main manifest and the debug build's widget overlay (RN's plugins' entries, scripts/build-widgets.mjs; pass W1).
+    const { buildManifest } = await import('./build-widgets.mjs');
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + buildManifest('tech.dongdongbh.mindwtr.nativeclient.dev', 'Mindwtr Native Dev');
     const gradle = readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8');
+    const widgetGradle = readFileSync(resolve(app, 'android/widget/build.gradle.kts'), 'utf8');
     const rnWidget = (name) => readFileSync(resolve(app, '../mobile/modules/android-widget/android/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
     const nativeKt = (path) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr', path), 'utf8');
-    // Exported: RN's activity alias, RN's two automation receivers (plugins/android-widget.js, android-manifest-fixes.js), and the
-    // reminders' reschedule receiver in place of RN's exported AlarmBootReceiver (patch-alarm-notification-gradle.js), nothing else.
+    const widgetKt = (name) => readFileSync(resolve(app, 'android/widget/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
+    // Exported: RN's activity alias, RN's two automation receivers (plugins/android-widget.js, android-manifest-fixes.js), the
+    // reminders' reschedule receiver in place of RN's exported AlarmBootReceiver (patch-alarm-notification-gradle.js), and RN's
+    // widget components (pass W1's block lists them), nothing else.
     const exported = [...manifest.matchAll(/<(?:activity-alias|activity|receiver|service|provider)\s[^>]*?android:name="([^"]+)"[^>]*?android:exported="true"/g)].map((m) => m[1]).sort();
-    assert.deepEqual(exported, ['${applicationId}.MainActivity', '.ReminderRescheduleReceiver', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
+    assert.deepEqual(exported.filter((name) => !/Widget|TasksWidget|CaptureTileService/.test(name)), ['${applicationId}.MainActivity', '.ReminderRescheduleReceiver', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
         'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver'], 'only RN\'s exported components');
     const receiver = (name) => manifest.match(new RegExp(`<receiver\\s+android:name="${name.replace(/\./g, '\\.')}"[\\s\\S]*?</receiver>`))?.[0] ?? assert.fail(`no ${name}`);
     const rnPlugin = readFileSync(resolve(app, '../mobile/plugins/android-widget.js'), 'utf8');
@@ -3001,16 +3006,14 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(contextFilters[0], /<data /);
     assert.match(contextFilters[1], /<data android:scheme="mindwtr" \/>/);
     assert.match(manifest, /<uses-permission android:name="android\.permission\.POST_NOTIFICATIONS" \/>/);
-    // RN's capture intent Kotlin compiled as it is, with RN's tests; the receiver is RN's but for its lines marked `native`.
-    for (const name of ['CaptureIntentProcessor', 'CaptureIntentConfigStore', 'PendingCaptureWriter', 'QuickCaptureAudioRecorder']) assert(gradle.includes(`"${name}"`), `RN's ${name}.kt is compiled in`);
-    for (const name of ['CaptureIntentProcessorTest', 'CaptureIntentConfigStoreTest']) assert(gradle.includes(`"${name}"`), `RN's ${name}.kt runs`);
-    assert.doesNotMatch(gradle.slice(gradle.indexOf('val rnCaptureIntent')), /"CaptureIntentReceiver"/, 'RN\'s receiver is replaced, not compiled in');
-    const nativeReceiver = nativeKt('androidwidget/CaptureIntentReceiver.kt');
+    // RN's capture intent Kotlin compiled as it is in the widget module (pass W1), with RN's tests; the receiver is RN's but for its
+    // lines marked `native`, and it is the module's own (it reads RN's internal extras reader).
+    assert.match(widgetGradle, /val rnExcluded = listOf\("AndroidWidgetModule", "CaptureSyncHeadlessService", "CaptureIntentReceiver"\)/, 'RN\'s receiver is replaced, not compiled in');
+    const nativeReceiver = widgetKt('CaptureIntentReceiver.kt');
     assert.equal(nativeReceiver.split('\n').filter((line) => !line.endsWith('// native')).join('\n').replace(/\n \*\n \* Native:[\s\S]*?(?=\n \*\/)/, ''),
         rnWidget('CaptureIntentReceiver.kt'), 'the capture intent receiver is RN\'s but for its native lines');
-    assert.match(nativeReceiver, /if \(queued && ordered\) pendingResult\.resultCode = Activity\.RESULT_OK\n[^\n]*\/\/ native\n\s+if \(queued\) runCatching \{ CoreWork\.enqueue\(appContext, CoreJob\.INGEST\) \} \/\/ native\n/, 'a queued capture starts CoreWork after the sender is told');
-    const undo = (text) => /const val UNDO_WINDOW_MS = ([^\n]+)/.exec(text)[1];
-    assert.equal(undo(nativeKt('androidwidget/CheckoffStore.kt')), undo(rnWidget('CheckoffStore.kt')), 'the writer\'s undo window is RN\'s');
+    assert.match(nativeReceiver, /if \(queued && ordered\) pendingResult\.resultCode = Activity\.RESULT_OK\n[^\n]*\/\/ native\n\s+if \(queued\) CaptureSyncHeadlessService\.start\(appContext\) \/\/ native\n/, 'a queued capture starts CoreWork after the sender is told');
+    assert(!existsSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/androidwidget')), 'RN\'s CheckoffStore.kt is compiled in; no native copy is left');
     // The context receiver reads the intent as RN's does; where RN starts its headless task, CoreWork asks core.
     const rnContext = readFileSync(resolve(app, '../mobile/modules/context-automation/android/src/main/java/tech/dongdongbh/mindwtr/contextautomation/ContextAutomationReceiver.kt'), 'utf8');
     const nativeContext = nativeKt('contextautomation/ContextAutomationReceiver.kt');

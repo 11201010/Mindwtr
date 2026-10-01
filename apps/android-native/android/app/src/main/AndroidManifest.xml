@@ -7,8 +7,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- RN's network security config (apps/mobile/plugins/android-network-security-config.js). -->
+    <!-- MindwtrApplication sets the widget module's hook (CoreWork) before any component of this process runs. -->
     <application
         android:networkSecurityConfig="@xml/network_security_config"
+        android:name=".MindwtrApplication"
         android:label="Mindwtr Native Dev"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -87,16 +89,8 @@
                 android:resource="@xml/mindwtr_shortcuts" />
         </activity-alias>
 
-        <!-- RN's capture intent (plugins/android-widget.js), under RN's class name so an automation that names it keeps working.
-             Exported on purpose: it checks the exact action, the string extras, the device-local token and the text bounds
-             before it queues anything, and then starts CoreWork. -->
-        <receiver
-            android:name="tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="tech.dongdongbh.mindwtr.action.CAPTURE" />
-            </intent-filter>
-        </receiver>
+        <!-- RN's widget components, quick capture dialog, capture intent receiver and Quick Settings tile come from RN's own
+             plugins, one overlay per build type (scripts/build-widgets.mjs; build/generated/widgets/<type>/AndroidManifest.xml). -->
 
         <!-- RN's context automation receiver and its two filters (plugins/android-manifest-fixes.js), under RN's class name.
              Exported as in RN: core reads the trigger (runContextAutomation), and nothing is written. -->

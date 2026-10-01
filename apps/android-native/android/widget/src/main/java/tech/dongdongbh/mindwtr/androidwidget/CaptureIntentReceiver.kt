@@ -8,8 +8,6 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
-import tech.dongdongbh.mindwtr.pilot.CoreJob // native
-import tech.dongdongbh.mindwtr.pilot.CoreWork // native
 
 /**
  * Token-protected automation entry point. It never starts the app or writes its
@@ -18,8 +16,9 @@ import tech.dongdongbh.mindwtr.pilot.CoreWork // native
  * Native: RN's receiver (apps/mobile/modules/android-widget), under RN's class
  * name so an automation that names the component keeps working after the
  * upgrade. The lines marked `native` are the only change (check-boot-gates.mjs
- * keeps the rest RN's): a queued capture starts CoreWork, which stores it now
- * through the app's one core host.
+ * keeps the rest RN's): a queued capture starts the app's CoreWork (through
+ * CaptureSyncHeadlessService, as the dialog does), which stores it now through
+ * the app's one core host.
  */
 class CaptureIntentReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
@@ -51,7 +50,7 @@ class CaptureIntentReceiver : BroadcastReceiver() {
           }
           if (queued && ordered) pendingResult.resultCode = Activity.RESULT_OK
           // The file is on disk: a failed start leaves it for the next app start. // native
-          if (queued) runCatching { CoreWork.enqueue(appContext, CoreJob.INGEST) } // native
+          if (queued) CaptureSyncHeadlessService.start(appContext) // native
         } catch (_: Exception) {
           // Fail closed. Broadcasts have no result channel, and private text or
           // tokens must never enter logs.
