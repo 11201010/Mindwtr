@@ -25,7 +25,7 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 - **`v1.3.4/ios-task-duplicate`** — native iOS `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. Message: `Native iOS Task duplicated`; outcome `confirmed`. The Task editor's Duplicate action copies the saved source using the prepared Board command. The log must appear only after durable success and settlement of the matching editor snapshot, including cold recovery. A failed write retains the source draft and exact command; retry must create only one copy. No task content or identifiers are logged.
 
-- `ios-task-share` — `apps/ios-native/App/TaskViewSheet.swift`: `Native iOS Task share sheet opened` with `outcome=presented` proves the native activity sheet was created after the core text read and any owed draft checkpoint; no task content or destination is logged.
+- **`v1.3.4/ios-task-share`** — `apps/ios-native/App/TaskViewSheet.swift`: `Native iOS Task share sheet opened` with `outcome=presented` proves the native activity sheet was created after the core text read and any owed draft checkpoint; no task content or destination is logged.
 
 - **`v1.3.4/ios-calendar-delete`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Calendar task deleted` with `outcome=confirmed` proves the prepared soft deletion completed durably. No Task text, identifiers or dates are logged.
 

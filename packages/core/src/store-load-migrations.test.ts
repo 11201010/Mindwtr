@@ -180,7 +180,12 @@ describe('runLoadMigrations', () => {
                 reactivatedAt,
                 'device-a',
             );
-            expect(reactivated.tasks.find((task) => task.id === reference.id)).toEqual(archivedReference);
+            expect(reactivated.tasks.find((task) => task.id === reference.id)).toEqual({
+                ...archivedReference,
+                archivedAt: undefined,
+                updatedAt: reactivatedAt,
+                rev: 9,
+            });
             expect(reactivated.tasks.find((task) => task.id === actionable.id)).toMatchObject({
                 status: 'next',
                 completedAt: undefined,

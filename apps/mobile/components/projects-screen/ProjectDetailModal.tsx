@@ -544,11 +544,12 @@ export function ProjectDetailModal({
     const tc = useThemeColors();
     const insets = useSafeAreaInsets();
     const filledButton = useFilledButtonColors();
+    const selectedProjectId = selectedProject?.id;
     React.useEffect(() => {
-        if (!selectedProject) return;
+        if (!selectedProjectId) return;
         useTaskStore.getState().lockEditing();
         return () => useTaskStore.getState().unlockEditing();
-    }, [selectedProject?.id]);
+    }, [selectedProjectId]);
     const {
         addSection,
         deleteSection,

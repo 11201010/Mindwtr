@@ -81,6 +81,7 @@ describe('stable sync property-order reuse', () => {
 const GTD_SYNCED_FIELD_SAMPLE_VALUES: Record<GtdSyncedFieldKey, GtdSettings[GtdSyncedFieldKey]> = {
     timeEstimatePresets: ['15min', '1hr'],
     autoArchiveDays: 14,
+    archiveRetentionDays: 30,
     defaultCaptureMethod: 'audio',
     defaultScheduleTime: '09:30',
     defaultAreaMode: 'fixed',

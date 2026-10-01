@@ -1556,6 +1556,8 @@ describe('native host contract', () => {
                 revision: expect.any(String),
                 id: 'edit',
                 readOnly: false,
+                canCancel: true,
+                cancelLabel: 'Cancel recurring series',
                 draft,
                 backdatedCompletionStart: { initialValue: null, initialTimeSpentMinutes: null },
                 focusStar: expect.objectContaining({ isFocused: false, canToggle: false, queued: false, blockedReason: 'deferred' }),

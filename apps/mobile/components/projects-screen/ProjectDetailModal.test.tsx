@@ -357,6 +357,9 @@ describe('ProjectDetailModal archive retention guard', () => {
         act(() => { tree = create(<ProjectDetailModal {...props} />); });
         expect(storeActions.lockEditing).toHaveBeenCalledTimes(1);
         expect(storeActions.unlockEditing).not.toHaveBeenCalled();
+        act(() => tree.update(<ProjectDetailModal {...props} project={{ ...props.project!, title: 'Edited draft' }} />));
+        expect(storeActions.lockEditing).toHaveBeenCalledTimes(1);
+        expect(storeActions.unlockEditing).not.toHaveBeenCalled();
         act(() => tree.update(<ProjectDetailModal {...props} project={null} />));
         expect(storeActions.unlockEditing).toHaveBeenCalledTimes(1);
         act(() => tree.unmount());

@@ -388,7 +388,7 @@ describe('TaskItemDisplay', () => {
             </LanguageProvider>
         );
 
-        expect(getByText('Daily · Repeat every 3 day(s)')).toBeInTheDocument();
+        expect(getByText(/^Daily · Repeat every 3 day\(s\) · Next calendar preview: /)).toBeInTheDocument();
     });
 
     // #1164: Waiting For completes from the quick action; Someday still promotes.

@@ -1324,6 +1324,22 @@ describe('canonical local reads contract', () => {
                 expect(nativeValue(await host.commitPreparedFocusSavedFilter({ request, prepared: planned.prepared })))
                     .toEqual(planned.prepared.result);
             },
+            commitPreparedSavedSearchWrite: async (control) => {
+                const host = await nativeHost(control);
+                const operation = { type: 'save' as const, query: '#contract' };
+                const options = nativeValue(host.getSavedSearchWriteOptions({ operation }));
+                const request = { requestId: '49b253b9-a22c-43b1-9de6-f568a6250ae9', operation,
+                    name: 'Contract search', expected: options.expected };
+                const planned = nativeValue(host.prepareSavedSearchWrite(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.settings.savedSearches).toEqual(planned.prepared.after.savedSearches);
+                    expect(written.settings.savedSearchesUpdatedAt).toBe(planned.prepared.after.stamp);
+                });
+                expect(nativeValue(await host.commitPreparedSavedSearchWrite({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+            },
             commitPreparedProjectCreate: async (control) => {
                 const host = await nativeHost(control);
                 const request = { requestId: 'a18279a3-1920-4453-a715-c123e1595304',
@@ -1337,6 +1353,22 @@ describe('canonical local reads contract', () => {
                 expect(nativeValue(await host.commitPreparedProjectCreate({ request, prepared: planned.prepared })))
                     .toEqual({ id: request.requestId, created: true });
                 expect(useTaskStore.getState()._projectsById.get(request.requestId)).toEqual(planned.prepared.project);
+            },
+            commitPreparedProjectAttachmentWrite: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getProjectAttachmentEditOptions({ projectId: settled.projects[1].id }));
+                const { id, ...expected } = options.project;
+                const request = { requestId: '596486b8-859c-4ad0-81a0-1184ed595106', projectId: id,
+                    intent: { kind: 'add' as const, text: 'Contract | https://example.org/contract' }, expected };
+                const planned = nativeValue(host.prepareProjectAttachmentWrite(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === id))
+                        .toEqual(planned.prepared.effect.project.after);
+                });
+                expect(nativeValue(await host.commitPreparedProjectAttachmentWrite({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
             },
             commitPreparedProjectFocus: async (control) => {
                 const host = await nativeHost(control);
@@ -1733,7 +1765,30 @@ describe('canonical local reads contract', () => {
             },
             restoreTask: () => call('restoreTask', deletedTaskId),
             restoreTasks: () => call('restoreTasks', [deletedTaskId]),
+            runArchiveRetention: async (control) => {
+                const first = Date.now();
+                vi.useFakeTimers({ toFake: ['Date'] });
+                try {
+                    vi.setSystemTime(new Date(first));
+                    expect(await call('setArchiveRetentionDays', 1)).toMatchObject({ success: true });
+                    await flushPendingSave();
+                    control.resetBaseline();
+                    vi.setSystemTime(new Date(first + 2 * 24 * 60 * 60 * 1000));
+                    expect(await call('runArchiveRetention')).toMatchObject({ success: true });
+                    control.expectPersisted((written) => {
+                        expect(written.tasks.some((entry) => entry.purgedAt)).toBe(true);
+                    });
+                } finally {
+                    vi.useRealTimers();
+                }
+            },
             seedGettingStarted: () => call('seedGettingStarted', { language: 'en' }),
+            setArchiveRetentionDays: async (control) => {
+                expect(await call('setArchiveRetentionDays', 30)).toMatchObject({ success: true });
+                control.expectPersisted((written) => {
+                    expect(written.settings.gtd?.archiveRetentionDays).toBe(30);
+                });
+            },
             skipRecurringTaskOccurrence: async () => {
                 await call('updateTask', taskId, { recurrence: { rule: 'daily', strategy: 'strict', rrule: 'FREQ=DAILY' }, dueDate: '2026-09-01' });
                 expect(await call('skipRecurringTaskOccurrence', taskId)).toMatchObject({ success: true });

@@ -126,13 +126,14 @@ describe('local API write-action parity fixture (kind: action)', () => {
                 : null;
         }
 
-        expect(updatedTask).toEqual(testCase.expectedTask);
+        // The Rust writer and shared fixture compare JSON, which omits JS-only undefined fields.
+        expect(JSON.parse(JSON.stringify(updatedTask))).toEqual(testCase.expectedTask);
 
         if (nextRecurringTask) {
             // `id` is a fresh random uuid, the one legitimately platform/run-variant
             // field (mirrors the exclusion in local_api.rs's own comparator).
             const { id: _followUpId, ...followUpRest } = nextRecurringTask;
-            expect(followUpRest).toEqual(testCase.expectedFollowUp);
+            expect(JSON.parse(JSON.stringify(followUpRest))).toEqual(testCase.expectedFollowUp);
         } else {
             expect(testCase.expectedFollowUp ?? null).toBeNull();
         }

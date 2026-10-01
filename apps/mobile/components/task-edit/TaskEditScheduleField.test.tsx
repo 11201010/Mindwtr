@@ -969,7 +969,7 @@ describe('RN recurrence calendar preview parity', () => {
     { name: 'exhausted count', stored: { recurrence: { rule: 'daily', strategy: 'strict', count: 3, completedOccurrences: 2 } }, hint: '' },
     { name: 'exhausted until', stored: { recurrence: { rule: 'daily', strategy: 'strict', until: '2026-10-01' } }, hint: '' },
     { name: 'preview toggle off', stored: { recurrence: { rule: 'daily', strategy: 'strict' }, showFutureRecurrence: false }, hint: 'Next calendar preview: Oct 2, 2026.' },
-    { name: 'cleared draft date', stored: { recurrence: { rule: 'daily', strategy: 'strict' } }, edited: { dueDate: '' }, hint: '' },
+    { name: 'cleared draft date', stored: { recurrence: { rule: 'daily', strategy: 'strict' } }, edited: { dueDate: '' }, hint: 'Next calendar preview: Sep 28, 2026.' },
     { name: 'stored completion progress', stored: { recurrence: { rule: 'daily', strategy: 'strict', count: 3, completedOccurrences: 1 } }, hint: 'Next calendar preview: Oct 2, 2026.' },
     { name: 'after completion', stored: { dueDate: '2026-09-25', recurrence: { rule: 'daily', strategy: 'fluid' } }, hint: 'Next calendar preview: Sep 28, 2026.' },
     { name: 'draft status done', stored: { recurrence: { rule: 'daily', strategy: 'strict' } }, edited: { status: 'done' }, hint: '' },
