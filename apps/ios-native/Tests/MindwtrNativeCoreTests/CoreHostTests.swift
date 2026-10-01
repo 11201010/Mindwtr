@@ -22519,4 +22519,61 @@ final class CoreHostTests: XCTestCase {
         await cold.close()
     }
 
+    func testTaskURLLinkOpenBridgeIsBoundedAndReadOnly() async throws {
+        let id = try await seedDestinationTask()
+        let archivedID = id + "-protected"
+        let archivedLink: [String: Any] = ["id": "archived-link", "kind": "link", "title": "Archived source",
+            "uri": "https://example.com/archived", "createdAt": "2026-01-01T12:00:00.000Z",
+            "updatedAt": "2026-01-01T12:00:00.000Z"]
+        let setup = try SQLiteBridge(url: database)
+        _ = try setup.execute("UPDATE tasks SET attachments = ? WHERE id = ?",
+                              parametersJSON: json([json([archivedLink]), archivedID]))
+        setup.close()
+        let writer = host()
+        _ = try await writer.start()
+        let view = try object(await writer.call("taskView", argumentsJSON: json([json(["id": id])])))
+        let base = try XCTUnwrap(view["attachmentsBase"] as? [[String: Any]])
+        let owner: [String: Any] = ["kind": "task", "taskId": id, "attachments": base]
+        let added = try object(await writer.call("taskAttachmentLinks", argumentsJSON: json([json([
+            "owner": owner, "requestId": UUID().uuidString.lowercased(),
+            "text": "Read only | https://example.com/open"])])))
+        let draft = try XCTUnwrap(added["attachments"] as? [[String: Any]])
+        let linkID = try XCTUnwrap(draft.last?["id"] as? String)
+        let input: [String: Any] = ["owner": ["kind": "task", "taskId": id, "attachments": draft],
+                                    "attachmentId": linkID]
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        let result = try object(await writer.call("taskAttachmentOpen", argumentsJSON: json([json(input)])))
+        XCTAssertEqual(result["status"] as? String, "available")
+        XCTAssertTrue(result["message"] is NSNull)
+        XCTAssertTrue(result["update"] is NSNull)
+        let plan = try XCTUnwrap(result["open"] as? [String: Any])
+        XCTAssertEqual(plan["kind"] as? String, "link")
+        XCTAssertEqual(plan["uri"] as? String, "https://example.com/open")
+        XCTAssertNotNil(plan["failedMessage"] as? String)
+        let archivedEditor = try object(await writer.call("editorModel", argumentsJSON: json([archivedID])))
+        XCTAssertEqual(archivedEditor["readOnly"] as? Bool, true)
+        let archivedView = try object(await writer.call("taskView", argumentsJSON: json([json(["id": archivedID])])))
+        let archivedAttachments = try XCTUnwrap(archivedView["attachmentsBase"] as? [[String: Any]])
+        let archivedOpen = try object(await writer.call("taskAttachmentOpen", argumentsJSON: json([json([
+            "owner": ["kind": "task", "taskId": archivedID, "attachments": archivedAttachments],
+            "attachmentId": "archived-link"])])))
+        XCTAssertEqual(archivedOpen["status"] as? String, "available")
+        XCTAssertEqual((archivedOpen["open"] as? [String: Any])?["uri"] as? String, "https://example.com/archived")
+        await expectFailure("Attachment draft command failed") {
+            _ = try await writer.call("taskAttachmentOpen", argumentsJSON: json([json([
+                "owner": input["owner"]!, "attachmentId": "keep-file"])]))
+        }
+        await expectFailure("INVALID_INPUT") {
+            _ = try await writer.call("taskAttachmentOpen", argumentsJSON: json([json([
+                "owner": input["owner"]!, "attachmentId": linkID, "extra": "secret"])]))
+        }
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await writer.close()
+    }
+
 }

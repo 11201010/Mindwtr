@@ -608,12 +608,28 @@ export function createAttachmentMethods(deps: AttachmentDeps) {
         },
 
         /** Open: the bytes first (downloading a synced file), then what to open. */
-        async openAttachment(input: { owner: NativeAttachmentOwner; attachmentId: string }): Promise<NativeHostResult<NativeAttachmentOpen>> {
+        async openAttachment(input: { owner: NativeAttachmentOwner; attachmentId: string; urlOnly?: boolean }): Promise<NativeHostResult<NativeAttachmentOpen>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             if (!isObjectRecord(input) || !isText(input.attachmentId, ID_LIMIT) || !input.attachmentId) return fail('INVALID_INPUT', 'An attachment ID is required');
             const owner = readOwner(input.owner);
             if (!owner) return ownerError();
+            if (input.urlOnly) {
+                if (owner.kind !== 'task') return fail('INVALID_INPUT', 'Task cannot open links');
+                const task = useTaskStore.getState()._tasksById.get(owner.taskId);
+                if (!task || task.deletedAt || task.purgedAt) return fail('INVALID_INPUT', 'Task cannot open links');
+                const attachment = owner.attachments.find((item) => item.id === input.attachmentId && !item.deletedAt);
+                if (attachment?.kind !== 'link' || task.attachments
+                    ?.some((item) => item.id === input.attachmentId && item.kind === 'file')) {
+                    return fail('INVALID_INPUT', 'Only a task link can be opened');
+                }
+                const t = deps.t();
+                const plan = planAttachmentOpen(attachment, { audio: true, t });
+                return { ok: true, value: {
+                    status: 'available', message: null, update: null,
+                    open: plan.kind === 'link' ? { ...plan, failedMessage: getAttachmentOpenLinkFailedMessage(t) } : plan,
+                } };
+            }
             const host = deps.host();
             if (!host) return unbound();
             const resolved = await resolve(owner, input.attachmentId, host);

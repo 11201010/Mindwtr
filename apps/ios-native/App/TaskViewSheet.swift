@@ -36,7 +36,7 @@ struct TaskViewSheet: View {
     private var busy: Bool { model.busy }
     private var error: String? { model.taskError }
     private var readOnly: Bool { model.taskEditor.flag("readOnly") }
-    private var frozen: Bool { busy || model.retryNeeded || model.taskChecklistReadPending || model.taskPersonCreateOwed }
+    private var frozen: Bool { busy || model.retryNeeded || model.taskChecklistReadPending || model.taskPersonCreateOwed || model.taskAttachmentOpening }
 
     private var rows: [CoreObject] { value.objects("rows") }
     private var modalPresented: Bool {
@@ -66,6 +66,15 @@ struct TaskViewSheet: View {
                     close: { backdatedCompletion = nil })
             }
             if model.taskLinkSheetActive { taskLinkDialog }
+        }
+        .alert(strings.text("attachments.title"), isPresented: Binding(
+            get: { model.taskAttachmentOpenError != nil },
+            set: { if !$0 { model.dismissTaskAttachmentOpenError() } })) {
+            Button(strings.text("common.ok")) { model.dismissTaskAttachmentOpenError() }
+                .accessibilityIdentifier("task-attachment-open-dismiss")
+        } message: {
+            Text(model.taskAttachmentOpenError ?? "")
+                .accessibilityIdentifier("task-attachment-open-error")
         }
     }
 
@@ -907,20 +916,19 @@ struct TaskViewSheet: View {
                 let entries = item.objects("items")
                 ForEach(entries.indices, id: \.self) { index in
                     let entry = entries[index]
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: entry.flag("image") ? "photo" : "paperclip")
-                            .foregroundStyle(palette.secondary).accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(entry.text("title")).rnFont(14, .semibold).textSelection(.enabled)
-                            if !entry.text("note").isEmpty {
-                                Text(entry.text("note")).rnFont(12).foregroundStyle(palette.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if entry.text("kind") == "link" {
+                        Button {
+                            endEditingBeforeAction()
+                            Task { await model.openTaskAttachment(entry.text("id")) }
+                        } label: { attachmentPreviewContent(entry) }
+                            .buttonStyle(.plain).foregroundStyle(palette.tint)
+                            .disabled(frozen || entry.flag("disabled"))
+                            .accessibilityLabel(entry.text("title"))
+                            .accessibilityIdentifier("task-view-attachment-open-" + entry.text("id"))
+                    } else {
+                        attachmentPreviewContent(entry)
+                            .accessibilityElement(children: .combine)
                     }
-                    .padding(12)
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1))
-                    .accessibilityElement(children: .combine)
                 }
             }
         default:
@@ -933,6 +941,24 @@ struct TaskViewSheet: View {
             .accessibilityAddTraits(.isHeader)
     }
 
+    private func attachmentPreviewContent(_ entry: CoreObject) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: entry.flag("image") ? "photo" : "paperclip")
+                .foregroundStyle(palette.secondary).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(entry.text("title")).rnFont(14, .semibold)
+                if !entry.text("note").isEmpty {
+                    Text(entry.text("note")).rnFont(12).foregroundStyle(palette.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .padding(12)
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1))
+        .contentShape(Rectangle())
+    }
+
     private var attachmentEditor: some View {
         VStack(alignment: .leading, spacing: 10) {
             label(strings.text("attachments.title"))
@@ -941,7 +967,22 @@ struct TaskViewSheet: View {
                 HStack(spacing: 8) {
                     Image(systemName: entry.text("kind") == "link" ? "link" : "paperclip")
                         .foregroundStyle(palette.secondary).accessibilityHidden(true)
-                    Text(entry.text("title")).rnFont(14).frame(maxWidth: .infinity, alignment: .leading)
+                    if entry.text("kind") == "link" {
+                        Button {
+                            endEditingBeforeAction()
+                            Task { await model.openTaskAttachment(entry.text("id")) }
+                        } label: {
+                            Text(entry.text("title")).rnFont(14)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint)
+                        .disabled(frozen || entry.flag("disabled"))
+                        .accessibilityLabel(entry.text("title"))
+                        .accessibilityIdentifier("task-attachment-open-" + entry.text("id"))
+                    } else {
+                        Text(entry.text("title")).rnFont(14).frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     if entry.text("kind") == "link" {
                         Button {
                             endEditingBeforeAction()

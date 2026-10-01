@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
-import type { AppData, Attachment, Task } from './types';
+import type { AppData, Attachment, Project, Task } from './types';
 
 const at = '2026-10-01T12:00:00.000Z';
 const later = '2026-10-01T13:00:00.000Z';
@@ -85,6 +85,69 @@ describe('prepared Task URL draft', () => {
         await open();
         expect(await host.commitPreparedTaskDraftSave({ request: input, prepared: prepared.prepared })).toMatchObject({ ok: true });
         expect(writes).toHaveBeenCalledTimes(count);
+    });
+
+    it('opens saved and unsaved task links through the shared plan without a file host or writes', async () => {
+        const savedLink = unwrap(await host.openAttachment({ owner: owner([file, link]), attachmentId: link.id, urlOnly: true }));
+        expect(savedLink).toEqual({ status: 'available', message: null, update: null,
+            open: { kind: 'link', uri: link.uri, failedMessage: 'Could not open this link.' } });
+
+        const draft = await add([file, link], 'Private | custom://alice:secret@example.org/path');
+        const opened = unwrap(await host.openAttachment({ owner: owner(draft), attachmentId: draft[2].id, urlOnly: true }));
+        expect(opened).toEqual({ status: 'available', message: null, update: null,
+            open: { kind: 'link', uri: draft[2].uri, failedMessage: 'Could not open this link.' } });
+        expect(saved().attachments).toEqual([file, link]);
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('opens a saved link on a live read-only Task without writing', async () => {
+        const archived: Project = { id: 'archived', title: 'Archived', status: 'archived', color: '#000000',
+            order: 0, tagIds: [], createdAt: at, updatedAt: at };
+        const readOnly = { ...task(), projectId: archived.id };
+        useTaskStore.setState({ _allProjects: [archived], _allTasks: [readOnly], _tasksById: new Map([[readOnly.id, readOnly]]) });
+        expect(unwrap(host.getAttachmentList({ owner: owner([file, link]) })).canEdit).toBe(false);
+        expect(unwrap(await host.openAttachment({ owner: owner([file, link]), attachmentId: link.id, urlOnly: true }))).toEqual({
+            status: 'available', message: null, update: null,
+            open: { kind: 'link', uri: link.uri, failedMessage: 'Could not open this link.' },
+        });
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('uses the shared alert for a desktop file path and never returns it as an OS link', async () => {
+        const path = { ...link, uri: 'C:\\Private\\report.pdf' };
+        const result = unwrap(await host.openAttachment({ owner: owner([file, path]), attachmentId: path.id, urlOnly: true }));
+        expect(result).toMatchObject({ status: 'available', message: null, update: null,
+            open: { kind: 'alert', message: expect.stringContaining(path.uri) } });
+        expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('refuses unavailable tasks, files, removed links and forged file IDs without leaking link text', async () => {
+        const secret = 'https://alice:secret@example.org/path?token=private';
+        const privateLink = { ...link, uri: secret };
+        const request = (attachments: Attachment[], attachmentId = link.id) =>
+            host.openAttachment({ owner: owner(attachments), attachmentId, urlOnly: true });
+        const check = async (result: Awaited<ReturnType<typeof host.openAttachment>>) => {
+            expect(result).toMatchObject({ ok: false });
+            expect(JSON.stringify(result)).not.toMatch(/alice|secret|private/);
+        };
+        const setTask = (candidate: Task | null) => useTaskStore.setState({
+            _allTasks: candidate ? [candidate] : [], _tasksById: new Map(candidate ? [[candidate.id, candidate]] : []),
+        });
+
+        await check(await request([file, privateLink], file.id));
+        await check(await request([file, { ...privateLink, deletedAt: later }]));
+        await check(await request([file, privateLink], 'absent'));
+        await check(await request([{ ...file, kind: 'link', uri: secret }, privateLink], file.id));
+        await check(await host.openAttachment({ owner: { kind: 'project', projectId: 'other' }, attachmentId: link.id, urlOnly: true }));
+        await check(await request([privateLink, privateLink]));
+        await check(await request(Array.from({ length: 1_001 }, (_, i) => ({ ...privateLink, id: `link-${i}` }))));
+        setTask(null);
+        await check(await request([file, privateLink]));
+        setTask({ ...task(), deletedAt: later });
+        await check(await request([file, privateLink]));
+        setTask({ ...task(), purgedAt: later });
+        await check(await request([file, privateLink]));
+        expect(writes).not.toHaveBeenCalled();
     });
 
     it('accepts an added then soft-removed link in the same unsaved draft', async () => {

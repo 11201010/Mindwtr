@@ -806,6 +806,15 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getAttachmentList(taskAttachmentInput(json, ['owner']) as Parameters<typeof contract.getAttachmentList>[0]));
         });
     },
+    taskAttachmentOpen(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            const input = taskAttachmentInput(json, ['owner', 'attachmentId']);
+            return unwrap(await contract.openAttachment({
+                ...input, urlOnly: true,
+            } as Parameters<typeof contract.openAttachment>[0]));
+        });
+    },
     taskAttachmentLinks(json: string): string {
         return submit(async () => {
             requireSaved();

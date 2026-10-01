@@ -526,6 +526,9 @@ final class CoreModel: ObservableObject {
     @Published private(set) var taskLinkSheet: CoreObject = [:]
     @Published private(set) var taskLinkSheetError: String?
     @Published private(set) var taskLinkSubmitting = false
+    @Published private(set) var taskAttachmentOpening = false
+    @Published private(set) var taskAttachmentOpenError: String?
+    private var taskAttachmentOpenClaim = UUID()
     @Published private(set) var taskChecklistField: CoreObject = [:]
     @Published private(set) var taskChecklistInputs: [Int: String] = [:]
     @Published var taskChecklistAppendInput = ""
@@ -2014,6 +2017,66 @@ final class CoreModel: ObservableObject {
         ["kind": "task", "taskId": viewedTaskID, "attachments": taskAttachments]
     }
 
+    func openTaskAttachment(_ attachmentID: String) async {
+        guard taskPresented, !taskEditor.isEmpty, !appLock.concealed,
+              !busy, !retryNeeded, !taskAttachmentOpening, !taskRecoverySaving, !taskSavePending,
+              !taskPersonCreateOwed, !taskPersonCreateNeedsReview, !taskLinkSubmitting,
+              taskLinkSheet.isEmpty, taskDestinationKind.isEmpty,
+              taskChecklistWriteKind == nil, !taskChecklistReadPending, !taskScheduleUpdating,
+              taskAttachments.contains(where: { $0.text("id") == attachmentID && $0.text("kind") == "link" && $0["deletedAt"] == nil }) else { return }
+        let id = viewedTaskID, session = taskRecoverySession
+        guard let raw = try? json(taskAttachments) else { return }
+        let claim = UUID()
+        taskAttachmentOpenClaim = claim
+        taskAttachmentOpening = true
+        taskAttachmentOpenError = nil
+        defer { if taskAttachmentOpenClaim == claim { taskAttachmentOpening = false } }
+        let current = { [self] in
+            taskAttachmentOpenClaim == claim && taskAttachmentOpening && taskPresented && viewedTaskID == id
+                && taskRecoverySession == session && !appLock.concealed && !busy && !retryNeeded
+                && !taskRecoverySaving && !taskSavePending && !taskPersonCreateOwed
+                && !taskPersonCreateNeedsReview && !taskLinkSubmitting && taskLinkSheet.isEmpty
+                && taskDestinationKind.isEmpty && taskChecklistWriteKind == nil
+                && !taskChecklistReadPending && !taskScheduleUpdating
+                && (try? json(taskAttachments)) == raw
+                && taskAttachments.contains(where: { $0.text("id") == attachmentID && $0.text("kind") == "link" && $0["deletedAt"] == nil })
+        }
+        if taskRecoverySnapshot != nil || (!taskEditor.flag("readOnly") && taskDirty) {
+            await flushTaskDraftCheckpoint()
+            guard current() else { return }
+            guard taskRecoveryProtected else {
+                taskAttachmentOpenError = "The task draft could not be saved for recovery."
+                return
+            }
+        }
+        do {
+            let result = try await query("taskAttachmentOpen", [try json([
+                "owner": taskAttachmentOwner(), "attachmentId": attachmentID])])
+            guard current() else { return }
+            guard result.text("status") == "available", result["message"] is NSNull,
+                  result["update"] is NSNull else { throw CocoaError(.coderReadCorrupt) }
+            let plan = result.object("open")
+            if plan.text("kind") == "alert", let message = plan["message"] as? String {
+                taskAttachmentOpenError = message
+                return
+            }
+            guard plan.text("kind") == "link", let uri = plan["uri"] as? String,
+                  let failedMessage = plan["failedMessage"] as? String else { throw CocoaError(.coderReadCorrupt) }
+            guard let url = URL(string: uri) else { taskAttachmentOpenError = failedMessage; return }
+            guard current() else { return }
+            let opened = await withCheckedContinuation { continuation in
+                UIApplication.shared.open(url, options: [:]) { continuation.resume(returning: $0) }
+            }
+            guard current() else { return }
+            if opened { NSLog("Native iOS Task URL opened releaseCheck=v1.3.4/ios-task-link-open outcome=opened") }
+            else { taskAttachmentOpenError = failedMessage }
+        } catch {
+            if current() { taskAttachmentOpenError = "The link could not be opened. Try again." }
+        }
+    }
+
+    func dismissTaskAttachmentOpenError() { taskAttachmentOpenError = nil }
+
     private func refreshTaskAttachmentRows() async throws {
         let id = viewedTaskID, session = taskRecoverySession
         let current = try json(taskAttachments)
@@ -2026,6 +2089,7 @@ final class CoreModel: ObservableObject {
 
     func openTaskLinkSheet(_ attachmentID: String? = nil) {
         guard taskPresented, !taskEditor.flag("readOnly"), !busy, !retryNeeded, !taskRecoverySaving,
+              !taskAttachmentOpening,
               taskLinkSheet.isEmpty else { return }
         var sheet: CoreObject = ["id": UUID().uuidString.lowercased(), "text": ""]
         if let attachmentID {
@@ -2056,6 +2120,7 @@ final class CoreModel: ObservableObject {
 
     func submitTaskLinkSheet() async {
         guard taskPresented, taskLinkSheetActive, !taskLinkSubmitting, !taskEditor.flag("readOnly"),
+              !taskAttachmentOpening,
               !busy, !retryNeeded, !taskRecoverySaving else { return }
         taskLinkSubmitting = true
         defer { taskLinkSubmitting = false }
@@ -2091,6 +2156,7 @@ final class CoreModel: ObservableObject {
 
     func removeTaskLink(_ attachmentID: String) async {
         guard taskPresented, !taskEditor.flag("readOnly"), !busy, !retryNeeded, !taskRecoverySaving,
+              !taskAttachmentOpening,
               taskLinkSheet.isEmpty,
               taskAttachmentRows.contains(where: { $0.text("id") == attachmentID && $0.text("kind") == "link" }) else { return }
         let id = viewedTaskID, session = taskRecoverySession
@@ -12974,6 +13040,9 @@ final class CoreModel: ObservableObject {
         taskLinkSheet = [:]
         taskLinkSheetError = nil
         taskLinkSubmitting = false
+        taskAttachmentOpenClaim = UUID()
+        taskAttachmentOpening = false
+        taskAttachmentOpenError = nil
         taskTitleDraft = ""
         taskNoteDraft = ""
         taskEditorDraftDirection = ""
@@ -12987,14 +13056,14 @@ final class CoreModel: ObservableObject {
     }
 
     func closeTask() {
-        guard !busy, !retryNeeded, !taskPersonCreateOwed, !taskSavePending, taskChecklistWriteKind == nil,
+        guard !busy, !retryNeeded, !taskAttachmentOpening, !taskPersonCreateOwed, !taskSavePending, taskChecklistWriteKind == nil,
               !taskChecklistReadPending, !taskScheduleUpdating else { return }
         guard !taskDirty else { return }
         Task { await discardCleanTaskSnapshotAndClose() }
     }
 
     func discardTask() {
-        guard !busy, !retryNeeded, !taskPersonCreateOwed, !taskSavePending, taskChecklistWriteKind == nil,
+        guard !busy, !retryNeeded, !taskAttachmentOpening, !taskPersonCreateOwed, !taskSavePending, taskChecklistWriteKind == nil,
               !taskChecklistReadPending, !taskScheduleUpdating else { return }
         Task { await discardTaskRecoveryDraft(close: true) }
     }
@@ -13287,6 +13356,9 @@ final class CoreModel: ObservableObject {
         taskLinkSheet = [:]
         taskLinkSheetError = nil
         taskLinkSubmitting = false
+        taskAttachmentOpenClaim = UUID()
+        taskAttachmentOpening = false
+        taskAttachmentOpenError = nil
         viewedTaskID = ""
         taskRecoveryHydrating = false
         if taskRecoverySnapshot == nil {
@@ -13500,6 +13572,7 @@ final class CoreModel: ObservableObject {
 
     func saveTask() async {
         guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              !taskAttachmentOpening,
               !taskLinkSheetActive,
               !taskPersonCreateOwed, !taskPersonCreateNeedsReview,
               taskChecklistWriteKind == nil, !taskChecklistReadPending else { return }
@@ -14672,7 +14745,7 @@ final class CoreModel: ObservableObject {
                     "recurrence.weekdayMonFri", "recurrence.ordinal.first", "recurrence.ordinal.second",
                     "recurrence.ordinal.third", "recurrence.ordinal.fourth", "recurrence.ordinal.last",
                     "attachments.title", "attachments.addLink", "attachments.remove",
-                    "attachments.linkPlaceholder", "attachments.linkBatchHint", "common.edit"]
+                    "attachments.linkPlaceholder", "attachments.linkBatchHint", "common.edit", "common.ok"]
         keys += options.objects("recurrences").map { $0.text("labelKey") }
         keys += (options["statuses"] as? [String] ?? []).map { "status." + $0 }
         keys += (options["priorities"] as? [String] ?? []).map { "priority." + $0 }

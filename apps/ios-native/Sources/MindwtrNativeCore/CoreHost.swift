@@ -187,7 +187,7 @@ private final class Engine: @unchecked Sendable {
     private static let methods: [String: Int] = [
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
         "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1,
-        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
+        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentOpen": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
         "projects": 0, "projectDetail": 4, "projectNotes": 4, "projectCreateOptions": 0, "projectCreate": 1, "projectCreateRetryOutcome": 1,
         "projectSectionOptions": 1, "projectSectionCreate": 1, "projectSectionCreateRetryOutcome": 1,
         "projectSectionRenameOptions": 1, "projectSectionRename": 1, "projectSectionRenameRetryOutcome": 1,
@@ -959,7 +959,7 @@ private final class Engine: @unchecked Sendable {
             } else {
                 do { value = try invoke(method, arguments: args) }
                 catch let failure as HostFailure {
-                    if ["taskAttachmentList", "taskAttachmentLinks", "taskAttachmentRemove"].contains(method) {
+                    if ["taskAttachmentList", "taskAttachmentOpen", "taskAttachmentLinks", "taskAttachmentRemove"].contains(method) {
                         throw HostFailure("Attachment draft command failed")
                     }
                     guard method == "gtdTaskEditorPresetOptions", failure.message.hasPrefix("INVALID_INPUT:") else { throw failure }
@@ -5419,16 +5419,17 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Task view needs bounded draft attachments")
             }
         }
-        if ["taskAttachmentList", "taskAttachmentLinks", "taskAttachmentRemove"].contains(method) {
+        if ["taskAttachmentList", "taskAttachmentOpen", "taskAttachmentLinks", "taskAttachmentRemove"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
                   Self.validTaskAttachmentOwner(input["owner"]),
                   Set(input.keys) == Set(method == "taskAttachmentList" ? ["owner"]
+                    : method == "taskAttachmentOpen" ? ["owner", "attachmentId"]
                     : method == "taskAttachmentRemove" ? ["owner", "requestId", "attachmentId"]
                     : ["owner", "requestId", "text"] + (input["editing"] == nil ? [] : ["editing"])) else {
                 throw HostFailure("INVALID_INPUT: Attachment draft needs a bounded Task owner")
             }
-            if method != "taskAttachmentList" {
+            if method != "taskAttachmentList" && method != "taskAttachmentOpen" {
                 guard let requestID = input["requestId"] as? String,
                       requestID == UUID(uuidString: requestID)?.uuidString.lowercased() else {
                     throw HostFailure("INVALID_INPUT: Attachment draft needs a lowercase request UUID")
@@ -5439,7 +5440,7 @@ private final class Engine: @unchecked Sendable {
                       input["editing"] == nil || input["editing"] is NSNull || Self.validTaskLinkEditing(input["editing"]) else {
                     throw HostFailure("INVALID_INPUT: Attachment link input is malformed")
                 }
-            } else if method == "taskAttachmentRemove" {
+            } else if method == "taskAttachmentRemove" || method == "taskAttachmentOpen" {
                 guard (input["attachmentId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true else {
                     throw HostFailure("INVALID_INPUT: Attachment link target is malformed")
                 }

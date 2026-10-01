@@ -16,6 +16,81 @@ final class FoundationUITests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    private func openTask120(_ library: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        boardEnabled(app.buttons["Task120 Links"], timeout: 30)
+        app.buttons["Task120 Links"].tap(); boardTap(app, "task-mode-edit")
+        return app
+    }
+
+    private func task120Browser(_ app: XCUIApplication, returnToApp: Bool) {
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        XCTAssertTrue(safari.wait(for: .runningForeground, timeout: 20))
+        let shot = XCTAttachment(screenshot: safari.screenshot())
+        shot.name = "Task URL opened in Safari"; shot.lifetime = .keepAlways; add(shot)
+        if returnToApp {
+            app.activate()
+            boardEnabled(app.buttons["task-editor-save"], timeout: 20)
+        }
+    }
+
+    private func task120DismissAlert(_ app: XCUIApplication, containing text: String) {
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 15))
+        XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Task URL open explanation"; shot.lifetime = .keepAlways; add(shot)
+        let dismiss = alert.buttons["task-attachment-open-dismiss"].firstMatch
+        if dismiss.exists { dismiss.tap() } else { alert.buttons["OK"].tap() }
+    }
+
+    func testTaskURLAttachmentOpenSavedAndRefused() {
+        let app = openTask120("d3456d57-d707-4da8-8a01-758e5e10f3ed")
+        let open = app.buttons["task-attachment-open-task120-web"]
+        revealTask119(app, open); open.tap()
+        task120Browser(app, returnToApp: true)
+        let unavailable = app.buttons["task-attachment-open-task120-unsupported"]
+        revealTask119(app, unavailable); unavailable.tap()
+        task120DismissAlert(app, containing: "Could not open")
+        XCTAssertFalse(app.buttons["task-attachment-open-task120-file"].exists)
+        boardTap(app, "task-mode-view")
+        let desktop = app.buttons["task-view-attachment-open-task120-desktop"]
+        revealTask119(app, desktop); desktop.tap()
+        task120DismissAlert(app, containing: "another device")
+        let preview = app.buttons["task-view-attachment-open-task120-web"]
+        revealTask119(app, preview); preview.tap()
+        task120Browser(app, returnToApp: true)
+        XCTAssertFalse(app.buttons["task-view-attachment-open-task120-file"].exists)
+        boardTap(app, "task-view-close")
+        XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+        app.terminate()
+    }
+
+    func testTaskURLAttachmentDraftOpenColdRecovery() {
+        let app = openTask120("d7352605-b114-4248-bb76-ed45e5bb802b")
+        replaceProjectNotesText(app.textFields["task-editor-title"], with: "Task120 Draft")
+        addTask119Links(app, "Draft public | https://example.com/#task120-draft")
+        let open = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+                                                    "task-attachment-open-", "Draft public")).firstMatch
+        revealTask119(app, open); open.tap()
+        task120Browser(app, returnToApp: false)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["task-editor-save"], timeout: 30)
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task120 Draft")
+        revealTask119(app, open)
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 15)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Task draft recovered after external URL"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard")
+        boardEnabled(app.buttons["Task120 Links"], timeout: 30)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["Task120 Links"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate()
+    }
+
     private func openTask119(_ library: String) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--native-ui-test-library", library]

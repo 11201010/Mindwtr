@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-task-link-open`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS Task URL opened` with `outcome=opened` follows a successful iOS URL handoff from a Task attachment card. Tap a URL title in Edit or Preview; unsupported URLs and desktop-path alerts must not emit it. Opening does not save the Task, and a dirty draft must be protected before leaving the app. No titles, URLs, identifiers or raw errors are logged.
+
 - **`v1.3.4/ios-editor-url-links`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Task URL links saved` with `outcome=confirmed` follows durable acknowledgment and journal cleanup for a Task Save containing URL attachment edits. Add, edit or remove a link in the task editor, then Save; draft-only changes and Discard must not emit this line. No titles, URLs, identifiers or raw input are logged.
 
 - **`v1.3.4/ios-editor-person-create`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS editor Person create confirmed` with `outcome=created` or `outcome=reused` follows the existing Person writer's durable acknowledgment. The Person persists independently; the task assignment remains a draft until Task Save. Discarding that task draft retains the Person. No names, task fields, identifiers, or request contents are logged.
