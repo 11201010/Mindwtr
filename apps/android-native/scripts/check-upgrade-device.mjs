@@ -5,11 +5,12 @@
 //   node apps/android-native/scripts/check-upgrade-device.mjs <adb-serial> [--only=1,4,2,4b,2b,3,3b,5,5b,6] [--keep]
 //
 // Scenarios, each from a fresh RN v1.3.2 install:
-//   1   happy upgrade: the native app shows the RN data, captures once, keeps
-//       every pre-upgrade row and every non-database file, and leaves a
+//   1   happy upgrade: the native app shows the RN data, imports the capture RN
+//       left queued once at its first boot, captures once, keeps every
+//       pre-upgrade row and every other non-database file, and leaves a
 //       .prewrite checkpoint that holds the pre-upgrade rows;
 //   4   recovery (continues 1): the RN 154 build opens the database and keeps
-//       the native edit. While the recovery source is v1.3.2 a failure is
+//       the native edit and the native import. While the recovery source is v1.3.2 a failure is
 //       reported as BLOCKED (RN startup snapshot bug) and does not fail the run;
 //   2   json-ahead import: RN's JSON backup holds a task SQLite never took and
 //       the json-ahead marker is set. The native app imports the task once,
@@ -175,11 +176,14 @@ const snapshot = () => new Map(runAs(
 }));
 // androidx profileinstaller rewrites this marker after every package update, and Samsung's One UI framework counts launches
 // in the IDS file (`IDSCount`, S23 2026-09-27); neither holds user data.
+// WorkManager keeps its own database, which RN's WorkManager (expo-background-task) and the native app's (CoreWork) both open at
+// process start: the same library's state, never user data.
 const PLATFORM_STATE = new Set(['files/profileInstalled', 'shared_prefs/android.app.ActivityThread.IDS.xml']);
+const isPlatformState = (path) => PLATFORM_STATE.has(path) || /^no_backup\/androidx\.work\.workdb(-wal|-shm|-journal)?$/.test(path);
 const differences = (before, after, { changedOk = () => false, newOk = () => false } = {}) => [
-    ...[...before].filter(([path, hash]) => !PLATFORM_STATE.has(path) && !changedOk(path) && after.get(path) !== hash)
+    ...[...before].filter(([path, hash]) => !isPlatformState(path) && !changedOk(path) && after.get(path) !== hash)
         .map(([path]) => `${after.has(path) ? 'changed' : 'removed'} ${path}`),
-    ...[...after.keys()].filter((path) => !before.has(path) && !PLATFORM_STATE.has(path) && !newOk(path)).map((path) => `new ${path}`),
+    ...[...after.keys()].filter((path) => !before.has(path) && !isPlatformState(path) && !newOk(path)).map((path) => `new ${path}`),
 ];
 const isDatabase = (path) => /^files\/SQLite\/mindwtr\.db(-wal|-shm)?$/.test(path);
 const isAsyncStorage = (path) => /^databases\/RKStorage(-wal|-shm|-journal)?$/.test(path);
@@ -411,20 +415,21 @@ const scenarioUpgrade = async () => {
     console.log('\n# 1 happy upgrade');
     fresh();
     const t = await seed('1');
-    // RN is stopped and never runs again before the native app: this capture stays un-imported.
+    // RN is stopped and never runs again before the native app: the native app's first boot imports this capture (its queue
+    // drain, after the journal replay), once, under its own id.
     const queued = { id: randomUUID(), title: t.queued, createdAt: new Date().toISOString(), source: 'android-quick-capture' };
     queue([queued]);
     const queuedPath = `files/pending-captures/${queued.id}.json`;
     const before = snapshot();
     const pre = readState(pullDatabase('1-pre'));
-    const expected = pre.tasks.filter((task) => task.status === 'inbox' && !task.deletedAt).map((task) => task.title).sort();
+    const expected = [...pre.tasks.filter((task) => task.status === 'inbox' && !task.deletedAt).map((task) => task.title), t.queued].sort();
     console.log(`pre-upgrade rows: ${JSON.stringify(pre.counts)}; ${before.size} files hashed`);
 
     install(APKS.native153, true);
     device.launch(NATIVE_ACTIVITY);
     let nodes = await nativeScreen();
     check(!unavailable(nodes), `(1) native boot succeeded ${unavailable(nodes) ?? ''}`);
-    check(header(nodes) === expected.length, `(1) native Inbox counts ${expected.length} RN Inbox tasks`);
+    check(header(nodes) === expected.length, `(1) native Inbox counts ${expected.length}: RN's ${expected.length - 1} Inbox tasks and the capture RN left queued`);
     for (const title of expected) check(hasText(nodes, title), `(1) native Inbox shows RN task ${title}`);
     check(!hasText(nodes, t.done), '(1) the completed RN task is not in the native Inbox');
     check(nativeGuardLog().includes(`${GUARD} outcome=clear`), '(1) guard logged outcome=clear');
@@ -445,9 +450,10 @@ const scenarioUpgrade = async () => {
     check(isDeepStrictEqual(counts(checkpoint), pre.counts), '(1) .prewrite has the pre-upgrade row count of every core table');
     const checkpointChanges = rowChanges(pre.rows, checkpoint);
     check(checkpointChanges.length === 0, `(1) .prewrite holds every pre-upgrade row exactly${shortList(checkpointChanges)}`);
-    const changed = differences(before, after, { changedOk: isDatabase, newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` });
-    check(changed.length === 0, `(1) every non-database file is unchanged (${[...before.keys()].filter((path) => !isDatabase(path)).length} files)${shortList(changed)}`);
-    check(before.has(queuedPath) && after.get(queuedPath) === before.get(queuedPath), '(1) the un-imported pending capture is byte-identical');
+    const imported = rows(post, TASK_SQL).filter((task) => task.title === t.queued && !task.deletedAt);
+    check(imported.length === 1 && imported[0].id === queued.id && !after.has(queuedPath), '(1) the native boot imported the capture RN left queued once, under its id, and removed its file');
+    const changed = differences(before, after, { changedOk: (path) => isDatabase(path) || path === queuedPath, newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` });
+    check(changed.length === 0, `(1) every other non-database file is unchanged (${[...before.keys()].filter((path) => !isDatabase(path)).length} files)${shortList(changed)}`);
     return { t, pre, queued };
 };
 
@@ -463,7 +469,7 @@ const scenarioRecovery = async ({ t, pre, queued }) => {
     await stopApp();
     const db = pullDatabase('4-post');
     check(rows(db, TASK_SQL).filter((task) => task.title === t.native && !task.deletedAt).length === 1, '(4) the native-created task is present once');
-    check(rows(db, TASK_SQL).filter((task) => task.title === t.queued && !task.deletedAt).length === 1, '(4) RN imported the capture the native app left queued, once');
+    check(rows(db, TASK_SQL).filter((task) => task.title === t.queued && !task.deletedAt).length === 1, '(4) the capture the native app imported is present once: RN imports it no second time');
     const changes = rowChanges(pre.rows, db);
     check(changes.length === 0, `(4) every pre-upgrade row, settings included, is unchanged${shortList(changes)}`);
     // Findings, not assertions: RN warnings or errors while it opened a database the native app wrote.

@@ -86,7 +86,12 @@ export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
          * PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY; a write resolves once durable. Captures,
          * check-offs and defers are stored; `audio` and `pomodoro` items stay in the
          * queue untouched. A file is deleted only after its write is durable.
-         * `ingested` counts the items stored and removed.
+         * `ingested` counts the items stored and removed. A capture, check-off or
+         * defer a failure keeps queued fails the call, so the caller drains again:
+         * SAVE_FAILED once its store write landed but its save, its lastApplied
+         * write or its delete did not finish (owed: a later edit of that task must
+         * wait for the retry), whatever later items do; ACTION_FAILED when nothing
+         * of it landed. A record that did not reach the disk still removes the file.
          *
          * Every call drains again, so a replay after a restart is safe: a capture is
          * created under its own UUID and a replay finds that task; a check-off or
@@ -107,6 +112,7 @@ export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
                 return fail('INVALID_INPUT', 'A request UUID, a queue with list, read and delete, and a lastApplied record with read and write are required');
             }
             const { queue, lastApplied } = input;
+            const unfinished = { owed: 0, queued: 0 };
             const run = drainChain.then(async () => {
                 if (isSandboxMode() || isWorkspaceTransitionActive()) return 0;
                 const { addTask, updateTask, addProject, projects, areas, tasks, people, settings } = useTaskStore.getState();
@@ -125,14 +131,24 @@ export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
                     queue,
                     lastApplied,
                     log,
+                    onUnfinished: (state) => { unfinished[state] += 1; },
                 });
             });
             drainChain = run.catch(() => undefined);
+            let ingested = 0;
+            let thrown: unknown;
             try {
-                return { ok: true, value: { ingested: await run } };
+                ingested = await run;
             } catch (error) {
-                return fail('ACTION_FAILED', error instanceof Error ? error.message : String(error));
+                thrown = error;
             }
+            // Every item's state is settled before the answer, and a later item's throw never hides an earlier one: an item
+            // stored but not saved, recorded or removed is owed (SAVE_FAILED: the journal keeps this request and newer edits wait
+            // for its replay); a throw or an item a failure left queued needs a later drain.
+            if (unfinished.owed > 0) return fail('SAVE_FAILED', `${unfinished.owed} queued item(s) stored but not yet saved, recorded or removed`);
+            if (thrown !== undefined) return fail('ACTION_FAILED', thrown instanceof Error ? thrown.message : String(thrown));
+            if (unfinished.queued > 0) return fail('ACTION_FAILED', `${unfinished.queued} queued item(s) left for a later drain`);
+            return { ok: true, value: { ingested } };
         },
 
         /**

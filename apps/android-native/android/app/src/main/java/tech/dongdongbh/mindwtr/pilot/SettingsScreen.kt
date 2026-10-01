@@ -1,5 +1,8 @@
 package tech.dongdongbh.mindwtr.pilot
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
@@ -31,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -62,10 +66,12 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import org.json.JSONObject
@@ -771,6 +777,61 @@ private fun GtdCapture(model: InboxViewModel, capture: JSONObject) = with(model.
         capture.optJSONObject("saveAudio")?.let { ToggleRow(model, it, true, write = settings::gtd) }
         for (name in listOf("quickAddAutoClean", "naturalLanguageDates", "markdownEditorAssist")) ToggleRow(model, capture.getJSONObject(name), true, write = settings::gtd)
     }
+    capture.optJSONObject("captureIntent")?.let { CaptureIntentCard(model, it) }
+}
+
+/**
+ * RN's AndroidCaptureIntentSection under the Capture card, from core's card: the switch (off while the stored config is unread or
+ * its write runs), and while on the token row with the token RN's CaptureIntentConfigStore holds (never core's), selectable, and
+ * Copy. A config that cannot be read shows core's loadFailed toast once per visit, as RN shows it on opening.
+ */
+@Composable
+private fun CaptureIntentCard(model: InboxViewModel, card: JSONObject) = with(model.menu) {
+    val c = LocalTheme.current.colors
+    val context = LocalContext.current
+    val messages = card.getJSONObject("messages")
+    val label = card.getString("label")
+    LaunchedEffect(card.getBoolean("disabled")) {
+        if (card.getBoolean("disabled") && !settings.local.optBoolean("captureLoadFailed")) {
+            settings.editLocal { put("captureLoadFailed", true) }
+            model.showToast(null, messages.getString("loadFailed"), "error")
+        }
+    }
+    Card(top = 12) {
+        SettingRow(label, card.menuText("description")) {
+            Box(Modifier.testTag("android-capture-intent-switch")) {
+                RnSwitch(card.getBoolean("value"), !card.getBoolean("disabled") && idle, label, LocalTheme.current.settingsSwitch) {
+                    settings.setCaptureIntent(!card.getBoolean("value"), messages.getString("updateFailed"))
+                }
+            }
+        }
+        val token = card.optJSONObject("token")
+        val stored = settings.page?.captureToken
+        if (token != null && stored != null) {
+            Column(Modifier.fillMaxWidth().hairline(c.border, top = true).padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(token.getString("label"), style = rnText(15, 600), color = c.text)
+                SelectionContainer {
+                    Text(stored, style = rnText(13, 400, 19).copy(fontFamily = FontFamily.Monospace), color = c.secondaryText,
+                        modifier = Modifier.fillMaxWidth().testTag("android-capture-intent-token").clip(RoundedCornerShape(8.dp)).background(c.bg)
+                            .border(Dp.Hairline, c.border, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 9.dp))
+                }
+                val copyLabel = token.getString("copyLabel")
+                Box(Modifier.testTag("android-capture-intent-copy").clip(RoundedCornerShape(8.dp)).border(1.dp, c.tint, RoundedCornerShape(8.dp))
+                    .clearAndSetSemantics { contentDescription = copyLabel; role = Role.Button; onClick { copy(context, stored, messages, model); true } }
+                    .clickable { copy(context, stored, messages, model) }.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Text(copyLabel, style = rnText(14, 600), color = c.tint)
+                }
+            }
+        }
+    }
+}
+
+/** RN's copyToken: the token on the clipboard, then core's copied (info) or copyFailed (error) toast. */
+private fun copy(context: Context, token: String, messages: JSONObject, model: InboxViewModel) {
+    val copied = runCatching {
+        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(null, token))
+    }.isSuccess
+    if (copied) model.showToast(null, messages.getString("copied"), "info") else model.showToast(null, messages.getString("copyFailed"), "error")
 }
 
 /**

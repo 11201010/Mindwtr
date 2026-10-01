@@ -42,6 +42,8 @@ class CoreHost(
     private val devices: DeviceWrites,
     private val logFile: File,
     private val keyValue: RnKeyValue,
+    /** The pending-captures queue's files (host-entry's queue port). */
+    private val files: HostFiles,
 ) {
     companion object {
         const val TAG = "MindwtrNativeDev"
@@ -187,7 +189,7 @@ class CoreHost(
             // RN's AsyncStorage (RnKeyValue): reads answer JSON (a value, or AsyncStorage's [[key, value]] pairs); a write is on disk
             // when it returns.
             bridge.setProperty("kvGet", guarded { args -> JSONArray().put(keyValue.get(args[0] as String) ?: JSONObject.NULL).toString() })
-            bridge.setProperty("kvSet", guarded { args -> keyValue.set(args[0] as String, args[1] as String); null })
+            bridge.setProperty("kvSet", guarded { args -> kvFault(); keyValue.set(args[0] as String, args[1] as String); null })
             bridge.setProperty("kvRemove", guarded { args -> keyValue.remove(args[0] as String); null })
             bridge.setProperty("kvMultiGet", guarded { args -> keyValuePairs(keyValue.multiGet(stringList(args[0] as String))) })
             bridge.setProperty("kvMultiSet", guarded { args -> keyValue.multiSet(JSONArray(args[0] as String).let { pairs ->
@@ -197,6 +199,10 @@ class CoreHost(
             if (debugFault("ai_consent_reset") == "1") keyValue.remove("mindwtr-ai-provider-consent-v1")
             // An event for the screens: handed on as text; a listener that throws never reaches JS.
             bridge.setProperty("hostEvent", guarded { args -> runCatching { onEvent?.invoke(args[0] as String) }; null })
+            // The pending-captures queue (core's ingestPendingCaptures): app-private files only.
+            bridge.setProperty("fileList", guarded { args -> files.list(args[0] as String) })
+            bridge.setProperty("fileRead", guarded { args -> files.readText(args[0] as String) })
+            bridge.setProperty("fileDelete", guarded { args -> queueStop(); files.delete(args[0] as String); null })
             engine.globalObject.setProperty("__mindwtrNative", bridge)
             // A fetch or secret answer queued while no call runs wakes the idle pump, which settles it at once.
             io.wake = { runCatching { executor.execute { idlePump() } } }
@@ -342,6 +348,23 @@ class CoreHost(
     fun updateTask(id: String, baseJson: String, patchJson: String, requestId: String): JSONObject =
         callAsync("update", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson))
             .put("requestId", requestId).toString())
+
+    /**
+     * Core's ingestPendingCaptures: the queue's captures, check-offs and defers stored, each file deleted once its write is on
+     * disk. A journaled write under [requestId]; its replay drains again, and each item's own id makes that write nothing twice.
+     */
+    fun ingestPendingCaptures(requestId: String): JSONObject = callAsync("ingest", requestId)
+
+    /**
+     * A line of the runner's (CoreWork, the queue drain) through core's logger: logcat, and RN's diagnostics log file while Debug
+     * logging is on, its fields in [context]. It never fails its caller: a line that cannot go through core goes to logcat.
+     */
+    fun logLine(message: String, context: JSONObject) {
+        runCatching { callAsync("logLine", message, context.toString()) }.onFailure { Log.i(TAG, "$message $context") }
+    }
+
+    /** Core's runContextAutomation with [json] (`{ action, context }`): `{ notification }`, the details to post, or null. */
+    fun contextAutomation(json: String): JSONObject = callAsync("contextAutomation", json)
 
     /** Core's receipts older than 30 days go; ProcessCoreHost calls it once, after a boot replay that left no entry. */
     fun pruneReceipts(): JSONObject = callAsync("pruneReceipts")
@@ -638,6 +661,19 @@ class CoreHost(
         val op = if (entry.method == "menuCommand") entry.args[0] else entry.method
         if (stop != "$at:$op") return
         Log.i(TAG, "Native Android journal stop at=$at op=$op entry=${entry.file.name}")
+        android.os.Process.killProcess(android.os.Process.myPid())
+    }
+
+    /**
+     * Debug builds only (check-runner-device.mjs): with `debug.mindwtr.native.queue_stop=delete`, the process dies before a
+     * queue file's delete, so after that item's write and save.
+     */
+    /** Debug builds only (check-runner-device.mjs, an owed drain): `debug.mindwtr.native.fail_kv_set` = 1 refuses an RKStorage write. */
+    private fun kvFault() = check(debugFault("fail_kv_set") != "1") { "Injected RKStorage write failure" }
+
+    private fun queueStop() {
+        if (debugFault("queue_stop") != "delete") return
+        Log.i(TAG, "Native Android queue stop at=delete")
         android.os.Process.killProcess(android.os.Process.myPid())
     }
 

@@ -949,15 +949,18 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             "areaFilter" -> sendAreaFilter(action)
             "saveSearch" -> sendSaveSearch(action)
             "inboxCommit", "inboxSkip" -> sendAnswer(action, reopen = processing?.hidden == false)
-            // A journal replay that stopped on an owed save (ProcessCoreHost's boot): the journal's requests again, in order.
+            // A journal replay that stopped on an owed save (ProcessCoreHost's boot, or its queue drain): the journal's requests
+            // again, in order.
             "journal" -> perform(action) { runtime ->
                 runtime.replayJournal().owed?.let { throw IllegalStateException(it) }
                 acknowledged(action)
-                // The replay finished: sync may start now (it never runs before the replay).
-                ProcessCoreHost.journalReplayed(getApplication(), runtime)
+                // The replay finished: the queue drain it held back, then sync (never before the replay); an owed drain shows its retry.
+                if (!ProcessCoreHost.recovered(getApplication(), runtime)) throw IllegalStateException(ProcessCoreHost.failure?.error ?: "SAVE_FAILED")
             }
-            // A read that met an unsaved write: read again under the same lock; its success clears it.
-            "storage" -> perform(action) { runtime ->
+            // A read that met an unsaved write: read again under the same lock; its success clears it. A write no screen sent (a
+            // CoreWork queue drain while this screen showed) owes its journal retry instead: that replay saves it.
+            "storage" -> ProcessCoreHost.failure?.action?.takeIf { it.kind == "journal" }?.let { owed -> failedAction = owed; retryOwed() }
+                ?: perform(action) { runtime ->
                 val lists = read(runtime, depth())
                 acknowledged(action)
                 ui { showLists(lists, ++issued) }
@@ -1781,6 +1784,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
      */
     internal fun perform(action: FailedAction? = null, work: (CoreHost) -> Unit) {
         val runtime = host
+        // A journal retry owed by work no screen sent (a CoreWork queue drain that stored an item but could not save or record
+        // it) holds newer edits back too: until its replay, a reopen would be undone by that item's retry.
+        if (failedAction == null) ProcessCoreHost.failure?.takeIf { it.action.kind == "journal" }?.let { owed ->
+            failedAction = owed.action
+            error = owed.error
+        }
         if (busy || runtime == null || (failedAction != null && failedAction != action)) return
         busy = true
         if (action != null) commandAt = ++issued

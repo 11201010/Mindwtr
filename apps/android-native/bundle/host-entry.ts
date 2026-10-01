@@ -1,17 +1,22 @@
 import {
     DEFAULT_GLOBAL_SEARCH_FILTERS,
     NativeReceiptSqliteAdapter,
+    PENDING_CAPTURES_DIRECTORY,
+    PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY,
+    REMINDER_NOTIFICATION_CHANNEL_NAME,
     STATUS_COLORS_BY_THEME,
     type SqliteAdapter,
     TASK_PRIORITY_COLORS,
     consoleLogger,
     createDiagnosticsLog,
+    buildImmediateNotificationDetails,
     createNativeHostContract,
     diagnosticsEntryFromLogPayload,
     getGeneralSettingsDeviceWrites,
     getPersistenceStatus,
     isSupportedLanguage,
     isDiagnosticsLoggingEnabled,
+    isSandboxMode,
     legacyImportMismatch,
     assertNativeLegacyBackupSafe,
     loadNativeRequestReceipts,
@@ -55,6 +60,9 @@ type NativeBridge = {
     rnStateCommit(change: string): string | null;
     /** RN's diagnostics log file (files/logs/mindwtr.log): one operation of core's DiagnosticsLogFile, as text. */
     logFile(operation: string, text: string): string;
+    fileList(path: string): string;
+    fileRead(path: string): string;
+    fileDelete(path: string): string | null;
     /** RN's AsyncStorage (RnKeyValue.kt): reads answer JSON; a write is on disk when it returns. */
     kvGet(key: string): string;
     kvSet(key: string, value: string): string | null;
@@ -134,6 +142,19 @@ setLogger((payload) => {
     } catch { /* a diagnostic line must never fail its caller */ }
 });
 
+// The pending-captures queue under the app's files folder (Kotlin's HostFiles), and the record of the last queued command
+// applied to each task in RN's RKStorage (Kotlin's RnKeyValue), durable before kvSet returns: core's ingestPendingCaptures ports.
+const QUEUE = `files/${PENDING_CAPTURES_DIRECTORY}`;
+const pendingCaptureQueue = {
+    list: async () => JSON.parse(checked(native().fileList(QUEUE))) as string[] | null,
+    read: async (name: string) => checked(native().fileRead(`${QUEUE}/${name}`)),
+    delete: async (name: string) => { checked(native().fileDelete(`${QUEUE}/${name}`)); },
+};
+const lastAppliedRecord = {
+    read: async () => (JSON.parse(checked(native().kvGet(PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY))) as [string | null])[0],
+    write: async (value: string) => { checked(native().kvSet(PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY, value)); },
+};
+
 type LoadedData = Awaited<ReturnType<SqliteAdapter['getData']>>;
 // Core's receipt adapter: a write's request receipt commits in the same transaction as its data.
 class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter {
@@ -188,7 +209,8 @@ const submit = (work: (signal: AbortSignal) => Promise<unknown>): string => {
  * Sync (host-sync.ts), on a host with RN's AsyncStorage bridge (Android). The iOS host and the gates' stand-in bridge have
  * none, so their contract has no Settings › Sync device, as before.
  */
-const nativeSync: NativeSync | null = typeof (globalThis.__mindwtrNative as { kvGet?: unknown } | undefined)?.kvGet === 'function'
+// kvMultiGet, not kvGet: the gates' stand-in bridge has kvGet and kvSet for the queue's record, and no sync.
+const nativeSync: NativeSync | null = typeof (globalThis.__mindwtrNative as { kvMultiGet?: unknown } | undefined)?.kvMultiGet === 'function'
     ? createNativeSync({
         keyValue,
         secrets: {
@@ -241,7 +263,7 @@ type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncB
  */
 type AIScreenCommand = 'openAISettings' | 'setAIKey' | 'setAIEndpoint';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
-    | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | MenuCommand;
+    | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | 'ingest' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
     const ios = globalThis.__mindwtrHostPlatform === 'ios';
     const meta = {
@@ -2093,6 +2115,34 @@ globalThis.MindwtrHost = {
     /** The badge and the finished-cycle count now. */
     syncState(): string {
         return submit(async () => requireSync().state());
+    },
+    /**
+     * The pending-captures queue drained into the store (core's ingestPendingCaptures): at every boot after the journal's replay,
+     * and for CoreWork's ingest job. A journaled write; its replay drains again.
+     */
+    ingest(requestId: string): string {
+        return submit(async () => taskResult('ingest', await contract.ingestPendingCaptures({ requestId, queue: pendingCaptureQueue, lastApplied: lastAppliedRecord })));
+    },
+    /**
+     * An automation trigger (`json`: the receiver's `{ action, context }`): core's notification as the details RN's alarm
+     * library posts it with (its channel's name added), or null. None in sandbox mode, as RN's sendMobileImmediateNotification.
+     * It writes nothing, and a failed save does not block it.
+     */
+    contextAutomation(json: string): string {
+        return submit(async () => {
+            const { notification } = unwrap(contract.runContextAutomation(JSON.parse(json)));
+            if (!notification || isSandboxMode()) return { notification: null };
+            return { notification: { ...buildImmediateNotificationDetails(notification.title, notification.message, notification.data), channelName: REMINDER_NOTIFICATION_CHANNEL_NAME } };
+        });
+    },
+    /** A line of Kotlin's runner (CoreWork, the queue drain) through core's logger, its fields in `context`. */
+    logLine(message: string, contextJson: string): string {
+        return submit(async () => {
+            try {
+                logInfo(message, { scope: 'native-android', context: JSON.parse(contextJson) as Record<string, unknown> });
+            } catch { /* a diagnostic line must never fail its caller */ }
+            return {};
+        });
     },
     /** After the journal's boot replay: drops request receipts older than 30 days. */
     pruneReceipts(): string {

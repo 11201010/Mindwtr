@@ -42,6 +42,11 @@ android {
 
     // RN's app shortcuts, generated per build type (buildShortcuts below).
     sourceSets { urlSchemes.keys.forEach { getByName(it).res.srcDir(layout.buildDirectory.dir("generated/shortcuts/$it/res")) } }
+    // RN's capture intent Kotlin and its JVM tests, compiled as they are (rnCaptureIntent below).
+    sourceSets {
+        getByName("main").java.srcDir(layout.buildDirectory.dir("generated/rnKotlin/main/java"))
+        getByName("test").java.srcDir(layout.buildDirectory.dir("generated/rnKotlin/test/java"))
+    }
 
     // BuildConfig.DEBUG gates the lifecycle check's fault hooks.
     buildFeatures { compose = true; buildConfig = true }
@@ -77,6 +82,8 @@ dependencies {
     implementation("androidx.biometric:biometric:1.2.0-alpha04")
     // biometric asks for fragment 1.2.5, which predates activity 1.10's result registry; MainActivity is a FragmentActivity.
     implementation("androidx.fragment:fragment:1.8.9")
+    // CoreWork (D7): work after the app closes, on the WorkManager RN ships (expo-background-task's version).
+    implementation("androidx.work:work-runtime:2.9.1")
     // JVM unit tests of plain Kotlin (the entry queue, WriteJournalTest); Android's org.json is a stub there.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
@@ -106,4 +113,15 @@ val buildShortcuts by tasks.registering(Exec::class) {
     inputs.property("urlSchemes", urlSchemes.toString())
     outputs.dir(out)
 }
-tasks.named("preBuild") { dependsOn(buildCoreBundle, buildShortcuts) }
+// RN's capture intent (apps/mobile/modules/android-widget): the token store, the request check, the queue writer and the audio
+// draft types the writer names, with RN's tests of the first two. RN's receiver is not among them: this app's own copy
+// (androidwidget/CaptureIntentReceiver.kt) also starts CoreWork. The widgets pass brings the rest of the module.
+val rnCaptureIntent by tasks.registering(Sync::class) {
+    val widget = "tech/dongdongbh/mindwtr/androidwidget"
+    from(rootProject.projectDir.resolve("../../mobile/modules/android-widget/android/src")) {
+        include(listOf("CaptureIntentProcessor", "CaptureIntentConfigStore", "PendingCaptureWriter", "QuickCaptureAudioRecorder").map { "main/java/$widget/$it.kt" })
+        include(listOf("CaptureIntentProcessorTest", "CaptureIntentConfigStoreTest").map { "test/java/$widget/$it.kt" })
+    }
+    into(layout.buildDirectory.dir("generated/rnKotlin"))
+}
+tasks.named("preBuild") { dependsOn(buildCoreBundle, buildShortcuts, rnCaptureIntent) }

@@ -1,6 +1,7 @@
 package tech.dongdongbh.mindwtr.pilot
 
 import android.app.Activity
+import android.app.Application
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
@@ -15,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.SavedStateHandle
 import org.json.JSONArray
 import org.json.JSONObject
+import tech.dongdongbh.mindwtr.androidwidget.CaptureIntentConfigStore
 import tech.dongdongbh.mindwtr.pilot.InboxViewModel.Part
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.DeviceWrites
@@ -72,8 +74,12 @@ fun applyDeviceChoices(runtime: CoreHost, prefs: SharedPreferences) {
     prefs.getString(THEME_KEY, null)?.let { stored -> runCatching { ThemeChoice.load(runtime.theme(stored)) } }
 }
 
-/** A Settings screen at one revision: core's view, and on Manage its lists as paged and core's Someday sections. */
-class SettingsPage(val screen: String, val view: JSONObject, val lists: Map<String, List<JSONObject>>, val sections: JSONObject?) {
+/**
+ * A Settings screen at one revision: core's view, on Manage its lists as paged and core's Someday sections, and on GTD the
+ * capture intent's token (RN's CaptureIntentConfigStore; it never goes to core), null while it is off or unreadable.
+ */
+class SettingsPage(val screen: String, val view: JSONObject, val lists: Map<String, List<JSONObject>>, val sections: JSONObject?,
+                   val captureToken: String? = null) {
     /** A Manage list as shown: its first window, or as many as More loaded. */
     fun list(name: String): List<JSONObject> = lists[name] ?: view.optJSONObject(name)?.optJSONObject("rows")?.menuObjects("items").orEmpty()
     fun total(name: String): Int = view.optJSONObject(name)?.optJSONObject("rows")?.optInt("total") ?: 0
@@ -200,9 +206,12 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         if (screen == "sync") return SettingsPage(screen, sync.read(runtime), emptyMap(), null)
         if (screen == "ai") return SettingsPage(screen, ai.read(runtime), emptyMap(), null)
         val (name, input) = request(screen)
+        // GTD › Capture's automation capture card: core gets whether the stored config is on (null: it cannot be read).
+        val capture = if (name == "gtdSettings") runCatching { CaptureIntentConfigStore.read(shell.getApplication<Application>()) } else null
+        capture?.let { input.put("captureIntent", JSONObject().put("enabled", it.getOrNull()?.enabled ?: JSONObject.NULL)) }
         val view = runtime.menuRead(name, input.toString())
         check(view.optInt("version", 1) == 1) { "Unsupported core contract" }
-        if (screen != "manage") return SettingsPage(screen, view, emptyMap(), null)
+        if (screen != "manage") return SettingsPage(screen, view, emptyMap(), null, capture?.getOrNull()?.token)
         val open = view.menuObjects("sections").associate { it.getString("key") to it.getBoolean("open") }
         val lists = HashMap<String, List<JSONObject>>()
         var sections: JSONObject? = null
@@ -260,6 +269,24 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         val open = screen
         val depth = page?.takeIf { it.screen == open }?.depth.orEmpty()
         shell.background(listOf(Part.Menu), { runtime -> read(runtime, open, depth) }) { next, mine -> if (shell.fresh(mine, Part.Menu)) show(next) }
+    }
+
+    /**
+     * GTD › Capture's automation capture switch: RN's CaptureIntentConfigStore.setEnabled, a target state (on keeps a token already
+     * stored, off deletes it, so off then on makes a new token), then the screen again. A write that fails shows core's [failed]
+     * toast. The switch is off while it runs (perform).
+     */
+    fun setCaptureIntent(enabled: Boolean, failed: String) = menu.whenIdle {
+        val open = screen
+        val mine = shell.issue()
+        shell.perform { runtime ->
+            val written = runCatching { CaptureIntentConfigStore.setEnabled(shell.getApplication<Application>(), enabled) }.isSuccess
+            val next = read(runtime, open, emptyMap())
+            shell.ui {
+                if (!written) shell.showToast(null, failed, "error")
+                if (shell.fresh(mine, Part.Menu)) show(next)
+            }
+        }
     }
 
     /** A Manage list's next window (by core's ManageListName), or the Someday sections'. */
