@@ -219,6 +219,7 @@ export function ReviewView() {
     const [selectedTaskIndex, setSelectedTaskIndex] = useState(0);
     useTaskListScope({
         getTasks: () => keyboardVisibleTasks,
+        getSelectedIds: () => multiSelectedIds,
         getSelectedIndex: () => selectedTaskIndex,
         setSelectedIndex: setSelectedTaskIndex,
         t,

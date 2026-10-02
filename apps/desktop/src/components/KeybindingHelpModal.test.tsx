@@ -55,6 +55,12 @@ describe('KeybindingHelpModal', () => {
         expect(queryByText('gi')).not.toBeInTheDocument();
     });
 
+    it.each(['vim', 'standard', 'emacs'] as const)('shows native copy in %s help', (style) => {
+        const { getByText } = renderModal(style);
+        const primary = /mac/i.test(navigator.platform) ? 'Cmd' : 'Ctrl';
+        expect(getByText(`${primary}+C`).parentElement).toHaveTextContent('keybindings.list.copyTitle');
+    });
+
     it('shows Standard focus and rename shortcuts', () => {
         const { getByText } = renderModal('standard');
 

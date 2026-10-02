@@ -7,7 +7,7 @@ import { reportError } from '../../../lib/report-error';
 import { showUndoToast } from '../../../lib/undo-registry';
 import { undoTaskCompletion } from '../../../lib/undo-task-completion';
 import { requestTaskRowAction, type TaskRowAction } from '../../../lib/task-row-actions';
-import { useUiStore } from '../../../store/ui-store';
+import { copyTaskTitles } from '../../../lib/task-clipboard';
 
 type TranslateFn = (key: string) => string;
 
@@ -15,6 +15,8 @@ export type TaskListScopeDeps = {
     /** The view's visible tasks, in display order. */
     getTasks: () => Task[];
     getSelectedIndex: () => number;
+    getSelectedIds?: () => ReadonlySet<string> | undefined;
+    getHighlightedTaskId?: () => string | undefined;
     setSelectedIndex: (index: number) => void;
     t: TranslateFn;
     addInputRef?: RefObject<HTMLElement | null>;
@@ -210,16 +212,23 @@ export function createTaskListScope(deps: TaskListScopeDeps): TaskListScope {
             if (!task) return;
             deps.toggleSelect?.(task);
         },
-        copySelected: async (includeDescription) => {
-            const task = selectedTask();
-            if (!task) return;
-            try {
-                const description = includeDescription && task.description?.trim() ? `\n\n${task.description}` : '';
-                await navigator.clipboard.writeText(task.title + description);
-                useUiStore.getState().showToast(translate('list.taskCopied', 'Task copied to clipboard'), 'success');
-            } catch {
-                useUiStore.getState().showToast(translate('list.taskCopyFailed', 'Could not copy task'), 'error');
-            }
+        copySelected: (includeDescription, requireHighlight = false) => {
+            const selectedIds = includeDescription ? undefined : deps.getSelectedIds?.();
+            const seenIds = new Set<string>();
+            const highlightedId = requireHighlight ? getFocusedTaskId() ?? deps.getHighlightedTaskId?.() : undefined;
+            const selected = selectedIds?.size ? undefined : requireHighlight
+                ? deps.getTasks().find((task) => task.id === highlightedId)
+                : selectedTask();
+            const tasks = selectedIds?.size
+                ? deps.getTasks().filter((task) => {
+                    if (!selectedIds.has(task.id) || seenIds.has(task.id)) return false;
+                    seenIds.add(task.id);
+                    return true;
+                })
+                : selected ? [selected] : [];
+            if (tasks.length === 0) return false;
+            void copyTaskTitles(tasks, deps.t, includeDescription);
+            return true;
         },
         toggleFocusSelected: () => requestRowAction('toggle-focus'),
         renameSelected: () => requestRowAction('rename-title'),
@@ -298,6 +307,8 @@ export function useRegisteredTaskListScope(
     const scope = useMemo(() => createTaskListScope({
         getTasks: () => depsRef.current.getTasks(),
         getSelectedIndex: () => depsRef.current.getSelectedIndex(),
+        getSelectedIds: () => depsRef.current.getSelectedIds?.(),
+        getHighlightedTaskId: () => depsRef.current.getHighlightedTaskId?.(),
         setSelectedIndex: (index) => depsRef.current.setSelectedIndex(index),
         t: (key) => depsRef.current.t(key),
         addInputRef: depsRef.current.addInputRef,

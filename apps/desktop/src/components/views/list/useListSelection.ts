@@ -362,6 +362,8 @@ export function useListSelection({
         enabled: !isProcessing,
         focusSelected,
         getSelectedIndex: () => selectedIndex,
+        getSelectedIds: () => multiSelectedIds,
+        getHighlightedTaskId: () => !selectionMode ? filteredTasks[selectedIndex]?.id : undefined,
         getTasks: () => filteredTasks,
         revealSelected,
         setSelectedIndex,

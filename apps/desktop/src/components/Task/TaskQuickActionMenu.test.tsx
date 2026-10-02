@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { useState, type ComponentProps } from 'react';
 import { flushSync } from 'react-dom';
 import type { Task } from '@mindwtr/core';
+import { useUiStore } from '../../store/ui-store';
 import { reportError } from '../../lib/report-error';
 import { TaskQuickActionMenu } from './TaskQuickActionMenu';
 
@@ -130,6 +131,41 @@ const openDestinationPanel = () => {
 };
 
 describe('TaskQuickActionMenu', () => {
+    it('surfaces clipboard failure from Copy Title without a success toast', async () => {
+        const writeText = vi.fn().mockRejectedValue(new Error('Clipboard unavailable'));
+        const showToast = vi.fn();
+        vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+        const previousToast = useUiStore.getState().showToast;
+        useUiStore.setState({ showToast });
+        try {
+            renderMenu();
+            fireEvent.click(screen.getByRole('menuitem', { name: 'Copy Title' }));
+            await waitFor(() => expect(showToast).toHaveBeenCalledExactlyOnceWith('Could not copy task', 'error'));
+        } finally {
+            vi.unstubAllGlobals();
+            useUiStore.setState({ showToast: previousToast });
+        }
+    });
+
+    it.each([false, true])('copies only the title from the menu, including read-only=%s', async (readOnly) => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        const showToast = vi.fn();
+        vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+        const previousToast = useUiStore.getState().showToast;
+        useUiStore.setState({ showToast });
+        try {
+            const props = renderMenu({ readOnly, task: { ...task, description: 'Do not copy this' } });
+            fireEvent.click(screen.getByRole('menuitem', { name: 'Copy Title' }));
+            expect(writeText).toHaveBeenCalledExactlyOnceWith('Task');
+            expect(props.onClose).toHaveBeenCalledOnce();
+            expect(props.onUpdateTask).not.toHaveBeenCalled();
+            await waitFor(() => expect(showToast).toHaveBeenCalledExactlyOnceWith('Title copied', 'success'));
+        } finally {
+            vi.unstubAllGlobals();
+            useUiStore.setState({ showToast: previousToast });
+        }
+    });
+
     it.each([
         ['garden', ['@garden']],
         ['garden, @garden, @@garden, #garden', ['@garden']],
@@ -190,8 +226,8 @@ describe('TaskQuickActionMenu', () => {
         const props = renderClosableMenu({ task: { ...task, status: 'done' }, readOnly: true });
 
         expect(screen.getAllByRole('menuitem').map((item) => item.textContent))
-            .toEqual(['Duplicate', 'Move to Next', 'Delete']);
-        await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+            .toEqual(['Copy Title', 'Duplicate', 'Move to Next', 'Delete']);
+        await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}{Enter}');
 
         expect(props.onStatusChange).toHaveBeenCalledExactlyOnceWith('next');
         expect(screen.queryByRole('menu')).not.toBeInTheDocument();
