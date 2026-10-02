@@ -1075,7 +1075,10 @@ assert.match(coreHost, /fun saveTaskDraft\(id: String, baseJson: String, patchJs
 assert.match(coreHost, /fun updateTask\(id: String, baseJson: String, patchJson: String, requestId: String\): JSONObject =\s*callAsync\("update", JSONObject\(\)\.put\("id", id\)\.put\("base", JSONObject\(baseJson\)\)\.put\("patch", JSONObject\(patchJson\)\)\s*\.put\("requestId", requestId\)\.toString\(\)\)/);
 assert.doesNotMatch(coreHost + hostEntry, /taskEditor\(|getTaskEditor\(/, 'the seven-field editor reply is gone');
 assert.match(hostEntry, /editorModel\(id: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskEditorModel\(\{ id \}\)\);/);
-assert.match(hostEntry, /taskView\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskView\(JSON\.parse\(json\)\)\);/);
+// taskView parses through editorJson (shared with the iOS attachment edits): JSON.parse under a size bound, and a refusal
+// that never quotes the request.
+assert.match(hostEntry, /taskView\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskView\(editorJson\(json\) as Parameters<typeof contract\.getTaskView>\[0\]\)\);/);
+assert.match(hostEntry, /const editorJson = \(json: string\): unknown => \{\s*try \{ if \(json\.length <= 2_000_000\) return JSON\.parse\(json\); \}\s*catch \{ \/\*[^*]*\*\/ \}\s*throw new Error\('Invalid bounded editor request'\);\s*\};/);
 assert.match(hostEntry, /editChecklist\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.editTaskChecklist\(JSON\.parse\(json\)\)\);/);
 assert.match(hostEntry, /resetChecklist\(json: string\): string \{\s*return submit\(async \(\) => taskResult\('resetChecklist', await contract\.resetTaskChecklist\(JSON\.parse\(json\)\)\)\);/);
 assert.match(hostEntry, /editorSuggestions\(id: string, field: string, query: string, limit: number\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskEditorSuggestions\(\{ id, field: [^,]*, query, limit \}\)\);/);
