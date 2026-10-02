@@ -303,6 +303,8 @@ export const huOverrides: Record<string, string> = {
     'task.cancelRecurringSeries': 'Ismétlődő sorozat elvetése',
     'task.cancelled': 'Elvetve',
     'task.cancelledWithRestore': 'A feladat megszakítva. Az Archívumból visszaállítható.',
+    'task.completionOutcomeUnknown': 'Nem sikerült megerősíteni, hogy a feladat befejeződött-e. Indítsd újra a Mindwtr alkalmazást a mentett adatok újratöltéséhez.',
+    'task.completionUndoOutcomeUnknown': 'Nem sikerült megerősíteni, hogy visszavonták-e a feladat befejezését. Indítsd újra a Mindwtr alkalmazást a mentett adatok újratöltéséhez.',
     'task.cancelFailed': 'Nem sikerült elvetni a feladatot',
     'task.skipOccurrence': 'Alkalom kihagyása',
     'task.skipOccurrenceFailed': 'Nem sikerült kihagyni ezt az alkalmat',

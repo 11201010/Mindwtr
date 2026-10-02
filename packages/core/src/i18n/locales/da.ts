@@ -306,6 +306,8 @@ export const daOverrides: Record<string, string> = {
     'task.cancelRecurringSeries': 'Annuller tilbagevendende serier',
     'task.cancelled': 'Annulleret',
     'task.cancelledWithRestore': 'Opgaven er annulleret. Du kan gendanne den fra Arkiv.',
+    'task.completionOutcomeUnknown': 'Det kunne ikke bekræftes, om opgaven blev fuldført. Genstart Mindwtr for at genindlæse gemte data.',
+    'task.completionUndoOutcomeUnknown': 'Det kunne ikke bekræftes, om fuldførelsen af opgaven blev fortrudt. Genstart Mindwtr for at genindlæse gemte data.',
     'task.cancelFailed': 'Opgaven kunne ikke annulleres',
     'task.skipOccurrence': 'Spring denne gentagelse over',
     'task.skipOccurrenceFailed': 'Denne gentagelse kunne ikke springes over',
