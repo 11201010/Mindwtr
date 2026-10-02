@@ -466,7 +466,8 @@ const shootAttachments = async (prefix, rn) => {
         await scrollTo(fieldShown, true);
         await shoot(`${prefix}-attachments-editor-light`, fieldShown);
         await tap(button(await screen(), en['attachments.addLink']));
-        const sheetShown = (current) => hasText(current, en['attachments.linkPlaceholder']) || current.some((node) => node.class === 'android.widget.EditText' && node.text === '');
+        // The sheet's hint line (RN's field reports its placeholder as the EditText's own text, which hasText skips).
+        const sheetShown = (current) => hasText(current, en['attachments.linkBatchHint']);
         await waitFor('the link sheet', sheetShown, 15_000);
         await hideKeyboard();
         await shoot(`${prefix}-attachments-link-sheet-light`, sheetShown);
