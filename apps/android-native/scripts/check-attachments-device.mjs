@@ -285,7 +285,8 @@ const pickNewestPhoto = async () => {
     await until('the photo picker', otherAppFront, 15_000, 500);
     await sleep(2000);
     const nodes = await anyScreen();
-    const photo = nodes.filter((node) => /^Photo\b/i.test(node['content-desc'] ?? '') && node.clickable === 'true')
+    // The thumbnail's description ("Photo taken on …") sits on a non-clickable child of the clickable cell; both share its bounds.
+    const photo = nodes.filter((node) => /^(Photo|Image)\b/i.test(node['content-desc'] ?? ''))
         .sort((a, b) => box(a)[1] - box(b)[1] || box(a)[0] - box(b)[0])[0];
     if (!photo) return fail('the photo picker shows no photo');
     return tapAny(photo);
