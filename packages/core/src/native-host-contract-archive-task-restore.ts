@@ -8,9 +8,10 @@ import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { readAreaDurableData } from './native-host-contract-area-durable';
 import { createNativeRequestReceipts, taskRevisionOf } from './native-request-receipts';
 import { ensureDeviceId } from './store-helpers';
-import { planTaskUpdateEffects, prepareTaskUpdatesForStore } from './store-tasks';
+import { archiveRestoreEffect, archiveRestoreScope } from './store-tasks';
+export { archiveRestoreEffect, archiveRestoreScope } from './store-tasks';
 import { useTaskStore } from './store';
-import { projectFocusDateValues, type FocusDateLookup, type FocusDateProjection } from './task-utils';
+import { projectFocusDateValues, type FocusDateProjection } from './task-utils';
 import { logInfo } from './logger';
 import type { Area, Project, Section, Task } from './types';
 
@@ -76,62 +77,6 @@ const validDevice = (raw: Record<string, unknown>) =>
         ? typeof raw.deviceIdToInitialize === 'string' && UUID.test(raw.deviceIdToInitialize)
         : raw.deviceIdToInitialize === null)
     && iso(raw.updateAt);
-
-/** The relevant complete membership, including legacy Section-only children. */
-export const archiveRestoreScope = (task: Task,
-    data: { tasks: Task[]; projects: Project[]; sections: Section[]; areas: Area[] }): NativePreparedArchivedTaskRestore['scope'] => {
-    const sourceSection = data.sections.find((row) => row.id === task.sectionId);
-    const parentProject = data.projects.find((row) => row.id === (task.projectId ?? sourceSection?.projectId)) ?? null;
-    // A legacy Section-only Task can infer this archived Project during the
-    // shared container normalization, then reopen it. Freeze all of its owned
-    // rows before that single Task action, just as a direct Project child does.
-    const fullParent = Boolean(parentProject?.status === 'archived'
-        && (task.projectId === parentProject.id || sourceSection?.projectId === parentProject.id));
-    const parentSections = parentProject
-        ? data.sections.filter((row) => row.projectId === parentProject.id && (fullParent || row.id === task.sectionId))
-        : [];
-    const sectionIds = new Set(parentSections.map((row) => row.id));
-    const parentTasks = fullParent && parentProject
-        ? data.tasks.filter((row) => row.projectId === parentProject.id
-            || (!row.projectId && row.sectionId !== undefined && sectionIds.has(row.sectionId)))
-        : [task];
-    return { task, parentProject, parentTasks, parentSections,
-        // Shared container resolution clears Area whenever Project/Section wins,
-        // even if a legacy raw areaId names a deleted or missing Area.
-        sourceArea: parentProject ? null : data.areas.find((row) => row.id === task.areaId) ?? null,
-        fullParent };
-};
-
-/** RN's one `updateTask({status:'inbox'})`, including implicit archived-parent reactivation. */
-export const archiveRestoreEffect = (scope: NativePreparedArchivedTaskRestore['scope'],
-    deviceId: string, updateAt: string, futureBoundary: string,
-    dates: FocusDateLookup): NativePreparedArchivedTaskRestore['effect'] | null => {
-    const task = scope.task;
-    const prepared = prepareTaskUpdatesForStore({ task, updates: { status: 'inbox' },
-        allProjects: scope.parentProject ? [scope.parentProject] : [],
-        allSections: scope.parentSections, allAreas: scope.sourceArea ? [scope.sourceArea] : [],
-        nowMs: Date.parse(updateAt), futureBoundary, futureDates: dates });
-    if (!prepared.ok) return null;
-    const planned = planTaskUpdateEffects({ task, preparedUpdates: prepared.updates,
-        allTasks: scope.parentTasks, allProjects: scope.parentProject ? [scope.parentProject] : [],
-        allSections: scope.parentSections, now: updateAt, deviceId });
-    if (planned.recurringCandidateTask || planned.recurringDuplicateTask || planned.recurringFollowUpTask) return null;
-    const beforeTasks = new Map(scope.parentTasks.map((row) => [row.id, row]));
-    const beforeSections = new Map(scope.parentSections.map((row) => [row.id, row]));
-    const afterTask = planned.tasks.find((row) => row.id === task.id);
-    if (!afterTask || afterTask.status !== 'inbox') return null;
-    const tasks = planned.tasks.flatMap((after) => {
-        const before = beforeTasks.get(after.id);
-        return before && !same(before, after) ? [{ before, after }] : [];
-    });
-    const sections = planned.sections.flatMap((after) => {
-        const before = beforeSections.get(after.id);
-        return before && !same(before, after) ? [{ before, after }] : [];
-    });
-    const projectAfter = scope.parentProject ? planned.projects.find((row) => row.id === scope.parentProject?.id) : null;
-    return { tasks, sections, project: projectAfter && scope.parentProject && !same(scope.parentProject, projectAfter)
-        ? { before: scope.parentProject, after: projectAfter } : null };
-};
 
 const requiredDates = (task: Task): string[] => [...new Set([task.startTime, task.dueDate, task.reviewAt]
     .filter((value): value is string => typeof value === 'string'))].sort();

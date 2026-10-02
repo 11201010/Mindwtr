@@ -1125,6 +1125,27 @@ describe('canonical local reads contract', () => {
                 expect(nativeValue(await host.commitPreparedAppLock({ request, prepared: planned.prepared })))
                     .toEqual({ changed: true, value: request.value });
             },
+            commitPreparedArchivedTaskRestore: async (control) => {
+                const host = await nativeHost(control);
+                const source = useTaskStore.getState()._tasksById.get('task-29');
+                expect(source?.status).toBe('archived');
+                if (!source) return;
+                const request = { requestId: 'c7485e97-2d70-481f-bd1b-e8224698c741',
+                    taskId: source.id, taskRevision: taskRevisionOf(source) };
+                const planned = nativeValue(await host.prepareArchivedTaskRestore(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                const restored = planned.prepared.effect.tasks.find((pair) => pair.before.id === source.id)?.after;
+                expect(restored?.status).toBe('inbox');
+                control.expectPersisted((written) => {
+                    expect(written.tasks.find((entry) => entry.id === source.id)).toEqual(restored);
+                    expect(written.tasks).toHaveLength(settled.tasks.length);
+                    expect(written.projects).toEqual(settled.projects);
+                    expect(written.sections).toEqual(settled.sections);
+                });
+                expect(nativeValue(await host.commitPreparedArchivedTaskRestore({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+            },
             commitPreparedPersonCreate: async (control) => {
                 const host = await nativeHost(control);
                 const request = { requestId: 'd97f91ae-d02d-48a5-90ef-fc26a14343b9',
