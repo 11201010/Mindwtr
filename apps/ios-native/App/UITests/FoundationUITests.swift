@@ -17936,4 +17936,131 @@ final class FoundationUITests: XCTestCase {
         task164SavedSearchRowIdentity("e7d99581-f08e-474e-9d75-63fba4579586")
     }
 
+    private func task166DeferredRowIdentity(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+
+        func open(_ surface: String) {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu")
+            let item = app.buttons["menu-" + surface]
+            let menuScroll = app.scrollViews.containing(.button, identifier: "menu-projects").firstMatch
+            for _ in 0..<8 {
+                if item.exists {
+                    let viewport = menuScroll.exists ? menuScroll.frame.intersection(app.frame) : app.frame
+                    let overlap = item.frame.intersection(viewport)
+                    if !overlap.isNull && overlap.height >= min(32, item.frame.height) && item.isHittable { break }
+                    if menuScroll.exists && item.frame.minY < viewport.minY { menuScroll.swipeDown() }
+                    else if menuScroll.exists { menuScroll.swipeUp() }
+                    else { app.swipeUp() }
+                } else if menuScroll.exists { menuScroll.swipeUp() }
+                else { app.swipeUp() }
+            }
+            boardEnabled(item, timeout: 30)
+            XCTAssertTrue(item.isHittable, "Deferred list menu item must be reachable: " + surface)
+            item.tap()
+            boardEnabled(app.buttons[surface + "-back"], timeout: 30)
+            XCTAssertEqual(app.staticTexts[surface + "-title"].label, surface == "waiting" ? "Waiting For" : "Someday/Maybe")
+        }
+
+        func reveal(_ element: XCUIElement, surface: String, movedAbove: Bool = false) {
+            let scroll = app.scrollViews[surface + "-scroll"]
+            XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+            for attempt in 0..<8 {
+                let viewport = scroll.frame.intersection(app.frame)
+                if element.exists {
+                    let frame = element.frame
+                    let overlap = frame.intersection(viewport)
+                    if !overlap.isNull && overlap.height >= min(32, frame.height) && element.isHittable { return }
+                    if frame.minY < viewport.minY { scroll.swipeDown() }
+                    else { scroll.swipeUp() }
+                } else if movedAbove && attempt < 4 { scroll.swipeDown() }
+                else { scroll.swipeUp() }
+            }
+            XCTFail("Deferred task control could not be revealed: " + element.identifier)
+        }
+
+        func assertTask(_ id: String, title: String, status: String, priority: String,
+                        surface: String, movedAbove: Bool = false) {
+            let task = app.buttons["task-title-" + id]
+            reveal(task, surface: surface, movedAbove: movedAbove)
+            XCTAssertEqual(app.buttons.matching(identifier: "task-title-" + id).count, 1, id)
+            XCTAssertEqual(task.label, title, id)
+            XCTAssertTrue(task158ReviewPriorityRow(app, title: title, status: status, priority: priority).exists,
+                          "Deferred survivor must retain its own status and priority: " + id)
+            let badge = app.buttons["task-status-" + id]
+            reveal(badge, surface: surface, movedAbove: movedAbove)
+            XCTAssertEqual(badge.label, "Change status. Current status: " + status, id)
+            boardEnabled(badge, timeout: 30)
+            XCTAssertTrue(badge.isEnabled, id)
+        }
+
+        func complete(_ id: String, surface: String) {
+            let badge = app.buttons["task-status-" + id]
+            reveal(badge, surface: surface, movedAbove: true)
+            boardEnabled(badge, timeout: 30)
+            badge.tap()
+            boardTap(app, "task-complete")
+            XCTAssertTrue(app.buttons["task-title-" + id].waitForNonExistence(timeout: 20))
+        }
+
+        app.launch()
+        open("waiting")
+        assertTask("task166-waiting-first", title: "Task166 Waiting First", status: "Waiting", priority: "High", surface: "waiting")
+        assertTask("task166-waiting-second", title: "Task166 Waiting Second", status: "Waiting", priority: "Low", surface: "waiting")
+        XCTAssertFalse(app.buttons["task-title-task166-other"].exists)
+        complete("task166-waiting-first", surface: "waiting")
+        assertTask("task166-waiting-second", title: "Task166 Waiting Second", status: "Waiting", priority: "Low",
+                   surface: "waiting", movedAbove: true)
+        XCTAssertFalse(app.buttons["task-title-task166-other"].exists)
+        let waitingShot = XCTAttachment(screenshot: app.screenshot())
+        waitingShot.name = "Waiting survivor before navigation"
+        waitingShot.lifetime = .keepAlways
+        add(waitingShot)
+
+        boardTap(app, "waiting-back")
+        open("someday")
+        assertTask("task166-someday-first", title: "Task166 Someday First", status: "Someday", priority: "High", surface: "someday")
+        assertTask("task166-someday-second", title: "Task166 Someday Second", status: "Someday", priority: "Low", surface: "someday")
+        XCTAssertFalse(app.buttons["task-title-task166-other"].exists)
+        complete("task166-someday-first", surface: "someday")
+        assertTask("task166-someday-second", title: "Task166 Someday Second", status: "Someday", priority: "Low",
+                   surface: "someday", movedAbove: true)
+        XCTAssertFalse(app.buttons["task-title-task166-other"].exists)
+        let somedayShot = XCTAttachment(screenshot: app.screenshot())
+        somedayShot.name = "Someday survivor before navigation"
+        somedayShot.lifetime = .keepAlways
+        add(somedayShot)
+
+        boardTap(app, "someday-back")
+        open("waiting")
+        assertTask("task166-waiting-second", title: "Task166 Waiting Second", status: "Waiting", priority: "Low", surface: "waiting")
+        XCTAssertFalse(app.buttons["task-title-task166-waiting-first"].exists)
+        boardTap(app, "waiting-back")
+        open("someday")
+        assertTask("task166-someday-second", title: "Task166 Someday Second", status: "Someday", priority: "Low", surface: "someday")
+        XCTAssertFalse(app.buttons["task-title-task166-someday-first"].exists)
+
+        app.terminate()
+        app.launch()
+        open("waiting")
+        assertTask("task166-waiting-second", title: "Task166 Waiting Second", status: "Waiting", priority: "Low", surface: "waiting")
+        XCTAssertFalse(app.buttons["task-title-task166-waiting-first"].exists)
+        boardTap(app, "waiting-back")
+        open("someday")
+        assertTask("task166-someday-second", title: "Task166 Someday Second", status: "Someday", priority: "Low", surface: "someday")
+        XCTAssertFalse(app.buttons["task-title-task166-someday-first"].exists)
+        XCTAssertFalse(app.buttons["task-title-task166-other"].exists)
+        app.terminate()
+    }
+
+    func testTask166DeferredRowIdentityNormal() {
+        task166DeferredRowIdentity("c195c15c-3452-440c-806a-190ef14e0025")
+    }
+
+    func testTask166DeferredRowIdentityLargest() {
+        task166DeferredRowIdentity("c0a39c9f-5d5d-44df-828d-6a87691c732b")
+    }
+
 }
