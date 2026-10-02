@@ -59,6 +59,7 @@ import { isProjectedRecurringTaskId } from './recurrence';
 import { isStatusListTaskReadOnly } from './menu-views-model';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { useTaskStore } from './store';
+import { validRawTask } from './native-host-contract-task-save';
 import type { Area, Project, Section, Task } from './types';
 import { resolveI18nText } from './i18n';
 
@@ -200,6 +201,13 @@ export type NativePreparedTaskDeleteUndo = {
 };
 export type NativeTaskDeleteUndoPreparation = { kind: 'prepared'; prepared: NativePreparedTaskDeleteUndo };
 export type NativeTaskDeleteUndoEnvelope = { request: NativeTaskDeleteUndoRequest; prepared: NativePreparedTaskDeleteUndo };
+export type NativeTrashTaskRestoreRequest = { requestId: string; taskId: string; taskRevision: string };
+export type NativePreparedTrashTaskRestore = {
+    version: 1; request: NativeTrashTaskRestoreRequest; before: Task; after: Task; scope: NativeRestoreScope;
+    deviceIdBefore: string | null; deviceIdToInitialize: string | null; result: { id: string };
+};
+export type NativeTrashTaskRestorePreparation = { kind: 'prepared'; prepared: NativePreparedTrashTaskRestore };
+export type NativeTrashTaskRestoreEnvelope = { request: NativeTrashTaskRestoreRequest; prepared: NativePreparedTrashTaskRestore };
 
 const fail = (code: NativeHostErrorCode, message: string): NativeHostResult<never> => ({ ok: false, error: { code, message } });
 const isObjectRecord = (value: unknown): value is Record<string, unknown> => (
@@ -683,6 +691,52 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             return taskEditValuesEqual(after, expected) ? envelope as NativeTaskDeleteUndoEnvelope : null;
         } catch { return null; }
     };
+    const readPreparedTrashTaskRestore = (input: unknown): NativeTrashTaskRestoreEnvelope | null => {
+        const envelope = bounded(input);
+        if (!isObjectRecord(envelope) || !exactKeys(envelope, ['request', 'prepared'])
+            || !isObjectRecord(envelope.prepared)
+            || !exactKeys(envelope.prepared, ['version', 'request', 'before', 'after', 'scope',
+                'deviceIdBefore', 'deviceIdToInitialize', 'result']) || envelope.prepared.version !== 1) return null;
+        const request = readTaskDeleteRequest(envelope.request);
+        const raw = envelope.prepared;
+        const wrapped = readTaskDeleteRequest(raw.request);
+        if (!request || !wrapped || !taskEditValuesEqual(request, wrapped)
+            || !validRawTask(raw.before, request.taskId) || !validRawTask(raw.after, request.taskId)
+            || !isObjectRecord(raw.scope) || !exactKeys(raw.scope, ['projects', 'sections', 'areas'])
+            || !Array.isArray(raw.scope.projects) || !Array.isArray(raw.scope.sections) || !Array.isArray(raw.scope.areas)
+            || raw.scope.projects.length > 2 || raw.scope.sections.length > 1 || raw.scope.areas.length > 1
+            || !raw.scope.projects.every((entry) => isObjectRecord(entry) && typeof entry.id === 'string')
+            || !raw.scope.sections.every((entry) => isObjectRecord(entry) && typeof entry.id === 'string'
+                && typeof entry.projectId === 'string')
+            || !raw.scope.areas.every((entry) => isObjectRecord(entry) && typeof entry.id === 'string')
+            || !isObjectRecord(raw.result) || !exactKeys(raw.result, ['id'])) return null;
+        const prepared = raw as unknown as NativePreparedTrashTaskRestore;
+        const { before, after, scope } = prepared;
+        const section = scope.sections[0];
+        const allowedProjects = new Set([before.projectId, section?.projectId]);
+        if (!before.deletedAt || before.purgedAt || isProjectedRecurringTaskId(request.taskId)
+            || taskRevisionOf(before) !== request.taskRevision || prepared.result.id !== request.taskId
+            || scope.projects.some((entry) => !allowedProjects.has(entry.id))
+            || scope.sections.some((entry) => entry.id !== before.sectionId)
+            || scope.areas.some((entry) => entry.id !== before.areaId)
+            || new Set(scope.projects.map((entry) => entry.id)).size !== scope.projects.length
+            || !isText(after.revBy) || !after.revBy
+            || typeof after.updatedAt !== 'string' || !Number.isFinite(Date.parse(after.updatedAt))
+            || new Date(after.updatedAt).toISOString() !== after.updatedAt
+            || prepared.deviceIdBefore !== null && typeof prepared.deviceIdBefore !== 'string'
+            || (prepared.deviceIdBefore === null
+                ? typeof prepared.deviceIdToInitialize !== 'string'
+                    || !deps.requestIdPattern.test(prepared.deviceIdToInitialize)
+                    || after.revBy !== prepared.deviceIdToInitialize
+                : prepared.deviceIdToInitialize !== null || after.revBy !== prepared.deviceIdBefore)) return null;
+        try {
+            const expected = { ...before, deletedAt: undefined,
+                ...sanitizeRestoredTaskContainerReferences(before, {
+                    _allProjects: scope.projects, _allSections: scope.sections, _allAreas: scope.areas,
+                }), updatedAt: after.updatedAt, rev: nextRevision(before.rev), revBy: after.revBy };
+            return taskEditValuesEqual(after, expected) ? envelope as NativeTrashTaskRestoreEnvelope : null;
+        } catch { return null; }
+    };
     // Object order changes when a native host encodes its journal; array order never does.
     const canonicalJSON = (input: unknown): string => JSON.stringify(input, (_name, value) =>
         isObjectRecord(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : value);
@@ -949,6 +1003,55 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                     kind: 'restoreTask', before, after, deviceIdBefore, deviceIdToInitialize,
                 });
                 if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Task Delete Undo conflicts with saved data');
+                return { ok: true, value: result };
+            });
+        },
+
+        /** Trash Restore uses the same sanitizer and guarded one-row writer as Delete Undo, without a Delete prerequisite. */
+        prepareTrashTaskRestore(input: NativeTrashTaskRestoreRequest): NativeHostResult<NativeTrashTaskRestorePreparation> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const request = readTaskDeleteRequest(input);
+            if (!request) return fail('INVALID_INPUT', 'A Restore UUID, task and saved Trash revision are required');
+            const state = useTaskStore.getState();
+            const source = state._tasksById.get(request.taskId);
+            if (!source || !source.deletedAt || source.purgedAt || isProjectedRecurringTaskId(request.taskId))
+                return fail('TASK_NOT_FOUND', 'Task is not restorable from Trash');
+            if (taskRevisionOf(source) !== request.taskRevision)
+                return fail('STALE_REVISION', 'Task changed since Trash was read');
+            const before = bounded(source) as Task | null;
+            if (!validRawTask(before, request.taskId)) return fail('INVALID_INPUT', 'Task cannot fit a valid bounded Restore journal');
+            const device = ensureDeviceId(state.settings);
+            const scope = restoreScope(before, state);
+            const after: Task = { ...before, deletedAt: undefined,
+                ...sanitizeRestoredTaskContainerReferences(before, {
+                    _allProjects: scope.projects, _allSections: scope.sections, _allAreas: scope.areas,
+                }), updatedAt: new Date().toISOString(), rev: nextRevision(before.rev), revBy: device.deviceId };
+            const prepared = bounded({ version: 1, request, before, after, scope,
+                deviceIdBefore: state.settings.deviceId ?? null,
+                deviceIdToInitialize: device.updated ? device.deviceId : null, result: { id: before.id } }) as NativePreparedTrashTaskRestore | null;
+            return prepared && readPreparedTrashTaskRestore({ request, prepared })
+                ? { ok: true, value: { kind: 'prepared', prepared } }
+                : fail('INVALID_INPUT', 'Trash Restore could not produce a valid prepared journal');
+        },
+
+        validatePreparedTrashTaskRestore(input: NativeTrashTaskRestoreEnvelope): NativeHostResult<{ id: string }> {
+            const envelope = readPreparedTrashTaskRestore(input);
+            return envelope ? { ok: true, value: envelope.prepared.result }
+                : fail('INVALID_INPUT', 'Prepared Trash Restore is malformed');
+        },
+
+        async commitPreparedTrashTaskRestore(input: NativeTrashTaskRestoreEnvelope): Promise<NativeHostResult<{ id: string }>> {
+            const envelope = readPreparedTrashTaskRestore(input);
+            if (!envelope) return fail('INVALID_INPUT', 'Prepared Trash Restore is malformed');
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            return receipts.run(envelope.request.requestId, canonicalJSON(['preparedTrashTaskRestore', envelope]), async () => {
+                const { before, after, deviceIdBefore, deviceIdToInitialize, result } = envelope.prepared;
+                const applied = await useTaskStore.getState().commitPreparedBoardTask({
+                    kind: 'restoreTask', before, after, deviceIdBefore, deviceIdToInitialize,
+                });
+                if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Trash Restore conflicts with saved data');
                 return { ok: true, value: result };
             });
         },

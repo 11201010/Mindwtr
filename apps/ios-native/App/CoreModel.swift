@@ -548,6 +548,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var trash: CoreObject = [:]
     @Published private(set) var trashCurrent = false
     @Published private(set) var trashError: String?
+    private var trashRestoreRequest: String?
     @Published private(set) var theme: CoreObject = [:]
     @Published private(set) var area: CoreObject = [:]
     @Published private(set) var strings: CoreObject = [:]
@@ -2729,7 +2730,7 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .history
                 historyTabs = ["tab": "archived"]
             }
-            if recovery.text("method") == "taskDeleteCommit" { selectedSurface = .trash }
+            if ["taskDeleteCommit", "trashTaskRestoreCommit"].contains(recovery.text("method")) { selectedSurface = .trash }
             if recovery.text("method") == "taskPromoteCommit" {
                 taskPromotionRecoveredResult = recovery.object("result")
             }
@@ -11845,8 +11846,49 @@ final class CoreModel: ObservableObject {
     }
 
     func retryTrash() async {
-        guard selectedSurface == .trash, !busy, !retryNeeded, !taskPresented else { return }
-        await refresh()
+        guard selectedSurface == .trash, !busy, !taskPresented else { return }
+        if retryNeeded { await retry() }
+        else { await refresh() }
+    }
+
+    func restoreTrashTask(_ id: String) async {
+        guard trashActionsEnabled, let item = trash.objects("items").first(where: {
+            $0.text("type") == "task" && $0.object("row").text("id") == id
+        }), !item.object("row").text("taskRevision").isEmpty else { return }
+        busy = true
+        trashError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "taskId": id,
+                                    "taskRevision": item.object("row").text("taskRevision")])
+            trashRestoreRequest = request
+            let result = try await query("trashTaskRestoreWrite", [request])
+            try acknowledgeTrashRestore(result)
+            await readTrash()
+        } catch { await handleTrashRestoreError(error) }
+    }
+
+    private func acknowledgeTrashRestore(_ result: CoreObject) throws {
+        guard let request = trashRestoreRequest, Set(result.keys) == Set(["id"]),
+              result.text("id") == (try decode(request)).text("taskId") else { throw CocoaError(.coderReadCorrupt) }
+        trashRestoreRequest = nil
+        retryNeeded = false
+        trashError = nil
+        error = nil
+        trashCurrent = false
+    }
+
+    private func handleTrashRestoreError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            trashRestoreRequest = nil
+            retryNeeded = false
+            error = nil
+            await readTrash()
+        } else {
+            retryNeeded = trashRestoreRequest != nil
+            error = failure.localizedDescription
+        }
+        trashError = failure.localizedDescription
     }
 
     func loadMoreTrash() async {
@@ -17425,6 +17467,14 @@ final class CoreModel: ObservableObject {
                 try await readSelectedSurface()
                 return
             }
+            if let request = trashRestoreRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("trashTaskRestoreRetryOutcome", [request]) }
+                try acknowledgeTrashRestore(result)
+                await readTrash()
+                return
+            }
             if let request = projectFocusRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -17745,6 +17795,10 @@ final class CoreModel: ObservableObject {
             }
             if taskFocusRequest != nil {
                 await handleTaskFocusWriteError(error)
+                return
+            }
+            if trashRestoreRequest != nil {
+                await handleTrashRestoreError(error)
                 return
             }
             if projectFocusRequest != nil {

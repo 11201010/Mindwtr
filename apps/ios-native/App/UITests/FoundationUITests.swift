@@ -16667,4 +16667,95 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    private func task149OpenTrash(_ app: XCUIApplication) {
+        boardTap(app, "tab-menu")
+        let trash = app.buttons["menu-trash"]
+        if !trash.isHittable { revealPagedElement(app, trash, in: app.scrollViews.containing(.button, identifier: "menu-trash").firstMatch) }
+        boardTap(app, "menu-trash")
+        XCTAssertTrue(app.staticTexts["trash-title"].waitForExistence(timeout: 30))
+    }
+
+    private func task149RevealRestore(_ app: XCUIApplication) -> XCUIElement {
+        let row = app.descendants(matching: .any).matching(identifier: "trash-task-task149-task").firstMatch
+        let list = app.descendants(matching: .any).matching(identifier: "trash-scroll").firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 30))
+        for _ in 0..<8 {
+            if row.exists && row.isHittable && list.frame.intersection(app.frame).contains(CGPoint(x: row.frame.midX, y: row.frame.midY)) { break }
+            list.swipeUp()
+        }
+        XCTAssertTrue(row.isHittable)
+        row.swipeRight()
+        let action = app.buttons["trash-restore-task149-task"]
+        boardEnabled(action, timeout: 15)
+        XCTAssertEqual(action.label, "Restore")
+        return action
+    }
+
+    private func task149Restored(_ app: XCUIApplication) {
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "trash-task-task149-task").firstMatch.exists)
+        boardTap(app, "search-open")
+        let search = app.textFields["search-input"]; boardEnabled(search); search.tap(); search.typeText("Task149 restore task")
+        boardTap(app, "search-task-task149-task"); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]; boardEnabled(title)
+        XCTAssertEqual(title.value as? String, "Task149 restore task")
+        boardEnabled(app.buttons["task-editor-destination"], timeout: 30)
+        expectation(for: NSPredicate(format: "value == %@", "Task149 live project"), evaluatedWith: app.buttons["task-editor-destination"])
+        waitForExpectations(timeout: 15)
+        let section = app.buttons["task-editor-project-section"]; boardEnabled(section)
+        XCTAssertEqual(section.value as? String, "Task149 section")
+        let details = app.buttons["task-editor-section-details"]
+        let scroll = app.scrollViews["task-editor-scroll"]
+        for _ in 0..<12 {
+            if details.exists && details.isHittable && scroll.frame.intersection(app.frame).contains(CGPoint(x: details.frame.midX, y: details.frame.midY)) { break }
+            scroll.swipeUp()
+        }
+        XCTAssertTrue(details.isHittable)
+        if details.value as? String == "Expand" { details.tap() }
+        let note = app.textViews["task-editor-note"]; boardEnabled(note)
+        XCTAssertEqual(note.value as? String, "Retained149 body")
+        boardTap(app, "task-view-close"); boardTap(app, "search-close")
+    }
+
+    func testTrashTaskRestoreSwipeOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "65bbce86-d72b-44f3-952b-e6f7b2ca8084"]
+        app.launch(); task149OpenTrash(app); _ = task149RevealRestore(app)
+        XCTAssertFalse(app.buttons["task-view-close"].exists, "A Trash row does not open the editor")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Trash Restore requires a tap"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    private func task149RestoreFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task149OpenTrash(app); task149RevealRestore(app).tap()
+        let row = app.descendants(matching: .any).matching(identifier: "trash-task-task149-task").firstMatch
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: row); waitForExpectations(timeout: 30)
+        task149Restored(app)
+        app.terminate(); app.launch(); task149OpenTrash(app); task149Restored(app); app.terminate()
+    }
+
+    func testTrashTaskRestoreNormal() { task149RestoreFlow("b672dc07-a347-4111-8565-4e909de5bfde") }
+    func testTrashTaskRestoreLargest() { task149RestoreFlow("4fc168a7-3b68-4026-b424-9ecad0b6e129") }
+
+    func testTrashTaskRestoreFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e42c775b-1f7e-4ef3-8791-4b10400213b0"]
+        app.launch(); task149OpenTrash(app); task149RevealRestore(app).tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["trash-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["trash-back"].isEnabled)
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trash-task-task149-task").firstMatch.exists)
+            retry.tap()
+        }
+        boardEnabled(app.buttons["trash-retry"], timeout: 30); app.terminate()
+    }
+
+    func testTrashTaskRestoreColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e42c775b-1f7e-4ef3-8791-4b10400213b0"]
+        app.launch(); XCTAssertTrue(app.staticTexts["trash-title"].waitForExistence(timeout: 30)); task149Restored(app)
+        app.terminate(); app.launch(); task149OpenTrash(app); task149Restored(app); app.terminate()
+    }
+
 }

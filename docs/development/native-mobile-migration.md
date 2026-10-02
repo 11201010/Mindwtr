@@ -14,6 +14,8 @@ Freeze capability scope at **v1.3.2**, commit **ee82a9e3e9a1d4e0c406f5ffff80e768
 
 Maintainer clarification, 2026-09-26: preserve the RN interface and interaction patterns so the native update feels like the same app. A native difference needs a concrete convenience or usability improvement. Existing data must survive the ordinary update without export/import or reinstall.
 
+RN regression provenance (2026-10-02): before accepting each native workflow, trace the actual RN caller/controller, shared-core policy, existing tests and relevant fix history. Reuse shared policy and carry previously fixed edge cases into runnable native checks; matching the visible screen alone is insufficient. Record the source/fix references and separate core, simulator and physical-device evidence in the parity ledger. Older migrated workflows remain subject to this audit; do not infer complete regression coverage from a build or a focused happy-path pass.
+
 ### Current evidence and limits
 
 - ADR 0029 records an Android pilot with Inbox, editor, and Focus on local branch `experiment/gate2-native-android`, reviewed at `6c74a67e9`. It is not a complete client or a production release. Its injected taps, simplified collation, and partial workflow coverage do not establish hands-on or language readiness.
