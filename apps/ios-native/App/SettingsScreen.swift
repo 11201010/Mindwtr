@@ -238,6 +238,10 @@ struct SettingsScreen: View {
                                 }
                             }.padding(4).background(palette.bg, in: RoundedRectangle(cornerRadius: 10))
                         }.padding(14)
+                        if field == "focusTaskLimit" {
+                            palette.border.frame(height: 0.5)
+                            gtdToggle(model.gtdWorkflow.object("focusIncludeStartDates")).padding(14)
+                        }
                     }
                     gtdNavigationRow("autoArchive")
                 }.background(palette.card, in: RoundedRectangle(cornerRadius: 12))

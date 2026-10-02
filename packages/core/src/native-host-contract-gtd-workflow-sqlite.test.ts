@@ -60,7 +60,8 @@ async function open(path: string, seed = false, seedData = initial()) {
 }
 
 async function plan(host: ReturnType<typeof createNativeHostContract>,
-    edit: Extract<NativeGtdWorkflowRequest['edit'], { type: 'defaultScheduleTime' | 'focusTaskLimit' | 'defaultProjectFlowMode' }>) {
+    edit: Extract<NativeGtdWorkflowRequest['edit'], { type: 'defaultScheduleTime' | 'focusTaskLimit'
+        | 'focusIncludeStartDates' | 'defaultProjectFlowMode' }>) {
     const options = await host.getGtdWorkflowOptions({});
     if (!options.ok) throw new Error(JSON.stringify(options));
     const request: NativeGtdWorkflowRequest = { requestId: ID, edit, expected: options.value.expected[edit.type] };
@@ -136,13 +137,16 @@ const nineTables = (db: Database) => Object.fromEntries(tables.map((table) =>
     [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
 
 describe('GTD workflow SQLite recovery', () => {
-    it('requeues raw saved rows after failed COMMIT and cold-replays the exact field/stamp', async () => {
+    it.each([
+        { type: 'focusTaskLimit', value: 5 },
+        { type: 'focusIncludeStartDates', value: false },
+    ] as const)('requeues raw saved rows after failed COMMIT and cold-replays $type', async (edit) => {
         const dir = mkdtempSync(join(tempRoot, 'gtd-workflow-')); directories.push(dir);
         const path = join(dir, 'library.db');
         const first = await open(path, true);
         const beforeTask = first.db.prepare('SELECT * FROM tasks WHERE id = ?').get('gtd-raw');
         const beforeSettings = (await first.adapter.getData()).settings;
-        const envelope = await plan(first.host, { type: 'focusTaskLimit', value: 5 });
+        const envelope = await plan(first.host, edit);
         first.fault.commits = 10;
         expect(await first.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
             error: { code: 'SAVE_FAILED' } });
@@ -154,10 +158,10 @@ describe('GTD workflow SQLite recovery', () => {
         expect((await first.adapter.getData()).settings).toEqual(beforeSettings);
         first.fault.commits = 0;
         expect(await first.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
-            value: { type: 'focusTaskLimit', value: 5, changed: true } });
+            value: { type: edit.type, value: edit.value, changed: true } });
         expect(first.db.prepare('SELECT * FROM tasks WHERE id = ?').get('gtd-raw')).toEqual(beforeTask);
         const saved = (await first.adapter.getData()).settings;
-        expect(saved.gtd).toEqual({ ...beforeSettings.gtd, focusTaskLimit: 5 });
+        expect(saved.gtd).toEqual({ ...beforeSettings.gtd, [edit.type]: edit.value });
         expect(saved.syncPreferencesUpdatedAt?.gtd).toBe(envelope.prepared.after.stamp);
         expect(saved.syncPreferencesUpdatedAt?.language).toBe(AT);
         first.db.close(); databases.splice(databases.indexOf(first.db), 1);

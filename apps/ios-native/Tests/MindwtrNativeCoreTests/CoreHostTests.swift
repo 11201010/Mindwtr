@@ -14013,6 +14013,8 @@ final class CoreHostTests: XCTestCase {
             gtd["unknown103"] = ["retained": true]
             if presetting {
                 gtd["taskEditor"] = ["retained109": "editor", "sectionOpen": ["details": true]]
+            } else if type == "focusIncludeStartDates" {
+                gtd[type] = !(value as? Bool ?? false)
             } else if let section {
                 gtd["taskEditor"] = ["retained108": "editor", "sectionOpen": [section: !(value as? Bool ?? false), "retained108": "section"]]
             } else if parsing {
@@ -14166,7 +14168,7 @@ final class CoreHostTests: XCTestCase {
                 statements += 1
                 if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
             }
-            replayFaults.commandDiagnostic = { if $0 == (presetting ? "gtdTaskEditorPresetApplied" : section != nil ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : nestedParent == nil ? method + "Applied" : "gtdReviewApplied") { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
+            replayFaults.commandDiagnostic = { if $0 == (type == "focusIncludeStartDates" ? "gtdFocusStartDatesApplied" : presetting ? "gtdTaskEditorPresetApplied" : section != nil ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : nestedParent == nil ? method + "Applied" : "gtdReviewApplied") { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
             let recovered = host(replayFaults, bundleURL: clock)
             if scenario != "unrelated" {
                 await expectFailure(scenario == "forged" ? "INVALID_INPUT" : "STALE_REVISION") { _ = try await recovered.start() }
@@ -14420,7 +14422,50 @@ final class CoreHostTests: XCTestCase {
 
     func testGtdWorkflowScheduleRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "defaultScheduleTime", value: "09:30", workflow: true) }
     func testGtdWorkflowFocusLimitRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "focusTaskLimit", value: 3, workflow: true) }
+    func testGtdWorkflowFocusStartDatesOffRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "focusIncludeStartDates", value: false, workflow: true) }
+    func testGtdWorkflowFocusStartDatesOnRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "focusIncludeStartDates", value: true, workflow: true) }
     func testGtdWorkflowProjectFlowRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "defaultProjectFlowMode", value: "sequential", workflow: true) }
+
+    func testGtdWorkflowFocusStartDatesDefaultAndBooleanBoundary() async throws {
+        let bootstrap = host(); _ = try await bootstrap.start(); await bootstrap.close()
+        var settings = try calendarPreferenceSettings(), gtd = settings["gtd"] as? [String: Any] ?? [:]
+        gtd.removeValue(forKey: "focusIncludeStartDates"); settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let options = try object(await core.call("gtdWorkflowOptions", argumentsJSON: json(["{}"])))
+        let hub = try XCTUnwrap(options["hub"] as? [String: Any])
+        let row = try XCTUnwrap(hub["focusIncludeStartDates"] as? [String: Any])
+        XCTAssertEqual(Set(row.keys), Set(["label", "description", "value", "edit"]))
+        XCTAssertEqual(row["value"] as? Bool, true)
+        let edit = try XCTUnwrap(row["edit"] as? [String: Any])
+        XCTAssertEqual(Set(edit.keys), Set(["type", "value"]))
+        XCTAssertEqual(edit["type"] as? String, "focusIncludeStartDates")
+        XCTAssertEqual(edit["value"] as? Bool, false)
+        let expected = try XCTUnwrap(options["expected"] as? [String: Any])
+        let witness = try XCTUnwrap(expected["focusIncludeStartDates"] as? [String: Any])
+        XCTAssertEqual(witness["present"] as? Bool, false)
+        XCTAssertTrue(witness["value"] is NSNull)
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": edit, "expected": witness]
+        var invalids: [[String: Any]] = []
+        let invalidValues: [Any] = [0, 1, "false", "true", NSNull()]
+        for value in invalidValues {
+            var invalid = request; invalid["edit"] = ["type": "focusIncludeStartDates", "value": value]
+            invalids.append(invalid)
+        }
+        let invalidWitnessValues: [Any] = [0, 1, "false", "true"]
+        for value in invalidWitnessValues {
+            var wrong = witness; wrong["present"] = true; wrong["value"] = value
+            var invalid = request; invalid["expected"] = wrong; invalids.append(invalid)
+        }
+        var statements = 0, journals = 0
+        faults.beforeSQL = { _ in statements += 1 }; faults.journalWrite = { journals += 1 }
+        for invalid in invalids {
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("gtdWorkflow", argumentsJSON: json([json(invalid)])) }
+        }
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journals, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
 
     func testGtdWorkflowDraftNoopAndBoundary() async throws {
         let faults = HostIOFaults(), core = host(faults); _ = try await core.start()

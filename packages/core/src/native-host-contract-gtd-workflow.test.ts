@@ -42,7 +42,7 @@ async function open(start: AppData, fail?: () => boolean) {
 }
 
 async function planned(env: Awaited<ReturnType<typeof open>>,
-    edit: Extract<GtdWorkflowEdit, { type: 'defaultScheduleTime' | 'focusTaskLimit' | 'defaultProjectFlowMode' }>) {
+    edit: Extract<GtdWorkflowEdit, { type: 'defaultScheduleTime' | 'focusTaskLimit' | 'focusIncludeStartDates' | 'defaultProjectFlowMode' }>) {
     const options = await env.host.getGtdWorkflowOptions({});
     if (!options.ok) throw new Error(JSON.stringify(options));
     const request: NativeGtdWorkflowRequest = { requestId: ID, edit, expected: options.value.expected[edit.type] };
@@ -335,12 +335,13 @@ describe('prepared GTD workflow defaults', () => {
     it.each([
         { type: 'defaultScheduleTime', value: '09:30' },
         { type: 'focusTaskLimit', value: 5 },
+        { type: 'focusIncludeStartDates', value: false },
         { type: 'defaultProjectFlowMode', value: 'sequential' },
     ] as const)('saves and cold-replays $type with only the chosen raw field and GTD stamp', async (edit) => {
         const env = await open(initial());
         const { options, envelope, prepared } = await planned(env, edit);
         expect(Object.keys(options.expected).sort()).toEqual([
-            'defaultScheduleTime', 'focusTaskLimit', 'defaultProjectFlowMode'].sort());
+            'defaultScheduleTime', 'focusTaskLimit', 'focusIncludeStartDates', 'defaultProjectFlowMode'].sort());
         expect(options.expected[edit.type]).toMatchObject({ present: false, value: null, stampPresent: true, stamp: AT });
         expect(options.hub[edit.type].label).toEqual(expect.any(String));
         expect(env.host.validatePreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
@@ -360,6 +361,12 @@ describe('prepared GTD workflow defaults', () => {
             const limit = normalizeFocusTaskLimit(env.data().settings.gtd?.focusTaskLimit);
             expect(canStarNewCapture({ focusedCount: 4, focusTaskLimit: limit })).toBe(true);
             expect(canStarNewCapture({ focusedCount: 5, focusTaskLimit: limit })).toBe(false);
+        } else if (edit.type === 'focusIncludeStartDates') {
+            const after = await env.host.getGtdWorkflowOptions({});
+            expect(after).toMatchObject({ ok: true, value: { hub: {
+                focusIncludeStartDates: { value: false, edit: { type: 'focusIncludeStartDates', value: true } },
+            } } });
+            env.changeSaved((data) => ({ ...data, settings: { ...data.settings, language: 'ko' } }));
         } else {
             const project = env.host.prepareProjectCreate({ requestId: '10300000-0000-4000-8000-000000000103',
                 title: 'Uses saved GTD flow', areaId: null });
@@ -369,6 +376,7 @@ describe('prepared GTD workflow defaults', () => {
         const cold = await env.reopen();
         expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
         expect(cold.saves()).toBe(0);
+        if (edit.type === 'focusIncludeStartDates') expect(cold.data().settings.language).toBe('ko');
     });
 
     it('uses the shared time parser for drafts and only accepts normalized time edits', async () => {
@@ -415,6 +423,92 @@ describe('prepared GTD workflow defaults', () => {
         const replacement = await planned(legacy, { type: 'focusTaskLimit', value: 5 });
         expect(await legacy.host.commitPreparedGtdWorkflow(replacement.envelope)).toMatchObject({ ok: true });
         expect(legacy.data().settings.gtd?.focusTaskLimit).toBe(5);
+    });
+
+    it('offers only the inverse Focus start-date toggle and accepts strict saved booleans', async () => {
+        const absent = await open(initial());
+        const options = await absent.host.getGtdWorkflowOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(options.value.hub.focusIncludeStartDates).toMatchObject({ value: true,
+            edit: { type: 'focusIncludeStartDates', value: false } });
+        for (const value of [null, 0, 1, 'false'])
+            expect(await absent.host.prepareGtdWorkflow({ requestId: ID,
+                edit: { type: 'focusIncludeStartDates', value },
+                expected: options.value.expected.focusIncludeStartDates }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await absent.host.prepareGtdWorkflow({ requestId: ID,
+            edit: { type: 'focusIncludeStartDates', value: true },
+            expected: options.value.expected.focusIncludeStartDates }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const { envelope } = await planned(absent, { type: 'focusIncludeStartDates', value: false });
+        const forged = structuredClone(envelope);
+        forged.request.edit.value = true;
+        forged.prepared.request.edit.value = true;
+        forged.prepared.after.value = true;
+        forged.prepared.result.value = true;
+        expect(absent.host.validatePreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        expect(absent.saves()).toBe(0);
+
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd, focusIncludeStartDates: false };
+        const off = await open(start);
+        const offered = await off.host.getGtdWorkflowOptions({});
+        expect(offered).toMatchObject({ ok: true, value: { hub: { focusIncludeStartDates: {
+            value: false, edit: { type: 'focusIncludeStartDates', value: true } } } } });
+        const enabled = await planned(off, { type: 'focusIncludeStartDates', value: true });
+        expect(await off.host.commitPreparedGtdWorkflow(enabled.envelope)).toMatchObject({ ok: true });
+        expect(off.data().settings.gtd?.focusIncludeStartDates).toBe(true);
+        for (const bad of [null, 1, 'true']) {
+            const malformed = initial(); malformed.settings.gtd = { ...malformed.settings.gtd,
+                focusIncludeStartDates: bad as never };
+            const env = await open(malformed);
+            expect(await env.host.getGtdWorkflowOptions({})).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        }
+    });
+
+    it('updates Focus schedule membership without changing task rows', async () => {
+        const today = new Date();
+        const date = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 9).toISOString();
+        const start = initial(); start.tasks.push(
+            { id: 'gtd-start-only', title: 'Start only', status: 'next', startTime: date,
+                tags: [], contexts: [], createdAt: AT, updatedAt: AT },
+            { id: 'gtd-due-only', title: 'Due only', status: 'next', dueDate: date,
+                tags: [], contexts: [], createdAt: AT, updatedAt: AT },
+        );
+        const env = await open(start);
+        const scheduled = (host: typeof env.host) => {
+            const focus = host.getFocus({ limit: 20 });
+            if (!focus.ok) throw new Error(JSON.stringify(focus));
+            return focus.value.sections.find((section) => section.key === 'schedule')?.rows.map((row) => row.id) ?? [];
+        };
+        expect(scheduled(env.host)).toContain('gtd-start-only');
+        expect(scheduled(env.host)).toContain('gtd-due-only');
+        const { envelope } = await planned(env, { type: 'focusIncludeStartDates', value: false });
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: true });
+        expect(scheduled(env.host)).not.toContain('gtd-start-only');
+        expect(scheduled(env.host)).toContain('gtd-due-only');
+        expect(env.data().tasks).toEqual(start.tasks);
+        const cold = await env.reopen();
+        expect(scheduled(cold.host)).not.toContain('gtd-start-only');
+        expect(scheduled(cold.host)).toContain('gtd-due-only');
+    });
+
+    it('refuses a stale Focus start-date field or GTD stamp before commit', async () => {
+        for (const change of [
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                gtd: { ...data.settings.gtd, focusIncludeStartDates: false } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                    gtd: '2026-09-02T00:00:00.000Z' } } }),
+        ]) {
+            const env = await open(initial());
+            const { envelope } = await planned(env, { type: 'focusIncludeStartDates', value: false });
+            env.changeSaved(change);
+            expect(await env.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'STALE_REVISION' } });
+            expect(env.saves()).toBe(0);
+        }
     });
 
     it('refuses malformed relevant raw fields and forged prepared effects before storage', async () => {

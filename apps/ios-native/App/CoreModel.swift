@@ -3067,7 +3067,7 @@ final class CoreModel: ObservableObject {
         let options = try await query(editing ? "gtdTaskEditorOpenOptions" : inboxing ? "gtdInboxOptions" : reviewing ? "gtdReviewOptions" : "gtdWorkflowOptions", ["{}"])
         let contentKey = editing ? "taskEditor" : inboxing ? "inbox" : reviewing ? "review" : "hub"
         var content = options.object(contentKey), expected = options.object("expected")
-        let fields = editing ? ["scheduling", "organization", "details"] : inboxing ? ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"] : reviewing ? ["dailyReviewFocusStep", "weeklyReviewContextStep"] : ["defaultScheduleTime", "focusTaskLimit", "defaultProjectFlowMode"]
+        let fields = editing ? ["scheduling", "organization", "details"] : inboxing ? ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"] : reviewing ? ["dailyReviewFocusStep", "weeklyReviewContextStep"] : ["defaultScheduleTime", "focusTaskLimit", "focusIncludeStartDates", "defaultProjectFlowMode"]
         guard Set(options.keys) == Set([contentKey, "expected"]), !content.text("title").isEmpty,
               Set(expected.keys) == Set(fields) else { throw CocoaError(.coderReadCorrupt) }
         if editing {
