@@ -8,7 +8,8 @@
 //   1   happy upgrade: the native app shows the RN data, imports the capture RN
 //       left queued once at its first boot, captures once, keeps every
 //       pre-upgrade row and every other non-database file, and leaves a
-//       .prewrite checkpoint that holds the pre-upgrade rows;
+//       .prewrite checkpoint that holds the pre-upgrade rows. In RKStorage only
+//       RN's alarm map may change (the reminder alarms), after a byte checkpoint;
 //   4   recovery (continues 1): the RN 154 build opens the database and keeps
 //       the native edit and the native import. While the recovery source is v1.3.2 a failure is
 //       reported as BLOCKED (RN startup snapshot bug) and does not fail the run;
@@ -104,6 +105,8 @@ const JSON_BACKUP = 'mindwtr-data';
 const ASYNC_STORAGE = 'databases/RKStorage';
 // The native app's byte copy of RKStorage, taken once before its first RKStorage write.
 const RN_CHECKPOINT = 'files/SQLite/RKStorage.prewrite';
+// RN's reminder alarm map (core's REMINDER_ALARM_MAP_STORAGE_KEY): the native app's reminder alarms clear RN's and keep theirs there.
+const ALARM_MAP = 'mindwtr:local:alarms:v1';
 const AUTO_CLEAN_LABEL = 'Clean up quick add text'; // RN v1.3.2 English label of settings.quickAddAutoClean
 const TMP = '/data/local/tmp/mindwtr-upgradetest';
 const DB = 'files/SQLite/mindwtr.db';
@@ -426,6 +429,7 @@ const scenarioUpgrade = async () => {
     const queuedPath = `files/pending-captures/${queued.id}.json`;
     const before = snapshot();
     const pre = readState(pullDatabase('1-pre'));
+    const preAsync = asyncStorage('1-pre-rkstorage');
     const expected = [...pre.tasks.filter((task) => task.status === 'inbox' && !task.deletedAt).map((task) => task.title), t.queued].sort();
     console.log(`pre-upgrade rows: ${JSON.stringify(pre.counts)}; ${before.size} files hashed`);
 
@@ -456,7 +460,20 @@ const scenarioUpgrade = async () => {
     check(checkpointChanges.length === 0, `(1) .prewrite holds every pre-upgrade row exactly${shortList(checkpointChanges)}`);
     const imported = rows(post, TASK_SQL).filter((task) => task.title === t.queued && !task.deletedAt);
     check(imported.length === 1 && imported[0].id === queued.id && !after.has(queuedPath), '(1) the native boot imported the capture RN left queued once, under its id, and removed its file');
-    const changed = differences(before, after, { changedOk: (path) => isDatabase(path) || path === queuedPath, newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` });
+    // The one RKStorage write the native app makes here on purpose: the reminder alarms clear RN's alarm map and keep their own under
+    // RN's key, after the byte checkpoint of RKStorage. No other RKStorage row may change.
+    const rnStateWritten = [ASYNC_STORAGE, `${ASYNC_STORAGE}-wal`, `${ASYNC_STORAGE}-journal`].some((path) => before.get(path) !== after.get(path))
+        || [...after.keys()].some(isRnCheckpoint);
+    const asyncChanged = (() => {
+        const postAsync = asyncStorage('1-post-rkstorage');
+        return [...new Set([...preAsync.keys(), ...postAsync.keys()])].filter((name) => preAsync.get(name) !== postAsync.get(name));
+    })();
+    check(asyncChanged.every((name) => name === ALARM_MAP), `(1) RKStorage: only RN's alarm map ${ALARM_MAP} changed${shortList(asyncChanged)}`);
+    check(!rnStateWritten || checkpointMatches(before, after), `(1) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files byte for byte, taken before that write`);
+    const changed = differences(before, after, {
+        changedOk: (path) => isDatabase(path) || path === queuedPath || isAsyncStorage(path),
+        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path),
+    });
     check(changed.length === 0, `(1) every other non-database file is unchanged (${[...before.keys()].filter((path) => !isDatabase(path)).length} files)${shortList(changed)}`);
     return { t, pre, queued };
 };

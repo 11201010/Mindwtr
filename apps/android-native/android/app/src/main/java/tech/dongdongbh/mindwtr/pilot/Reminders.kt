@@ -177,7 +177,12 @@ internal class ReminderStart<H : Any>(private val start: (H) -> JSONObject, priv
  * The Android side of core's reminder alarms (CoreHost's alarm bridges): AlarmManager, the tray, RN's old alarms. Called on the
  * engine thread, which alone opens RKStorage.
  */
-internal class ReminderAlarms(private val context: Context, private val keyValue: RnKeyValue) : CoreHost.Reminders, ReminderPlan.Port {
+internal class ReminderAlarms(
+    private val context: Context,
+    private val keyValue: RnKeyValue,
+    /** RN's `RKStorage` byte copy (LegacyRnStoreGuard.checkpointRnState), taken before this class first writes it. */
+    private val checkpointRnState: () -> Unit,
+) : CoreHost.Reminders, ReminderPlan.Port {
     companion object {
         /** Core's POMODORO_ALARM_STORAGE_KEY: RN's record of its Pomodoro alarm. */
         private const val POMODORO_KEY = "mindwtr:local:pomodoro-alarm:v1"
@@ -254,10 +259,21 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
     override fun cleanupRn(): Int = RnAlarmCleanup.run(rows = ::rnAlarmIds, cancel = ::cancelRn, stripButtons = ::stripRnButtons,
         // Only maps that exist: an RN user who never had reminders keeps RKStorage untouched.
         forgetMaps = { keyValue.multiGet(listOf(ReminderPlan.MAP_KEY, POMODORO_KEY)).filterValues { it != null }.keys.toList()
-            .takeIf { it.isNotEmpty() }?.let(keyValue::multiRemove); Unit },
+            .takeIf { it.isNotEmpty() }?.let { keys -> beforeWrite(); keyValue.multiRemove(keys) }; Unit },
         deleteTable = { check(context.deleteDatabase(RN_DATABASE) || !context.getDatabasePath(RN_DATABASE).exists()) { "Cannot delete $RN_DATABASE" } })
 
-    override fun store(entries: Map<String, String>) { keyValue.multiSet(entries.toList()) }
+    override fun store(entries: Map<String, String>) {
+        beforeWrite()
+        keyValue.multiSet(entries.toList())
+    }
+
+    private var checkpointed = false
+
+    private fun beforeWrite() {
+        if (checkpointed) return
+        checkpointRnState()
+        checkpointed = true
+    }
 
     override fun removeDelivered(id: Int) = notifications.cancel(id)
 

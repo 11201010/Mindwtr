@@ -111,7 +111,8 @@ internal object ProcessCoreHost {
         val keyValue = RnKeyValue(app.getDatabasePath("RKStorage"))
         val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir }, HostIo(app),
             File(app.filesDir, "journal"), deviceStore(app), File(app.filesDir, DiagnosticsLogFile.RELATIVE_PATH),
-            keyValue, HostFiles(app.filesDir, app.cacheDir, content = AndroidContentSource(app)), installer, ReminderAlarms(app, keyValue))
+            keyValue, HostFiles(app.filesDir, app.cacheDir, content = AndroidContentSource(app)), installer,
+            ReminderAlarms(app, keyValue, checkpointRnState = { if (legacy != null) LegacyRnStoreGuard.checkpointRnState(app.dataDir) }))
         try {
             runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)
