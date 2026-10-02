@@ -69,3 +69,5 @@ Task editor title and Notes automatically share RN's text direction, using both 
 Task editor More → Cancel saves the current draft and archives the Task as cancelled through the existing prepared Save command. The transient Undo action follows the shared notification preference and restores the original lifecycle fields while retaining unrelated edits. Frozen cancellation and Undo effects survive failed writes and cold recovery; pending display strings remain valid across translation updates.
 
 Task editor More → Delete removes the saved Task, matching RN, and offers transient Undo even when the cancellation Undo preference is off. Unsaved edits remain checkpointed until the exact deletion acknowledgment. Undo restores the saved Task through the shared container-reference sanitizer; newer changes and purges refuse safely. Delete and Undo reuse the existing prepared journal for exact Retry and cold recovery.
+
+Reference Tasks expose Convert to action in More from Preview and Edit, using the existing draft status action. Save applies it; Discard retains Reference.
