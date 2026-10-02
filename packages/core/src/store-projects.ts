@@ -5,6 +5,7 @@ import { createProjectCoreActions } from './store-projects/project-actions';
 import { createSectionActions } from './store-projects/section-actions';
 import type { ProjectActionContext, ProjectActions } from './store-projects/shared';
 import { createTaxonomyActions } from './store-projects/taxonomy-actions';
+import { createProjectToSectionActions } from './store-projects/project-to-section-actions';
 
 export const createProjectActions = (context: ProjectActionContext): ProjectActions => ({
     ...createProjectCoreActions(context),
@@ -13,4 +14,5 @@ export const createProjectActions = (context: ProjectActionContext): ProjectActi
     ...createOrderingActions(context),
     ...createPeopleActions(context),
     ...createTaxonomyActions(context),
+    ...createProjectToSectionActions(context),
 });

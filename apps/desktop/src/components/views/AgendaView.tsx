@@ -802,6 +802,7 @@ export function AgendaView() {
             sortBy: effectiveFocusSortBy,
             prioritiesEnabled,
             sortOrder: activeSavedFilter?.sortOrder,
+            focusIncludeStartDates: settings?.gtd?.focusIncludeStartDates,
         });
     }, [
         activeSavedFilter?.sortOrder,
@@ -811,6 +812,7 @@ export function AgendaView() {
         prioritiesEnabled,
         projects,
         projectSections,
+        settings?.gtd?.focusIncludeStartDates,
     ]);
     const focusedTasks = sections.focusedTasks;
     const nextActionGroups = useMemo(() => (

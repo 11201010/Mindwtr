@@ -46,6 +46,8 @@ type Labels = {
     defaultAreaActive: string;
     focusTaskLimit: string;
     focusTaskLimitDesc: string;
+    focusIncludeStartDates: string;
+    focusIncludeStartDatesDesc: string;
     defaultProjectFlowMode: string;
     defaultProjectFlowModeDesc: string;
     projectFlowParallel: string;
@@ -227,6 +229,7 @@ export function SettingsGtdPage({
     const includeContextStep = safeSettings.gtd?.weeklyReview?.includeContextStep !== false;
     const defaultScheduleTime = normalizeClockTimeInput(safeSettings.gtd?.defaultScheduleTime) || '';
     const focusTaskLimit = normalizeFocusTaskLimit(safeSettings.gtd?.focusTaskLimit);
+    const focusIncludeStartDates = safeSettings.gtd?.focusIncludeStartDates !== false;
     const defaultProjectFlowMode: DefaultProjectFlowMode = safeSettings.gtd?.defaultProjectFlowMode === 'sequential'
         ? 'sequential'
         : 'parallel';
@@ -568,6 +571,13 @@ export function SettingsGtdPage({
                             );
                         })}
                     </div>
+                </SettingRow>
+                <SettingRow padded settingsKey="focusIncludeStartDates" title={t.focusIncludeStartDates} description={t.focusIncludeStartDatesDesc}>
+                    <Switch
+                        aria-label={t.focusIncludeStartDates}
+                        checked={focusIncludeStartDates}
+                        onCheckedChange={() => updateGtdSettings({ focusIncludeStartDates: !focusIncludeStartDates })}
+                    />
                 </SettingRow>
                 <SettingRow padded settingsKey="defaultProjectFlowMode" title={t.defaultProjectFlowMode} description={t.defaultProjectFlowModeDesc}>
                     <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/40 p-1 shrink-0">

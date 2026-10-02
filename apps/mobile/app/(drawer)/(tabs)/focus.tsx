@@ -764,6 +764,7 @@ export default function FocusScreen() {
       sortBy: effectiveFocusSortBy,
       prioritiesEnabled,
       sortOrder: activeSavedFilter?.sortOrder,
+      focusIncludeStartDates: settings?.gtd?.focusIncludeStartDates,
     });
   }, [
     activeSavedFilter?.sortOrder,
@@ -773,6 +774,7 @@ export default function FocusScreen() {
     prioritiesEnabled,
     projects,
     projectSections,
+    settings?.gtd?.focusIncludeStartDates,
   ]);
   // A Today row whose timed start hasn't arrived yet gets the same appears-at
   // footer as Upcoming, formatted as a time (it's today) so it drops the

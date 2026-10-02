@@ -650,6 +650,8 @@ const STORE_WRITE_ACTION_KEYS = [
     'purgeDeletedProjects',
     'duplicateProject',
     'toggleProjectFocus',
+    'convertProjectToSection',
+    'undoProjectToSection',
     'addSection',
     'updateSection',
     'deleteSection',

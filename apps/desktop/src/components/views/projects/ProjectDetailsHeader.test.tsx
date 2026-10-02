@@ -13,6 +13,7 @@ const translations: Record<string, string> = {
     'projects.cancel': 'Cancel project',
     'projects.details': 'Details',
     'projects.duplicate': 'Duplicate',
+    'projects.convertToSection': 'Convert to section…',
     'projects.noActiveTasks': 'No active tasks',
     'projects.parallel': 'Parallel',
     'projects.projectTypeHelpLabel': 'Project type help',
@@ -51,6 +52,22 @@ function buildProject(overrides: Partial<Project> = {}): Project {
 const openMenu = () => fireEvent.click(screen.getByRole('button', { name: /^More options: / }));
 
 describe('ProjectDetailsHeader', () => {
+    it('keeps conversion visible with a reason when blocked', () => {
+        const onConvertToSection = vi.fn();
+        render(<ProjectDetailsHeader
+            project={buildProject()} projectColor="#2563eb" isSequential={false}
+            editTitle="Launch site" onEditTitleChange={vi.fn()} onCommitTitle={vi.fn()} onResetTitle={vi.fn()}
+            detailsExpanded={false} onToggleDetails={vi.fn()} onDuplicate={vi.fn()}
+            onConvertToSection={onConvertToSection} convertToSectionBlockedReason="Remove attachments first."
+            onArchive={vi.fn()} onReactivate={vi.fn()} onDelete={vi.fn()} t={t}
+        />);
+        openMenu();
+        const action = screen.getByRole('menuitem', { name: 'Convert to section…' });
+        expect(action).toBeDisabled();
+        expect(action).toHaveAccessibleDescription('Remove attachments first.');
+        fireEvent.click(action);
+        expect(onConvertToSection).not.toHaveBeenCalled();
+    });
     it('discards a project title edit on Escape and still commits later edits', () => {
         const project = buildProject();
         const onCommitTitle = vi.fn();

@@ -65,6 +65,7 @@ export * from './legacy-json-import';
 export { buildNewProject, MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
 export { nameNotifyListener } from './store-notify-profiler';
 export * from './store-types';
+export * from './project-to-section';
 export * from './area-rename';
 export * from './store-helpers';
 export * from './sync';

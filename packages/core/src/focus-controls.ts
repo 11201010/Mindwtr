@@ -637,6 +637,7 @@ export function buildFocusControlsModel(input: {
         sortBy: perspective.effectiveSortBy,
         prioritiesEnabled: flags.priorities,
         sortOrder: filter.activeSavedFilter?.sortOrder,
+        focusIncludeStartDates: settings.gtd?.focusIncludeStartDates,
     });
     const reviewProjects = getReviewDueProjects(visibleProjects, now);
     const hasTasks = lists.focusedTasks.length > 0 || lists.schedule.length > 0 || lists.nextActions.length > 0

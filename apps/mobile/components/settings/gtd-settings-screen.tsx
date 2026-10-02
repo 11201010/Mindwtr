@@ -271,6 +271,13 @@ export function GtdSettingsScreen({
                                 })}
                             </View>
                         </View>
+                        <SettingToggleRow
+                            divider
+                            label={hub.focusIncludeStartDates.label}
+                            description={hub.focusIncludeStartDates.description ?? undefined}
+                            value={hub.focusIncludeStartDates.value}
+                            onChange={() => writeSetting(hub.focusIncludeStartDates.edit)}
+                        />
                         <View style={[styles.settingRowColumn, { borderTopWidth: 1, borderTopColor: tc.border, gap: 12 }]}>
                             <View>
                                 <Text style={[styles.settingLabel, { color: tc.text }]}>{hub.defaultProjectFlowMode.label}</Text>

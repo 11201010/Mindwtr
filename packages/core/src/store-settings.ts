@@ -805,6 +805,11 @@ export const createSettingsActions = ({
      * @param updates Settings to update
      */
     updateSettings: async (updates: Partial<AppData['settings']>) => {
+        const focusStartDates = updates.gtd?.focusIncludeStartDates;
+        if (focusStartDates !== undefined && typeof focusStartDates !== 'boolean') {
+            set({ error: 'Focus start-date inclusion must be a boolean' });
+            return;
+        }
         const retentionUpdate = Object.prototype.hasOwnProperty.call(updates.gtd ?? {}, 'archiveRetentionDays');
         if (retentionUpdate && updates.gtd?.archiveRetentionDays !== undefined
             && !isArchiveRetentionDays(updates.gtd.archiveRetentionDays)) {

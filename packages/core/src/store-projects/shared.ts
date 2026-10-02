@@ -42,6 +42,8 @@ export type ProjectActions = Pick<
     | 'purgeDeletedProjects'
     | 'duplicateProject'
     | 'toggleProjectFocus'
+    | 'convertProjectToSection'
+    | 'undoProjectToSection'
     | 'addSection'
     | 'updateSection'
     | 'deleteSection'
@@ -100,6 +102,7 @@ export type ProjectCoreActions = Pick<
 >;
 
 export type SectionActions = Pick<ProjectActions, 'addSection' | 'commitPreparedProjectSectionCreate' | 'commitPreparedProjectSectionRename' | 'commitPreparedProjectSectionDelete' | 'updateSection' | 'deleteSection'>;
+export type ProjectToSectionActions = Pick<ProjectActions, 'convertProjectToSection' | 'undoProjectToSection'>;
 
 export type AreaActions = Pick<ProjectActions, 'addArea' | 'commitPreparedAreaCreate' | 'commitPreparedAreaColor' | 'commitPreparedAreaRename' | 'commitPreparedAreaOrder' | 'commitPreparedAreaDelete' | 'updateArea' | 'deleteArea' | 'restoreArea' | 'reorderAreas'>;
 

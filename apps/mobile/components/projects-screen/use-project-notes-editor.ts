@@ -222,8 +222,9 @@ export function useProjectNotesEditor({
     if (!current || isProjectReadOnly(current)) return;
     const nextNotes = selectedProjectNotesRef.current;
     if (nextNotes === committedProjectNotesRef.current) return;
-    committedProjectNotesRef.current = nextNotes;
-    updateProject(current.id, { supportNotes: nextNotes });
+    return Promise.resolve(updateProject(current.id, { supportNotes: nextNotes })).then(() => {
+      committedProjectNotesRef.current = nextNotes;
+    });
   }, [isProjectReadOnly, updateProject]);
 
   const handleSelectedProjectNotesApplyAutocomplete = useCallback((next: { value: string; selection: MarkdownSelection }) => {

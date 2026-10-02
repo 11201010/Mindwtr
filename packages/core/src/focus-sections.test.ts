@@ -35,6 +35,7 @@ const derive = (pools: Partial<FocusPools> & Pick<FocusPools, 'base'>, ctx: {
     sections?: Section[];
     sortBy?: 'default' | 'title';
     prioritiesEnabled?: boolean;
+    focusIncludeStartDates?: boolean;
 } = {}) => deriveFocusTaskLists({
     focused: pools.focused ?? [],
     active: pools.active ?? pools.base,
@@ -47,6 +48,7 @@ const derive = (pools: Partial<FocusPools> & Pick<FocusPools, 'base'>, ctx: {
     sections: ctx.sections ?? [],
     sortBy: ctx.sortBy ?? 'default',
     prioritiesEnabled: ctx.prioritiesEnabled ?? false,
+    focusIncludeStartDates: ctx.focusIncludeStartDates,
 });
 
 describe('buildFocusPools', () => {
@@ -96,6 +98,21 @@ describe('buildFocusPools', () => {
 });
 
 describe('deriveFocusTaskLists', () => {
+    it('keeps due and manual Focus tasks while moving start-only work out of Today when disabled', () => {
+        const startsToday = makeTask({ id: 'starts-today', startTime: iso('2026-03-10T08:00:00') });
+        const dueToday = makeTask({ id: 'due-today', dueDate: iso('2026-03-10T17:00:00') });
+        const starred = makeTask({ id: 'starred', isFocusedToday: true, startTime: iso('2026-03-10T08:00:00') });
+        const reviewDue = makeTask({ id: 'review-due', startTime: iso('2026-03-10T08:00:00'), reviewAt: iso('2026-03-09T08:00:00') });
+        const base = [startsToday, dueToday, starred, reviewDue];
+        const pools = { base, focused: [starred] };
+        expect(ids(derive(pools).schedule)).toEqual(['starts-today', 'review-due', 'due-today']);
+        const disabled = derive(pools, { focusIncludeStartDates: false });
+        expect(ids(disabled.focusedTasks)).toEqual(['starred']);
+        expect(ids(disabled.schedule)).toEqual(['due-today']);
+        expect(ids(disabled.reviewDue)).toEqual(['review-due']);
+        expect(ids(disabled.nextActions)).toEqual(['starts-today']);
+    });
+
     it('buckets Today, Review Due and Next actions without repeating a task', () => {
         const dueToday = makeTask({ id: 'due-today', dueDate: iso('2026-03-10T17:00:00') });
         const reviewDue = makeTask({ id: 'review-due', reviewAt: iso('2026-03-09T08:00:00') });

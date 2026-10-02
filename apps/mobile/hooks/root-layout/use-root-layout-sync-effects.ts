@@ -238,6 +238,15 @@ export function useRootLayoutSyncEffects({
 
     useEffect(() => {
         if (disabled) return undefined;
+        const unsubscribe = useTaskStore.subscribe(nameNotifyListener('focus-widget-setting', (state, previous) => {
+            if (state.settings.gtd?.focusIncludeStartDates === previous.settings.gtd?.focusIncludeStartDates) return;
+            updateMobileWidgetFromStore().catch(logAppError);
+        }));
+        return () => unsubscribe();
+    }, [disabled]);
+
+    useEffect(() => {
+        if (disabled) return undefined;
         let previousEnabled = hasActiveMobileNotificationFeature(useTaskStore.getState().settings);
         const unsubscribe = useTaskStore.subscribe(nameNotifyListener('notification-feature-watcher', (state) => {
             const enabled = hasActiveMobileNotificationFeature(state.settings);

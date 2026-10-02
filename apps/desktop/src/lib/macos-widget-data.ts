@@ -123,6 +123,7 @@ export function buildMacWidgetPayload(data: AppData, language: Language, systemI
         sections: data.sections || [],
         sortBy: widgetSort,
         now,
+        focusIncludeStartDates: data.settings?.gtd?.focusIncludeStartDates,
     });
     const listSource = [...starredTasks, ...focusTasks];
 

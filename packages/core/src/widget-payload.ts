@@ -571,6 +571,7 @@ export function createWidgetPayloadProjection(
         sortBy: focusFilter.sortBy,
         prioritiesEnabled,
         sortOrder: focusFilter.sortOrder,
+        focusIncludeStartDates: data.settings?.gtd?.focusIncludeStartDates,
     });
     // A home-screen glance should stay calm: reuse the app's canonical Focus
     // derivation, but publish only Today's Focus followed by Today. The other
@@ -880,6 +881,7 @@ export function buildShortcutsSnapshot(data: AppData): ShortcutsSnapshot {
         sections: data.sections || [],
         sortBy: widgetSort,
         now,
+        focusIncludeStartDates: data.settings?.gtd?.focusIncludeStartDates,
     });
     const focusListSource = [...starredTasks, ...focusTasks];
 

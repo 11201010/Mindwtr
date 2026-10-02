@@ -92,6 +92,8 @@ export const SETTINGS_LABEL_KEYS = [
     'defaultAreaActive',
     'focusTaskLimit',
     'focusTaskLimitDesc',
+    'focusIncludeStartDates',
+    'focusIncludeStartDatesDesc',
     'defaultProjectFlowMode',
     'defaultProjectFlowModeDesc',
     'projectFlowParallel',

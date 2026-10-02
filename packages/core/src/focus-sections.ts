@@ -42,7 +42,7 @@ export function getTodayBounds(now: Date): { startOfToday: Date; endOfToday: Dat
 }
 
 /**
- * "Due today or starting today" — the ONE answer to what belongs in Today, read
+ * "Due today or (when enabled) starting today" — the ONE answer to what belongs in Today, read
  * by the Today bucket below and by the widget selection's starred rule. A change
  * to what counts as today is an edit to this function and nothing else.
  *
@@ -54,11 +54,12 @@ export function isTodayScheduleCandidate(
     task: Task,
     now: Date,
     bounds: { startOfToday: Date; endOfToday: Date } = getTodayBounds(now),
+    includeStartDates = true,
 ): boolean {
     const startOfTodayMs = bounds.startOfToday.getTime();
     const endOfTodayMs = bounds.endOfToday.getTime();
     const due = safeParseDueDate(task.dueDate)?.getTime();
-    const start = safeParseDate(task.startTime)?.getTime();
+    const start = includeStartDates ? safeParseDate(task.startTime)?.getTime() : undefined;
     const startsToday = start !== undefined && start >= startOfTodayMs && start <= endOfTodayMs;
     return (due !== undefined && due <= endOfTodayMs) || startsToday;
 }
@@ -153,6 +154,7 @@ export interface FocusListContext {
     sections: Section[];
     sortBy: SortField;
     prioritiesEnabled: boolean;
+    focusIncludeStartDates?: boolean;
     /** The saved filter's direction, honoured by a non-default sort. */
     sortOrder?: 'asc' | 'desc';
 }
@@ -214,7 +216,7 @@ export function deriveFocusTaskLists(pools: FocusPools, ctx: FocusListContext): 
         if (task.isFocusedToday) return false;
         if (task.status !== 'next') return false;
         if (isSequentialBlocked(task)) return false;
-        return isTodayScheduleCandidate(task, now, todayBounds);
+        return isTodayScheduleCandidate(task, now, todayBounds, ctx.focusIncludeStartDates !== false);
     });
     const scheduleIds = new Set(scheduleItems.map((task) => task.id));
 

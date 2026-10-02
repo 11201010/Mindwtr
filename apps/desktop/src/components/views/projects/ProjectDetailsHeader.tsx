@@ -1,6 +1,6 @@
 import { format } from 'date-fns';
 import { safeParseDate, tFallback, type Project } from '@mindwtr/core';
-import { Calendar, CheckCircle, Copy, FolderOpenDot, Loader2, MoreHorizontal, RotateCcw, Signal, Trash2, XCircle } from 'lucide-react';
+import { Calendar, CheckCircle, Copy, FolderOpenDot, FolderPlus, Loader2, MoreHorizontal, RotateCcw, Signal, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -25,6 +25,8 @@ type ProjectDetailsHeaderProps = {
     detailsExpanded: boolean;
     onToggleDetails: () => void;
     onDuplicate: () => void;
+    onConvertToSection?: () => void;
+    convertToSectionBlockedReason?: string;
     onArchive: () => Promise<void> | void;
     onCancel?: () => Promise<void> | void;
     onReactivate: () => void;
@@ -53,6 +55,8 @@ export function ProjectDetailsHeader({
     detailsExpanded,
     onToggleDetails,
     onDuplicate,
+    onConvertToSection,
+    convertToSectionBlockedReason,
     onArchive,
     onCancel,
     onReactivate,
@@ -270,6 +274,19 @@ export function ProjectDetailsHeader({
                                     <Copy className="w-4 h-4" />
                                     {t('projects.duplicate')}
                                 </button>
+                                {onConvertToSection && <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => runMenuAction(onConvertToSection)}
+                                    disabled={Boolean(convertToSectionBlockedReason)}
+                                    title={convertToSectionBlockedReason}
+                                    aria-describedby={convertToSectionBlockedReason ? `convert-disabled-${project.id}` : undefined}
+                                    className={MENU_ITEM_CLASS}
+                                >
+                                    <FolderPlus className="w-4 h-4" />
+                                    {tFallback(t, 'projects.convertToSection', 'Convert to section…')}
+                                </button>}
+                                {onConvertToSection && convertToSectionBlockedReason && <p id={`convert-disabled-${project.id}`} className="px-3 pb-1 text-xs text-muted-foreground">{convertToSectionBlockedReason}</p>}
                                 {project.status === 'archived' ? (
                                     <button
                                         type="button"

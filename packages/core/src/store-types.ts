@@ -8,6 +8,7 @@ import type { ProcessInboxPlan } from './process-inbox-plan';
 import type { AreaOrderIntent } from './area-ordering';
 import type { ProjectTaskOrderAnchor, ProjectTaskOrderIdentity } from './project-task-reorder';
 import type { FocusControlState } from './focus-controls';
+import type { PreparedProjectToSection, ProjectToSectionReceipt } from './project-to-section';
 
 /** Per-call saved authority for the three prepared Area commands; never journaled. */
 export type PreparedNativeSaveBoundary = { taskReference: Task[]; lastDataChangeAt: number;
@@ -655,6 +656,14 @@ export interface TaskStore {
     duplicateProject: (id: string) => Promise<Project | null>;
     /** Toggle focus status of a project (max 5) */
     toggleProjectFocus: (id: string) => Promise<void>;
+    /** Confirm one frozen project-to-section plan; success means the coordinated save is durable. */
+    convertProjectToSection: (command: PreparedProjectToSection) => Promise<
+        { success: true; receipt: ProjectToSectionReceipt; sectionId: string; destinationProjectId: string }
+        | { success: false; reason: 'conflict' | 'save-failed' | 'invalid'; error: string }>;
+    /** Reverse owned assignments while retaining subsequent unrelated Task edits. */
+    undoProjectToSection: (receipt: ProjectToSectionReceipt) => Promise<
+        { success: true; sourceProjectId: string }
+        | { success: false; reason: 'conflict' | 'save-failed' | 'invalid'; error: string }>;
 
     // Section Actions
     /** Add a new section within a project */

@@ -53,7 +53,7 @@ import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useFilledButtonColors } from '@/hooks/use-filled-button-colors';
 import { ListSectionHeader, defaultListContentStyle } from '@/components/list-layout';
 import { logError, logWarn } from '../../lib/app-log';
-import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToValue } from '@mindwtr/core';
+import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToValue, flushPendingSave } from '@mindwtr/core';
 import { consumePendingCaptureTaskOpen, openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigation';
 import { CompactText, CompactTextInput } from '@/components/compact-text';
 
@@ -130,6 +130,8 @@ export default function ProjectsScreen() {
   const [newProjectTitle, setNewProjectTitle] = useState('');
   const [newProjectAreaId, setNewProjectAreaId] = useState('');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const selectedProjectRef = useRef(selectedProject);
+  selectedProjectRef.current = selectedProject;
   const [projectActivityRecoveryEnabled, setProjectActivityRecoveryEnabled] = useState(true);
   const [projectTaskSortBy, setProjectTaskSortBy] = useState<ProjectTaskSortBy>('default');
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -243,6 +245,8 @@ export default function ProjectsScreen() {
     language,
   });
   const { commitSelectedProjectNotes, resetProjectNotesUi } = notesEditor;
+  const notesEditorRef = useRef(notesEditor);
+  notesEditorRef.current = notesEditor;
 
   useEffect(() => {
     let active = true;
@@ -788,9 +792,11 @@ export default function ProjectsScreen() {
     }
 
     if (Object.keys(updates).length > 0) {
-      updateProject(project.id, updates);
+      return updateProject(project.id, updates);
     }
   };
+  const persistSelectedProjectEditsRef = useRef(persistSelectedProjectEdits);
+  persistSelectedProjectEditsRef.current = persistSelectedProjectEdits;
 
   // Quick add is a pushed route, but the project detail is a native modal
   // (pageSheet on iOS) whose visibility is derived from selectedProject.
@@ -1109,6 +1115,49 @@ export default function ProjectsScreen() {
         onDismiss={handleProjectDetailDismiss}
         onDeleteProject={handleDeleteProject}
         onDuplicateProject={handleDuplicateProject}
+        onBeforeConvertToSection={async () => {
+          try {
+            await commitSelectedProjectNotes();
+            await persistSelectedProjectEdits(selectedProject);
+            await flushPendingSave();
+            return true;
+          } catch {
+            showToast({ title: resolveText('common.notice', 'Notice'), message: resolveText('projects.convertFailure.save-failed', 'Could not save. Retry the same conversion.'), tone: 'error' });
+            return false;
+          }
+        }}
+        onConvertedToSection={(result) => {
+          clearProjectSelectionActivity();
+          resetProjectNotesUi();
+          const destination = useTaskStore.getState()._allProjects.find((project) => project.id === result.destinationProjectId);
+          setSelectedProject(destination ?? null);
+          const undo = async () => {
+            try {
+              await notesEditorRef.current.commitSelectedProjectNotes();
+              await persistSelectedProjectEditsRef.current(selectedProjectRef.current);
+              await flushPendingSave();
+            } catch {
+              showToast({ title: resolveText('common.notice', 'Notice'), message: resolveText('projects.convertUndoFailure.save-failed', 'Could not save the Undo. Retry.'), tone: 'error',
+                actionLabel: resolveText('common.retry', 'Retry'), onAction: () => { void undo(); } });
+              return;
+            }
+            const outcome = await useTaskStore.getState().undoProjectToSection(result.receipt);
+            if (outcome.success) {
+              const restored = useTaskStore.getState()._allProjects.find((project) => project.id === outcome.sourceProjectId);
+              if (restored) setSelectedProject(restored);
+              return;
+            }
+            showToast({
+              title: resolveText('common.notice', 'Notice'),
+              message: resolveText(`projects.convertUndoFailure.${outcome.reason}`, 'Could not undo the conversion.'),
+              tone: 'error',
+              actionLabel: outcome.reason === 'save-failed' ? resolveText('common.retry', 'Retry') : undefined,
+              onAction: outcome.reason === 'save-failed' ? () => { void undo(); } : undefined,
+            });
+          };
+          showToast({ title: resolveText('common.done', 'Done'), message: resolveText('projects.convertSuccess', 'Project converted to section.'), tone: 'success',
+            actionLabel: resolveText('common.undo', 'Undo'), onAction: () => { void undo(); } });
+        }}
         onOpenAreaPicker={openAreaPicker}
         onOpenQuickAdd={openProjectQuickAdd}
         onOpenTagPicker={openTagPicker}
