@@ -898,8 +898,8 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
     const called = (text) => [...text.matchAll(/contract\.(\w+)\(/g)].map((m) => m[1]);
     assert.deepEqual(called(hostEntry).filter((name) => unwiredWrites.includes(name)), [], 'no host method calls an unwired core write');
+    const iosOnlyMethods = methods.filter((m) => called(m.body).some((name) => iosOnlyWrites.includes(name))).map((m) => m.name);
     {
-        const iosOnlyMethods = methods.filter((m) => called(m.body).some((name) => iosOnlyWrites.includes(name))).map((m) => m.name);
         assert.equal(iosOnlyMethods.length, iosOnlyWrites.length, 'each iOS-only write has its host method');
         const java = resolve(app, 'android/app/src/main/java');
         const kotlin = readdirSync(java, { recursive: true }).filter((file) => file.endsWith('.kt')).map((file) => readFileSync(resolve(java, file), 'utf8')).join('\n');
@@ -927,7 +927,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     for (const name of coreWrites) assert.match(contractSource, new RegExp(`\\b(async )?${name}\\((input|\\))`), `core defines the write ${name}`);
     const writeCalls = [...methods.filter((m) => writes.includes(m.name)).flatMap((m) => called(m.body)), ...called(table('MENU_COMMANDS'))];
     assert.deepEqual([...new Set(writeCalls)].sort(), [...coreWrites].sort(), 'the journaled methods call exactly core\'s write commands');
-    const readCalls = [...methods.filter((m) => !writes.includes(m.name)).flatMap((m) => called(m.body)), ...called(table('MENU_READS'))];
+    // iOS's own write methods (taskAttachmentLinks, taskAttachmentRemove: core writes Kotlin journals as a project's, pass A2) are
+    // left out by name: the check above proves no Kotlin file names them, and iOS journals them.
+    const readCalls = [...methods.filter((m) => !writes.includes(m.name) && !iosOnlyMethods.includes(m.name)).flatMap((m) => called(m.body)),
+        ...called(table('MENU_READS'))];
     assert.deepEqual(readCalls.filter((name) => coreWrites.includes(name)), [], 'no unjournaled host method calls a core write');
     // The AI's requests are reads too: they send task text to the provider and write nothing (an answer applies through the screen's edits).
     assert.deepEqual(called(table('AI_REQUESTS')).filter((name) => coreWrites.includes(name) || unwiredWrites.includes(name)), [], 'no AI request calls a core write');
