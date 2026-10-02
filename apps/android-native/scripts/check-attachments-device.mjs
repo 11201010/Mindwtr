@@ -55,6 +55,9 @@ const DB = 'mindwtr-native-dev.db';
 const PHONE_DIR = '/sdcard/Download/mindwtr-test-a2';
 const work = resolve(app, 'android/build/attachments-check');
 const { en } = await import(resolve(repo, 'packages/core/src/i18n/locales/en.ts'));
+const { getAttachmentDisplayTitle } = await import(resolve(repo, 'packages/core/src/attachment-link-utils.ts'));
+/** A link's row title as core shows it (RN's getAttachmentDisplayTitle: no scheme). */
+const linkRow = (uri) => getAttachmentDisplayTitle({ kind: 'link', title: uri, uri });
 
 // This run's names: digits and plain letters only (the phone types them through an English layout).
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
@@ -387,7 +390,7 @@ try {
     await hideKeyboard();
     await tapExpecting(tagged(await screen(), 'attachment-link-save') ?? fail('no link Save'), (current) => !tagged(current, 'attachment-link-sheet'), 'the link saved');
     nodes = await waitFor('three rows', (current) => rowTitles(current).length === 3, 15_000);
-    check(rowTitles(nodes).includes(names.link), `(2) Add link lists ${names.link}`);
+    check(rowTitles(nodes).includes(linkRow(names.link)), `(2) Add link lists ${names.link} (as "${linkRow(names.link)}")`);
     const savesBefore = commands('saveTaskDraft');
     await tapExpecting(button(await screen(), en['common.save']) ?? fail('no Save'), (current) => !inEditor(current) && commands('saveTaskDraft') > savesBefore, 'the editor saved');
     let saved = stored('tasks', names.task);
@@ -411,10 +414,10 @@ try {
 
     // (4) Remove the link, Save: soft-deleted.
     nodes = await screen();
-    const linkTitle = withDescription(nodes, names.link) ?? fail('no link row');
+    const linkTitle = withDescription(nodes, linkRow(names.link)) ?? fail('no link row');
     const [, lt, , lb] = box(linkTitle);
     const remove = nodes.find((node) => node['content-desc'] === en['attachments.remove'] && box(node)[1] <= (lt + lb) / 2 && box(node)[3] >= (lt + lb) / 2);
-    await tapExpecting(remove ?? fail('no Remove beside the link'), (current) => !withDescription(current, names.link), 'the link removed from the draft');
+    await tapExpecting(remove ?? fail('no Remove beside the link'), (current) => !withDescription(current, linkRow(names.link)), 'the link removed from the draft');
     await tapExpecting(button(await screen(), en['common.save']) ?? fail('no Save'), (current) => !inEditor(current), 'the editor saved again');
     await until('the removal stored', () => stored('tasks', names.task).find((a) => a.id === link.id)?.deletedAt, 15_000, 1_000);
     saved = stored('tasks', names.task);
@@ -447,10 +450,10 @@ try {
     await tapExpecting(tagged(await screen(), 'attachment-link-save'), (current) => !tagged(current, 'attachment-link-sheet'), 'the project link saved');
     await until('the project link stored', () => live(stored('projects', names.project)).some((a) => a.uri === projectLink), 15_000, 1_000);
     check(true, '(6) the project card\'s Add link wrote the link at once');
-    nodes = await waitFor('the project link row', (current) => Boolean(withDescription(current, projectLink)), 15_000);
-    const [, pt, , pb] = box(withDescription(nodes, projectLink));
+    nodes = await waitFor('the project link row', (current) => Boolean(withDescription(current, linkRow(projectLink))), 15_000);
+    const [, pt, , pb] = box(withDescription(nodes, linkRow(projectLink)));
     const projectRemove = nodes.filter((node) => node.text === en['attachments.remove'] && box(node)[1] <= (pt + pb) / 2 && box(node)[3] >= (pt + pb) / 2)[0];
-    await tapExpecting(projectRemove ?? fail('no Remove beside the project link'), (current) => !withDescription(current, projectLink), 'the project link removed');
+    await tapExpecting(projectRemove ?? fail('no Remove beside the project link'), (current) => !withDescription(current, linkRow(projectLink)), 'the project link removed');
     await until('the project link soft-deleted', () => stored('projects', names.project).find((a) => a.uri === projectLink)?.deletedAt, 15_000, 1_000);
     check(true, '(6) Remove soft-deleted the project link (deletedAt)');
 

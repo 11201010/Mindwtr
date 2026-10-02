@@ -476,7 +476,8 @@ const shootAttachments = async (prefix, rn) => {
         await back();
         const discard = button(await screen(), en['common.discard']);
         if (discard) await tap(discard);
-        const projectShown = (current) => hasText(current, 'https://example.com/kitchen-plan') && hasText(current, en['attachments.title']);
+        // A link's row shows core's display title (no scheme) in both apps.
+        const projectShown = (current) => current.some((node) => (node.text ?? '').endsWith('example.com/kitchen-plan')) && hasText(current, en['attachments.title']);
         await waitFor(`${PROJECT}'s screen`, (current) => Boolean(inList(current, T.paint)) || projectShown(current), 15_000);
         if (rn) {
             const details = button(await screen(), en['taskEdit.details']);
