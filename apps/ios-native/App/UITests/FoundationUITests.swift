@@ -16533,5 +16533,138 @@ final class FoundationUITests: XCTestCase {
         waitForExpectations(timeout: 30); app.terminate()
     }
 
+    private func task148Open(_ app: XCUIApplication, _ suffix: String) {
+        boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+        let query = app.textFields["search-input"]
+        boardEnabled(query); query.tap(); query.typeText("Task148 " + suffix)
+        let result = app.buttons["search-task-task148-" + suffix]
+        boardEnabled(result, timeout: 30); boardTap(app, "search-task-task148-" + suffix)
+        boardTap(app, "task-mode-edit")
+        boardEnabled(app.textFields["task-editor-title"], timeout: 30)
+    }
+
+    private func task148Expand(_ app: XCUIApplication, _ id: String) {
+        let header = app.buttons["task-editor-section-" + id]
+        boardEnabled(header); revealPagedElement(app, header, in: app.scrollViews["task-editor-scroll"])
+        if header.value as? String == "Expand" { header.tap() }
+        expectation(for: NSPredicate(format: "value == %@", "Collapse"), evaluatedWith: header)
+        waitForExpectations(timeout: 10)
+    }
+
+    private func task148ExpectDestination(_ app: XCUIApplication, _ title: String) {
+        let destination = app.buttons["task-editor-destination"]
+        boardEnabled(destination, timeout: 30)
+        expectation(for: NSPredicate(format: "value == %@", title), evaluatedWith: destination)
+        waitForExpectations(timeout: 10)
+    }
+
+    private func task148Close(_ app: XCUIApplication, discard: Bool = false) {
+        boardTap(app, "task-view-close")
+        if discard { boardTap(app, "task-editor-discard") }
+        boardTap(app, "search-close")
+    }
+
+    private func task148MigratedDefaults(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        task148Open(app, "unassigned")
+        let section = app.buttons["task-editor-project-section"]
+        boardEnabled(section, timeout: 30)
+        XCTAssertEqual(section.value as? String, "No Section")
+        revealPagedElement(app, section, in: app.scrollViews["task-editor-scroll"]); section.tap()
+        boardEnabled(app.buttons["task-section-choice-task148-section"], timeout: 30)
+        boardTap(app, "task-section-close"); task148Close(app)
+
+        task148Open(app, "move")
+        task148ExpectDestination(app, "Task148 sectionless")
+        XCTAssertFalse(section.exists, "Sectionless project has no Section control before a draft move")
+        let destination = app.buttons["task-editor-destination"]
+        boardEnabled(destination); revealPagedElement(app, destination, in: app.scrollViews["task-editor-scroll"])
+        destination.tap()
+        let target = app.buttons["task-destination-choice-project-task148-sectioned"]
+        boardEnabled(target, timeout: 30); target.tap()
+        boardEnabled(section, timeout: 30)
+        revealPagedElement(app, section, in: app.scrollViews["task-editor-scroll"]); section.tap()
+        let choice = app.buttons["task-section-choice-task148-section"]
+        boardEnabled(choice, timeout: 30); choice.tap()
+        expectation(for: NSPredicate(format: "value == %@", "Task148 section"), evaluatedWith: section)
+        waitForExpectations(timeout: 10)
+        task148Close(app, discard: true)
+        app.terminate(); app.launch()
+        task148Open(app, "move")
+        task148ExpectDestination(app, "Task148 sectionless")
+        XCTAssertFalse(section.exists, "Discarded draft move must not survive cold reopening")
+        task148Close(app)
+
+        task148Open(app, "waiting")
+        task148Expand(app, "organization")
+        let person = app.textFields["task-editor-assignedTo"]
+        boardEnabled(person, timeout: 30)
+        XCTAssertEqual(person.label, "Assigned To")
+        XCTAssertEqual(person.value as? String, person.placeholderValue)
+        revealPagedElement(app, person, in: app.scrollViews["task-editor-scroll"]); XCTAssertTrue(person.isHittable)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task148 migrated editor fields"; shot.lifetime = .keepAlways; add(shot)
+        task148Close(app); app.terminate()
+    }
+
+    func testTask148MigratedDefaultsNormal() {
+        task148MigratedDefaults("c99a507c-e613-404f-9ce9-3a8dc59a4edb")
+    }
+
+    func testTask148MigratedDefaultsLargest() {
+        task148MigratedDefaults("44e943da-6211-457e-8c48-59ee0c02b0ad")
+    }
+
+    func testTask148CustomHiddenEmptyAndPopulated() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "a743ae6f-7656-4261-bc3b-cb32773bd502"]
+        app.launch(); task148Open(app, "unassigned")
+        task148ExpectDestination(app, "Task148 sectioned")
+        XCTAssertFalse(app.buttons["task-editor-project-section"].exists, "Explicit custom hide wins for empty Section")
+        task148Close(app)
+        task148Open(app, "waiting"); task148Expand(app, "organization")
+        boardEnabled(app.textFields["task-editor-tags"])
+        XCTAssertFalse(app.textFields["task-editor-assignedTo"].exists, "Explicit custom hide wins for empty Waiting person")
+        task148Close(app)
+        task148Open(app, "populated")
+        let section = app.buttons["task-editor-project-section"]
+        boardEnabled(section, timeout: 30); XCTAssertEqual(section.value as? String, "Task148 section")
+        task148Expand(app, "organization")
+        let person = app.textFields["task-editor-assignedTo"]
+        boardEnabled(person); XCTAssertEqual(person.value as? String, "Sam")
+        task148Expand(app, "details")
+        let location = app.textFields["task-editor-location"]
+        boardEnabled(location); XCTAssertEqual(location.value as? String, "Lab")
+        revealPagedElement(app, location, in: app.scrollViews["task-editor-scroll"]); XCTAssertTrue(location.isHittable)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task148 custom hidden populated"; shot.lifetime = .keepAlways; add(shot)
+        task148Close(app); app.terminate()
+    }
+
+    private func task148FeatureFlags(_ library: String, enabled: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        task148Open(app, "features"); task148Expand(app, "organization")
+        boardEnabled(app.textFields["task-editor-tags"], timeout: 30)
+        let priority = app.buttons["task-editor-priority-high"]
+        let estimate = app.buttons["task-editor-timeEstimate-30min"]
+        if enabled {
+            boardEnabled(priority); boardEnabled(estimate)
+            XCTAssertTrue(priority.isSelected); XCTAssertTrue(estimate.isSelected)
+        } else {
+            XCTAssertFalse(priority.exists, "Feature-off Priority stays absent despite its saved value")
+            XCTAssertFalse(estimate.exists, "Feature-off Time Estimate stays absent despite its saved value")
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = enabled ? "Task148 features on" : "Task148 features off"; shot.lifetime = .keepAlways; add(shot)
+        task148Close(app); app.terminate()
+    }
+
+    func testTask148FeatureFlagsOff() {
+        task148FeatureFlags("3315ada5-be33-4fe6-bfcc-04df7db47607", enabled: false)
+    }
+
+    func testTask148FeatureFlagsOn() {
+        task148FeatureFlags("a251ca39-4f61-424b-b716-455c549a29cb", enabled: true)
+    }
+
 
 }
