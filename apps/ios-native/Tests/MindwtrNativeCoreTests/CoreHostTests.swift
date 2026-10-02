@@ -13990,6 +13990,7 @@ final class CoreHostTests: XCTestCase {
 
     private func exerciseGeneralPreferenceRecovery(type: String, value: Any, workflow: Bool = false, section: String? = nil) async throws {
         let presetting = type == "taskEditorPreset"
+        let archiving = type == "autoArchiveDays"
         let parsing = ["quickAddAutoClean", "naturalLanguageDates"].contains(type)
         let capturing = type == "defaultArea"
         let method = workflow ? "gtdWorkflow" : "generalPreference"
@@ -14011,7 +14012,9 @@ final class CoreHostTests: XCTestCase {
             var gtd = settings["gtd"] as? [String: Any] ?? [:]
             gtd["defaultScheduleTime"] = ""; gtd["focusTaskLimit"] = 5; gtd["defaultProjectFlowMode"] = "parallel"
             gtd["unknown103"] = ["retained": true]
-            if presetting {
+            if archiving {
+                gtd[type] = 7
+            } else if presetting {
                 gtd["taskEditor"] = ["retained109": "editor", "sectionOpen": ["details": true]]
             } else if type == "focusIncludeStartDates" {
                 gtd[type] = !(value as? Bool ?? false)
@@ -14048,12 +14051,12 @@ final class CoreHostTests: XCTestCase {
         let faults = HostIOFaults(), writer = host(faults, bundleURL: clock)
         _ = try await writer.start()
         if type == "calendarSystem" { _ = try await writer.call("language", argumentsJSON: json(["fa", "en-US"])) }
-        let options = try object(await writer.call(presetting ? "gtdTaskEditorPresetOptions" : section != nil ? "gtdTaskEditorOpenOptions" : parsing ? "gtdCaptureParseOptions" : capturing ? "gtdCaptureAreaOptions" : inboxing ? "gtdInboxOptions" : nestedParent == nil ? method + "Options" : "gtdReviewOptions", argumentsJSON: json([capturing ? json(["offset": 0, "limit": 50]) : "{}"])))
+        let options = try object(await writer.call(archiving ? "gtdArchiveOptions" : presetting ? "gtdTaskEditorPresetOptions" : section != nil ? "gtdTaskEditorOpenOptions" : parsing ? "gtdCaptureParseOptions" : capturing ? "gtdCaptureAreaOptions" : inboxing ? "gtdInboxOptions" : nestedParent == nil ? method + "Options" : "gtdReviewOptions", argumentsJSON: json([capturing ? json(["offset": 0, "limit": 50]) : "{}"])))
         let expected = try XCTUnwrap(options["expected"] as? [String: Any])
-        XCTAssertNotNil(options[presetting || section != nil ? "taskEditor" : parsing || capturing ? "capture" : inboxing ? "inbox" : nestedParent != nil ? "review" : workflow ? "hub" : "model"])
+        XCTAssertNotNil(options[archiving ? "archive" : presetting || section != nil ? "taskEditor" : parsing || capturing ? "capture" : inboxing ? "inbox" : nestedParent != nil ? "review" : workflow ? "hub" : "model"])
         var edit: [String: Any] = ["type": type, "value": value]
         if let section { edit["section"] = section }
-        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": edit, "expected": capturing || presetting ? expected : try XCTUnwrap(expected[section ?? type])]
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(), "edit": edit, "expected": capturing || presetting || archiving ? expected : try XCTUnwrap(expected[section ?? type])]
         faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected General COMMIT failure") } }
         await expectFailure("SAVE_FAILED") { _ = try await writer.call(method, argumentsJSON: json([json(request)])) }
         let frozen = try Data(contentsOf: journal), saved = try object(String(decoding: frozen, as: UTF8.self))
@@ -14065,6 +14068,7 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(prepared["preparedAt"] as? String, at)
         XCTAssertEqual(try json(XCTUnwrap(prepared["request"])), try json(request))
         XCTAssertEqual((prepared["after"] as? [String: Any])?["stamp"] as? String, expectedStamp)
+        if archiving { XCTAssertEqual((prepared["archiveEffects"] as? [[String: Any]])?.count, 0) }
         await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
         try assertJournalContentUnchanged(frozen)
         let snapshot = try SQLiteBridge(url: database)
@@ -14168,7 +14172,7 @@ final class CoreHostTests: XCTestCase {
                 statements += 1
                 if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
             }
-            replayFaults.commandDiagnostic = { if $0 == (type == "focusIncludeStartDates" ? "gtdFocusStartDatesApplied" : presetting ? "gtdTaskEditorPresetApplied" : section != nil ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : nestedParent == nil ? method + "Applied" : "gtdReviewApplied") { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
+            replayFaults.commandDiagnostic = { if $0 == (archiving ? "gtdAutoArchiveApplied" : type == "focusIncludeStartDates" ? "gtdFocusStartDatesApplied" : presetting ? "gtdTaskEditorPresetApplied" : section != nil ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : nestedParent == nil ? method + "Applied" : "gtdReviewApplied") { diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path)) } }
             let recovered = host(replayFaults, bundleURL: clock)
             if scenario != "unrelated" {
                 await expectFailure(scenario == "forged" ? "INVALID_INPUT" : "STALE_REVISION") { _ = try await recovered.start() }
@@ -14425,6 +14429,211 @@ final class CoreHostTests: XCTestCase {
     func testGtdWorkflowFocusStartDatesOffRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "focusIncludeStartDates", value: false, workflow: true) }
     func testGtdWorkflowFocusStartDatesOnRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "focusIncludeStartDates", value: true, workflow: true) }
     func testGtdWorkflowProjectFlowRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "defaultProjectFlowMode", value: "sequential", workflow: true) }
+    func testGtdAutoArchiveNeverRecovery() async throws { try await exerciseGeneralPreferenceRecovery(type: "autoArchiveDays", value: 0, workflow: true) }
+
+    func testGtdAutoArchiveOptionsAndNumericBoundary() async throws {
+        let bootstrap = host(); _ = try await bootstrap.start(); await bootstrap.close()
+        var settings = try calendarPreferenceSettings(), gtd = settings["gtd"] as? [String: Any] ?? [:]
+        gtd.removeValue(forKey: "autoArchiveDays"); settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let options = try object(await core.call("gtdArchiveOptions", argumentsJSON: json(["{}"])))
+        XCTAssertEqual(Set(options.keys), Set(["archive", "expected"]))
+        let archive = try XCTUnwrap(options["archive"] as? [String: Any])
+        let rows = try XCTUnwrap(archive["options"] as? [[String: Any]])
+        XCTAssertEqual(rows.compactMap { $0["value"] as? Int }, [0, 1, 3, 7, 14, 30, 60])
+        XCTAssertEqual(rows.filter { $0["selected"] as? Bool == true }.compactMap { $0["value"] as? Int }, [7])
+        let expected = try XCTUnwrap(options["expected"] as? [String: Any])
+        XCTAssertEqual(expected["present"] as? Bool, false)
+        XCTAssertTrue(expected["value"] is NSNull)
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+                                       "edit": ["type": "autoArchiveDays", "value": 1], "expected": expected]
+        var invalids: [[String: Any]] = []
+        let invalidValues: [Any] = [true, "1", 1.5, 2, -1, 61, NSNull()]
+        for value in invalidValues {
+            var invalid = request; invalid["edit"] = ["type": "autoArchiveDays", "value": value]
+            invalids.append(invalid)
+        }
+        let invalidWitnessValues: [Any] = [true, "7", NSNull()]
+        for value in invalidWitnessValues {
+            var wrong = expected; wrong["present"] = true; wrong["value"] = value
+            var invalid = request; invalid["expected"] = wrong; invalids.append(invalid)
+        }
+        var statements = 0, journals = 0
+        faults.beforeSQL = { _ in statements += 1 }; faults.journalWrite = { journals += 1 }
+        for invalid in invalids {
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("gtdWorkflow", argumentsJSON: json([json(invalid)])) }
+        }
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("gtdArchiveOptions", argumentsJSON: json([json(["extra": true])])) }
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journals, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    func testGtdAutoArchiveLegacySavedNumberCanBeCorrected() async throws {
+        let bootstrap = host(); _ = try await bootstrap.start(); await bootstrap.close()
+        let cases: [(raw: Double, selected: Int?, correction: Int)] = [
+            (90, nil, 7), (10.6, nil, 7), (-0.5, 0, 0),
+        ]
+        for (raw, selected, correction) in cases {
+            var settings = try calendarPreferenceSettings()
+            var gtd = settings["gtd"] as? [String: Any] ?? [:]
+            gtd["autoArchiveDays"] = raw; gtd["legacy141"] = "retained"
+            settings["gtd"] = gtd
+            try writeCalendarPreferenceSettings(settings)
+
+            let core = host(); _ = try await core.start()
+            let options = try object(await core.call("gtdArchiveOptions", argumentsJSON: json(["{}"])))
+            let witness = try XCTUnwrap(options["expected"] as? [String: Any])
+            XCTAssertEqual(witness["present"] as? Bool, true)
+            XCTAssertEqual((witness["value"] as? NSNumber)?.doubleValue, raw)
+            let archive = try XCTUnwrap(options["archive"] as? [String: Any])
+            let rows = try XCTUnwrap(archive["options"] as? [[String: Any]])
+            XCTAssertEqual(rows.filter { $0["selected"] as? Bool == true }.compactMap { $0["value"] as? Int }, selected.map { [$0] } ?? [])
+            let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+                                          "edit": ["type": "autoArchiveDays", "value": correction], "expected": witness]
+            let result = try object(await core.call("gtdWorkflow", argumentsJSON: json([json(request)])))
+            XCTAssertEqual(result["type"] as? String, "autoArchiveDays")
+            XCTAssertEqual(result["value"] as? Int, correction)
+            XCTAssertEqual(result["changed"] as? Bool, true)
+            let saved = try calendarPreferenceSettings()
+            let savedGtd = try XCTUnwrap(saved["gtd"] as? [String: Any])
+            XCTAssertEqual(savedGtd["autoArchiveDays"] as? Int, correction)
+            XCTAssertEqual(savedGtd["legacy141"] as? String, "retained")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await core.close()
+        }
+    }
+
+    func testGtdAutoArchiveOptionsRefusesMalformedSavedValues() async throws {
+        let bootstrap = host(); _ = try await bootstrap.start(); await bootstrap.close()
+        let malformed: [Any] = ["7", true, NSNull()]
+        for raw in malformed {
+            var settings = try calendarPreferenceSettings()
+            var gtd = settings["gtd"] as? [String: Any] ?? [:]
+            gtd["autoArchiveDays"] = raw; settings["gtd"] = gtd
+            try writeCalendarPreferenceSettings(settings)
+            let core = host(); _ = try await core.start()
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("gtdArchiveOptions", argumentsJSON: json(["{}"])) }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+            await core.close()
+        }
+    }
+
+    func testGtdAutoArchiveTaskEffectColdRecoveryAndReceipt() async throws {
+        let at = "2026-10-01T12:00:00.000Z", old = "2026-09-25T12:00:00.000Z"
+        let recent = "2026-10-01T11:00:00.000Z"
+        let clock = try dateBundle(at: at)
+        let bootstrap = host(bundleURL: clock); _ = try await bootstrap.start(); await bootstrap.close()
+        var settings = try calendarPreferenceSettings(), gtd = settings["gtd"] as? [String: Any] ?? [:]
+        gtd["autoArchiveDays"] = 0; gtd["retained141"] = "keep"
+        settings["gtd"] = gtd; try writeCalendarPreferenceSettings(settings)
+        let setup = try SQLiteBridge(url: database)
+        for (id, status, completedAt, deletedAt, archivedAt) in [
+            ("archive141-old", "done", old as Any, NSNull() as Any, NSNull() as Any),
+            ("archive141-recent", "done", recent as Any, NSNull() as Any, NSNull() as Any),
+            ("archive141-next", "next", NSNull() as Any, NSNull() as Any, NSNull() as Any),
+            ("archive141-deleted", "done", old as Any, old as Any, NSNull() as Any),
+            ("archive141-archived", "archived", old as Any, NSNull() as Any, old as Any),
+        ] {
+            _ = try setup.execute("INSERT INTO tasks (id,title,status,contexts,tags,createdAt,updatedAt,completedAt,deletedAt,archivedAt,rev,revBy,isFocusedToday,pushCount,showFutureRecurrence,suppressMindwtrReminders) VALUES (?,?,?,'[]','[]',?,?,?,?,?,1,'archive141',0,0,0,0)",
+                                  parametersJSON: json([id, id, status, old, old, completedAt, deletedAt, archivedAt]))
+        }
+        setup.close()
+        let faults = HostIOFaults(), writer = host(faults, bundleURL: clock)
+        _ = try await writer.start()
+        let baseline = try SQLiteBridge(url: database), before = try nineTableSnapshot(baseline)
+        baseline.close()
+        let options = try object(await writer.call("gtdArchiveOptions", argumentsJSON: json(["{}"])))
+        let witness = try XCTUnwrap(options["expected"] as? [String: Any])
+        let request: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+                                       "edit": ["type": "autoArchiveDays", "value": 1], "expected": witness]
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Auto-archive COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("gtdWorkflow", argumentsJSON: json([json(request)])) }
+        let frozen = try Data(contentsOf: journal), saved = try object(String(decoding: frozen, as: UTF8.self))
+        XCTAssertEqual(saved["method"] as? String, "gtdWorkflowCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        let prepared = try XCTUnwrap(object(XCTUnwrap(args.first))["prepared"] as? [String: Any])
+        let effects = try XCTUnwrap(prepared["archiveEffects"] as? [[String: Any]])
+        XCTAssertEqual(effects.count, 1)
+        XCTAssertEqual((effects[0]["before"] as? [String: Any])?["id"] as? String, "archive141-old")
+        XCTAssertEqual((effects[0]["after"] as? [String: Any])?["status"] as? String, "archived")
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        try assertJournalContentUnchanged(frozen)
+        let failed = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failed), before); failed.close()
+        await writer.close()
+
+        var forgedPayload = try object(XCTUnwrap(args.first))
+        var forgedPrepared = prepared, forgedEffects = effects
+        var forgedEffect = forgedEffects[0], forgedAfter = try XCTUnwrap(forgedEffect["after"] as? [String: Any])
+        forgedAfter["status"] = "next"; forgedEffect["after"] = forgedAfter; forgedEffects[0] = forgedEffect
+        forgedPrepared["archiveEffects"] = forgedEffects; forgedPayload["prepared"] = forgedPrepared
+        var forgedJournal = saved; forgedJournal["argumentsJSON"] = try json([json(forgedPayload)])
+        let forgedData = Data(try json(forgedJournal).utf8)
+        try forgedData.write(to: journal)
+        let rejectionFaults = HostIOFaults(); var rejectedStatements = 0
+        rejectionFaults.beforeSQL = { _ in rejectedStatements += 1 }
+        let rejected = host(rejectionFaults, bundleURL: clock)
+        await expectFailure("INVALID_INPUT") { _ = try await rejected.start() }
+        XCTAssertEqual(rejectedStatements, 0)
+        try assertJournalContentUnchanged(forgedData)
+        await rejected.close()
+        try frozen.write(to: journal)
+
+        let recoveryFaults = HostIOFaults(); var diagnostics = 0
+        recoveryFaults.commandDiagnostic = { if $0 == "gtdAutoArchiveApplied" {
+            diagnostics += 1; XCTAssertFalse(FileManager.default.fileExists(atPath: self.journal.path))
+        } }
+        let recovered = host(recoveryFaults, bundleURL: clock)
+        let startup = try object(await recovered.start()), recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "gtdWorkflowCommit")
+        let result = try XCTUnwrap(recovery["result"] as? [String: Any])
+        XCTAssertEqual(result["type"] as? String, "autoArchiveDays")
+        XCTAssertEqual(result["value"] as? Int, 1)
+        XCTAssertEqual(result["changed"] as? Bool, true)
+        XCTAssertEqual(diagnostics, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let afterBridge = try SQLiteBridge(url: database), after = try nineTableSnapshot(afterBridge)
+        afterBridge.close()
+        for table in [1, 2, 3, 4, 6, 7, 8] { XCTAssertEqual(after[table], before[table]) }
+        let archived = try storedTask("archive141-old")
+        XCTAssertEqual(archived["status"] as? String, "archived")
+        XCTAssertEqual(archived["archivedAt"] as? String, at)
+        XCTAssertEqual(archived["completedAt"] as? String, old)
+        let originalTasks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[0].utf8)) as? [[String: Any]])
+        for id in ["archive141-recent", "archive141-next", "archive141-deleted", "archive141-archived"] {
+            let original = try XCTUnwrap(originalTasks.first { $0["id"] as? String == id })
+            XCTAssertEqual(try json(storedTask(id)), try json(original))
+        }
+        let originalSettingsRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before[5].utf8)) as? [[String: Any]])
+        let savedSettingsRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(after[5].utf8)) as? [[String: Any]])
+        var expectedSettings = try object(XCTUnwrap(originalSettingsRows.first?["data"] as? String))
+        var expectedGtd = try XCTUnwrap(expectedSettings["gtd"] as? [String: Any])
+        expectedGtd["autoArchiveDays"] = 1; expectedSettings["gtd"] = expectedGtd
+        let originalStamps = expectedSettings["syncPreferencesUpdatedAt"]
+        XCTAssertTrue(originalStamps == nil || originalStamps is [String: Any])
+        var expectedStamps = originalStamps as? [String: Any] ?? [:]
+        expectedStamps["gtd"] = try XCTUnwrap((prepared["after"] as? [String: Any])?["stamp"])
+        expectedSettings["syncPreferencesUpdatedAt"] = expectedStamps
+        XCTAssertEqual(try json(expectedSettings), try json(object(XCTUnwrap(savedSettingsRows.first?["data"] as? String))))
+        await recovered.close()
+
+        var later = try calendarPreferenceSettings(); later["unrelated141"] = "retained"
+        try writeCalendarPreferenceSettings(later)
+        let receiptBeforeBridge = try SQLiteBridge(url: database), receiptBefore = try nineTableSnapshot(receiptBeforeBridge)
+        receiptBeforeBridge.close()
+        try frozen.write(to: journal)
+        let receiptHost = host(bundleURL: clock)
+        let receiptStartup = try object(await receiptHost.start())
+        XCTAssertEqual((receiptStartup["recovery"] as? [String: Any])?["method"] as? String, "gtdWorkflowCommit")
+        let receiptAfterBridge = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(receiptAfterBridge), receiptBefore)
+        receiptAfterBridge.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await receiptHost.close()
+    }
 
     func testGtdWorkflowFocusStartDatesDefaultAndBooleanBoundary() async throws {
         let bootstrap = host(); _ = try await bootstrap.start(); await bootstrap.close()

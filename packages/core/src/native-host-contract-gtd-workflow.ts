@@ -1,6 +1,7 @@
 import { normalizeClockTimeInput } from './date';
 import { FOCUS_TASK_LIMIT_OPTIONS } from './focus-utils';
-import { buildGtdSettingsModel, buildGtdSettingsUpdate, GTD_DEFAULT_AREA_ACTIVE_OPTION, isGtdSettingStored,
+import { buildGtdSettingsModel, buildGtdSettingsUpdate, GTD_AUTO_ARCHIVE_DAY_OPTIONS,
+    GTD_DEFAULT_AREA_ACTIVE_OPTION, isGtdSettingStored,
     type GtdSettingsEdit, type GtdSettingsModel } from './gtd-settings-model';
 import { taskEditValuesEqual } from './json-value-equality';
 import { compareAreasByOrder } from './task-utils';
@@ -9,8 +10,9 @@ import { readAreaDurableData, createAreaSaveGuard } from './native-host-contract
 import type { NativeHostResult } from './native-host-contract';
 import { detach, exact, record } from './native-host-contract-project-shared';
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
+import { validRawTask } from './native-host-contract-task-save';
 import { useTaskStore } from './store';
-import { gtdWorkflowNestedPath, gtdWorkflowWitness, timestampAtLeastAfter,
+import { gtdArchiveEffects, gtdWorkflowNestedPath, gtdWorkflowWitness, timestampAtLeastAfter,
     gtdWorkflowTargetArea, gtdWorkflowTaskEditorSelected, gtdWorkflowPresetSelected,
     type GtdWorkflowType, type GtdWorkflowDirectType, type GtdWorkflowReviewType, type GtdWorkflowInboxType,
     type GtdWorkflowCaptureParseType, type GtdWorkflowCaptureParseWitness,
@@ -18,7 +20,7 @@ import { gtdWorkflowNestedPath, gtdWorkflowWitness, timestampAtLeastAfter,
     type GtdWorkflowPresetWitness, type GtdWorkflowPresetSelected,
     type GtdWorkflowWitness, type GtdWorkflowDirectWitness,
     type GtdWorkflowReviewWitness, type GtdWorkflowInboxWitness,
-    type GtdWorkflowAreaWitness, type GtdWorkflowTargetArea } from './store-settings';
+    type GtdWorkflowAreaWitness, type GtdWorkflowTargetArea, type GtdArchiveEffect } from './store-settings';
 import { ensureDeviceId } from './store-helpers';
 import type { AppData, AppSettings, Area } from './types';
 
@@ -36,9 +38,10 @@ export type NativePreparedGtdWorkflow = { version: 1; request: NativeGtdWorkflow
     preparedAt: string; deviceIdBefore: string | null; deviceIdToInitialize: string | null;
     after: { value: string | number | boolean; stamp: string;
         selected?: GtdWorkflowTaskEditorSelected | GtdWorkflowPresetSelected }; result: NativeGtdWorkflowResult;
-    targetArea?: GtdWorkflowTargetArea | null };
+    targetArea?: GtdWorkflowTargetArea | null; archiveEffects?: GtdArchiveEffect[] };
 export type NativeGtdWorkflowOptions = { hub: GtdSettingsModel['hub'];
-    expected: Record<GtdWorkflowDirectType, GtdWorkflowDirectWitness> };
+    expected: Record<Exclude<GtdWorkflowDirectType, 'autoArchiveDays'>, GtdWorkflowDirectWitness> };
+export type NativeGtdArchiveOptions = { archive: GtdSettingsModel['archive']; expected: GtdWorkflowDirectWitness };
 export type NativeGtdReviewOptions = { review: GtdSettingsModel['review'];
     expected: Record<GtdWorkflowReviewType, GtdWorkflowReviewWitness> };
 export type NativeGtdInboxOptions = { inbox: GtdSettingsModel['inbox'];
@@ -59,7 +62,8 @@ export type NativeGtdWorkflowPreparation = { kind: 'noop'; result: NativeGtdWork
 export type NativeGtdWorkflowDraft = { valid: true; value: string } | { valid: false; value: null };
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const TYPES: GtdWorkflowDirectType[] = ['defaultScheduleTime', 'focusTaskLimit', 'focusIncludeStartDates', 'defaultProjectFlowMode'];
+const TYPES: Exclude<GtdWorkflowDirectType, 'autoArchiveDays'>[] =
+    ['defaultScheduleTime', 'focusTaskLimit', 'focusIncludeStartDates', 'defaultProjectFlowMode'];
 const REVIEW_TYPES: GtdWorkflowReviewType[] = ['dailyReviewFocusStep', 'weeklyReviewContextStep'];
 const INBOX_TYPES: GtdWorkflowInboxType[] = ['inboxTwoMinute', 'inboxProjectFirst', 'inboxContextStep', 'inboxSchedule'];
 const CAPTURE_PARSE_TYPES: GtdWorkflowCaptureParseType[] = ['quickAddAutoClean', 'naturalLanguageDates'];
@@ -92,6 +96,8 @@ const validEdit = (value: unknown): value is GtdWorkflowEdit => {
             return bounded(value.value, 50) && normalizeClockTimeInput(value.value) === value.value;
         case 'focusTaskLimit':
             return FOCUS_TASK_LIMIT_OPTIONS.includes(value.value as never);
+        case 'autoArchiveDays':
+            return GTD_AUTO_ARCHIVE_DAY_OPTIONS.includes(value.value as never);
         case 'focusIncludeStartDates':
             return typeof value.value === 'boolean';
         case 'defaultProjectFlowMode':
@@ -134,7 +140,9 @@ const validWitness = (value: unknown, type: GtdWorkflowType): value is GtdWorkfl
     && (!isNested(type) || typeof value.parentPresent === 'boolean'
         && (value.parentPresent || !value.present))
     && (value.present ? isNested(type) || isCaptureParse(type) || isTaskEditor(type) || type === 'focusIncludeStartDates'
-        ? typeof value.value === 'boolean' : type === 'focusTaskLimit'
+        ? typeof value.value === 'boolean' : type === 'autoArchiveDays'
+        ? typeof value.value === 'number' && Number.isFinite(value.value)
+        : type === 'focusTaskLimit'
         ? typeof value.value === 'number' && Number.isSafeInteger(value.value) && Math.abs(value.value) <= 1_000_000
         : bounded(value.value) : value.value === null))
     && (value.stampPresent ? iso(value.stamp) : value.stamp === null);
@@ -259,15 +267,42 @@ const presetOfferedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitne
     return model.taskEditor.presets.options.some((option) => same(option.edit, edit));
 };
 
+const validArchiveEffects = (request: NativeGtdWorkflowRequest, prepared: Record<string, unknown>): boolean => {
+    if (request.edit.type !== 'autoArchiveDays') return prepared.archiveEffects === undefined;
+    if (!Array.isArray(prepared.archiveEffects) || !iso(prepared.preparedAt)) return false;
+    const settings = settingsByWitness(request.edit, request.expected);
+    const update = buildGtdSettingsUpdate(settings, request.edit);
+    if (!update) return false;
+    const afterSettings = { ...settings, ...update };
+    const deviceId = prepared.deviceIdBefore ?? prepared.deviceIdToInitialize;
+    if (typeof deviceId !== 'string') return false;
+    const ids = new Set<string>();
+    for (const value of prepared.archiveEffects) {
+        if (!record(value) || !exact(value, ['before', 'after']) || !record(value.before)
+            || !bounded(value.before.id) || !value.before.id
+            || !validRawTask(value.before, value.before.id) || !validRawTask(value.after, value.before.id)
+            || ids.has(value.before.id)) return false;
+        ids.add(value.before.id);
+        try {
+            const projected = gtdArchiveEffects([value.before], afterSettings, prepared.preparedAt, deviceId);
+            if (projected.length !== 1 || !same(projected[0].after, value.after)) return false;
+        } catch { return false; }
+    }
+    return true;
+};
+
 /** Pure validation of the frozen edit and its scalar/group receipt before storage opens. */
 const readPrepared = (input: unknown): NativePreparedGtdWorkflow | null => {
-    if (!isNativeJsonWithinBytes(input, 8192)) return null;
+    if (!isNativeJsonWithinBytes(input, 2_000_000)) return null;
     const envelope = detach<Record<string, unknown>>(input);
     if (!envelope || !exact(envelope, ['request', 'prepared']) || !record(envelope.prepared)) return null;
     const request = readRequest(envelope.request);
     const prepared = envelope.prepared;
-    if (!request || !exact(prepared, request.edit.type === 'defaultArea'
+    if (!request || request.edit.type !== 'autoArchiveDays' && !isNativeJsonWithinBytes(input, 8192)
+        || !exact(prepared, request.edit.type === 'defaultArea'
         ? ['version', 'request', 'preparedAt', 'deviceIdBefore', 'deviceIdToInitialize', 'after', 'result', 'targetArea']
+        : request.edit.type === 'autoArchiveDays'
+        ? ['version', 'request', 'preparedAt', 'deviceIdBefore', 'deviceIdToInitialize', 'after', 'result', 'archiveEffects']
         : ['version', 'request', 'preparedAt', 'deviceIdBefore', 'deviceIdToInitialize', 'after', 'result']) || prepared.version !== 1
         || !same(prepared.request, request) || !iso(prepared.preparedAt)
         || !(prepared.deviceIdBefore === null || bounded(prepared.deviceIdBefore) && Boolean(prepared.deviceIdBefore))
@@ -295,6 +330,7 @@ const readPrepared = (input: unknown): NativePreparedGtdWorkflow | null => {
         || !focusStartDatesOfferedByWitness(request.edit, request.expected)
         || !taskEditorOfferedByWitness(request.edit, request.expected)
         || !presetOfferedByWitness(request.edit, request.expected)
+        || !validArchiveEffects(request, prepared)
         || request.edit.type === 'defaultArea' && (request.edit.value === ''
             || request.edit.value === GTD_DEFAULT_AREA_ACTIVE_OPTION
             ? prepared.targetArea !== null
@@ -318,6 +354,11 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             defaultProjectFlowMode: gtd?.defaultProjectFlowMode } };
         return buildGtdSettingsModel({ settings: display, areas: [],
             taskOpenMode: 'automatic', t: deps.t() }).hub;
+    };
+    const archiveFor = (data: AppData): GtdSettingsModel['archive'] => {
+        const display = { gtd: { autoArchiveDays: data.settings.gtd?.autoArchiveDays } } as AppSettings;
+        return buildGtdSettingsModel({ settings: display, areas: [],
+            taskOpenMode: 'automatic', t: deps.t() }).archive;
     };
     const reviewFor = (data: AppData): GtdSettingsModel['review'] => {
         // Only the two Review fields are display inputs; other legacy GTD
@@ -455,7 +496,7 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             if (!record(input) || !exact(input, [])) return fail('INVALID_INPUT', 'GTD options take an empty object');
             const read = await readAreaDurableData(); if (!read.ok) return read;
             const snapshot = read.value.authority.snapshot;
-            const expected = {} as Record<GtdWorkflowDirectType, GtdWorkflowDirectWitness>;
+            const expected = {} as NativeGtdWorkflowOptions['expected'];
             for (const type of TYPES) {
                 const witness = gtdWorkflowWitness(snapshot.settings, type);
                 if (!witness) return fail('INVALID_INPUT', `Saved ${type} GTD default has an unsupported value`);
@@ -464,6 +505,17 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             const value = { hub: hubFor(snapshot), expected };
             return isNativeJsonWithinBytes(value, 2_000_000) ? { ok: true, value }
                 : fail('INVALID_INPUT', 'GTD options exceed the bounded response');
+        },
+        async getGtdArchiveOptions(input: unknown): Promise<NativeHostResult<NativeGtdArchiveOptions>> {
+            const ready = deps.readiness(); if (!ready.ok) return ready;
+            if (!record(input) || !exact(input, [])) return fail('INVALID_INPUT', 'GTD Archive options take an empty object');
+            const read = await readAreaDurableData(); if (!read.ok) return read;
+            const snapshot = read.value.authority.snapshot;
+            const expected = gtdWorkflowWitness(snapshot.settings, 'autoArchiveDays');
+            if (!expected) return fail('INVALID_INPUT', 'Saved Auto-archive choice has an unsupported value');
+            const value = { archive: archiveFor(snapshot), expected };
+            return isNativeJsonWithinBytes(value, 262_144) ? { ok: true, value }
+                : fail('INVALID_INPUT', 'GTD Archive options exceed the bounded response');
         },
         async getGtdReviewOptions(input: unknown): Promise<NativeHostResult<NativeGtdReviewOptions>> {
             const ready = deps.readiness(); if (!ready.ok) return ready;
@@ -511,7 +563,7 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             const request = readRequest(input);
             if (!request) return fail('INVALID_INPUT', 'A bounded GTD workflow request is required');
             const preparedAt = new Date().toISOString();
-            const read = await readAreaDurableData(); if (!read.ok) return read;
+            const read = await readAreaDurableData(false, request.edit.type === 'autoArchiveDays'); if (!read.ok) return read;
             const settings = read.value.authority.snapshot.settings;
             const current = gtdWorkflowWitness(settings, request.edit.type,
                 isTaskEditorEdit(request.edit) ? request.edit.section : undefined);
@@ -557,6 +609,9 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             } else if (isPreset(request.edit.type)) {
                 if (!presetOfferedByWitness(request.edit, current))
                     return fail('INVALID_INPUT', 'GTD Task Editor preset choice is unavailable');
+            } else if (request.edit.type === 'autoArchiveDays') {
+                if (!archiveFor(read.value.authority.snapshot).options.some((option) => same(option.edit, request.edit)))
+                    return fail('INVALID_INPUT', 'GTD Auto-archive choice is unavailable');
             } else {
                 const hub = hubFor(read.value.authority.snapshot);
                 if (request.edit.type === 'focusTaskLimit'
@@ -574,13 +629,21 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             if ((isTaskEditorEdit(request.edit) || isPreset(request.edit.type)) && !selected)
                 return fail('INVALID_INPUT', 'GTD Task Editor receipt is unavailable');
             const device = ensureDeviceId(settings);
+            let archiveEffects: GtdArchiveEffect[] | null = null;
+            if (request.edit.type === 'autoArchiveDays') {
+                try {
+                    archiveEffects = JSON.parse(JSON.stringify(gtdArchiveEffects(read.value.authority.snapshot.tasks,
+                        { ...settings, ...update }, preparedAt, device.deviceId))) as GtdArchiveEffect[];
+                } catch { return fail('INVALID_INPUT', 'GTD Auto-archive effects are not bounded JSON'); }
+            }
             const prepared: NativePreparedGtdWorkflow = { version: 1, request, preparedAt,
                 deviceIdBefore: settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null,
                 after: { value: request.edit.value, stamp: plannedStamp(preparedAt, request.expected),
                     ...(selected ? { selected } : {}) },
                 result: resultFor(request.edit, true),
-                ...(request.edit.type === 'defaultArea' ? { targetArea } : {}) };
+                ...(request.edit.type === 'defaultArea' ? { targetArea } : {}),
+                ...(archiveEffects ? { archiveEffects } : {}) };
             const frozen = detach<NativePreparedGtdWorkflow>(prepared);
             return frozen && readPrepared({ request, prepared: frozen })
                 ? { ok: true, value: { kind: 'prepared', prepared: frozen } }
@@ -595,7 +658,7 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             const ready = deps.readiness(); if (!ready.ok) return ready;
             const prepared = readPrepared(input);
             if (!prepared) return fail('INVALID_INPUT', 'Prepared GTD workflow default does not match the request');
-            const read = await readAreaDurableData(true); if (!read.ok) return read;
+            const read = await readAreaDurableData(true, prepared.request.edit.type === 'autoArchiveDays'); if (!read.ok) return read;
             if (!saves.mayApply(prepared, read.value.adapter))
                 return fail('SAVE_FAILED', 'GTD workflow default has an unresolved persistence failure');
             const applied = await useTaskStore.getState().commitPreparedGtdWorkflow(prepared, read.value.authority);

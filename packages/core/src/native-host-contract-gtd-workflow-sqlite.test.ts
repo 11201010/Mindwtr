@@ -70,6 +70,16 @@ async function plan(host: ReturnType<typeof createNativeHostContract>,
     return { request, prepared: prepared.value.prepared };
 }
 
+async function planArchive(host: ReturnType<typeof createNativeHostContract>, value: number) {
+    const options = await host.getGtdArchiveOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID,
+        edit: { type: 'autoArchiveDays', value }, expected: options.value.expected };
+    const prepared = await host.prepareGtdWorkflow(request);
+    if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+    return { request, prepared: prepared.value.prepared };
+}
+
 async function planReview(host: ReturnType<typeof createNativeHostContract>,
     edit: { type: 'dailyReviewFocusStep' | 'weeklyReviewContextStep'; value: boolean }) {
     const options = await host.getGtdReviewOptions({});
@@ -209,6 +219,55 @@ describe('GTD workflow SQLite recovery', () => {
             error: { code: 'STALE_REVISION' } });
         expect((await afterAba.adapter.getData()).settings.gtd?.defaultScheduleTime).toBeUndefined();
     });
+});
+
+describe('GTD Auto-archive SQLite recovery', () => {
+    it('preserves raw rows after failed COMMIT and cold-applies the complete frozen archive batch', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-auto-archive-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const old = new Date(Date.now() - 10 * 86_400_000).toISOString();
+        const recent = new Date(Date.now() - 2 * 86_400_000).toISOString();
+        const seed = initial(); seed.settings.gtd = { ...seed.settings.gtd, autoArchiveDays: 30 };
+        seed.tasks = [
+            { ...task, id: 'archive-old', status: 'done', completedAt: old, updatedAt: old },
+            { ...task, id: 'archive-recent', status: 'done', completedAt: recent, updatedAt: recent },
+        ];
+        const first = await open(path, true, seed);
+        const before = nineTables(first.db);
+        const envelope = await planArchive(first.host, 7);
+        expect(envelope.prepared.archiveEffects).toHaveLength(1);
+        first.fault.commits = 10;
+        expect(await first.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'SAVE_FAILED' } });
+        expect(nineTables(first.db)).toEqual(before);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+
+        const cold = await open(path);
+        const beforeCold = await cold.adapter.getData();
+        expect(beforeCold.settings.gtd?.autoArchiveDays).toBe(30);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const saved = await cold.adapter.getData();
+        expect(saved.settings.gtd).toEqual({ ...beforeCold.settings.gtd, autoArchiveDays: 7 });
+        expect(saved.settings.syncPreferencesUpdatedAt?.gtd).toBe(envelope.prepared.after.stamp);
+        expect(saved.tasks.find((row) => row.id === 'archive-old')).toMatchObject({ status: 'archived',
+            archivedAt: envelope.prepared.preparedAt, rev: 8, revBy: 'gtd-device' });
+        expect(saved.tasks.find((row) => row.id === 'archive-recent')?.status).toBe('done');
+        const unrelated = structuredClone(saved);
+        unrelated.settings.language = 'ko';
+        unrelated.tasks = unrelated.tasks.map((row) => row.id === 'archive-recent'
+            ? { ...row, title: 'changed after receipt' } : row);
+        await cold.adapter.saveData(unrelated);
+        cold.db.close(); databases.splice(databases.indexOf(cold.db), 1);
+        const replay = await open(path);
+        expect(await replay.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const afterReplay = await replay.adapter.getData();
+        expect(afterReplay.settings.language).toBe('ko');
+        expect(afterReplay.tasks.find((row) => row.id === 'archive-recent')?.title).toBe('changed after receipt');
+        expect(afterReplay.tasks.find((row) => row.id === 'archive-old')).toEqual(
+            saved.tasks.find((row) => row.id === 'archive-old'));
+    }, 30_000);
 });
 
 describe('GTD Capture Default Area paired SQLite recovery', () => {

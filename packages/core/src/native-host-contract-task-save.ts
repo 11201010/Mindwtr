@@ -223,7 +223,7 @@ const nullableText = (value: unknown): value is string | null => value === null
     || typeof value === 'string' && value.length <= 500;
 const nullableRevision = (value: unknown): value is number | null => value === null
     || typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-const validRawTask = (value: unknown, id: string): value is Task => {
+export const validRawTask = (value: unknown, id: string): value is Task => {
     if (!record(value) || Object.keys(value).some((key) => !TASK_KEYS.has(key as keyof Task))) return false;
     const row = Object.fromEntries(Object.entries(value).map(([key, part]) => [key, part === null ? undefined : part]));
     if (row.id !== id || typeof row.title !== 'string'

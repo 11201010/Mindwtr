@@ -52,6 +52,17 @@ async function planned(env: Awaited<ReturnType<typeof open>>,
         envelope: { request, prepared: plan.value.prepared } };
 }
 
+async function plannedArchive(env: Awaited<ReturnType<typeof open>>, value: number) {
+    const options = await env.host.getGtdArchiveOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID,
+        edit: { type: 'autoArchiveDays', value }, expected: options.value.expected };
+    const plan = await env.host.prepareGtdWorkflow(request);
+    if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+    return { options: options.value, request, prepared: plan.value.prepared,
+        envelope: { request, prepared: plan.value.prepared } };
+}
+
 async function plannedReview(env: Awaited<ReturnType<typeof open>>,
     edit: { type: 'dailyReviewFocusStep' | 'weeklyReviewContextStep'; value: boolean }) {
     const options = await env.host.getGtdReviewOptions({});
@@ -585,6 +596,179 @@ describe('prepared GTD workflow defaults', () => {
         expect(env.saves()).toBe(0);
         expect(env.host.probeGtdWorkflowOutcome(envelope.request)).toMatchObject({ ok: false,
             error: { code: 'STALE_REVISION' } });
+    });
+});
+
+describe('prepared GTD Auto-archive', () => {
+    it('shows the shared seven choices, defaults to seven, and accepts only an offered integer', async () => {
+        const env = await open(initial());
+        const options = await env.host.getGtdArchiveOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(options.value.archive.options.map((row) => row.value)).toEqual([0, 1, 3, 7, 14, 30, 60]);
+        expect(options.value.archive.options.find((row) => row.selected)?.value).toBe(7);
+        expect(options.value.expected).toEqual({ present: false, value: null, stampPresent: true, stamp: AT });
+        for (const row of options.value.archive.options)
+            expect(row.edit).toEqual({ type: 'autoArchiveDays', value: row.value });
+        for (const value of [-1, 2, 7.5, 90, '7', null, true])
+            expect(await env.host.prepareGtdWorkflow({ requestId: ID,
+                edit: { type: 'autoArchiveDays', value }, expected: options.value.expected }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd, autoArchiveDays: 0 };
+        const never = await open(start);
+        const current = await never.host.getGtdArchiveOptions({});
+        if (!current.ok) throw new Error(JSON.stringify(current));
+        expect(await never.host.prepareGtdWorkflow({ requestId: ID,
+            edit: { type: 'autoArchiveDays', value: 0 }, expected: current.value.expected }))
+            .toMatchObject({ ok: true, value: { kind: 'noop', result: { changed: false } } });
+        expect(never.saves()).toBe(0);
+        const malformed = initial(); malformed.settings.gtd = { ...malformed.settings.gtd,
+            autoArchiveDays: '7' as never };
+        const bad = await open(malformed);
+        expect(await bad.host.getGtdArchiveOptions({})).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+    });
+
+    it.each([
+        { raw: 10.6, selected: null, replacement: 7 },
+        { raw: 90, selected: null, replacement: 30 },
+        { raw: -0.4, selected: 0, replacement: 0 },
+    ])('corrects legacy raw Auto-archive $raw while preserving its exact witness and replay', async (row) => {
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd, autoArchiveDays: row.raw };
+        const env = await open(start);
+        const options = await env.host.getGtdArchiveOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(options.value.expected).toMatchObject({ present: true, value: row.raw });
+        expect(options.value.archive.options.find((option) => option.selected)?.value ?? null).toBe(row.selected);
+        const { envelope, prepared } = await plannedArchive(env, row.replacement);
+        expect(prepared.archiveEffects).toEqual([]);
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(env.data().settings.gtd?.autoArchiveDays).toBe(row.replacement);
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+    });
+
+    it('archives old Done tasks immediately with the selected preference and no other task changes', async () => {
+        const now = Date.now();
+        const old = new Date(now - 40 * 86_400_000).toISOString();
+        const recent = new Date(now - 2 * 86_400_000).toISOString();
+        const start = initial();
+        start.settings.gtd = { ...start.settings.gtd, autoArchiveDays: 0 };
+        start.tasks = [
+            { ...terminal, id: 'archive-old', status: 'done', deletedAt: undefined,
+                completedAt: old, updatedAt: old, rev: 7 },
+            { ...terminal, id: 'archive-recent', status: 'done', deletedAt: undefined,
+                completedAt: recent, updatedAt: recent },
+            { ...terminal, id: 'archive-active', status: 'next', deletedAt: undefined,
+                completedAt: old, updatedAt: old },
+            { ...terminal, id: 'archive-deleted', status: 'done', completedAt: old, updatedAt: old },
+            { ...terminal, id: 'archive-already', status: 'archived', deletedAt: undefined,
+                archivedAt: old, completedAt: old, updatedAt: old },
+        ];
+        const env = await open(start);
+        const options = await env.host.getGtdArchiveOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(options.value.archive.options.map((row) => row.value)).toEqual([0, 1, 3, 7, 14, 30, 60]);
+        const request: NativeGtdWorkflowRequest = { requestId: ID,
+            edit: { type: 'autoArchiveDays', value: 7 }, expected: options.value.expected };
+        const planned = await env.host.prepareGtdWorkflow(request);
+        if (!planned.ok || planned.value.kind !== 'prepared') throw new Error(JSON.stringify(planned));
+        const { prepared } = planned.value;
+        expect(prepared.archiveEffects).toHaveLength(1);
+        expect(prepared.archiveEffects?.[0].before).toEqual(start.tasks[0]);
+        expect(prepared.archiveEffects?.[0].after).toMatchObject({ id: 'archive-old', status: 'archived',
+            archivedAt: prepared.preparedAt, updatedAt: prepared.preparedAt, rev: 8, revBy: 'gtd-device' });
+        const envelope = { request, prepared };
+        expect(env.host.validatePreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(env.data().settings.gtd).toEqual({ ...start.settings.gtd, autoArchiveDays: 7 });
+        expect(env.data().tasks[0]).toEqual(prepared.archiveEffects?.[0].after);
+        expect(env.data().tasks.slice(1)).toEqual(start.tasks.slice(1));
+    });
+
+    it('Never preserves already archived tasks and has an empty frozen effect batch', async () => {
+        const old = new Date(Date.now() - 40 * 86_400_000).toISOString();
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd, autoArchiveDays: 30 };
+        start.tasks = [{ ...terminal, id: 'already-archived', status: 'archived',
+            deletedAt: undefined, archivedAt: old, completedAt: old, updatedAt: old }];
+        const env = await open(start);
+        const { envelope, prepared } = await plannedArchive(env, 0);
+        expect(prepared.archiveEffects).toEqual([]);
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(env.data().tasks).toEqual(start.tasks);
+        expect(env.data().settings.gtd?.autoArchiveDays).toBe(0);
+    });
+
+    it('rejects noncanonical or malformed frozen task effects before storage and incomplete batches at commit', async () => {
+        const old = new Date(Date.now() - 10 * 86_400_000).toISOString();
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd, autoArchiveDays: 30 };
+        start.tasks = [{ ...terminal, id: 'archive-old', status: 'done', deletedAt: undefined,
+            completedAt: old, updatedAt: old }];
+        const env = await open(start);
+        const { envelope } = await plannedArchive(env, 7);
+        for (const mutate of [
+            (copy: typeof envelope) => { copy.prepared.archiveEffects![0].after.rev = 999; },
+            (copy: typeof envelope) => { delete (copy.prepared.archiveEffects![0].before as Partial<Task>).title; },
+            (copy: typeof envelope) => { (copy.prepared.archiveEffects![0] as never).extra = true; },
+        ]) {
+            const forged = structuredClone(envelope); mutate(forged);
+            expect(env.host.validatePreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+            expect(await env.host.commitPreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        }
+        const omitted = structuredClone(envelope);
+        omitted.prepared.archiveEffects = [];
+        expect(await env.host.commitPreparedGtdWorkflow(omitted)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(env.saves()).toBe(0);
+    });
+
+    it('refuses changed eligible tasks, newly eligible tasks, and newer GTD stamps before any write', async () => {
+        const old = new Date(Date.now() - 10 * 86_400_000).toISOString();
+        const seed = initial(); seed.settings.gtd = { ...seed.settings.gtd, autoArchiveDays: 30 };
+        seed.tasks = [{ ...terminal, id: 'archive-old', status: 'done', deletedAt: undefined,
+            completedAt: old, updatedAt: old }];
+        for (const change of [
+            (data: AppData) => ({ ...data, tasks: data.tasks.map((row) => ({ ...row, title: 'changed' })) }),
+            (data: AppData) => ({ ...data, tasks: [...data.tasks,
+                { ...data.tasks[0], id: 'newly-eligible' }] }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                    gtd: '2026-09-02T00:00:00.000Z' } } }),
+        ]) {
+            const env = await open(seed);
+            const { envelope } = await plannedArchive(env, 7);
+            env.changeSaved(change);
+            expect(await env.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'STALE_REVISION' } });
+            expect(env.saves()).toBe(0);
+        }
+    });
+
+    it('replays exact archived rows after unrelated saved edits without overwriting them', async () => {
+        const old = new Date(Date.now() - 10 * 86_400_000).toISOString();
+        const recent = new Date(Date.now() - 2 * 86_400_000).toISOString();
+        const seed = initial(); seed.settings.gtd = { ...seed.settings.gtd, autoArchiveDays: 30 };
+        seed.tasks = [
+            { ...terminal, id: 'archive-old', status: 'done', deletedAt: undefined,
+                completedAt: old, updatedAt: old },
+            { ...terminal, id: 'archive-recent', status: 'done', deletedAt: undefined,
+                completedAt: recent, updatedAt: recent },
+        ];
+        const env = await open(seed);
+        const { envelope, prepared } = await plannedArchive(env, 7);
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        env.changeSaved((data) => ({ ...data, tasks: data.tasks.map((row) => row.id === 'archive-recent'
+            ? { ...row, title: 'unrelated later edit' } : row),
+        settings: { ...data.settings, language: 'ko' } }));
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+        expect(cold.data().settings.language).toBe('ko');
+        expect(cold.data().tasks.find((row) => row.id === 'archive-recent')?.title).toBe('unrelated later edit');
+        expect(cold.data().tasks.find((row) => row.id === 'archive-old'))
+            .toEqual(prepared.archiveEffects?.[0].after);
     });
 });
 

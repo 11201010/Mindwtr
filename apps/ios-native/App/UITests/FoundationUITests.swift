@@ -1,6 +1,64 @@
 import XCTest
 
 final class FoundationUITests: XCTestCase {
+    private func task141Open(_ app: XCUIApplication) {
+        task103Open(app)
+        let link = app.buttons["gtd-autoArchive"]
+        revealPagedElement(app, link, in: app.scrollViews["gtd-scroll"]); boardEnabled(link); link.tap()
+        boardEnabled(app.buttons["gtd-archive-back"])
+    }
+
+    private func task141Option(_ app: XCUIApplication, _ days: Int) -> XCUIElement {
+        let option = app.buttons["gtd-autoArchiveDays-" + String(days)]
+        revealPagedElement(app, option, in: app.scrollViews["gtd-archive-scroll"]); boardEnabled(option)
+        return option
+    }
+
+    private func task141Select(_ app: XCUIApplication, _ days: Int) {
+        let option = task141Option(app, days); option.tap()
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: option)
+        waitForExpectations(timeout: 30)
+        XCTAssertFalse(app.staticTexts["gtd-error"].exists)
+    }
+
+    private func task141Flow(_ library: String, legacy: Bool = false) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task141Open(app)
+        if legacy {
+            for days in [0, 1, 3, 7, 14, 30, 60] { XCTAssertFalse(app.buttons["gtd-autoArchiveDays-" + String(days)].isSelected) }
+        } else { XCTAssertTrue(task141Option(app, 30).isSelected) }
+        task141Select(app, 7)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Auto-archive preference"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task141Open(app); XCTAssertTrue(task141Option(app, 7).isSelected)
+        task141Select(app, 0); task141Select(app, 30)
+        app.terminate(); app.launch(); task141Open(app); XCTAssertTrue(task141Option(app, 30).isSelected)
+        app.terminate()
+    }
+
+    func testAutoArchiveLegacyInterval() { task141Flow("7d0ac683-d696-4736-b7cc-5580b663dd3b", legacy: true) }
+    func testAutoArchiveNormal() { task141Flow("9ef6c710-dd5f-46f5-bc0a-bb525440bdaa") }
+    func testAutoArchiveLargest() { task141Flow("54228a48-7c4d-4769-b0f5-9a3d86173c65") }
+
+    func testAutoArchiveFailedSave() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "ea2ffe16-7256-4c05-832f-517863fb7db0"]
+        app.launch(); task141Open(app); task141Option(app, 7).tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-archive-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-archive-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-retry"], timeout: 30); app.terminate()
+    }
+
+    func testAutoArchiveColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "ea2ffe16-7256-4c05-832f-517863fb7db0"]
+        app.launch(); boardEnabled(app.buttons["gtd-archive-back"], timeout: 30)
+        XCTAssertTrue(task141Option(app, 7).isSelected)
+        app.terminate(); app.launch(); task141Open(app); XCTAssertTrue(task141Option(app, 7).isSelected)
+        app.terminate()
+    }
+
+
     private func task140Toggle(_ app: XCUIApplication) -> XCUIElement {
         let toggle = app.switches["gtd-focusIncludeStartDates"]
         revealPagedElement(app, toggle, in: app.scrollViews["gtd-scroll"])
