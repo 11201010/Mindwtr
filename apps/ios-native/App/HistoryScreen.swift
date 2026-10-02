@@ -9,6 +9,10 @@ struct HistoryScreen: View {
     @State private var archiveDeleteID = ""
     @State private var archiveDeleteRevision = ""
     @State private var archiveDeletePresented = false
+    @State private var archiveProjectDeleteID = ""
+    @State private var archiveProjectDeleteRevision = ""
+    @State private var archiveProjectDeleteConfirmation: CoreObject = [:]
+    @State private var archiveProjectDeletePresented = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -63,6 +67,17 @@ struct HistoryScreen: View {
             .accessibilityIdentifier("archive-delete-confirm")
         } message: {
             Text(model.history.object("confirmations").object("trashTask").text("message"))
+        }
+        .alert(archiveProjectDeleteConfirmation.text("title"), isPresented: $archiveProjectDeletePresented) {
+            Button(archiveProjectDeleteConfirmation.text("cancelLabel"), role: .cancel) {}
+            Button(archiveProjectDeleteConfirmation.text("confirmLabel"), role: .destructive) {
+                let id = archiveProjectDeleteID
+                let revision = archiveProjectDeleteRevision
+                Task { await model.deleteArchivedProject(expectedID: id, expectedRevision: revision) }
+            }
+            .accessibilityIdentifier("archive-delete-confirm")
+        } message: {
+            Text(archiveProjectDeleteConfirmation.text("message"))
         }
     }
 
@@ -156,6 +171,21 @@ struct HistoryScreen: View {
                                             }
                                             .tint(palette.tint)
                                             .accessibilityIdentifier("archive-restore-project-" + item.text("id"))
+                                        }
+                                    }
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        if model.historyActionsEnabled {
+                                            Button {
+                                                searchFocused = false
+                                                archiveProjectDeleteID = item.text("id")
+                                                archiveProjectDeleteRevision = item.text("projectRevision")
+                                                archiveProjectDeleteConfirmation = item.object("trashConfirmation")
+                                                archiveProjectDeletePresented = true
+                                            } label: {
+                                                Label(model.history.object("labels").text("delete"), systemImage: "trash")
+                                            }
+                                            .tint(palette.danger)
+                                            .accessibilityIdentifier("archive-delete-project-" + item.text("id"))
                                         }
                                     }
                             }

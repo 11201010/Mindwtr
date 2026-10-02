@@ -396,6 +396,7 @@ final class CoreModel: ObservableObject {
     private var projectLifecycleFromHistory = false
     @Published private(set) var projectDeleteError: String?
     private var projectDeleteRequest: String?
+    private var projectDeleteFromHistory = false
     private var projectDeleteUndoRequest: String?
     private var projectDeleteNoticeGeneration = 0
     @Published private(set) var projectCurrent = false
@@ -1764,7 +1765,8 @@ final class CoreModel: ObservableObject {
     var historyArchiveActionPending: Bool {
         selectedSurface == .history && historyArchived &&
             (archivedTaskRestoreRequest != nil || archivedTaskDeleteRequest != nil ||
-                projectLifecycleFromHistory && projectLifecycleRequest != nil) && retryNeeded
+                projectLifecycleFromHistory && projectLifecycleRequest != nil ||
+                projectDeleteFromHistory && projectDeleteRequest != nil) && retryNeeded
     }
     var historyPickerActionsEnabled: Bool { historyActionsEnabled && historyPickerCurrent }
     var trashActionsEnabled: Bool {
@@ -12213,6 +12215,43 @@ final class CoreModel: ObservableObject {
         } catch { await handleArchivedTaskDeleteError(error) }
     }
 
+    func deleteArchivedProject(expectedID: String, expectedRevision: String) async {
+        guard historyActionsEnabled, historyArchived else { return }
+        guard let item = history.objects("items").first(where: {
+                  $0.text("type") == "project" && $0.text("id") == expectedID
+              }), item.text("projectRevision") == expectedRevision,
+              !expectedID.isEmpty, expectedID.utf16.count <= 200,
+              !expectedRevision.isEmpty, expectedRevision.utf16.count <= 200 else {
+            historyError = label("task.updateFailed")
+            return
+        }
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    "projectId": expectedID, "projectRevision": expectedRevision,
+                                    "source": "archive"])
+            projectDeleteFromHistory = true
+            projectDeleteRequest = request
+            let result = try await query("projectDeleteWrite", [request])
+            try acknowledgeProjectDelete(result)
+            _ = await readHistory()
+        } catch {
+            if isDefiniteRejection(error) {
+                projectDeleteRequest = nil
+                projectDeleteFromHistory = false
+                retryNeeded = false
+                self.error = nil
+                _ = await readHistory()
+            } else {
+                retryNeeded = projectDeleteRequest != nil
+                self.error = error.localizedDescription
+            }
+            historyError = error.localizedDescription
+        }
+    }
+
     private func acknowledgeArchivedTaskDelete(_ result: CoreObject) throws {
         guard let request = archivedTaskDeleteRequest,
               (try decode(request)).text("source") == "archive",
@@ -13005,6 +13044,7 @@ final class CoreModel: ObservableObject {
         do {
             let request = try json(["requestId": UUID().uuidString.lowercased(),
                                     "projectId": id, "projectRevision": revision])
+            projectDeleteFromHistory = false
             projectDeleteRequest = request
             let result = try await query("projectDeleteWrite", [request])
             try acknowledgeProjectDelete(result)
@@ -13027,6 +13067,7 @@ final class CoreModel: ObservableObject {
         guard let request = projectDeleteRequest,
               Set(result.keys) == Set(["id", "deletion"]),
               result.text("id") == (try decode(request)).text("projectId"),
+              Set(result.object("deletion").keys) == Set(["message", "undoLabel", "undoEnabled"]),
               let enabled = result.object("deletion")["undoEnabled"] as? NSNumber,
               CFGetTypeID(enabled) == CFBooleanGetTypeID(), enabled.boolValue,
               !result.object("deletion").text("message").isEmpty,
@@ -13034,10 +13075,17 @@ final class CoreModel: ObservableObject {
             throw CocoaError(.coderReadCorrupt)
         }
         let requestID = (try decode(request)).text("requestId")
+        let fromHistory = projectDeleteFromHistory
         projectDeleteRequest = nil
+        projectDeleteFromHistory = false
         retryNeeded = false
         projectDeleteError = nil
         error = nil
+        if fromHistory {
+            historyError = nil
+            historyCurrent = false
+            return
+        }
         projectDeleteNotice = result.object("deletion").merging(["id": result.text("id"), "requestId": requestID]) { _, new in new }
         projectDeleteNoticeGeneration += 1
         let generation = projectDeleteNoticeGeneration
@@ -17604,6 +17652,27 @@ final class CoreModel: ObservableObject {
                 return
             }
             if let request = projectDeleteRequest {
+                if projectDeleteFromHistory {
+                    let outcome = try await query("projectDeleteReceiptOutcome", [request])
+                    if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                        let unknown = label("projects.archiveDeleteOutcomeUnknown")
+                        _ = await readHistory()
+                        historyError = unknown
+                        self.error = unknown
+                        return
+                    }
+                    guard Set(outcome.keys) == Set(["kind", "result"]),
+                          outcome.text("kind") == "confirmed" else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    let result = outcome.object("result")
+                    if let acknowledgment, try json(result) != json(decode(acknowledgment)) {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    try acknowledgeProjectDelete(result)
+                    _ = await readHistory()
+                    return
+                }
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
                 else { result = try await query("projectDeleteRetryOutcome", [request]) }
@@ -18504,7 +18573,13 @@ final class CoreModel: ObservableObject {
                     projectDeleteUndoRequest = nil
                     projectDeleteNotice = [:]
                 }
-                if projectDeleteRequest != nil { projectDeleteRequest = nil }
+                if projectDeleteRequest != nil {
+                    projectDeleteRequest = nil
+                    if projectDeleteFromHistory {
+                        projectDeleteFromHistory = false
+                        historyError = error.localizedDescription
+                    }
+                }
                 if projectDuplicateRequest != nil { projectDuplicateRequest = nil }
                 if projectLifecycleRequest != nil {
                     projectLifecycleRequest = nil

@@ -25269,7 +25269,7 @@ final class CoreHostTests: XCTestCase {
         await core.close()
     }
 
-    func testProjectDeleteColdLostReplyChangedChildRefusesWithoutOverwrite() async throws {
+    func testProjectDeleteColdLostReplyChangedChildAcknowledgesExactReceiptWithoutOverwrite() async throws {
         let taskID = try await seedProjectDeleteProject()
         let faults = HostIOFaults()
         let writer = host(faults)
@@ -25281,7 +25281,6 @@ final class CoreHostTests: XCTestCase {
             _ = try await writer.call("projectDeleteWrite", argumentsJSON: json([json(request)]))
         }
         XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
-        let pending = try Data(contentsOf: journal)
         await writer.close()
         let edit = try SQLiteBridge(url: database)
         _ = try edit.execute("UPDATE tasks SET title = ?, rev = rev + 1 WHERE id = ?", parametersJSON: json(["Later detached task edit", taskID]))
@@ -25293,9 +25292,12 @@ final class CoreHostTests: XCTestCase {
             if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
         }
         let reopened = host(replayFaults)
-        await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+        let startup = try object(await reopened.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "projectDeleteCommit")
+        let recovered = try XCTUnwrap((startup["recovery"] as? [String: Any])?["result"] as? [String: Any])
+        XCTAssertEqual(recovered["id"] as? String, "destination-project-a")
         XCTAssertEqual(writes, 0)
-        try assertJournalContentUnchanged(pending)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
         let check = try SQLiteBridge(url: database)
         XCTAssertEqual(try nineTableSnapshot(check), intervened)
         check.close()
@@ -27306,6 +27308,237 @@ final class CoreHostTests: XCTestCase {
             var statements = 0
             replayFaults.beforeSQL = { _ in statements += 1 }
             let cold = host(replayFaults, bundleURL: try dateBundle(at: "2026-10-06T12:00:00.000Z"))
+            await expectFailure { _ = try await cold.start() }
+            XCTAssertEqual(statements, 0, part)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, part)
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), baseline, part)
+            check.close()
+            await cold.close()
+        }
+    }
+
+    private func archivedProjectDelete175Request(_ core: CoreHost) async throws -> [String: Any] {
+        let lifecycle = try await projectLifecycleRequest(core, action: "complete")
+        _ = try await core.call("projectLifecycleWrite", argumentsJSON: json([json(lifecycle)]))
+        let archive = try object(await core.call("menuRead", argumentsJSON:
+            json(["archive", json(["segment": "projects", "offset": 0, "limit": 50])])))
+        let items = try XCTUnwrap(archive["items"] as? [[String: Any]])
+        let item = try XCTUnwrap(items.first { $0["type"] as? String == "project"
+            && $0["id"] as? String == "destination-project-a" })
+        XCTAssertNotNil(item["trashConfirmation"] as? [String: Any])
+        return ["requestId": UUID().uuidString.lowercased(), "projectId": "destination-project-a",
+                "projectRevision": try XCTUnwrap(item["projectRevision"] as? String), "source": "archive"]
+    }
+
+    func testArchivedProjectDelete175FailedCommitExactRetryAndReceipt() async throws {
+        let taskID = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let request = try await archivedProjectDelete175Request(core)
+        let beforeTask = try storedTask(taskID)
+        let sqlite = try SQLiteBridge(url: database)
+        let baseline = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        var writes = 0
+        faults.beforeSQL = { _ in writes += 1 }
+        for invalid in [request.merging(["source": "detail"]) { _, new in new },
+                        request.merging(["extra": true]) { _, new in new },
+                        request.merging(["projectRevision": "stale"]) { _, new in new }] {
+            await expectFailure {
+                _ = try await core.call("projectDeleteWrite", argumentsJSON: json([json(invalid)]))
+            }
+        }
+        XCTAssertEqual(writes, 0)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected archived Project Delete COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("projectDeleteWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try Data(contentsOf: journal)
+        let envelope = try projectDeleteJournal("projectDeleteCommit")
+        XCTAssertEqual(try json(XCTUnwrap(envelope["request"])), try json(request))
+        let failed = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failed), baseline)
+        failed.close()
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        try assertJournalContentUnchanged(pending)
+        faults.beforeSQL = nil
+        let retryValue = try await core.retryPending()
+        let retryText = try XCTUnwrap(retryValue)
+        let result = try object(retryText)
+        XCTAssertEqual(result["id"] as? String, "destination-project-a")
+        XCTAssertEqual((result["deletion"] as? [String: Any])?["undoEnabled"] as? Bool, true)
+        let detached = try storedTask(taskID)
+        XCTAssertTrue(detached["projectId"] is NSNull)
+        XCTAssertEqual(try destinationPreservedFields(detached), try destinationPreservedFields(beforeTask))
+        let outcome = try object(await core.call("projectDeleteReceiptOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed")
+        XCTAssertEqual(try json(XCTUnwrap(outcome["result"])), try json(result))
+        let unused = request.merging(["requestId": UUID().uuidString.lowercased()]) { _, new in new }
+        let unknown = try object(await core.call("projectDeleteReceiptOutcome", argumentsJSON: json([json(unused)])))
+        XCTAssertEqual(unknown["kind"] as? String, "unproven")
+        var old = request
+        old.removeValue(forKey: "source")
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("projectDeleteReceiptOutcome", argumentsJSON: json([json(old)]))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    func testArchivedProjectDelete175ColdLostReplyUsesReceiptAfterLaterEdit() async throws {
+        let taskID = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await archivedProjectDelete175Request(writer)
+        var journalWrites = 0
+        faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected archived Project Delete lost reply") } }
+        await expectFailure("lost reply") {
+            _ = try await writer.call("projectDeleteWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE tasks SET title = ?, rev = rev + 1 WHERE id = ?",
+                             parametersJSON: json(["Later detached edit", taskID]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var domainWrites = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#,
+                            options: .regularExpression) != nil { domainWrites += 1 }
+        }
+        let cold = host(replayFaults)
+        let startup = try object(await cold.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "projectDeleteCommit")
+        XCTAssertEqual(domainWrites, 0)
+        let outcome = try object(await cold.call("projectDeleteReceiptOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed")
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await cold.close()
+    }
+
+    func testArchivedProjectDelete175ColdFailedCommitChangedProjectRefuses() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await archivedProjectDelete175Request(writer)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected archived Project Delete COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectDeleteWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try Data(contentsOf: journal)
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET title = ?, rev = rev + 1 WHERE id = ?",
+                             parametersJSON: json(["Newer archived Project title", "destination-project-a"]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var domainWrites = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#,
+                            options: .regularExpression) != nil { domainWrites += 1 }
+        }
+        let cold = host(replayFaults)
+        await expectFailure("STALE_REVISION") { _ = try await cold.start() }
+        XCTAssertEqual(domainWrites, 0)
+        try assertJournalContentUnchanged(pending)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        await cold.close()
+    }
+
+    func testArchivedProjectDelete175ColdTerminalAckKeepsLaterEdits() async throws {
+        let taskID = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await archivedProjectDelete175Request(writer)
+        faults.journalRemove = { throw HostFailure("Injected archived Project Delete terminal cleanup failure") }
+        await expectFailure("terminal cleanup failure") {
+            _ = try await writer.call("projectDeleteWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertNotNil(try object(String(contentsOf: journal))["terminal"])
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE tasks SET title = ?, rev = rev + 1 WHERE id = ?",
+                             parametersJSON: json(["Later detached task edit", taskID]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var domainWrites = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#,
+                            options: .regularExpression) != nil { domainWrites += 1 }
+        }
+        let cold = host(replayFaults)
+        let startup = try object(await cold.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "projectDeleteCommit")
+        XCTAssertEqual(domainWrites, 0)
+        let outcome = try object(await cold.call("projectDeleteReceiptOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(outcome["kind"] as? String, "confirmed")
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await cold.close()
+    }
+
+    func testArchivedProjectDelete175ForgedJournalRefusesBeforeSQLite() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await archivedProjectDelete175Request(writer)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected archived Project Delete COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectDeleteWrite", argumentsJSON: json([json(request)]))
+        }
+        let original = try object(String(contentsOf: journal))
+        let envelope = try projectDeleteJournal("projectDeleteCommit")
+        await writer.close()
+        let reader = try SQLiteBridge(url: database)
+        let baseline = try nineTableSnapshot(reader)
+        reader.close()
+        for part in ["source", "effect", "result", "request"] {
+            var forged = envelope
+            var prepared = try XCTUnwrap(forged["prepared"] as? [String: Any])
+            if part == "source" {
+                var changed = request
+                changed["source"] = "editor"
+                forged["request"] = changed
+                prepared["request"] = changed
+            } else if part == "effect" {
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                var project = try XCTUnwrap(effect["project"] as? [String: Any])
+                var after = try XCTUnwrap(project["after"] as? [String: Any])
+                after["title"] = "Forged archived Project"
+                project["after"] = after
+                effect["project"] = project
+                prepared["effect"] = effect
+            } else if part == "result" {
+                prepared["result"] = ["id": "wrong", "deletion": ["message": "Deleted", "undoLabel": "Undo", "undoEnabled": true]]
+            } else {
+                forged["request"] = request.merging(["requestId": UUID().uuidString.lowercased()]) { _, new in new }
+            }
+            forged["prepared"] = prepared
+            var saved = original
+            saved["argumentsJSON"] = try json([json(forged)])
+            let bytes = Data(try json(saved).utf8)
+            try bytes.write(to: journal)
+            let replayFaults = HostIOFaults()
+            var statements = 0
+            replayFaults.beforeSQL = { _ in statements += 1 }
+            let cold = host(replayFaults)
             await expectFailure { _ = try await cold.start() }
             XCTAssertEqual(statements, 0, part)
             XCTAssertEqual(try Data(contentsOf: journal), bytes, part)

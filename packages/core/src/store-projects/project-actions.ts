@@ -1156,7 +1156,7 @@ export const createProjectCoreActions = ({
             const relevantAfterSections = new Set(expectedSections.map((row) => row.id));
             const relevantAfterTasks = expectedTasks.filter((row) => row.projectId === current.id
                 || (row.sectionId !== undefined && relevantAfterSections.has(row.sectionId)));
-            if (sameProjectSqliteRow(current, planned.project.after)
+            if (input.request.source !== 'archive' && sameProjectSqliteRow(current, planned.project.after)
                 && (state.settings.deviceId ?? null) === (input.deviceIdToInitialize ?? input.deviceIdBefore)
                 && sameOwnedRows(sections, expectedSections, sameSectionSqliteRow)
                 && expectedTasks.every((row) => {

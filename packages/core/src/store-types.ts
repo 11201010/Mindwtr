@@ -214,7 +214,7 @@ export type PreparedTrashProjectRestore = {
 
 /** Frozen Project Delete: section-linked inconsistent Tasks are part of the relevant scope. */
 export type PreparedProjectDelete = {
-    request: { requestId: string; projectId: string; projectRevision: string };
+    request: { requestId: string; projectId: string; projectRevision: string; source?: 'archive' };
     scope: { project: Project; tasks: Task[]; sections: Section[] };
     effect: { project: { before: Project; after: Project };
         tasks: { before: Task; after: Task }[]; sections: { before: Section; after: Section }[] };

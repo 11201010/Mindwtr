@@ -12,6 +12,7 @@ import { useTaskStore } from './store';
 import { projectDeleteEffect, projectDeleteUndoEffect } from './store-projects/project-actions';
 import type { PreparedProjectDelete, PreparedProjectDeleteUndo } from './store-types';
 import type { Area, Project, Task } from './types';
+import { logInfo } from './logger';
 
 export type NativeProjectDeleteRequest = PreparedProjectDelete['request'];
 export type NativeProjectDeleteResult = PreparedProjectDelete['result'];
@@ -43,7 +44,8 @@ const jsonSafe = <T,>(value: unknown): T | null => {
 const readDeleteRequest = (value: unknown): NativeProjectDeleteRequest | null => {
     const input = detach<Record<string, unknown>>(value);
     return input && isNativeJsonWithinBytes(input, 4_096)
-        && exact(input, ['requestId', 'projectId', 'projectRevision'])
+        && (exact(input, ['requestId', 'projectId', 'projectRevision'])
+            || exact(input, ['requestId', 'projectId', 'projectRevision', 'source']) && input.source === 'archive')
         && typeof input.requestId === 'string' && UUID.test(input.requestId)
         && text(input.projectId) && text(input.projectRevision)
         ? input as NativeProjectDeleteRequest : null;
@@ -108,6 +110,8 @@ const readDelete = (input: unknown): NativeProjectDeleteEnvelope | null => {
         const prepared = raw as unknown as NativePreparedProjectDelete;
         const { scope, effect } = prepared;
         if (!validProject(scope.project, request.projectId) || revisionOf(scope.project) !== request.projectRevision
+            || (request.source === 'archive' && (scope.project.status !== 'archived'
+                || scope.project.archivedAt !== undefined && !iso(scope.project.archivedAt)))
             || !unique(scope.tasks) || !unique(scope.sections)
             || scope.sections.some((row) => !validSection(row, row.id, request.projectId))
             || scope.tasks.some((row) => !validTask(row))
@@ -201,6 +205,7 @@ export function createProjectDeleteMethods(deps: {
             const state = useTaskStore.getState();
             const target = state._projectsById.get(request.projectId);
             if (!target || target.deletedAt || target.purgedAt
+                || request.source === 'archive' && target.status !== 'archived'
                 || revisionOf(target) !== request.projectRevision)
                 return fail('STALE_REVISION', 'Project changed since the detail was read');
             const sections = state._allSections.filter((row) => row.projectId === target.id);
@@ -228,17 +233,34 @@ export function createProjectDeleteMethods(deps: {
             return envelope ? { ok: true, value: envelope.prepared.result }
                 : fail('INVALID_INPUT', 'Prepared Project Delete is malformed');
         },
+        /** Exact durable UUID/effect receipt only; an equal target row is not proof. */
+        projectDeleteOutcome(input: NativeProjectDeleteEnvelope): NativeHostResult<NativeProjectDeleteResult | null> {
+            const envelope = readDelete(input);
+            if (!envelope) return fail('INVALID_INPUT', 'Prepared Project Delete is malformed');
+            const saved = receipts.saved<NativeProjectDeleteResult>(envelope.request.requestId,
+                canonicalPayload(['preparedProjectDelete', envelope]));
+            if (saved?.ok && !same(saved.value, envelope.prepared.result))
+                return fail('INVALID_INPUT', 'Saved Project Delete result does not match the prepared request');
+            return saved === null ? { ok: true, value: null } : saved;
+        },
         async commitPreparedProjectDelete(input: NativeProjectDeleteEnvelope): Promise<NativeHostResult<NativeProjectDeleteResult>> {
             const envelope = readDelete(input);
             if (!envelope) return fail('INVALID_INPUT', 'Prepared Project Delete is malformed');
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            return receipts.run(envelope.request.requestId,
-                canonicalPayload(['preparedProjectDelete', envelope]), async () => {
+            const payload = canonicalPayload(['preparedProjectDelete', envelope]);
+            const alreadySaved = receipts.saved<NativeProjectDeleteResult>(envelope.request.requestId, payload);
+            const confirmed = await receipts.run(envelope.request.requestId, payload, async () => {
                     const applied = await useTaskStore.getState().commitPreparedProjectDelete(envelope.prepared);
                     return applied.success ? { ok: true, value: envelope.prepared.result }
                         : fail('STALE_REVISION', applied.error ?? 'Prepared Project Delete conflicts with saved data');
                 });
+            if (confirmed.ok && envelope.request.source === 'archive' && !alreadySaved?.ok) {
+                try { logInfo('Native archived Project delete confirmed', { scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: 'v1.3.4/ios-archive-project-trash', outcome: 'confirmed' } }); }
+                catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            }
+            return confirmed;
         },
         prepareProjectDeleteUndo(input: { request: NativeProjectDeleteUndoRequest;
             delete: NativeProjectDeleteEnvelope }): NativeHostResult<NativeProjectDeleteUndoPreparation> {
