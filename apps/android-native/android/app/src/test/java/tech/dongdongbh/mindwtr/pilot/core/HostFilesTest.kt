@@ -179,6 +179,46 @@ class HostFilesTest {
         assertFalse(File(attachments(), "dir").exists())
     }
 
+    /** RN's file-system.ts prepareFileTarget (c2472e974): a write, copy or move makes its folder and replaces a folder at the target. */
+    @Test fun aWriteCopyOrMoveMakesItsFolderAndReplacesAFolderAtTheTarget() {
+        val files = open()
+        val written = File(cacheDir, "stage/new/a.bin")
+        call(files, "writeBytes", written, bytes = byteArrayOf(1, 2))
+        assertArrayEquals(byteArrayOf(1, 2), written.readBytes())
+        val copied = File(attachments(), "x/b.bin")
+        call(files, "copy", written, { put("to", uri(copied)) })
+        assertArrayEquals(byteArrayOf(1, 2), copied.readBytes())
+        val moved = File(attachments(), "y/c.bin")
+        call(files, "move", copied, { put("to", uri(moved)) })
+        assertArrayEquals(byteArrayOf(1, 2), moved.readBytes())
+        val folderAtTarget = File(attachments(), "d.bin").apply { mkdirs() }.also { File(it, "inner").writeText("old") }
+        call(files, "writeBytes", folderAtTarget, bytes = byteArrayOf(3))
+        assertArrayEquals(byteArrayOf(3), folderAtTarget.readBytes())
+        File(attachments(), "e.bin").apply { mkdirs() }
+        call(files, "copy", moved, { put("to", uri(File(attachments(), "e.bin"))) })
+        assertTrue(File(attachments(), "e.bin").isFile)
+        File(attachments(), "f.bin").apply { mkdirs() }
+        call(files, "move", moved, { put("to", uri(File(attachments(), "f.bin"))) })
+        assertTrue(File(attachments(), "f.bin").isFile)
+    }
+
+    /**
+     * Android names the app's folders through a link (/data/user/0 → /data/data). A URI in either spelling is the same file, as
+     * desktop's lease must compare a canonical root with an app-built one (the Windows `\\?\` root, bc3ab4c2e).
+     */
+    @Test fun aRootNamedThroughALinkTakesURIsInEitherSpelling() {
+        val real = File(folder.root, "data/app").apply { mkdirs() }
+        File(real, "files/attachments").mkdirs()
+        File(real, "cache").mkdirs()
+        val user = File(folder.root, "user0").also { java.nio.file.Files.createSymbolicLink(it.toPath(), File(folder.root, "data").toPath()) }
+        val files = HostFiles(File(user, "app/files"), File(user, "app/cache"), syncDirectory = { })
+        val linked = File(user, "app/files/attachments/a.bin")
+        call(files, "writeBytes", linked, bytes = byteArrayOf(7))
+        assertArrayEquals(byteArrayOf(7), call(files, "readBytes", File(real, "files/attachments/a.bin")).bytes)
+        call(files, "delete", File(real, "files/attachments/a.bin"))
+        assertFalse(linked.exists())
+    }
+
     @Test fun noAttachmentUriLeavesTheAppFolders() {
         val outside = File(folder.root, "outside.txt").apply { writeText("secret") }
         attachments().mkdirs()

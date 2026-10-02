@@ -89,9 +89,9 @@ class HostFiles(
             })
             "readBytes" -> Reply(null, read(uri, 0, Long.MAX_VALUE))
             "readBytesRange" -> Reply(null, read(uri, request.getLong("position"), request.getLong("length")))
-            "writeBytes" -> Reply(null.also { write(writable(local(uri)), bytes ?: ByteArray(0)) })
-            "copy" -> Reply(null.also { copy(uri, writable(local(request.getString("to")))) })
-            "move" -> Reply(null.also { move(writable(local(uri)), writable(local(request.getString("to")))) })
+            "writeBytes" -> Reply(null.also { write(target(local(uri)), bytes ?: ByteArray(0)) })
+            "copy" -> Reply(null.also { copy(uri) { target(local(request.getString("to"))) } })
+            "move" -> Reply(null.also { writable(local(uri)).let { from -> if (!from.exists()) missing(); move(from, target(local(request.getString("to")))) } })
             "delete" -> Reply(null.also { remove(entry(uri)) })
             else -> throw IllegalArgumentException("Unsupported file call $op")
         }
@@ -139,20 +139,31 @@ class HostFiles(
         }
     }
 
-    /** Creates or replaces [file] with [bytes], synced; its folder must exist, as expo-file-system requires. */
+    /**
+     * A write's, copy's or move's [file], made ready as RN's file-system.ts prepareFileTarget does: its folder made, and a folder
+     * at [file] itself removed (a link is removed as a link). Only where a write may land.
+     */
+    private fun target(file: File): File {
+        val ready = writable(file)
+        makeDirectory(ready.parentFile!!)
+        if (ready.isDirectory) remove(ready)
+        return ready
+    }
+
+    /** Creates or replaces [file] with [bytes], synced. */
     private fun write(file: File, bytes: ByteArray) {
         FileOutputStream(file).use { out -> out.write(bytes); out.fd.sync() }
         syncDirectory(file.parentFile!!)
     }
 
-    private fun copy(from: String, to: File) {
-        open(from).use { input -> FileOutputStream(to).use { out -> input.copyTo(out, 64 * 1024); out.fd.sync() } }
-        syncDirectory(to.parentFile!!)
+    /** [from]'s bytes into [to], made ready only once the source opened (a missing source changes nothing). */
+    private fun copy(from: String, to: () -> File) {
+        val file = open(from).use { input -> to().also { file -> FileOutputStream(file).use { out -> input.copyTo(out, 64 * 1024); out.fd.sync() } } }
+        syncDirectory(file.parentFile!!)
     }
 
     /** A rename that replaces [to], as expo-file-system's move does. */
     private fun move(from: File, to: File) {
-        if (!from.exists()) missing()
         if (!from.renameTo(to)) throw IOException("Cannot move ${from.name}")
         syncDirectory(to.parentFile!!)
         if (from.parentFile != to.parentFile) syncDirectory(from.parentFile!!)
