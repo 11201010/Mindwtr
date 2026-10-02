@@ -3133,6 +3133,13 @@ private final class Engine: @unchecked Sendable {
 #endif
             NSLog("Native iOS Task cancellation saved releaseCheck=v1.3.4/ios-task-cancel operation=cancel outcome=confirmed")
         }
+        if command.method == "checklistPreparedCommit", case .success = terminal,
+           let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+           let encoded = args.first,
+           let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+           (envelope["request"] as? [String: Any])?["intent"] as? String == "skip" {
+            NSLog("Native iOS recurring occurrence skipped releaseCheck=v1.3.4/ios-skip-occurrence outcome=confirmed")
+        }
         if command.method == "boardCommit", command.editorDraft?.method == "boardAction", case .success = terminal {
 #if DEBUG
             faults?.commandDiagnostic?("taskDuplicate")
@@ -7265,7 +7272,7 @@ private final class Engine: @unchecked Sendable {
                         + (input["recurrenceBase"] == nil ? [] : ["recurrenceBase"])
                         + (input["attachments"] == nil ? [] : ["attachments"])
                         + (input["intent"] == nil ? [] : ["intent"])),
-                          input["intent"] == nil || input["intent"] as? String == "cancel",
+                          input["intent"] == nil || ["cancel", "skip"].contains(input["intent"] as? String ?? ""),
                           let base = input["base"] as? [String: Any], let patch = input["patch"] as? [String: Any],
                           Set(base.keys) == Set(patch.keys),
                           input["attachments"] == nil || Self.validTaskAttachmentHalf(input["attachments"]),

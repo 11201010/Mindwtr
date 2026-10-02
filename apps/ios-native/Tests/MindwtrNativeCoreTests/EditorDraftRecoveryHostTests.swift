@@ -68,6 +68,44 @@ final class EditorDraftRecoveryHostTests: XCTestCase {
             "checklist": ["base": [], "value": []]])])
     }
 
+    private func recurringOpening(_ core: CoreHost, id: String) async throws -> [String: Any] {
+        let opening = try await seed(core, id: id)
+        let edited = try object(await core.call("editDraft", argumentsJSON: json([json([
+            "id": id, "draft": try XCTUnwrap(opening["draft"]),
+            "edit": ["type": "recurrence", "edit": ["kind": "rule", "rule": "daily"]],
+        ])])))
+        let original = try XCTUnwrap(opening["draft"] as? [String: Any])
+        let changed = try XCTUnwrap(edited["draft"] as? [String: Any])
+        let recurrenceFields = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
+        var base = try Dictionary(uniqueKeysWithValues: recurrenceFields.map { ($0, try XCTUnwrap(original[$0])) })
+        var patch = try Dictionary(uniqueKeysWithValues: recurrenceFields.map { ($0, try XCTUnwrap(changed[$0])) })
+        base["dueDate"] = try XCTUnwrap(original["dueDate"])
+        patch["dueDate"] = "2036-10-05"
+        _ = try await core.call("saveDraft", argumentsJSON: json([json([
+            "id": id, "base": base, "patch": patch,
+            "scheduleBase": try XCTUnwrap(opening["scheduleBase"]),
+            "recurrenceBase": try XCTUnwrap(opening["recurrenceBase"]),
+        ])]))
+        let recurring = try object(await core.call("editorModel", argumentsJSON: json([id])))
+        XCTAssertEqual(recurring["canSkipOccurrence"] as? Bool, true)
+        return recurring
+    }
+
+    private func skipArguments(_ id: String, opening: [String: Any], intent: String = "skip",
+                               baseTitle: String = "Before edit") throws -> String {
+        try json([json(["id": id, "requestId": UUID().uuidString.lowercased(), "intent": intent,
+            "base": ["title": baseTitle], "patch": ["title": "Skipped draft title"],
+            "scheduleBase": try XCTUnwrap(opening["scheduleBase"]),
+            "checklist": ["base": [], "value": []]])])
+    }
+
+    private func taskRows() throws -> [[String: Any]] {
+        let sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sqlite.execute(
+            "SELECT * FROM tasks ORDER BY id", parametersJSON: "[]").utf8)) as? [[String: Any]])
+    }
+
     private func deletionArguments(_ id: String, requestID: String, opening: [String: Any]) throws -> String {
         try json([json(["requestId": requestID, "taskId": id,
             "taskRevision": try XCTUnwrap(opening["taskRevision"] as? String)])])
@@ -236,6 +274,136 @@ final class EditorDraftRecoveryHostTests: XCTestCase {
         await recovered.close()
         let cold = host(); _ = try await cold.start()
         XCTAssertEqual(try json(task(id)), try json(saved))
+    }
+
+    func testSkipFailedCommitKeepsDirtyDraftAndColdCreatesOneFollowUp() async throws {
+        let faults = HostIOFaults(), writing = host(faults)
+        _ = try await writing.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await recurringOpening(writing, id: id)
+        let before = try json(taskRows())
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: id,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Skipped draft title"}}"#)
+        try await writing.checkpointEditorDraft(draft)
+        let args = try skipArguments(id, opening: opening)
+        do {
+            _ = try await writing.call("checklistSave", argumentsJSON: args)
+            XCTFail("A dirty editor must use its frozen Save attempt")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("exact Save attempt")) }
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Skip COMMIT") } }
+        do {
+            _ = try await writing.saveEditorDraft("checklistSave", argumentsJSON: args,
+                expectedSession: draft.sessionID, expectedGeneration: draft.generation)
+            XCTFail("Expected failed Skip")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED"), error.localizedDescription) }
+        XCTAssertEqual(try json(taskRows()), before)
+        let frozen = try XCTUnwrap(EditorDraftStore(databaseURL: database).read())
+        XCTAssertEqual(frozen.snapshot, draft)
+        XCTAssertEqual(frozen.attempt?.method, "checklistSave")
+        let owed = try object(String(contentsOf: journal))
+        do { _ = try await writing.retryPending(); XCTFail("Expected repeated Skip failure") } catch {}
+        let retried = try object(String(contentsOf: journal))
+        XCTAssertEqual(try json(retried), try json(owed))
+        XCTAssertEqual(retried["argumentsJSON"] as? String, owed["argumentsJSON"] as? String)
+        XCTAssertEqual(try json(taskRows()), before)
+        await writing.close()
+
+        let recovered = host()
+        let startup = try object(await recovered.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "checklistPreparedCommit")
+        let result = try XCTUnwrap(recovery["result"] as? [String: Any])
+        XCTAssertEqual(Set(result.keys), Set(["id"]))
+        XCTAssertEqual(result["id"] as? String, id)
+        let skipped = try task(id)
+        XCTAssertEqual(skipped["status"] as? String, "archived")
+        XCTAssertEqual(skipped["title"] as? String, "Skipped draft title")
+        XCTAssertTrue(skipped["completedAt"] is NSNull)
+        XCTAssertNotNil(skipped["cancelledAt"] as? String)
+        let rows = try taskRows()
+        XCTAssertEqual(rows.count, 2)
+        let followUp = try XCTUnwrap(rows.first { $0["id"] as? String != id })
+        XCTAssertEqual(followUp["title"] as? String, "Skipped draft title")
+        XCTAssertEqual(followUp["status"] as? String, "inbox")
+        XCTAssertEqual(followUp["dueDate"] as? String, "2036-10-06")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await recovered.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(try json(taskRows()), try json(rows))
+    }
+
+    func testSkipLostTerminalRetryKeepsOneFrozenFollowUp() async throws {
+        let faults = HostIOFaults(), writing = host(faults)
+        _ = try await writing.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await recurringOpening(writing, id: id)
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: id,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Skipped draft title"}}"#)
+        try await writing.checkpointEditorDraft(draft)
+        var writes = 0
+        faults.journalWrite = {
+            writes += 1
+            if writes == 2 { throw HostFailure("Injected Skip terminal loss") }
+        }
+        do {
+            _ = try await writing.saveEditorDraft("checklistSave",
+                argumentsJSON: skipArguments(id, opening: opening),
+                expectedSession: draft.sessionID, expectedGeneration: draft.generation)
+            XCTFail("Expected lost terminal")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("terminal loss")) }
+        XCTAssertEqual(writes, 2)
+        let committed = try taskRows()
+        XCTAssertEqual(committed.count, 2)
+        XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
+        XCTAssertEqual(try EditorDraftStore(databaseURL: database).read()?.snapshot, draft)
+        faults.journalWrite = { throw HostFailure("Injected Skip retry terminal loss") }
+        do { _ = try await writing.retryPending(); XCTFail("Expected failed terminal retry") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("retry terminal loss")) }
+        XCTAssertEqual(try json(taskRows()), try json(committed))
+        await writing.close()
+
+        let recovered = host()
+        let startup = try object(await recovered.start())
+        let result = try XCTUnwrap((startup["recovery"] as? [String: Any])?["result"] as? [String: Any])
+        XCTAssertEqual(Set(result.keys), Set(["id"]))
+        XCTAssertEqual(result["id"] as? String, id)
+        XCTAssertEqual(try json(taskRows()), try json(committed))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        await recovered.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(try json(taskRows()), try json(committed))
+    }
+
+    func testSkipInvalidIntentAndStaleDraftKeepCheckpoint() async throws {
+        let writing = host()
+        _ = try await writing.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await recurringOpening(writing, id: id)
+        let before = try json(taskRows())
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: id,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Skipped draft title"}}"#)
+        try await writing.checkpointEditorDraft(draft)
+        do {
+            _ = try await writing.saveEditorDraft("checklistSave",
+                argumentsJSON: skipArguments(id, opening: opening, intent: "skip-again"),
+                expectedSession: draft.sessionID, expectedGeneration: draft.generation)
+            XCTFail("Expected unsupported intent refusal")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("INVALID_INPUT")) }
+        XCTAssertEqual(try EditorDraftStore(databaseURL: database).read()?.snapshot, draft)
+        XCTAssertNil(try EditorDraftStore(databaseURL: database).read()?.attempt)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        do {
+            _ = try await writing.saveEditorDraft("checklistSave",
+                argumentsJSON: skipArguments(id, opening: opening, baseTitle: "Stale title"),
+                expectedSession: draft.sessionID, expectedGeneration: draft.generation)
+            XCTFail("Expected stale baseline refusal")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("STALE_REVISION")) }
+        XCTAssertEqual(try EditorDraftStore(databaseURL: database).read()?.snapshot, draft)
+        XCTAssertNil(try EditorDraftStore(databaseURL: database).read()?.attempt)
+        XCTAssertEqual(try json(taskRows()), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 
     func testTaskCancellationUndoRequiresConfirmedProofAndColdRetriesExactly() async throws {

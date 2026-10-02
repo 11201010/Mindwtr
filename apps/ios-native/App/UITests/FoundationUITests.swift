@@ -17,6 +17,79 @@ final class FoundationUITests: XCTestCase {
     }
 
 
+    func testTaskSkipNormal() { taskSkipFlow(library: "c442d3e1-b93d-434c-be6a-e91f9006ad33") }
+    func testTaskSkipLargestText() { taskSkipFlow(library: "1624d369-4f98-41f5-b9c3-7c9cb3767079") }
+
+    private func beginTaskSkip(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+        let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText("Task138 scheduled")
+        boardTap(app, "search-task-task138-task"); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]; boardEnabled(title)
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap(); title.typeText(" draft")
+        XCTAssertEqual(title.value as? String, "Task138 scheduled task draft")
+        boardTap(app, "task-more")
+        let skip = app.buttons["task-skip-occurrence"]; boardEnabled(skip)
+        XCTAssertEqual(skip.label, "Skip this occurrence")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Skip occurrence"; shot.lifetime = .keepAlways; add(shot)
+        skip.tap()
+    }
+
+    private func assertTaskSkipChild(_ app: XCUIApplication) {
+        boardEnabled(app.textFields["search-input"], timeout: 30)
+        let child = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier != %@", "search-task-", "search-task-task138-task")).firstMatch
+        boardEnabled(child, timeout: 30); XCTAssertTrue(child.label.contains("Task138 scheduled task draft"))
+        let childID = child.identifier; child.tap(); boardTap(app, "task-mode-edit")
+        boardEnabled(app.textFields["task-editor-title"])
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task138 scheduled task draft")
+        XCTAssertTrue(app.buttons["task-editor-status-next"].isSelected)
+        boardTap(app, "task-view-close"); boardEnabled(app.buttons[childID]); boardTap(app, "search-close")
+    }
+
+    private func taskSkipFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); beginTaskSkip(app); assertTaskSkipChild(app)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        boardTap(app, "search-open"); let query = app.textFields["search-input"]; boardEnabled(query)
+        query.tap(); query.typeText("Task138 scheduled"); assertTaskSkipChild(app); app.terminate()
+    }
+
+    func testTaskSkipFailureRetainsDraft() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "eeb76a40-dcd5-419f-872d-79e9e7090b45"]
+        app.launch(); beginTaskSkip(app); boardEnabled(app.buttons["task-view-retry"], timeout: 30)
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task138 scheduled task draft")
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["task-view-close"].isEnabled)
+            boardTap(app, "task-view-retry"); boardEnabled(app.buttons["task-view-retry"], timeout: 30)
+        }
+        app.terminate()
+    }
+
+    func testTaskSkipRejectsIneligibleDraft() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "86a35009-6bb0-4e85-b5e1-841f432ffcd2"]
+        app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+        let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText("Task138 scheduled")
+        boardTap(app, "search-task-task138-task"); boardTap(app, "task-mode-edit")
+        let reference = app.buttons["task-editor-status-reference"]; boardEnabled(reference)
+        revealPagedElement(app, reference, in: app.scrollViews["task-editor-scroll"]); reference.tap()
+        boardEnabled(app.buttons["task-reference-convert-to-action"])
+        boardTap(app, "task-more"); boardTap(app, "task-skip-occurrence")
+        let error = app.staticTexts["task-view-error"]; XCTAssertTrue(error.waitForExistence(timeout: 30))
+        XCTAssertTrue(error.label.contains("Save or discard"))
+        boardEnabled(app.buttons["task-view-close"]); boardTap(app, "task-view-close")
+        boardTap(app, "task-editor-discard"); boardEnabled(app.textFields["search-input"])
+        app.terminate()
+    }
+
+    func testTaskSkipColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "eeb76a40-dcd5-419f-872d-79e9e7090b45"]
+        app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        boardTap(app, "search-open"); let query = app.textFields["search-input"]; boardEnabled(query)
+        query.tap(); query.typeText("Task138 scheduled"); assertTaskSkipChild(app)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30); app.terminate()
+    }
+
     func testTaskDeleteNormal() { taskDeleteFlow(library: "d4ff80f3-2fa5-47d5-a683-33d3d2ddb39d") }
     func testTaskDeleteLargestText() { taskDeleteFlow(library: "fb24537b-6beb-48ca-8bac-80025e184466") }
     func testTaskDeleteUndoPreference() { taskDeleteFlow(library: "84adaee8-790f-428f-b821-396c7fd78ab0") }

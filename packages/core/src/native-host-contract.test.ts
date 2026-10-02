@@ -1558,6 +1558,7 @@ describe('native host contract', () => {
                 taskRevision: taskRevisionOf(stored),
                 readOnly: false,
                 canCancel: true,
+                canSkipOccurrence: true,
                 cancelLabel: 'Cancel recurring series',
                 draft,
                 backdatedCompletionStart: { initialValue: null, initialTimeSpentMinutes: null },

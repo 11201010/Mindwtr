@@ -71,3 +71,5 @@ Task editor More → Cancel saves the current draft and archives the Task as can
 Task editor More → Delete removes the saved Task, matching RN, and offers transient Undo even when the cancellation Undo preference is off. Unsaved edits remain checkpointed until the exact deletion acknowledgment. Undo restores the saved Task through the shared container-reference sanitizer; newer changes and purges refuse safely. Delete and Undo reuse the existing prepared journal for exact Retry and cold recovery.
 
 Reference Tasks expose Convert to action in More from Preview and Edit, using the existing draft status action. Save applies it; Discard retains Reference.
+
+Task editor More → Skip this occurrence saves the draft, archives the current fixed-schedule occurrence as cancelled, and creates at most one next occurrence through the shared RN recurrence planner. The existing prepared Save command applies both changes atomically and retains the exact request and draft through failed writes and cold recovery. A draft that no longer supports Skip must be saved or discarded first.

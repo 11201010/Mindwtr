@@ -111,10 +111,16 @@ struct TaskViewSheet: View {
                 Spacer()
                 if !readOnly && !model.taskEditor.isEmpty {
                     Menu {
+                        if model.taskEditor.flag("canSkipOccurrence") {
+                            Button(strings.text("task.skipOccurrence")) {
+                                endEditingBeforeAction()
+                                Task { await model.saveTask(intent: .skip) }
+                            }.accessibilityIdentifier("task-skip-occurrence")
+                        }
                         if model.taskEditor.flag("canCancel") {
                             Button(model.taskEditor.text("cancelLabel"), role: .destructive) {
                                 endEditingBeforeAction()
-                                Task { await model.saveTask(cancel: true) }
+                                Task { await model.saveTask(intent: .cancel) }
                             }.accessibilityIdentifier("task-cancel")
                         }
                         if model.taskEditor.object("draft").text("status") == "reference" {

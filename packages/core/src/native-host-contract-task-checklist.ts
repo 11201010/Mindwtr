@@ -11,7 +11,7 @@ import {
 } from './native-host-contract-task-save';
 import { isNativeJsonWithinBytes, readChecklist, toChecklist } from './native-host-contract-task-view';
 import { buildResetTaskChecklistUpdates, planTaskUpdateEffects, prepareTaskUpdatesForStore,
-    taskEditValuesEqual } from './store-tasks';
+    planSkippedRecurringOccurrence, taskEditValuesEqual } from './store-tasks';
 import { createProjectOrderReserver, ensureDeviceId, getNextProjectOrder, getTaskOrder,
     nextRevision } from './store-helpers';
 import { countFocusedTasksBeforeBoundary } from './task-utils';
@@ -19,7 +19,8 @@ import { normalizeFocusTaskLimit } from './focus-utils';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
 import { isStatusListTaskReadOnly } from './menu-views-model';
 import { mergeNativeTaskLinkHalf } from './native-host-contract-attachments';
-import { projectNextRecurringTask, type RecurrenceProjection } from './recurrence';
+import { canSkipRecurringTaskOccurrence, matchesAdvanceOneCalendarProjection,
+    projectNextRecurringTask, type RecurrenceProjection } from './recurrence';
 import { generateUUID } from './uuid';
 import { getTranslator, resolveI18nText } from './i18n';
 import { isTaskActionable } from './task-status';
@@ -29,7 +30,7 @@ import { taskCancellationRestoreFields } from './undo-task-cancellation';
 export type NativeChecklistSaveRequest = NativeTaskDraftSaveRequest & {
     requestId: string;
     checklist: { base: ChecklistItem[]; value: ChecklistItem[] };
-    intent?: 'cancel';
+    intent?: 'cancel' | 'skip';
 };
 export type NativeChecklistResetRequest = { id: string; requestId: string; checklistBase: ChecklistItem[] };
 export type NativeChecklistWriteRequest = NativeChecklistSaveRequest | NativeChecklistResetRequest;
@@ -51,6 +52,7 @@ type Witness = {
     deviceIdBefore: string | null;
     deviceIdToInitialize: string | null;
     recurrenceProjection: RecurrenceProjection | null;
+    calendarTimeZone?: string;
     ids: string[];
     /** Undefined top-level direct update fields are explicit clears. */
     directClears: string[];
@@ -124,6 +126,9 @@ const readUndoRequest = (value: unknown): NativeTaskCancellationUndoRequest | nu
 export const canCancelNativeTask = (task: Task, projects: readonly Project[], readOnly = false): boolean =>
     !readOnly && !task.deletedAt && !task.purgedAt && isTaskActionable(task)
     && !isProjectedRecurringTaskId(task.id) && !isStatusListTaskReadOnly(task, projects);
+export const canSkipNativeTaskOccurrence = (task: Task, projects: readonly Project[], readOnly = false): boolean =>
+    !readOnly && !isProjectedRecurringTaskId(task.id) && !isStatusListTaskReadOnly(task, projects)
+    && canSkipRecurringTaskOccurrence(task);
 const draftRequest = (request: NativeChecklistSaveRequest): NativeTaskDraftSaveRequest => ({
     id: request.id, base: request.base, patch: request.patch, scheduleBase: request.scheduleBase,
     ...(request.recurrenceBase ? { recurrenceBase: request.recurrenceBase } : {}),
@@ -145,12 +150,12 @@ const readRequest = (value: unknown, validateField: (field: TaskDraftField, valu
         ...(own(input, 'recurrenceBase') ? { recurrenceBase: input.recurrenceBase } : {}),
         ...(own(input, 'attachments') ? { attachments: input.attachments } : {}) };
     const parsed = readNativeTaskDraftSaveRequest(bare, validateField, true, false, true);
-    if (!base || !selected || !parsed || (own(input, 'intent') && input.intent !== 'cancel')
+    if (!base || !selected || !parsed || (own(input, 'intent') && input.intent !== 'cancel' && input.intent !== 'skip')
         || !exact(input, ['id', 'requestId', 'base', 'patch', 'scheduleBase', 'checklist',
             ...(parsed.recurrenceBase ? ['recurrenceBase'] : []), ...(parsed.attachments ? ['attachments'] : []),
-            ...(input.intent === 'cancel' ? ['intent'] : [])])) return null;
+            ...(input.intent === 'cancel' || input.intent === 'skip' ? ['intent'] : [])])) return null;
     return { ...parsed, requestId: input.requestId, checklist: { base, value: selected },
-        ...(input.intent === 'cancel' ? { intent: 'cancel' as const } : {}) };
+        ...(input.intent === 'cancel' || input.intent === 'skip' ? { intent: input.intent } : {}) };
 };
 
 const futureBoundary = (preparedAt: string) => {
@@ -251,25 +256,48 @@ const plan = (kind: 'save' | 'reset', request: NativeChecklistWriteRequest, witn
             nowMs: Date.parse(witness.preparedAt), reserveProjectOrder: true,
             projectOrderReserver: createProjectOrderReserver(lists.tasks) });
         if (!prepared.ok) throw new Error(prepared.error);
-        const effects = planTaskUpdateEffects({ task: source, preparedUpdates: prepared.updates,
+        const skip = request.intent === 'skip';
+        if (skip && (!canSkipNativeTaskOccurrence(source, lists.projects)
+            || !canSkipRecurringTaskOccurrence({ ...source, ...prepared.updates }))) {
+            throw new Error('Task draft cannot skip an occurrence');
+        }
+        const createId = () => {
+            let id = witness.ids[generated++];
+            if (!id && allowIds && witness.ids.length < Math.floor(LIMIT_BYTES / 38)) {
+                id = generateUUID();
+                witness.ids.push(id);
+            }
+            if (!id) throw new Error('Missing frozen checklist child ID');
+            return id;
+        };
+        // A clean Skip has one lifecycle transition. A dirty Skip first resolves
+        // the ordinary Save, then archives that row in the same atomic effect.
+        const hasDraftUpdate = !skip || Object.keys(direct).length > 0;
+        const effects = hasDraftUpdate ? planTaskUpdateEffects({ task: source, preparedUpdates: prepared.updates,
             allTasks: lists.tasks, allProjects: lists.projects, allSections: lists.sections,
-            now: witness.preparedAt, deviceId: deviceId(witness),
-            createId: () => {
-                let id = witness.ids[generated++];
-                if (!id && allowIds && witness.ids.length < Math.floor(LIMIT_BYTES / 38)) {
-                    id = generateUUID();
-                    witness.ids.push(id);
-                }
-                if (!id) throw new Error('Missing frozen checklist child ID');
-                return id;
-            },
-            recurrenceProjection: prepared.updates.status === 'done' && source.status !== 'done'
-                && source.status !== 'archived' ? witness.recurrenceProjection : undefined });
-        tasks = effects.tasks;
-        projects = effects.projects;
-        sections = effects.sections;
-        recurringCandidate = effects.recurringCandidateTask;
-        recurringDuplicate = effects.recurringDuplicateTask;
+            now: witness.preparedAt, deviceId: deviceId(witness), createId,
+            recurrenceProjection: !skip && prepared.updates.status === 'done' && source.status !== 'done'
+                && source.status !== 'archived' ? witness.recurrenceProjection : undefined }) : null;
+        tasks = effects?.tasks ?? lists.tasks;
+        projects = effects?.projects ?? lists.projects;
+        sections = effects?.sections ?? lists.sections;
+        recurringCandidate = effects?.recurringCandidateTask ?? null;
+        recurringDuplicate = effects?.recurringDuplicateTask ?? null;
+        if (skip) {
+            const draftResolved = effects?.updatedTask ?? source;
+            if (!canSkipRecurringTaskOccurrence(draftResolved)) throw new Error('Task draft cannot skip an occurrence');
+            if (allowIds) witness.recurrenceProjection = projectNextRecurringTask(draftResolved, witness.preparedAt, true);
+            if (!matchesAdvanceOneCalendarProjection(draftResolved, witness.preparedAt,
+                witness.recurrenceProjection, witness.calendarTimeZone ?? '')) {
+                throw new Error('Invalid frozen recurrence calendar step');
+            }
+            const skipped = planSkippedRecurringOccurrence({ task: draftResolved, allTasks: tasks,
+                now: witness.preparedAt, deviceId: deviceId(witness),
+                projection: witness.recurrenceProjection, createId });
+            tasks = skipped.tasks;
+            recurringCandidate = skipped.recurringCandidateTask;
+            recurringDuplicate = skipped.recurringDuplicateTask;
+        }
     } else if (kind === 'reset' && !isSave(request)) {
         const after: Task = { ...source, ...buildResetTaskChecklistUpdates(source),
             updatedAt: witness.preparedAt, rev: nextRevision(source.rev), revBy: deviceId(witness) };
@@ -364,6 +392,7 @@ const readPrepared = (
             'source', 'lists', 'settings', 'preparedAt', 'preparedLocalDay', 'preparedOffsetMinutes',
             'boundaryOffsetMinutes', 'futureBoundary', 'deviceIdBefore', 'deviceIdToInitialize',
             'recurrenceProjection', 'ids', 'directClears', 'direct', 'focusCount', 'focusLimit',
+            ...(isSave(request) && request.intent === 'skip' ? ['calendarTimeZone'] : []),
             ...(isSave(request) && request.intent === 'cancel' ? ['cancelMessage', 'cancelUndoLabel'] : []),
         ]) || !isRecord(witness.source) || !isRecord(witness.lists) || !isRecord(witness.settings)
         || !exact(witness.lists, ['tasks', 'projects', 'sections', 'areas'])
@@ -401,7 +430,9 @@ const readPrepared = (
                 witness.lists.projects as Project[])
             || witness.recurrenceProjection !== null
             || (witness.settings.undoNotificationsEnabled !== undefined
-                && typeof witness.settings.undoNotificationsEnabled !== 'boolean')))) return null;
+                && typeof witness.settings.undoNotificationsEnabled !== 'boolean')))
+        || (isSave(request) && request.intent === 'skip'
+            && !canSkipNativeTaskOccurrence(witness.source, witness.lists.projects as Project[]))) return null;
     if (isSave(request)) {
         if (!validNativeTaskDraftBases(witness.source, draftRequest(request))
             || !same(toChecklist(witness.source.checklist), request.checklist.base)
@@ -515,6 +546,8 @@ export function createTaskChecklistSaveMethods(deps: {
         if (isSave(request)) {
             if (request.intent === 'cancel' && !canCancelNativeTask(task, state._allProjects, deps.isReadOnly(task)))
                 return fail('INVALID_INPUT', 'Task cannot be cancelled');
+            if (request.intent === 'skip' && !canSkipNativeTaskOccurrence(task, state._allProjects, deps.isReadOnly(task)))
+                return fail('INVALID_INPUT', 'Task cannot skip an occurrence');
             if (!validNativeTaskDraftBases(task, draftRequest(request))
                 || !same(toChecklist(task.checklist), request.checklist.base)) {
                 return fail('STALE_REVISION', 'Task changed while editing');
@@ -539,6 +572,10 @@ export function createTaskChecklistSaveMethods(deps: {
             const device = ensureDeviceId(state.settings);
             const direct = isSave(request) ? directSaveUpdates(task, request, preparedAt) : {};
             if (!direct) return fail('INVALID_INPUT', 'Checklist edit cannot produce a task update');
+            if (isSave(request) && request.intent === 'skip'
+                && !canSkipRecurringTaskOccurrence({ ...task, ...direct })) {
+                return fail('INVALID_INPUT', resolveI18nText(getTranslator(deps.language()), 'task.skipOccurrenceSaveFirst'));
+            }
             const source = JSON.parse(JSON.stringify(task)) as Task;
             const settings = JSON.parse(JSON.stringify({ deviceId: state.settings.deviceId,
                 gtd: { autoArchiveDays: state.settings.gtd?.autoArchiveDays,
@@ -556,8 +593,10 @@ export function createTaskChecklistSaveMethods(deps: {
                     .toISOString().slice(0, 10),
                 deviceIdBefore: state.settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null,
-                recurrenceProjection: isSave(request) && request.intent !== 'cancel' && request.patch.status === 'done' && task.status !== 'done'
+                recurrenceProjection: isSave(request) && !request.intent && request.patch.status === 'done' && task.status !== 'done'
                     && task.status !== 'archived' ? projectNextRecurringTask(task, preparedAt) : null,
+                ...(isSave(request) && request.intent === 'skip'
+                    ? { calendarTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } : {}),
                 ids: [], directClears: cleared(direct), direct: JSON.parse(JSON.stringify(direct)),
                 focusCount: countFocusedTasksBeforeBoundary(state.tasks, boundary),
                 focusLimit: normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit),

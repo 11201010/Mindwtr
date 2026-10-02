@@ -14784,17 +14784,21 @@ final class CoreModel: ObservableObject {
         Task { await readTaskView() }
     }
 
-    func saveTask(cancel: Bool = false) async {
+    enum TaskSaveIntent: String { case cancel, skip }
+
+    func saveTask(intent: TaskSaveIntent? = nil) async {
+        let cancel = intent == .cancel
         guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
               !taskAttachmentOpening,
               !taskLinkSheetActive,
               !taskPersonCreateOwed, !taskPersonCreateNeedsReview,
               taskChecklistWriteKind == nil, !taskChecklistReadPending else { return }
         guard !cancel || taskEditor.flag("canCancel") else { return }
-        guard taskDirty || cancel else { await discardCleanTaskSnapshotAndClose(); return }
+        guard intent != .skip || taskEditor.flag("canSkipOccurrence") else { return }
+        guard taskDirty || intent != nil else { await discardCleanTaskSnapshotAndClose(); return }
         let id = viewedTaskID
         let session = taskChecklistSession
-        if cancel { taskRecoveryOwn(["title"]) }
+        if intent != nil { taskRecoveryOwn(["title"]) }
         taskRecoverySaving = true
         busy = true
         taskError = nil
@@ -14859,7 +14863,7 @@ final class CoreModel: ObservableObject {
             }
             let checklistChanged = !taskDraftValuesEqual(taskChecklist, taskOriginalChecklist)
             let attachmentsChanged = !taskDraftValuesEqual(taskAttachments, taskOriginalAttachments)
-            let checklistSave = checklistChanged || lifecycleChanged || cancel
+            let checklistSave = checklistChanged || lifecycleChanged || intent != nil
             guard !patch.isEmpty || checklistSave || attachmentsChanged else {
                 taskRecoverySaving = false
                 await discardCleanTaskSnapshotAndClose()
@@ -14879,10 +14883,8 @@ final class CoreModel: ObservableObject {
                 request["checklist"] = ["base": taskOriginalChecklist, "value": taskChecklist]
                 request["requestId"] = UUID().uuidString.lowercased()
             }
-            if cancel {
-                request["intent"] = "cancel"
-                taskActionRequestID = request.text("requestId")
-            }
+            if let intent { request["intent"] = intent.rawValue }
+            if cancel { taskActionRequestID = request.text("requestId") }
             let payload = try json(request)
             if let snapshot = taskRecoverySnapshot {
                 guard let host else { throw CocoaError(.coderInvalidValue) }
@@ -15950,7 +15952,7 @@ final class CoreModel: ObservableObject {
 
     private func readTaskEditorLabels(_ editor: CoreObject) async throws {
         let options = editor.object("options")
-        var keys = ["taskEdit.duplicateTask", "task.updateFailed", "common.none", "common.share", "common.more", "share.unavailable", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
+        var keys = ["taskEdit.duplicateTask", "task.skipOccurrence", "task.updateFailed", "common.none", "common.share", "common.more", "share.unavailable", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
                     "taskEdit.scheduling", "taskEdit.organization", "taskEdit.details",
                     "taskEdit.contextsLabel", "taskEdit.contextsPlaceholder", "taskEdit.tagsLabel", "taskEdit.tagsPlaceholder",
                     "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder", "people.new", "taskEdit.statusLabel", "reference.convertToAction",

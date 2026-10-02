@@ -2033,6 +2033,45 @@ export function projectNextRecurringTask(
     };
 }
 
+/** Verify a frozen strict one-step calendar projection with the canonical projector.
+ * Date-only inputs make the rule and sibling-day calculation independent of the
+ * validating process's timezone. Explicit instants are interpreted in the
+ * preparing process's recorded calendar zone before that calculation.
+ */
+export function matchesAdvanceOneCalendarProjection(
+    task: Task,
+    completedAtIso: string,
+    projection: RecurrenceProjection | null,
+    calendarTimeZone: string,
+): boolean {
+    if (!projection || !canSkipRecurringTaskOccurrence(task)
+        || typeof calendarTimeZone !== 'string' || calendarTimeZone.length < 1
+        || calendarTimeZone.length > 100) return false;
+    let formatter: Intl.DateTimeFormat;
+    try {
+        formatter = new Intl.DateTimeFormat('en-US', { timeZone: calendarTimeZone,
+            year: 'numeric', month: '2-digit', day: '2-digit' });
+    } catch { return false; }
+    const localDay = (raw: string | undefined): string | undefined => {
+        if (!raw) return undefined;
+        if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) return /^\d{4}-\d{2}-\d{2}/.exec(raw)?.[0];
+        const epoch = Date.parse(raw);
+        if (!Number.isFinite(epoch)) return undefined;
+        const parts = Object.fromEntries(formatter.formatToParts(new Date(epoch))
+            .map((part) => [part.type, part.value]));
+        return parts.year && parts.month && parts.day ? `${parts.year}-${parts.month}-${parts.day}` : undefined;
+    };
+    const sourceDays = { startTime: localDay(task.startTime), dueDate: localDay(task.dueDate),
+        reviewAt: localDay(task.reviewAt) };
+    const candidateDays = { startTime: localDay(projection.candidate.startTime),
+        dueDate: localDay(projection.candidate.dueDate), reviewAt: localDay(projection.candidate.reviewAt) };
+    const calendarTask: Task = { ...task, ...sourceDays, relativeStartOffset: undefined };
+    const expected = projectNextRecurringTask(calendarTask, completedAtIso, true);
+    return Boolean(expected && (['startTime', 'dueDate', 'reviewAt'] as const).every((field) =>
+        field === 'startTime' && task.relativeStartOffset
+            ? true : candidateDays[field] === expected.candidate[field]));
+}
+
 /** Build one full follow-up row without recalculating local calendar dates. */
 export function buildNextRecurringTask(
     task: Task,

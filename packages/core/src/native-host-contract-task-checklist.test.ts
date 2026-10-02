@@ -4,6 +4,7 @@ import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from
 import type { AppData, Area, Project, Section, Task } from './types';
 import { createTaskDraft } from './task-draft';
 import { en } from './i18n/locales/en';
+import { createNextRecurringTask } from './recurrence';
 
 const clock = '2026-09-27T15:00:00.000Z';
 const item = (id: string, title: string, isCompleted = false) => ({ id, title, isCompleted });
@@ -12,6 +13,220 @@ const source = (overrides: Partial<Task> = {}): Task => ({
     createdAt: '2026-09-01T10:00:00.000Z', updatedAt: '2026-09-01T10:00:00.000Z',
     rev: 3, revBy: 'device-a', tags: [], contexts: [],
     checklist: [item('one', 'First'), item('two', 'Second')], ...overrides,
+});
+
+describe('prepared recurring occurrence Skip', () => {
+    const recurring = (overrides: Partial<Task> = {}): Task => source({
+        dueDate: '2026-09-27', recurrence: { rule: 'daily', strategy: 'strict' },
+        ...overrides,
+    });
+    const skipRequest = (task: Task, patch: Record<string, unknown> = {}, base: Record<string, unknown> = {}) => ({
+        id: task.id, requestId: id, intent: 'skip' as const, base, patch,
+        scheduleBase: { startTime: task.startTime ?? null, dueDate: task.dueDate ?? null,
+            relativeStartOffset: task.relativeStartOffset ?? null, reviewAt: task.reviewAt ?? null },
+        checklist: { base: task.checklist!, value: task.checklist! },
+    });
+    const preparedSkip = (host: Awaited<ReturnType<typeof open>>['host'], request: ReturnType<typeof skipRequest>) => {
+        const plan = unwrap(host.prepareTaskChecklistSave(request));
+        expect(plan.kind).toBe('prepared');
+        if (plan.kind !== 'prepared') throw new Error('Expected prepared Skip');
+        return plan.prepared;
+    };
+
+    it('archives a clean saved occurrence once and replays its exact child after restart', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(clock));
+        const original = recurring();
+        const { host, saved } = await open(original);
+        expect(unwrap(host.getTaskEditorModel({ id: original.id })).canSkipOccurrence).toBe(true);
+        const request = skipRequest(original);
+        const prepared = preparedSkip(host, request);
+        expect(prepared.result).toEqual({ id: original.id });
+        expect(prepared.effect.tasks).toHaveLength(2);
+        expect(unwrap(host.validatePreparedTaskChecklistWrite({ request, prepared }))).toEqual({ id: original.id });
+        expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared }))).toEqual({ id: original.id });
+        expect(savedTask()).toMatchObject({ status: 'archived', cancelledAt: clock, rev: 4 });
+        expect(savedTask().completedAt).toBeUndefined();
+        const child = saved().tasks.find((task) => task.id !== original.id)!;
+        expect(child).toMatchObject({ status: 'next', dueDate: '2026-09-28',
+            recurrence: { seriesId: original.id } });
+        const persisted = structuredClone(saved());
+        const cold = (await open(persisted.tasks[0], { tasks: persisted.tasks.slice(1) })).host;
+        vi.setSystemTime(new Date('2028-04-01T10:00:00.000Z'));
+        expect(unwrap(cold.validatePreparedTaskChecklistWrite({ request, prepared }))).toEqual({ id: original.id });
+        expect(unwrap(await cold.commitPreparedTaskChecklistWrite({ request, prepared }))).toEqual({ id: original.id });
+        expect(useTaskStore.getState()._allTasks).toHaveLength(2);
+        expect(useTaskStore.getState()._tasksById.get(child.id)).toEqual(child);
+    });
+
+    it('saves the draft into the skipped source and bases the next occurrence on that draft', async () => {
+        const original = recurring({ checklist: [item('one', 'First', true)], isFocusedToday: true,
+            focusOrder: 2 });
+        const { host } = await open(original);
+        const request = { ...skipRequest(original,
+            { title: 'Edited title', dueDate: '2026-10-01' },
+            { title: original.title, dueDate: '2026-09-27' }),
+            checklist: { base: original.checklist!, value: [item('one', 'First', false)] } };
+        const prepared = preparedSkip(host, request);
+        expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared }))).toEqual({ id: original.id });
+        expect(savedTask()).toMatchObject({ title: 'Edited title', status: 'archived', rev: 5,
+            isFocusedToday: false });
+        const child = useTaskStore.getState()._allTasks.find((task) => task.id !== original.id)!;
+        expect(child).toMatchObject({ title: 'Edited title', dueDate: '2026-10-02', status: 'next' });
+        expect(child.checklist?.[0]).toMatchObject({ title: 'First', isCompleted: false });
+    });
+
+    it('refuses ineligible saved and dirty tasks without saving, and rejects forged effects', async () => {
+        const original = recurring();
+        const { host, saves } = await open(original);
+        const before = saves();
+        for (const patch of [{ status: 'done' }, { status: 'reference' }]) {
+            expect(host.prepareTaskChecklistSave(skipRequest(original, patch, { status: original.status }))).toMatchObject({
+                ok: false, error: { code: 'INVALID_INPUT', message: en['task.skipOccurrenceSaveFirst'] },
+            });
+        }
+        expect(host.prepareTaskChecklistSave(skipRequest(original, { status: 'archived' },
+            { status: original.status }))).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const request = skipRequest(original);
+        const prepared = preparedSkip(host, request);
+        const forged = structuredClone(prepared);
+        forged.effect.tasks.find((row) => row.after.id === original.id)!.after.status = 'done';
+        expect(host.validatePreparedTaskChecklistWrite({ request, prepared: forged }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const forgedProjection = structuredClone(prepared);
+        forgedProjection.witness.recurrenceProjection!.candidate.dueDate = '2030-01-01';
+        expect(host.validatePreparedTaskChecklistWrite({ request, prepared: forgedProjection }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const coordinated = structuredClone(prepared);
+        coordinated.witness.recurrenceProjection!.candidate.dueDate = '2026-10-28';
+        coordinated.effect.tasks.find((row) => row.after.id !== original.id)!.after.dueDate = '2026-10-28';
+        coordinated.effect.guards.recurringCandidate!.dueDate = '2026-10-28';
+        expect(host.validatePreparedTaskChecklistWrite({ request, prepared: coordinated }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const paired = recurring({ startTime: '2026-09-25' });
+        const pairedHost = (await open(paired)).host;
+        const pairedRequest = skipRequest(paired);
+        const pairedPrepared = preparedSkip(pairedHost, pairedRequest);
+        const forgedSibling = structuredClone(pairedPrepared);
+        forgedSibling.witness.recurrenceProjection!.candidate.startTime = '2026-10-25';
+        forgedSibling.effect.tasks.find((row) => row.after.id !== paired.id)!.after.startTime = '2026-10-25';
+        forgedSibling.effect.guards.recurringCandidate!.startTime = '2026-10-25';
+        expect(pairedHost.validatePreparedTaskChecklistWrite({ request: pairedRequest, prepared: forgedSibling }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(saves()).toBe(before);
+        for (const task of [recurring({ recurrence: { rule: 'daily', strategy: 'fluid' } }),
+            recurring({ dueDate: undefined, startTime: undefined }), recurring({ status: 'done' })]) {
+            const blocked = await open(task);
+            expect(unwrap(blocked.host.getTaskEditorModel({ id: task.id })).canSkipOccurrence).toBe(false);
+            expect(blocked.host.prepareTaskChecklistSave(skipRequest(task)))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+    });
+
+    it('matches shared advanceOne for dated, timed, start-only, paired, and bounded recurrences', async () => {
+        const cases: Array<[string, Partial<Task>]> = [
+            ['daily due', { dueDate: '2026-09-27', recurrence: { rule: 'daily', strategy: 'strict' } }],
+            ['weekly timed due', { dueDate: '2026-09-27T09:30:00',
+                recurrence: { rule: 'weekly', strategy: 'strict' } }],
+            ['monthly nth start', { startTime: '2026-09-28', dueDate: undefined,
+                recurrence: { rule: 'monthly', strategy: 'strict', byDay: ['MO'], bySetPos: -1,
+                    rrule: 'FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-1' } }],
+            ['yearly paired', { startTime: '2026-09-25', dueDate: '2026-09-27',
+                recurrence: { rule: 'yearly', strategy: 'strict' } }],
+            ['count end', { dueDate: '2026-09-27',
+                recurrence: { rule: 'daily', strategy: 'strict', count: 1, completedOccurrences: 0,
+                    rrule: 'FREQ=DAILY;COUNT=1' } }],
+            ['count continues', { dueDate: '2026-09-27',
+                recurrence: { rule: 'daily', strategy: 'strict', count: 5, completedOccurrences: 0,
+                    rrule: 'FREQ=DAILY;COUNT=5' } }],
+        ];
+        for (const [label, fields] of cases) {
+            const original = recurring(fields);
+            const { host } = await open(original);
+            const request = skipRequest(original);
+            const prepared = preparedSkip(host, request);
+            const expected = createNextRecurringTask(original, prepared.witness.preparedAt, original.status,
+                { advanceOne: true });
+            const child = prepared.effect.tasks.find((row) => row.after.id !== original.id)?.after;
+            expect(child?.startTime, label).toBe(expected?.startTime);
+            expect(child?.dueDate, label).toBe(expected?.dueDate);
+            expect(child?.reviewAt, label).toBe(expected?.reviewAt);
+            expect(child?.status, label).toBe(expected?.status);
+            expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared })), label)
+                .toEqual({ id: original.id });
+            expect(useTaskStore.getState()._allTasks, label).toHaveLength(expected ? 2 : 1);
+        }
+    });
+
+    it('does not duplicate a preexisting follow-up and refuses an intervening source writer', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(clock));
+        const original = recurring();
+        const existing = createNextRecurringTask(original, clock, original.status,
+            { advanceOne: true })!;
+        const { host } = await open(original, { tasks: [existing] });
+        const request = skipRequest(original);
+        const prepared = preparedSkip(host, request);
+        expect(prepared.effect.tasks).toHaveLength(1);
+        expect(unwrap(await host.commitPreparedTaskChecklistWrite({ request, prepared })))
+            .toEqual({ id: original.id });
+        expect(useTaskStore.getState()._allTasks).toHaveLength(2);
+        const another = await open(original);
+        const staleRequest = skipRequest(original);
+        const stale = preparedSkip(another.host, staleRequest);
+        await useTaskStore.getState().updateTask(original.id, { description: 'Another writer' });
+        await flushPendingSave();
+        expect(await another.host.commitPreparedTaskChecklistWrite({ request: staleRequest, prepared: stale }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(useTaskStore.getState()._allTasks).toHaveLength(1);
+        expect(savedTask().description).toBe('Another writer');
+    });
+
+    it('validates the frozen timed projection after process timezone and clock change', async () => {
+        const previousZone = process.env.TZ;
+        try {
+            process.env.TZ = 'America/New_York';
+            vi.useFakeTimers({ toFake: ['Date'] });
+            vi.setSystemTime(new Date(clock));
+            const original = recurring({ dueDate: '2026-09-27T09:30:00' });
+            const { host } = await open(original);
+            const request = skipRequest(original);
+            const prepared = preparedSkip(host, request);
+            process.env.TZ = 'UTC';
+            vi.setSystemTime(new Date('2028-04-01T10:00:00.000Z'));
+            const cold = createNativeHostContract();
+            unwrap(await cold.activate({ writeSafetyReady: true, recoveryLoad: true }));
+            expect(unwrap(cold.validatePreparedTaskChecklistWrite({ request, prepared }))).toEqual({ id: original.id });
+            expect(unwrap(await cold.commitPreparedTaskChecklistWrite({ request, prepared }))).toEqual({ id: original.id });
+            expect(useTaskStore.getState()._allTasks).toHaveLength(2);
+        } finally {
+            if (previousZone === undefined) delete process.env.TZ;
+            else process.env.TZ = previousZone;
+        }
+    });
+
+    it('replays a spring-forward wall time and hourly relative start in the preparing zone', async () => {
+        const previousZone = process.env.TZ;
+        try {
+            process.env.TZ = 'America/New_York';
+            vi.useFakeTimers({ toFake: ['Date'] });
+            vi.setSystemTime(new Date('2026-03-01T15:00:00.000Z'));
+            const original = recurring({ dueDate: '2026-03-01T02:30',
+                startTime: '2026-03-01T01:30', relativeStartOffset: { amount: -1, unit: 'hour' },
+                recurrence: { rule: 'weekly', strategy: 'strict' } });
+            const { host } = await open(original);
+            const request = skipRequest(original);
+            const prepared = preparedSkip(host, request);
+            const child = prepared.effect.tasks.find((row) => row.after.id !== original.id)!.after;
+            expect(child.dueDate).toBe('2026-03-08T03:30');
+            process.env.TZ = 'UTC';
+            expect(unwrap(host.validatePreparedTaskChecklistWrite({ request, prepared })))
+                .toEqual({ id: original.id });
+        } finally {
+            if (previousZone === undefined) delete process.env.TZ;
+            else process.env.TZ = previousZone;
+        }
+    });
 });
 
 describe('prepared task cancellation and Undo', () => {

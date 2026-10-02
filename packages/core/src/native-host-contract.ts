@@ -256,7 +256,7 @@ import { createQuickCaptureMethods } from './native-host-contract-quick-capture'
 import { createMindSweepMethods } from './native-host-contract-mind-sweep';
 import { createTaskDraftSaveMethods, getNativeTaskScheduleBase, getNativeTaskRecurrenceBase, type NativeTaskScheduleBase, type NativeTaskRecurrenceBase } from './native-host-contract-task-save';
 import { createTaskEditorResumeMethods } from './native-host-contract-task-editor-resume';
-import { canCancelNativeTask, createTaskChecklistSaveMethods } from './native-host-contract-task-checklist';
+import { canCancelNativeTask, canSkipNativeTaskOccurrence, createTaskChecklistSaveMethods } from './native-host-contract-task-checklist';
 import { createTaskFocusMethods } from './native-host-contract-task-focus';
 import { createFocusOrderMethods } from './native-host-contract-focus-order';
 import { createFocusSavedFilterMethods } from './native-host-contract-focus-saved-filter';
@@ -371,6 +371,7 @@ export type NativeTaskEditorModel = TaskEditorModel & {
     taskRevision: string;
     readOnly: boolean;
     canCancel: boolean;
+    canSkipOccurrence: boolean;
     cancelLabel: string;
     /** createTaskDraft(task). Fields whose value is undefined are absent over JSON. */
     draft: TaskDraft;
@@ -1514,6 +1515,7 @@ export function createNativeHostContract(options: {
             taskRevision: taskRevisionOf(task),
             readOnly: isInArchivedProject(task),
             canCancel: canCancelNativeTask(task, state._allProjects, isInArchivedProject(task)),
+            canSkipOccurrence: canSkipNativeTaskOccurrence(task, state._allProjects, isInArchivedProject(task)),
             cancelLabel: task.recurrence
                 ? tFallback(translate, 'task.cancelRecurringSeries', 'Cancel recurring series')
                 : tFallback(translate, 'task.cancel', 'Cancel task'),

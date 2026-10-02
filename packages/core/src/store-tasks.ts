@@ -46,7 +46,8 @@ import {
 } from './task-status';
 import { beginNotifyProfile, endNotifyProfile, type NotifyProfile } from './store-notify-profiler';
 import { generateUUID as uuidv4 } from './uuid';
-import { canSkipRecurringTaskOccurrence, createNextRecurringTask, normalizeRecurrenceForLoad, type RecurrenceProjection } from './recurrence';
+import { buildNextRecurringTask, canSkipRecurringTaskOccurrence, createNextRecurringTask,
+    normalizeRecurrenceForLoad, type RecurrenceProjection } from './recurrence';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import { resolveProcessInboxPlan } from './process-inbox-plan';
 import { boardOrderForDuplicate, countFocusedTasksBeforeBoundary, isTaskFutureFocusCandidate,
@@ -431,6 +432,34 @@ export const planTaskUpdateEffects = ({
     );
     return { updatedTask, recurringFollowUpTask, recurringCandidateTask: stampedNextRecurringTask,
         recurringDuplicateTask, ...projectReactivation };
+};
+
+/** Archive one already-resolved occurrence and plan its frozen next instance. */
+export const planSkippedRecurringOccurrence = ({ task, allTasks, now, deviceId, projection, createId }: {
+    task: Task;
+    allTasks: Task[];
+    now: string;
+    deviceId: string;
+    /** Native prepared writes pass this frozen value; RN computes at the action boundary. */
+    projection?: RecurrenceProjection | null;
+    createId?: () => string;
+}): { updatedTask: Task; recurringCandidateTask: Task | null; recurringDuplicateTask: Task | null;
+    recurringFollowUpTask: Task | null; tasks: Task[] } => {
+    if (!canSkipRecurringTaskOccurrence(task)) throw new Error('Task cannot skip an occurrence');
+    const { updatedTask } = applyTaskUpdates(task, {
+        status: 'archived', cancelledAt: now, rev: nextRevision(task.rev), revBy: deviceId,
+    }, now);
+    const recurringCandidateTask = stampNewRecurringFollowUp(
+        projection === undefined
+            ? createNextRecurringTask(task, now, task.status, { advanceOne: true, createId })
+            : buildNextRecurringTask(task, now, task.status, projection, createId),
+        deviceId, getTaskOrder(task), (projectId) => getNextProjectOrder(projectId, allTasks),
+    );
+    const recurringDuplicateTask = findExistingRecurringFollowUp(allTasks, recurringCandidateTask, task.id);
+    const recurringFollowUpTask = recurringDuplicateTask ? null : recurringCandidateTask;
+    const updatedTasks = replaceEntityInArray(allTasks, task.id, updatedTask);
+    return { updatedTask, recurringCandidateTask, recurringDuplicateTask, recurringFollowUpTask,
+        tasks: recurringFollowUpTask ? [...updatedTasks, recurringFollowUpTask] : updatedTasks };
 };
 
 /** The bounded Focus witness contains only columns consulted by eligibility and the cap. */
@@ -1595,23 +1624,9 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         set((state) => {
             const currentTask = state._tasksById.get(id)!;
             const deviceState = ensureDeviceId(state.settings);
-            const { updatedTask } = applyTaskUpdates(currentTask, {
-                status: 'archived',
-                cancelledAt: now,
-                rev: nextRevision(currentTask.rev),
-                revBy: deviceState.deviceId,
-            }, now);
-            const nextTask = stampNewRecurringFollowUp(
-                createNextRecurringTask(currentTask, now, currentTask.status, { advanceOne: true }),
-                deviceState.deviceId,
-                getTaskOrder(currentTask),
-                (projectId) => getNextProjectOrder(projectId, state._allTasks),
-            );
-            const followUp = findExistingRecurringFollowUp(state._allTasks, nextTask, id)
-                ? null
-                : nextTask;
-            const updatedTasks = replaceEntityInArray(state._allTasks, id, updatedTask);
-            const tasks = followUp ? [...updatedTasks, followUp] : updatedTasks;
+            const tasks = planSkippedRecurringOccurrence({ task: currentTask, allTasks: state._allTasks,
+                now, deviceId: deviceState.deviceId,
+                createId: uuidv4 }).tasks;
             persist(set, debouncedSave, state, {
                 tasks,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
