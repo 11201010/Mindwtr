@@ -566,6 +566,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # The iOS host runs the same bundle and edits host-entry.ts too: the boot gates catch an
+      # edit that breaks an Android guarantee (journaled writes, reads after a failed save, pins).
+      - name: Build the native core bundle
+        run: node apps/android-native/scripts/build-bundle.mjs
+
+      - name: Android native boot gates
+        run: node apps/android-native/scripts/check-boot-gates.mjs
+
       - name: Build Android Compose client
         working-directory: apps/android-native/android
         run: ./gradlew :app:assembleDebug --no-daemon
