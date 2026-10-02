@@ -195,7 +195,7 @@ private final class Engine: @unchecked Sendable {
     private static let methods: [String: Int] = [
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
         "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1,
-        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "taskShare": 1, "taskViewReferenceTarget": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentOpen": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
+        "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "taskShare": 1, "taskOpenTab": 1, "taskViewReferenceTarget": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentOpen": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
         "projects": 0, "projectDetail": 4, "projectNotes": 4, "projectAttachmentList": 1, "projectAttachmentOpen": 1, "projectCreateOptions": 0, "projectCreate": 1, "projectCreateRetryOutcome": 1,
         "projectSectionOptions": 1, "projectSectionCreate": 1, "projectSectionCreateRetryOutcome": 1,
         "projectSectionRenameOptions": 1, "projectSectionRename": 1, "projectSectionRenameRetryOutcome": 1,
@@ -945,7 +945,7 @@ private final class Engine: @unchecked Sendable {
                 "somedaySectionMoveRetryOutcome", "somedaySectionMoveUndoRetryOutcome"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
-            if ["gtdArchiveOptions", "gtdTaskEditorFieldOptions"].contains(method), pending == nil {
+            if ["gtdArchiveOptions", "gtdTaskEditorFieldOptions", "taskOpenTab"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
             // Mind Sweep has no journal or write before argument validation.
@@ -1054,7 +1054,7 @@ private final class Engine: @unchecked Sendable {
                     if ["taskAttachmentList", "taskAttachmentOpen", "taskAttachmentLinks", "taskAttachmentRemove"].contains(method) {
                         throw HostFailure("Attachment draft command failed")
                     }
-                    guard ["gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions"].contains(method), failure.message.hasPrefix("INVALID_INPUT:") else { throw failure }
+                    guard ["gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "taskOpenTab"].contains(method), failure.message.hasPrefix("INVALID_INPUT:") else { throw failure }
                     throw CoreHostRejection(message: failure.message)
                 }
             }
@@ -1065,6 +1065,14 @@ private final class Engine: @unchecked Sendable {
                       share["title"] is String || share["title"] is NSNull,
                       let message = share["message"] as? String, !message.isEmpty else {
                     throw HostFailure("Malformed Task Share response")
+                }
+            }
+            if method == "taskOpenTab" {
+                guard value.utf8.count <= 128,
+                      let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(result.keys) == Set(["tab"]),
+                      ["task", "view"].contains(result["tab"] as? String ?? "") else {
+                    throw HostFailure("Malformed Task open tab")
                 }
             }
             if method == "appLockOptions" {
@@ -1135,8 +1143,25 @@ private final class Engine: @unchecked Sendable {
                       let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
                       Set(options.keys) == Set(["taskEditor", "expected"]),
                       let editor = options["taskEditor"] as? [String: Any],
-                      Set(editor.keys) == Set(["title", "description", "presets", "reset"]),
+                      Set(editor.keys) == Set(["title", "description", "presets", "reset", "openMode"]),
                       editor["title"] is String, editor["description"] is String,
+                      let openMode = editor["openMode"] as? [String: Any],
+                      Set(openMode.keys) == Set(["label", "description", "options"]),
+                      let openLabel = openMode["label"] as? String, !openLabel.isEmpty, openLabel.utf16.count <= 500,
+                      let openDescription = openMode["description"] as? String, openDescription.utf16.count <= 1_000,
+                      let modeOptions = openMode["options"] as? [[String: Any]], modeOptions.count == 3,
+                      modeOptions.compactMap({ $0["value"] as? String }) == ["automatic", "preview", "edit"],
+                      modeOptions.filter({ $0["selected"] as? Bool == true }).count == 1,
+                      modeOptions.allSatisfy({ option in
+                          guard Set(option.keys) == Set(["value", "label", "selected", "edit"]),
+                                let mode = option["value"] as? String,
+                                let label = option["label"] as? String, !label.isEmpty, label.utf16.count <= 500,
+                                Self.isBoolean(option["selected"]),
+                                let edit = option["edit"] as? [String: Any],
+                                Set(edit.keys) == Set(["type", "value"]),
+                                edit["type"] as? String == "taskOpenMode", edit["value"] as? String == mode else { return false }
+                          return true
+                      }),
                       let reset = editor["reset"] as? [String: Any],
                       Set(reset.keys) == Set(["label", "edit"]),
                       let resetLabel = reset["label"] as? String, !resetLabel.isEmpty, resetLabel.utf16.count <= 500,
@@ -6202,6 +6227,9 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func arguments(_ method: String, _ json: String, allowPreparedDates: Bool = true) throws -> [Any] {
+        if method == "taskOpenTab", json.utf8.count > 4_096 {
+            throw HostFailure("INVALID_INPUT: Task open tab request is too large")
+        }
         if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo"].contains(method), json.utf8.count > 4_096 {
             throw HostFailure("INVALID_INPUT: Task mutation request too large")
         }
@@ -6686,7 +6714,7 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Process Inbox needs a bounded step object")
             }
         }
-        if ["inboxView", "captureView", "captureEdit", "captureSubmit", "setAreaFilter", "taskView", "taskViewReferenceTarget", "editDraft", "destinationPicker", "search", "mindSweepGuide", "mindSweepAdd",
+        if ["inboxView", "captureView", "captureEdit", "captureSubmit", "setAreaFilter", "taskView", "taskOpenTab", "taskViewReferenceTarget", "editDraft", "destinationPicker", "search", "mindSweepGuide", "mindSweepAdd",
             "calendarComposerOpen", "calendarComposerEdit", "calendarComposerSave", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome",
             "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectAttachmentWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
             guard let json = args.first as? String,
@@ -7268,6 +7296,16 @@ private final class Engine: @unchecked Sendable {
                 }
             }
         }
+        if method == "taskOpenTab" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_048,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["rawMode", "automaticTab", "explicitEdit", "readOnly"]),
+                  input["rawMode"] is NSNull || (input["rawMode"] as? String).map({ $0.utf16.count <= 200 }) == true,
+                  ["task", "view"].contains(input["automaticTab"] as? String ?? ""),
+                  Self.isBoolean(input["explicitEdit"]), Self.isBoolean(input["readOnly"]) else {
+                throw HostFailure("INVALID_INPUT: Task open tab requires a bounded mode and explicit opening context")
+            }
+        }
         if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 8_192,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else {
@@ -7280,7 +7318,12 @@ private final class Engine: @unchecked Sendable {
                       let limit = input["limit"] as? Int, (1...100).contains(limit),
                       input["revision"] == nil || (input["revision"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 100 }) == true,
                       offset == 0 || input["revision"] is String else { throw HostFailure("INVALID_INPUT: Invalid Capture default area page") }
-            } else if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions"].contains(method) {
+            } else if method == "gtdTaskEditorPresetOptions" {
+                guard input.isEmpty || (Set(input.keys) == Set(["rawMode"])
+                    && (input["rawMode"] is NSNull || (input["rawMode"] as? String).map({ $0.utf16.count <= 200 }) == true)) else {
+                    throw HostFailure("INVALID_INPUT: Task Editor options require an optional bounded local mode")
+                }
+            } else if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorFieldOptions"].contains(method) {
                 guard input.isEmpty else { throw HostFailure("INVALID_INPUT: GTD workflow options take an empty object") }
             } else if method == "gtdWorkflowDraft" {
                 guard Set(input.keys) == Set(["value"]), (input["value"] as? String).map({ $0.utf16.count <= 50 }) == true else {

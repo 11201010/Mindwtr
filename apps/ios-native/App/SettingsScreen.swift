@@ -336,6 +336,30 @@ struct SettingsScreen: View {
     private var gtdTaskEditorContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                let openMode = model.gtdTaskEditor.object("openMode")
+                if !openMode.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(openMode.text("label")).rnFont(16, .semibold).foregroundStyle(palette.text)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(openMode.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        let options = openMode.objects("options")
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: dynamicTypeSize.isAccessibilitySize ? 1 : 3), spacing: 4) {
+                            ForEach(options.indices, id: \.self) { index in
+                                let option = options[index]
+                                Button { Task { await model.chooseTaskOpenMode(option.object("edit")) } } label: {
+                                    Text(option.text("label")).rnFont(14, .semibold)
+                                        .foregroundStyle(option.flag("selected") ? palette.tint : palette.secondary)
+                                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                                        .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 6)
+                                        .background(option.flag("selected") ? palette.filter : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                                }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
+                                    .accessibilityAddTraits(option.flag("selected") ? .isSelected : [])
+                                    .accessibilityIdentifier("gtd-taskOpenMode-" + option.text("value"))
+                            }
+                        }.padding(4).background(palette.bg, in: RoundedRectangle(cornerRadius: 10))
+                    }.padding(14).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                }
                 let presets = model.gtdTaskEditor.object("presets")
                 if !presets.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {

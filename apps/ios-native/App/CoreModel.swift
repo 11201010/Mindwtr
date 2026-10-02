@@ -560,7 +560,8 @@ final class CoreModel: ObservableObject {
     @Published var capturePresented = false
     @Published private(set) var areaPickerPresented = false
     @Published private(set) var taskPresented = false
-    var taskInitialTab = "view"
+    @Published private(set) var taskInitialTab = "view"
+    private var taskOpeningIntent: CoreObject?
     @Published private(set) var taskView: CoreObject = [:]
     @Published private(set) var taskError: String?
     @Published private(set) var taskEditor: CoreObject = [:] {
@@ -1065,6 +1066,15 @@ final class CoreModel: ObservableObject {
     private var storedLanguage = ""
     private var storedTheme = ""
     private var devicePreferencePrefix = ""
+    private var initialTaskOpenMode: String?
+    private var taskOpenModePreference: String { devicePreferencePrefix + "mindwtr:view:taskOpenMode:v1" }
+    private var rawTaskOpenMode: Any {
+        let raw: String?
+        if let stored = preferenceDefaults.object(forKey: taskOpenModePreference) { raw = stored as? String }
+        else { raw = initialTaskOpenMode }
+        guard let raw, raw.utf16.count <= 200 else { return NSNull() }
+        return raw
+    }
     private var initialAddAnother = false
 
     var focusControlsEnabled: Bool {
@@ -2415,6 +2425,7 @@ final class CoreModel: ObservableObject {
     }
     func setTaskInitialTab(_ tab: String) {
         guard ["task", "view"].contains(tab) else { return }
+        taskOpeningIntent = nil
         taskInitialTab = tab
         if taskRecoverySnapshot != nil { checkpointTaskDraft() }
     }
@@ -2587,6 +2598,7 @@ final class CoreModel: ObservableObject {
                     storedLanguage = try legacy.value(forKey: "mindwtr-language") ?? ""
                     storedTheme = try legacy.value(forKey: "@mindwtr_theme") ?? ""
                     devicePreferencePrefix = "nativeRNRehearsal."
+                    initialTaskOpenMode = try legacy.value(forKey: "mindwtr:view:taskOpenMode:v1")
                     initialAddAnother = try legacy.value(forKey: "mindwtr:quickCapture:addAnother") == "true"
                     preference = "nativeRNRehearsal.capture.addAnother"
                     initialProjectShowCompleted = try legacy.value(forKey: "mindwtr:view:project-detail:show-completed:v1") == "true"
@@ -3112,7 +3124,7 @@ final class CoreModel: ObservableObject {
         if editing {
             gtdTaskEditorPresetError = nil
             do {
-                let presets = try await query("gtdTaskEditorPresetOptions", ["{}"])
+                let presets = try await query("gtdTaskEditorPresetOptions", [try json(["rawMode": rawTaskOpenMode])])
                 let presetExpected = presets.object("expected")
                 guard fields.allSatisfy({ field in
                     let witness = expected.object(field)
@@ -3121,6 +3133,7 @@ final class CoreModel: ObservableObject {
                 }) else { throw CocoaError(.coderReadCorrupt) }
                 content["presets"] = presets.object("taskEditor").object("presets")
                 content["reset"] = presets.object("taskEditor").object("reset")
+                content["openMode"] = presets.object("taskEditor").object("openMode")
                 expected["taskEditorPreset"] = presetExpected
                 expected["taskEditorReset"] = presetExpected
                 let fieldOptions = try await query("gtdTaskEditorFieldOptions", ["{}"])
@@ -3162,6 +3175,25 @@ final class CoreModel: ObservableObject {
         gtdWorkflowExpected = expected
         gtdWorkflowReadError = nil
         gtdWorkflowAwaitingRefresh = false
+    }
+
+    func chooseTaskOpenMode(_ edit: CoreObject) async {
+        guard gtdWorkflowEnabled, settingsGtdTaskEditorPresented,
+              let option = gtdTaskEditor.object("openMode").objects("options").first(where: {
+                  taskDraftValuesEqual($0.object("edit"), edit)
+              }), !option.flag("selected") else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let options = try await query("gtdTaskEditorPresetOptions", [try json(["rawMode": option.text("value")])])
+            let mode = options.object("taskEditor").object("openMode")
+            guard mode.objects("options").first(where: { $0.flag("selected") })?.text("value") == option.text("value") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            preferenceDefaults.set(option.text("value"), forKey: taskOpenModePreference)
+            gtdTaskEditor["openMode"] = mode
+            gtdTaskEditorPresetError = nil
+        } catch { gtdTaskEditorPresetError = error.localizedDescription }
     }
 
     func toggleGtdTaskEditorGroup(_ id: String) {
@@ -14151,11 +14183,14 @@ final class CoreModel: ObservableObject {
                 $0.text("type") == "task" && $0.object("row").text("id") == id
             }) else { return }
         }
-        prepareTaskPresentation(id)
+        prepareTaskPresentation(id, automaticTab: selectedSurface == .inbox ? "task" : "view")
         await readTaskView()
     }
 
-    private func prepareTaskPresentation(_ id: String, initialTab: String = "view") {
+    private func prepareTaskPresentation(_ id: String, initialTab: String = "view", automaticTab: String = "view") {
+        taskOpeningIntent = taskRecoveryHydrating ? nil : [
+            "rawMode": rawTaskOpenMode, "automaticTab": automaticTab,
+            "explicitEdit": initialTab == "task"]
         taskPersonCreateReadRetry = nil
         taskPersonCreateReadError = nil
         taskRecoverySession = UUID().uuidString.lowercased()
@@ -16154,6 +16189,17 @@ final class CoreModel: ObservableObject {
                     let editor = try await query("editorModel", [id])
                     try await readTaskEditorLabels(editor)
                     guard taskPresented, viewedTaskID == id, taskChecklistSession == session else { return }
+                    if var intent = taskOpeningIntent {
+                        intent["readOnly"] = editor.flag("readOnly")
+                        let opening = try await query("taskOpenTab", [try json(intent)])
+                        guard taskPresented, viewedTaskID == id, taskChecklistSession == session else { return }
+                        // Resolve before publishing the editor. A manual/recovered tab is already user intent.
+                        if taskOpeningIntent != nil {
+                            taskInitialTab = opening.text("tab")
+                            taskOpeningIntent = nil
+                            NSLog("Native iOS Task opening mode resolved releaseCheck=v1.3.4/ios-task-opening-mode tab=\(opening.text("tab"))")
+                        }
+                    }
                     taskEditor = editor
                     taskOriginalDraft = editor.object("draft")
                     taskOriginalSchedule = editor.object("scheduleBase")

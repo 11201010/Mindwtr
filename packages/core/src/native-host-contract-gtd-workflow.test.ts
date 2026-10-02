@@ -738,7 +738,74 @@ describe('prepared GTD Task Editor field visibility', () => {
     });
 });
 
+describe('native task opening read', () => {
+    it.each([
+        [null, 'task', false, false, 'task'],
+        ['unknown', 'view', false, false, 'view'],
+        ['preview', 'task', false, false, 'view'],
+        ['edit', 'view', false, false, 'task'],
+        ['preview', 'view', true, false, 'task'],
+        ['edit', 'task', true, true, 'view'],
+    ] as const)('resolves %s / %s / explicit %s / readOnly %s', async (
+        rawMode, automaticTab, explicitEdit, readOnly, tab,
+    ) => {
+        const env = await open(initial());
+        expect(env.host.getTaskOpenTab({ rawMode, automaticTab, explicitEdit, readOnly }))
+            .toEqual({ ok: true, value: { tab } });
+        expect(env.saves()).toBe(0);
+    });
+
+    it('rejects malformed or unbounded requests before any read or write', async () => {
+        const env = await open(initial());
+        const valid = { rawMode: 'preview', automaticTab: 'task', explicitEdit: false, readOnly: false };
+        for (const input of [null, {}, { ...valid, automaticTab: 'other' },
+            { ...valid, explicitEdit: 1 }, { ...valid, readOnly: null },
+            { ...valid, rawMode: 1 }, { ...valid, rawMode: 'x'.repeat(201) },
+            { ...valid, extra: true }]) {
+            expect(env.host.getTaskOpenTab(input)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        }
+        expect(env.host.getTaskOpenTab({ ...valid, rawMode: 'x'.repeat(200) }))
+            .toEqual({ ok: true, value: { tab: 'task' } });
+        expect(env.saves()).toBe(0);
+    });
+});
+
 describe('prepared GTD Task Editor presets', () => {
+    it('projects device-local opening choices without changing the GTD witness or saved data', async () => {
+        const env = await open(initial());
+        const absent = await env.host.getGtdTaskEditorPresetOptions({});
+        if (!absent.ok) throw new Error(JSON.stringify(absent));
+        for (const rawMode of [null, 'automatic', 'preview', 'edit', 'unexpected']) {
+            const read = await env.host.getGtdTaskEditorPresetOptions({ rawMode });
+            if (!read.ok) throw new Error(JSON.stringify(read));
+            const { openMode } = read.value.taskEditor;
+            expect(Object.keys(openMode).sort()).toEqual(['description', 'label', 'options']);
+            expect(openMode.options.map((option) => option.value)).toEqual(['automatic', 'preview', 'edit']);
+            expect(openMode.options.map((option) => option.edit)).toEqual([
+                { type: 'taskOpenMode', value: 'automatic' },
+                { type: 'taskOpenMode', value: 'preview' },
+                { type: 'taskOpenMode', value: 'edit' },
+            ]);
+            expect(openMode.options.filter((option) => option.selected).map((option) => option.value))
+                .toEqual([rawMode === 'preview' || rawMode === 'edit' ? rawMode : 'automatic']);
+            expect(read.value.expected).toEqual(absent.value.expected);
+        }
+        expect(env.saves()).toBe(0);
+        expect(env.data()).toEqual(initial());
+    });
+
+    it('rejects malformed opening read requests but falls back for bounded unknown mode text', async () => {
+        const env = await open(initial());
+        for (const input of [{ rawMode: 1 }, { rawMode: false }, { rawMode: {} },
+            { rawMode: 'x'.repeat(201) }, { rawMode: null, extra: 1 }]) {
+            expect(await env.host.getGtdTaskEditorPresetOptions(input)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        }
+        expect((await env.host.getGtdTaskEditorPresetOptions({ rawMode: 'x'.repeat(200) })).ok).toBe(true);
+        expect(env.saves()).toBe(0);
+    });
+
     it.each(['simple', 'standard', 'full'] as const)('uses shared %s preset layout and exact composite receipt', async (value) => {
         const start = initial();
         start.tasks.push({ id: 'preset-editor', title: 'Preset editor', status: 'next', tags: [], contexts: [],

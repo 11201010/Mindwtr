@@ -271,6 +271,7 @@ struct TaskViewSheet: View {
             editing = model.taskInitialTab == "task"
             initializeSections()
         }
+        .onChange(of: model.taskInitialTab) { tab in editing = tab == "task" }
         .onChange(of: model.taskEditor.text("id")) { _ in waitingAssignment = nil; backdatedCompletion = nil; initializeSections() }
         .onChange(of: model.taskEditorSession) { _ in waitingAssignment = nil; backdatedCompletion = nil }
         .onDisappear { backdatedCompletion = nil }
