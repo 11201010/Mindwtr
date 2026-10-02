@@ -141,6 +141,16 @@ async function planPreset(host: ReturnType<typeof createNativeHostContract>, val
     return { request, prepared: prepared.value.prepared };
 }
 
+async function planField(host: ReturnType<typeof createNativeHostContract>, field: 'description', value: boolean) {
+    const options = await host.getGtdTaskEditorFieldOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID,
+        edit: { type: 'taskEditorFieldVisible', field, value }, expected: options.value.expected };
+    const prepared = await host.prepareGtdWorkflow(request);
+    if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+    return { request, prepared: prepared.value.prepared };
+}
+
 const tables = ['tasks', 'projects', 'areas', 'people', 'sections', 'settings', 'saved_filters',
     'schema_migrations', 'calendar_sync'] as const;
 const nineTables = (db: Database) => Object.fromEntries(tables.map((table) =>
@@ -720,5 +730,41 @@ describe('GTD Task Editor presets use the composite v1 receipt', () => {
         expect(await sameTarget.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
             error: { code: 'STALE_REVISION' } });
         expect(nineTables(sameTarget.db)).toEqual(beforeSame);
+    }, 20_000);
+});
+
+describe('GTD Task Editor field visibility uses the composite v1 receipt', () => {
+    it('retries failed COMMIT, preserves other raw tables, and cold-replays the exact hidden selection', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-editor-field-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const seed = initial(); seed.settings.features = { priorities: false, timeEstimates: false };
+        const first = await open(path, true, seed);
+        const before = nineTables(first.db);
+        const beforeSettings = (await first.adapter.getData()).settings;
+        const envelope = await planField(first.host, 'description', false);
+        expect(envelope.prepared.after.selected?.hidden.value).toContain('description');
+        first.fault.commits = 10;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            expect(await first.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'SAVE_FAILED' } });
+            expect(nineTables(first.db)).toEqual(before);
+        }
+        first.fault.commits = 0;
+        expect(await first.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const saved = nineTables(first.db);
+        for (const table of tables.filter((name) => name !== 'settings')) expect(saved[table]).toEqual(before[table]);
+        const settings = (await first.adapter.getData()).settings;
+        expect(settings.gtd?.taskEditor?.hidden).toEqual(envelope.prepared.after.selected?.hidden.value);
+        expect(settings.gtd?.taskEditor?.order).toEqual(envelope.prepared.after.selected?.order.value);
+        expect(settings.gtd?.taskEditor?.sections).toEqual(beforeSettings.gtd?.taskEditor?.sections);
+        expect(settings.gtd?.taskEditor?.sectionOpen).toEqual(beforeSettings.gtd?.taskEditor?.sectionOpen);
+        expect(settings.features).toEqual(beforeSettings.features);
+        expect(settings.syncPreferencesUpdatedAt?.gtd).toBe(envelope.prepared.after.stamp);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        expect(nineTables(cold.db)).toEqual(saved);
     }, 20_000);
 });
