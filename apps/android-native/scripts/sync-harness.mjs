@@ -248,10 +248,16 @@ export const hostDevice = async ({ bundle, name, log = () => {} }) => {
             const opened = await call('captureOpen');
             return call('captureSubmit', JSON.stringify({ text: title, options: opened.options, captureId: randomUUID(), openAfterSave: false }));
         },
-        /** Every Inbox title (the first 100). */
+        /** Every Inbox title, window by window at one revision (the phone's library outgrows one window). */
         async titles() {
-            const page = await call('window', 0, 100, '');
-            return page.rows.map((row) => row.title);
+            const first = await call('window', 0, 100, '');
+            const rows = [...first.rows];
+            while (rows.length < first.total) {
+                const next = await call('window', rows.length, 100, first.revision);
+                if (next.rows.length === 0) break;
+                rows.push(...next.rows);
+            }
+            return rows.map((row) => row.title);
         },
         /** Configures [kind] ('webdav' or 'selfhosted') from the Sync screen as a user does: choose, fill, Save. */
         async configure(kind, fields) {

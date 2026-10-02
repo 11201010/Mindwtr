@@ -1106,15 +1106,7 @@ export class SqliteAdapter {
         const areas: Area[] = areasRows.map((row) => areaFromSqliteRow(row, nowIso));
         const people: Person[] = peopleRows.map((row) => personFromSqliteRow(row, nowIso));
 
-        const settings = settingsRow?.data ? fromJson<AppData['settings']>(settingsRow.data, {}) : {};
-        const savedFiltersFromTable = savedFilterRows
-            .map((row) => this.mapSavedFilterRow(row))
-            .filter((item): item is SavedFilter => Boolean(item));
-        if (!Array.isArray(settings.savedFilters) && savedFiltersFromTable.length > 0) {
-            settings.savedFilters = savedFiltersFromTable;
-        } else if (Array.isArray(settings.savedFilters)) {
-            settings.savedFilters = keepSavedFilters(settings.savedFilters);
-        }
+        const settings = this.mapSettings(settingsRow, savedFilterRows);
 
         // A read is the deletion baseline for this adapter. Retain exact row
         // versions so later snapshot omissions can use compare-and-swap deletion.
@@ -1128,6 +1120,49 @@ export class SqliteAdapter {
         ]);
 
         return { tasks, projects, sections, areas, people, settings };
+    }
+
+    private mapSettings(settingsRow: Record<string, unknown> | undefined, savedFilterRows: Record<string, unknown>[]): AppData['settings'] {
+        const settings = settingsRow?.data ? fromJson<AppData['settings']>(settingsRow.data, {}) : {};
+        const savedFiltersFromTable = savedFilterRows
+            .map((row) => this.mapSavedFilterRow(row))
+            .filter((item): item is SavedFilter => Boolean(item));
+        if (!Array.isArray(settings.savedFilters) && savedFiltersFromTable.length > 0) {
+            settings.savedFilters = savedFiltersFromTable;
+        } else if (Array.isArray(settings.savedFilters)) {
+            settings.savedFilters = keepSavedFilters(settings.savedFilters);
+        }
+        return settings;
+    }
+
+    /**
+     * The deletion baseline a full getData() would leave, without reading or mapping whole rows: rowid, id, rev and updatedAt
+     * of every row in the entity tables and saved_filters, with each entity table's ids, and the settings as getData() maps
+     * them. For a guarded adapter (rejectConcurrentWrites) after its own saves: the native boot's check after activation.
+     * Null, changing nothing, unless the external-change epoch is still the one this adapter's last full read accepted:
+     * after another connection's commit only a full getData() is a current baseline.
+     */
+    async readRowBaseline(): Promise<{ ids: Record<SqliteTombstoneTable, string[]>; settings: AppData['settings'] } | null> {
+        await this.ensureSchema();
+        const accepted = this.lastObservedExternalChangeEpoch;
+        if (!this.rejectConcurrentWrites || accepted === undefined) return null;
+        if (await this.readExternalChangeEpoch() !== accepted) return null;
+        const [entityRows, settingsRow, savedFilterRows] = await Promise.all([
+            Promise.all(SQLITE_ENTITY_TABLES.map((table) => this.client.all<Record<string, unknown>>(
+                `SELECT rowid AS _rowid, id, rev, updatedAt FROM ${table}`,
+            ))),
+            this.client.get<Record<string, unknown>>('SELECT data FROM settings WHERE id = 1'),
+            this.client.all<Record<string, unknown>>('SELECT rowid as _rowid, * FROM saved_filters ORDER BY createdAt, name'),
+        ]);
+        if (await this.readExternalChangeEpoch() !== accepted) return null;
+        this.lastKnownRowVersions = new Map<SqliteEntityTable, Map<string, SqliteKnownRowVersion>>([
+            ...SQLITE_ENTITY_TABLES.map((table, index) => [table, this.knownRowVersionsFromRows(entityRows[index])] as const),
+            ['saved_filters', this.knownRowVersionsFromRows(savedFilterRows)],
+        ]);
+        return {
+            ids: Object.fromEntries(SQLITE_ENTITY_TABLES.map((table, index) => [table, entityRows[index].map((row) => String(row.id))])) as Record<SqliteTombstoneTable, string[]>,
+            settings: this.mapSettings(settingsRow, savedFilterRows),
+        };
     }
 
     async queryTasks(options: TaskQueryOptions): Promise<Task[]> {

@@ -1,6 +1,7 @@
 package tech.dongdongbh.mindwtr.pilot
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -51,6 +52,8 @@ import org.json.JSONObject
 fun InboxList(model: InboxViewModel, modifier: Modifier) = with(model.menu) {
     val owner = LocalLifecycleOwner.current
     LaunchedEffect(owner) { owner.repeatOnLifecycle(Lifecycle.State.RESUMED) { refresh() } }
+    // Time to first content (scripts/measure-startup-device.mjs): the frame that first draws core's Inbox rows.
+    ReportDrawnWhen { page != null }
     // Back closes an open dialog first, then leaves selection mode.
     BackHandler(enabled = model.failedAction == null && (dialog != null || page?.bulk != null)) { if (dialog != null) backInDialog() else endBulk("inbox") }
     val shown = page

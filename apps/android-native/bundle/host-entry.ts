@@ -72,6 +72,8 @@ type NativeBridge = {
     kvMultiRemove(keysJson: string): string | null;
     /** An event for Kotlin (CoreHost's event listener): sync's badge and cycle count, an automatic sync's warning. */
     hostEvent(json: string): string | null;
+    /** Android only: opens an android.os.Trace section named `name`, or closes the open one for "". */
+    trace?(name: string): void;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown };
@@ -87,6 +89,20 @@ const NATIVE_ERROR = '!MindwtrNativeError:';
 const checked = <T,>(value: T): T => {
     if (typeof value === 'string' && value.startsWith(NATIVE_ERROR)) throw new Error(value.slice(NATIVE_ERROR.length));
     return value;
+};
+
+/**
+ * Boot steps as trace sections for startup profiling (Perfetto): each call closes the step before it and opens `name`
+ * ("" only closes). A host without the trace call (iOS) ignores it. A boot that throws leaves its step open; that host is
+ * closed anyway.
+ */
+let tracedStep = false;
+const traceStep = (name: string) => {
+    const bridge = native();
+    if (!bridge.trace) return;
+    if (tracedStep) bridge.trace('');
+    tracedStep = name !== '';
+    if (tracedStep) bridge.trace(name);
 };
 
 const sqlite: SqliteClient = {
@@ -156,15 +172,61 @@ const lastAppliedRecord = {
 };
 
 type LoadedData = Awaited<ReturnType<SqliteAdapter['getData']>>;
+const ENTITY_TABLES = ['tasks', 'projects', 'sections', 'areas', 'people'] as const;
+type EntityTable = typeof ENTITY_TABLES[number];
 // Core's receipt adapter: a write's request receipt commits in the same transaction as its data.
 class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter {
     latestData: LoadedData | null = null;
 
     override async getData(options?: { rawTasks?: true }): Promise<LoadedData> {
         const data = await super.getData(options);
-        for (const table of ['tasks', 'projects', 'sections', 'areas', 'people'] as const) {
+        await this.validate((table) => data[table].length, data.settings);
+        if (!options?.rawTasks) this.latestData = data;
+        return data;
+    }
+
+    /**
+     * After activation and its flush: the database holds exactly the store's rows, by id, per entity table, and its settings
+     * row and saved filters map whole. Core reads row versions instead of whole rows and refreshes the deletion baseline from
+     * them (the rowids of rows activation's save created) under the epoch its last full read accepted; after another
+     * connection's commit, a full validated read instead.
+     */
+    async verifyActivation(store: Record<EntityTable, readonly { id: string }[]>): Promise<void> {
+        const light = await this.readRowBaseline();
+        let ids: Record<EntityTable, readonly string[]>;
+        if (light) {
+            ids = light.ids;
+            await this.validate((table) => light.ids[table].length, light.settings);
+        } else {
+            const data = await this.getData();
+            ids = Object.fromEntries(ENTITY_TABLES.map((table) => [table, data[table].map((row) => row.id)])) as Record<EntityTable, string[]>;
+        }
+        for (const table of ENTITY_TABLES) {
+            const stored = new Set(ids[table]);
+            const seen = new Set<string>();
+            for (const { id } of store[table]) {
+                if (!stored.has(id) || seen.has(id)) throw new Error(`Incomplete ${table} activation`);
+                seen.add(id);
+            }
+            if (store[table].length !== ids[table].length) throw new Error(`Incomplete ${table} activation`);
+        }
+        try {
+            const ios = globalThis.__mindwtrHostPlatform === 'ios';
+            logInfo(ios ? 'Native iOS activation check' : 'Native Android activation check', {
+                scope: ios ? 'native-ios' : 'native-android', category: 'storage',
+                context: { releaseCheck: 'v1.3.4/native-startup-activation-check', outcome: light ? 'row-versions' : 'full-read' },
+            });
+        } catch { /* a diagnostic line never fails the boot */ }
+    }
+
+    /**
+     * A read against the database: each entity table's rows against the rows the read mapped ([loaded]), the settings row
+     * against the settings core mapped from it, and the saved filters' rows against the mapped list.
+     */
+    private async validate(loaded: (table: EntityTable) => number, settingsLoaded: LoadedData['settings']): Promise<void> {
+        for (const table of ENTITY_TABLES) {
             const rows = await sqlite.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`);
-            if (data[table].length !== rows?.n) throw new Error(`Incomplete ${table} load`);
+            if (loaded(table) !== rows?.n) throw new Error(`Incomplete ${table} load`);
         }
         const settingsCount = await sqlite.get<{ n: number }>('SELECT COUNT(*) AS n FROM settings WHERE id = 1');
         const settings = await sqlite.get<{ data: string }>('SELECT data FROM settings WHERE id = 1');
@@ -175,18 +237,16 @@ class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter {
             const parsed = JSON.parse(settings.data) as Record<string, unknown>;
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid settings load');
             for (const [key, value] of Object.entries(parsed)) {
-                if (key !== 'savedFilters' && JSON.stringify(data.settings[key as keyof typeof data.settings]) !== JSON.stringify(value)) {
+                if (key !== 'savedFilters' && JSON.stringify(settingsLoaded[key as keyof typeof settingsLoaded]) !== JSON.stringify(value)) {
                     throw new Error('Incomplete settings load');
                 }
             }
         }
         const savedFilters = await sqlite.get<{ n: number }>('SELECT COUNT(*) AS n FROM saved_filters');
         if (!Number.isSafeInteger(savedFilters?.n) || savedFilters!.n < 0
-            || (savedFilters!.n > 0 && data.settings.savedFilters?.length !== savedFilters!.n)) {
+            || (savedFilters!.n > 0 && settingsLoaded.savedFilters?.length !== savedFilters!.n)) {
             throw new Error('Incomplete saved filters load');
         }
-        if (!options?.rawTasks) this.latestData = data;
-        return data;
     }
 }
 
@@ -707,18 +767,19 @@ const savedSettingsIfSettled = async (settingsReference: unknown): Promise<Recor
         ? saved as Record<string, unknown> : null;
 };
 const activateAndVerify = async (adapter: ValidatedSqliteAdapter, recoveryLoad = false) => {
+    traceStep('js:activate');
     unwrap(await contract.activate(recoveryLoad ? { writeSafetyReady: true, recoveryLoad: true } : { writeSafetyReady: true }));
+    traceStep('js:flushPendingSave');
     await flushPendingSave();
-    const data = await adapter.getData();
+    traceStep('js:verifyActivation');
     const loaded = useTaskStore.getState();
-    for (const [table, storeRows] of [
-        ['tasks', loaded._allTasks], ['projects', loaded._allProjects],
-        ['sections', loaded._allSections], ['areas', loaded._allAreas],
-        ['people', loaded._allPeople],
-    ] as const) {
-        if (storeRows.length !== data[table].length) throw new Error(`Incomplete ${table} activation`);
-    }
-    return unwrap(contract.getInboxWindow({ offset: 0, limit: 50 }));
+    await adapter.verifyActivation({
+        tasks: loaded._allTasks, projects: loaded._allProjects, sections: loaded._allSections, areas: loaded._allAreas, people: loaded._allPeople,
+    });
+    traceStep('js:inboxWindow');
+    const inbox = unwrap(contract.getInboxWindow({ offset: 0, limit: 50 }));
+    traceStep('');
+    return inbox;
 };
 const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, journaled = false): string => submit(async () => {
     // A host that journals every write replays it after process death, so each write must carry its replay tokens.
@@ -728,9 +789,14 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     setStorageAdapter(adapter);
     // Before the journal's replay (Kotlin, after boot): a landed request answers from its receipt. A host without
     // a journal keeps its receipts in memory, as before.
+    traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
     else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock'] });
-    await adapter.getData();
+    // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
+    // is validated before anything saves.
+    traceStep('js:schema');
+    if (legacyState) await adapter.getData(); else await adapter.ensureSchema();
+    traceStep('');
     if (legacyState) await importLegacyJson(adapter, JSON.parse(legacyState) as LegacyState, legacyBackup);
     const result = await activateAndVerify(adapter, recoveryLoad);
     bootAdapter = adapter;
@@ -2478,3 +2544,5 @@ globalThis.MindwtrHost = {
 if (globalThis.__mindwtrIntlCheck === true) {
     try { runIntlCheck(); } catch (error) { native().log(`Native Android intl check failed: ${error instanceof Error ? error.message : String(error)}`); }
 }
+// Closes the bundle's init section, opened at the end of host-polyfills.js.
+native().trace?.('');

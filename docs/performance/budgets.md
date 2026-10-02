@@ -91,3 +91,31 @@ Add or update a budget when a PR touches a hot path:
 - large list rendering
 
 Prefer core tests for pure derivation and platform tests for render or native-thread behavior. This suite is the CI regression radar; use release-mode device profiling to diagnose regressions that cross native or render-thread boundaries.
+
+## Native Android startup
+
+`apps/android-native/scripts/check-startup-device.mjs` fails a phone run whose startup goes over these budgets. It measures the
+`benchmark` build (minified, profileable, not debuggable, its own application id), so the dev app's data is never touched:
+
+```bash
+(cd apps/android-native/android && ./gradlew assembleBenchmark assembleBenchmarkSeed)
+node apps/android-native/scripts/check-startup-device.mjs <adb-serial> \
+  apps/android-native/android/app/build/outputs/apk/benchmarkSeed/app-benchmarkSeed.apk \
+  apps/android-native/android/app/build/outputs/apk/benchmark/app-benchmark.apk
+```
+
+For each database it seeds the app, makes one first start (the recovery checkpoint, then the bytecode cache written after
+first content), and measures 10 cold and 10 warm starts with ART at `verify`, as a sideload leaves it. **TTID** is
+`am start -W` TotalTime (the first frame). **First content** is the system's Fully drawn time, which the Inbox reports on
+the frame that first draws core's rows (`ReportDrawnWhen` in `InboxScreen.kt`). `large-5000` is core's
+`scripts/performance/fixture.mjs` store with 5,000 tasks (`mixed-v1-5000`), made once by `measure-startup-device.mjs fixture`.
+
+| Database | Cold TTID median | Cold first content median | Cold first content p90 | Warm first content median |
+| --- | ---: | ---: | ---: | ---: |
+| `empty` | 160ms | 360ms | 400ms | 100ms |
+| `large-5000` | 160ms | 1050ms | 1150ms | 100ms |
+
+The budgets come from 15-sample runs on the Galaxy S23 test phone (`RFCW10JBP0Y`) on 2026-10-01, at commit `perf(native): one
+full read at boot instead of three`: empty 121 / 288 / 295 / 58 ms, large-5000 125 / 874 / 888 / 61 ms (same columns).
+That is about 25% headroom on first content (more on TTID and warm starts, which vary more from run to run), so a run fails on
+a clear regression, not on noise. Budgets hold for that phone only: measure again before using them on another device.

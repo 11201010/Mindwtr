@@ -107,6 +107,8 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         model.attach()
+        // First content drawn (InboxList's ReportDrawnWhen): the boot's leftover work, the bytecode cache, may run now.
+        fullyDrawnReporter.addOnReportDrawnListener(model::contentShown)
         // A link, share or assistant note that launched the app (a recreated screen already has it: EntryRouter keeps it).
         if (savedInstanceState == null) model.entries.receive(intent)
         setContent {

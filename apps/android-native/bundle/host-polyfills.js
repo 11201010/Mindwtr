@@ -9,6 +9,10 @@
  * Only the classes are defined here; nothing is instantiated.
  */
 (function installHostPolyfills(global) {
+    // Startup trace sections (Android's trace bridge call; absent elsewhere): this file's run, then the bundle's init, which
+    // the last line of host-entry.ts closes.
+    var tracer = global.__mindwtrNative && typeof global.__mindwtrNative.trace === 'function' ? global.__mindwtrNative : null;
+    if (tracer) tracer.trace('js:polyfills');
     var used = Object.create(null);
     var mark = function (name) { used[name] = (used[name] || 0) + 1; };
     global.__hostUse = used;
@@ -1020,4 +1024,5 @@
             try { global.__hostLog(level + ': ' + parts.join(' ')); } catch (_error) { /* logging cannot fail a save */ }
         };
     });
+    if (tracer) { tracer.trace(''); tracer.trace('js:bundleInit'); }
 }(globalThis));

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import vm from 'node:vm';
 import { build } from 'esbuild';
@@ -106,12 +108,12 @@ assert.equal(String(new consoleState.URL('https://host/dav/?dir=a+b')), 'https:/
     const noDates = vm.createContext({ console: { info() {} }, Intl: undefined, __mindwtrNative: { log() {} } });
     vm.runInContext(polyfills, noDates);
     assert.equal(vm.runInContext("new Intl.DateTimeFormat('de-DE', { weekday: 'long' }).format(new Date(2026, 8, 6))", noDates), 'Sunday');
-    // The Kotlin side: one guarded callback, its formatter made in start (on the engine thread) and used only there, no IO;
+    // The Kotlin side: one guarded callback, its formatter made in install (on the engine thread) and used only there, no IO;
     // the device check's cases run only in a debug build.
     const kotlin = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core', name), 'utf8');
     const host = kotlin('CoreHost.kt');
     const icu = kotlin('IcuDateTimeFormat.kt');
-    assert.match(host, /fun start\([^)]*\): JSONObject = onEngine \{[\s\S]*?val dates = IcuDateTimeFormat\(\)\s+bridge\.setProperty\("dateTimeFormat", guarded \{ args -> dates\.reply\(args\[0\] as String, args\[1\] as String, \(args\[2\] as Number\)\.toDouble\(\)\) \}\)/);
+    assert.match(host, /private fun install\(engine: QuickJSContext, database: \(\) -> SqliteBridge\) \{[\s\S]*?val dates = IcuDateTimeFormat\(\)\s+bridge\.setProperty\("dateTimeFormat", guarded \{ args -> dates\.reply\(args\[0\] as String, args\[1\] as String, \(args\[2\] as Number\)\.toDouble\(\)\) \}\)/);
     assert.equal(host.match(/IcuDateTimeFormat\(\)|dates\./g).length, 2, 'made once, used only by the bridge callback');
     assert.doesNotMatch(icu, /java\.io|java\.nio|\bFile\b|Thread|Executor|\bLog\.|debugProperty|synchronized|Volatile|quickjs|getprop/, 'pure: no IO, no threads');
     assert.match(host, /if \(debugFault\("intl_check"\) == "1"\) engine\.globalObject\.setProperty\("__mindwtrIntlCheck", true\)/);
@@ -398,8 +400,19 @@ assert(pragmaOrder.every((index, i) => index > (i ? pragmaOrder[i - 1] : -1)), `
 assert.equal(sqliteBridge.match(/journal_mode|synchronous =/g).length, 2);
 assert.doesNotMatch(bridgeCheckpoint, /\breturn\b/);
 assert.match(sqliteBridge, /syncFile\(partial\)[\s\S]*?renameTo\(checkpointFile\)[\s\S]*?syncDirectory/);
-assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('engine.evaluate(bundle'));
-assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('callAsync("boot", legacyState, legacyBackup, "journaled")'));
+// Startup (phase 2 #3): SQLite opens and takes its checkpoint on the caller's thread while the engine loads the bundle. No SQL runs
+// before the checkpoint: the bridge reaches SQLite only through the open's future, and boot starts after the engine took it.
+{
+    const start = coreHost.slice(coreHost.indexOf('fun start(bundle: CoreBundle'), coreHost.indexOf('/** Where the bundle came from'));
+    const order = ['val opened = FutureTask {', 'database.ensureRecoveryCheckpoint()', 'val database = { opened.get() }', 'executor.submit(Callable {',
+        'install(engine, database)', 'load(engine, database, bundle)', 'opened.run()', 'return onEngine {', 'loading.get()', 'sqlite = database()',
+        'callAsync("boot", legacyState, legacyBackup, "journaled")'].map((text) => start.indexOf(text));
+    assert(order.every((index, i) => index > (i ? order[i - 1] : -1)), `start order ${order}`);
+    assert.match(start, /catch \(failure: Throwable\) \{\s+if \(sqlite == null\) runCatching \{ database\(\)\.close\(\) \}\s+closeOnEngine\(\)/, 'a failed start closes an open database it never handed over');
+    assert.match(start, /catch \(error: Throwable\) \{\s+runCatching \{ database\.close\(\) \}\s+throw error/, 'a failed checkpoint closes its database');
+    assert.equal(coreHost.match(/database\(\)\.(run|all|exec)\(/g).length, 3, 'the SQL calls take the database from the open\'s future');
+    assert.equal(coreHost.match(/\bsqlite = (?!null)/g).length, 1, 'the engine takes the database once, at start');
+}
 const source = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot', name), 'utf8');
 const activity = source('MainActivity.kt');
 const model = source('InboxViewModel.kt');
@@ -520,11 +533,12 @@ const backgroundFn = code(model.slice(model.indexOf('internal fun <T> background
 assert.match(backgroundFn, /if \(runtime == null \|\| busy \|\| failedAction != null\) return\s+val mine = \+\+issued/);
 assert.doesNotMatch(backgroundFn, /busy = /);
 assert.equal(code(model).match(/\bbusy = true\b/g).length, 1, 'only a user action takes busy');
-assert.match(model, /fun refreshFocus\(\) \{\s+val depth = focus\.depth\(\)\s+val controls = menu\.focusControls\.state\.toString\(\)\s+background\(/);
-assert.match(model, /fun refreshProjects\(\) \{\s+val at = depth\(\)\s+background\(/);
+// A list the boot left for later (still null) waits for a running action to end instead of being dropped (startup review 1).
+assert.match(model, /fun refreshFocus\(\) \{\s+\/\/[^\n]*\s+if \(focus == null && busy\) return menu\.whenIdle\(::refreshFocus\)\s+val depth = focus\.depth\(\)\s+val controls = menu\.focusControls\.state\.toString\(\)\s+background\(/);
+assert.match(model, /fun refreshProjects\(\) \{\s+\/\/[^\n]*\s+if \(projects == null && busy\) return menu\.whenIdle\(::refreshProjects\)\s+val at = depth\(\)\s+background\(/);
 assert.match(model, /private fun refreshAll\(\) \{\s+val at = depth\(\)\s+background\(Part\.entries, \{ runtime -> read\(runtime, at\) \}, ::showLists\)/);
 // A command's lists are read again only after it succeeds (or was refused as stale), in the background, once busy is released.
-assert.match(model, /try \{ work\(runtime\); done = true \}/);
+assert.match(model, /try \{\s+\/\/[^\n]*\s+debugProperty\("delay_action_ms"\)\.toLongOrNull\(\)\?\.let\(Thread::sleep\)\s+work\(runtime\); done = true\s+\}/);
 assert.match(model, /ui \{\s+busy = false\s+if \(\(done \|\| stale\) && action != null\) refreshAll\(\)\s+\}/);
 assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('fun openEditor('))), /read\(runtime/);
 // Stale results never overwrite newer state: every list read takes a number; a command outdates every earlier read;
@@ -689,7 +703,15 @@ assert.match(model, /if \(action\.kind == "createProject"\) setProjectDraft\(act
 // A refused star shows core's own text (RN's toast); an empty refusal shows nothing.
 assert.match(model, /val blocked = reply\.optString\("blocked"\)\s+if \(blocked\.isNotEmpty\(\)\) ui \{ showToast\(reply\.getString\("blockedTitle"\), blocked\) \}/);
 // The area filter is read with every list, so its label and the lists change together.
-assert.match(model, /readOpen\(runtime, at\),\s+AreaFilter\.parse\(runtime\.areaFilter\(\)\),\s+\)/);
+assert.match(model, /readOpen\(runtime, at\) else null,\s+AreaFilter\.parse\(runtime\.areaFilter\(\)\),\s+\)/);
+// Startup (phase 2 #2): the boot reads only the tab on screen; Focus and Projects follow first content (or their tab opening, or a
+// tab chosen while the boot ran). Every other full read (refreshAll) reads every list.
+assert.match(model, /private fun read\(runtime: CoreHost, at: Depth, shown: Screen\? = null\) = Lists\(\s+if \(shown == null \|\| shown == Screen\.Focus\) readFocus\(runtime, null, at\.focus, at\.controls\) else null,\s+if \(shown == null \|\| shown == Screen\.Projects\) ProjectsView\.parse\(runtime\.projects\(\)\) else null,\s+at\.project,\s+if \(shown == null \|\| shown == Screen\.Projects\) readOpen\(runtime, at\) else null,/);
+assert.equal(code(model).match(/\bread\(runtime, at\b[^)]*\)/g).join(' | '), 'read(runtime, at, screen) | read(runtime, at) | read(runtime, at)', 'the boot reads the tab on screen; a read\'s Try again and refreshAll read all');
+assert.match(model, /fun contentShown\(\) \{\s+if \(focus == null\) refreshFocus\(\)\s+if \(projects == null\) refreshProjects\(\)\s+ProcessCoreHost\.contentShown\(\)\s+\}/);
+assert.match(model, /loading = false\s+\/\/[^\n]*\s+if \(screen == Screen\.Focus && lists\.focus == null\) refreshFocus\(\)\s+if \(screen == Screen\.Projects && lists\.projects == null\) refreshProjects\(\)/);
+// A list the boot did not read never closes the open project.
+assert.match(model, /lists\.projects\?\.let \{ read ->\s+if \(fresh\(mine, Part\.Projects\)\) projects = read\s+if \(fresh\(mine, Part\.Project\)\) showProject\(lists\.projectId, lists\.project\)\s+\}/);
 for (const [fn, js] of [['setTaskFocus', 'taskFocus'], ['setProjectFocus', 'projectFocus'], ['createProject', 'createProject'], ['areaFilter', 'areaFilter'], ['setAreaFilter', 'setAreaFilter']]) {
     assert.match(coreHost, new RegExp(`fun ${fn}\\([^)]*\\): JSONObject =\\s*callAsync\\("${js}"`), `CoreHost.${fn} reaches host method ${js}`);
 }
@@ -700,7 +722,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 25, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent and the queue\'s file calls: each guarded');
+assert.equal(bridgeCallbacks.length, 26, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent and the queue\'s file calls: each guarded');
 // The JS host's events (sync's badge and cycles, an automatic sync's warning): handed on as text, a listener's failure swallowed.
 assert(bridgeCallbacks.includes('bridge.setProperty("hostEvent", guarded { args -> runCatching { onEvent?.invoke(args[0] as String) }; null })'));
 for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\w+", guarded \{/);
@@ -827,8 +849,9 @@ assert.match(coreHost, /try \{ work\(args\) \} catch \(error: Throwable\) \{ NAT
 assert.equal(coreHost.match(/getprop/g).length, 1);
 assert.match(coreHost, /private fun debugFault\(name: String\): String = debugProperty\(name\)/);
 assert.match(coreHost, /fun debugProperty\(name: String\): String \{\s*if \(!BuildConfig\.DEBUG\) return ""/);
-// The only other debug property: the capture check's clipboard, put there for the field's real Paste.
-assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, captureUi].join('\n').match(/debugProperty\(/g).length, 1);
+// The only other debug properties: the capture check's clipboard, put there for the field's real Paste, and the projects
+// check's held user action (delay_action_ms, perform's worker thread; release builds read nothing).
+assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, captureUi].join('\n').match(/debugProperty\(/g).length, 2);
 assert.match(captureUi, /withContext\(Dispatchers\.IO\) \{ debugProperty\("clipboard"\) \}\.takeIf \{ it\.isNotEmpty\(\) \}\?\.let \{ clipboard\.setText\(/);
 // The command path's fault hook, and the same hook for a journal replay (a replay can meet a failed save too).
 assert.equal(coreHost.match(/failCommits =/g).length, 2);
@@ -1041,10 +1064,17 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(owner, /private fun replay\(runtime: CoreHost\): Boolean \{\s+val replay = runtime\.replayJournal\(\)\s+replay\.owed\?\.let \{ recordFailure\(PendingFailure\(FailedAction\("journal", ""\), it, null\)\); return false \}\s+(?:\/\/[^\n]*\s+)+if \(replay\.left > 0\) return true\s+runCatching \{ runtime\.pruneReceipts\(\) \}[\s\S]*?return true\s+\}/);
     // Sync (plan block 1): its triggers start only after the validated load, a replay that finished (no entry owed) and the queue
     // drain (ProcessCoreHost.recovered), or once the owed journal retry went through; nothing else starts them.
-    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) recovered\(app, runtime\)\s+return runtime/);
+    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/syncStart\(/g).length, 1, 'one start of the triggers, in startSync');
-    assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 1, 'startSync only in recovered, after the drain');
-    assert.equal([activity, model, owner, menuModel].join('\n').match(/recovered\(app, runtime\)|ProcessCoreHost\.recovered\(getApplication\(\), runtime\)/g).length, 2, 'recovered after the boot replay and the owed retry (CoreWork\'s is checked with the runner)');
+    assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 2, 'startSync only in recovered, after the drain (at once, or held for the first screen\'s content)');
+    // Startup follow-up: the boot's start is held until the first screen shows its content: the Inbox's first rows (contentShown),
+    // another tab's boot read, or a 3 s fallback; CoreWork's and the owed retry's start at once. One start at a time.
+    assert.match(owner, /startSync = \{ if \(deferSync\) deferredSync\.set \{ startSync\(app, runtime\) \} else startSync\(app, runtime\) \},/);
+    assert.match(owner, /fun startDeferredSync\(\) \{\s+deferredSync\.getAndSet\(null\)\?\.let \{ start -> syncThread\.execute \{ start\(\) \} \}\s+\}/);
+    assert.match(owner, /fun contentShown\(\) \{\s+startDeferredSync\(\)/);
+    assert.match(owner, /private fun startSync\(app: Application, runtime: CoreHost\): Unit = synchronized\(syncLock\) \{\s+if \(syncHost != null\) return/);
+    assert.match(model, /if \(screen != Screen\.Inbox\) ProcessCoreHost\.startDeferredSync\(\)\s+main\.postDelayed\(ProcessCoreHost::startDeferredSync, SYNC_FALLBACK_MS\)/);
+    assert.equal([activity, model, owner, menuModel].join('\n').match(/recovered\(app, runtime(?:, deferSync = true)?\)|ProcessCoreHost\.recovered\(getApplication\(\), runtime\)/g).length, 2, 'recovered after the boot replay and the owed retry (CoreWork\'s is checked with the runner)');
     // Core's receipts are pruned once per boot, and only after a replay that left nothing: never before the replay, never while an
     // entry that may need its receipt is left.
     assert.match(coreHost, /fun pruneReceipts\(\): JSONObject = callAsync\("pruneReceipts"\)/);
@@ -1237,7 +1267,7 @@ assert.match(rowUi, /val label = blocked \?: t\(if \(task\.isFocusedToday\) "age
 assert.match(model, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure[\s\S]{0,200}?readFocus\(runtime, null, depth, state\)/);
 // Time-aware refresh: on resume and each minute, only while the Focus list is composed and resumed.
 assert.match(focusUi, /LaunchedEffect\(owner\) \{\s*owner\.repeatOnLifecycle\(Lifecycle\.State\.RESUMED\) \{\s*while \(true\) \{\s*model\.refreshFocus\(\)\s*delay\(60_000\)/);
-assert.equal(code([activity, model, focusUi].join('\n')).match(/(?<!fun )refreshFocus\(\)/g).length, 1, 'one caller: the lifecycle loop');
+assert.equal(code([activity, model, focusUi].join('\n')).match(/(?<!fun )refreshFocus\(\)/g).length, 3, 'the lifecycle loop, and the boot\'s deferred read (first content, or the tab chosen while the boot ran)');
 assert.match(activity, /Screen\.Focus -> FocusList\(model, Modifier\.fillMaxSize\(\)\)/);
 // Commands from Focus and a project use the Inbox's command path and its exact-retry lock.
 assert.match(rowUi, /fun TaskRowItem\(\s*model: InboxViewModel, task: TaskRow, status: RowStatus = RowStatus\.Hidden, star: RowStar = RowStar\.Hidden,/);
@@ -1270,10 +1300,10 @@ assert.match(labelsKt, /strings = LABEL_KEYS\.filter\(values::has\)\.associateWi
 assert.match(labelsKt, /if \(logged\.add\(name\)\) Log\.w\(/, 'a missing key is logged once');
 assert.equal(kotlinFiles.join('\n').match(/Labels\.load\(/g).length, 1);
 assert.match(owner, /runtime\.language\(stored \?: "", Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
-assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) recovered\(app, runtime\)\s+return runtime/);
+assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
 // After a finished replay (the boot's, the owed retry's, CoreWork's): the queue drain, then sync (StartOrder, StartOrderTest). Any
 // drain that did not finish becomes the screens' owed journal retry, holds sync back, and CoreWork retries it.
-assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\)\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+startSync = \{ startSync\(app, runtime\) \},\s+\)/);
+assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost, deferSync: Boolean = false\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\)\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+(?:\/\/[^\n]*\s+)?startSync = \{ if \(deferSync\) deferredSync\.set \{ startSync\(app, runtime\) \} else startSync\(app, runtime\) \},\s+\)/);
 assert.match(source('StartOrder.kt'), /Drain\.Done -> \{\s+startSync\(\)\s+return true\s+\}\s+Drain\.Waiting -> retryLater\(\)\s+is Drain\.Failed -> \{\s+owe\(result\.message\)\s+retryLater\(\)\s+\}/);
 assert.match(source('CoreWork.kt'), /fun retryDrain\(context: Context\) = enqueue\(context, CoreJob\.INGEST, emptyMap\(\), ExistingWorkPolicy\.KEEP\)/, 'a retry never cancels a running drain');
 // The queue drain (RN's startup drain; CoreWork's ingest job too): after the journal replay, before any screen, entry point or
@@ -1462,8 +1492,8 @@ assert.match(model, /if \(id != openProjectId\) return\s+if \(detail == null\) k
 assert.match(model, /if \(failure\.message\?\.startsWith\("TASK_NOT_FOUND"\) != true\) throw failure\s+null/);
 // Read on every resume of the Projects tab and after every command, as Focus is.
 assert.match(projectsUi, /LaunchedEffect\(owner\) \{\s*owner\.repeatOnLifecycle\(Lifecycle\.State\.RESUMED\) \{ model\.refreshProjects\(\) \}/);
-assert.equal(code([activity, model, projectsUi].join('\n')).match(/(?<!fun )refreshProjects\(\)/g).length, 1, 'one caller: the lifecycle loop');
-assert.match(model, /ProjectsView\.parse\(runtime\.projects\(\)\),\s*at\.project,\s*readOpen\(runtime, at\),/);
+assert.equal(code([activity, model, projectsUi].join('\n')).match(/(?<!fun )refreshProjects\(\)/g).length, 3, 'the lifecycle loop, and the boot\'s deferred read (first content, or the tab chosen while the boot ran)');
+assert.match(model, /ProjectsView\.parse\(runtime\.projects\(\)\) else null,\s*at\.project,\s*if \(shown == null \|\| shown == Screen\.Projects\) readOpen\(runtime, at\) else null,/);
 // The open project survives rotation (ViewModel) and process death (SavedStateHandle); Back closes it unless a retry is owed.
 assert.match(model, /var openProjectId by mutableStateOf\(saved\.get<String>\("project"\)\)/);
 assert.match(model, /openProjectId = id\s+saved\["project"\] = id/);
@@ -1941,7 +1971,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(menuModel, /shell\.screen == Screen\.Inbox -> "inbox"/);
     // The Inbox reads only core's getInboxView: Kotlin has no getInboxWindow call left, and a full read carries no Inbox part.
     assert.doesNotMatch(code(kotlinFiles.join('\n') + inboxUi + bulkUi + focusControlsUi + focusModelKt), /inboxWindow|callAsync\("window"|InboxPage|Part\.Inbox/, 'no getInboxWindow read is left in Kotlin');
-    assert.match(model, /private class Lists\(val focus: FocusView, val projects: ProjectsView, val projectId: String\?, val project: ProjectDetail\?, val areas: AreaFilter\)/);
+    assert.match(model, /private class Lists\(val focus: FocusView\?, val projects: ProjectsView\?, val projectId: String\?, val project: ProjectDetail\?, val areas: AreaFilter\)/);
     assert.match(menuModel, /if \(list != this\.list\) return\s+shell\.readSucceeded\(\)/, 'the Inbox view\'s (or a Menu list\'s) success clears a read\'s failure');
     assert.match(menuModel, /"reference", "inbox" -> send\(FailedAction\("taskListSort", value\)\)/);
     assert.match(menuModel, /"inbox" -> kept\(listOf\("groupBy", "filters"\)\)\.put\("collapsedGroupIds", GroupCollapse\.axis\(prefs, "inbox", own\.optString\("groupBy", "none"\), 200\)\)/);
@@ -2446,6 +2476,68 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
     assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
     assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, rnCaptureIntent\) \}/);
+    // The bytecode cache's keys (BytecodeCache.kt): the engine version is the QuickJS dependency's, and the bundle carries the
+    // SHA-256 of its own body in its first line, written with it in one file (build-bundle.mjs), so a bundle and a hash from
+    // two builds cannot pair up. Every variant's merged assets are checked by verify-bundle.mjs before packaging.
+    assert.equal(/buildConfigField\("String", "QUICKJS_WRAPPER", "\\"([^"\\]+)\\""\)/.exec(gradle)?.[1],
+        /implementation\("wang\.harlon\.quickjs:wrapper-android:([^"]+)"\)/.exec(gradle)?.[1], 'the cache key names the QuickJS wrapper in use');
+    {
+        const verifier = resolve(app, 'scripts/verify-bundle.mjs');
+        const buildBundle = readFileSync(resolve(app, 'scripts/build-bundle.mjs'), 'utf8');
+        const verifies = (file) => spawnSync(process.execPath, [verifier, file], { encoding: 'utf8' }).status === 0;
+        const bundlePath = resolve(app, 'android/app/src/main/assets/core-host.js');
+        const bundle = readFileSync(bundlePath);
+        const newline = bundle.indexOf(10);
+        assert.match(bundle.subarray(0, newline).toString('utf8'), /^\/\/mindwtr-bundle-sha256:[0-9a-f]{64}$/, 'the bundle starts with its hash line');
+        assert(verifies(bundlePath), 'the built bundle matches its own hash line');
+        const scratch = mkdtempSync(resolve(tmpdir(), 'bundle-pair-'));
+        try {
+            const write = (name, bytes) => { writeFileSync(resolve(scratch, name), bytes); return resolve(scratch, name); };
+            // A body from another build under this hash line, a changed byte, no hash line, and no file all fail the check.
+            assert(!verifies(write('other-body.js', Buffer.concat([bundle.subarray(0, newline + 1), Buffer.from('globalThis.other = 1;')]))), 'another body under the hash line fails');
+            const changed = Buffer.from(bundle); changed[changed.length - 2] ^= 1;
+            assert(!verifies(write('changed.js', changed)), 'a changed byte fails');
+            assert(!verifies(write('no-header.js', bundle.subarray(newline + 1))), 'a bundle without its hash line fails');
+            assert(!verifies(resolve(scratch, 'missing.js')), 'a missing bundle fails');
+        } finally {
+            rmSync(scratch, { recursive: true, force: true });
+        }
+        assert.match(gradle, /val verifyBundle = [^\n]*verify-bundle\.mjs[\s\S]{0,300}?tasks\.withType<com\.android\.build\.gradle\.tasks\.MergeSourceSetFolders>\(\)\.configureEach \{\s+if \(name\.startsWith\("merge"\) && name\.endsWith\("Assets"\) && !name\.contains\("Test"\)\) \{[\s\S]{0,300}?commandLine\(listOfNotNull\("node", verifyBundle, outputDir\.get\(\)\.asFile\.resolve\("core-host\.js"\)\.path, traced\)\)\s*\}\.result\.get\(\)\.assertNormalExitValue\(\)/, 'every variant\'s merged assets are verified and a mismatch fails the build');
+        assert.match(buildBundle, /renameSync\(/, 'the bundle is written under a temporary name and renamed into place');
+    }
+    // Module instrumentation (build-bundle.mjs --trace-modules) is a measurement build's only: its own output, merged only
+    // into the benchmarkTrace variant. The bundle every other variant ships has no module hook, and no environment variable
+    // can turn one on.
+    {
+        const shipped = readFileSync(resolve(app, 'android/app/src/main/assets/core-host.js'), 'utf8');
+        assert(!shipped.includes('__mwTraceModule') && !/__MINDWTR_STARTUP_PROFILING__\s*=\s*(true|!0)/.test(shipped), 'the shipped bundle has no module hooks');
+        const buildBundle = readFileSync(resolve(app, 'scripts/build-bundle.mjs'), 'utf8');
+        assert.doesNotMatch(buildBundle, /process\.env/, 'no environment variable changes the bundle');
+        assert.equal(gradle.match(/--trace-modules/g)?.length, 1, 'one Gradle task builds the traced bundle');
+        assert.match(gradle, /val buildTracedCoreBundle by tasks\.registering\(Exec::class\) \{[\s\S]{0,300}?"--trace-modules", "--out", tracedBundle\.get\(\)\.asFile\.path/);
+        assert.equal(gradle.match(/tracedBundleAssets/g)?.length, 3, 'the traced bundle is declared once, written once, and merged once');
+        assert.match(gradle, /getByName\("benchmarkTrace"\)\.assets\.srcDir\(tracedBundleAssets\)/, 'only benchmarkTrace merges it');
+        // Both ends refuse a traced bundle anywhere else: build-bundle.mjs will not write one into the shared main assets,
+        // and verify-bundle.mjs fails any variant's bundle with module hooks unless Gradle says it is benchmarkTrace's.
+        const mainBundle = resolve(app, 'android/app/src/main/assets/core-host.js');
+        const before = readFileSync(mainBundle);
+        const run = (script, args) => spawnSync(process.execPath, [resolve(app, 'scripts', script), ...args], { encoding: 'utf8' }).status;
+        assert.notEqual(run('build-bundle.mjs', ['--trace-modules']), 0, 'no traced bundle without --out');
+        assert.notEqual(run('build-bundle.mjs', ['--trace-modules', '--out', mainBundle]), 0, 'no traced bundle into the main assets');
+        assert(readFileSync(mainBundle).equals(before), 'the main bundle is untouched by a refused traced build');
+        const scratch = mkdtempSync(resolve(tmpdir(), 'traced-bundle-'));
+        try {
+            const traced = resolve(scratch, 'core-host.js');
+            assert.equal(run('build-bundle.mjs', ['--trace-modules', '--out', traced]), 0, 'a traced bundle builds to its own output');
+            assert.notEqual(run('verify-bundle.mjs', [traced]), 0, 'a bundle with module hooks fails an ordinary variant');
+            assert.equal(run('verify-bundle.mjs', [traced, '--allow-module-trace']), 0, 'benchmarkTrace accepts it');
+            assert.equal(run('verify-bundle.mjs', [mainBundle]), 0, 'the ordinary bundle passes');
+        } finally {
+            rmSync(scratch, { recursive: true, force: true });
+        }
+        assert.equal(gradle.match(/--allow-module-trace/g)?.length, 1, 'one place allows module hooks');
+        assert.match(gradle, /if \(name == "mergeBenchmarkTraceAssets"\) "--allow-module-trace"/, 'only benchmarkTrace\'s merged assets may carry them');
+    }
     // RN's shortcuts from RN's own builder: the same ids, capabilities, labels and links, on the build's scheme; Add task opens
     // the capture popup through RN's system capture link until the widget pass brings QuickCaptureActivity.
     const { createRequire } = await import('node:module');
@@ -2880,6 +2972,16 @@ export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLogg
 export function setLogger(logger) { globalThis.coreLogger = logger; }
 export function consoleLogger() {}
 export class SqliteAdapter {
+  async ensureSchema() { globalThis.events.push('schema'); }
+  // core's row-version read after activation: the ids and the mapped settings a full read would give (rowBaseline overrides;
+  // rowBaselineNull is another connection's commit since the last full read).
+  async readRowBaseline() {
+    globalThis.events.push('baseline');
+    if (globalThis.rowBaselineNull) return null;
+    const data = globalThis.fakeData;
+    return globalThis.rowBaseline || { ids: Object.fromEntries(['tasks', 'projects', 'sections', 'areas', 'people'].map((table) =>
+      [table, data[table].map((row) => row.id)])), settings: data.settings };
+  }
   async getData() {
     globalThis.events.push('load');
     globalThis.lastLoaded = globalThis.fakeDataSequence.shift() || globalThis.fakeData;
@@ -3128,6 +3230,7 @@ const makeState = (taskCount, fakeDataSequence = []) => {
                 if (sql.includes('COUNT(*)') && sql.includes('tasks')) {
                     return JSON.stringify([{ n: taskCount === 'auto' ? state.lastLoaded.tasks.length : taskCount }]);
                 }
+                if (sql.includes('COUNT(*)') && sql.includes('saved_filters')) return JSON.stringify([{ n: state.filterCount ?? 0 }]);
                 if (sql.includes('COUNT(*)')) return '[{"n":0}]';
                 return '[]';
             },
@@ -3177,7 +3280,8 @@ assert.match((await poll(state, state.MindwtrHost.languageSaved('', 'en-US'))).e
 
 const full = { tasks: [{ id: 'first' }], projects: [], sections: [], areas: [], people: [], settings: {} };
 const partial = { ...full, tasks: [] };
-const secondRead = makeState(1, [full, partial]);
+// Startup #4: a non-legacy boot reads whole rows first in the activation, whose validated read fails the boot before any save.
+const secondRead = makeState(1, [partial]);
 const secondResult = await poll(secondRead, secondRead.MindwtrHost.boot());
 assert.equal(secondResult.ok, false);
 assert.match(secondResult.error, /Incomplete tasks load/);
@@ -3187,8 +3291,45 @@ assert.equal(secondRead.saveCount, 0);
 const ready = makeState(0);
 assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
 assert.equal(ready.activationCount, 1);
-// Activation may write (core backfills a person per assignee): the store is checked against a load taken after its save.
-assert.deepEqual(ready.events.slice(ready.events.lastIndexOf('activate')), ['activate', 'load', 'flush', 'load']);
+// Startup #4: a non-legacy boot sets the schema up, and the activation's validated read is its first full read. Activation may
+// write (core backfills a person per assignee): the store is checked against the database after its save, by id, from core's
+// row-version read, which also refreshes the deletion baseline (rowids of rows the save created) under the accepted epoch.
+assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline']);
+{
+    // Ids, not counts: a lost row and a duplicated one leave the count equal.
+    const lost = makeState(2);
+    lost.fakeData = { ...full, tasks: [{ id: 'a' }, { id: 'b' }] };
+    lost.rowBaseline = { ids: { tasks: ['a', 'c'], projects: [], sections: [], areas: [], people: [] }, settings: {} };
+    assert.match((await poll(lost, lost.MindwtrHost.boot())).error, /Incomplete tasks activation/);
+    const twice = makeState(2);
+    twice.fakeData = { ...full, tasks: [{ id: 'a' }, { id: 'a' }] };
+    twice.rowBaseline = { ids: { tasks: ['a', 'b'], projects: [], sections: [], areas: [], people: [] }, settings: {} };
+    assert.match((await poll(twice, twice.MindwtrHost.boot())).error, /Incomplete tasks activation/);
+    // Another connection committed since the activation's read: a full validated read instead (today's check).
+    const moved = makeState(0);
+    moved.rowBaselineNull = true;
+    assert.equal((await poll(moved, moved.MindwtrHost.boot())).ok, true);
+    assert.deepEqual(moved.events, ['schema', 'activate', 'load', 'flush', 'baseline', 'load']);
+    // The settings row is compared with what core maps from it, never with the store: a recovery load that drops ai.apiKey
+    // from the store (unsaved) still boots; a row that maps differently does not.
+    const stripped = makeState(0);
+    stripped.fakeData = { ...full, tasks: [], settings: { ai: { provider: 'openai', apiKey: 'stored' } } };
+    stripped.settings = { ai: { provider: 'openai' } };
+    assert.equal((await poll(stripped, stripped.MindwtrHost.boot())).ok, true);
+    const remapped = makeState(0);
+    remapped.fakeData = { ...full, tasks: [], settings: { theme: 'dark' } };
+    remapped.rowBaseline = { ids: { tasks: [], projects: [], sections: [], areas: [], people: [] }, settings: { theme: 'light' } };
+    assert.match((await poll(remapped, remapped.MindwtrHost.boot())).error, /Incomplete settings load/);
+    // Saved filters keep their mapping check: a blank id maps to nothing, so 3 rows mapping to 2 filters fail the boot.
+    // The activation loaded 3 (the store's list); then one row's id went blank: the table still counts 3, core now maps 2.
+    const blank = makeState(0);
+    const three = { savedFilters: [{ id: 'f1' }, { id: 'f2' }, { id: 'f3' }] };
+    blank.fakeData = { ...full, tasks: [], settings: three };
+    blank.settings = three;
+    blank.filterCount = 3;
+    blank.rowBaseline = { ids: { tasks: [], projects: [], sections: [], areas: [], people: [] }, settings: { savedFilters: [{ id: 'f1' }, { id: 'f2' }] } };
+    assert.match((await poll(blank, blank.MindwtrHost.boot())).error, /Incomplete saved filters load/);
+}
 // Replay tokens and durable receipts: iOS keeps tokens optional but loads only App lock's exact receipts; Android's
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
