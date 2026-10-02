@@ -235,6 +235,7 @@ private final class Engine: @unchecked Sendable {
         "projectDeleteWrite": 1, "projectDeleteRetryOutcome": 1, "projectDeleteUndo": 1, "projectDeleteUndoRetryOutcome": 1,
         "projectDuplicateWrite": 1, "projectDuplicateRetryOutcome": 1,
         "projectLifecycleWrite": 1, "projectLifecycleRetryOutcome": 1,
+        "reviewTaskWrite": 1,
         "somedaySectionMoveOptions": 1, "somedaySectionMoveWrite": 1, "somedaySectionMoveUndo": 1,
         "somedaySectionMoveRetryOutcome": 1, "somedaySectionMoveUndoRetryOutcome": 1,
         "taskFocusOptions": 1, "taskFocusWrite": 1, "taskFocusRetryOutcome": 1,
@@ -258,7 +259,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -991,19 +992,24 @@ private final class Engine: @unchecked Sendable {
     private func call(_ method: String, argumentsJSON: String, editorAttempt: EditorDraftAttempt?) throws -> String {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, !recoveryActivationPending else { throw HostFailure("Core host is not ready; retry startup") }
-        if editorAttempt == nil, ["saveDraft", "checklistSave", "taskDelete", "taskPromote"].contains(method), try editorDrafts.read() != nil {
+        if editorAttempt == nil, ["saveDraft", "reviewTaskWrite", "checklistSave", "taskDelete", "taskPromote"].contains(method), try editorDrafts.read() != nil {
+            if method == "reviewTaskWrite" {
+                throw CoreHostRejection(message: "INVALID_INPUT: Review row action cannot replace a saved editor draft")
+            }
             throw HostFailure("Editor draft must use its exact Save attempt")
         }
         let args: [Any]
         do {
-            if ["projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method) {
+            if method == "reviewTaskWrite" {
+                args = try reviewTaskRequestArguments(argumentsJSON)
+            } else if ["projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method) {
                 args = try projectLifecycleRequestArguments(argumentsJSON)
             } else {
                 args = try arguments(method, argumentsJSON)
             }
         }
         catch {
-            if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome", "projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method), pending == nil {
+            if ["reviewTaskWrite", "taskCancellationUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome", "projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
             if ["unassignedAreaColorOptions", "unassignedAreaColorWrite", "unassignedAreaColorRetryOutcome"].contains(method), pending == nil {
@@ -3053,6 +3059,15 @@ private final class Engine: @unchecked Sendable {
                 let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
                 let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
                 command = PendingCommand(version: 2, method: "captureCommit", argumentsJSON: encoded)
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "reviewTaskWrite" {
+            do {
+                switch try prepareReviewTaskWrite(args) {
+                case .noop(let value): return value
+                case .prepared(let prepared):
+                    command = prepared
+                    try validateDraftAcknowledgment(command)
+                }
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "saveDraft",
                   let inputJSON = args.first as? String,
@@ -5674,6 +5689,71 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("Malformed Trash Project restore acknowledgment")
             }
         }
+    }
+
+    private enum ReviewTaskPreparation {
+        case noop(String)
+        case prepared(PendingCommand)
+    }
+
+    private func reviewTaskRequestArguments(_ json: String) throws -> [Any] {
+        guard json.utf8.count <= 4_096,
+              let args = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String], args.count == 1,
+              let encoded = args.first, encoded.utf8.count <= 4_096,
+              let action = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              Set(action.keys) == Set(["type", "taskId", "advance", "taskRevision"]),
+              action["type"] as? String == "markTaskReviewed",
+              let id = action["taskId"] as? String, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              id.utf16.count <= 500,
+              Self.isBoolean(action["advance"]),
+              let revision = action["taskRevision"] as? String, !revision.isEmpty,
+              revision.utf16.count <= 200 else {
+            throw HostFailure("INVALID_INPUT: Review row action needs an exact task, boolean choice, and saved revision")
+        }
+        return [encoded]
+    }
+
+    private func prepareReviewTaskWrite(_ args: [Any]) throws -> ReviewTaskPreparation {
+        guard let encoded = args.first as? String,
+              let action = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let taskID = action["taskId"] as? String else {
+            throw HostFailure("INVALID_INPUT: Review row action is malformed")
+        }
+        let value = try invoke("reviewTaskPrepare", arguments: args)
+        guard value.utf8.count <= 2_000_000,
+              let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              let kind = response["kind"] as? String else {
+            throw HostFailure("Malformed Review row preparation")
+        }
+        if kind == "noop" {
+            guard Set(response.keys) == Set(["kind", "result"]),
+                  let result = response["result"] as? [String: Any],
+                  Set(result.keys) == Set(["id", "draft"]), result["id"] as? String == taskID,
+                  result["draft"] is [String: Any] else { throw HostFailure("Malformed Review row no-op") }
+            var publicResult = result
+            publicResult["changed"] = false
+            return .noop(String(decoding: try JSONSerialization.data(withJSONObject: publicResult, options: [.sortedKeys]), as: UTF8.self))
+        }
+        guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+              let prepared = response["prepared"] as? [String: Any],
+              Set(prepared.keys) == Set(["version", "request", "preparedAt", "deviceIdBefore", "deviceIdToInitialize", "scope", "effect"]),
+              Self.isInteger(prepared["version"], equalTo: 2),
+              let request = prepared["request"] as? [String: Any],
+              Set(request.keys) == Set(["id", "base", "patch", "scheduleBase"]),
+              request["id"] as? String == taskID,
+              let base = request["base"] as? [String: Any], Set(base.keys) == Set(["reviewAt"]),
+              let patch = request["patch"] as? [String: Any], Set(patch.keys) == Set(["reviewAt"]),
+              base["reviewAt"] is String, patch["reviewAt"] is String,
+              let schedule = request["scheduleBase"] as? [String: Any], Set(schedule.keys) == Self.scheduleFields,
+              ["startTime", "dueDate", "reviewAt"].allSatisfy({ schedule[$0] is String || schedule[$0] is NSNull }),
+              Self.isOffset(schedule["relativeStartOffset"]) else {
+            throw HostFailure("Malformed prepared Review row save")
+        }
+        let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+        guard envelope.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Review row journal is too large") }
+        let arguments = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+        guard arguments.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Review row journal is too large") }
+        return .prepared(PendingCommand(version: 2, method: "draftCommit", argumentsJSON: arguments))
     }
 
     private func projectLifecycleRequestArguments(_ json: String) throws -> [Any] {

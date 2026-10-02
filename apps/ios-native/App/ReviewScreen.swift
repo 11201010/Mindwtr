@@ -40,6 +40,10 @@ struct ReviewScreen: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     ReviewFailure(model: model, palette: palette)
+                    if let notice = model.reviewNotice {
+                        Text(notice).rnFont(14).foregroundStyle(palette.success)
+                            .accessibilityIdentifier("review-row-notice")
+                    }
                     if !view.text("empty").isEmpty {
                         Text(view.text("empty")).rnFont(14).foregroundStyle(palette.secondary)
                             .frame(maxWidth: .infinity).padding(.vertical, 40).accessibilityIdentifier("review-empty")
@@ -48,9 +52,23 @@ struct ReviewScreen: View {
                     ForEach(items.indices, id: \.self) { index in
                         let item = items[index]
                         if item.text("type") == "task" {
-                            TaskCard(row: item.object("row"), model: model, palette: palette,
-                                onProject: { project in Task { await model.openProject(project) } })
-                                .disabled(!model.reviewActionsEnabled).padding(.leading, 20)
+                            VStack(alignment: .leading, spacing: 8) {
+                                TaskCard(row: item.object("row"), model: model, palette: palette,
+                                    onProject: { project in Task { await model.openProject(project) } })
+                                AppChipFlow {
+                                    ForEach(["markReviewed", "advance"], id: \.self) { name in
+                                        let action = item.object("review").object(name)
+                                        if !action.isEmpty {
+                                            ReviewAction(title: action.text("label"), enabled: model.reviewActionsEnabled,
+                                                palette: palette, id: "review-task-" + name + "-" + item.object("row").text("id")) {
+                                                Task { await model.performReviewTaskAction(action.object("action")) }
+                                            }
+                                            .accessibilityLabel(action.text("accessibilityLabel"))
+                                        }
+                                    }
+                                }
+                            }
+                            .disabled(!model.reviewActionsEnabled).padding(.leading, 20)
                         } else { group(item) }
                     }
                     if items.count < view.number("total") {

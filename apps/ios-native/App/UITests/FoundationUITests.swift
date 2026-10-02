@@ -3844,6 +3844,139 @@ final class FoundationUITests: XCTestCase {
         tap("review-guide-close")
     }
 
+    private func task159OpenReview(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        if app.buttons["tab-review"].exists { boardTap(app, "tab-review") }
+        else { boardTap(app, "tab-menu"); boardTap(app, "menu-review") }
+        boardEnabled(app.buttons["review-start"], timeout: 30)
+    }
+
+    private func task159ReviewRowActions(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+
+        func reveal(_ id: String) -> XCUIElement {
+            let element = app.buttons[id]
+            revealPagedElement(app, element, in: app.scrollViews.firstMatch,
+                more: "review-more", ready: app.buttons["review-start"])
+            return element
+        }
+        func settled(_ id: String) {
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons[id])
+            waitForExpectations(timeout: 30)
+            boardEnabled(app.buttons["review-start"], timeout: 30)
+        }
+
+        task159OpenReview(app)
+        XCTAssertTrue(app.buttons["review-scope-due"].isSelected)
+        boardTap(app, "review-expand-cycle")
+        boardTap(app, "review-expand-cycle")
+        for id in ["task159-date", "task159-timed"] {
+            let action = "review-task-advance-" + id
+            let control = reveal(action)
+            XCTAssertTrue(control.label.contains(id == "task159-date" ? "Task159 Date" : "Task159 Timed"))
+            control.tap()
+            settled(action)
+            XCTAssertFalse(app.buttons["task-title-" + id].exists)
+            if id == "task159-date" {
+                let notice = app.staticTexts["review-row-notice"]
+                for _ in 0..<4 where !notice.exists { app.scrollViews.firstMatch.swipeDown() }
+                XCTAssertTrue(notice.waitForExistence(timeout:10))
+                XCTAssertFalse(notice.label.isEmpty)
+            }
+        }
+        let clear = "review-task-markReviewed-task159-clear"
+        reveal(clear).tap()
+        settled(clear)
+        XCTAssertFalse(app.buttons["task-title-task159-clear"].exists)
+        XCTAssertFalse(app.buttons["task-title-task159-future"].exists)
+
+        boardTap(app, "review-scope-all")
+        XCTAssertTrue(app.buttons["review-scope-all"].isSelected)
+        for (id, title) in [("task159-date", "Task159 Date"), ("task159-timed", "Task159 Timed"),
+                            ("task159-clear", "Task159 Clear"), ("task159-future", "Task159 Future")] {
+            XCTAssertEqual(reveal("task-title-" + id).label, title)
+            XCTAssertTrue(app.buttons["task-status-" + id].label.contains("Next"))
+            XCTAssertFalse(app.buttons["review-task-advance-" + id].exists)
+            XCTAssertFalse(app.buttons["review-task-markReviewed-" + id].exists)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Review row actions after advance and clear"
+        shot.lifetime = .keepAlways
+        add(shot)
+
+        app.terminate()
+        app.launch()
+        task159OpenReview(app)
+        XCTAssertTrue(app.buttons["review-scope-due"].isSelected)
+        XCTAssertTrue(app.staticTexts["review-empty"].waitForExistence(timeout: 30))
+        boardTap(app, "review-scope-all")
+        boardTap(app, "review-expand-cycle")
+        boardTap(app, "review-expand-cycle")
+        XCTAssertEqual(reveal("task-title-task159-date").label, "Task159 Date")
+        XCTAssertFalse(app.buttons["review-task-advance-task159-date"].exists)
+        app.terminate()
+    }
+
+    func testReviewRowActionsNormal() { task159ReviewRowActions("3caad5ec-4618-4007-ac74-8d5f446e7815") }
+    func testReviewRowActionsLargest() { task159ReviewRowActions("16ad5e1b-2170-4385-9319-16cf120dbf5f") }
+
+    func testReviewRowActionFailedSaveRetainsRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "f0af43b0-2194-4b49-b1bc-72134198936c"]
+        app.launch()
+        task159OpenReview(app)
+        XCTAssertTrue(app.buttons["review-scope-due"].isSelected)
+        boardTap(app, "review-expand-cycle")
+        boardTap(app, "review-expand-cycle")
+        let advance = app.buttons["review-task-advance-task159-date"]
+        revealPagedElement(app, advance, in: app.scrollViews.firstMatch)
+        advance.tap()
+
+        let retry = app.buttons["persistence-retry"]
+        XCTAssertTrue(app.staticTexts["persistence-error"].waitForExistence(timeout: 30))
+        boardEnabled(retry, timeout: 30)
+        func assertBlocked() {
+            for id in ["review-task-advance-task159-date", "review-start", "review-scope-due", "tab-inbox", "tab-menu"] {
+                let control = app.buttons[id]
+                XCTAssertTrue(control.exists, "Missing blocked control: " + id)
+                XCTAssertFalse(control.isEnabled, "Control enabled with an owed Review write: " + id)
+            }
+            XCTAssertFalse(app.staticTexts["review-row-notice"].exists)
+        }
+        assertBlocked()
+        for _ in 0..<2 {
+            boardTap(app, "persistence-retry")
+            boardEnabled(retry, timeout: 30)
+            assertBlocked()
+        }
+        app.terminate()
+    }
+
+    func testReviewRowActionColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "f0af43b0-2194-4b49-b1bc-72134198936c"]
+        app.launch()
+        task159OpenReview(app)
+        XCTAssertTrue(app.buttons["review-scope-due"].isSelected)
+        XCTAssertTrue(app.staticTexts["review-empty"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        boardTap(app, "review-scope-all")
+        boardTap(app, "review-expand-cycle")
+        boardTap(app, "review-expand-cycle")
+        let title = app.buttons["task-title-task159-date"]
+        revealPagedElement(app, title, in: app.scrollViews.firstMatch)
+        XCTAssertEqual(title.label, "Task159 Date")
+        XCTAssertTrue(app.buttons["task-status-task159-date"].label.contains("Next"))
+        XCTAssertFalse(app.buttons["review-task-advance-task159-date"].exists)
+        XCTAssertFalse(app.buttons["review-task-markReviewed-task159-date"].exists)
+        app.terminate()
+    }
+
     func testReviewOverviewEditSearchAndGuideCheckpointRestart() {
         let app = XCUIApplication()
         app.launch()
