@@ -6,39 +6,39 @@ struct ReviewScreen: View {
     private var view: CoreObject { model.reviewOverview }
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 8) {
+                    AppChipFlow {
+                        let choices = view.object("scope").objects("options")
+                        ForEach(choices.indices, id: \.self) { index in
+                            let choice = choices[index]
+                            ReviewAction(title: choice.text("label"), selected: view.object("scope").text("selected") == choice.text("id"),
+                                enabled: model.reviewActionsEnabled, palette: palette, id: "review-scope-" + choice.text("id")) {
+                                Task { await model.editReviewOverview(scope: choice.text("id")) }
+                            }
+                        }
+                        if view.object("scope").text("selected") == "all" {
+                            ReviewAction(title: model.label("nav.history"), enabled: model.reviewActionsEnabled, palette: palette, id: "review-history") {
+                                Task { await model.openHistory() }
+                            }
+                        }
+                    }
+                    Text(view.object("scope").text("help")).rnFont(12).foregroundStyle(palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
                 AppChipFlow {
-                    let choices = view.object("scope").objects("options")
-                    ForEach(choices.indices, id: \.self) { index in
-                        let choice = choices[index]
-                        ReviewAction(title: choice.text("label"), selected: view.object("scope").text("selected") == choice.text("id"),
-                            enabled: model.reviewActionsEnabled, palette: palette, id: "review-scope-" + choice.text("id")) {
-                            Task { await model.editReviewOverview(scope: choice.text("id")) }
-                        }
+                    ReviewAction(title: view.object("expansion").text("label"),
+                        enabled: model.reviewActionsEnabled && !view.object("expansion").flag("disabled"), palette: palette, id: "review-expand-cycle") {
+                        Task { await model.editReviewOverview(expansion: ["type": "cycle"]) }
                     }
-                    if view.object("scope").text("selected") == "all" {
-                        ReviewAction(title: model.label("nav.history"), enabled: model.reviewActionsEnabled, palette: palette, id: "review-history") {
-                            Task { await model.openHistory() }
-                        }
-                    }
+                    ReviewAction(title: view.object("startReview").text("label"), selected: true,
+                        enabled: model.reviewActionsEnabled, palette: palette, id: "review-start") { model.openReviewPicker() }
                 }
-                Text(view.object("scope").text("help")).rnFont(12).foregroundStyle(palette.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
-            AppChipFlow {
-                ReviewAction(title: view.object("expansion").text("label"),
-                    enabled: model.reviewActionsEnabled && !view.object("expansion").flag("disabled"), palette: palette, id: "review-expand-cycle") {
-                    Task { await model.editReviewOverview(expansion: ["type": "cycle"]) }
-                }
-                ReviewAction(title: view.object("startReview").text("label"), selected: true,
-                    enabled: model.reviewActionsEnabled, palette: palette, id: "review-start") { model.openReviewPicker() }
-            }
-            .padding(12).frame(maxWidth: .infinity, alignment: .leading).background(palette.card)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading).background(palette.card)
+                Group {
                     ReviewFailure(model: model, palette: palette)
                     if let notice = model.reviewNotice {
                         Text(notice).rnFont(14).foregroundStyle(palette.success)
@@ -78,10 +78,10 @@ struct ReviewScreen: View {
                     }
                     if model.busy { ProgressView().frame(maxWidth: .infinity).padding(12) }
                 }
-                .padding(12)
+                .padding(.horizontal, 12).padding(.bottom, 10)
             }
-            .refreshable { await model.refresh() }
         }
+        .refreshable { await model.refresh() }
     }
 
     private func group(_ item: CoreObject) -> some View {
