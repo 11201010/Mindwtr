@@ -1205,8 +1205,9 @@ assert.match(model, /fun closeEditor\(settle: Boolean = true\) \{[\s\S]{0,600}?a
 // A Discard settles the draft's attachments (core's settleTaskDraftAttachments, pass A2): baseline and committed are the list the
 // draft started from, at the revision the editor read; a Save settles its own after it landed (closeEditor(settle = false)).
 assert.match(model, /attachments\.settle\(closing\.id, closing\.model\.taskRevision, from, closing\.attachmentsNow, from\)/);
-// A close while a save is owed (a View-tab link) never settles: that save's own settlement runs when it lands (review 2).
-assert.match(model, /editor\?\.takeIf \{ settle && pendingSave == null && it\.attachments != null && !it\.readOnly \}\?\.let \{ closing ->/);
+// A close while a save is owed (a View-tab link) never settles: that save's own settlement runs when it lands (review 2; the
+// rule itself is DraftAttachmentsTest's).
+assert.match(model, /editor\?\.takeIf \{ discardSettles\(settle, pendingSave != null, it\.attachments != null, it\.readOnly\) \}\?\.let \{ closing ->/);
 // Pending edits are in the draft file before dispatch; each reply's draft and the removal of its edit are one write;
 // a restore sends them again in order.
 assert.match(model, /keepEditor\(current\.queued\(edit\.toString\(\), field\)\)\s+pumpEdits\(\)/);

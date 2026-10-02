@@ -114,6 +114,21 @@ data class AttachmentRowView(
 /** A task draft command's answer [reply] for the list [sent] is stale when the draft now holds [now] instead: send it again. */
 internal fun draftMoved(sent: String, now: String, reply: JSONObject): Boolean = reply.optString("kind") == "saved" && sent != now
 
+/**
+ * The editor closes on a Discard ([settle]): its draft's copies are settled, except while a save is owed (its new copies are that
+ * save's, settled when it lands), before the attachments were read, or in a read-only editor.
+ */
+internal fun discardSettles(settle: Boolean, saveOwed: Boolean, attachmentsRead: Boolean, readOnly: Boolean) =
+    settle && !saveOwed && attachmentsRead && !readOnly
+
+/**
+ * A Save's settlement: [half] is the save's attachments (`base`, `value`), [saved] getTaskView after it. `committed` is the list the
+ * Save wrote (its merge with a sync that landed meanwhile), never the draft, as RN's Save hands its cleanup (0b62f4725).
+ */
+internal fun savedSettlement(taskId: String, half: JSONObject, saved: JSONObject): JSONObject =
+    JSONObject().put("taskId", taskId).put("taskRevision", saved.getString("taskRevision"))
+        .put("baseline", half.getJSONArray("base")).put("draft", half.getJSONArray("value")).put("committed", saved.getJSONArray("attachmentsBase"))
+
 /** Whose attachments: the open editor's draft (a task), or a project's stored list. */
 data class AttachmentOwner(val kind: String, val id: String)
 
@@ -125,6 +140,9 @@ data class LinkSheet(
     val owner: AttachmentOwner, val text: String = "", val touched: Boolean = false, val editing: JSONObject? = null,
     val error: String? = null, val requestId: String = UUID.randomUUID().toString(),
 )
+
+/** RN's task link field marks itself touched when it loses focus, so a blank one shows "Required"; RN's project sheet has no such line. */
+internal fun LinkSheet.blurred(): LinkSheet = if (owner.kind == "task") copy(touched = true) else this
 
 /** What an Open showed: RN's image preview or audio player, with the title and the local file URI. */
 data class AttachmentView(val kind: String, val title: String, val uri: String)
@@ -200,8 +218,8 @@ class AttachmentsModel(private val shell: InboxViewModel) {
         }
     }
 
-    /** RN's task link field marks itself touched when it loses focus, so a blank one shows "Required" (RN's project sheet has no such line). */
-    fun blurLink() { link?.takeIf { it.owner.kind == "task" }?.let { link = it.copy(touched = true) } }
+    /** The link field lost focus ([blurred]). */
+    fun blurLink() { link = link?.blurred() }
 
     fun closeLink() { link = null }
 
@@ -353,8 +371,7 @@ class AttachmentsModel(private val shell: InboxViewModel) {
     fun settleSaved(runtime: CoreHost, taskId: String, half: JSONObject) {
         runCatching {
             val saved = runtime.taskView(JSONObject().put("id", taskId).put("limit", 1).toString())
-            settleOn(runtime, JSONObject().put("taskId", taskId).put("taskRevision", saved.getString("taskRevision"))
-                .put("baseline", half.getJSONArray("base")).put("draft", half.getJSONArray("value")).put("committed", saved.getJSONArray("attachmentsBase")))
+            settleOn(runtime, savedSettlement(taskId, half, saved))
         }.onFailure { Log.w(CoreHost.TAG, "Attachment settlement not read code=${it.message?.substringBefore(':')}") }
     }
 

@@ -749,7 +749,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
      */
     fun closeEditor(settle: Boolean = true) {
         // Never while a save is owed: its new copies are that save's, settled when it lands (sendDraft).
-        editor?.takeIf { settle && pendingSave == null && it.attachments != null && !it.readOnly }?.let { closing ->
+        editor?.takeIf { discardSettles(settle, pendingSave != null, it.attachments != null, it.readOnly) }?.let { closing ->
             val from = closing.attachmentsFrom ?: closing.model.attachmentsBase
             attachments.settle(closing.id, closing.model.taskRevision, from, closing.attachmentsNow, from)
         }
