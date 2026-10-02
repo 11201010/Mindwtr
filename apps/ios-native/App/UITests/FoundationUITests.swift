@@ -17386,4 +17386,62 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task157PriorityRow(_ app: XCUIApplication, title: String, priority: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@",
+            title, "Status: Inbox", "Priority: " + priority)).firstMatch
+    }
+
+    private func task157InboxCompletionIdentity(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); boardEnabled(app.buttons["tab-inbox"], timeout: 30); boardTap(app, "tab-inbox")
+        let scroll = app.scrollViews.firstMatch
+        XCTAssertTrue(scroll.waitForExistence(timeout: 30))
+
+        func reveal(_ id: String, survivorMovedAbove: Bool = false) {
+            let title = app.buttons["task-title-" + id]
+            if survivorMovedAbove {
+                // After removing the first row, a lazy survivor can be above
+                // the current viewport. Search upward before paging downward.
+                for _ in 0..<6 where !title.exists { scroll.swipeDown() }
+            }
+            revealPagedElement(app, title, in: scroll)
+        }
+        func assertRow(_ id: String, _ title: String, _ priority: String, movedAbove: Bool = false) {
+            reveal(id, survivorMovedAbove: movedAbove)
+            XCTAssertEqual(app.buttons.matching(identifier: "task-title-" + id).count, 1, id)
+            XCTAssertTrue(task157PriorityRow(app, title: title, priority: priority).exists,
+                          "The surviving Inbox card must retain its own status and priority: \(id)")
+            let status = app.buttons["task-status-" + id]
+            XCTAssertEqual(status.label, "Change status. Current status: Inbox", id)
+            XCTAssertTrue(status.isEnabled, id)
+        }
+        func complete(_ id: String) {
+            reveal(id, survivorMovedAbove: true)
+            let status = app.buttons["task-status-" + id]
+            boardEnabled(status); status.tap()
+            boardTap(app, "task-complete")
+        }
+
+        assertRow("task157-high", "Task157 High", "High")
+        assertRow("task157-medium", "Task157 Medium", "Medium")
+        assertRow("task157-low", "Task157 Low", "Low")
+        complete("task157-high")
+        XCTAssertTrue(app.buttons["task-title-task157-high"].waitForNonExistence(timeout: 20))
+        assertRow("task157-medium", "Task157 Medium", "Medium", movedAbove: true)
+        assertRow("task157-low", "Task157 Low", "Low", movedAbove: true)
+        complete("task157-medium")
+        XCTAssertTrue(app.buttons["task-title-task157-medium"].waitForNonExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["task-title-task157-high"].exists)
+        assertRow("task157-low", "Task157 Low", "Low", movedAbove: true)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "task-title-task157-")).count, 1,
+                       "Completing High and Medium must leave only the saved Low task")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Inbox survivors after two completions"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testTask157InboxCompletionIdentityNormal() { task157InboxCompletionIdentity("5cfe4d95-f7c6-4260-b59e-c0602a4fab2c") }
+    func testTask157InboxCompletionIdentityLargest() { task157InboxCompletionIdentity("3889040f-4507-4692-b862-bd4a32ad5c26") }
+
 }
