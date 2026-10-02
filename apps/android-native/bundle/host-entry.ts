@@ -2102,6 +2102,24 @@ globalThis.MindwtrHost = {
     trashProjectRestoreCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedTrashProjectRestore(editorJson(json) as Parameters<typeof contract.commitPreparedTrashProjectRestore>[0])));
     },
+    projectDeletePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareProjectDelete(editorJson(json) as Parameters<typeof contract.prepareProjectDelete>[0])); });
+    },
+    projectDeleteValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedProjectDelete(editorJson(json) as Parameters<typeof contract.validatePreparedProjectDelete>[0])));
+    },
+    projectDeleteCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedProjectDelete(editorJson(json) as Parameters<typeof contract.commitPreparedProjectDelete>[0])));
+    },
+    projectDeleteUndoPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareProjectDeleteUndo(editorJson(json) as Parameters<typeof contract.prepareProjectDeleteUndo>[0])); });
+    },
+    projectDeleteUndoValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedProjectDeleteUndo(editorJson(json) as Parameters<typeof contract.validatePreparedProjectDeleteUndo>[0])));
+    },
+    projectDeleteUndoCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedProjectDeleteUndo(editorJson(json) as Parameters<typeof contract.commitPreparedProjectDeleteUndo>[0])));
+    },
     /** Private native editor preparation freezes the raw Task effect before journaling. */
     draftPrepare(json: string): string {
         return submit(async () => {

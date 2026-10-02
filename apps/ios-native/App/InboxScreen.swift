@@ -101,6 +101,25 @@ struct InboxScreen: View {
                             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                                 .foregroundStyle(palette.text).background(palette.filter)
                         }
+                        if !model.projectDeleteNotice.isEmpty && !model.taskPresented {
+                            HStack(spacing: 12) {
+                                Text(model.projectDeleteNotice.text("message")).rnFont(14)
+                                    .accessibilityIdentifier("project-delete-notice")
+                                Spacer(minLength: 0)
+                                if model.projectDeleteNotice.flag("undoEnabled") {
+                                    Button {
+                                        Task { await model.undoProjectDelete() }
+                                    } label: {
+                                        Text(model.projectDeleteNotice.text("undoLabel"))
+                                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                    }
+                                    .disabled(model.busy || model.retryNeeded)
+                                    .accessibilityIdentifier("project-delete-undo")
+                                }
+                            }
+                            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                            .foregroundStyle(palette.text).background(palette.filter)
+                        }
                         if !model.taskFocusNotice.isEmpty && !model.reviewGuidePresented {
                             TaskFocusNotice(model: model, palette: palette)
                         }

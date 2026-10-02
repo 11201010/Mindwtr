@@ -280,6 +280,7 @@ import { createProjectTagsWriteMethods } from './native-host-contract-project-ta
 import { createProjectAttachmentWriteMethods } from './native-host-contract-project-attachments';
 import { createProjectStatusMethods } from './native-host-contract-project-status';
 import { createTrashProjectRestoreMethods } from './native-host-contract-trash-project-restore';
+import { createProjectDeleteMethods } from './native-host-contract-project-delete';
 import { createProjectDateMethods } from './native-host-contract-project-date';
 import { createProjectAreaMethods } from './native-host-contract-project-area';
 import { createProjectSectionMethods } from './native-host-contract-project-section';
@@ -548,6 +549,8 @@ export type NativeProjectDetail = {
     revision: string;
     mutationRevision: string;
     projectId: string;
+    /** The saved Project row revision for compare-and-set actions from this detail. */
+    projectRevision: string;
     readOnly: boolean;
     metadata: ProjectDetailsMetadata;
     total: number;
@@ -1321,6 +1324,8 @@ export function createNativeHostContract(options: {
     ): NativeHostResult<{ value: NativeProjectDetail; cache: ProjectDetailCache }> => {
         const detail = projectDetail(projectId, currentRevision, showCompleted, completedCollapsed, filter);
         if (!detail) return fail('TASK_NOT_FOUND', 'Project not found');
+        const savedProject = useTaskStore.getState()._projectsById.get(projectId);
+        if (!savedProject) return fail('TASK_NOT_FOUND', 'Project not found');
         return { ok: true, value: {
             cache: detail,
             value: {
@@ -1328,6 +1333,7 @@ export function createNativeHostContract(options: {
                 revision: currentRevision,
                 mutationRevision: projectMutationRevision(),
                 projectId,
+                projectRevision: revisionOf(savedProject),
                 readOnly: detail.readOnly,
                 metadata: detail.metadata,
                 total: detail.items.length,
@@ -1812,6 +1818,7 @@ export function createNativeHostContract(options: {
         ...createProjectStatusMethods({ readiness, save,
             revision: projectMutationRevision }),
         ...createTrashProjectRestoreMethods({ readiness, save }),
+        ...createProjectDeleteMethods({ readiness, save, t: () => translate }),
         ...createProjectDateMethods({ readiness, save,
             revision: projectMutationRevision }),
         ...createProjectAreaMethods({ readiness, save,
