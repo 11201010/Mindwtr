@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createNativeHostContract } from './native-host-contract';
 import { canStarNewCapture } from './focus-star';
 import { normalizeFocusTaskLimit } from './focus-utils';
-import { DEFAULT_TASK_EDITOR_HIDDEN, DEFAULT_TASK_EDITOR_ORDER } from './task-editor-layout';
+import { DEFAULT_TASK_EDITOR_HIDDEN, DEFAULT_TASK_EDITOR_ORDER, TASK_EDITOR_SECTIONABLE_FIELDS } from './task-editor-layout';
 import { getProcessInboxDefaultScheduleTime } from './process-inbox-model';
 import { createQuickCaptureOptions, resolveQuickCaptureDefaultAreaId } from './quick-capture-model';
 import type { GtdWorkflowEdit, NativeGtdWorkflowRequest } from './native-host-contract-gtd-workflow';
@@ -163,6 +163,74 @@ async function plannedSection(env: Awaited<ReturnType<typeof open>>,
 }
 
 afterEach(async () => { vi.useRealTimers(); await flushPendingSave(); resetForTests(); });
+
+describe('GTD Task Editor field-options RN expansion metadata', () => {
+    it('projects default and saved fold states, raw reset keys, and visible group counts without saving', async () => {
+        const env = await open(initial());
+        const defaults = await env.host.getGtdTaskEditorFieldOptions({});
+        if (!defaults.ok) throw new Error(JSON.stringify(defaults));
+        expect(defaults.value.taskEditor.initiallyExpanded).toEqual({ basic: true,
+            scheduling: false, organization: false, details: false });
+        expect(defaults.value.taskEditor.expandedResetKey).toBe('[null,null,null]');
+        expect(defaults.value.taskEditor.groups.reduce((sum, group) => sum + group.count, 0))
+            .toBe(DEFAULT_TASK_EDITOR_ORDER.length);
+        for (const group of defaults.value.taskEditor.groups) expect(group.count).toBe(group.fields.length);
+        expect(env.saves()).toBe(0);
+
+        env.changeSaved((data) => ({ ...data, settings: { ...data.settings, gtd: { ...data.settings.gtd,
+            taskEditor: { sectionOpen: { scheduling: true, organization: false, details: true } } } } }));
+        const custom = await env.host.getGtdTaskEditorFieldOptions({});
+        if (!custom.ok) throw new Error(JSON.stringify(custom));
+        expect(custom.value.taskEditor.initiallyExpanded).toEqual({ basic: true,
+            scheduling: true, organization: false, details: true });
+        expect(custom.value.taskEditor.expandedResetKey).toBe('[true,false,true]');
+        expect(env.saves()).toBe(0);
+    });
+
+    it('changes reset key for an explicit default, keeps omitted groups in fold state, and ignores field moves', async () => {
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd,
+            taskEditor: { sections: Object.fromEntries(TASK_EDITOR_SECTIONABLE_FIELDS.map((field) => [field, 'basic'])),
+                sectionOpen: { scheduling: true, details: false } } as never };
+        const empty = await open(start);
+        const first = await empty.host.getGtdTaskEditorFieldOptions({});
+        if (!first.ok) throw new Error(JSON.stringify(first));
+        expect(first.value.taskEditor.groups.map((group) => [group.id, group.count]))
+            .toEqual([['basic', DEFAULT_TASK_EDITOR_ORDER.length]]);
+        expect(first.value.taskEditor.initiallyExpanded).toEqual({ basic: true,
+            scheduling: true, organization: false, details: false });
+        expect(first.value.taskEditor.expandedResetKey).toBe('[true,null,false]');
+        empty.changeSaved((data) => ({ ...data, settings: { ...data.settings, gtd: { ...data.settings.gtd,
+            taskEditor: { ...data.settings.gtd?.taskEditor,
+                sectionOpen: { scheduling: true, organization: false, details: false } } } } }));
+        const explicitDefault = await empty.host.getGtdTaskEditorFieldOptions({});
+        if (!explicitDefault.ok) throw new Error(JSON.stringify(explicitDefault));
+        expect(explicitDefault.value.taskEditor.initiallyExpanded).toEqual(first.value.taskEditor.initiallyExpanded);
+        expect(explicitDefault.value.taskEditor.expandedResetKey).toBe('[true,false,false]');
+        expect(empty.saves()).toBe(0);
+
+        const moved = await open(initial());
+        const original = await moved.host.getGtdTaskEditorFieldOptions({});
+        if (!original.ok) throw new Error(JSON.stringify(original));
+        const section = await plannedSection(moved, 'description', 'scheduling');
+        expect(await moved.host.commitPreparedGtdWorkflow(section.envelope)).toEqual({ ok: true,
+            value: section.prepared.result });
+        const afterMove = await moved.host.getGtdTaskEditorFieldOptions({});
+        if (!afterMove.ok) throw new Error(JSON.stringify(afterMove));
+        expect(afterMove.value.taskEditor.expandedResetKey).toBe(original.value.taskEditor.expandedResetKey);
+        expect(afterMove.value.taskEditor.initiallyExpanded).toEqual(original.value.taskEditor.initiallyExpanded);
+        expect(afterMove.value.taskEditor.groups.find((group) => group.id === 'scheduling')?.count)
+            .toBe((original.value.taskEditor.groups.find((group) => group.id === 'scheduling')?.count ?? 0) + 1);
+        const visible = await plannedField(moved, 'description', false);
+        expect(await moved.host.commitPreparedGtdWorkflow(visible.envelope)).toEqual({ ok: true,
+            value: visible.prepared.result });
+        const afterHide = await moved.host.getGtdTaskEditorFieldOptions({});
+        if (!afterHide.ok) throw new Error(JSON.stringify(afterHide));
+        expect(afterHide.value.taskEditor.expandedResetKey).toBe(original.value.taskEditor.expandedResetKey);
+        expect(afterHide.value.taskEditor.groups.find((group) => group.id === 'scheduling')?.count)
+            .toBe(afterMove.value.taskEditor.groups.find((group) => group.id === 'scheduling')?.count);
+        expect(moved.saves()).toBe(2);
+    });
+});
 
 describe('prepared GTD Task Editor field section assignment', () => {
     it('moves Description to Scheduling and restores its default Details assignment', async () => {

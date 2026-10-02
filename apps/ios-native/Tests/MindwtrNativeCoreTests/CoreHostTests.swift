@@ -14141,6 +14141,19 @@ final class CoreHostTests: XCTestCase {
         let successful = try SQLiteBridge(url: database)
         try assertEffect(original, nineTableSnapshot(successful)); successful.close()
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        if fielding || fieldSectioning {
+            let beforeEditor = try XCTUnwrap(options["taskEditor"] as? [String: Any])
+            let updated = try object(await writer.call("gtdTaskEditorFieldOptions", argumentsJSON: json(["{}"])))
+            let afterEditor = try XCTUnwrap(updated["taskEditor"] as? [String: Any])
+            XCTAssertEqual(afterEditor["expandedResetKey"] as? String, beforeEditor["expandedResetKey"] as? String)
+            if fieldSectioning {
+                let groups = try XCTUnwrap(afterEditor["groups"] as? [[String: Any]])
+                let destination = try XCTUnwrap(value as? String)
+                let moved = try XCTUnwrap(groups.first { $0["id"] as? String == destination })
+                let rows = try XCTUnwrap(moved["fields"] as? [[String: Any]])
+                XCTAssertTrue(rows.contains { $0["id"] as? String == field })
+            }
+        }
         if type == "weekStart" {
             let view = try object(await writer.call("menuRead", argumentsJSON: json(["calendar", json([
                 "state": ["viewMode": "week", "selectedDate": "2026-10-01", "visibleMonth": "2026-10-01"],
@@ -14393,6 +14406,7 @@ final class CoreHostTests: XCTestCase {
         var editor = gtd["taskEditor"] as? [String: Any] ?? [:]
         let movable = ["contexts", "dueDate", "startTime", "reviewAt", "recurrence", "tags", "description", "attachments", "checklist", "priority", "energyLevel", "timeEstimate", "assignedTo", "location"]
         editor["sections"] = Dictionary(uniqueKeysWithValues: movable.map { ($0, "basic") })
+        editor["sectionOpen"] = ["scheduling": true]
         gtd["taskEditor"] = editor; settings["gtd"] = gtd
         try writeCalendarPreferenceSettings(settings)
         let core = host(); _ = try await core.start()
@@ -14401,7 +14415,47 @@ final class CoreHostTests: XCTestCase {
         let groups = try XCTUnwrap(model["groups"] as? [[String: Any]])
         XCTAssertEqual(groups.compactMap { $0["id"] as? String }, ["basic"])
         XCTAssertEqual((groups.first?["fields"] as? [[String: Any]])?.count, 18)
+        XCTAssertEqual(groups.first?["count"] as? Int, 18)
+        let expanded = try XCTUnwrap(model["initiallyExpanded"] as? [String: Any])
+        XCTAssertEqual(try json(expanded), try json(["basic": true, "scheduling": true, "organization": false, "details": false]))
+        XCTAssertEqual(model["expandedResetKey"] as? String, "[true,null,null]")
         await core.close()
+    }
+
+    func testGtdTaskEditorFieldReadTracksRawExpansionDefaultsWithoutSaving() async throws {
+        let bootstrap = host(); _ = try await bootstrap.start(); await bootstrap.close()
+        let cases: [(raw: [String: Any], resetKey: String, expanded: [String: Bool])] = [
+            ([:], "[null,null,null]", ["basic": true, "scheduling": false, "organization": false, "details": false]),
+            (["basic": false, "scheduling": false, "organization": true, "details": false], "[false,true,false]",
+             ["basic": true, "scheduling": false, "organization": true, "details": false]),
+            (["basic": false, "organization": true, "details": false], "[null,true,false]",
+             ["basic": true, "scheduling": false, "organization": true, "details": false]),
+        ]
+        for scenario in cases {
+            var settings = try calendarPreferenceSettings()
+            var gtd = settings["gtd"] as? [String: Any] ?? [:]
+            var editor = gtd["taskEditor"] as? [String: Any] ?? [:]
+            editor["sectionOpen"] = scenario.raw; gtd["taskEditor"] = editor; settings["gtd"] = gtd
+            try writeCalendarPreferenceSettings(settings)
+            let core = host(); _ = try await core.start()
+            let beforeBridge = try SQLiteBridge(url: database), before = try nineTableSnapshot(beforeBridge)
+            beforeBridge.close()
+            let options = try object(await core.call("gtdTaskEditorFieldOptions", argumentsJSON: json(["{}"])))
+            let model = try XCTUnwrap(options["taskEditor"] as? [String: Any])
+            let expanded = try XCTUnwrap(model["initiallyExpanded"] as? [String: Any])
+            XCTAssertEqual(try json(expanded), try json(scenario.expanded))
+            XCTAssertEqual(model["expandedResetKey"] as? String, scenario.resetKey)
+            let groups = try XCTUnwrap(model["groups"] as? [[String: Any]])
+            XCTAssertEqual(groups.compactMap { $0["count"] as? Int }.reduce(0, +), 18)
+            for group in groups {
+                XCTAssertEqual(group["count"] as? Int, (group["fields"] as? [[String: Any]])?.count)
+            }
+            let afterBridge = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(afterBridge), before)
+            afterBridge.close()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await core.close()
+        }
     }
 
     func testGtdTaskEditorPresetUnsupportedLayoutIsDefiniteButReadFailureIsNot() async throws {
