@@ -178,6 +178,10 @@ struct SettingsScreen: View {
             get: { model.gtdCaptureAreaPicker },
             set: { if !$0 && !model.appLock.concealed { model.closeGtdCaptureAreaPicker() } }
         )) { gtdCaptureAreaSheet }
+        .sheet(isPresented: Binding(
+            get: { model.gtdTaskEditorFieldId != nil },
+            set: { if !$0 && !model.appLock.concealed { model.closeGtdTaskEditorField() } }
+        )) { gtdTaskEditorFieldSheet }
         .accessibilityAction(.escape) {
             if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
             else if model.settingsGeneralPresented { model.closeGeneralSettings() }
@@ -373,26 +377,76 @@ struct SettingsScreen: View {
                         ForEach(group.objects("fields").indices, id: \.self) { fieldIndex in
                             let field = group.objects("fields")[fieldIndex]
                             let visibility = field.object("visibility")
-                            Button { Task { await model.chooseGtdWorkflow(visibility.object("edit")) } } label: {
-                                HStack(spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(field.text("label")).rnFont(16).foregroundStyle(palette.text)
-                                        Text(field.text("status")).rnFont(13).foregroundStyle(palette.secondary)
-                                    }.fixedSize(horizontal: false, vertical: true)
-                                    Spacer(minLength: 8)
+                            HStack(spacing: 12) {
+                                Button { Task { await model.chooseGtdWorkflow(visibility.object("edit")) } } label: {
                                     Image(systemName: field.flag("visible") ? "eye" : "eye.slash")
-                                        .foregroundStyle(palette.secondary).accessibilityHidden(true)
-                                }.frame(minHeight: 44).contentShape(Rectangle())
-                            }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
-                                .accessibilityLabel(visibility.text("accessibilityLabel"))
-                                .accessibilityValue(field.text("status"))
-                                .accessibilityIdentifier("gtd-taskEditorFieldVisible-" + field.text("id"))
+                                        .foregroundStyle(palette.secondary).frame(minWidth: 44, minHeight: 44)
+                                        .contentShape(Rectangle())
+                                }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
+                                    .accessibilityLabel(visibility.text("accessibilityLabel"))
+                                    .accessibilityValue(field.text("status"))
+                                    .accessibilityIdentifier("gtd-taskEditorFieldVisible-" + field.text("id"))
+                                Button { model.openGtdTaskEditorField(field.text("id")) } label: {
+                                    HStack(spacing: 8) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(field.text("label")).rnFont(16).foregroundStyle(palette.text)
+                                            Text(field.text("status")).rnFont(13).foregroundStyle(palette.secondary)
+                                        }.fixedSize(horizontal: false, vertical: true)
+                                        Spacer(minLength: 4)
+                                        Image(systemName: "chevron.right").foregroundStyle(palette.secondary).accessibilityHidden(true)
+                                    }.frame(minHeight: 44).contentShape(Rectangle())
+                                }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
+                                    .accessibilityIdentifier("gtd-taskEditorField-" + field.text("id"))
+                            }
                         }
                     }.padding(14).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
                 }
-                gtdFeedback
+                if model.gtdTaskEditorFieldId == nil { gtdFeedback }
             }.padding(16).padding(.bottom, 24)
         }.accessibilityIdentifier("gtd-taskEditor-scroll")
+    }
+
+    private var gtdTaskEditorFieldSheet: some View {
+        let field = model.gtdTaskEditorField
+        let sheet = field.object("sheet")
+        return VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text(sheet.text("title")).rnFont(20, .bold).foregroundStyle(palette.text)
+                    .accessibilityAddTraits(.isHeader).frame(maxWidth: .infinity, alignment: .leading)
+                Button(sheet.text("doneLabel").isEmpty ? model.label("common.done") : sheet.text("doneLabel")) {
+                    model.closeGtdTaskEditorField()
+                }.rnFont(15).frame(minWidth: 48, minHeight: 48)
+                    .disabled(model.busy || model.retryNeeded || model.gtdWorkflowPending)
+                    .accessibilityIdentifier("gtd-field-done")
+            }.padding(.horizontal, 16).padding(.top, 20)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if !sheet.object("visible").isEmpty { gtdToggle(sheet.object("visible")) }
+                    let sections = sheet.object("sections")
+                    if !sections.isEmpty {
+                        Text(sections.text("label")).rnFont(16, .semibold).foregroundStyle(palette.text)
+                            .accessibilityAddTraits(.isHeader)
+                        ForEach(sections.objects("options").indices, id: \.self) { index in
+                            let option = sections.objects("options")[index]
+                            Button { Task { await model.chooseGtdWorkflow(option.object("edit")) } } label: {
+                                HStack {
+                                    Text(option.text("label")).rnFont(16).foregroundStyle(palette.text)
+                                        .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                                    if option.flag("selected") { Image(systemName: "checkmark").foregroundStyle(palette.tint) }
+                                }.padding(14).frame(minHeight: 48).contentShape(Rectangle())
+                            }.buttonStyle(.plain).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                                .disabled(!model.gtdWorkflowEnabled)
+                                .accessibilityAddTraits(option.flag("selected") ? .isSelected : [])
+                                .accessibilityIdentifier("gtd-field-section-" + option.text("value"))
+                        }
+                    }
+                    gtdFeedback
+                }.padding(16)
+            }.accessibilityIdentifier("gtd-field-scroll")
+        }.background(palette.bg)
+            .presentationDetents([.large]).presentationDragIndicator(.visible)
+            .interactiveDismissDisabled(model.busy || model.retryNeeded || model.gtdWorkflowPending)
+            .accessibilityAction(.escape) { model.closeGtdTaskEditorField() }
     }
 
     private var gtdCaptureContent: some View {

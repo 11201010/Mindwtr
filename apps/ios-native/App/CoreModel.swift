@@ -262,6 +262,11 @@ final class CoreModel: ObservableObject {
     @Published private(set) var settingsGtdTaskEditorPresented = false
     @Published private(set) var gtdTaskEditor: CoreObject = [:]
     @Published private(set) var gtdTaskEditorPresetError: String?
+    @Published private(set) var gtdTaskEditorFieldId: String?
+    var gtdTaskEditorField: CoreObject {
+        gtdTaskEditor.objects("groups").flatMap { $0.objects("fields") }
+            .first { $0.text("id") == gtdTaskEditorFieldId } ?? [:]
+    }
     @Published private(set) var gtdCaptureAreaPicker = false
     @Published private(set) var gtdCaptureAreaOptions: [CoreObject] = []
     @Published private(set) var gtdCaptureAreaTotal = 0
@@ -2744,7 +2749,10 @@ final class CoreModel: ObservableObject {
                 settingsGtdReviewPresented = ["dailyReviewFocusStep", "weeklyReviewContextStep"].contains(recovery.object("result").text("type"))
                 settingsGtdInboxPresented = ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"].contains(recovery.object("result").text("type"))
                 settingsGtdCapturePresented = ["defaultArea", "quickAddAutoClean", "naturalLanguageDates"].contains(recovery.object("result").text("type"))
-                settingsGtdTaskEditorPresented = ["taskEditorSectionOpen", "taskEditorPreset", "taskEditorFieldVisible"].contains(recovery.object("result").text("type"))
+                settingsGtdTaskEditorPresented = ["taskEditorSectionOpen", "taskEditorPreset", "taskEditorFieldVisible", "taskEditorFieldSection"].contains(recovery.object("result").text("type"))
+                if recovery.object("result").text("type") == "taskEditorFieldSection" {
+                    gtdTaskEditorFieldId = recovery.object("result").text("field")
+                }
             } else if ["generalPreferenceCommit", "appLockCommit"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsGeneralPresented = true
@@ -2934,6 +2942,7 @@ final class CoreModel: ObservableObject {
         settingsGtdInboxPresented = false
         settingsGtdCapturePresented = false
         settingsGtdTaskEditorPresented = false
+        gtdTaskEditorFieldId = nil
         gtdCaptureAreaPicker = false
         generalPreferencePicker = nil
         selectedSurface = .settings
@@ -2994,6 +3003,7 @@ final class CoreModel: ObservableObject {
         settingsGtdInboxPresented = false
         settingsGtdCapturePresented = false
         settingsGtdTaskEditorPresented = false
+        gtdTaskEditorFieldId = nil
         gtdCaptureAreaPicker = false
         gtdWorkflowError = nil
         busy = true
@@ -3024,6 +3034,7 @@ final class CoreModel: ObservableObject {
 
     func closeGtdSettings() async {
         guard settingsGtdPresented, !busy, !retryNeeded, !gtdWorkflowPending else { return }
+        if gtdTaskEditorFieldId != nil { closeGtdTaskEditorField(); return }
         if gtdCaptureAreaPicker { closeGtdCaptureAreaPicker(); return }
         if settingsGtdArchivePresented || settingsGtdReviewPresented || settingsGtdInboxPresented || settingsGtdCapturePresented || settingsGtdTaskEditorPresented {
             settingsGtdArchivePresented = false
@@ -3031,6 +3042,7 @@ final class CoreModel: ObservableObject {
             settingsGtdInboxPresented = false
             settingsGtdCapturePresented = false
             settingsGtdTaskEditorPresented = false
+            gtdTaskEditorFieldId = nil
             gtdCaptureAreaPicker = false
             gtdWorkflowError = nil
             busy = true
@@ -3112,6 +3124,7 @@ final class CoreModel: ObservableObject {
                     return merged
                 }
                 expected["taskEditorFieldVisible"] = fieldExpected
+                expected["taskEditorFieldSection"] = fieldExpected
             } catch {
                 // Unsupported legacy layout prevents layout changes, but section defaults remain usable.
                 guard isDefiniteRejection(error), error.localizedDescription.hasPrefix("INVALID_INPUT:") else { throw error }
@@ -3128,6 +3141,17 @@ final class CoreModel: ObservableObject {
         gtdWorkflowExpected = expected
         gtdWorkflowReadError = nil
         gtdWorkflowAwaitingRefresh = false
+    }
+
+    func openGtdTaskEditorField(_ id: String) {
+        guard gtdWorkflowEnabled, settingsGtdTaskEditorPresented,
+              gtdTaskEditor.objects("groups").flatMap({ $0.objects("fields") }).contains(where: { $0.text("id") == id }) else { return }
+        gtdTaskEditorFieldId = id
+    }
+
+    func closeGtdTaskEditorField() {
+        guard !busy, !retryNeeded, !gtdWorkflowPending else { return }
+        gtdTaskEditorFieldId = nil
     }
 
     func openGtdCaptureAreaPicker() {
@@ -3217,7 +3241,7 @@ final class CoreModel: ObservableObject {
 
     private func acknowledgeGtdWorkflow(_ result: CoreObject) throws {
         let editing = gtdWorkflowEdit.text("type") == "taskEditorSectionOpen"
-        let fieldVisibility = gtdWorkflowEdit.text("type") == "taskEditorFieldVisible"
+        let fieldVisibility = ["taskEditorFieldVisible", "taskEditorFieldSection"].contains(gtdWorkflowEdit.text("type"))
         guard gtdWorkflowRequest != nil, Set(result.keys) == Set(editing ? ["type", "section", "value", "changed"] : fieldVisibility ? ["type", "field", "value", "changed"] : ["type", "value", "changed"]),
               !editing || result.text("section") == gtdWorkflowEdit.text("section"),
               !fieldVisibility || result.text("field") == gtdWorkflowEdit.text("field"),

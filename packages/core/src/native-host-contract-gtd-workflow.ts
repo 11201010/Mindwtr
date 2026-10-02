@@ -4,7 +4,7 @@ import { buildGtdSettingsModel, buildGtdSettingsUpdate, GTD_AUTO_ARCHIVE_DAY_OPT
     GTD_DEFAULT_AREA_ACTIVE_OPTION, isGtdSettingStored,
     type GtdSettingsEdit, type GtdSettingsModel } from './gtd-settings-model';
 import { taskEditValuesEqual } from './json-value-equality';
-import { DEFAULT_TASK_EDITOR_ORDER } from './task-editor-layout';
+import { DEFAULT_TASK_EDITOR_ORDER, TASK_EDITOR_SECTIONABLE_FIELDS, TASK_EDITOR_SECTION_ORDER } from './task-editor-layout';
 import { compareAreasByOrder } from './task-utils';
 import { revisionsToken } from './native-request-receipts';
 import { readAreaDurableData, createAreaSaveGuard } from './native-host-contract-area-durable';
@@ -23,20 +23,22 @@ import { gtdArchiveEffects, gtdWorkflowNestedPath, gtdWorkflowWitness, timestamp
     type GtdWorkflowReviewWitness, type GtdWorkflowInboxWitness,
     type GtdWorkflowAreaWitness, type GtdWorkflowTargetArea, type GtdArchiveEffect } from './store-settings';
 import { ensureDeviceId } from './store-helpers';
-import type { AppData, AppSettings, Area, TaskEditorFieldId } from './types';
+import type { AppData, AppSettings, Area, TaskEditorFieldId, TaskEditorSectionId } from './types';
 
 export type { GtdWorkflowType, GtdWorkflowWitness } from './store-settings';
 export type GtdWorkflowEdit = Extract<GtdSettingsEdit,
     { type: GtdWorkflowDirectType | 'defaultArea' | 'taskEditorSectionOpen'
-        | 'taskEditorPreset' | 'taskEditorFieldVisible' }>
+        | 'taskEditorPreset' | 'taskEditorFieldVisible' | 'taskEditorFieldSection' }>
     | { type: 'focusIncludeStartDates'; value: boolean }
     | { type: GtdWorkflowReviewType | GtdWorkflowInboxType | GtdWorkflowCaptureParseType; value: boolean };
 export type NativeGtdWorkflowRequest = { requestId: string; edit: GtdWorkflowEdit;
     expected: GtdWorkflowWitness };
-export type NativeGtdWorkflowResult = { type: Exclude<GtdWorkflowType, 'taskEditorSectionOpen' | 'taskEditorFieldVisible'>;
+export type NativeGtdWorkflowResult = { type: Exclude<GtdWorkflowType,
+    'taskEditorSectionOpen' | 'taskEditorFieldVisible' | 'taskEditorFieldSection'>;
     value: string | number | boolean; changed: boolean }
     | { type: 'taskEditorSectionOpen'; section: GtdWorkflowTaskEditorSection; value: boolean; changed: boolean }
-    | { type: 'taskEditorFieldVisible'; field: TaskEditorFieldId; value: boolean; changed: boolean };
+    | { type: 'taskEditorFieldVisible'; field: TaskEditorFieldId; value: boolean; changed: boolean }
+    | { type: 'taskEditorFieldSection'; field: TaskEditorFieldId; value: TaskEditorSectionId; changed: boolean };
 export type NativePreparedGtdWorkflow = { version: 1; request: NativeGtdWorkflowRequest;
     preparedAt: string; deviceIdBefore: string | null; deviceIdToInitialize: string | null;
     after: { value: string | number | boolean; stamp: string;
@@ -60,8 +62,11 @@ export type NativeGtdTaskEditorPresetOptions = { taskEditor: { title: string; de
     presets: GtdSettingsModel['taskEditor']['presets'] }; expected: GtdWorkflowPresetWitness };
 export type NativeGtdTaskEditorFieldOptions = { taskEditor: { title: string; description: string;
     groups: { id: GtdSettingsModel['taskEditor']['groups'][number]['id']; title: string;
-        fields: Pick<GtdSettingsModel['taskEditor']['groups'][number]['fields'][number],
-            'id' | 'label' | 'visible' | 'status' | 'visibility'>[] }[] }; expected: GtdWorkflowPresetWitness };
+        fields: (Pick<GtdSettingsModel['taskEditor']['groups'][number]['fields'][number],
+            'id' | 'label' | 'visible' | 'status' | 'visibility'> & { sheet: Pick<
+                GtdSettingsModel['taskEditor']['groups'][number]['fields'][number]['sheet'],
+                'title' | 'section' | 'visible' | 'sections' | 'doneLabel'> })[] }[] };
+    expected: GtdWorkflowPresetWitness };
 export type NativeGtdCaptureAreaOptions = { capture: Pick<GtdSettingsModel['capture'], 'title' | 'description' | 'defaultArea'>;
     expected: GtdWorkflowAreaWitness; offset: number; total: number; revision: string };
 export type NativeGtdWorkflowPreparation = { kind: 'noop'; result: NativeGtdWorkflowResult }
@@ -87,8 +92,9 @@ const isCaptureParse = (type: GtdWorkflowType): type is GtdWorkflowCaptureParseT
 const isTaskEditor = (type: GtdWorkflowType): type is 'taskEditorSectionOpen' => type === 'taskEditorSectionOpen';
 const isPreset = (type: GtdWorkflowType): type is 'taskEditorPreset' => type === 'taskEditorPreset';
 const isField = (type: GtdWorkflowType): type is 'taskEditorFieldVisible' => type === 'taskEditorFieldVisible';
-const isLayout = (type: GtdWorkflowType): type is 'taskEditorPreset' | 'taskEditorFieldVisible' =>
-    isPreset(type) || isField(type);
+const isFieldSection = (type: GtdWorkflowType): type is 'taskEditorFieldSection' => type === 'taskEditorFieldSection';
+const isLayout = (type: GtdWorkflowType): type is 'taskEditorPreset' | 'taskEditorFieldVisible'
+    | 'taskEditorFieldSection' => isPreset(type) || isField(type) || isFieldSection(type);
 const isTaskEditorEdit = (edit: GtdWorkflowEdit): edit is Extract<GtdWorkflowEdit, { type: 'taskEditorSectionOpen' }> =>
     edit.type === 'taskEditorSectionOpen';
 const same = taskEditValuesEqual;
@@ -101,6 +107,7 @@ const fail = (code: 'INVALID_INPUT' | 'STALE_REVISION' | 'SAVE_FAILED', message:
 const validEdit = (value: unknown): value is GtdWorkflowEdit => {
     if (!record(value) || !exact(value, value.type === 'taskEditorSectionOpen'
         ? ['type', 'section', 'value'] : value.type === 'taskEditorFieldVisible'
+            || value.type === 'taskEditorFieldSection'
         ? ['type', 'field', 'value'] : ['type', 'value'])) return false;
     switch (value.type) {
         case 'defaultScheduleTime':
@@ -122,6 +129,9 @@ const validEdit = (value: unknown): value is GtdWorkflowEdit => {
         case 'taskEditorFieldVisible':
             return DEFAULT_TASK_EDITOR_ORDER.includes(value.field as TaskEditorFieldId)
                 && typeof value.value === 'boolean';
+        case 'taskEditorFieldSection':
+            return TASK_EDITOR_SECTIONABLE_FIELDS.includes(value.field as TaskEditorFieldId)
+                && TASK_EDITOR_SECTION_ORDER.includes(value.value as TaskEditorSectionId);
         case 'dailyReviewFocusStep':
         case 'weeklyReviewContextStep':
         case 'inboxTwoMinute':
@@ -281,12 +291,13 @@ const presetOfferedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitne
     return model.taskEditor.presets.options.some((option) => same(option.edit, edit));
 };
 const fieldOfferedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): boolean => {
-    if (edit.type !== 'taskEditorFieldVisible') return true;
+    if (edit.type !== 'taskEditorFieldVisible' && edit.type !== 'taskEditorFieldSection') return true;
     const model = buildGtdSettingsModel({ settings: settingsByWitness(edit, witness), areas: [],
         taskOpenMode: 'automatic', t: (key) => key });
     const row = model.taskEditor.groups.flatMap((group) => group.fields)
         .find((field) => field.id === edit.field);
-    return same(row?.visibility.edit, edit);
+    return edit.type === 'taskEditorFieldVisible' ? same(row?.visibility.edit, edit)
+        : !!row?.sheet.sections?.options.some((option) => same(option.edit, edit));
 };
 
 const validArchiveEffects = (request: NativeGtdWorkflowRequest, prepared: Record<string, unknown>): boolean => {
@@ -342,11 +353,11 @@ const readPrepared = (input: unknown): NativePreparedGtdWorkflow | null => {
                 'featuresPresent', 'priorities', 'timeEstimates'])
             || !same(prepared.after.selected, presetSelectedAfter(request.edit, request.expected)))
         || !record(prepared.result) || !exact(prepared.result, isTaskEditorEdit(request.edit)
-            ? ['type', 'section', 'value', 'changed'] : isField(request.edit.type)
+            ? ['type', 'section', 'value', 'changed'] : isField(request.edit.type) || isFieldSection(request.edit.type)
             ? ['type', 'field', 'value', 'changed'] : ['type', 'value', 'changed'])
         || !same(prepared.result, isTaskEditorEdit(request.edit)
             ? { type: request.edit.type, section: request.edit.section, value: request.edit.value, changed: true }
-            : request.edit.type === 'taskEditorFieldVisible'
+            : request.edit.type === 'taskEditorFieldVisible' || request.edit.type === 'taskEditorFieldSection'
             ? { type: request.edit.type, field: request.edit.field, value: request.edit.value, changed: true }
             : { type: request.edit.type, value: request.edit.value, changed: true })
         || storedByWitness(request.edit, request.expected)
@@ -371,6 +382,8 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
         isTaskEditorEdit(edit) ? { type: edit.type, section: edit.section, value: edit.value, changed }
             : edit.type === 'taskEditorFieldVisible'
                 ? { type: edit.type, field: edit.field, value: edit.value, changed }
+                : edit.type === 'taskEditorFieldSection'
+                    ? { type: edit.type, field: edit.field, value: edit.value, changed }
             : { type: edit.type, value: edit.value, changed };
     const hubFor = (data: AppData): GtdSettingsModel['hub'] => {
         // The full shared model also builds six unavailable subpages. Keep their
@@ -442,7 +455,10 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
         return { title: model.title, description: model.description,
             groups: model.groups.map((group) => ({ id: group.id, title: group.title,
                 fields: group.fields.map((field) => ({ id: field.id, label: field.label,
-                    visible: field.visible, status: field.status, visibility: field.visibility })) })) };
+                    visible: field.visible, status: field.status, visibility: field.visibility,
+                    sheet: { title: field.sheet.title, section: field.sheet.section,
+                        visible: field.sheet.visible, sections: field.sheet.sections,
+                        doneLabel: field.sheet.doneLabel } })) })) };
     };
     const captureFor = (data: AppData): GtdSettingsModel['capture'] => {
         const gtd = data.settings.gtd;
@@ -657,7 +673,7 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             } else if (isPreset(request.edit.type)) {
                 if (!presetOfferedByWitness(request.edit, current))
                     return fail('INVALID_INPUT', 'GTD Task Editor preset choice is unavailable');
-            } else if (isField(request.edit.type)) {
+            } else if (isField(request.edit.type) || isFieldSection(request.edit.type)) {
                 if (!fieldOfferedByWitness(request.edit, current))
                     return fail('INVALID_INPUT', 'GTD Task Editor field choice is unavailable');
             } else if (request.edit.type === 'autoArchiveDays') {
