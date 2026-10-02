@@ -796,7 +796,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'preparedProjectLifecycle'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2244,6 +2244,9 @@ globalThis.MindwtrHost = {
     },
     projectLifecycleCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectLifecycle(editorJson(json) as Parameters<typeof contract.commitPreparedProjectLifecycle>[0])));
+    },
+    projectLifecycleOutcome(json: string): string {
+        return submit(async () => unwrap(contract.projectLifecycleOutcome(editorJson(json) as Parameters<typeof contract.projectLifecycleOutcome>[0])));
     },
     /** Private native editor preparation freezes the raw Task effect before journaling. */
     draftPrepare(json: string): string {

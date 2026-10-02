@@ -970,15 +970,6 @@ export const createProjectCoreActions = ({
             const planned = projectLifecycleEffect(input.scope, input.request.action,
                 input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
             if (!taskEditValuesEqual(planned, input.effect)) return state;
-            const expectedTasks = afterRows(input.scope.tasks, planned.tasks);
-            const expectedSections = afterRows(input.scope.sections, planned.sections);
-            if (sameProjectSqliteRow(current, planned.project.after)
-                && (state.settings.deviceId ?? null) === (input.deviceIdToInitialize ?? input.deviceIdBefore)
-                && sameOwnedRows(tasks, expectedTasks, sameTaskSqliteRow)
-                && sameOwnedRows(sections, expectedSections, sameSectionSqliteRow)) {
-                result = { success: true, id: current.id, outcome: 'replayed' };
-                return state;
-            }
             const sourceStatusMatches = input.request.action !== 'reactivate'
                 ? current.status !== 'archived' : current.status === 'archived';
             if (!sourceStatusMatches || (state.settings.deviceId ?? null) !== input.deviceIdBefore

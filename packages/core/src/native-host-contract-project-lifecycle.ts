@@ -6,6 +6,7 @@ import { validRawTask } from './native-host-contract-task-save';
 import { isNativeJsonWithinBytes } from './native-host-contract-task-view';
 import { createNativeRequestReceipts, revisionOf } from './native-request-receipts';
 import { ensureDeviceId } from './store-helpers';
+import { logInfo } from './logger';
 import { useTaskStore } from './store';
 import { projectLifecycleEffect } from './store-projects/project-actions';
 import type { PreparedProjectLifecycle } from './store-types';
@@ -30,6 +31,8 @@ const jsonSafe = <T,>(value: unknown): T | null => {
 const canonicalPayload = (value: unknown): string => JSON.stringify(value, (_key, item) => record(item)
     ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
     : item);
+const payload = (envelope: NativeProjectLifecycleEnvelope): string =>
+    canonicalPayload(['preparedProjectLifecycle', envelope]);
 
 const readRequest = (value: unknown): NativeProjectLifecycleRequest | null => {
     const input = detach<Record<string, unknown>>(value);
@@ -141,17 +144,30 @@ export function createProjectLifecycleMethods(deps: {
             return envelope ? { ok: true, value: envelope.prepared.result }
                 : fail('INVALID_INPUT', 'Prepared Project lifecycle is malformed');
         },
+        projectLifecycleOutcome(input: NativeProjectLifecycleEnvelope): NativeHostResult<NativeProjectLifecycleResult | null> {
+            const envelope = readEnvelope(input);
+            if (!envelope) return fail('INVALID_INPUT', 'Prepared Project lifecycle is malformed');
+            const saved = receipts.saved<NativeProjectLifecycleResult>(envelope.request.requestId, payload(envelope));
+            if (saved?.ok && !same(saved.value, envelope.prepared.result))
+                return fail('INVALID_INPUT', 'Saved Project lifecycle result does not match the prepared request');
+            return saved === null ? { ok: true, value: null } : saved;
+        },
         async commitPreparedProjectLifecycle(input: NativeProjectLifecycleEnvelope): Promise<NativeHostResult<NativeProjectLifecycleResult>> {
             const envelope = readEnvelope(input);
             if (!envelope) return fail('INVALID_INPUT', 'Prepared Project lifecycle is malformed');
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            return receipts.run(envelope.request.requestId,
-                canonicalPayload(['preparedProjectLifecycle', envelope]), async () => {
-                    const applied = await useTaskStore.getState().commitPreparedProjectLifecycle(envelope.prepared);
-                    return applied.success ? { ok: true, value: envelope.prepared.result }
-                        : fail('STALE_REVISION', applied.error ?? 'Prepared Project lifecycle conflicts with saved data');
-                });
+            const confirmed = await receipts.run(envelope.request.requestId, payload(envelope), async () => {
+                const applied = await useTaskStore.getState().commitPreparedProjectLifecycle(envelope.prepared);
+                return applied.success ? { ok: true, value: envelope.prepared.result }
+                    : fail('STALE_REVISION', applied.error ?? 'Prepared Project lifecycle conflicts with saved data');
+            });
+            if (confirmed.ok && envelope.request.action === 'reactivate') {
+                try { logInfo('Native archived Project restore confirmed', { scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: 'v1.3.4/ios-archive-project-restore', outcome: 'confirmed' } }); }
+                catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            }
+            return confirmed;
         },
     };
 }

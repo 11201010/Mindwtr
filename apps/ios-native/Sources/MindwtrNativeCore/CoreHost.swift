@@ -135,6 +135,7 @@ private final class Engine: @unchecked Sendable {
     private var confirmedTaskCompletionEnvelope: String?
     private var confirmedTaskCompletionUndoEnvelope: String?
     private var confirmedArchivedTaskRestoreEnvelope: String?
+    private var confirmedProjectLifecycleEnvelope: String?
     private var confirmedTaskDeleteEnvelope: String?
     private var confirmedProjectDeleteEnvelope: String?
     private var confirmedSomedaySectionMoveEnvelope: String?
@@ -244,7 +245,7 @@ private final class Engine: @unchecked Sendable {
         "trashProjectRestoreWrite": 1, "trashProjectRestoreRetryOutcome": 1,
         "projectDeleteWrite": 1, "projectDeleteRetryOutcome": 1, "projectDeleteUndo": 1, "projectDeleteUndoRetryOutcome": 1,
         "projectDuplicateWrite": 1, "projectDuplicateRetryOutcome": 1,
-        "projectLifecycleWrite": 1, "projectLifecycleRetryOutcome": 1,
+        "projectLifecycleWrite": 1, "projectLifecycleRetryOutcome": 1, "projectLifecycleReceiptOutcome": 1,
         "reviewTaskWrite": 1,
         "somedaySectionMoveOptions": 1, "somedaySectionMoveWrite": 1, "somedaySectionMoveUndo": 1,
         "somedaySectionMoveRetryOutcome": 1, "somedaySectionMoveUndoRetryOutcome": 1,
@@ -658,6 +659,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringProjectDeleteUndo = pending?.method == "projectDeleteUndoCommit"
         let recoveringProjectDuplicate = pending?.method == "projectDuplicateCommit"
         let recoveringProjectLifecycle = pending?.method == "projectLifecycleCommit"
+        let recoveringProjectLifecycleCommand = recoveringProjectLifecycle ? pending : nil
         let recoveringTrashTaskRestore = pending?.method == "trashTaskRestoreCommit"
         let recoveringTrashProjectRestore = pending?.method == "trashProjectRestoreCommit"
         let recoveringTaskPromote = pending?.method == "taskPromoteCommit"
@@ -725,7 +727,10 @@ private final class Engine: @unchecked Sendable {
         if recoveringProjectDelete, let terminal, case .success(let value) = terminal { startupProjectDeleteResult = value }
         if recoveringProjectDeleteUndo, let terminal, case .success(let value) = terminal { startupProjectDeleteUndoResult = value }
         if recoveringProjectDuplicate, let terminal, case .success(let value) = terminal { startupProjectDuplicateResult = value }
-        if recoveringProjectLifecycle, let terminal, case .success(let value) = terminal { startupProjectLifecycleResult = value }
+        if recoveringProjectLifecycle, let terminal, case .success(let value) = terminal {
+            startupProjectLifecycleResult = value
+            if let recoveringProjectLifecycleCommand { rememberConfirmedProjectLifecycle(recoveringProjectLifecycleCommand) }
+        }
         if recoveringTrashTaskRestore, let terminal, case .success(let value) = terminal { startupTrashTaskRestoreResult = value }
         if recoveringTrashProjectRestore, let terminal, case .success(let value) = terminal { startupTrashProjectRestoreResult = value }
         if recoveringTaskPromote, let terminal, case .success(let value) = terminal { startupTaskPromoteResult = value }
@@ -1045,7 +1050,7 @@ private final class Engine: @unchecked Sendable {
         do {
             if method == "reviewTaskWrite" {
                 args = try reviewTaskRequestArguments(argumentsJSON)
-            } else if ["projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method) {
+            } else if ["projectLifecycleWrite", "projectLifecycleRetryOutcome", "projectLifecycleReceiptOutcome"].contains(method) {
                 args = try projectLifecycleRequestArguments(argumentsJSON)
             } else {
                 args = try arguments(method, argumentsJSON)
@@ -1098,6 +1103,9 @@ private final class Engine: @unchecked Sendable {
             }
             if method == "projectLifecycleRetryOutcome" {
                 throw CoreHostRejection(message: "STALE_REVISION: Project lifecycle has no pending journal")
+            }
+            if method == "projectLifecycleReceiptOutcome" {
+                return try projectLifecycleReceiptOutcome(arguments: args)
             }
             if ["somedaySectionMoveRetryOutcome", "somedaySectionMoveUndoRetryOutcome"].contains(method) {
                 let envelope = try confirmedSomedayMoveEnvelope(for: method, publicArguments: args)
@@ -3547,6 +3555,9 @@ private final class Engine: @unchecked Sendable {
         }
         if command.method == "archivedTaskRestoreCommit", case .success = terminal {
             rememberConfirmedArchivedTaskRestore(command)
+        }
+        if command.method == "projectLifecycleCommit", case .success = terminal {
+            rememberConfirmedProjectLifecycle(command)
         }
         if ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(command.method), case .success = terminal {
             // Retain the exact validated envelope even if terminal persistence or cleanup fails.
@@ -6132,6 +6143,31 @@ private final class Engine: @unchecked Sendable {
             throw HostFailure("Malformed Project lifecycle journal")
         }
         return action
+    }
+
+    private func rememberConfirmedProjectLifecycle(_ command: PendingCommand) {
+        guard command.method == "projectLifecycleCommit",
+              let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+              let encoded = args.first else { return }
+        confirmedProjectLifecycleEnvelope = encoded
+    }
+
+    private func projectLifecycleReceiptOutcome(arguments args: [Any]) throws -> String {
+        guard let encodedRequest = args.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(encodedRequest.utf8)) as? [String: Any],
+              let confirmed = confirmedProjectLifecycleEnvelope,
+              let envelope = try NativeJSON.jsonObject(with: Data(confirmed.utf8)) as? [String: Any],
+              Self.equalJSON(envelope["request"], request) else {
+            return #"{"kind":"unproven"}"#
+        }
+        let command = PendingCommand(version: 2, method: "projectLifecycleCommit",
+                                     argumentsJSON: String(decoding: try JSONSerialization.data(withJSONObject: [confirmed]), as: UTF8.self))
+        _ = try invoke("projectLifecycleValidate", arguments: projectLifecycleJournalArguments(command))
+        let value = try invoke("projectLifecycleOutcome", arguments: [confirmed])
+        if value == "null" { return #"{"kind":"unproven"}"# }
+        try validateProjectLifecycleAcknowledgment(command, value: value)
+        let result = try NativeJSON.jsonObject(with: Data(value.utf8))
+        return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "confirmed", "result": result], options: [.sortedKeys]), as: UTF8.self)
     }
 
     private func journalArguments(_ command: PendingCommand, checkingEditorSnapshot: Bool = true) throws -> [Any] {

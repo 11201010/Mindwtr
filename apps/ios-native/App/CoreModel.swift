@@ -393,6 +393,7 @@ final class CoreModel: ObservableObject {
     private var projectDuplicateNoticeGeneration = 0
     @Published private(set) var projectLifecycleError: String?
     private var projectLifecycleRequest: String?
+    private var projectLifecycleFromHistory = false
     @Published private(set) var projectDeleteError: String?
     private var projectDeleteRequest: String?
     private var projectDeleteUndoRequest: String?
@@ -1760,7 +1761,8 @@ final class CoreModel: ObservableObject {
         ready && selectedSurface == .history && historyCurrent && !busy && !retryNeeded && !taskPresented
     }
     var historyArchiveRestorePending: Bool {
-        selectedSurface == .history && historyArchived && archivedTaskRestoreRequest != nil && retryNeeded
+        selectedSurface == .history && historyArchived &&
+            (archivedTaskRestoreRequest != nil || projectLifecycleFromHistory && projectLifecycleRequest != nil) && retryNeeded
     }
     var historyPickerActionsEnabled: Bool { historyActionsEnabled && historyPickerCurrent }
     var trashActionsEnabled: Bool {
@@ -12186,6 +12188,36 @@ final class CoreModel: ObservableObject {
         scheduleHistoryRead(delay: 0)
     }
 
+    func restoreArchivedProject(_ id: String) async {
+        guard historyArchived, historyActionsEnabled,
+              let item = history.objects("items").first(where: { $0.text("type") == "project" && $0.text("id") == id }) else { return }
+        let revision = item.text("projectRevision")
+        guard !id.isEmpty, id.utf16.count <= 200, !revision.isEmpty, revision.utf16.count <= 200 else { return }
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    "projectId": id, "projectRevision": revision, "action": "reactivate"])
+            projectLifecycleFromHistory = true
+            projectLifecycleRequest = request
+            let result = try await query("projectLifecycleWrite", [request])
+            try await acknowledgeProjectLifecycle(result)
+        } catch {
+            if isDefiniteRejection(error) {
+                projectLifecycleRequest = nil
+                projectLifecycleFromHistory = false
+                retryNeeded = false
+                self.error = nil
+                _ = await readHistory()
+            } else {
+                retryNeeded = projectLifecycleRequest != nil
+                self.error = error.localizedDescription
+            }
+            historyError = error.localizedDescription
+        }
+    }
+
     func restoreArchivedTask(_ id: String) async {
         guard historyArchived, historyActionsEnabled,
               let item = history.objects("items").first(where: {
@@ -13014,6 +13046,7 @@ final class CoreModel: ObservableObject {
         do {
             let request = try json(["requestId": UUID().uuidString.lowercased(),
                                     "projectId": id, "projectRevision": revision, "action": action])
+            projectLifecycleFromHistory = false
             projectLifecycleRequest = request
             let result = try await query("projectLifecycleWrite", [request])
             try await acknowledgeProjectLifecycle(result)
@@ -13031,17 +13064,25 @@ final class CoreModel: ObservableObject {
         guard
               Set(result.keys) == Set(["id", "status"]),
               result.text("id") == input.text("projectId"),
-              projectHeader.text("id") == result.text("id"),
+              (projectLifecycleFromHistory && selectedSurface == .history && historyArchived
+                || !projectLifecycleFromHistory && projectHeader.text("id") == result.text("id")),
               (["complete", "cancel"].contains(input.text("action")) && result.text("status") == "archived"
                 || input.text("action") == "reactivate" && result.text("status") == "active") else {
             throw CocoaError(.coderReadCorrupt)
         }
+        let fromHistory = projectLifecycleFromHistory
         projectLifecycleRequest = nil
+        projectLifecycleFromHistory = false
         retryNeeded = false
         projectLifecycleError = nil
         error = nil
-        projectHeader["status"] = result.text("status")
-        _ = await readProjectDetail()
+        if fromHistory {
+            historyError = nil
+            _ = await readHistory()
+        } else {
+            projectHeader["status"] = result.text("status")
+            _ = await readProjectDetail()
+        }
     }
 
     func duplicateProject(expectedID: String, expectedRevision: String) async {
@@ -17527,7 +17568,23 @@ final class CoreModel: ObservableObject {
             }
             if let request = projectLifecycleRequest {
                 let result: CoreObject
-                if let acknowledgment { result = try decode(acknowledgment) }
+                if projectLifecycleFromHistory {
+                    let outcome = try await query("projectLifecycleReceiptOutcome", [request])
+                    if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                        let unknown = label("projects.archiveRestoreOutcomeUnknown")
+                        _ = await readHistory()
+                        historyError = unknown
+                        self.error = unknown
+                        return
+                    }
+                    guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    result = outcome.object("result")
+                    if let acknowledgment, try json(result) != json(decode(acknowledgment)) {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                } else if let acknowledgment { result = try decode(acknowledgment) }
                 else { result = try await query("projectLifecycleRetryOutcome", [request]) }
                 try await acknowledgeProjectLifecycle(result)
                 return
@@ -18370,7 +18427,10 @@ final class CoreModel: ObservableObject {
                 if projectDuplicateRequest != nil { projectDuplicateRequest = nil }
                 if projectLifecycleRequest != nil {
                     projectLifecycleRequest = nil
-                    projectLifecycleError = error.localizedDescription
+                    if projectLifecycleFromHistory {
+                        projectLifecycleFromHistory = false
+                        historyError = error.localizedDescription
+                    } else { projectLifecycleError = error.localizedDescription }
                 }
                 if taskDeleteRequest != nil {
                     taskDeleteRequest = nil
@@ -18423,7 +18483,10 @@ final class CoreModel: ObservableObject {
                 processInboxError = error.localizedDescription
                 if retryNeeded { self.error = error.localizedDescription }
             }
-            else { self.error = error.localizedDescription }
+            else {
+                if projectLifecycleFromHistory { historyError = error.localizedDescription }
+                self.error = error.localizedDescription
+            }
         }
     }
 

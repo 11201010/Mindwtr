@@ -359,6 +359,7 @@ export const zhHans: Record<string, string> = {
         'task.completionOutcomeUnknown': '无法确认任务是否已完成。请重新启动 Mindwtr 以重新加载已保存的数据。',
         'task.completionUndoOutcomeUnknown': '无法确认是否已撤销任务完成操作。请重新启动 Mindwtr 以重新加载已保存的数据。',
         'task.archiveRestoreOutcomeUnknown': '无法确认已归档任务是否已恢复。请重启 Mindwtr 以重新加载已保存的数据。',
+        'projects.archiveRestoreOutcomeUnknown': "无法确认已归档项目是否已恢复。请重启 Mindwtr 以重新加载已保存的数据。",
         'task.cancelFailed': '无法取消任务',
         'task.skipOccurrence': '跳过本次重复',
         'task.skipOccurrenceFailed': '无法跳过本次重复',

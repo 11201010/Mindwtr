@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createRequire } from 'node:module';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
+import { reactivateArchivedProject } from './archive-view-model';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import { loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts } from './native-request-receipts';
+import type { SqliteClient } from './sqlite-adapter';
 import type { AppData, Project, Section, Task } from './types';
 
 const AT = '2026-10-01T12:00:00.000Z';
@@ -160,17 +166,21 @@ describe('prepared Project Complete and Reactivate', () => {
         expect(env.state()._allSections.find((row) => row.id === 'section-live')?.deletedAt).toBeUndefined();
     });
 
-    it('cold exact-after replay acknowledges both transitions without rewriting later edits', async () => {
+    it('requires a receipt for cold exact-after lifecycle replay', async () => {
         const env = await open();
         const complete = env.prepare('complete');
         value(await env.host.commitPreparedProjectLifecycle(complete));
         const archived = await env.reopen();
-        expect(value(await archived.host.commitPreparedProjectLifecycle(complete))).toEqual({ id: ID, status: 'archived' });
+        expect(await archived.host.commitPreparedProjectLifecycle(complete)).toMatchObject({
+            ok: false, error: { code: 'STALE_REVISION' },
+        });
         expect(archived.saves()).toBe(0);
         const reactivate = archived.prepare('reactivate');
         value(await archived.host.commitPreparedProjectLifecycle(reactivate));
         const active = await archived.reopen();
-        expect(value(await active.host.commitPreparedProjectLifecycle(reactivate))).toEqual({ id: ID, status: 'active' });
+        expect(await active.host.commitPreparedProjectLifecycle(reactivate)).toMatchObject({
+            ok: false, error: { code: 'STALE_REVISION' },
+        });
         expect(active.saves()).toBe(0);
         await useTaskStore.getState().updateTask('next', { description: 'Later saved edit' });
         await flushPendingSave();
@@ -179,6 +189,21 @@ describe('prepared Project Complete and Reactivate', () => {
             ok: false, error: { code: 'STALE_REVISION' },
         });
         expect(changed.saves()).toBe(0);
+    });
+
+    it('does not let a fresh UUID claim an already restored Project and children', async () => {
+        const env = await open();
+        value(await env.host.commitPreparedProjectLifecycle(env.prepare('complete')));
+        const restored = env.prepare('reactivate');
+        value(await env.host.commitPreparedProjectLifecycle(restored));
+        const other = copy(restored);
+        other.request.requestId = 'cbebf523-dd4e-40dc-9fce-37e456295d49';
+        other.prepared.request.requestId = other.request.requestId;
+        expect(value(env.host.validatePreparedProjectLifecycle(other))).toEqual({ id: ID, status: 'active' });
+        expect(await env.host.commitPreparedProjectLifecycle(other)).toMatchObject({
+            ok: false, error: { code: 'STALE_REVISION' },
+        });
+        expect(env.saves()).toBe(2);
     });
 
     it('retries a failed durable Complete save with the same UUID and row stamps', async () => {
@@ -194,6 +219,24 @@ describe('prepared Project Complete and Reactivate', () => {
         expect(value(await env.host.commitPreparedProjectLifecycle(complete))).toEqual({ id: ID, status: 'archived' });
         expect(env.state()._projectsById.get(ID)).toEqual(stamped);
         expect(env.saves()).toBe(1);
+    });
+
+    it('retries a failed Reactivate save with its original UUID and frozen child rows', async () => {
+        let fail = false;
+        const env = await open(initial(), () => fail);
+        value(await env.host.commitPreparedProjectLifecycle(env.prepare('complete')));
+        const restored = env.prepare('reactivate');
+        fail = true;
+        expect(await env.host.commitPreparedProjectLifecycle(restored)).toMatchObject({
+            ok: false, error: { code: 'SAVE_FAILED' },
+        });
+        const inMemory = copy(env.state()._allTasks);
+        expect(value(env.host.projectLifecycleOutcome(restored))).toBeNull();
+        fail = false;
+        expect(value(await env.host.commitPreparedProjectLifecycle(restored))).toEqual({ id: ID, status: 'active' });
+        expect(env.state()._allTasks).toEqual(inMemory);
+        expect(value(env.host.projectLifecycleOutcome(restored))).toEqual({ id: ID, status: 'active' });
+        expect(env.saves()).toBe(2);
     });
 
     it('refuses forged effects and changed child membership before a write', async () => {
@@ -235,6 +278,31 @@ describe('prepared Project Complete and Reactivate', () => {
         expect(snapshot()).toEqual(nativeCompleted);
         expect(await rn.state().updateProject(ID, { status: 'active' })).toMatchObject({ success: true });
         expect(snapshot()).toEqual(nativeReactivated);
+    });
+
+    it.each(['complete', 'cancel'] as const)('Archive Restore matches RN for a %s Project with mixed child history', async (firstAction) => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
+        const source = initial();
+        const archivedHost = await open(source);
+        if (firstAction === 'complete') {
+            expect(await archivedHost.state().updateProject(ID, { status: 'archived' })).toMatchObject({ success: true });
+        } else {
+            expect(await archivedHost.state().cancelProject(ID)).toMatchObject({ success: true });
+        }
+        await flushPendingSave();
+        const archived = archivedHost.data();
+        const native = await open(archived);
+        const restored = native.prepare('reactivate');
+        expect(value(await native.host.commitPreparedProjectLifecycle(restored))).toEqual({ id: ID, status: 'active' });
+        const expected = native.data();
+        const rn = await open(archived);
+        expect(await reactivateArchivedProject(rn.state(), ID)).toMatchObject({ success: true });
+        await flushPendingSave();
+        expect(rn.data()).toEqual(expected);
+        expect(rn.data().tasks.find((row) => row.id === 'deleted')?.deletedAt).toBe(AT);
+        expect(rn.data().tasks.find((row) => row.id === 'archived')?.status).toBe('archived');
+        expect(rn.data().tasks.find((row) => row.id === 'foreign')?.projectId).toBe('foreign-project');
     });
 });
 
@@ -335,7 +403,9 @@ describe('prepared Project Cancel', () => {
         expect(value(await env.host.commitPreparedProjectLifecycle(cancelled))).toEqual({ id: ID, status: 'archived' });
         expect(env.state()._projectsById.get(ID)).toEqual(savedStamp);
         const cold = await env.reopen();
-        expect(value(await cold.host.commitPreparedProjectLifecycle(cancelled))).toEqual({ id: ID, status: 'archived' });
+        expect(await cold.host.commitPreparedProjectLifecycle(cancelled)).toMatchObject({
+            ok: false, error: { code: 'STALE_REVISION' },
+        });
         expect(cold.saves()).toBe(0);
         await peerEditTask('next', { description: 'Changed after acknowledgement' });
         const changed = await cold.reopen();
@@ -361,4 +431,83 @@ describe('prepared Project Cancel', () => {
         expect(env.host.prepareProjectLifecycle(env.request('cancel', 'bbebf523-dd4e-40dc-9fce-37e456295d49')))
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     });
+});
+
+const require = createRequire(import.meta.url);
+type Statement = { run: (...params: unknown[]) => unknown; all: (...params: unknown[]) => unknown[];
+    get: (...params: unknown[]) => unknown };
+type Database = { exec: (sql: string) => void; prepare: (sql: string) => Statement; close: () => void };
+const DatabaseSync = (require('node:sqlite') as { DatabaseSync: new (path: string) => Database }).DatabaseSync;
+const sqliteRoot = join(process.cwd(), '../../.orchestrator/tmp');
+mkdirSync(sqliteRoot, { recursive: true });
+
+describe('prepared Project Reactivate durable SQLite receipt', () => {
+    const databases: Database[] = [];
+    const directories: string[] = [];
+    async function openSqlite(path: string, start?: AppData) {
+        await flushPendingSave(); resetForTests(); resetNativeRequestReceipts();
+        const db = new DatabaseSync(path); databases.push(db);
+        const client: SqliteClient = {
+            run: async (sql, params = []) => { db.prepare(sql).run(...params); },
+            all: async <T,>(sql: string, params: unknown[] = []) => db.prepare(sql).all(...params) as T[],
+            get: async <T,>(sql: string, params: unknown[] = []) => db.prepare(sql).get(...params) as T | undefined,
+            exec: async (sql) => { db.exec(sql); },
+        };
+        if (start) await new NativeReceiptSqliteAdapter(client).saveData(start);
+        await loadNativeRequestReceipts(client, { durableCommands: ['preparedProjectLifecycle'] });
+        setStorageAdapter(new NativeReceiptSqliteAdapter(client, { rejectConcurrentWrites: true }));
+        useTaskStore.setState({ _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
+            settings: {}, error: null, persistenceFailure: null, isLoading: false, lastDataChangeAt: 0 } as never);
+        const host = createNativeHostContract();
+        value(await host.activate({ writeSafetyReady: true, recoveryLoad: true }));
+        await flushPendingSave();
+        return { db, host };
+    }
+    afterEach(async () => {
+        await flushPendingSave(); resetForTests(); resetNativeRequestReceipts();
+        for (const db of databases.splice(0)) db.close();
+        for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+    });
+
+    it('cold-acknowledges only the saved UUID and full envelope, even after a later edit', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
+        const directory = mkdtempSync(join(sqliteRoot, 'archive-project-')); directories.push(directory);
+        const path = join(directory, 'data.sqlite');
+        const first = await openSqlite(path, initial());
+        const prepare = (action: 'complete' | 'reactivate', requestId: string) => {
+            const request = { requestId, projectId: ID, action,
+                projectRevision: value(first.host.getProjectDetail({ projectId: ID, offset: 0, limit: 20 })).projectRevision };
+            const planned = value(first.host.prepareProjectLifecycle(request));
+            return { request, prepared: planned.prepared };
+        };
+        value(await first.host.commitPreparedProjectLifecycle(prepare('complete', COMPLETE_ID)));
+        const restored = prepare('reactivate', REACTIVATE_ID);
+        vi.setSystemTime(new Date('2026-10-02T12:01:00.000Z'));
+        const altered = prepare('reactivate', REACTIVATE_ID);
+        vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
+        expect(value(first.host.projectLifecycleOutcome(restored))).toBeNull();
+        expect(value(await first.host.commitPreparedProjectLifecycle(restored))).toEqual({ id: ID, status: 'active' });
+        const committed = first.db.prepare('SELECT * FROM projects ORDER BY id').all();
+        expect(first.db.prepare('SELECT COUNT(*) AS count FROM native_request_receipts').get()).toMatchObject({ count: 2 });
+        const cold = await openSqlite(path);
+        expect(value(cold.host.projectLifecycleOutcome(restored))).toEqual({ id: ID, status: 'active' });
+        expect(cold.host.projectLifecycleOutcome(altered)).toMatchObject({
+            ok: false, error: { code: 'INVALID_INPUT' },
+        });
+        const other = copy(restored);
+        other.request.requestId = 'cbebf523-dd4e-40dc-9fce-37e456295d49';
+        other.prepared.request.requestId = other.request.requestId;
+        expect(value(cold.host.projectLifecycleOutcome(other))).toBeNull();
+        expect(await cold.host.commitPreparedProjectLifecycle(other)).toMatchObject({
+            ok: false, error: { code: 'STALE_REVISION' },
+        });
+        expect(cold.db.prepare('SELECT * FROM projects ORDER BY id').all()).toEqual(committed);
+        cold.db.prepare('UPDATE tasks SET description = ?, rev = ?, revBy = ?, updatedAt = ? WHERE id = ?')
+            .run('Later edit', 99, 'other-device', '2026-10-03T12:00:00.000Z', 'next');
+        const changed = cold.db.prepare('SELECT * FROM tasks ORDER BY id').all();
+        const later = await openSqlite(path);
+        expect(value(later.host.projectLifecycleOutcome(restored))).toEqual({ id: ID, status: 'active' });
+        expect(value(await later.host.commitPreparedProjectLifecycle(restored))).toEqual({ id: ID, status: 'active' });
+        expect(later.db.prepare('SELECT * FROM tasks ORDER BY id').all()).toEqual(changed);
+    }, 40_000);
 });

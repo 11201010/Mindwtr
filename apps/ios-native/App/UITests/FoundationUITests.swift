@@ -18417,4 +18417,93 @@ final class FoundationUITests: XCTestCase {
         app.terminate(); app.launch(); task172CheckScheduledRestore(app); app.terminate()
     }
 
+    private func task173OpenArchive(_ app: XCUIApplication) {
+        task172OpenArchive(app)
+        boardTap(app, "archive-segment-projects")
+    }
+
+    private func task173RevealRestore(_ app: XCUIApplication, _ suffix: String) -> XCUIElement {
+        let row = app.buttons["archive-project-task173-" + suffix]
+        let list = app.descendants(matching: .any).matching(identifier: "archive-scroll").firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 30))
+        for _ in 0..<10 {
+            if row.isHittable && list.frame.intersection(app.frame).contains(CGPoint(x: row.frame.midX, y: row.frame.midY)) { break }
+            list.swipeUp()
+        }
+        XCTAssertTrue(row.isHittable); row.swipeRight()
+        let restore = app.buttons["archive-restore-project-task173-" + suffix]
+        boardEnabled(restore, timeout: 15)
+        return restore
+    }
+
+    private func task173CheckProjects(_ app: XCUIApplication, suffixes: [String]) {
+        let ready = NSPredicate { _, _ in
+            app.buttons["project-back"].exists || app.scrollViews["projects-scroll"].exists || app.buttons["tab-menu"].exists
+        }
+        XCTAssertTrue(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 30) == .completed)
+        if app.buttons["project-back"].exists { boardTap(app, "project-back") }
+        if !app.scrollViews["projects-scroll"].exists {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        }
+        let scroll = app.scrollViews["projects-scroll"]
+        for suffix in suffixes {
+            let row = app.buttons["project-open-task173-" + suffix]
+            revealPagedElement(app, row, in: scroll)
+            boardEnabled(row); row.tap()
+            boardEnabled(app.buttons["project-rename-open"], timeout: 30)
+            XCTAssertTrue(app.buttons["project-rename-open"].isEnabled)
+            boardTap(app, "project-back")
+        }
+    }
+
+    private func task173RestoreFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task173OpenArchive(app)
+        for suffix in ["completed", "cancelled"] {
+            task173RevealRestore(app, suffix).tap()
+            XCTAssertFalse(app.alerts.firstMatch.exists)
+            XCTAssertTrue(app.buttons["archive-project-task173-" + suffix].waitForNonExistence(timeout: 30))
+            XCTAssertTrue(app.buttons["history-tab-archived"].isSelected)
+            XCTAssertTrue(app.buttons["archive-segment-projects"].isSelected)
+        }
+        boardEnabled(app.buttons["history-back"])
+        XCTAssertTrue(app.staticTexts["archive-empty"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task173 restored Projects leave Archive"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "history-back"); task173CheckProjects(app, suffixes: ["completed", "cancelled"])
+        app.terminate(); app.launch(); task173CheckProjects(app, suffixes: ["completed", "cancelled"]); app.terminate()
+    }
+
+    func testTask173ArchiveProjectRestoreNormal() { task173RestoreFlow("96f7f821-6b6c-4f79-9958-17910d2e3bad") }
+    func testTask173ArchiveProjectRestoreLargest() { task173RestoreFlow("4101f379-e21f-4ae0-bbe3-43b1af62d175") }
+
+    func testTask173ArchiveProjectRestoreSwipeOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "753610e0-99c2-4517-a275-aa00ac1c4cde"]
+        app.launch(); task173OpenArchive(app); _ = task173RevealRestore(app, "completed")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task173 Project Restore requires explicit tap"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testTask173ArchiveProjectRestoreFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "1a8e7993-5686-411c-9ee6-6356f7b657e7"]
+        app.launch(); task173OpenArchive(app); task173RevealRestore(app, "completed").tap()
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["archive-retry"], timeout: 30)
+            XCTAssertFalse(app.buttons["history-back"].isEnabled)
+            XCTAssertTrue(app.buttons["archive-project-task173-completed"].exists)
+            boardTap(app, "archive-retry")
+        }
+        boardEnabled(app.buttons["archive-retry"], timeout: 30); app.terminate()
+    }
+
+    func testTask173ArchiveProjectRestoreColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "1a8e7993-5686-411c-9ee6-6356f7b657e7"]
+        app.launch(); task173CheckProjects(app, suffixes: ["completed"])
+        app.terminate(); app.launch(); task173CheckProjects(app, suffixes: ["completed"]); app.terminate()
+    }
+
 }

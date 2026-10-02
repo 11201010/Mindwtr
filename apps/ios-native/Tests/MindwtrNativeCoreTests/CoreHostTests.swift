@@ -25811,7 +25811,52 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try projectRows("destination-project-a").first?["status"] as? String, "active")
         XCTAssertEqual(try storedTask(taskID)["status"] as? String, "next")
         XCTAssertEqual(confirmations, 2)
+        let restoreReceipt = try object(await core.call("projectLifecycleReceiptOutcome", argumentsJSON: json([json(reactivate)])))
+        XCTAssertEqual(restoreReceipt["kind"] as? String, "confirmed")
+        XCTAssertEqual(try json(XCTUnwrap(restoreReceipt["result"])), try json(restored))
         await core.close()
+    }
+
+    func testArchiveProjectRestoreReceiptProbeUsesExactRequestAfterLaterEdit() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let core = host()
+        _ = try await core.start()
+        let complete = try await projectLifecycleRequest(core, action: "complete")
+        _ = try await core.call("projectLifecycleWrite", argumentsJSON: json([json(complete)]))
+        let restore = try await projectLifecycleRequest(core, action: "reactivate")
+        let result = try object(await core.call("projectLifecycleWrite", argumentsJSON: json([json(restore)])))
+        XCTAssertEqual(result["status"] as? String, "active")
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET title = ?, rev = rev + 1 WHERE id = ?",
+                             parametersJSON: json(["Later title", "destination-project-a"]))
+        let baseline = try nineTableSnapshot(edit)
+        edit.close()
+
+        let confirmed = try object(await core.call("projectLifecycleReceiptOutcome", argumentsJSON: json([json(restore)])))
+        XCTAssertEqual(Set(confirmed.keys), Set(["kind", "result"]))
+        XCTAssertEqual(confirmed["kind"] as? String, "confirmed")
+        XCTAssertEqual(try json(XCTUnwrap(confirmed["result"])), try json(result))
+        var otherUUID = restore
+        otherUUID["requestId"] = UUID().uuidString.lowercased()
+        let unproven = try object(await core.call("projectLifecycleReceiptOutcome", argumentsJSON: json([json(otherUUID)])))
+        XCTAssertEqual(Set(unproven.keys), Set(["kind"]))
+        XCTAssertEqual(unproven["kind"] as? String, "unproven")
+        var otherAction = restore
+        otherAction["action"] = "complete"
+        let mismatched = try object(await core.call("projectLifecycleReceiptOutcome", argumentsJSON: json([json(otherAction)])))
+        XCTAssertEqual(mismatched["kind"] as? String, "unproven")
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("projectLifecycleReceiptOutcome", argumentsJSON: json([json(restore.merging(["extra": true]) { _, new in new })]))
+        }
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), baseline)
+        check.close()
+        await core.close()
+        let cold = host()
+        _ = try await cold.start()
+        let withoutEnvelope = try object(await cold.call("projectLifecycleReceiptOutcome", argumentsJSON: json([json(restore)])))
+        XCTAssertEqual(withoutEnvelope["kind"] as? String, "unproven")
+        await cold.close()
     }
 
     func testProjectLifecycleColdArchivedWindowThenReactivateReadsEveryRestoredChild() async throws {
@@ -25964,6 +26009,9 @@ final class CoreHostTests: XCTestCase {
         let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
         XCTAssertEqual(recovery["method"] as? String, "projectLifecycleCommit")
         XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(result))
+        let receipt = try object(await reopened.call("projectLifecycleReceiptOutcome", argumentsJSON: json([json(reactivate)])))
+        XCTAssertEqual(receipt["kind"] as? String, "confirmed")
+        XCTAssertEqual(try json(XCTUnwrap(receipt["result"])), try json(result))
         XCTAssertEqual(writes, 0)
         let check = try SQLiteBridge(url: database)
         XCTAssertEqual(try nineTableSnapshot(check), intervened)
@@ -26003,11 +26051,58 @@ final class CoreHostTests: XCTestCase {
         let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
         XCTAssertEqual(recovery["method"] as? String, "projectLifecycleCommit")
         XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(result))
+        let receipt = try object(await reopened.call("projectLifecycleReceiptOutcome", argumentsJSON: json([json(reactivate)])))
+        XCTAssertEqual(receipt["kind"] as? String, "confirmed")
+        XCTAssertEqual(try json(XCTUnwrap(receipt["result"])), try json(result))
         XCTAssertEqual(writes, 0)
         let check = try SQLiteBridge(url: database)
         XCTAssertEqual(try nineTableSnapshot(check), before)
         check.close()
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+    }
+
+    func testArchiveProjectRestoreLegacyLandedJournalWithoutReceiptRefusesColdReplay() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let complete = try await projectLifecycleRequest(writer, action: "complete")
+        _ = try await writer.call("projectLifecycleWrite", argumentsJSON: json([json(complete)]))
+        let restore = try await projectLifecycleRequest(writer, action: "reactivate")
+        var journalWrites = 0
+        faults.journalWrite = {
+            journalWrites += 1
+            if journalWrites == 2 { throw HostFailure("Injected legacy Project lifecycle lost reply") }
+        }
+        await expectFailure("lost reply") {
+            _ = try await writer.call("projectLifecycleWrite", argumentsJSON: json([json(restore)]))
+        }
+        let owedJournal = try Data(contentsOf: journal)
+        XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
+        await writer.close()
+
+        // Pre-Task173 iOS had this landed v1 journal but did not save a
+        // preparedProjectLifecycle receipt. Equal current rows are not proof
+        // that this UUID committed.
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("DELETE FROM native_request_receipts WHERE request_id = ?",
+                             parametersJSON: json([try XCTUnwrap(restore["requestId"] as? String)]))
+        let baseline = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var domainWrites = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#,
+                            options: .regularExpression) != nil { domainWrites += 1 }
+        }
+        let reopened = host(replayFaults)
+        await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+        XCTAssertEqual(domainWrites, 0)
+        try assertJournalContentUnchanged(owedJournal)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), baseline)
+        check.close()
         await reopened.close()
     }
 

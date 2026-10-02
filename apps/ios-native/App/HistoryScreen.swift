@@ -116,7 +116,21 @@ struct HistoryScreen: View {
                                         }
                                     }
                             }
-                            else { archiveCard(item) }
+                            else {
+                                archiveCard(item)
+                                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                        if model.historyActionsEnabled {
+                                            Button {
+                                                searchFocused = false
+                                                Task { await model.restoreArchivedProject(item.text("id")) }
+                                            } label: {
+                                                Label(model.history.object("labels").text("restore"), systemImage: "arrow.counterclockwise")
+                                            }
+                                            .tint(palette.tint)
+                                            .accessibilityIdentifier("archive-restore-project-" + item.text("id"))
+                                        }
+                                    }
+                            }
                         }
                         if model.history.objects("items").count < model.history.number("total") {
                             Button(model.label("common.more")) { Task { await model.loadMoreHistory() } }

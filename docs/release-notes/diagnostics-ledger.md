@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-archive-project-restore`** — `packages/core/src/native-host-contract-project-lifecycle.ts`. `Native archived Project restore confirmed` with `outcome=confirmed` follows the durable Project lifecycle Reactivate receipt, including its affected Sections and Tasks. The shared `logInfo` line is the field-test proof; failed persistence or an unproven retry does not claim success. No Project or Task content, identifiers, dates, or URLs are logged.
+
 - **`v1.3.4/ios-archive-task-restore`** — `packages/core/src/native-host-contract-archive-task-restore.ts`. `Native archived Task restore confirmed` with `outcome=confirmed` follows the durable request receipt for a single Task restored to Inbox, including shared RN parent reactivation effects. The native host also emits a local confirmation marker after its journal settles; the core `logInfo` line is the field-test proof. Failed persistence or an unproven outcome does not claim success. No task content, identifiers, dates, or URLs are logged.
 
 - **`v1.3.4/ios-completion-undo`** — native iOS `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Task completion saved` with `operation=complete` or `operation=undo` and `outcome=confirmed` proves the exact prepared completion or Undo settled durably, including retry or cold journal recovery. No task content, dates, identifiers or URLs are logged.
