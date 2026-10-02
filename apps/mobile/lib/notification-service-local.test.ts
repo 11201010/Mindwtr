@@ -665,7 +665,7 @@ describe('notification-service-local', () => {
     });
 
     it('uses current task state after the native read resolves', async () => {
-      let resolveRows!: (rows: unknown[]) => void;
+      let resolveRows!: (rows: Record<string, unknown>[]) => void;
       mockAlarmGetScheduledAlarms.mockReturnValue(new Promise((resolve) => { resolveRows = resolve; }));
       const start = startLocalMobileNotifications();
       await vi.waitFor(() => expect(mockAlarmGetScheduledAlarms).toHaveBeenCalledTimes(1));
