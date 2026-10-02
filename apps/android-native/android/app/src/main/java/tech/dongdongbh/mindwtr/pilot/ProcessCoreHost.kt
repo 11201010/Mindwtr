@@ -115,7 +115,7 @@ internal object ProcessCoreHost {
             File(app.filesDir, "journal"), deviceStore(app), File(app.filesDir, DiagnosticsLogFile.RELATIVE_PATH),
             keyValue, HostFiles(app.filesDir, app.cacheDir, content = AndroidContentSource(app)), installer,
             ReminderAlarms(app, keyValue, checkpointRnState = { if (legacy != null) LegacyRnStoreGuard.checkpointRnState(app.dataDir) }),
-            HostWidgets(app))
+            HostWidgets(app) { appState })
         try {
             runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)
@@ -318,9 +318,9 @@ internal object ProcessCoreHost {
         }
         if (state == appState) return
         appState = state
-        // RN republishes the widgets when the app comes to the front (a new day, a changed theme); a boot still running publishes
-        // once it finished.
-        if (state == "active") boot?.takeIf { it.isDone }?.let { task -> runCatching { task.get() }.getOrNull()?.let(::refreshWidgets) }
+        // RN republishes the widgets when the app comes to the front (a new day, a changed theme) and flushes a change still
+        // waiting when it leaves; a boot still running publishes once it finished.
+        boot?.takeIf { it.isDone }?.let { task -> runCatching { task.get() }.getOrNull()?.let(::refreshWidgets) }
         val runtime = syncHost ?: return
         syncThread.execute { runCatching { runtime.syncAppState(state) }.onFailure { Log.w(CoreHost.TAG, "Native Android sync app state failed ${failureForLog(it)}") } }
     }

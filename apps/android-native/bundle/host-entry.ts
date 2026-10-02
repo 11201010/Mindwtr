@@ -92,6 +92,7 @@ type NativeBridge = {
     /** RN's widget module on Android (HostWidgets.kt): the publication's device inputs as JSON, and the payload to write and draw. */
     widgetInputs?(): string;
     widgetPublish?(payload: string): string | null;
+    widgetAppState?(): string;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown };
@@ -329,6 +330,7 @@ const widgets = typeof (globalThis.__mindwtrNative as { widgetPublish?: unknown 
         inputs: () => JSON.parse(checked(native().widgetInputs!())) as WidgetInputs,
         publish: (payload) => { checked(native().widgetPublish!(payload)); },
         storedLanguage: () => storedLanguage,
+        active: () => checked(native().widgetAppState!()) === 'active',
     })
     : null;
 

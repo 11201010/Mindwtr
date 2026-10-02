@@ -608,7 +608,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\) \{ appState \}\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 // RN's installer journal recovery runs at boot after the validated load and before the journal's replay, the first write that
 // can reach files/attachments (pass A2); it is RN's own Kotlin, compiled as it is.
 assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s*(?:\/\/[^\n]*\n\s*)*recoverInstalls\(installer\)\s*if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)/);
@@ -731,7 +731,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 38, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' two calls: each guarded');
+assert.equal(bridgeCallbacks.length, 39, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls: each guarded');
 assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })'));
 // The attachment file port and the installer only start their call on the engine thread; HostIo's files thread runs it.
@@ -3089,9 +3089,12 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const published = [];
     const timers = [];
     const realSetTimeout = globalThis.setTimeout;
-    globalThis.setTimeout = (fn, ms) => { timers.push(ms); return realSetTimeout(() => {}, 0); };
+    const pendingTimers = [];
+    let active = false;
+    globalThis.setTimeout = (fn, ms) => { timers.push(ms); pendingTimers.push(fn); return realSetTimeout(() => {}, 0); };
+    const fireTimer = () => pendingTimers.pop()();
     try {
-        const widgets = core.createWidgetPublisher({ ready: () => ready, inputs: () => inputs, publish: (text) => published.push(text), storedLanguage: () => null });
+        const widgets = core.createWidgetPublisher({ ready: () => ready, inputs: () => inputs, publish: (text) => published.push(text), storedLanguage: () => null, active: () => active });
         assert.equal(widgets.publish(), false, 'nothing is published before the validated load');
         ready = true;
         assert.equal(widgets.publish(), true);
@@ -3118,6 +3121,26 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         widgets.focusFilter(undefined);
         core.useTaskStore.setState({ lastDataChangeAt: 2 });
         assert.deepEqual(timers, [1000, 1000], 'a store change republishes after the delay');
+        // RN's storage widget refresh (storage-adapter.ts, #766: a redraw costs seconds): while the app is in front, a store change
+        // republishes at most once per five minutes; leaving the app publishes at once (Kotlin's background refresh). The Focus
+        // screen's filter and the Focus start-date setting publish at once, as RN's direct calls do. Away from the front: one second.
+        active = true;
+        const sent = published.length;
+        core.useTaskStore.setState({ _allTasks: [...data.tasks, task('d', 'Delta', { status: 'inbox' })], lastDataChangeAt: 3 });
+        fireTimer();
+        assert.equal(published.length, sent + 1, 'the waiting store change published');
+        core.useTaskStore.setState({ _allTasks: [...data.tasks, task('d', 'Delta', { status: 'inbox' }), task('e', 'Epsilon', { status: 'inbox' })], lastDataChangeAt: 4 });
+        assert(timers.at(-1) > 299_000 && timers.at(-1) <= 300_000, `in front, the next store change waits out five minutes (${timers.at(-1)} ms)`);
+        widgets.focusFilter({ criteria: { contexts: ['@home'] }, sortBy: 'due', sortOrder: null });
+        assert.equal(timers.at(-1), 1000, 'a new Focus filter publishes at once, the waiting change with it');
+        fireTimer();
+        assert.equal(published.length, sent + 2);
+        core.useTaskStore.setState({ settings: { ...data.settings, gtd: { focusIncludeStartDates: false } }, lastDataChangeAt: 5 });
+        assert.equal(timers.at(-1), 1000, 'the Focus start-date setting publishes at once');
+        fireTimer();
+        active = false;
+        core.useTaskStore.setState({ _allTasks: data.tasks, lastDataChangeAt: 6 });
+        assert.equal(timers.at(-1), 1000, 'away from the front, a store change publishes after one second');
     } finally {
         globalThis.setTimeout = realSetTimeout;
     }
@@ -3161,13 +3184,15 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const coreHostKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');
     assert.match(coreHostKt, /bridge\.setProperty\("widgetInputs", guarded \{ _ -> widgets\.inputs\(\) \}\)/);
     assert.match(coreHostKt, /bridge\.setProperty\("widgetPublish", guarded \{ args -> widgets\.publish\(args\[0\] as String\); null \}\)/);
+    assert.match(coreHostKt, /bridge\.setProperty\("widgetAppState", guarded \{ _ -> widgets\.appState\(\) \}\)/, 'the publisher reads whether the app is in front');
     // A boot publishes once it finished (its load, replay and drain), whatever the store's own changes did meanwhile: one that
     // came before the validated load was not sent. It waits with the boot's sync start for the first screen's content (startup
     // pass). Resume publishes through the same call, off the engine's callers.
     const ownerKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/ProcessCoreHost.kt'), 'utf8');
     assert.match(ownerKt, /fun startDeferredSync\(\) \{\s+deferredSync\.getAndSet\(null\)\?\.let \{ start -> syncThread\.execute \{ start\(\) \} \}\s+deferredWidgets\.getAndSet\(null\)\?\.let\(::refreshWidgets\)\s+\}/);
     assert.match(ownerKt, /private fun refreshWidgets\(runtime: CoreHost\) = widgetThread\.execute \{\s+runCatching \{ runtime\.refreshWidgets\(\) \}\.onFailure \{ Log\.w\(CoreHost\.TAG, "Native Android widget refresh failed", it\) \}\s+\}/);
-    assert.match(ownerKt, /if \(state == "active"\) boot\?\.takeIf \{ it\.isDone \}\?\.let \{ task -> runCatching \{ task\.get\(\) \}\.getOrNull\(\)\?\.let\(::refreshWidgets\) \}/);
+    // Coming to the front and leaving it both publish (RN's resume refresh and its flush on leaving).
+    assert.match(ownerKt, /if \(state == appState\) return\s+appState = state\s+(?:\/\/[^\n]*\s+)*boot\?\.takeIf \{ it\.isDone \}\?\.let \{ task -> runCatching \{ task\.get\(\) \}\.getOrNull\(\)\?\.let\(::refreshWidgets\) \}/);
     // Kotlin says when a publication did not reach the widgets (its store or redraw failed), so the publisher sends it again.
     const hostWidgetsKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/HostWidgets.kt'), 'utf8');
     assert.match(hostWidgetsKt, /\.put\("stale", stale\)/);

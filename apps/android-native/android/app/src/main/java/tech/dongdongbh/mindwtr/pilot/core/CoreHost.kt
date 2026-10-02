@@ -372,6 +372,7 @@ class CoreHost(
         widgets?.let { widgets ->
             bridge.setProperty("widgetInputs", guarded { _ -> widgets.inputs() })
             bridge.setProperty("widgetPublish", guarded { args -> widgets.publish(args[0] as String); null })
+            bridge.setProperty("widgetAppState", guarded { _ -> widgets.appState() })
         }
         engine.globalObject.setProperty("__mindwtrNative", bridge)
     }

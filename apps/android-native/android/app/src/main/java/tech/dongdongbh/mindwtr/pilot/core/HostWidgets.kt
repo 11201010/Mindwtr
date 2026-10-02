@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
  * core's publication needs, and setPayload + updateWidgets in one call. The payload is core's; this only stores it where RN's
  * widgets read it and redraws them, in order, off the engine thread (a redraw can take seconds).
  */
-class HostWidgets(private val app: Context) {
+class HostWidgets(private val app: Context, val appState: () -> String) {
     private val worker = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-widgets") }
     /** The last publication's store or redraw failed: the publisher sends it again on its next refresh, even if unchanged. */
     @Volatile private var stale = false

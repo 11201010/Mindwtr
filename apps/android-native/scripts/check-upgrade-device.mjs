@@ -217,10 +217,14 @@ const isDatabase = (path) => /^files\/SQLite\/mindwtr\.db(-wal|-shm)?$/.test(pat
 // for the database the app left, with the inputs the app logged.
 const widgetPrefsNow = () => widgetPrefs(runAs(`cat ${WIDGET_PREFS} 2>/dev/null || true`));
 const isWidgetPayload = (path) => path === WIDGET_PREFS;
-/** Before the app stops: waits until its last publication is stored and drawn, and returns that publication's logged inputs. */
+/**
+ * Before the app stops: leaves it (the app publishes what changed as it leaves; while it is in front a change waits up to five
+ * minutes, as RN's), waits until that publication is stored and drawn, and returns its logged inputs.
+ */
 const widgetsPublished = async (label) => {
     let context = null;
-    await sleep(1500); // a store change publishes one second later
+    if (front().includes(`${PKG}/`)) sh('input keyevent KEYCODE_HOME');
+    await sleep(2500);
     await until(`(${label}) the widget payload to be stored`, () => {
         const text = device.logs(pid(), TAG);
         context = publicationContext(text);

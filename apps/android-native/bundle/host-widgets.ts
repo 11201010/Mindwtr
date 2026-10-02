@@ -33,6 +33,8 @@ export type WidgetBridge = {
     publish(payload: string): void;
     /** The language chosen in the app (RN's `mindwtr-language`), as the host last passed it to setLanguage; null for none. */
     storedLanguage(): string | null;
+    /** True while the app is in front (RN's AppState "active"). */
+    active(): boolean;
 };
 
 /**
@@ -40,21 +42,33 @@ export type WidgetBridge = {
  * save the same way (storage-adapter.ts, one second).
  */
 const PUBLISH_DELAY_MS = 1_000;
+/**
+ * RN's widget refresh after a save (storage-adapter.ts, #766: a redraw costs seconds on mid-range phones): while the app is in
+ * front, at most once per five minutes; leaving the app publishes at once (the host's background refresh), as RN flushes it.
+ */
+const FOREGROUND_MIN_INTERVAL_MS = 5 * 60_000;
 
 /**
  * RN's widget service on the engine: core builds the whole Android payload (buildAndroidWidgetPublication) from the store, with
  * the device's inputs and the device language passed every time (QuickJS cannot detect either), and Kotlin writes it where RN's
- * module reads it and redraws the widgets. A store change publishes after a short delay; the host publishes at once after its
- * boot, after a CoreWork job and when the app comes to the front (RN publishes on resume). A payload equal to the last one is
+ * module reads it and redraws the widgets. A store change publishes after a short delay (at most once per five minutes while the
+ * app is in front, as RN); the host publishes at once after its boot, after a CoreWork job, and when the app comes to the front
+ * or leaves it (RN publishes on resume and flushes on leaving). A payload equal to the last one is
  * not sent again, unless Kotlin says that one never reached the widgets.
  */
 export const createWidgetPublisher = (bridge: WidgetBridge) => {
     let last: string | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let due = 0;
+    // RN's throttle counts from its last save-driven refresh: a store change waiting is published with this one.
+    let storeChangePending = false;
+    let lastStoreRefreshAt = 0;
 
     const publish = (): boolean => {
         if (timer !== null) clearTimeout(timer);
         timer = null;
+        if (storeChangePending) lastStoreRefreshAt = Date.now();
+        storeChangePending = false;
         if (isSandboxMode() || !bridge.ready()) return false;
         const state = useTaskStore.getState();
         const data = { tasks: state._allTasks, projects: state._allProjects, sections: state._allSections, areas: state._allAreas, settings: state.settings ?? {} };
@@ -77,26 +91,43 @@ export const createWidgetPublisher = (bridge: WidgetBridge) => {
         return true;
     };
 
-    const schedule = () => {
-        if (timer !== null) return;
+    /** Publishes in [delayMs], or sooner if a publication is already due sooner. */
+    const schedule = (delayMs: number) => {
+        const at = Date.now() + delayMs;
+        if (timer !== null) {
+            if (at >= due) return;
+            clearTimeout(timer);
+        }
+        due = at;
         timer = setTimeout(() => {
             timer = null;
             try { publish(); } catch (error) { logWarn('Native Android widget publication failed', { scope: 'widget', error }); }
-        }, PUBLISH_DELAY_MS);
+        }, delayMs);
     };
+    // RN's computeThrottledDelayMs while in front; its one-second coalesce otherwise.
+    const storeChangeDelay = () => (bridge.active()
+        ? Math.min(Math.max(lastStoreRefreshAt + FOREGROUND_MIN_INTERVAL_MS - Date.now(), PUBLISH_DELAY_MS), FOREGROUND_MIN_INTERVAL_MS)
+        : PUBLISH_DELAY_MS);
 
     useTaskStore.subscribe((state, previous) => {
-        if (state.lastDataChangeAt !== previous.lastDataChangeAt || state.settings !== previous.settings) schedule();
+        // RN's Focus start-date setting republishes at once (its own listener, use-root-layout-sync-effects.ts).
+        if (state.settings?.gtd?.focusIncludeStartDates !== previous.settings?.gtd?.focusIncludeStartDates) {
+            storeChangePending = true;
+            schedule(PUBLISH_DELAY_MS);
+        } else if (state.lastDataChangeAt !== previous.lastDataChangeAt || state.settings !== previous.settings) {
+            storeChangePending = true;
+            schedule(storeChangeDelay());
+        }
     });
 
     return {
         publish,
         /**
          * The Focus screen's current filter and sort (core's `controls.widgetFilter`), as RN's Focus screen hands it to
-         * setFocusWidgetFilter: a change republishes. Core's null sortOrder is RN's absent one.
+         * setFocusWidgetFilter: a change republishes at once, as RN's Focus screen does. Core's null sortOrder is RN's absent one.
          */
         focusFilter(filter: { criteria: FilterCriteria; sortBy: SortField; sortOrder: 'asc' | 'desc' | null } | undefined) {
-            if (filter && setFocusWidgetFilter({ criteria: filter.criteria, sortBy: filter.sortBy, sortOrder: filter.sortOrder ?? undefined })) schedule();
+            if (filter && setFocusWidgetFilter({ criteria: filter.criteria, sortBy: filter.sortBy, sortOrder: filter.sortOrder ?? undefined })) schedule(PUBLISH_DELAY_MS);
         },
     };
 };
