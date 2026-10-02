@@ -17837,5 +17837,103 @@ final class FoundationUITests: XCTestCase {
 
     func testTask162ContextsRowIdentityNormal() throws { try task162ContextsRowIdentity("522c4d71-9724-4aaf-92c7-a61317a22034") }
     func testTask162ContextsRowIdentityLargest() throws { try task162ContextsRowIdentity("8657b665-8b99-400e-8953-5ed128cba548") }
+    private func task164SavedSearchRowIdentity(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+
+        func openSearch() {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu")
+            let tile = app.buttons["menu-task164-search"]
+            let vertical = app.scrollViews.containing(.button, identifier: "menu-task164-search")
+                .matching(NSPredicate(format: "identifier != %@", "menu-saved-search-scroll")).firstMatch
+            for _ in 0..<8 {
+                if tile.exists {
+                    let viewport = vertical.exists ? vertical.frame.intersection(app.frame) : app.frame
+                    if tile.frame.intersects(viewport) && tile.isHittable { break }
+                }
+                if vertical.exists { vertical.swipeUp() } else { app.swipeUp() }
+            }
+            boardEnabled(tile, timeout: 30)
+            XCTAssertTrue(tile.isHittable, "Saved Search must be reachable in the largest menu")
+            tile.tap()
+            boardEnabled(app.buttons["saved-search-back"], timeout: 30)
+            XCTAssertEqual(app.staticTexts["saved-search-title"].label, "Task164 Next")
+            XCTAssertEqual(app.staticTexts["saved-search-query"].label, "status:next")
+        }
+
+        func reveal(_ element: XCUIElement, movedAbove: Bool = false) {
+            let scroll = app.scrollViews["saved-search-scroll"]
+            XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+            for attempt in 0..<10 {
+                let viewport = scroll.frame.intersection(app.frame)
+                if element.exists {
+                    let frame = element.frame
+                    if frame.minY >= viewport.minY - 1 && frame.maxY <= viewport.maxY + 1 && element.isHittable { return }
+                    if frame.minY < viewport.minY { scroll.swipeDown() }
+                    else { scroll.swipeUp() }
+                } else if movedAbove && attempt < 4 { scroll.swipeDown() }
+                else { scroll.swipeUp() }
+            }
+            XCTFail("Saved Search row could not be revealed: " + element.identifier)
+        }
+
+        func assertRow(_ id: String, title: String, priority: String, movedAbove: Bool = false) {
+            let task = app.buttons["task-title-" + id]
+            reveal(task, movedAbove: movedAbove)
+            boardEnabled(task, timeout: 30)
+            XCTAssertEqual(task.label, title)
+            XCTAssertEqual(app.buttons.matching(identifier: "task-title-" + id).count, 1, id)
+            XCTAssertTrue(task158ReviewPriorityRow(app, title: title, status: "Next", priority: priority).exists,
+                          "Saved Search survivor must retain its own status and priority: " + id)
+            let status = app.buttons["task-status-" + id]
+            reveal(status, movedAbove: movedAbove)
+            boardEnabled(status, timeout: 30)
+            XCTAssertEqual(status.label, "Change status. Current status: Next", id)
+            XCTAssertTrue(status.isEnabled, id)
+        }
+
+        app.launch()
+        openSearch()
+        assertRow("task164-first", title: "Task164 First", priority: "High")
+        assertRow("task164-second", title: "Task164 Second", priority: "Low")
+        XCTAssertFalse(app.buttons["task-title-task164-other"].exists, "Waiting task must not match status:next")
+
+        let firstStatus = app.buttons["task-status-task164-first"]
+        reveal(firstStatus, movedAbove: true)
+        boardEnabled(firstStatus, timeout: 30)
+        firstStatus.tap()
+        boardTap(app, "task-complete")
+        XCTAssertTrue(app.buttons["task-title-task164-first"].waitForNonExistence(timeout: 20))
+        assertRow("task164-second", title: "Task164 Second", priority: "Low", movedAbove: true)
+        XCTAssertFalse(app.buttons["task-title-task164-other"].exists)
+        let survivorShot = XCTAttachment(screenshot: app.screenshot())
+        survivorShot.name = "Saved Search survivor before leaving screen"
+        survivorShot.lifetime = .keepAlways
+        add(survivorShot)
+
+        boardTap(app, "saved-search-back")
+        openSearch()
+        assertRow("task164-second", title: "Task164 Second", priority: "Low")
+        XCTAssertFalse(app.buttons["task-title-task164-first"].exists)
+        XCTAssertFalse(app.buttons["task-title-task164-other"].exists)
+
+        app.terminate()
+        app.launch()
+        openSearch()
+        assertRow("task164-second", title: "Task164 Second", priority: "Low")
+        XCTAssertFalse(app.buttons["task-title-task164-first"].exists)
+        XCTAssertFalse(app.buttons["task-title-task164-other"].exists)
+        app.terminate()
+    }
+
+    func testTask164SavedSearchRowIdentityNormal() {
+        task164SavedSearchRowIdentity("96d44dd4-02e6-4697-95cc-bfe9fe4d0922")
+    }
+
+    func testTask164SavedSearchRowIdentityLargest() {
+        task164SavedSearchRowIdentity("e7d99581-f08e-474e-9d75-63fba4579586")
+    }
 
 }

@@ -1,5 +1,10 @@
 import SwiftUI
 
+private struct SavedSearchTaskRow: Identifiable {
+    let row: CoreObject
+    var id: Data { Data(row.text("id").utf8) }
+}
+
 struct SavedSearchScreen: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
@@ -39,12 +44,11 @@ struct SavedSearchScreen: View {
                     }
                     // Keep the published rows mounted while a new read is staged.
                     let rows = model.savedSearch.objects("rows")
-                    ForEach(rows.indices, id: \.self) { index in
-                        let row = rows[index]
+                    ForEach(rows.map(SavedSearchTaskRow.init)) { entry in
+                        let row = entry.row
                         TaskCard(row: row, model: model, palette: palette,
                                  onProject: { project in Task { await model.openProject(project) } },
                                  onToken: { model.focusSavedSearchToken($0) })
-                            .id(row.text("id"))
                             .disabled(!model.savedSearchCurrent || !model.savedSearchActionsEnabled)
                     }
                     if rows.count < model.savedSearch.number("total") {
