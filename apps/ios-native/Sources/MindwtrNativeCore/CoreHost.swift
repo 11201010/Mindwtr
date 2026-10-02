@@ -3897,6 +3897,7 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("projectAreaApplied")
 #endif
             NSLog("Native iOS Project Area saved releaseCheck=v1.3.3/native-ios-project-area-assignment outcome=applied")
+            NSLog("Native iOS Project Area acknowledgment releaseCheck=v1.3.4/ios-host-validation-stack outcome=confirmed")
         }
         if command.method == "focusGroupWrite", case .success = terminal {
 #if DEBUG
@@ -5765,6 +5766,13 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("Editor draft journal is missing its frozen snapshot")
             }
         }
+        if let args = try journalSettingsAndProjectSectionArguments(command) { return args }
+        if let args = try journalProjectArguments(command) { return args }
+        if let args = try journalAreaAndPreparedTaskArguments(command) { return args }
+        return try journalLegacyAndCaptureArguments(command)
+    }
+
+    private func journalSettingsAndProjectSectionArguments(_ command: PendingCommand) throws -> [Any]? {
         if command.method == "appLockCommit" {
             guard command.argumentsJSON.utf8.count <= 49_152,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
@@ -6025,6 +6033,10 @@ private final class Engine: @unchecked Sendable {
             _ = try arguments("projectDateWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
             return args
         }
+        return nil
+    }
+
+    private func journalProjectArguments(_ command: PendingCommand) throws -> [Any]? {
         if command.method == "projectAreaCommit" {
             guard command.argumentsJSON.utf8.count <= 12_000_000,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
@@ -6255,6 +6267,10 @@ private final class Engine: @unchecked Sendable {
             _ = try arguments(command.method == "manageAreaDeleteCommit" ? "manageAreaDelete" : "areaDelete", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
             return args
         }
+        return nil
+    }
+
+    private func journalAreaAndPreparedTaskArguments(_ command: PendingCommand) throws -> [Any]? {
         if command.method == "areaOrderCommit" {
             guard command.argumentsJSON.utf8.count <= 12_000_000,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
@@ -6505,6 +6521,10 @@ private final class Engine: @unchecked Sendable {
             _ = try arguments(request["decision"] == nil ? "inboxSkip" : "inboxCommit", encoded)
             return args
         }
+        return nil
+    }
+
+    private func journalLegacyAndCaptureArguments(_ command: PendingCommand) throws -> [Any] {
         // These commands store a final state. Text drafts also carry the exact
         // base values; core accepts an applied edit or refuses an intervening one.
         if ["complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit"].contains(command.method) {
@@ -6647,6 +6667,7 @@ private final class Engine: @unchecked Sendable {
         return args
     }
 
+
     private static func isPersonDeleteExpected(_ value: Any?, personID: String) -> Bool {
         guard let person = value as? [String: Any],
               Set(["id", "name", "createdAt", "updatedAt"]).isSubset(of: Set(person.keys)),
@@ -6716,6 +6737,32 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func arguments(_ method: String, _ json: String, allowPreparedDates: Bool = true) throws -> [Any] {
+        try validateArgumentTransportSize(method, json)
+        guard let count = Self.methods[method],
+              let args = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [Any], args.count == count else {
+            throw HostFailure("Invalid or unavailable core method arguments")
+        }
+        // Native validates its transport; the shared contract validates meaning.
+        for (index, argument) in args.enumerated() {
+            if (method == "window" && index < 2) || method == "focus"
+                || (["focusWindow", "projectDetail", "projectNotes"].contains(method) && (index == 1 || index == 2))
+                || (method == "editorSuggestions" && index == 3) {
+                guard Self.isInteger(argument) else {
+                    throw HostFailure("Core numeric arguments must be integers")
+                }
+            } else if !(argument is String) { throw HostFailure("Core arguments must be strings") }
+        }
+        try validateTaskReadArguments(method, args, json, allowPreparedDates: allowPreparedDates)
+        try validateListAndInboxArguments(method, args, json, allowPreparedDates: allowPreparedDates)
+        try validateProjectCollectionArguments(method, args, json, allowPreparedDates: allowPreparedDates)
+        try validateProjectFieldArguments(method, args, json, allowPreparedDates: allowPreparedDates)
+        try validateSettingsAndAreaArguments(method, args, json, allowPreparedDates: allowPreparedDates)
+        try validatePreparedTaskArguments(method, args, json, allowPreparedDates: allowPreparedDates)
+        try validateMenuAndDraftArguments(method, args, json, allowPreparedDates: allowPreparedDates)
+        return args
+    }
+
+    private func validateArgumentTransportSize(_ method: String, _ json: String) throws {
         if method == "taskOpenTab", json.utf8.count > 4_096 {
             throw HostFailure("INVALID_INPUT: Task open tab request is too large")
         }
@@ -6822,20 +6869,9 @@ private final class Engine: @unchecked Sendable {
         if method == "inboxStep" && json.utf8.count > 12_000_000 {
             throw HostFailure("INVALID_INPUT: Process Inbox step is too large")
         }
-        guard let count = Self.methods[method],
-              let args = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [Any], args.count == count else {
-            throw HostFailure("Invalid or unavailable core method arguments")
-        }
-        // Native validates its transport; the shared contract validates meaning.
-        for (index, argument) in args.enumerated() {
-            if (method == "window" && index < 2) || method == "focus"
-                || (["focusWindow", "projectDetail", "projectNotes"].contains(method) && (index == 1 || index == 2))
-                || (method == "editorSuggestions" && index == 3) {
-                guard Self.isInteger(argument) else {
-                    throw HostFailure("Core numeric arguments must be integers")
-                }
-            } else if !(argument is String) { throw HostFailure("Core arguments must be strings") }
-        }
+    }
+
+    private func validateTaskReadArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
         if method == "taskEditorResumeCheck" {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
@@ -6995,6 +7031,9 @@ private final class Engine: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    private func validateListAndInboxArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
         if ["somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 1_000_000,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else {
@@ -7211,6 +7250,9 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("Core input must be a JSON object")
             }
         }
+    }
+
+    private func validateProjectCollectionArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
         if method == "projectCreate" || method == "projectCreateRetryOutcome" {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
@@ -7449,6 +7491,9 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Task Focus needs a bounded row token and lowercase UUID")
             }
         }
+    }
+
+    private func validateProjectFieldArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
         if method == "projectRenameOptions" {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
@@ -7770,6 +7815,9 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Project task order needs a bounded token, typed anchor, and lowercase UUID")
             }
         }
+    }
+
+    private func validateSettingsAndAreaArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
         if ["appLockOptions", "appLock", "appLockRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 8_192,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else {
@@ -8022,6 +8070,9 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Area order needs a bounded complete token list and lowercase UUID")
             }
         }
+    }
+
+    private func validatePreparedTaskArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
         if method == "taskCancellationUndo" {
             guard let text = args.first as? String, text.utf8.count <= 4_096,
                   let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
@@ -8242,6 +8293,9 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("Unsupported native Board action")
             }
         }
+    }
+
+    private func validateMenuAndDraftArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
         if method == "menuRead" {
             guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
                   let json = args[1] as? String,
@@ -8548,8 +8602,8 @@ private final class Engine: @unchecked Sendable {
                 }
             }
         }
-        return args
     }
+
 
     private func persist(_ command: PendingCommand) throws {
         #if DEBUG
