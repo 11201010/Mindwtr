@@ -17142,4 +17142,78 @@ final class FoundationUITests: XCTestCase {
     func testTask153ProjectFailedReactivate() { task153FailedSave("571597b8-5594-491d-8afa-67a67ca1d664", action: "reactivate") }
     func testTask153ProjectColdReactivateRecovery() { task153ColdRecovery("571597b8-5594-491d-8afa-67a67ca1d664", archived: false) }
 
+    private func task154PriorityRow(_ app: XCUIApplication, title: String, priority: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@",
+            title, "Status: Next", "Priority: " + priority)).firstMatch
+    }
+
+    private func task154FocusPriorityRegroup(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); boardEnabled(app.buttons["tab-focus"], timeout: 30); boardTap(app, "tab-focus")
+        let scroll = app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch
+        let next = app.buttons["focus-section-next"]
+        revealPagedElement(app, next, in: scroll)
+        boardEnabled(next)
+        if next.value as? String == "Expand" { next.tap() }
+        let highGroup = app.descendants(matching: .any).matching(identifier: "focus-group-header-priority:high").firstMatch
+        let mediumGroup = app.descendants(matching: .any).matching(identifier: "focus-group-header-priority:medium").firstMatch
+        let lowGroup = app.descendants(matching: .any).matching(identifier: "focus-group-header-priority:low").firstMatch
+        for (id, title, priority, group) in [
+            ("task154-high", "Task154 High", "High", highGroup),
+            ("task154-medium", "Task154 Medium", "Medium", mediumGroup),
+            ("task154-low", "Task154 Low", "Low", lowGroup),
+        ] {
+            revealPagedElement(app, app.buttons["task-title-" + id], in: scroll)
+            XCTAssertTrue(group.waitForExistence(timeout: 15), "Expected three distinct priority groups")
+            XCTAssertTrue(group.label.contains("1"), "Each priority group begins with one task")
+            XCTAssertTrue(task154PriorityRow(app, title: title, priority: priority).waitForExistence(timeout: 15),
+                          "Focus must show the saved status and priority before editing")
+        }
+
+        let high = app.buttons["task-title-task154-high"]
+        revealPagedElement(app, high, in: scroll)
+        boardEnabled(high); high.tap()
+        boardTap(app, "task-mode-edit")
+        let selected = app.buttons["task-editor-priority-high"]
+        if !selected.exists { boardTap(app, "task-editor-section-organization") }
+        revealPagedElement(app, selected, in: app.scrollViews["task-editor-scroll"])
+        boardEnabled(selected); XCTAssertTrue(selected.isSelected)
+        let lowChoice = app.buttons["task-editor-priority-low"]
+        revealPagedElement(app, lowChoice, in: app.scrollViews["task-editor-scroll"])
+        boardEnabled(lowChoice); lowChoice.tap()
+        boardTap(app, "task-editor-save")
+
+        revealPagedElement(app, next, in: scroll)
+        XCTAssertTrue(highGroup.waitForNonExistence(timeout: 20), "The former High group must disappear")
+        XCTAssertTrue(mediumGroup.waitForExistence(timeout: 15))
+        XCTAssertTrue(mediumGroup.label.contains("1"))
+        revealPagedElement(app, app.buttons["task-title-task154-low"], in: scroll)
+        XCTAssertTrue(lowGroup.waitForExistence(timeout: 15))
+        XCTAssertTrue(lowGroup.label.contains("2"), "Moved High and original Low belong to Low group")
+        let moved = task154PriorityRow(app, title: "Task154 High", priority: "Low")
+        revealPagedElement(app, app.buttons["task-title-task154-high"], in: scroll)
+        XCTAssertTrue(moved.waitForExistence(timeout: 15), "Moved task must immediately show its new priority")
+        XCTAssertFalse(task154PriorityRow(app, title: "Task154 High", priority: "High").exists,
+                       "No stale High-priority card may remain")
+        for (id, title, priority) in [("task154-high", "Task154 High", "Low"),
+                                      ("task154-medium", "Task154 Medium", "Medium"),
+                                      ("task154-low", "Task154 Low", "Low")] {
+            let task = app.buttons["task-title-" + id]
+            revealPagedElement(app, task, in: scroll)
+            XCTAssertEqual(app.buttons.matching(identifier: "task-title-" + id).count, 1,
+                           "Regrouping must not duplicate or replace a task row")
+            XCTAssertTrue(task154PriorityRow(app, title: title, priority: priority).exists)
+            let status = app.buttons["task-status-" + id]
+            XCTAssertEqual(status.label, "Change status. Current status: Next")
+            XCTAssertTrue(status.isEnabled)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Focus Priority regroup after editor save"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testTask154FocusPriorityRegroupNormal() { task154FocusPriorityRegroup("8d77cb7b-8050-469f-8002-ac13ce7f00c1") }
+    func testTask154FocusPriorityRegroupLargest() { task154FocusPriorityRegroup("f4542b36-c84e-47c5-8035-5a69b830b0aa") }
+
 }
