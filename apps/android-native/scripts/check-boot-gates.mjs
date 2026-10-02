@@ -849,19 +849,25 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     const host = hostEntry.slice(hostEntry.indexOf('globalThis.MindwtrHost = {'));
     const methods = [...host.matchAll(/\n    (\w+)\([^)]*\): [^{\n]+\{([\s\S]*?)\n    \},/g)].map(([, name, body]) => ({ name, body }));
     assert(methods.length > 40 && methods.some((m) => m.name === 'menuCommand'), 'host-entry\'s methods parsed');
-    // The iOS host's prepared commits and its Calendar preference, Focus grouping and Someday section task writes: its own journal
-    // holds them, and Kotlin never calls them.
+    // The iOS host's prepared commits and its Calendar preference, Focus grouping, Someday section task and task attachment
+    // link/remove writes: its own journal holds them, and Kotlin never calls them.
     const iosPreparedCommits = ['captureCommit', 'draftCommit'];
-    const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask'];
-    // Core writes no host method calls yet (reminder actions, Settings › Calendar's edits, a project's attachment edits):
+    const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment'];
+    // Core writes no host method calls yet (reminder actions, Settings › Calendar's edits, adding an attachment file):
     // wiring one into host-entry fails the write-list checks above until the journal takes it.
-    const unwiredWrites = ['completeReminderTask', 'snoozeReminder', 'setCalendarSetting', 'addCalendarFeed',
-        'addAttachmentFile', 'submitAttachmentLinks', 'removeAttachment'];
+    const unwiredWrites = ['completeReminderTask', 'snoozeReminder', 'setCalendarSetting', 'addCalendarFeed', 'addAttachmentFile'];
     assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
     assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
     const called = (text) => [...text.matchAll(/contract\.(\w+)\(/g)].map((m) => m[1]);
     assert.deepEqual(called(hostEntry).filter((name) => unwiredWrites.includes(name)), [], 'no host method calls an unwired core write');
+    {
+        const iosOnlyMethods = methods.filter((m) => called(m.body).some((name) => iosOnlyWrites.includes(name))).map((m) => m.name);
+        assert.equal(iosOnlyMethods.length, iosOnlyWrites.length, 'each iOS-only write has its host method');
+        const java = resolve(app, 'android/app/src/main/java');
+        const kotlin = readdirSync(java, { recursive: true }).filter((file) => file.endsWith('.kt')).map((file) => readFileSync(resolve(java, file), 'utf8')).join('\n');
+        assert.equal(kotlin.match(new RegExp(`"(${iosOnlyMethods.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS-only writes');
+    }
     // Core's write commands: every command of the crash-safe table (native-request-receipts.ts states the rule each follows).
     const coreWrites = ['setTaskFocus', 'completeTask', 'setProjectFocus', 'createProject', 'saveSearch', 'updateTask', 'saveTaskDraft', 'resetTaskChecklist',
         'submitQuickCapture', 'submitQuickCaptureLines', 'submitQuickCapturePickerQuery', 'commitInboxProcessingStep', 'skipInboxProcessingTask', 'setAreaFilter',
@@ -1069,7 +1075,10 @@ assert.match(coreHost, /fun saveTaskDraft\(id: String, baseJson: String, patchJs
 assert.match(coreHost, /fun updateTask\(id: String, baseJson: String, patchJson: String, requestId: String\): JSONObject =\s*callAsync\("update", JSONObject\(\)\.put\("id", id\)\.put\("base", JSONObject\(baseJson\)\)\.put\("patch", JSONObject\(patchJson\)\)\s*\.put\("requestId", requestId\)\.toString\(\)\)/);
 assert.doesNotMatch(coreHost + hostEntry, /taskEditor\(|getTaskEditor\(/, 'the seven-field editor reply is gone');
 assert.match(hostEntry, /editorModel\(id: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskEditorModel\(\{ id \}\)\);/);
-assert.match(hostEntry, /taskView\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskView\(JSON\.parse\(json\)\)\);/);
+// taskView parses through editorJson (shared with the iOS attachment edits): JSON.parse under a size bound, and a refusal
+// that never quotes the request.
+assert.match(hostEntry, /taskView\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskView\(editorJson\(json\) as Parameters<typeof contract\.getTaskView>\[0\]\)\);/);
+assert.match(hostEntry, /const editorJson = \(json: string\): unknown => \{\s*try \{ if \(json\.length <= 2_000_000\) return JSON\.parse\(json\); \}\s*catch \{ \/\*[^*]*\*\/ \}\s*throw new Error\('Invalid bounded editor request'\);\s*\};/);
 assert.match(hostEntry, /editChecklist\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.editTaskChecklist\(JSON\.parse\(json\)\)\);/);
 assert.match(hostEntry, /resetChecklist\(json: string\): string \{\s*return submit\(async \(\) => taskResult\('resetChecklist', await contract\.resetTaskChecklist\(JSON\.parse\(json\)\)\)\);/);
 assert.match(hostEntry, /editorSuggestions\(id: string, field: string, query: string, limit: number\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskEditorSuggestions\(\{ id, field: [^,]*, query, limit \}\)\);/);
@@ -3472,6 +3481,8 @@ ready.newInputs.length = 0;
     ready.menuInputs.length = 0;
 }
 ready.persistenceFailure = { message: 'disk full' };
+// A blocked read keeps the SAVE_FAILED code and never quotes the store's failure text.
+const readRefusal = { ok: false, error: 'SAVE_FAILED: Previous changes could not be saved; retry before continuing' };
 const queriesBeforeFailure = ready.queryCount;
 const blockedRefresh = await poll(ready, ready.MindwtrHost.window(0, 50, ''));
 assert.equal(blockedRefresh.ok, false);
@@ -3480,12 +3491,12 @@ assert.equal(ready.queryCount, queriesBeforeFailure);
 // The editor cannot load unsaved in-memory values as if they were stored.
 for (const blocked of [ready.MindwtrHost.editorModel('t'), ready.MindwtrHost.taskView('{"id":"t"}'), ready.MindwtrHost.editChecklist(JSON.stringify(checklistInput)),
     ready.MindwtrHost.editorSuggestions('t', 'tags', 'x', 4), ready.MindwtrHost.editDraft(JSON.stringify(editInput))]) {
-    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.deepEqual(await poll(ready, blocked), readRefusal);
 }
 assert.equal(ready.editorInputs.length, 5);
 // Focus cannot show unsaved in-memory values as stored either.
 for (const blocked of [ready.MindwtrHost.focus(50), ready.MindwtrHost.focusWindow('next', 0, 50, 'f')]) {
-    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.deepEqual(await poll(ready, blocked), readRefusal);
 }
 assert.equal(ready.focusInputs.length, 4);
 // Commands never wait on requireSaved: the exact retry of a failed command must reach core, which retries the save.
@@ -3494,7 +3505,7 @@ assert.equal((await poll(ready, ready.MindwtrHost.complete('t'))).ok, true);
 assert.equal((await poll(ready, ready.MindwtrHost.captureSubmit('{"text":"Retry","options":{},"captureId":"123"}'))).ok, true);
 // The popup's reads wait for the retry; its commands (a capture, several lines, a picker create) reach core so the retry can save.
 for (const blocked of [ready.MindwtrHost.captureOpen(), ready.MindwtrHost.captureView('{"text":"a","options":{}}'), ready.MindwtrHost.captureEdit('{"text":"a","options":{},"edit":{}}')]) {
-    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.deepEqual(await poll(ready, blocked), readRefusal);
 }
 for (const command of [ready.MindwtrHost.captureLines('{"text":"a\\nb","options":{},"captureIds":["1","2"],"snapshotFileName":null}'),
     ready.MindwtrHost.capturePicker('{"picker":"area","query":"x","text":"","options":{},"requestId":"9"}')]) {
@@ -3506,11 +3517,11 @@ assert.equal((await poll(ready, ready.MindwtrHost.saveDraft(draftInput))).ok, tr
 assert.equal(ready.completeCount + ready.createCount + ready.updateInputs.length, commandsBefore + 4);
 // Projects cannot show unsaved in-memory values as stored either; labels still load.
 for (const blocked of [ready.MindwtrHost.projects(), ready.MindwtrHost.projectDetail('p1', 0, 50, '')]) {
-    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.deepEqual(await poll(ready, blocked), readRefusal);
 }
 assert.equal(ready.projectInputs.length, 3);
 // The area filter is a read: it waits for the retry. Its commands, like every command, reach core so the retry can save.
-assert.deepEqual(await poll(ready, ready.MindwtrHost.areaFilter()), { ok: false, error: 'SAVE_FAILED: disk full' });
+assert.deepEqual(await poll(ready, ready.MindwtrHost.areaFilter()), readRefusal);
 ready.taskFocusResult = { ok: true, value: { id: 't', focused: true } };
 for (const command of [ready.MindwtrHost.taskFocus('t', true), ready.MindwtrHost.projectFocus('p', true),
     ready.MindwtrHost.createProject('New', 'a', '123'), ready.MindwtrHost.setAreaFilter('{"included":[],"excluded":[]}')]) {
@@ -3520,7 +3531,7 @@ assert.equal(ready.newInputs.length, 4);
 // Search and Process Inbox reads wait for the retry; their commands reach core so the retry can save.
 for (const blocked of [ready.MindwtrHost.search('{"query":"a","filters":{},"limit":50}'), ready.MindwtrHost.inboxStart('guided'),
     ready.MindwtrHost.inboxStep('{"sessionId":"x","taskId":"t","step":"actionable"}')]) {
-    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.deepEqual(await poll(ready, blocked), readRefusal);
 }
 assert.equal(ready.newInputs.length, 4);
 ready.inboxCommitResult = { ok: true, value: { view: null, notice: null, toast: null } };
@@ -3532,7 +3543,7 @@ for (const command of [ready.MindwtrHost.saveSearch('{"query":"a","requestId":"r
 assert.equal(ready.newInputs.length, 7);
 // Menu screen reads wait for the retry; the More sheet's tiles (navigation) do not, so Menu never opens empty;
 // menu commands reach core so the retry can save.
-assert.deepEqual(await poll(ready, ready.MindwtrHost.menuRead('archive', '{"offset":0,"limit":50}')), { ok: false, error: 'SAVE_FAILED: disk full' });
+assert.deepEqual(await poll(ready, ready.MindwtrHost.menuRead('archive', '{"offset":0,"limit":50}')), readRefusal);
 assert.equal(ready.menuInputs.length, 0);
 assert.equal((await poll(ready, ready.MindwtrHost.menuRead('more', '{}'))).ok, true);
 assert.equal(ready.menuInputs.length, 1);
