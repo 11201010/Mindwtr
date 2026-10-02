@@ -142,6 +142,16 @@ async function planPreset(host: ReturnType<typeof createNativeHostContract>, val
     return { request, prepared: prepared.value.prepared };
 }
 
+async function planReset(host: ReturnType<typeof createNativeHostContract>) {
+    const options = await host.getGtdTaskEditorPresetOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID,
+        edit: { type: 'taskEditorReset' }, expected: options.value.expected };
+    const prepared = await host.prepareGtdWorkflow(request);
+    if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+    return { request, prepared: prepared.value.prepared };
+}
+
 async function planField(host: ReturnType<typeof createNativeHostContract>, field: 'description', value: boolean) {
     const options = await host.getGtdTaskEditorFieldOptions({});
     if (!options.ok) throw new Error(JSON.stringify(options));
@@ -873,6 +883,74 @@ describe('GTD Task Editor field order uses the composite v1 SQLite receipt', () 
         independent.settings = { ...independent.settings, ...update };
         independent.settings.syncPreferencesUpdatedAt = { ...independent.settings.syncPreferencesUpdatedAt,
             gtd: '2026-09-02T00:00:00.000Z' };
+        await first.adapter.saveData(independent);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        const before = nineTables(cold.db);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(cold.db)).toEqual(before);
+    });
+});
+
+describe('GTD Task Editor reset uses the composite v1 SQLite receipt', () => {
+    it('preserves nine raw tables through failed COMMIT, exact-retries, and cold-replays the reset', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-editor-reset-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const seed = initial(); seed.settings.gtd = { ...seed.settings.gtd, taskEditor: {
+            order: ['description', 'status'], hidden: ['status'], sections: { description: 'basic' },
+            sectionOpen: { details: true }, defaultsVersion: 5 } as never };
+        seed.settings.features = { priorities: true, timeEstimates: true, legacy: 'keep' } as never;
+        const first = await open(path, true, seed);
+        const before = nineTables(first.db);
+        const envelope = await planReset(first.host);
+        expect(Object.keys(envelope.prepared.after).sort()).toEqual(['selected', 'stamp']);
+        expect(envelope.prepared.result).toEqual({ type: 'taskEditorReset', changed: true });
+        first.fault.commits = 10;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            expect(await first.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'SAVE_FAILED' } });
+            expect(nineTables(first.db)).toEqual(before);
+        }
+        first.fault.commits = 0;
+        expect(await first.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const saved = nineTables(first.db);
+        for (const table of tables.filter((name) => name !== 'settings')) expect(saved[table]).toEqual(before[table]);
+        const settings = (await first.adapter.getData()).settings;
+        expect(settings.gtd?.taskEditor).toMatchObject({ order: envelope.prepared.after.selected?.order.value,
+            hidden: envelope.prepared.after.selected?.hidden.value, sections: {}, sectionOpen: {},
+            defaultsVersion: 5 });
+        expect(settings.features).toEqual({ priorities: false, timeEstimates: false, legacy: 'keep' });
+        expect(settings.gtd?.legacySibling).toBe('keep');
+        expect(settings.syncPreferencesUpdatedAt?.gtd).toBe(envelope.prepared.after.stamp);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        expect(nineTables(cold.db)).toEqual(saved);
+        const later = await cold.adapter.getData(); later.settings.language = 'ko';
+        later.tasks = later.tasks.map((row) => ({ ...row, title: 'later edit' }));
+        await cold.adapter.saveData(later);
+        cold.db.close(); databases.splice(databases.indexOf(cold.db), 1);
+        const replay = await open(path);
+        const beforeReplay = nineTables(replay.db);
+        expect(await replay.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        expect(nineTables(replay.db)).toEqual(beforeReplay);
+    }, 20_000);
+
+    it('cold-refuses an independently saved identical reset with another GTD stamp', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-editor-reset-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const first = await open(path, true);
+        const envelope = await planReset(first.host);
+        const independent = await first.adapter.getData();
+        const update = buildGtdSettingsUpdate(independent.settings, envelope.request.edit);
+        if (!update) throw new Error('Expected shared reset update');
+        independent.settings = { ...independent.settings, ...update,
+            syncPreferencesUpdatedAt: { ...independent.settings.syncPreferencesUpdatedAt,
+                gtd: '2026-09-02T00:00:00.000Z' } };
         await first.adapter.saveData(independent);
         first.db.close(); databases.splice(databases.indexOf(first.db), 1);
         const cold = await open(path);

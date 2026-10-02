@@ -65,6 +65,26 @@ describe('Task Editor Layout upgrade sync', () => {
         }
     });
 
+    it('converges to a newer stamped shared reset as one layout while honoring local GTD opt-out', () => {
+        const original = { ...settings({ ...layoutA, sections: { description: 'basic' },
+            sectionOpen: { details: true } }, NOW),
+        features: { priorities: true, timeEstimates: true } };
+        const update = buildGtdSettingsUpdate(original, { type: 'taskEditorReset' });
+        if (!update) throw new Error('Expected shared reset update');
+        const later = { ...original, ...update,
+            syncPreferencesUpdatedAt: { gtd: '2026-09-13T12:00:00.000Z' } };
+        for (const merged of [mergeSettingsForSync(original, later), mergeSettingsForSync(later, original)]) {
+            expect(merged.gtd?.taskEditor).toEqual(later.gtd?.taskEditor);
+            expect(merged.gtd?.taskEditor?.order).toEqual(DEFAULT_TASK_EDITOR_ORDER);
+            expect(merged.gtd?.taskEditor?.hidden).toEqual(DEFAULT_TASK_EDITOR_HIDDEN);
+            expect(merged.gtd?.taskEditor?.sections).toEqual({});
+            expect(merged.gtd?.taskEditor?.sectionOpen).toEqual({});
+            expect(merged.syncPreferencesUpdatedAt?.gtd).toBe(later.syncPreferencesUpdatedAt.gtd);
+        }
+        const optedOut = { ...original, syncPreferences: { gtd: false } };
+        expect(mergeSettingsForSync(optedOut, later).gtd?.taskEditor).toEqual(original.gtd?.taskEditor);
+    });
+
     it.each([
         { ...defaults, presentation: 'modal' as const },
         { ...defaults, sectionOpen: { details: true } },
