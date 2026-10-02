@@ -24759,4 +24759,389 @@ final class CoreHostTests: XCTestCase {
         await reopened.close()
     }
 
+    private func seedTrashProjectRestoreProject() async throws -> String {
+        let richTaskID = try await seedDestinationTask()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let cascade = formatter.string(from: Date().addingTimeInterval(-60))
+        let older = formatter.string(from: Date().addingTimeInterval(-3600))
+        let sqlite = try SQLiteBridge(url: database)
+        // seedDestinationTask inserts raw Projects without these two columns.
+        // The loader uses rowid for a missing order and [] for missing tags;
+        // a full-store save writes those canonical values on unrelated rows.
+        _ = try sqlite.execute("UPDATE projects SET orderNum = COALESCE(orderNum, rowid), tagIds = COALESCE(tagIds, '[]') WHERE id LIKE 'destination-project-%'")
+        _ = try sqlite.execute("UPDATE projects SET deletedAt = ?, areaTitle = '' WHERE id = 'destination-project-a'",
+                               parametersJSON: json([cascade]))
+        _ = try sqlite.execute("UPDATE sections SET deletedAt = ? WHERE id = 'destination-section-a'",
+                               parametersJSON: json([cascade]))
+        _ = try sqlite.execute("UPDATE sections SET deletedAt = ? WHERE id = 'destination-section-deleted'",
+                               parametersJSON: json([older]))
+        _ = try sqlite.execute("UPDATE tasks SET deletedAt = ? WHERE id = ?",
+                               parametersJSON: json([cascade, richTaskID]))
+        let insert = "INSERT INTO tasks (id, title, status, projectId, sectionId, tags, contexts, isFocusedToday, showFutureRecurrence, suppressMindwtrReminders, pushCount, createdAt, updatedAt, deletedAt, purgedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        for (id, title, project, section, deleted, purged) in [
+            ("restore-orphan-task", "Cascade with old section", "destination-project-a" as Any, "destination-section-deleted" as Any, cascade as Any, NSNull() as Any),
+            ("restore-older-task", "Previously deleted", "destination-project-a" as Any, "destination-section-a" as Any, older as Any, NSNull() as Any),
+            ("restore-purged-task", "Purged before restore", "destination-project-a" as Any, "destination-section-a" as Any, cascade as Any, cascade as Any),
+            ("restore-detached-task", "Live task detached by Delete", NSNull() as Any, NSNull() as Any, NSNull() as Any, NSNull() as Any),
+        ] {
+            _ = try sqlite.execute(insert, parametersJSON: json([id, title, "next", project, section, "[]", "[]", 0, 0, 0, 0, older, older, deleted, purged, 1]))
+        }
+        sqlite.close()
+        return richTaskID
+    }
+
+    private func trashProjectRestoreRequest(_ core: CoreHost,
+                                            requestID: String = UUID().uuidString.lowercased()) async throws -> [String: Any] {
+        let view = try object(await core.call("menuRead", argumentsJSON: json(["trash", json(["offset": 0, "limit": 50])])))
+        let items = try XCTUnwrap(view["items"] as? [[String: Any]])
+        let row = try XCTUnwrap(items.first { $0["type"] as? String == "project" && $0["id"] as? String == "destination-project-a" })
+        return ["requestId": requestID, "projectId": "destination-project-a",
+                "projectRevision": try XCTUnwrap(row["projectRevision"] as? String)]
+    }
+
+    private func trashProjectRestoreJournal() throws -> [String: Any] {
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "trashProjectRestoreCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        XCTAssertEqual(args.count, 1)
+        return try object(XCTUnwrap(args.first))
+    }
+
+    func testTrashProjectRestoreCascadePreservesEarlierDeletedPurgedAndDetachedChildren() async throws {
+        let richID = try await seedTrashProjectRestoreProject()
+        let faults = HostIOFaults()
+        var confirmations = 0
+        faults.commandDiagnostic = { if $0 == "trashProjectRestore" { confirmations += 1 } }
+        let core = host(faults)
+        _ = try await core.start()
+        let request = try await trashProjectRestoreRequest(core)
+        let projectBefore = try XCTUnwrap(projectRows("destination-project-a").first)
+        let richBefore = try storedTask(richID)
+        let olderBefore = try storedTask("restore-older-task")
+        let purgedBefore = try storedTask("restore-purged-task")
+        let detachedBefore = try storedTask("restore-detached-task")
+        let olderSectionBefore = try XCTUnwrap(projectSectionRows("destination-section-deleted").first)
+        let unrelatedBefore = try XCTUnwrap(projectRows("destination-project-b").first)
+        XCTAssertNotNil(unrelatedBefore["orderNum"] as? Int)
+        XCTAssertEqual(unrelatedBefore["tagIds"] as? String, "[]")
+        let result = try object(await core.call("trashProjectRestoreWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(result), try json(["id": "destination-project-a"]))
+        let project = try XCTUnwrap(projectRows("destination-project-a").first)
+        XCTAssertTrue(project["deletedAt"] is NSNull)
+        XCTAssertEqual(project["areaId"] as? String, "destination-area-a")
+        XCTAssertEqual(project["areaTitle"] as? String, "Alpha area")
+        XCTAssertEqual(project["rev"] as? Int, (projectBefore["rev"] as? Int ?? 0) + 1)
+        XCTAssertTrue(try XCTUnwrap(projectSectionRows("destination-section-a").first)["deletedAt"] is NSNull)
+        XCTAssertEqual(try json(XCTUnwrap(projectSectionRows("destination-section-deleted").first)), try json(olderSectionBefore))
+        let rich = try storedTask(richID)
+        XCTAssertTrue(rich["deletedAt"] is NSNull)
+        XCTAssertEqual(rich["projectId"] as? String, "destination-project-a")
+        XCTAssertEqual(rich["sectionId"] as? String, "destination-section-a")
+        XCTAssertEqual(try trashTaskPreservedFields(rich), try trashTaskPreservedFields(richBefore))
+        let orphan = try storedTask("restore-orphan-task")
+        XCTAssertTrue(orphan["deletedAt"] is NSNull)
+        XCTAssertEqual(orphan["projectId"] as? String, "destination-project-a")
+        XCTAssertTrue(orphan["sectionId"] is NSNull)
+        XCTAssertEqual(try json(storedTask("restore-older-task")), try json(olderBefore))
+        XCTAssertEqual(try json(storedTask("restore-purged-task")), try json(purgedBefore))
+        XCTAssertEqual(try json(storedTask("restore-detached-task")), try json(detachedBefore))
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("destination-project-b").first)), try json(unrelatedBefore))
+        XCTAssertEqual(confirmations, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("trashProjectRestoreRetryOutcome", argumentsJSON: json([json(request)]))
+        }
+        await core.close()
+    }
+
+    func testTrashProjectRestoreStrictRequestAndFailedCommitExactRetry() async throws {
+        let richID = try await seedTrashProjectRestoreProject()
+        let faults = HostIOFaults()
+        var confirmations = 0
+        faults.commandDiagnostic = { if $0 == "trashProjectRestore" { confirmations += 1 } }
+        let core = host(faults)
+        _ = try await core.start()
+        let request = try await trashProjectRestoreRequest(core)
+        let baseline = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(baseline)
+        baseline.close()
+        var sqlCalls = 0
+        var journalWrites = 0
+        faults.beforeSQL = { _ in sqlCalls += 1 }
+        faults.journalWrite = { journalWrites += 1 }
+        let invalid: [[String: Any]] = [
+            request.merging(["extra": true]) { _, new in new },
+            request.merging(["projectRevision": NSNull()]) { _, new in new },
+            request.merging(["projectId": String(repeating: "x", count: 201)]) { _, new in new },
+            request.merging(["requestId": UUID().uuidString]) { _, new in new },
+        ]
+        for candidate in invalid {
+            await expectFailure("INVALID_INPUT") {
+                _ = try await core.call("trashProjectRestoreWrite", argumentsJSON: json([json(candidate)]))
+            }
+            await expectFailure("INVALID_INPUT") {
+                _ = try await core.call("trashProjectRestoreRetryOutcome", argumentsJSON: json([json(candidate)]))
+            }
+        }
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("trashProjectRestoreWrite", argumentsJSON: json([json(request.merging(["projectRevision": "old"]) { _, new in new })]))
+        }
+        XCTAssertEqual(sqlCalls, 0)
+        XCTAssertEqual(journalWrites, 0)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project restore COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("trashProjectRestoreWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try Data(contentsOf: journal)
+        XCTAssertEqual(try json(XCTUnwrap(trashProjectRestoreJournal()["request"])), try json(request))
+        let failed = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failed), before)
+        failed.close()
+        XCTAssertEqual(confirmations, 0)
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        try assertJournalContentUnchanged(pending)
+        faults.beforeSQL = nil
+        let retried = try await core.retryPending()
+        XCTAssertEqual(try json(object(XCTUnwrap(retried))), try json(["id": "destination-project-a"]))
+        XCTAssertTrue(try XCTUnwrap(projectRows("destination-project-a").first)["deletedAt"] is NSNull)
+        XCTAssertTrue(try storedTask(richID)["deletedAt"] is NSNull)
+        XCTAssertEqual(confirmations, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let absent = try await core.retryPending()
+        XCTAssertNil(absent)
+        await core.close()
+    }
+
+    func testTrashProjectRestoreColdTerminalAckKeepsLaterProjectChildAndSettingsEdits() async throws {
+        let richID = try await seedTrashProjectRestoreProject()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await trashProjectRestoreRequest(writer)
+        faults.journalRemove = { throw HostFailure("Injected Project restore terminal cleanup failure") }
+        await expectFailure("terminal cleanup failure") {
+            _ = try await writer.call("trashProjectRestoreWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertNotNil(try object(String(contentsOf: journal))["terminal"])
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET title = ?, rev = rev + 1 WHERE id = 'destination-project-a'",
+                             parametersJSON: json(["Later Project title"]))
+        _ = try edit.execute("UPDATE tasks SET description = ?, rev = rev + 1 WHERE id = ?",
+                             parametersJSON: json(["Later independent task note", richID]))
+        let settingsRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(edit.execute("SELECT data FROM settings WHERE id = 1").utf8)) as? [[String: Any]])
+        var settings = try object(XCTUnwrap(settingsRows.first?["data"] as? String))
+        settings["theme"] = (settings["theme"] as? String) == "dark" ? "light" : "dark"
+        _ = try edit.execute("UPDATE settings SET data = ? WHERE id = 1", parametersJSON: json([json(settings)]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        var confirmations = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        replayFaults.commandDiagnostic = { if $0 == "trashProjectRestore" { confirmations += 1 } }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "trashProjectRestoreCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["id": "destination-project-a"]))
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(confirmations, 1)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await expectFailure("STALE_REVISION") {
+            _ = try await reopened.call("trashProjectRestoreRetryOutcome", argumentsJSON: json([json(request)]))
+        }
+        await reopened.close()
+    }
+
+    func testTrashProjectRestoreFailedCommitColdChangedChildRefusesWithoutOverwrite() async throws {
+        let richID = try await seedTrashProjectRestoreProject()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await trashProjectRestoreRequest(writer)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project restore COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("trashProjectRestoreWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try Data(contentsOf: journal)
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE tasks SET title = ?, rev = rev + 1 WHERE id = ?",
+                             parametersJSON: json(["Newer deleted child title", richID]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+        XCTAssertEqual(writes, 0)
+        try assertJournalContentUnchanged(pending)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        await reopened.close()
+    }
+
+    func testTrashProjectRestoreColdLostReplyUnchangedScopeUsesReceiptOnce() async throws {
+        let richID = try await seedTrashProjectRestoreProject()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await trashProjectRestoreRequest(writer)
+        var journalWrites = 0
+        faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Project restore lost reply") } }
+        await expectFailure("lost reply") {
+            _ = try await writer.call("trashProjectRestoreWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertTrue(try XCTUnwrap(projectRows("destination-project-a").first)["deletedAt"] is NSNull)
+        XCTAssertTrue(try storedTask(richID)["deletedAt"] is NSNull)
+        XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
+        await writer.close()
+        let baseline = try SQLiteBridge(url: database)
+        let tables = try nineTableSnapshot(baseline)
+        baseline.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        var confirmations = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        replayFaults.commandDiagnostic = { if $0 == "trashProjectRestore" { confirmations += 1 } }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "trashProjectRestoreCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(["id": "destination-project-a"]))
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(confirmations, 1)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), tables)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+    }
+
+    func testTrashProjectRestoreColdLostReplyChangedChildRefusesWithoutTerminalAck() async throws {
+        let richID = try await seedTrashProjectRestoreProject()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await trashProjectRestoreRequest(writer)
+        var journalWrites = 0
+        faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Project restore lost reply") } }
+        await expectFailure("lost reply") {
+            _ = try await writer.call("trashProjectRestoreWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
+        let pending = try Data(contentsOf: journal)
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE tasks SET title = ?, rev = rev + 1 WHERE id = ?",
+                             parametersJSON: json(["Later live child title", richID]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+        XCTAssertEqual(writes, 0)
+        try assertJournalContentUnchanged(pending)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        await reopened.close()
+    }
+
+    func testTrashProjectRestoreForgedScopeEffectAndResultRefuseBeforeSQLite() async throws {
+        _ = try await seedTrashProjectRestoreProject()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await trashProjectRestoreRequest(writer)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project restore COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("trashProjectRestoreWrite", argumentsJSON: json([json(request)]))
+        }
+        let original = try object(String(contentsOf: journal))
+        let envelope = try trashProjectRestoreJournal()
+        await writer.close()
+        let reader = try SQLiteBridge(url: database)
+        let baseline = try nineTableSnapshot(reader)
+        reader.close()
+        for forgedPart in ["scopeProject", "scopeTasks", "effectProject", "effectTask", "effectSection", "result", "request"] {
+            var forgedEnvelope = envelope
+            var prepared = try XCTUnwrap(forgedEnvelope["prepared"] as? [String: Any])
+            if forgedPart == "scopeProject" || forgedPart == "scopeTasks" {
+                var scope = try XCTUnwrap(prepared["scope"] as? [String: Any])
+                if forgedPart == "scopeProject" {
+                    var project = try XCTUnwrap(scope["project"] as? [String: Any])
+                    project["title"] = "Forged Project"
+                    scope["project"] = project
+                } else {
+                    scope["tasks"] = [] as [[String: Any]]
+                }
+                prepared["scope"] = scope
+            } else if forgedPart == "effectProject" || forgedPart == "effectTask" || forgedPart == "effectSection" {
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                if forgedPart == "effectProject" {
+                    var project = try XCTUnwrap(effect["project"] as? [String: Any])
+                    var after = try XCTUnwrap(project["after"] as? [String: Any])
+                    after["title"] = "Forged restored Project"
+                    project["after"] = after
+                    effect["project"] = project
+                } else {
+                    let key = forgedPart == "effectTask" ? "tasks" : "sections"
+                    var rows = try XCTUnwrap(effect[key] as? [[String: Any]])
+                    XCTAssertFalse(rows.isEmpty)
+                    var first = rows[0]
+                    var after = try XCTUnwrap(first["after"] as? [String: Any])
+                    after["title"] = "Forged restored child"
+                    first["after"] = after
+                    rows[0] = first
+                    effect[key] = rows
+                }
+                prepared["effect"] = effect
+            } else if forgedPart == "result" {
+                prepared["result"] = ["id": "forged-other-project"]
+            } else {
+                forgedEnvelope["request"] = ["requestId": UUID().uuidString.lowercased(),
+                                             "projectId": "destination-project-a", "projectRevision": request["projectRevision"]!]
+            }
+            forgedEnvelope["prepared"] = prepared
+            var saved = original
+            saved["argumentsJSON"] = try json([json(forgedEnvelope)])
+            let bytes = Data(try json(saved).utf8)
+            try bytes.write(to: journal)
+            let replayFaults = HostIOFaults()
+            var sqlCalls = 0
+            replayFaults.beforeSQL = { _ in sqlCalls += 1 }
+            let reopened = host(replayFaults)
+            await expectFailure { _ = try await reopened.start() }
+            XCTAssertEqual(sqlCalls, 0, forgedPart)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, forgedPart)
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), baseline, forgedPart)
+            check.close()
+            await reopened.close()
+        }
+        try Data(try json(original).utf8).write(to: journal)
+        let recovered = host()
+        let startup = try object(await recovered.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "trashProjectRestoreCommit")
+        await recovered.close()
+    }
+
 }

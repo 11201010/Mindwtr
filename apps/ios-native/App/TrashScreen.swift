@@ -36,14 +36,16 @@ struct TrashScreen: View {
                             ForEach(model.trash.objects("items").map(TrashRowEntry.init)) { entry in
                                 row(entry)
                                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                        if entry.item.text("type") == "task", model.trashActionsEnabled {
+                                        if model.trashActionsEnabled {
+                                            let project = entry.item.text("type") == "project"
+                                            let id = project ? entry.item.text("id") : entry.item.object("row").text("id")
                                             Button {
-                                                Task { await model.restoreTrashTask(entry.item.object("row").text("id")) }
+                                                Task { await model.restoreTrashItem(id, project: project) }
                                             } label: {
                                                 Label(model.trash.object("labels").text("restore"), systemImage: "arrow.counterclockwise")
                                             }
                                             .tint(palette.tint)
-                                            .accessibilityIdentifier("trash-restore-" + entry.item.object("row").text("id"))
+                                            .accessibilityIdentifier((project ? "trash-restore-project-" : "trash-restore-") + id)
                                         }
                                     }
                             }

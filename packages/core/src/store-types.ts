@@ -200,6 +200,18 @@ export type PreparedProjectStatus = {
     updateAt: string;
 };
 
+/** One frozen restore of a deleted Project and only its cascade-stamped children. */
+export type PreparedTrashProjectRestore = {
+    request: { requestId: string; projectId: string; projectRevision: string };
+    scope: { project: Project; tasks: Task[]; sections: Section[]; area: Area | null };
+    effect: { project: { before: Project; after: Project };
+        tasks: { before: Task; after: Task }[]; sections: { before: Section; after: Section }[] };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    updateAt: string;
+    result: { id: string };
+};
+
 /** One frozen Project date change and its complete Project receipt. */
 export type PreparedProjectDate = {
     scope: { project: Project };
@@ -630,6 +642,7 @@ export interface TaskStore {
     commitPreparedProjectTagsWrite: (input: PreparedProjectTagsWrite & { request: { projectId: string; intent: import('./project-tags').ProjectTagsIntent } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectAttachmentWrite: (input: PreparedProjectAttachmentWrite & { request: { projectId: string; requestId: string; intent: ProjectAttachmentIntent }; result: { id: string; attachmentIds: string[] } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectStatus: (input: PreparedProjectStatus & { request: { projectId: string; status: 'active' | 'waiting' | 'someday' } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedTrashProjectRestore: (input: PreparedTrashProjectRestore) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDate: (input: PreparedProjectDate & { request: { projectId: string; field: 'startDate' | 'dueDate' | 'reviewAt'; value: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectArea: (input: PreparedProjectArea & { request: { projectId: string; areaId: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionCreate: (input: PreparedProjectSectionCreate) => Promise<PreparedTaskEditResult>;

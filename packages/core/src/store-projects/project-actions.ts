@@ -21,8 +21,8 @@ import { PROJECT_SQLITE_COLUMNS, projectToSqliteRow } from '../project-sync-sche
 import { taskEditValuesEqual } from '../json-value-equality';
 import { planAttachmentLinkBatch, softDeleteAttachment } from '../attachment-editor-model';
 import type { Area, TaskSortBy } from '../types';
-import type { Project, ProjectCoreActions, ProjectActionContext, Task, TaskStatus } from './shared';
-import type { PreparedProjectArea, PreparedProjectAttachmentWrite, PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, ProjectAttachmentIntent, ProjectFlowAction, TaskStore } from '../store-types';
+import type { Project, ProjectCoreActions, ProjectActionContext, Section, Task, TaskStatus } from './shared';
+import type { PreparedProjectArea, PreparedProjectAttachmentWrite, PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, PreparedTrashProjectRestore, ProjectAttachmentIntent, ProjectFlowAction, TaskStore } from '../store-types';
 import { projectTagsForIntent, type ProjectTagsIntent } from '../project-tags';
 import { settingsWithPurgedParentAttachmentDeletes } from '../attachment-cleanup';
 import {
@@ -30,6 +30,7 @@ import {
     compactPurgedProjectSectionTombstone,
 } from '../tombstone-compaction';
 import { actionFail, actionOk, mutateEntities } from './shared';
+import { sameSectionSqliteRow, sameTaskSqliteRow } from './section-actions';
 
 const duplicateProjectAttachmentCopy = (attachment: NonNullable<Project['attachments']>[number], now: string) => ({
     ...attachment,
@@ -83,6 +84,41 @@ export const sameProjectSqliteRow = (left: Project, right: Project): boolean => 
         return projectJsonColumns.has(PROJECT_SQLITE_COLUMNS[index]) && typeof value === 'string'
             && typeof other === 'string' ? taskEditValuesEqual(JSON.parse(value), JSON.parse(other))
                 : Object.is(value, other);
+    });
+};
+
+/** The existing RN Restore policy, also used to derive native prepared effects. */
+export const projectRestoreEffect = (scope: PreparedTrashProjectRestore['scope'], deviceId: string,
+    now: string): PreparedTrashProjectRestore['effect'] => {
+    const target = scope.project;
+    const restoredArea = scope.area && scope.area.id === target.areaId && !scope.area.deletedAt
+        ? scope.area : undefined;
+    const restoredProject: Project = { ...target, deletedAt: undefined,
+        areaId: restoredArea ? target.areaId : undefined,
+        areaTitle: restoredArea
+            ? (typeof target.areaTitle === 'string' && target.areaTitle.trim().length > 0
+                ? target.areaTitle : restoredArea.name) : undefined,
+        updatedAt: now, rev: nextRevision(target.rev), revBy: deviceId };
+    const sections = scope.sections.filter((row) => row.deletedAt === target.deletedAt).map((before) => ({
+        before, after: { ...before, deletedAt: undefined, updatedAt: now,
+            rev: nextRevision(before.rev), revBy: deviceId } as Section,
+    }));
+    const restoredSectionIds = new Set(scope.sections
+        .filter((row) => !row.deletedAt || row.deletedAt === target.deletedAt).map((row) => row.id));
+    const tasks = scope.tasks.filter((row) => row.deletedAt === target.deletedAt && !row.purgedAt)
+        .map((before) => ({ before, after: { ...before, deletedAt: undefined,
+            sectionId: before.sectionId && restoredSectionIds.has(before.sectionId)
+                ? before.sectionId : undefined,
+            updatedAt: now, rev: nextRevision(before.rev), revBy: deviceId } as Task }));
+    return { project: { before: target, after: restoredProject }, tasks, sections };
+};
+
+const sameOwnedRows = <T extends { id: string }>(current: T[], frozen: T[], same: (a: T, b: T) => boolean) => {
+    if (current.length !== frozen.length || new Set(frozen.map((row) => row.id)).size !== frozen.length) return false;
+    const byId = new Map(current.map((row) => [row.id, row]));
+    return byId.size === current.length && frozen.every((row) => {
+        const saved = byId.get(row.id);
+        return saved !== undefined && same(saved, row);
     });
 };
 
@@ -940,56 +976,14 @@ export const createProjectCoreActions = ({
                 return state;
             }
             const deviceState = ensureDeviceId(state.settings);
-            const cascadeDeletedAt = target.deletedAt;
-            const restoredArea = target.areaId
-                ? state._allAreas.find((area) => area.id === target.areaId && !area.deletedAt)
-                : undefined;
-            const restoredProject: Project = {
-                ...target,
-                deletedAt: undefined,
-                areaId: restoredArea ? target.areaId : undefined,
-                areaTitle: restoredArea
-                    ? (typeof target.areaTitle === 'string' && target.areaTitle.trim().length > 0
-                        ? target.areaTitle
-                        : restoredArea.name)
-                    : undefined,
-                updatedAt: now,
-                rev: nextRevision(target.rev),
-                revBy: deviceState.deviceId,
-            };
-            const newAllProjects = state._allProjects.map((project) =>
-                project.id === id ? restoredProject : project
-            );
-            const newAllSections = state._allSections.map((section) => (
-                section.projectId === id && section.deletedAt === cascadeDeletedAt
-                    ? {
-                        ...section,
-                        deletedAt: undefined,
-                        updatedAt: now,
-                        rev: nextRevision(section.rev),
-                        revBy: deviceState.deviceId,
-                    }
-                    : section
-            ));
-            const restoredSectionIds = new Set(
-                newAllSections
-                    .filter((section) => section.projectId === id && !section.deletedAt)
-                    .map((section) => section.id)
-            );
-            const newAllTasks = state._allTasks.map((task) => (
-                task.projectId === id && task.deletedAt === cascadeDeletedAt && !task.purgedAt
-                    ? {
-                        ...task,
-                        deletedAt: undefined,
-                        sectionId: task.sectionId && restoredSectionIds.has(task.sectionId)
-                            ? task.sectionId
-                            : undefined,
-                        updatedAt: now,
-                        rev: nextRevision(task.rev),
-                        revBy: deviceState.deviceId,
-                    }
-                    : task
-            ));
+            const scope = { project: target,
+                tasks: state._allTasks.filter((task) => task.projectId === id),
+                sections: state._allSections.filter((section) => section.projectId === id),
+                area: state._allAreas.find((area) => area.id === target.areaId) ?? null };
+            const effect = projectRestoreEffect(scope, deviceState.deviceId, now);
+            const newAllProjects = replaceEntitiesInArray(state._allProjects, [effect.project.after]);
+            const newAllSections = replaceEntitiesInArray(state._allSections, effect.sections.map((row) => row.after));
+            const newAllTasks = replaceEntitiesInArray(state._allTasks, effect.tasks.map((row) => row.after));
             clearDerivedCache();
             persist(set, debouncedSave, state, {
                 tasks: newAllTasks,
@@ -1006,6 +1000,55 @@ export const createProjectCoreActions = ({
             };
         });
         return missingProject ? actionFail('Project not found') : actionOk();
+    },
+
+    commitPreparedTrashProjectRestore: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project Restore conflicts with current data' };
+        set((state) => {
+            const current = state._projectsById.get(input.request.projectId);
+            if (!current || current.purgedAt) return state;
+            const tasks = state._allTasks.filter((row) => row.projectId === current.id);
+            const sections = state._allSections.filter((row) => row.projectId === current.id);
+            const area = state._allAreas.find((row) => row.id === input.scope.project.areaId) ?? null;
+            const planned = projectRestoreEffect(input.scope,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!taskEditValuesEqual(planned, input.effect)) return state;
+            const expectedAfterTasks = input.scope.tasks.map((row) =>
+                planned.tasks.find((pair) => pair.before.id === row.id)?.after ?? row);
+            const expectedAfterSections = input.scope.sections.map((row) =>
+                planned.sections.find((pair) => pair.before.id === row.id)?.after ?? row);
+            // A COMMIT may have landed before Swift could persist its terminal ACK.
+            // Recognize only the entire exact saved effect; any later child edit or
+            // new Project-owned row makes this cold retry stale.
+            if (sameProjectSqliteRow(current, planned.project.after)
+                && (state.settings.deviceId ?? null) === (input.deviceIdToInitialize ?? input.deviceIdBefore)
+                && taskEditValuesEqual(area, input.scope.area)
+                && sameOwnedRows(tasks, expectedAfterTasks, sameTaskSqliteRow)
+                && sameOwnedRows(sections, expectedAfterSections, sameSectionSqliteRow)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            if (!current.deletedAt
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || !sameProjectSqliteRow(current, input.scope.project)
+                || !sameOwnedRows(tasks, input.scope.tasks, sameTaskSqliteRow)
+                || !sameOwnedRows(sections, input.scope.sections, sameSectionSqliteRow)
+                || !taskEditValuesEqual(area, input.scope.area)) return state;
+            const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
+            const nextSections = replaceEntitiesInArray(state._allSections, planned.sections.map((row) => row.after));
+            const nextTasks = replaceEntitiesInArray(state._allTasks, planned.tasks.map((row) => row.after));
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            clearDerivedCache();
+            persist(set, debouncedSave, state, { projects, sections: nextSections, tasks: nextTasks,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allProjects: projects, _allSections: nextSections, _allTasks: nextTasks, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
     },
 
     purgeProject: async (id: string) => {
