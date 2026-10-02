@@ -470,8 +470,8 @@ try {
     const killedId = await addProjectFile('install');
     sh('setprop debug.mindwtr.native.install_stop journal');
     const processBefore = pid();
-    await openSync();
-    await tapTag('sync-now', () => pid() !== processBefore, 'the sync to die at the install', 120_000).catch(() => null);
+    // An automatic sync may reach the install first (the app dies on its way to Settings › Sync): either death counts.
+    await openSync().then(() => tapTag('sync-now', () => pid() !== processBefore, 'the sync to die at the install', 120_000)).catch(() => null);
     await until('the app process to die at the install journal', () => pid() !== processBefore, 120_000, 1_000);
     sh('setprop debug.mindwtr.native.install_stop \'\'');
     check(allLogs().includes('Native Android install stop at=journal'), '(7) the sync\'s install died once its journal was on disk');
