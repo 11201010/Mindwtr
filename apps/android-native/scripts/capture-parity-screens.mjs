@@ -14,7 +14,7 @@
 // widget's quick capture), the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
 // task, and Review), the Weekly Review's first step, the Calendar's week and month, the Board, and Settings'
 // General, GTD (their switches drawn as RN's for the props it sets), Sync (off) and AI (each card unfolded), in light
-// and dark mode.
+// and dark mode; and in light mode the attachments (a task's file and link in the editor, the Add link sheet, the project's).
 // Then it installs
 // the native upgradetest build (153) over it, on the same database, and shoots the same
 // screens. It writes rn-*.png, native-*.png, and side-by-side pair-*.png (RN left) to
@@ -72,6 +72,13 @@ const T = {
 /** One task in Trash (not among T's live tasks), for the Trash screen. */
 const TRASHED = 'Old grocery list';
 const fixture = resolve(out, 'fixture/mindwtr.db');
+/** The fixture's file attachment: its bytes go to the app's files/attachments/ before the first launch (RN's managed copy). */
+const ATTACHMENT_FILE = {
+    title: 'Paint swatches.pdf',
+    uri: `file:///data/user/0/${PKG}/files/attachments/parity-file.pdf`,
+    bytes: Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n'
+        + '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n'),
+};
 const buildFixture = () => execFileSync('bun', ['-e', `
     import { Database } from 'bun:sqlite';
     import { SqliteAdapter, createNativeHostContract, flushPendingSave, setStorageAdapter, useTaskStore } from '${coreSrc}/index.ts';
@@ -119,6 +126,18 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     await add(T.taxes, { status: 'someday', areaId: work.id, description: 'W-2, bank statements, receipts folder.' });
     await add(T.deck, { status: 'waiting', assignedTo: 'Sam', contexts: ['@office'], dueDate: day(4) });
     await add(T.insurance, { status: 'done', areaId: home.id });
+    // The attachments shots (pass A2): a file (its bytes pushed into files/attachments/) and a link on T.paint, a link on the project.
+    const at = new Date().toISOString();
+    const paint = store()._allTasks.find((task) => task.title === T.paint);
+    await store().updateTask(paint.id, { attachments: [
+        { id: 'parity-file', kind: 'file', title: process.env.FIXTURE_FILE_TITLE, uri: process.env.FIXTURE_FILE_URI, mimeType: 'application/pdf',
+            size: Number(process.env.FIXTURE_FILE_SIZE), localStatus: 'available', createdAt: at, updatedAt: at },
+        { id: 'parity-link', kind: 'link', title: 'https://example.com/paint-colors', uri: 'https://example.com/paint-colors', createdAt: at, updatedAt: at },
+    ] });
+    await store().updateProject(kitchen.id, { attachments: [
+        { id: 'parity-project-link', kind: 'link', title: 'https://example.com/kitchen-plan', uri: 'https://example.com/kitchen-plan', createdAt: at, updatedAt: at },
+    ] });
+    await flushPendingSave();
     const trashed = await store().addTask(process.env.FIXTURE_TRASHED, { status: 'inbox' });
     if (!trashed.success) throw new Error('addTask failed: ' + trashed.error);
     await flushPendingSave();
@@ -133,7 +152,8 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     db.close();
     console.log(store()._allTasks.filter((task) => !task.deletedAt).length);
     process.exit(0);
-`], { encoding: 'utf8', env: { ...process.env, FIXTURE_DB: fixture, FIXTURE_TITLES: JSON.stringify(T), FIXTURE_TRASHED: TRASHED } }).trim().split('\n').pop();
+`], { encoding: 'utf8', env: { ...process.env, FIXTURE_DB: fixture, FIXTURE_TITLES: JSON.stringify(T), FIXTURE_TRASHED: TRASHED,
+    FIXTURE_FILE_TITLE: ATTACHMENT_FILE.title, FIXTURE_FILE_URI: ATTACHMENT_FILE.uri, FIXTURE_FILE_SIZE: String(ATTACHMENT_FILE.bytes.length) } }).trim().split('\n').pop();
 
 // ---- the device ----
 const device = connect({ serial, pkg: PKG, uiFile: '/data/local/tmp/mindwtr-parity-ui.xml' });
@@ -405,6 +425,70 @@ const shootAI = async (prefix, suffix, rn) => {
         await sleep(1000);
     }
 };
+/**
+ * Pass A2's attachments, light mode: the editor's Attachments field on T.paint (a file and a link), its Add link sheet, and the
+ * project's Attachments (RN: inside the project's Details; native: the card above the tasks). Ends on the tabs. A shot that
+ * cannot be reached is reported, never fatal to the other shots.
+ */
+const shootAttachments = async (prefix, rn) => {
+    const PROJECT = 'Kitchen renovation';
+    const back = async () => { requireAppFront(); sh('input keyevent KEYCODE_BACK'); await sleep(1000); };
+    const toTabs = async () => {
+        for (let step = 0; step < 5 && !tab(await screen(), 'Inbox'); step += 1) await back();
+    };
+    const scrollTo = async (ready, unfold) => {
+        let nodes = await screen();
+        for (let step = 0; step < 12 && !ready(nodes); step += 1) {
+            const next = await device.swipe(nodes, 'down');
+            if (device.signature(next) === device.signature(nodes)) {
+                const fold = unfold && button(next, en['taskEdit.details']);
+                if (!fold) break;
+                await tap(fold);
+                unfold = false;
+            }
+            nodes = await screen();
+        }
+        return nodes;
+    };
+    try {
+        if (rn) openLink('projects');
+        else { const nodes = await waitFor('the native tabs', (current) => Boolean(tab(current, 'Projects')), 60_000); await tap(tab(nodes, 'Projects')); }
+        const projects = await waitFor(PROJECT, (current) => Boolean(inList(current, PROJECT)), 45_000);
+        await tap(inList(projects, PROJECT));
+        const projectOpen = await waitFor(T.paint, (current) => Boolean(inList(current, T.paint)), 30_000);
+        await tap(inList(projectOpen, T.paint));
+        // As shootEditor: the Edit tab is the Form tab (its title field shows the task's title).
+        const formShown = (current) => current.some((node) => node.class === 'android.widget.EditText' && node.text === T.paint) && (rn || inEditor(current));
+        const opened = await waitFor(`the editor for ${T.paint}`, (current) => formShown(current) || Boolean(button(current, 'Edit')), 30_000);
+        if (!formShown(opened)) await tap(button(opened, 'Edit'));
+        await waitFor('the Edit tab', formShown, 15_000);
+        const fieldShown = (current) => hasText(current, ATTACHMENT_FILE.title) && Boolean(button(current, en['attachments.addLink']));
+        await scrollTo(fieldShown, true);
+        await shoot(`${prefix}-attachments-editor-light`, fieldShown);
+        await tap(button(await screen(), en['attachments.addLink']));
+        const sheetShown = (current) => hasText(current, en['attachments.linkPlaceholder']) || current.some((node) => node.class === 'android.widget.EditText' && node.text === '');
+        await waitFor('the link sheet', sheetShown, 15_000);
+        await hideKeyboard();
+        await shoot(`${prefix}-attachments-link-sheet-light`, sheetShown);
+        const cancel = button(await screen(), en['common.cancel']);
+        if (cancel) await tap(cancel); else await back();
+        await sleep(800);
+        await back();
+        const discard = button(await screen(), en['common.discard']);
+        if (discard) await tap(discard);
+        const projectShown = (current) => hasText(current, 'https://example.com/kitchen-plan') && hasText(current, en['attachments.title']);
+        await waitFor(`${PROJECT}'s screen`, (current) => Boolean(inList(current, T.paint)) || projectShown(current), 15_000);
+        if (rn) {
+            const details = button(await screen(), en['taskEdit.details']);
+            if (details) await tap(details);
+        }
+        await scrollTo(projectShown, false);
+        await shoot(`${prefix}-attachments-project-light`, projectShown);
+    } catch (error) {
+        console.log(`warn - ${prefix} attachments: ${error.message}`);
+    }
+    await toTabs();
+};
 const SCREENS = [
     { name: 'inbox', link: 'inbox', tab: 'Inbox', text: T.call },
     { name: 'focus', link: 'focus', tab: 'Focus', text: T.outline },
@@ -425,6 +509,9 @@ try {
     runAs('mkdir -p files/SQLite');
     adbRaw('push', fixture, '/data/local/tmp/mindwtr-parity.db');
     try { runAs('cp /data/local/tmp/mindwtr-parity.db files/SQLite/mindwtr.db'); } finally { sh('rm -f /data/local/tmp/mindwtr-parity.db'); }
+    writeFileSync(resolve(out, 'fixture/parity-file.pdf'), ATTACHMENT_FILE.bytes);
+    adbRaw('push', resolve(out, 'fixture/parity-file.pdf'), '/data/local/tmp/mindwtr-parity-file.pdf');
+    try { runAs('mkdir -p files/attachments'); runAs('cp /data/local/tmp/mindwtr-parity-file.pdf files/attachments/parity-file.pdf'); } finally { sh('rm -f /data/local/tmp/mindwtr-parity-file.pdf'); }
     device.launch(RN_ACTIVITY);
     for (const mode of ['no', 'yes']) {
         await setNight(mode);
@@ -455,6 +542,7 @@ try {
         await shootMenu('rn', mode === 'yes' ? 'dark' : 'light', true);
         openLink('inbox');
         await shootSettings('rn', mode === 'yes' ? 'dark' : 'light', true);
+        if (mode === 'no') await shootAttachments('rn', true);
     }
     await stopApp();
 
@@ -499,6 +587,7 @@ try {
         await shootModal('native', mode === 'yes' ? 'dark' : 'light', NATIVE_ACTIVITY);
         await shootMenu('native', mode === 'yes' ? 'dark' : 'light', false);
         await shootSettings('native', mode === 'yes' ? 'dark' : 'light', false);
+        if (mode === 'no') await shootAttachments('native', false);
     }
     await stopApp();
 
