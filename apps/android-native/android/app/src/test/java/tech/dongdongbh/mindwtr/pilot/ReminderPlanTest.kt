@@ -124,6 +124,14 @@ class ReminderPlanTest {
         assertEquals(true, deliveries.accepts(6, 8 * hour, "daily", 8 * hour + 1))
     }
 
+    @Test fun aOneShotMoreThanADayLateShowsNothingAsReactNativesLibraryDiscardsIt() {
+        val deliveries = ReminderDeliveries()
+        val day = 24 * 3_600_000L
+        assertEquals(true, deliveries.accepts(5, 0, "once", day))
+        assertEquals(false, deliveries.accepts(5, 0, "once", day + 1))
+        assertEquals(true, deliveries.accepts(6, 0, "weekly", 3 * day))
+    }
+
     @Test fun reactNativesAlarmsAreCancelledBeforeItsMapGoesAndTheTableLast() {
         val done = RnAlarmCleanup.run(rows = { listOf(1_790_000_001, 1_790_000_002) }, cancel = { events += "cancel $it" },
             stripButtons = { events += "strip" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })

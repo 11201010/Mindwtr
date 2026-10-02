@@ -95,6 +95,11 @@ internal object ReminderPlan {
  * A process that did not arm or cancel an alarm knows nothing of it and shows its delivery.
  */
 internal class ReminderDeliveries {
+    companion object {
+        /** RN's patched library discards a one-shot delivered more than a day late (patch-alarm-notification-gradle.js). */
+        const val ONE_SHOT_LATE_LIMIT_MS = 24 * 60 * 60 * 1000L
+    }
+
     /** Each alarm id's armed time; null once cancelled. */
     private val armed = HashMap<Int, Long?>()
 
@@ -104,7 +109,8 @@ internal class ReminderDeliveries {
 
     /** Whether a delivery of alarm [id], armed for [fireAtMs], shows at [nowMs]. */
     fun accepts(id: Int, fireAtMs: Long, repeat: String, nowMs: Long): Boolean {
-        return !armed.containsKey(id) || armed[id] == fireAtMs
+        if (armed.containsKey(id) && armed[id] != fireAtMs) return false
+        return repeat != "once" || nowMs - fireAtMs <= ONE_SHOT_LATE_LIMIT_MS
     }
 }
 
@@ -311,7 +317,7 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
 
 /**
  * An alarm fired: its notification, as RN's AlarmReceiver posts it, unless a plan cancelled the alarm or made it again for another
- * time while this delivery was on its way. A daily or weekly alarm is then made again by
+ * time while this delivery was on its way, or a one-shot comes more than a day late. A daily or weekly alarm is then made again by
  * core's plan (CoreWork), at the next time core's schedule gives, or not at all once it was turned off.
  */
 class ReminderAlarmReceiver : BroadcastReceiver() {
