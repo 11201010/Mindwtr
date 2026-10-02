@@ -17386,4 +17386,101 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task158ReviewPriorityRow(_ app: XCUIApplication, title: String, status: String, priority: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@",
+            title, "Status: " + status, "Priority: " + priority)).firstMatch
+    }
+
+    private func task158ReviewOverviewIdentity(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        if app.buttons["tab-review"].exists { boardTap(app, "tab-review") }
+        else { boardTap(app, "tab-menu"); boardTap(app, "menu-review") }
+        boardEnabled(app.buttons["review-start"], timeout: 30)
+        boardTap(app, "review-scope-all")
+        XCTAssertTrue(app.buttons["review-scope-all"].isSelected)
+        let scroll = app.scrollViews.firstMatch
+        XCTAssertTrue(scroll.waitForExistence(timeout: 30))
+
+        func reveal(_ element: XCUIElement, movedAbove: Bool = false) -> XCUICoordinate {
+            // At largest text a group can be taller than this viewport. Its
+            // visible portion is tappable even though the full row cannot fit.
+            func viewport() -> CGRect { scroll.frame.intersection(app.frame).insetBy(dx: 4, dy: 8) }
+            func intersection() -> CGRect { element.frame.intersection(viewport()) }
+            func enoughVisible() -> Bool {
+                guard element.exists, element.isEnabled, element.isHittable else { return false }
+                let frame = element.frame, visible = intersection()
+                return !visible.isNull && visible.height >= min(44, frame.height)
+                    && visible.width >= min(44, frame.width)
+            }
+            for _ in 0..<24 {
+                if enoughVisible() { break }
+                let frame = viewport()
+                // Lazy offscreen rows can report a stale/clipped frame while
+                // still existing. The test knows its traversal direction.
+                let above = movedAbove
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                let start = origin.withOffset(CGVector(dx: frame.minX + 8, dy: frame.minY + frame.height * (above ? 0.25 : 0.75)))
+                let end = origin.withOffset(CGVector(dx: frame.minX + 8, dy: frame.minY + frame.height * (above ? 0.75 : 0.25)))
+                start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+            }
+            guard enoughVisible() else {
+                XCTFail("Review row lacks a tappable visible portion after bounded scrolling")
+                return app.coordinate(withNormalizedOffset: .zero)
+            }
+            let frame = element.frame, visible = intersection()
+            let x = visible.isNull ? 0.5 : (visible.midX - frame.minX) / max(1, frame.width)
+            let y = visible.isNull ? 0.5 : (visible.midY - frame.minY) / max(1, frame.height)
+            return element.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y))
+        }
+        func expand(_ id: String) {
+            let group = app.buttons[id]
+            let point = reveal(group)
+            boardEnabled(group)
+            if group.value as? String == "Expand" { point.tap() }
+            XCTAssertEqual(group.value as? String, "Collapse", id)
+        }
+        func assertTask(_ id: String, title: String, status: String, priority: String, movedAbove: Bool = false) {
+            let task = app.buttons["task-title-" + id]
+            _ = reveal(task, movedAbove: movedAbove)
+            XCTAssertEqual(app.buttons.matching(identifier: "task-title-" + id).count, 1, id)
+            XCTAssertTrue(task158ReviewPriorityRow(app, title: title, status: status, priority: priority).exists,
+                          "Review card must remain bound to its saved Task: \(id)")
+            let badge = app.buttons["task-status-" + id]
+            XCTAssertEqual(badge.label, "Change status. Current status: \(status)", id)
+            XCTAssertTrue(badge.isEnabled, id)
+        }
+
+        expand("review-area-area:task158-area")
+        expand("review-project-project:task158-project-first")
+        expand("review-project-project:task158-project-second")
+        assertTask("task158-first", title: "Task158 First", status: "Next", priority: "High", movedAbove: true)
+        assertTask("task158-second", title: "Task158 Second", status: "Waiting", priority: "Low")
+
+        let first = app.buttons["review-project-project:task158-project-first"]
+        let firstPoint = reveal(first, movedAbove: true); boardEnabled(first); firstPoint.tap()
+        XCTAssertEqual(first.value as? String, "Expand")
+        assertTask("task158-second", title: "Task158 Second", status: "Waiting", priority: "Low")
+        let firstAgain = reveal(first, movedAbove: true); boardEnabled(first); firstAgain.tap()
+        XCTAssertEqual(first.value as? String, "Collapse")
+        assertTask("task158-first", title: "Task158 First", status: "Next", priority: "High")
+        assertTask("task158-second", title: "Task158 Second", status: "Waiting", priority: "Low")
+
+        let second = app.buttons["task-status-task158-second"]
+        let secondPoint = reveal(second); boardEnabled(second); secondPoint.tap()
+        boardTap(app, "task-complete")
+        XCTAssertTrue(app.buttons["task-title-task158-second"].waitForNonExistence(timeout: 20),
+                      "A completed Task leaves the active Review overview")
+        assertTask("task158-first", title: "Task158 First", status: "Next", priority: "High", movedAbove: true)
+        XCTAssertFalse(app.buttons["review-project-project:task158-project-second"].exists,
+                       "The empty second Project group leaves the active overview")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Review overview survivor after regroup and completion"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testTask158ReviewOverviewIdentityNormal() { task158ReviewOverviewIdentity("f7a24f18-fc4e-4e2f-9c80-035a4b6f0dca") }
+    func testTask158ReviewOverviewIdentityLargest() { task158ReviewOverviewIdentity("30d163bd-e9f8-4a68-9efc-e7c4e61d0cab") }
+
 }
