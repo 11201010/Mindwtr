@@ -1151,7 +1151,9 @@ struct TaskCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(meta.text("accessibilityLabel"))
         .confirmationDialog(meta.text("statusLabel"), isPresented: $statusMenu, titleVisibility: .visible) {
-            Button(model.label("common.done")) { Task { await model.complete(row.text("id")) } }
+            Button(model.label("common.done")) {
+                Task { await model.complete(row.text("id"), taskRevision: row.text("taskRevision")) }
+            }
                 .accessibilityIdentifier("task-complete")
             if let onMoveToSection, !moveToSectionLabel.isEmpty {
                 Button(moveToSectionLabel) { onMoveToSection() }

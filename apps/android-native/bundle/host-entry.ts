@@ -315,6 +315,11 @@ const editorJson = (json: string): unknown => {
     catch { /* Never expose a parser's excerpt of a credential-bearing URL. */ }
     throw new Error('Invalid bounded editor request');
 };
+const completionJson = (json: string, limit: number): unknown => {
+    try { if (json.length <= limit) return JSON.parse(json); }
+    catch { /* Do not expose a parser excerpt of task text or a link. */ }
+    throw new Error('Invalid bounded completion request');
+};
 const taskAttachmentInput = (json: string, fields: string[], optional: string[] = []): Record<string, unknown> => {
     const input = editorJson(json);
     if (!input || typeof input !== 'object' || Array.isArray(input)
@@ -791,7 +796,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2149,6 +2154,30 @@ globalThis.MindwtrHost = {
     },
     taskDeleteUndoCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedTaskDeleteUndo(editorJson(json) as Parameters<typeof contract.commitPreparedTaskDeleteUndo>[0])));
+    },
+    taskCompletionPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareTaskCompletion(completionJson(json, 4_096) as Parameters<typeof contract.prepareTaskCompletion>[0])); });
+    },
+    taskCompletionValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTaskCompletion(completionJson(json, 2_100_000) as Parameters<typeof contract.validatePreparedTaskCompletion>[0])));
+    },
+    taskCompletionCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedTaskCompletion(completionJson(json, 2_100_000) as Parameters<typeof contract.commitPreparedTaskCompletion>[0])));
+    },
+    taskCompletionOutcome(json: string): string {
+        return submit(async () => unwrap(contract.taskCompletionOutcome(completionJson(json, 2_100_000) as Parameters<typeof contract.taskCompletionOutcome>[0])));
+    },
+    taskCompletionUndoPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareTaskCompletionUndo(completionJson(json, 4_500_000) as Parameters<typeof contract.prepareTaskCompletionUndo>[0])); });
+    },
+    taskCompletionUndoValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTaskCompletionUndo(completionJson(json, 4_500_000) as Parameters<typeof contract.validatePreparedTaskCompletionUndo>[0])));
+    },
+    taskCompletionUndoCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedTaskCompletionUndo(completionJson(json, 4_500_000) as Parameters<typeof contract.commitPreparedTaskCompletionUndo>[0])));
+    },
+    taskCompletionUndoOutcome(json: string): string {
+        return submit(async () => unwrap(contract.taskCompletionUndoOutcome(completionJson(json, 4_500_000) as Parameters<typeof contract.taskCompletionUndoOutcome>[0])));
     },
     trashTaskRestorePrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.prepareTrashTaskRestore(editorJson(json) as Parameters<typeof contract.prepareTrashTaskRestore>[0])); });

@@ -18206,4 +18206,57 @@ final class FoundationUITests: XCTestCase {
         task167MonthlyCustomSelection("e21055d9-b15b-4eaa-8f98-d47d50b8ee62")
     }
 
+    private func task169CompletionUndo(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+
+        func search(_ title: String) {
+            if !app.textFields["search-input"].exists { boardTap(app, "search-open") }
+            let input = app.textFields["search-input"]
+            boardEnabled(input, timeout: 30)
+            if app.buttons["search-clear"].exists { boardTap(app, "search-clear") }
+            input.tap()
+            input.typeText(title)
+        }
+
+        func completeUndo(_ id: String, title: String) {
+            search(title)
+            let complete = app.buttons["search-complete-" + id]
+            boardEnabled(complete, timeout: 30)
+            complete.tap()
+            let undo = app.buttons["task-completion-undo"]
+            boardEnabled(undo, timeout: 5)
+            XCTAssertFalse(app.staticTexts["task-completion-notice"].label.isEmpty)
+            undo.tap()
+            boardEnabled(complete, timeout: 30)
+            XCTAssertTrue(app.buttons["search-task-" + id].exists)
+            XCTAssertTrue(app.buttons["search-complete-" + id].isEnabled)
+        }
+
+        app.launch()
+        completeUndo("task169-ordinary", title: "Task169 Ordinary")
+        completeUndo("task169-recurring", title: "Task169 Recurring")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Task169 recurring completion Undo restored source"
+        shot.lifetime = .keepAlways
+        add(shot)
+        app.terminate()
+        app.launch()
+        search("Task169 Ordinary")
+        boardEnabled(app.buttons["search-complete-task169-ordinary"], timeout: 30)
+        search("Task169 Recurring")
+        boardEnabled(app.buttons["search-complete-task169-recurring"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        app.terminate()
+    }
+
+    func testTask169CompletionUndoNormal() {
+        task169CompletionUndo("819a388a-7926-44fd-8999-192f292f3c31")
+    }
+
+    func testTask169CompletionUndoLargest() {
+        task169CompletionUndo("dc67e8c9-dd95-4cba-b687-2fb6708bfe15")
+    }
+
 }

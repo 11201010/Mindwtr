@@ -624,7 +624,7 @@ export interface TaskStore {
     commitPreparedCalendarTask: (input: PreparedCalendarTask) => Promise<PreparedTaskEditResult>;
     commitPreparedCalendarCreate: (input: PreparedCalendarCreate) => Promise<PreparedTaskEditResult>;
     commitPreparedInboxEffect: (input: PreparedInboxEffect) => Promise<PreparedTaskEditResult>;
-    commitPreparedChecklistEffect: (input: PreparedChecklistEffect) => Promise<PreparedTaskEditResult>;
+    commitPreparedChecklistEffect: (input: PreparedChecklistEffect, options?: { requireBefore?: boolean }) => Promise<PreparedTaskEditResult>;
     /** Update an existing task */
     updateTask: (id: string, updates: Partial<Task>) => Promise<StoreActionResult>;
     /** Archive a task as cancelled without completing it */

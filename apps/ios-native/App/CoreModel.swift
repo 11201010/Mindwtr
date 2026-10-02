@@ -9772,7 +9772,7 @@ final class CoreModel: ObservableObject {
         guard calendarActionsEnabled, calendarItems.contains(where: { $0.text("id") == item.text("id")
             && $0.text("taskId") == item.text("taskId") && $0.flag("showDone") }),
               calendarEditableTask(item.text("taskId")) else { return }
-        await complete(item.text("taskId"))
+        await complete(item.text("taskId"), taskRevision: item.object("row").text("taskRevision"))
     }
 
     func openCalendarItem(_ item: CoreObject) async {
@@ -9815,7 +9815,11 @@ final class CoreModel: ObservableObject {
         guard calendarItemSheet.text("kind") == "task", calendarEditableTask(calendarItemTaskID) else { return }
         let id = calendarItemTaskID
         if action == "edit" { closeCalendarItem(); await openTask(id) }
-        else if action == "done" { closeCalendarItem(); await complete(id) }
+        else if action == "done" {
+            let revision = calendarItemSheet.text("taskRevision")
+            closeCalendarItem()
+            await complete(id, taskRevision: revision)
+        }
         else if action == "unschedule" { await writeCalendarItem("calendarUnschedule") }
         else if action == "delete" { await writeCalendarItem("calendarDelete") }
     }
@@ -14337,7 +14341,7 @@ final class CoreModel: ObservableObject {
               row.flag("canComplete"), !row.flag("readOnly") else { return }
         invalidateSearch()
         error = nil
-        await complete(id)
+        await complete(id, taskRevision: row.text("taskRevision"))
     }
 
     private func invalidateSearch() {
@@ -15097,15 +15101,20 @@ final class CoreModel: ObservableObject {
     @Published private(set) var taskActionNotice: CoreObject = [:]
     private var taskActionRequestID: String?
     private var taskActionUndoRequest: String?
+    private var taskCompletionRequest: String?
     private var taskActionNoticeGeneration = 0
 
     private var taskActionUndoMethod: String {
-        taskActionNotice.text("operation") == "delete" ? "taskDeleteUndo" : "taskCancellationUndo"
+        switch taskActionNotice.text("operation") {
+        case "delete": return "taskDeleteUndo"
+        case "completion": return "taskCompletionUndo"
+        default: return "taskCancellationUndo"
+        }
     }
 
     private func showTaskAction(_ result: CoreObject, operation: String = "cancel") {
         guard let requestID = taskActionRequestID else { return }
-        let notice = result.object(operation == "delete" ? "deletion" : "cancellation")
+        let notice = result.object(operation == "delete" ? "deletion" : operation == "completion" ? "completion" : "cancellation")
         guard !notice.isEmpty else { return }
         taskActionRequestID = nil
         showTaskActionNotice(notice.merging(["requestId": requestID, "id": result.text("id"), "operation": operation]) { _, new in new })
@@ -15130,7 +15139,8 @@ final class CoreModel: ObservableObject {
         error = nil
         defer { finishOperation() }
         do {
-            let proofField = taskActionNotice.text("operation") == "delete" ? "deleteRequestId" : "cancelRequestId"
+            let proofField = taskActionNotice.text("operation") == "delete" ? "deleteRequestId"
+                : taskActionNotice.text("operation") == "completion" ? "completionRequestId" : "cancelRequestId"
             let request = try json(["requestId": UUID().uuidString.lowercased(),
                                     proofField: taskActionNotice.text("requestId")])
             taskActionUndoRequest = request
@@ -17292,9 +17302,10 @@ final class CoreModel: ObservableObject {
         }
     }
 
-    func complete(_ id: String) async {
+    func complete(_ id: String, taskRevision: String) async {
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
-        guard ready, !busy, !retryNeeded, !projectRenameEditing,
+        guard ready, !busy, !retryNeeded, !taskPresented, !projectRenameEditing,
+              !taskRevision.isEmpty, taskRevision.utf16.count <= 200,
               selectedSurface != .history, selectedSurface != .trash else { return }
         if selectedSurface == .review {
             guard reviewActionsEnabled, reviewRows.contains(where: {
@@ -17342,14 +17353,37 @@ final class CoreModel: ObservableObject {
         busy = true
         invalidatePreview()
         defer { finishOperation() }
+        var acknowledgment: CoreObject?
         do {
-            _ = try await query("complete", [id])
+            let requestID = UUID().uuidString.lowercased()
+            let request = try json(["id": id, "requestId": requestID, "taskRevision": taskRevision])
+            taskActionRequestID = requestID
+            taskCompletionRequest = request
+            let result = try await query("taskCompletion", [request])
+            try acknowledgeTaskCompletion(result)
+            acknowledgment = result
         } catch {
-            retryNeeded = !isDefiniteRejection(error)
+            if isDefiniteRejection(error) {
+                taskCompletionRequest = nil
+                taskActionRequestID = nil
+            }
+            retryNeeded = taskCompletionRequest != nil
             self.error = error.localizedDescription
             return
         }
         do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+        if let acknowledgment { showTaskAction(acknowledgment, operation: "completion") }
+    }
+
+    private func acknowledgeTaskCompletion(_ result: CoreObject) throws {
+        guard let request = taskCompletionRequest,
+              let submitted = try? decode(request),
+              result.text("id") == submitted.text("id"),
+              taskActionRequestID == submitted.text("requestId"),
+              !result.object("completion").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        taskCompletionRequest = nil
+        retryNeeded = false
+        error = nil
     }
 
     func retry() async {
@@ -17374,9 +17408,35 @@ final class CoreModel: ObservableObject {
             if let request = taskActionUndoRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
-                else { result = try await query(taskActionUndoMethod, [request]) }
+                else if taskActionUndoMethod == "taskCompletionUndo" {
+                    let outcome = try await query("taskCompletionUndoRetryOutcome", [request])
+                    guard outcome.text("kind") == "confirmed" else {
+                        self.error = label("task.completionUndoOutcomeUnknown")
+                        try? await readSelectedSurface()
+                        return
+                    }
+                    result = outcome.object("result")
+                } else { result = try await query(taskActionUndoMethod, [request]) }
                 try acknowledgeTaskActionUndo(result)
                 do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+                return
+            }
+            if let request = taskCompletionRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else {
+                    let outcome = try await query("taskCompletionRetryOutcome", [request])
+                    guard outcome.text("kind") == "confirmed" else {
+                        // No matching durable receipt: preserve the UUID and block a new write.
+                        self.error = label("task.completionOutcomeUnknown")
+                        try? await readSelectedSurface()
+                        return
+                    }
+                    result = outcome.object("result")
+                }
+                try acknowledgeTaskCompletion(result)
+                do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+                showTaskAction(result, operation: "completion")
                 return
             }
             if let request = projectDeleteUndoRequest {
@@ -18217,6 +18277,10 @@ final class CoreModel: ObservableObject {
                 if taskActionUndoRequest != nil {
                     taskActionUndoRequest = nil
                     taskActionNotice = [:]
+                }
+                if taskCompletionRequest != nil {
+                    taskCompletionRequest = nil
+                    taskActionRequestID = nil
                 }
                 if projectDeleteUndoRequest != nil {
                     projectDeleteUndoRequest = nil

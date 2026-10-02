@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-completion-undo`** — native iOS `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Task completion saved` with `operation=complete` or `operation=undo` and `outcome=confirmed` proves the exact prepared completion or Undo settled durably, including retry or cold journal recovery. No task content, dates, identifiers or URLs are logged.
+
 - **`v1.3.4/ios-review-row-actions`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS Review row action confirmed` with `outcome=confirmed` follows the host acknowledgment for Mark reviewed or Review in 1 week, including an in-process Retry. The existing Draft V2 journal owns failed-save and cold recovery. No Task content, identifiers or dates are logged.
 
 - **`v1.3.4/ios-gtd-editor-reset`** — native iOS `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Task Editor reset saved` with `outcome=confirmed` proves the shared default layout and feature flags settled durably through the existing GTD journal. Repeated reset against the stored target writes nothing; failed saves retain the exact request through Retry and cold recovery. No field labels, task content or layout arrays are logged.
