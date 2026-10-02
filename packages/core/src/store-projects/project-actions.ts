@@ -25,7 +25,7 @@ import { taskEditValuesEqual } from '../json-value-equality';
 import { planAttachmentLinkBatch, softDeleteAttachment } from '../attachment-editor-model';
 import type { Area, TaskSortBy } from '../types';
 import type { Project, ProjectCoreActions, ProjectActionContext, Section, Task, TaskStatus } from './shared';
-import type { PreparedProjectArea, PreparedProjectAttachmentWrite, PreparedProjectCreate, PreparedProjectDate, PreparedProjectDelete, PreparedProjectDeleteUndo, PreparedProjectDuplicate, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, PreparedTrashProjectRestore, ProjectAttachmentIntent, ProjectFlowAction, TaskStore } from '../store-types';
+import type { PreparedProjectArea, PreparedProjectAttachmentWrite, PreparedProjectCreate, PreparedProjectDate, PreparedProjectDelete, PreparedProjectDeleteUndo, PreparedProjectDuplicate, PreparedProjectLifecycle, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, PreparedTrashProjectRestore, ProjectAttachmentIntent, ProjectFlowAction, TaskStore } from '../store-types';
 import { projectTagsForIntent, type ProjectTagsIntent } from '../project-tags';
 import { settingsWithPurgedParentAttachmentDeletes } from '../attachment-cleanup';
 import {
@@ -250,6 +250,14 @@ const projectDeleteScopeRows = (state: TaskStore, projectId: string) => {
     return { sections, tasks };
 };
 
+const projectLifecycleScopeRows = (state: TaskStore, projectId: string) => {
+    const sections = state._allSections.filter((section) => section.projectId === projectId);
+    const sectionIds = new Set(sections.map((section) => section.id));
+    const tasks = state._allTasks.filter((task) => task.projectId === projectId
+        || (!task.projectId && task.sectionId !== undefined && sectionIds.has(task.sectionId)));
+    return { sections, tasks };
+};
+
 const afterRows = <T extends { id: string }>(scope: T[], effect: { before: T; after: T }[]) =>
     scope.map((row) => effect.find((pair) => pair.before.id === row.id)?.after ?? row);
 
@@ -362,6 +370,36 @@ export const projectStatusEffect = (project: Project, status: 'active' | 'waitin
         ...project, ...transition.projectUpdates,
         updatedAt: now, rev: nextRevision(project.rev), revBy: deviceId,
     }) } };
+};
+
+/** RN updateProject's Complete/Reactivate helper and exact changed child rows. */
+export const projectLifecycleEffect = (scope: PreparedProjectLifecycle['scope'],
+    action: PreparedProjectLifecycle['request']['action'], deviceId: string,
+    now: string): PreparedProjectLifecycle['effect'] => {
+    const targetStatus = action === 'complete' ? 'archived' : 'active';
+    const transition = applyProjectLifecycleTransition(scope.project, { status: targetStatus },
+        scope.tasks, scope.sections, now, deviceId);
+    const incomingStatus = transition.projectUpdates.status ?? scope.project.status;
+    const statusChanged = incomingStatus !== scope.project.status;
+    const projectAfter = normalizeProjectLifecycleFields({
+        ...scope.project,
+        ...transition.projectUpdates,
+        ...(statusChanged && incomingStatus !== 'active' ? { isFocused: false } : {}),
+        updatedAt: now,
+        rev: nextRevision(scope.project.rev),
+        revBy: deviceId,
+    });
+    return {
+        project: { before: scope.project, after: projectAfter },
+        tasks: scope.tasks.flatMap((before, index) => {
+            const after = transition.tasks[index];
+            return taskEditValuesEqual(before, after) ? [] : [{ before, after }];
+        }),
+        sections: scope.sections.flatMap((before, index) => {
+            const after = transition.sections[index];
+            return taskEditValuesEqual(before, after) ? [] : [{ before, after }];
+        }),
+    };
 };
 
 /** RN updateProject's Project date lifecycle result, with no child writes. */
@@ -914,6 +952,47 @@ export const createProjectCoreActions = ({
             });
         }
         return actionOk({ id });
+    },
+
+    commitPreparedProjectLifecycle: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project lifecycle conflicts with current data' };
+        set((state) => {
+            const current = state._projectsById.get(input.request.projectId);
+            if (!current || current.deletedAt || current.purgedAt) return state;
+            const { tasks, sections } = projectLifecycleScopeRows(state, current.id);
+            const planned = projectLifecycleEffect(input.scope, input.request.action,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!taskEditValuesEqual(planned, input.effect)) return state;
+            const expectedTasks = afterRows(input.scope.tasks, planned.tasks);
+            const expectedSections = afterRows(input.scope.sections, planned.sections);
+            if (sameProjectSqliteRow(current, planned.project.after)
+                && (state.settings.deviceId ?? null) === (input.deviceIdToInitialize ?? input.deviceIdBefore)
+                && sameOwnedRows(tasks, expectedTasks, sameTaskSqliteRow)
+                && sameOwnedRows(sections, expectedSections, sameSectionSqliteRow)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            const sourceStatusMatches = input.request.action === 'complete'
+                ? current.status !== 'archived' : current.status === 'archived';
+            if (!sourceStatusMatches || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || !sameProjectSqliteRow(current, input.scope.project)
+                || !sameOwnedRows(tasks, input.scope.tasks, sameTaskSqliteRow)
+                || !sameOwnedRows(sections, input.scope.sections, sameSectionSqliteRow)) return state;
+            const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
+            const nextTasks = replaceEntitiesInArray(state._allTasks, planned.tasks.map((row) => row.after));
+            const nextSections = replaceEntitiesInArray(state._allSections, planned.sections.map((row) => row.after));
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            clearDerivedCache();
+            persist(set, debouncedSave, state, { projects, tasks: nextTasks, sections: nextSections,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allProjects: projects, _allTasks: nextTasks, _allSections: nextSections, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
     },
 
     updateProject: async (id: string, updates: Partial<Project>) => {

@@ -143,6 +143,7 @@ private final class Engine: @unchecked Sendable {
     private var startupProjectDeleteResult: String?
     private var startupProjectDeleteUndoResult: String?
     private var startupProjectDuplicateResult: String?
+    private var startupProjectLifecycleResult: String?
     private var startupTrashTaskRestoreResult: String?
     private var startupTrashProjectRestoreResult: String?
     private var startupTaskPromoteResult: String?
@@ -233,6 +234,7 @@ private final class Engine: @unchecked Sendable {
         "trashProjectRestoreWrite": 1, "trashProjectRestoreRetryOutcome": 1,
         "projectDeleteWrite": 1, "projectDeleteRetryOutcome": 1, "projectDeleteUndo": 1, "projectDeleteUndoRetryOutcome": 1,
         "projectDuplicateWrite": 1, "projectDuplicateRetryOutcome": 1,
+        "projectLifecycleWrite": 1, "projectLifecycleRetryOutcome": 1,
         "somedaySectionMoveOptions": 1, "somedaySectionMoveWrite": 1, "somedaySectionMoveUndo": 1,
         "somedaySectionMoveRetryOutcome": 1, "somedaySectionMoveUndoRetryOutcome": 1,
         "taskFocusOptions": 1, "taskFocusWrite": 1, "taskFocusRetryOutcome": 1,
@@ -256,7 +258,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -309,7 +311,11 @@ private final class Engine: @unchecked Sendable {
             throw HostFailure("Invalid pending command journal")
         }
         guard saved.version == 2 else { throw HostFailure("Unsupported pending command journal; raw captures cannot be safely replanned") }
-        _ = try journalArguments(saved, checkingEditorSnapshot: checkingEditorSnapshot)
+        if saved.method == "projectLifecycleCommit" {
+            _ = try projectLifecycleJournalArguments(saved)
+        } else {
+            _ = try journalArguments(saved, checkingEditorSnapshot: checkingEditorSnapshot)
+        }
         switch saved.terminal {
         case .success(let value):
             _ = try NativeJSON.jsonObject(with: Data(value.utf8), options: [.fragmentsAllowed])
@@ -373,6 +379,10 @@ private final class Engine: @unchecked Sendable {
             if let command = pending, command.method == "projectDuplicateCommit" {
                 _ = try invoke("projectDuplicateValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectLifecycleCommit" {
+                _ = try invoke("projectLifecycleValidate", arguments: projectLifecycleJournalArguments(command))
+                if case .success(let value) = command.terminal { try validateProjectLifecycleAcknowledgment(command, value: value) }
             }
             if let command = pending, command.method == "trashTaskRestoreCommit" {
                 _ = try invoke("trashTaskRestoreValidate", arguments: journalArguments(command))
@@ -622,6 +632,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringProjectDelete = pending?.method == "projectDeleteCommit"
         let recoveringProjectDeleteUndo = pending?.method == "projectDeleteUndoCommit"
         let recoveringProjectDuplicate = pending?.method == "projectDuplicateCommit"
+        let recoveringProjectLifecycle = pending?.method == "projectLifecycleCommit"
         let recoveringTrashTaskRestore = pending?.method == "trashTaskRestoreCommit"
         let recoveringTrashProjectRestore = pending?.method == "trashProjectRestoreCommit"
         let recoveringTaskPromote = pending?.method == "taskPromoteCommit"
@@ -680,6 +691,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringProjectDelete, let terminal, case .success(let value) = terminal { startupProjectDeleteResult = value }
         if recoveringProjectDeleteUndo, let terminal, case .success(let value) = terminal { startupProjectDeleteUndoResult = value }
         if recoveringProjectDuplicate, let terminal, case .success(let value) = terminal { startupProjectDuplicateResult = value }
+        if recoveringProjectLifecycle, let terminal, case .success(let value) = terminal { startupProjectLifecycleResult = value }
         if recoveringTrashTaskRestore, let terminal, case .success(let value) = terminal { startupTrashTaskRestoreResult = value }
         if recoveringTrashProjectRestore, let terminal, case .success(let value) = terminal { startupTrashProjectRestoreResult = value }
         if recoveringTaskPromote, let terminal, case .success(let value) = terminal { startupTaskPromoteResult = value }
@@ -753,7 +765,7 @@ private final class Engine: @unchecked Sendable {
             ?? recoveredManage ?? recoveredSomedaySections
             ?? startupSomedaySectionMoveResult ?? startupSomedaySectionUndoResult
         let recoveredDeleteRestore = startupTaskDeleteResult ?? startupProjectDeleteResult
-            ?? startupProjectDeleteUndoResult ?? startupProjectDuplicateResult
+            ?? startupProjectDeleteUndoResult ?? startupProjectDuplicateResult ?? startupProjectLifecycleResult
             ?? startupTrashTaskRestoreResult ?? startupTrashProjectRestoreResult
         let recoveredTaskActions = recoveredDeleteRestore ?? startupTaskPromoteResult ?? startupBoardResult
             ?? startupCalendarResult ?? startupMindSweepResult
@@ -789,6 +801,7 @@ private final class Engine: @unchecked Sendable {
             : startupProjectDeleteResult != nil ? "projectDeleteCommit"
             : startupProjectDeleteUndoResult != nil ? "projectDeleteUndoCommit"
             : startupProjectDuplicateResult != nil ? "projectDuplicateCommit"
+            : startupProjectLifecycleResult != nil ? "projectLifecycleCommit"
             : startupTrashTaskRestoreResult != nil ? "trashTaskRestoreCommit"
             : startupTrashProjectRestoreResult != nil ? "trashProjectRestoreCommit"
             : startupTaskPromoteResult != nil ? "taskPromoteCommit"
@@ -825,6 +838,7 @@ private final class Engine: @unchecked Sendable {
         startupProjectDeleteResult = nil
         startupProjectDeleteUndoResult = nil
         startupProjectDuplicateResult = nil
+        startupProjectLifecycleResult = nil
         startupTrashTaskRestoreResult = nil
         startupTrashProjectRestoreResult = nil
         startupTaskPromoteResult = nil
@@ -981,9 +995,15 @@ private final class Engine: @unchecked Sendable {
             throw HostFailure("Editor draft must use its exact Save attempt")
         }
         let args: [Any]
-        do { args = try arguments(method, argumentsJSON) }
+        do {
+            if ["projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method) {
+                args = try projectLifecycleRequestArguments(argumentsJSON)
+            } else {
+                args = try arguments(method, argumentsJSON)
+            }
+        }
         catch {
-            if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome"].contains(method), pending == nil {
+            if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome", "projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
             if ["unassignedAreaColorOptions", "unassignedAreaColorWrite", "unassignedAreaColorRetryOutcome"].contains(method), pending == nil {
@@ -1020,6 +1040,9 @@ private final class Engine: @unchecked Sendable {
             }
             if method == "projectDuplicateRetryOutcome" {
                 throw CoreHostRejection(message: "STALE_REVISION: Project Duplicate has no pending journal")
+            }
+            if method == "projectLifecycleRetryOutcome" {
+                throw CoreHostRejection(message: "STALE_REVISION: Project lifecycle has no pending journal")
             }
             if ["somedaySectionMoveRetryOutcome", "somedaySectionMoveUndoRetryOutcome"].contains(method) {
                 let envelope = try confirmedSomedayMoveEnvelope(for: method, publicArguments: args)
@@ -2805,6 +2828,26 @@ private final class Engine: @unchecked Sendable {
                 command = PendingCommand(version: 2, method: "projectDuplicateCommit", argumentsJSON: encoded)
                 _ = try invoke("projectDuplicateValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectLifecycleWrite" {
+            do {
+                guard let original = args.first as? String,
+                      let request = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("INVALID_INPUT: Project lifecycle needs a bounded request")
+                }
+                let value = try invoke("projectLifecyclePrepare", arguments: args)
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+                      let prepared = response["prepared"] as? [String: Any],
+                      Self.equalJSON(prepared["request"], request) else {
+                    throw HostFailure("Malformed Project lifecycle preparation")
+                }
+                let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard envelope.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Project lifecycle journal is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Project lifecycle journal is too large") }
+                command = PendingCommand(version: 2, method: "projectLifecycleCommit", argumentsJSON: encoded)
+                _ = try invoke("projectLifecycleValidate", arguments: projectLifecycleJournalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "taskCancellationUndo" {
             do {
                 guard let encodedRequest = args.first as? String,
@@ -3043,7 +3086,10 @@ private final class Engine: @unchecked Sendable {
         try persist(command)
         let terminal: TerminalResult
         do {
-            terminal = .success(try invoke(command.method, arguments: journalArguments(command)))
+            let replay: [Any]
+            if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
+            else { replay = try journalArguments(command) }
+            terminal = .success(try invoke(command.method, arguments: replay))
         } catch {
             // These codes prove the first attempt stopped before its write. A
             // replay rejection cannot prove an earlier uncertain attempt did not.
@@ -3168,7 +3214,12 @@ private final class Engine: @unchecked Sendable {
         // A rejection here remains ambiguous: an earlier execution may have
         // succeeded. Only a successful exact replay establishes its terminal value.
         let value: String
-        do { value = try invoke(command.method, arguments: journalArguments(command)) }
+        do {
+            let replay: [Any]
+            if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
+            else { replay = try journalArguments(command) }
+            value = try invoke(command.method, arguments: replay)
+        }
         catch let failure as HostFailure {
             if command.method == "appLockCommit", recoveryActivationPending, failure.message.hasPrefix("STALE_REVISION:") {
                 unresolvedAppLockRecovery = true
@@ -3208,6 +3259,10 @@ private final class Engine: @unchecked Sendable {
         if command.method == "projectDuplicateCommit" {
             _ = try invoke("projectDuplicateValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
+        }
+        if command.method == "projectLifecycleCommit" {
+            _ = try invoke("projectLifecycleValidate", arguments: projectLifecycleJournalArguments(command))
+            if case .success(let value) = terminal { try validateProjectLifecycleAcknowledgment(command, value: value) }
         }
         if command.method == "trashTaskRestoreCommit" {
             _ = try invoke("trashTaskRestoreValidate", arguments: journalArguments(command))
@@ -3481,6 +3536,14 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("projectDuplicate")
 #endif
             NSLog("Native iOS Project duplicated releaseCheck=v1.3.4/ios-project-duplicate outcome=confirmed")
+        }
+        if command.method == "projectLifecycleCommit", case .success(let value) = terminal {
+            let result = (try? NativeJSON.jsonObject(with: Data(value.utf8))) as? [String: Any]
+            let action = result?["status"] as? String == "archived" ? "complete" : "reactivate"
+#if DEBUG
+            faults?.commandDiagnostic?("projectLifecycle")
+#endif
+            NSLog("Native iOS Project lifecycle saved releaseCheck=v1.3.4/ios-project-lifecycle action=\(action) outcome=confirmed")
         }
         if command.method == "trashTaskRestoreCommit", case .success = terminal {
 #if DEBUG
@@ -3902,7 +3965,7 @@ private final class Engine: @unchecked Sendable {
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
-            || (["taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit", "projectDuplicateCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit", "projectDuplicateCommit", "projectLifecycleCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
@@ -5503,6 +5566,27 @@ private final class Engine: @unchecked Sendable {
         }
     }
 
+    private func validateProjectLifecycleAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try projectLifecycleJournalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let effect = prepared["effect"] as? [String: Any],
+              let project = effect["project"] as? [String: Any],
+              let after = project["after"] as? [String: Any],
+              let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Self.equalJSON(result, expected), Set(result.keys) == Set(["id", "status"]),
+              result["id"] as? String == request["projectId"] as? String,
+              result["id"] as? String == after["id"] as? String,
+              result["status"] as? String == after["status"] as? String,
+              ((request["action"] as? String == "complete" && result["status"] as? String == "archived")
+                || (request["action"] as? String == "reactivate" && result["status"] as? String == "active")) else {
+            throw HostFailure("Malformed Project lifecycle acknowledgment")
+        }
+    }
+
     private func validatePreparedAcknowledgment(_ command: PendingCommand, value: String) throws {
         let args = try journalArguments(command)
         guard let encoded = args.first as? String,
@@ -5590,6 +5674,48 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("Malformed Trash Project restore acknowledgment")
             }
         }
+    }
+
+    private func projectLifecycleRequestArguments(_ json: String) throws -> [Any] {
+        guard json.utf8.count <= 4_096,
+              let args = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String], args.count == 1,
+              let text = args.first, text.utf8.count <= 4_096,
+              let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
+              Set(request.keys) == Set(["requestId", "projectId", "projectRevision", "action"]),
+              let id = request["requestId"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+              let projectID = request["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 200,
+              let revision = request["projectRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 200,
+              let action = request["action"] as? String, ["complete", "reactivate"].contains(action) else {
+            throw HostFailure("INVALID_INPUT: Project lifecycle needs an exact saved revision, action, and lowercase UUID")
+        }
+        return [text]
+    }
+
+    private func projectLifecycleJournalArguments(_ command: PendingCommand) throws -> [Any] {
+        guard command.method == "projectLifecycleCommit", command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= 12_000_000,
+              let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+              args[0].utf8.count <= 2_000_000,
+              let envelope = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+              Set(envelope.keys) == Set(["request", "prepared"]),
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              Set(prepared.keys) == Set(["version", "request", "scope", "effect", "deviceIdBefore", "deviceIdToInitialize", "updateAt", "result"]),
+              Self.isInteger(prepared["version"], equalTo: 1), Self.equalJSON(prepared["request"], request),
+              let scope = prepared["scope"] as? [String: Any],
+              Set(scope.keys) == Set(["project", "tasks", "sections"]),
+              let effect = prepared["effect"] as? [String: Any],
+              Set(effect.keys) == Set(["project", "tasks", "sections"]),
+              let project = effect["project"] as? [String: Any],
+              Set(project.keys) == Set(["before", "after"]),
+              effect["tasks"] is [[String: Any]], effect["sections"] is [[String: Any]],
+              let result = prepared["result"] as? [String: Any],
+              Set(result.keys) == Set(["id", "status"]), result["id"] as? String == request["projectId"] as? String else {
+            throw HostFailure("Malformed Project lifecycle journal")
+        }
+        let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+        _ = try projectLifecycleRequestArguments(String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+        return [args[0]]
     }
 
     private func journalArguments(_ command: PendingCommand, checkingEditorSnapshot: Bool = true) throws -> [Any] {

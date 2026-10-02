@@ -25739,4 +25739,341 @@ final class CoreHostTests: XCTestCase {
         await recovered.close()
     }
 
+    private func projectLifecycleRequest(_ core: CoreHost, action: String) async throws -> [String: Any] {
+        let detail = try object(await core.call("projectDetail", argumentsJSON: json(["destination-project-a", 0, 50, ""])))
+        return ["requestId": UUID().uuidString.lowercased(), "projectId": "destination-project-a",
+                "projectRevision": try XCTUnwrap(detail["projectRevision"] as? String), "action": action]
+    }
+
+    private func projectLifecycleJournal() throws -> [String: Any] {
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "projectLifecycleCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        XCTAssertEqual(args.count, 1)
+        return try object(XCTUnwrap(args.first))
+    }
+
+    func testProjectLifecycleCompleteFailedCommitExactRetryAndReactivate() async throws {
+        let taskID = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        var confirmations = 0
+        faults.commandDiagnostic = { if $0 == "projectLifecycle" { confirmations += 1 } }
+        let core = host(faults)
+        _ = try await core.start()
+        let request = try await projectLifecycleRequest(core, action: "complete")
+        let baselineDB = try SQLiteBridge(url: database)
+        let baseline = try nineTableSnapshot(baselineDB)
+        baselineDB.close()
+        var sqlCalls = 0
+        var journalWrites = 0
+        faults.beforeSQL = { _ in sqlCalls += 1 }
+        faults.journalWrite = { journalWrites += 1 }
+        for invalid in [request.merging(["extra": true]) { _, new in new },
+                        request.merging(["action": "archive"]) { _, new in new },
+                        request.merging(["requestId": UUID().uuidString]) { _, new in new }] {
+            await expectFailure("INVALID_INPUT") {
+                _ = try await core.call("projectLifecycleWrite", argumentsJSON: json([json(invalid)]))
+            }
+        }
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("projectLifecycleWrite", argumentsJSON: json([json(request.merging(["projectRevision": "stale"]) { _, new in new })]))
+        }
+        XCTAssertEqual(sqlCalls, 0)
+        XCTAssertEqual(journalWrites, 0)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project lifecycle COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("projectLifecycleWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try Data(contentsOf: journal)
+        let envelope = try projectLifecycleJournal()
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        XCTAssertEqual(try json(XCTUnwrap(prepared["request"])), try json(request))
+        let failedDB = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failedDB), baseline)
+        failedDB.close()
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        try assertJournalContentUnchanged(pending)
+        faults.beforeSQL = nil
+        let retried = try await core.retryPending()
+        let confirmed = try object(XCTUnwrap(retried))
+        XCTAssertEqual(Set(confirmed.keys), Set(["id", "status"]))
+        XCTAssertEqual(confirmed["id"] as? String, "destination-project-a")
+        XCTAssertEqual(confirmed["status"] as? String, "archived")
+        XCTAssertEqual(try projectRows("destination-project-a").first?["status"] as? String, "archived")
+        XCTAssertEqual(try storedTask(taskID)["status"] as? String, "done")
+        XCTAssertEqual(confirmations, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let reactivate = try await projectLifecycleRequest(core, action: "reactivate")
+        let restored = try object(await core.call("projectLifecycleWrite", argumentsJSON: json([json(reactivate)])))
+        XCTAssertEqual(Set(restored.keys), Set(["id", "status"]))
+        XCTAssertEqual(restored["id"] as? String, "destination-project-a")
+        XCTAssertEqual(restored["status"] as? String, "active")
+        XCTAssertEqual(try projectRows("destination-project-a").first?["status"] as? String, "active")
+        XCTAssertEqual(try storedTask(taskID)["status"] as? String, "next")
+        XCTAssertEqual(confirmations, 2)
+        await core.close()
+    }
+
+    func testProjectLifecycleColdArchivedWindowThenReactivateReadsEveryRestoredChild() async throws {
+        let nextID = try await seedProjectDuplicateSource()
+        let seed = try SQLiteBridge(url: database)
+        let at = "2026-01-01T12:00:00.000Z"
+        let children: [(id: String, status: String, project: String?)] = [
+            ("lifecycle-window-waiting", "waiting", "destination-project-a"),
+            ("lifecycle-window-someday", "someday", "destination-project-a"),
+            ("lifecycle-window-inbox", "inbox", "destination-project-a"),
+            ("lifecycle-window-recurring", "next", "destination-project-a"),
+            ("lifecycle-window-section-only", "next", nil),
+        ]
+        for (index, child) in children.enumerated() {
+            _ = try seed.execute("INSERT INTO tasks (id, title, status, projectId, sectionId, orderNum, tags, contexts, isFocusedToday, showFutureRecurrence, suppressMindwtrReminders, pushCount, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                 parametersJSON: json([child.id, child.id, child.status,
+                                                       child.project as Any? ?? NSNull(), "destination-section-a", index + 40,
+                                                       "[]", "[]", 0, 0, 0, 0, at, at, 1]))
+        }
+        seed.close()
+
+        let writer = host()
+        _ = try await writer.start()
+        let complete = try await projectLifecycleRequest(writer, action: "complete")
+        let completed = try object(await writer.call("projectLifecycleWrite", argumentsJSON: json([json(complete)])))
+        XCTAssertEqual(completed["status"] as? String, "archived")
+        await writer.close()
+
+        // The app opens this archived Project after a cold launch, then keeps
+        // the same host and filter state while Reactivate writes and rereads it.
+        let reopened = host()
+        _ = try await reopened.start()
+        func window(offset: Int, limit: Int, filters: [String: Any], revision: String? = nil) async throws -> [String: Any] {
+            var input: [String: Any] = ["projectId": "destination-project-a", "offset": offset,
+                                        "limit": limit, "showCompleted": false,
+                                        "completedCollapsed": false, "filters": filters,
+                                        "filterSheetOpen": false]
+            if let revision { input["revision"] = revision }
+            return try object(await reopened.call("menuRead", argumentsJSON: json(["projectDetailFilterView", json(input)])))
+        }
+        func rows(_ view: [String: Any]) -> [[String: Any]] {
+            (view["items"] as? [[String: Any]] ?? []).compactMap { $0["row"] as? [String: Any] }
+        }
+        let archived = try await window(offset: 0, limit: 50, filters: [:])
+        XCTAssertEqual(archived["readOnly"] as? Bool, true)
+        let archivedState = try XCTUnwrap((archived["filters"] as? [String: Any])?["state"] as? [String: Any])
+        let childIDs = [nextID] + children.map { $0.id }
+        XCTAssertTrue(Set(childIDs).isSubset(of: Set(rows(archived).compactMap { $0["id"] as? String })))
+        for row in rows(archived) where childIDs.contains(row["id"] as? String ?? "") {
+            XCTAssertEqual(row["status"] as? String, "done")
+        }
+
+        let reactivate = try await projectLifecycleRequest(reopened, action: "reactivate")
+        let restored = try object(await reopened.call("projectLifecycleWrite", argumentsJSON: json([json(reactivate)])))
+        XCTAssertEqual(restored["status"] as? String, "active")
+        let fresh = try await window(offset: 0, limit: 50, filters: archivedState)
+        XCTAssertEqual(fresh["readOnly"] as? Bool, false)
+        XCTAssertNotEqual(fresh["revision"] as? String, archived["revision"] as? String)
+        let expected = Dictionary(uniqueKeysWithValues: [(nextID, "next")] + children.map { ($0.id, $0.status) })
+        XCTAssertEqual(Set(rows(fresh).compactMap { $0["id"] as? String }).intersection(Set(expected.keys)), Set(expected.keys))
+        for row in rows(fresh) where expected[row["id"] as? String ?? ""] != nil {
+            let id = try XCTUnwrap(row["id"] as? String)
+            let status = try XCTUnwrap(expected[id])
+            XCTAssertEqual(row["status"] as? String, status, id)
+            let meta = try XCTUnwrap(row["meta"] as? [String: Any])
+            XCTAssertEqual(meta["statusLabel"] as? String, status.capitalized, id)
+            let parts = meta["parts"] as? [[String: Any]] ?? []
+            XCTAssertFalse(parts.contains { $0["kind"] as? String == "completed" }, id)
+        }
+
+        // Later windows must retain the same fresh snapshot as the first page.
+        let revision = try XCTUnwrap(fresh["revision"] as? String)
+        let total = try XCTUnwrap(fresh["total"] as? Int)
+        var paged: [[String: Any]] = []
+        for offset in stride(from: 0, to: total, by: 2) {
+            let page = try await window(offset: offset, limit: 2, filters: archivedState,
+                                        revision: offset == 0 ? nil : revision)
+            XCTAssertEqual(page["revision"] as? String, revision)
+            paged += rows(page)
+        }
+        for row in paged where expected[row["id"] as? String ?? ""] != nil {
+            let id = try XCTUnwrap(row["id"] as? String)
+            XCTAssertEqual(row["status"] as? String, expected[id], "paged " + id)
+        }
+        XCTAssertEqual(Set(paged.compactMap { $0["id"] as? String }).intersection(Set(expected.keys)), Set(expected.keys))
+        await reopened.close()
+    }
+
+    func testProjectLifecycleColdFailedCommitChangedChildRefusesWithoutWrites() async throws {
+        let taskID = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectLifecycleRequest(writer, action: "complete")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project lifecycle COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectLifecycleWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try Data(contentsOf: journal)
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE tasks SET title = ?, rev = rev + 1 WHERE id = ?", parametersJSON: json(["Newer child title", taskID]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+        XCTAssertEqual(writes, 0)
+        try assertJournalContentUnchanged(pending)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        await reopened.close()
+    }
+
+    func testProjectLifecycleReactivateColdTerminalAckKeepsLaterProjectEdit() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let complete = try await projectLifecycleRequest(writer, action: "complete")
+        _ = try await writer.call("projectLifecycleWrite", argumentsJSON: json([json(complete)]))
+        let reactivate = try await projectLifecycleRequest(writer, action: "reactivate")
+        faults.journalRemove = { throw HostFailure("Injected Project lifecycle terminal cleanup failure") }
+        await expectFailure("terminal cleanup failure") {
+            _ = try await writer.call("projectLifecycleWrite", argumentsJSON: json([json(reactivate)]))
+        }
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertNotNil(saved["terminal"])
+        let envelope = try projectLifecycleJournal()
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        let result = try XCTUnwrap(prepared["result"] as? [String: Any])
+        XCTAssertEqual(result["status"] as? String, "active")
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET title = ?, rev = rev + 1 WHERE id = ?", parametersJSON: json(["Later active title", "destination-project-a"]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "projectLifecycleCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(result))
+        XCTAssertEqual(writes, 0)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+    }
+
+    func testProjectLifecycleReactivateColdLostReplyExactAfterZeroWrites() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let complete = try await projectLifecycleRequest(writer, action: "complete")
+        _ = try await writer.call("projectLifecycleWrite", argumentsJSON: json([json(complete)]))
+        let reactivate = try await projectLifecycleRequest(writer, action: "reactivate")
+        var journalWrites = 0
+        faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Project lifecycle lost reply") } }
+        await expectFailure("lost reply") {
+            _ = try await writer.call("projectLifecycleWrite", argumentsJSON: json([json(reactivate)]))
+        }
+        XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
+        let envelope = try projectLifecycleJournal()
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        let result = try XCTUnwrap(prepared["result"] as? [String: Any])
+        await writer.close()
+        let beforeDB = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(beforeDB)
+        beforeDB.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "projectLifecycleCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(result))
+        XCTAssertEqual(writes, 0)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+    }
+
+    func testProjectLifecycleForgedScopeEffectAndStatusRefuseBeforeSQLite() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectLifecycleRequest(writer, action: "complete")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project lifecycle COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectLifecycleWrite", argumentsJSON: json([json(request)]))
+        }
+        let original = try object(String(contentsOf: journal))
+        let envelope = try projectLifecycleJournal()
+        await writer.close()
+        let beforeDB = try SQLiteBridge(url: database)
+        let baseline = try nineTableSnapshot(beforeDB)
+        beforeDB.close()
+        for part in ["scope", "effect", "result", "action", "request"] {
+            var forged = envelope
+            var prepared = try XCTUnwrap(forged["prepared"] as? [String: Any])
+            if part == "scope" {
+                var scope = try XCTUnwrap(prepared["scope"] as? [String: Any])
+                scope["tasks"] = [] as [[String: Any]]
+                prepared["scope"] = scope
+            } else if part == "effect" {
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                var project = try XCTUnwrap(effect["project"] as? [String: Any])
+                var after = try XCTUnwrap(project["after"] as? [String: Any])
+                after["status"] = "active"
+                project["after"] = after
+                effect["project"] = project
+                prepared["effect"] = effect
+            } else if part == "result" {
+                prepared["result"] = ["id": "destination-project-a", "status": "active"]
+            } else if part == "action" {
+                var altered = request
+                altered["action"] = "reactivate"
+                prepared["request"] = altered
+                forged["request"] = altered
+            } else {
+                forged["request"] = request.merging(["requestId": UUID().uuidString.lowercased()]) { _, new in new }
+            }
+            forged["prepared"] = prepared
+            var saved = original
+            saved["argumentsJSON"] = try json([json(forged)])
+            let bytes = Data(try json(saved).utf8)
+            try bytes.write(to: journal)
+            let replayFaults = HostIOFaults()
+            var sqlCalls = 0
+            replayFaults.beforeSQL = { _ in sqlCalls += 1 }
+            let reopened = host(replayFaults)
+            await expectFailure { _ = try await reopened.start() }
+            XCTAssertEqual(sqlCalls, 0, part)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, part)
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), baseline, part)
+            check.close()
+            await reopened.close()
+        }
+        try Data(try json(original).utf8).write(to: journal)
+        let recovered = host()
+        let startup = try object(await recovered.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "projectLifecycleCommit")
+        await recovered.close()
+    }
+
 }

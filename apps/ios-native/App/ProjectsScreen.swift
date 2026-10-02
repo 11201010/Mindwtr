@@ -1,6 +1,15 @@
 import SwiftUI
 import UIKit
 
+private struct ProjectDetailDisplayItem: Identifiable {
+    let value: CoreObject
+
+    var id: String {
+        if value.text("type") == "task" { return "task:" + value.object("row").text("id") }
+        return "section:" + value.text("id")
+    }
+}
+
 struct ProjectsScreen: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
@@ -820,6 +829,18 @@ struct ProjectDetailScreen: View {
                         Button {
                             let id = model.projectHeader.text("id")
                             let revision = model.projectDetail.text("projectRevision")
+                            let action = model.projectLifecycleAction
+                            Task { await model.changeProjectLifecycle(expectedID: id, expectedRevision: revision, action: action) }
+                        } label: {
+                            Label(model.label(model.projectLifecycleAction == "complete" ? "projects.complete" : "projects.reactivate"),
+                                  systemImage: model.projectLifecycleAction == "complete" ? "archivebox" : "arrow.uturn.backward")
+                        }
+                        .disabled(!model.projectLifecycleOpenEnabled)
+                        .accessibilityHint(model.projectLifecycleAction == "complete" ? model.label("projects.archiveHelp") : "")
+                        .accessibilityIdentifier(model.projectLifecycleAction == "complete" ? "project-archive-button" : "project-reactivate-button")
+                        Button {
+                            let id = model.projectHeader.text("id")
+                            let revision = model.projectDetail.text("projectRevision")
                             Task { await model.duplicateProject(expectedID: id, expectedRevision: revision) }
                         } label: {
                             Label(model.label("projects.duplicate"), systemImage: "square.on.square")
@@ -901,6 +922,16 @@ struct ProjectDetailScreen: View {
                         Button(model.label("common.retry")) { Task { await model.retry() } }
                             .rnFont(14, .semibold).frame(minHeight: 44)
                             .disabled(model.busy).accessibilityIdentifier("project-duplicate-retry")
+                    }
+                }
+                if let error = model.projectLifecycleError {
+                    Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("project-lifecycle-error")
+                    if model.retryNeeded {
+                        Button(model.label("common.retry")) { Task { await model.retry() } }
+                            .rnFont(14, .semibold).frame(minHeight: 44)
+                            .disabled(model.busy).accessibilityIdentifier("project-lifecycle-retry")
                     }
                 }
                 if let error = model.projectFlowError {
@@ -1051,8 +1082,8 @@ struct ProjectDetailScreen: View {
                                 }
                                 .frame(maxWidth: .infinity).padding(32).accessibilityIdentifier("project-empty")
                             }
-                            ForEach(items.indices, id: \.self) { index in
-                                let item = items[index]
+                            ForEach(items.map { ProjectDetailDisplayItem(value: $0) }) { entry in
+                                let item = entry.value
                                 if item.text("type") == "section" {
                                     if item.flag("collapsible") {
                                         Button {
@@ -1085,7 +1116,6 @@ struct ProjectDetailScreen: View {
                                     TaskCard(row: item.object("row"), model: model, palette: palette,
                                              readOnly: model.projectDetail.flag("readOnly"),
                                              beforeAction: resignProjectNotesInput)
-                                        .id(item.object("row").text("id"))
                                 }
                             }
                             if items.count < model.projectDetail.number("total") {

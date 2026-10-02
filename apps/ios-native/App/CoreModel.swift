@@ -389,6 +389,8 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectDuplicateError: String?
     private var projectDuplicateRequest: String?
     private var projectDuplicateNoticeGeneration = 0
+    @Published private(set) var projectLifecycleError: String?
+    private var projectLifecycleRequest: String?
     @Published private(set) var projectDeleteError: String?
     private var projectDeleteRequest: String?
     private var projectDeleteUndoRequest: String?
@@ -679,6 +681,7 @@ final class CoreModel: ObservableObject {
     private var boardRecoveredResult: CoreObject?
     private var taskPromotionRecoveredResult: CoreObject?
     private var projectDuplicateRecoveredResult: CoreObject?
+    private var projectLifecycleRecoveredResult: CoreObject?
     private var boardDepth: [String: Int] = [:]
     private var boardPickerName = ""
     private var boardGeneration = 0
@@ -1201,6 +1204,8 @@ final class CoreModel: ObservableObject {
             && !projectAttachmentEditOpening && !projectViewOptionsPresented && !projectFiltersPresented
     }
     var projectDuplicateOpenEnabled: Bool { projectDeleteOpenEnabled && projectDuplicateRequest == nil }
+    var projectLifecycleOpenEnabled: Bool { projectDeleteOpenEnabled && projectLifecycleRequest == nil }
+    var projectLifecycleAction: String { projectDetail.flag("readOnly") ? "reactivate" : "complete" }
     var projectAttachmentScopeCurrent: Bool {
         selectedSurface == .project && projectCurrent
             && projectAttachmentProjectID == projectHeader.text("id")
@@ -2763,6 +2768,10 @@ final class CoreModel: ObservableObject {
                 projectDuplicateRecoveredResult = recovery.object("result")
                 selectedSurface = .projects
             }
+            if recovery.text("method") == "projectLifecycleCommit" {
+                projectLifecycleRecoveredResult = recovery.object("result")
+                selectedSurface = .projects
+            }
             if recovery.text("method") == "taskPromoteCommit" {
                 taskPromotionRecoveredResult = recovery.object("result")
             }
@@ -2825,6 +2834,7 @@ final class CoreModel: ObservableObject {
             if mindSweepRecoveredResult != nil { selectedSurface = .inbox }
             if taskPromotionRecoveredResult != nil { selectedSurface = .projects }
             if projectDuplicateRecoveredResult != nil { selectedSurface = .projects }
+            if projectLifecycleRecoveredResult != nil { selectedSurface = .projects }
             try await readSelectedSurface()
             ready = true
             retryNeeded = false
@@ -2849,6 +2859,12 @@ final class CoreModel: ObservableObject {
                 await presentProject(["id": result.text("id")], caller: .projects)
                 showProjectDuplicateNotice(result)
                 projectDuplicateRecoveredResult = nil
+            }
+            if let result = projectLifecycleRecoveredResult {
+                guard Set(result.keys) == Set(["id", "status"]), !result.text("id").isEmpty,
+                      ["archived", "active"].contains(result.text("status")) else { throw CocoaError(.coderReadCorrupt) }
+                await presentProject(["id": result.text("id")], caller: .projects)
+                projectLifecycleRecoveredResult = nil
             }
             mindSweepRecoveredResult = nil
             appLockRecoveryPending = false
@@ -3571,7 +3587,7 @@ final class CoreModel: ObservableObject {
                     "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone",
                     "nav.projects", "nav.review", "nav.calendar", "nav.board", "nav.contexts", "common.back", "common.tasks",
                     "task.aria.openContext", "task.aria.openTag",
-                    "projects.title", "projects.deleteConfirm", "projects.duplicate", "projects.duplicated", "projects.activeSection", "projects.deferredSection", "projects.closed",
+                    "projects.title", "projects.deleteConfirm", "projects.duplicate", "projects.duplicated", "projects.complete", "projects.reactivate", "projects.archiveHelp", "projects.activeSection", "projects.deferredSection", "projects.closed",
                     "projects.noArea", "projects.empty", "list.noTasks", "projects.noNextAction",
                     "projects.addPlaceholder", "projects.add", "projects.tagFilter", "projects.allTags", "projects.noTags", "projects.emptyTag",
                     "filters.show", "filters.hide", "projects.areaLabel",
@@ -12635,6 +12651,7 @@ final class CoreModel: ObservableObject {
         projectCurrent = false
         projectError = nil
         projectDuplicateError = nil
+        projectLifecycleError = nil
         projectNotes = [:]
         projectNotesExpanded = false
         projectNotesCurrent = false
@@ -12776,6 +12793,7 @@ final class CoreModel: ObservableObject {
         projectCurrent = false
         projectError = nil
         projectDuplicateError = nil
+        projectLifecycleError = nil
         await refresh()
     }
 
@@ -12874,6 +12892,51 @@ final class CoreModel: ObservableObject {
         retryNeeded = false
         projectDeleteError = nil
         error = nil
+    }
+
+    func changeProjectLifecycle(expectedID: String, expectedRevision: String, action: String) async {
+        guard projectLifecycleOpenEnabled, ["complete", "reactivate"].contains(action) else { return }
+        let id = projectHeader.text("id")
+        let revision = projectDetail.text("projectRevision")
+        guard !id.isEmpty, !revision.isEmpty, projectDetail.text("projectId") == id,
+              id == expectedID, revision == expectedRevision, action == projectLifecycleAction else {
+            projectLifecycleError = label("task.updateFailed")
+            return
+        }
+        busy = true
+        projectLifecycleError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    "projectId": id, "projectRevision": revision, "action": action])
+            projectLifecycleRequest = request
+            let result = try await query("projectLifecycleWrite", [request])
+            try await acknowledgeProjectLifecycle(result)
+        } catch {
+            if isDefiniteRejection(error) { projectLifecycleRequest = nil }
+            retryNeeded = projectLifecycleRequest != nil
+            projectLifecycleError = error.localizedDescription
+            if retryNeeded { self.error = error.localizedDescription }
+        }
+    }
+
+    private func acknowledgeProjectLifecycle(_ result: CoreObject) async throws {
+        guard let request = projectLifecycleRequest else { throw CocoaError(.coderReadCorrupt) }
+        let input = try decode(request)
+        guard
+              Set(result.keys) == Set(["id", "status"]),
+              result.text("id") == input.text("projectId"),
+              projectHeader.text("id") == result.text("id"),
+              (input.text("action") == "complete" && result.text("status") == "archived"
+                || input.text("action") == "reactivate" && result.text("status") == "active") else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        projectLifecycleRequest = nil
+        retryNeeded = false
+        projectLifecycleError = nil
+        error = nil
+        projectHeader["status"] = result.text("status")
+        _ = await readProjectDetail()
     }
 
     func duplicateProject(expectedID: String, expectedRevision: String) async {
@@ -13243,6 +13306,7 @@ final class CoreModel: ObservableObject {
                 let resolved = filterView.object("state")
                 guard next.text("projectId") == id, !next.text("revision").isEmpty,
                       !next.text("mutationRevision").isEmpty, !next.text("projectRevision").isEmpty,
+                      (next["readOnly"] as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() }) == true,
                       next.number("total") >= 0,
                       !filterView.isEmpty, !resolved.isEmpty,
                       next["chips"] is [CoreObject], !next.text("filterButtonLabel").isEmpty,
@@ -17300,6 +17364,13 @@ final class CoreModel: ObservableObject {
                 try await acknowledgeProjectDuplicate(result)
                 return
             }
+            if let request = projectLifecycleRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectLifecycleRetryOutcome", [request]) }
+                try await acknowledgeProjectLifecycle(result)
+                return
+            }
             if taskDeleteRequest != nil {
                 if let acknowledgment {
                     try await acknowledgeTaskDelete(try decode(acknowledgment))
@@ -18105,6 +18176,10 @@ final class CoreModel: ObservableObject {
                 }
                 if projectDeleteRequest != nil { projectDeleteRequest = nil }
                 if projectDuplicateRequest != nil { projectDuplicateRequest = nil }
+                if projectLifecycleRequest != nil {
+                    projectLifecycleRequest = nil
+                    projectLifecycleError = error.localizedDescription
+                }
                 if taskDeleteRequest != nil {
                     taskDeleteRequest = nil
                     taskRecoverySaving = false
