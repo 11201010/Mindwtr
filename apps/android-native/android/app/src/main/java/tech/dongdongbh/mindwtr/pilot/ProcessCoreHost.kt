@@ -260,6 +260,8 @@ internal object ProcessCoreHost {
     /** The reminder alarms' start, and what a resume does (ReminderStart): plan again, or start again after a failed start. */
     private val reminders = ReminderStart<CoreHost>(start = { it.remindersStart() }, cycle = { it.remindersCycle("cycle") })
     @Volatile private var askedNotifications = false
+    /** Done once the reminder alarms started (with sync, after the first screen's content): the permission question waits for it. */
+    val remindersStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
 
     /**
      * Started where sync starts, after the validated load, the journal replay and the queue drain: RN's old alarms are cancelled
@@ -267,7 +269,10 @@ internal object ProcessCoreHost {
      */
     private fun startReminders(runtime: CoreHost) {
         runCatching { reminders.start(runtime) }
-            .onSuccess { now -> if (now) logRemindersStarted() }
+            .onSuccess { now ->
+                if (now) logRemindersStarted()
+                remindersStarted.complete(Unit)
+            }
             .onFailure { Log.w(CoreHost.TAG, "Native Android reminders start failed", it) }
     }
 
@@ -292,7 +297,9 @@ internal object ProcessCoreHost {
         // RN plans the reminder alarms again on every resume (its start runs one more cycle), so a permission that changed counts;
         // a start that failed starts again.
         if (state == "active") syncThread.execute {
-            runCatching { reminders.resume() }.onFailure { Log.w(CoreHost.TAG, "Native Android reminders cycle failed", it) }
+            runCatching { reminders.resume() }
+                .onSuccess { if (reminders.reply != null) remindersStarted.complete(Unit) }
+                .onFailure { Log.w(CoreHost.TAG, "Native Android reminders cycle failed", it) }
         }
         if (state == appState) return
         appState = state

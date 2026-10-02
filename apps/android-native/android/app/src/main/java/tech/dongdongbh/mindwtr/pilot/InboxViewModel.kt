@@ -292,8 +292,14 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         ProcessCoreHost.appState(state)
     }
 
-    /** Whether to ask for the notification permission now, as RN asks at start (once per process; ProcessCoreHost.askNotifications). */
-    fun askNotifications() = ProcessCoreHost.askNotifications()
+    /**
+     * Whether to ask for the notification permission now, as RN asks at start (once per process; ProcessCoreHost.askNotifications),
+     * once the reminder alarms started: they start with sync, after the first screen's content.
+     */
+    suspend fun askNotifications(): Boolean {
+        ProcessCoreHost.remindersStarted.await()
+        return ProcessCoreHost.askNotifications()
+    }
 
     override fun onCleared() {
         ProcessCoreHost.unlistenSync(syncListener)

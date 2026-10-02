@@ -1117,10 +1117,11 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // drain (ProcessCoreHost.recovered), or once the owed journal retry went through; nothing else starts them.
     assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/syncStart\(/g).length, 1, 'one start of the triggers, in startSync');
-    assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 2, 'startSync only in recovered, after the drain (at once, or held for the first screen\'s content)');
+    assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 1, 'startSync only in recovered, after the drain (at once, or held for the first screen\'s content)');
     // Startup follow-up: the boot's start is held until the first screen shows its content: the Inbox's first rows (contentShown),
     // another tab's boot read, or a 3 s fallback; CoreWork's and the owed retry's start at once. One start at a time.
-    assert.match(owner, /startSync = \{ if \(deferSync\) deferredSync\.set \{ startSync\(app, runtime\) \} else startSync\(app, runtime\) \},/);
+    // The reminder alarms start with sync (pass R1), held with it.
+    assert.match(owner, /startSync = \{\s+val start = \{\s+startSync\(app, runtime\)\s+startReminders\(runtime\)\s+\}\s+if \(deferSync\) deferredSync\.set\(start\) else start\(\)\s+\},/);
     assert.match(owner, /fun startDeferredSync\(\) \{\s+deferredSync\.getAndSet\(null\)\?\.let \{ start -> syncThread\.execute \{ start\(\) \} \}\s+\}/);
     assert.match(owner, /fun contentShown\(\) \{\s+startDeferredSync\(\)/);
     assert.match(owner, /private fun startSync\(app: Application, runtime: CoreHost\): Unit = synchronized\(syncLock\) \{\s+if \(syncHost != null\) return/);
@@ -4058,6 +4059,9 @@ console.log('Entry points: RN\'s alias, links on the build\'s scheme, text share
     assert.match(remindersKt, /override fun clearDelivered\(\) \{\s+for \(shown in notifications\.activeNotifications\) \{\s+if \(NotificationCompat\.getChannelId\(shown\.notification\) == CoreNotifications\.REMINDER_CHANNEL\)/);
     assert.doesNotMatch(code(remindersKt + notificationsKt), /cancelAll\(\)/, 'nothing clears the whole tray');
     assert.equal([...code(remindersKt).matchAll(/\), done = dismiss\)/g)].length, 2, 'Done and Snooze dismiss once stored');
+    // RN's start-time permission question waits for the reminder alarms' start (they start with sync, after first content).
+    assert.match(source('InboxViewModel.kt'), /suspend fun askNotifications\(\): Boolean \{\s+ProcessCoreHost\.remindersStarted\.await\(\)/);
+    assert.equal([...source('ProcessCoreHost.kt').matchAll(/remindersStarted\.complete\(Unit\)/g)].length, 2, 'a start, or a resume\'s start after a failed one');
     // The debug-only stops and the short snooze read a debug property (empty in a release build).
     assert.match(remindersKt, /if \(debugProperty\("reminder_stop"\) == point\)/);
     assert.match(remindersKt, /debugProperty\("snooze_minutes"\)\.toDoubleOrNull\(\)/);
