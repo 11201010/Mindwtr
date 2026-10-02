@@ -2751,8 +2751,8 @@ final class CoreModel: ObservableObject {
                 settingsGtdReviewPresented = ["dailyReviewFocusStep", "weeklyReviewContextStep"].contains(recovery.object("result").text("type"))
                 settingsGtdInboxPresented = ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"].contains(recovery.object("result").text("type"))
                 settingsGtdCapturePresented = ["defaultArea", "quickAddAutoClean", "naturalLanguageDates"].contains(recovery.object("result").text("type"))
-                settingsGtdTaskEditorPresented = ["taskEditorSectionOpen", "taskEditorPreset", "taskEditorFieldVisible", "taskEditorFieldSection"].contains(recovery.object("result").text("type"))
-                if recovery.object("result").text("type") == "taskEditorFieldSection" {
+                settingsGtdTaskEditorPresented = ["taskEditorSectionOpen", "taskEditorPreset", "taskEditorFieldVisible", "taskEditorFieldSection", "taskEditorOrder"].contains(recovery.object("result").text("type"))
+                if ["taskEditorFieldSection", "taskEditorOrder"].contains(recovery.object("result").text("type")) {
                     gtdTaskEditorFieldId = recovery.object("result").text("field")
                 }
             } else if ["generalPreferenceCommit", "appLockCommit"].contains(recovery.text("method")) {
@@ -3132,6 +3132,7 @@ final class CoreModel: ObservableObject {
                 }
                 expected["taskEditorFieldVisible"] = fieldExpected
                 expected["taskEditorFieldSection"] = fieldExpected
+                expected["taskEditorOrder"] = fieldExpected
                 let editor = fieldOptions.object("taskEditor")
                 let resetKey = editor.text("expandedResetKey")
                 if gtdTaskEditorExpandedResetKey != resetKey {
@@ -3263,10 +3264,10 @@ final class CoreModel: ObservableObject {
 
     private func acknowledgeGtdWorkflow(_ result: CoreObject) throws {
         let editing = gtdWorkflowEdit.text("type") == "taskEditorSectionOpen"
-        let fieldVisibility = ["taskEditorFieldVisible", "taskEditorFieldSection"].contains(gtdWorkflowEdit.text("type"))
-        guard gtdWorkflowRequest != nil, Set(result.keys) == Set(editing ? ["type", "section", "value", "changed"] : fieldVisibility ? ["type", "field", "value", "changed"] : ["type", "value", "changed"]),
+        let fieldEdit = ["taskEditorFieldVisible", "taskEditorFieldSection", "taskEditorOrder"].contains(gtdWorkflowEdit.text("type"))
+        guard gtdWorkflowRequest != nil, Set(result.keys) == Set(editing ? ["type", "section", "value", "changed"] : fieldEdit ? ["type", "field", "value", "changed"] : ["type", "value", "changed"]),
               !editing || result.text("section") == gtdWorkflowEdit.text("section"),
-              !fieldVisibility || result.text("field") == gtdWorkflowEdit.text("field"),
+              !fieldEdit || result.text("field") == gtdWorkflowEdit.text("field"),
               result.text("type") == gtdWorkflowEdit.text("type"), result["changed"] is Bool,
               try json(["value": result["value"] ?? NSNull()]) == json(["value": gtdWorkflowEdit["value"] ?? NSNull()]) else { throw CocoaError(.coderReadCorrupt) }
         gtdWorkflowRequest = nil

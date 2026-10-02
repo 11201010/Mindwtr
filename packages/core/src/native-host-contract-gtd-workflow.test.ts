@@ -162,7 +162,199 @@ async function plannedSection(env: Awaited<ReturnType<typeof open>>,
         envelope: { request, prepared: plan.value.prepared } };
 }
 
+async function plannedOrder(env: Awaited<ReturnType<typeof open>>, field: 'status' | 'priority' | 'description',
+    direction: 'moveUp' | 'moveDown', requestId = generateUUID()) {
+    const options = await env.host.getGtdTaskEditorFieldOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const row = options.value.taskEditor.groups.flatMap((group) => group.fields)
+        .find((entry) => entry.id === field);
+    const offered = row?.sheet.order[direction].edit;
+    if (!offered || offered.type !== 'taskEditorOrder') throw new Error('Expected an offered shared move');
+    const request: NativeGtdWorkflowRequest = { requestId,
+        edit: { type: 'taskEditorOrder', field, value: offered.value }, expected: options.value.expected };
+    const plan = await env.host.prepareGtdWorkflow(request);
+    if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+    return { options: options.value, request, prepared: plan.value.prepared,
+        envelope: { request, prepared: plan.value.prepared } };
+}
+
 afterEach(async () => { vi.useRealTimers(); await flushPendingSave(); resetForTests(); });
+
+describe('prepared GTD Task Editor field order', () => {
+    it('uses the shared offered within-group move across interleaved slots, retaining tasks and fold defaults', async () => {
+        const start = initial();
+        const interleaved = ['status', 'startTime', ...DEFAULT_TASK_EDITOR_ORDER.filter((id) =>
+            id !== 'status' && id !== 'startTime')] as typeof DEFAULT_TASK_EDITOR_ORDER;
+        start.settings.gtd = { ...start.settings.gtd, taskEditor: {
+            order: interleaved, hidden: [...DEFAULT_TASK_EDITOR_HIDDEN], sections: {}, sectionOpen: { scheduling: true },
+            legacy: 'keep' } as never };
+        const env = await open(start);
+        const first = await env.host.getGtdTaskEditorFieldOptions({});
+        if (!first.ok) throw new Error(JSON.stringify(first));
+        const status = first.value.taskEditor.groups.flatMap((group) => group.fields)
+            .find((row) => row.id === 'status');
+        expect(status?.sheet.order.moveUp).toMatchObject({ disabled: true, edit: null });
+        expect(status?.sheet.order.moveDown).toMatchObject({ disabled: false,
+            edit: { type: 'taskEditorOrder' } });
+        expect(status?.sheet.order.moveDown.edit?.value).toEqual([
+            'project', 'startTime', 'status', ...interleaved.slice(3)]);
+        const planned = await plannedOrder(env, 'status', 'moveDown');
+        expect(new TextEncoder().encode(JSON.stringify(first.value)).length).toBeLessThanOrEqual(65_536);
+        expect(new TextEncoder().encode(JSON.stringify(planned.envelope)).length).toBeLessThanOrEqual(8192);
+        expect(planned.prepared.result).toEqual({ type: 'taskEditorOrder', field: 'status',
+            value: planned.request.edit.value, changed: true });
+        expect(planned.prepared.after.selected?.order.value).toEqual(planned.request.edit.value);
+        expect(env.host.validatePreparedGtdWorkflow(planned.envelope)).toEqual({ ok: true,
+            value: planned.prepared.result });
+        expect(await env.host.commitPreparedGtdWorkflow(planned.envelope)).toEqual({ ok: true,
+            value: planned.prepared.result });
+        expect(env.data().settings.gtd?.taskEditor?.order).toEqual(planned.request.edit.value);
+        expect(env.data().settings.gtd?.taskEditor?.sections).toEqual({});
+        expect(env.data().settings.gtd?.taskEditor?.sectionOpen).toEqual({ scheduling: true });
+        expect(env.data().settings.gtd?.taskEditor?.legacy).toBe('keep');
+        expect(env.data().tasks).toEqual(start.tasks);
+        const next = await env.host.getGtdTaskEditorFieldOptions({});
+        if (!next.ok) throw new Error(JSON.stringify(next));
+        expect(next.value.taskEditor.expandedResetKey).toBe(first.value.taskEditor.expandedResetKey);
+        expect(next.value.taskEditor.groups.flatMap((group) => group.fields)
+            .find((row) => row.id === 'status')?.sheet.order.moveUp.disabled).toBe(false);
+    });
+
+    it('materializes a partial legacy order while keeping hidden feature-off fields orderable', async () => {
+        const start = initial(); start.settings.features = { priorities: false, timeEstimates: false };
+        start.settings.gtd = { ...start.settings.gtd, taskEditor: {
+            order: ['status', 'project', 'priority'], hidden: [...DEFAULT_TASK_EDITOR_HIDDEN] } };
+        const env = await open(start);
+        const planned = await plannedOrder(env, 'priority', 'moveDown');
+        expect(planned.request.edit.value).toHaveLength(DEFAULT_TASK_EDITOR_ORDER.length);
+        expect(new Set(planned.request.edit.value).size).toBe(DEFAULT_TASK_EDITOR_ORDER.length);
+        expect(planned.request.edit.value[2]).toBe('tags');
+        expect(planned.request.edit.value[10]).toBe('priority');
+        expect(await env.host.commitPreparedGtdWorkflow(planned.envelope)).toEqual({ ok: true,
+            value: planned.prepared.result });
+        expect(env.data().settings.gtd?.taskEditor?.order).toEqual(planned.request.edit.value);
+        expect(env.data().settings.features).toEqual(start.settings.features);
+        expect(env.data().settings.gtd?.taskEditor?.hidden).toEqual(start.settings.gtd?.taskEditor?.hidden);
+        expect(env.data().tasks).toEqual(start.tasks);
+    });
+
+    it('keeps the maximal one-group English move projection within existing byte limits', async () => {
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd, taskEditor: {
+            sections: Object.fromEntries(TASK_EDITOR_SECTIONABLE_FIELDS.map((field) => [field, 'basic'])) } as never };
+        const env = await open(start);
+        const planned = await plannedOrder(env, 'status', 'moveDown');
+        expect(planned.options.taskEditor.groups.map((group) => [group.id, group.count]))
+            .toEqual([['basic', DEFAULT_TASK_EDITOR_ORDER.length]]);
+        expect(new TextEncoder().encode(JSON.stringify(planned.options)).length).toBeLessThanOrEqual(65_536);
+        expect(new TextEncoder().encode(JSON.stringify(planned.envelope)).length).toBeLessThanOrEqual(8192);
+        expect(env.saves()).toBe(0);
+    });
+
+    it('rejects boundary, wrong-field, cross-group, malformed, and same-order edits before saving', async () => {
+        const env = await open(initial());
+        const options = await env.host.getGtdTaskEditorFieldOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        const rows = options.value.taskEditor.groups.flatMap((group) => group.fields);
+        const status = rows.find((row) => row.id === 'status');
+        const location = rows.find((row) => row.id === 'location');
+        expect(location?.sheet.order.moveDown).toMatchObject({ disabled: true, edit: null });
+        const down = status?.sheet.order.moveDown.edit;
+        if (!down || down.type !== 'taskEditorOrder') throw new Error('Expected shared Status move');
+        const current = [...DEFAULT_TASK_EDITOR_ORDER];
+        const crossGroup = [...current]; [crossGroup[0], crossGroup[6]] = [crossGroup[6], crossGroup[0]];
+        const duplicate = [...down.value]; duplicate[1] = duplicate[0];
+        for (const edit of [
+            { type: 'taskEditorOrder', field: 'status', value: current },
+            { type: 'taskEditorOrder', field: 'description', value: down.value },
+            { type: 'taskEditorOrder', field: 'status', value: crossGroup },
+            { type: 'taskEditorOrder', field: 'status', value: duplicate },
+            { type: 'taskEditorOrder', field: 'status', value: down.value.slice(1) },
+            { type: 'taskEditorOrder', field: 'status', value: [...down.value, 'status'] },
+            { type: 'taskEditorOrder', field: 'status', value: [...down.value.slice(0, -1), 'unknown'] },
+            { type: 'taskEditorOrder', field: 'textDirection', value: down.value },
+            { type: 'taskEditorOrder', field: 'status', value: down.value, direction: 'down' },
+        ]) expect(await env.host.prepareGtdWorkflow({ requestId: generateUUID(), edit,
+            expected: options.value.expected })).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        expect(env.saves()).toBe(0);
+    });
+
+    it('recomputes a field\'s offered boundaries after a shared section reassignment', async () => {
+        const env = await open(initial());
+        const before = await env.host.getGtdTaskEditorFieldOptions({});
+        if (!before.ok) throw new Error(JSON.stringify(before));
+        const descriptionBefore = before.value.taskEditor.groups.flatMap((group) => group.fields)
+            .find((row) => row.id === 'description');
+        expect(descriptionBefore?.sheet.order.moveUp).toMatchObject({ disabled: true, edit: null });
+        expect(descriptionBefore?.sheet.order.moveDown.disabled).toBe(false);
+        const section = await plannedSection(env, 'description', 'scheduling');
+        expect(await env.host.commitPreparedGtdWorkflow(section.envelope)).toEqual({ ok: true,
+            value: section.prepared.result });
+        const after = await env.host.getGtdTaskEditorFieldOptions({});
+        if (!after.ok) throw new Error(JSON.stringify(after));
+        const descriptionAfter = after.value.taskEditor.groups.flatMap((group) => group.fields)
+            .find((row) => row.id === 'description');
+        expect(descriptionAfter?.sheet.order.moveUp.disabled).toBe(false);
+        expect(descriptionAfter?.sheet.order.moveDown).toMatchObject({ disabled: true, edit: null });
+        expect(after.value.taskEditor.expandedResetKey).toBe(before.value.taskEditor.expandedResetKey);
+    });
+
+    it('rejects forged frozen results and receipts, plus stale layout, feature, and stamp witnesses', async () => {
+        const env = await open(initial());
+        const { envelope } = await plannedOrder(env, 'status', 'moveDown');
+        for (const mutate of [
+            (copy: typeof envelope) => { copy.prepared.after.value = [...DEFAULT_TASK_EDITOR_ORDER]; },
+            (copy: typeof envelope) => { copy.prepared.after.selected!.order.value = [...DEFAULT_TASK_EDITOR_ORDER]; },
+            (copy: typeof envelope) => { copy.prepared.result.field = 'description'; },
+            (copy: typeof envelope) => { copy.prepared.result.value = [...DEFAULT_TASK_EDITOR_ORDER]; },
+            (copy: typeof envelope) => { copy.prepared.request.edit.field = 'description'; },
+        ]) {
+            const forged = structuredClone(envelope); mutate(forged);
+            expect(env.host.validatePreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+            expect(await env.host.commitPreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        }
+        expect(env.saves()).toBe(0);
+        for (const change of [
+            (data: AppData) => ({ ...data, settings: { ...data.settings, gtd: { ...data.settings.gtd,
+                taskEditor: { ...data.settings.gtd?.taskEditor, order: [...DEFAULT_TASK_EDITOR_ORDER].reverse() } } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings, gtd: { ...data.settings.gtd,
+                taskEditor: { ...data.settings.gtd?.taskEditor, hidden: ['description'] } } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings, gtd: { ...data.settings.gtd,
+                taskEditor: { ...data.settings.gtd?.taskEditor, sections: { description: 'basic' as const } } } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings, gtd: { ...data.settings.gtd,
+                taskEditor: { ...data.settings.gtd?.taskEditor, sectionOpen: { details: true } } } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                features: { ...data.settings.features, priorities: true } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                    gtd: '2026-09-02T00:00:00.000Z' } } }),
+        ]) {
+            const other = await open(initial());
+            const planned = await plannedOrder(other, 'status', 'moveDown');
+            other.changeSaved(change);
+            expect(await other.host.commitPreparedGtdWorkflow(planned.envelope)).toMatchObject({ ok: false,
+                error: { code: 'STALE_REVISION' } });
+            expect(other.saves()).toBe(0);
+        }
+    });
+
+    it('cold-replays one exact order receipt while preserving later unrelated task and settings changes', async () => {
+        const env = await open(initial());
+        const { envelope, prepared } = await plannedOrder(env, 'status', 'moveDown');
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        env.changeSaved((data) => ({ ...data, tasks: data.tasks.map((task) => ({ ...task, title: 'later edit' })),
+            settings: { ...data.settings, language: 'ko', gtd: { ...data.settings.gtd,
+                legacySibling: { marker: 145 } } } }));
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+        expect(cold.data().tasks[0].title).toBe('later edit');
+        expect(cold.data().settings.language).toBe('ko');
+        expect(cold.data().settings.gtd?.legacySibling).toEqual({ marker: 145 });
+    });
+});
 
 describe('GTD Task Editor field-options RN expansion metadata', () => {
     it('projects default and saved fold states, raw reset keys, and visible group counts without saving', async () => {
