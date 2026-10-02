@@ -107,7 +107,7 @@ export type GtdWorkflowCaptureParseType = 'quickAddAutoClean' | 'naturalLanguage
 export type GtdWorkflowTaskEditorSection = 'scheduling' | 'organization' | 'details';
 export type GtdWorkflowType = GtdWorkflowDirectType | GtdWorkflowReviewType | GtdWorkflowInboxType
     | GtdWorkflowCaptureParseType | 'defaultArea' | 'taskEditorSectionOpen' | 'taskEditorPreset'
-    | 'taskEditorFieldVisible' | 'taskEditorFieldSection' | 'taskEditorOrder';
+    | 'taskEditorFieldVisible' | 'taskEditorFieldSection' | 'taskEditorOrder' | 'taskEditorReset';
 export type GtdWorkflowDirectWitness = { present: boolean; value: string | number | boolean | null;
     stampPresent: boolean; stamp: string | null };
 export type GtdWorkflowCaptureParseWitness = { present: boolean; value: boolean | null;
@@ -208,6 +208,7 @@ export function gtdWorkflowWitness(settings: AppSettings, type: 'taskEditorPrese
 export function gtdWorkflowWitness(settings: AppSettings, type: 'taskEditorFieldVisible'): GtdWorkflowPresetWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: 'taskEditorFieldSection'): GtdWorkflowPresetWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: 'taskEditorOrder'): GtdWorkflowPresetWitness | null;
+export function gtdWorkflowWitness(settings: AppSettings, type: 'taskEditorReset'): GtdWorkflowPresetWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType, section?: GtdWorkflowTaskEditorSection): GtdWorkflowWitness | null;
 export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType, section?: GtdWorkflowTaskEditorSection): GtdWorkflowWitness | null {
     const group = settings.gtd;
@@ -254,7 +255,7 @@ export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType,
             stampPresent, stamp: stampPresent ? stamp! : null };
     }
     if (type === 'taskEditorPreset' || type === 'taskEditorFieldVisible' || type === 'taskEditorFieldSection'
-        || type === 'taskEditorOrder') {
+        || type === 'taskEditorOrder' || type === 'taskEditorReset') {
         const taskEditorPresent = group !== undefined && owns(group, 'taskEditor') && group.taskEditor !== undefined;
         const taskEditor = taskEditorPresent ? group?.taskEditor : undefined;
         if (taskEditorPresent && !plain(taskEditor)) return null;
@@ -1032,6 +1033,7 @@ export const createSettingsActions = ({
                     gtdWorkflowTaskEditorSelected(current as GtdWorkflowTaskEditorWitness), input.after.selected)
                 : edit.type === 'taskEditorPreset' || edit.type === 'taskEditorFieldVisible'
                     || edit.type === 'taskEditorFieldSection' || edit.type === 'taskEditorOrder'
+                    || edit.type === 'taskEditorReset'
                 ? !!input.after.selected && taskEditValuesEqual(
                     gtdWorkflowPresetSelected(current as GtdWorkflowPresetWitness), input.after.selected)
                 : edit.type === 'defaultArea'
@@ -1069,6 +1071,7 @@ export const createSettingsActions = ({
                     gtdWorkflowTaskEditorSelected(fresh as GtdWorkflowTaskEditorWitness), input.after.selected)
                 : edit.type === 'taskEditorPreset' || edit.type === 'taskEditorFieldVisible'
                     || edit.type === 'taskEditorFieldSection' || edit.type === 'taskEditorOrder'
+                    || edit.type === 'taskEditorReset'
                 ? !!input.after.selected && taskEditValuesEqual(
                     gtdWorkflowPresetSelected(fresh as GtdWorkflowPresetWitness), input.after.selected)
                 : edit.type === 'defaultArea'

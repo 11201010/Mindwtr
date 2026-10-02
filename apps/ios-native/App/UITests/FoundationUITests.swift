@@ -15704,6 +15704,73 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task146VerifyReset(_ app: XCUIApplication) {
+        task144Defaults(app)
+        task144Group(app, "basic", expanded: false)
+        task144Group(app, "organization", expanded: true)
+        for field in ["priority", "timeEstimate"] {
+            let eye = app.buttons["gtd-taskEditorFieldVisible-" + field]
+            revealPagedElement(app, eye, in: app.scrollViews["gtd-taskEditor-scroll"]); XCTAssertFalse(eye.isSelected)
+        }
+        task145OpenField(app, "description", group: "details")
+        XCTAssertEqual(app.staticTexts["gtd-field-current-section"].label, "Details")
+        let visible = app.switches["gtd-taskEditorFieldVisible"]
+        revealPagedElement(app, visible, in: app.scrollViews["gtd-field-scroll"]); XCTAssertEqual(visible.value as? String, "1")
+        let down = app.buttons["gtd-field-moveDown"]
+        revealPagedElement(app, down, in: app.scrollViews["gtd-field-scroll"]); XCTAssertFalse(app.buttons["gtd-field-moveUp"].isEnabled)
+        boardTap(app, "gtd-field-done")
+    }
+
+    private func task146Reset(_ app: XCUIApplication) {
+        let reset = app.buttons["gtd-taskEditorReset"]
+        revealPagedElement(app, reset, in: app.scrollViews["gtd-taskEditor-scroll"]); boardEnabled(reset); reset.tap()
+        let basic = app.buttons["gtd-editor-group-basic"]
+        expectation(for: NSPredicate(format: "value == 'Collapse' AND enabled == true"), evaluatedWith: basic)
+        waitForExpectations(timeout: 30)
+        boardEnabled(reset)
+    }
+
+    private func task146Normal(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task144Open(app)
+        for group in ["basic", "scheduling", "organization", "details"] { task144Group(app, group, expanded: false) }
+        task146Reset(app); task146VerifyReset(app)
+        let reset = app.buttons["gtd-taskEditorReset"]
+        revealPagedElement(app, reset, in: app.scrollViews["gtd-taskEditor-scroll"]); boardEnabled(reset); reset.tap(); boardEnabled(reset)
+        XCTAssertEqual(app.buttons["gtd-editor-group-basic"].value as? String, "Expand")
+        XCTAssertEqual(app.buttons["gtd-editor-group-details"].value as? String, "Collapse")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "RN Task Editor Reset"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task144Open(app); task146VerifyReset(app); app.terminate()
+    }
+
+    func testGtdTaskEditorResetNormal() { task146Normal("4d5f188d-b0cb-4085-a856-f2f3b1be7879") }
+    func testGtdTaskEditorResetLargest() { task146Normal("b91816bf-6598-41a3-8dde-cc65df81fffc") }
+
+    func testGtdTaskEditorResetFailedSaveExactRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "5f5189c3-0e5b-4561-a6c0-07d13f6da240"]
+        app.launch(); task144Open(app)
+        for group in ["basic", "scheduling", "organization", "details"] { task144Group(app, group, expanded: false) }
+        let reset = app.buttons["gtd-taskEditorReset"]
+        revealPagedElement(app, reset, in: app.scrollViews["gtd-taskEditor-scroll"]); reset.tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-taskEditor-back"].isEnabled); XCTAssertFalse(reset.isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-taskEditor-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-retry"], timeout: 30); app.terminate()
+    }
+
+    func testGtdTaskEditorResetColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "5f5189c3-0e5b-4561-a6c0-07d13f6da240"]
+        app.launch(); boardEnabled(app.buttons["gtd-taskEditor-back"], timeout: 30)
+        XCTAssertFalse(app.buttons["gtd-field-done"].exists); XCTAssertFalse(app.buttons["gtd-retry"].exists)
+        task146VerifyReset(app)
+        app.terminate(); app.launch(); task144Open(app); task146VerifyReset(app); app.terminate()
+    }
+
     private func task145Move(_ app: XCUIApplication, _ direction: String) {
         let button = app.buttons["gtd-field-" + direction]
         revealPagedElement(app, button, in: app.scrollViews["gtd-field-scroll"]); boardEnabled(button); button.tap()

@@ -139,6 +139,17 @@ async function plannedPreset(env: Awaited<ReturnType<typeof open>>, value: 'simp
         envelope: { request, prepared: plan.value.prepared } };
 }
 
+async function plannedReset(env: Awaited<ReturnType<typeof open>>, requestId = generateUUID()) {
+    const options = await env.host.getGtdTaskEditorPresetOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId, edit: { type: 'taskEditorReset' },
+        expected: options.value.expected };
+    const plan = await env.host.prepareGtdWorkflow(request);
+    if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+    return { options: options.value, request, prepared: plan.value.prepared,
+        envelope: { request, prepared: plan.value.prepared } };
+}
+
 async function plannedField(env: Awaited<ReturnType<typeof open>>, field: 'description' | 'priority', value: boolean) {
     const options = await env.host.getGtdTaskEditorFieldOptions({});
     if (!options.ok) throw new Error(JSON.stringify(options));
@@ -815,6 +826,146 @@ describe('prepared GTD Task Editor presets', () => {
             edit: { type: 'taskEditorPreset', value: 'standard' }, expected: options.value.expected })).toMatchObject({ ok: true,
             value: { kind: 'noop', result: { changed: false } } });
         expect(env.saves()).toBe(1);
+    });
+});
+
+describe('prepared GTD Task Editor reset', () => {
+    it('uses shared reset to restore full defaults and feature flags while retaining unknown siblings', async () => {
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd,
+            taskEditor: { order: ['description', 'status'], hidden: ['status'],
+                sections: { description: 'basic' }, sectionOpen: { details: true },
+                defaultsVersion: 5, presentation: 'modal' } as never };
+        start.settings.features = { priorities: true, timeEstimates: true, legacy: 'keep' } as never;
+        const env = await open(start);
+        const before = await env.host.getGtdTaskEditorFieldOptions({});
+        if (!before.ok) throw new Error(JSON.stringify(before));
+        expect(before.value.taskEditor.expandedResetKey).toBe('[null,null,true]');
+        const { options, envelope, prepared } = await plannedReset(env);
+        expect(new TextEncoder().encode(JSON.stringify(options)).length).toBeLessThanOrEqual(65_536);
+        expect(new TextEncoder().encode(JSON.stringify(envelope)).length).toBeLessThanOrEqual(8192);
+        expect(options.taskEditor.reset.edit).toEqual({ type: 'taskEditorReset' });
+        expect(options.taskEditor.reset.label).toEqual(expect.any(String));
+        expect(prepared.result).toEqual({ type: 'taskEditorReset', changed: true });
+        expect(Object.keys(prepared.after).sort()).toEqual(['selected', 'stamp']);
+        expect(prepared.after.selected).toMatchObject({ order: { present: true, value: DEFAULT_TASK_EDITOR_ORDER },
+            hidden: { present: true, value: DEFAULT_TASK_EDITOR_HIDDEN },
+            sections: { present: true, value: {} }, sectionOpen: { present: true, value: {} },
+            priorities: { present: true, value: false }, timeEstimates: { present: true, value: false } });
+        expect(env.host.validatePreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(env.data().settings.gtd?.taskEditor).toMatchObject({
+            order: DEFAULT_TASK_EDITOR_ORDER, hidden: DEFAULT_TASK_EDITOR_HIDDEN,
+            sections: {}, sectionOpen: {}, defaultsVersion: 5, presentation: 'modal' });
+        expect(env.data().settings.features).toEqual({ priorities: false, timeEstimates: false, legacy: 'keep' });
+        expect(env.data().settings.gtd?.legacySibling).toEqual(start.settings.gtd?.legacySibling);
+        expect(env.data().tasks).toEqual(start.tasks);
+        const after = await env.host.getGtdTaskEditorFieldOptions({});
+        if (!after.ok) throw new Error(JSON.stringify(after));
+        expect(after.value.taskEditor.expandedResetKey).toBe('[null,null,null]');
+    });
+
+    it('materializes absent raw defaults once, stamps GTD, then returns a type-only no-op without saving', async () => {
+        const env = await open(initial());
+        const first = await plannedReset(env);
+        expect(first.options.expected).toMatchObject({ taskEditorPresent: false, featuresPresent: false,
+            order: { present: false, value: null }, hidden: { present: false, value: null },
+            sections: { present: false, value: null }, sectionOpen: { present: false, value: null },
+            priorities: { present: false, value: null }, timeEstimates: { present: false, value: null } });
+        expect(await env.host.commitPreparedGtdWorkflow(first.envelope)).toEqual({ ok: true,
+            value: first.prepared.result });
+        expect(env.data().settings.gtd?.taskEditor).toMatchObject({
+            order: DEFAULT_TASK_EDITOR_ORDER, hidden: DEFAULT_TASK_EDITOR_HIDDEN,
+            sections: {}, sectionOpen: {} });
+        expect(env.data().settings.features).toEqual({ priorities: false, timeEstimates: false });
+        expect(env.data().settings.syncPreferencesUpdatedAt?.gtd).toBe(first.prepared.after.stamp);
+        expect(env.saves()).toBe(1);
+        const options = await env.host.getGtdTaskEditorPresetOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        expect(await env.host.prepareGtdWorkflow({ requestId: generateUUID(),
+            edit: { type: 'taskEditorReset' }, expected: options.value.expected })).toEqual({ ok: true,
+                value: { kind: 'noop', result: { type: 'taskEditorReset', changed: false } } });
+        expect(env.saves()).toBe(1);
+    });
+
+    it('refuses shaped extras, forged frozen reset receipts, and stale raw layout/features/stamp', async () => {
+        const env = await open(initial());
+        const options = await env.host.getGtdTaskEditorPresetOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        for (const edit of [
+            { type: 'taskEditorReset', value: null },
+            { type: 'taskEditorReset', value: 'standard' },
+            { type: 'taskEditorReset', field: 'description' },
+            { type: 'taskEditorReset', extra: true },
+        ]) expect(await env.host.prepareGtdWorkflow({ requestId: generateUUID(), edit,
+            expected: options.value.expected })).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        const { envelope } = await plannedReset(env);
+        for (const mutate of [
+            (copy: typeof envelope) => { copy.prepared.after.value = 'fabricated'; },
+            (copy: typeof envelope) => { copy.prepared.after.selected!.order.present = false; },
+            (copy: typeof envelope) => { copy.prepared.after.selected!.hidden.value = ['description']; },
+            (copy: typeof envelope) => { copy.prepared.after.selected!.sections.value = { description: 'basic' }; },
+            (copy: typeof envelope) => { copy.prepared.after.selected!.sectionOpen.value = { details: true }; },
+            (copy: typeof envelope) => { copy.prepared.after.selected!.priorities.value = true; },
+            (copy: typeof envelope) => { copy.prepared.after.selected!.timeEstimates.value = true; },
+            (copy: typeof envelope) => { copy.prepared.after.stamp = '2026-09-03T00:00:00.000Z'; },
+            (copy: typeof envelope) => { copy.prepared.result.changed = false; },
+            (copy: typeof envelope) => { (copy.prepared.result as never).value = null; },
+            (copy: typeof envelope) => { (copy.request.edit as never).value = null; },
+        ]) {
+            const forged = structuredClone(envelope); mutate(forged);
+            expect(env.host.validatePreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+            expect(await env.host.commitPreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        }
+        expect(env.saves()).toBe(0);
+
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd, taskEditor: {
+            order: ['description'], hidden: ['tags'], sections: { description: 'basic' },
+            sectionOpen: { details: true } } };
+        start.settings.features = { priorities: true, timeEstimates: true };
+        for (const change of [
+            (data: AppData) => ({ ...data, settings: { ...data.settings, gtd: { ...data.settings.gtd,
+                taskEditor: { ...data.settings.gtd?.taskEditor, order: ['status'] } } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings, gtd: { ...data.settings.gtd,
+                taskEditor: { ...data.settings.gtd?.taskEditor, hidden: ['description'] } } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings, gtd: { ...data.settings.gtd,
+                taskEditor: { ...data.settings.gtd?.taskEditor, sections: {} } } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings, gtd: { ...data.settings.gtd,
+                taskEditor: { ...data.settings.gtd?.taskEditor, sectionOpen: {} } } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                features: { ...data.settings.features, priorities: false } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                features: { ...data.settings.features, timeEstimates: false } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                    gtd: '2026-09-02T00:00:00.000Z' } } }),
+        ]) {
+            const other = await open(start);
+            const planned = await plannedReset(other);
+            other.changeSaved(change);
+            expect(await other.host.commitPreparedGtdWorkflow(planned.envelope)).toMatchObject({ ok: false,
+                error: { code: 'STALE_REVISION' } });
+            expect(other.saves()).toBe(0);
+        }
+    });
+
+    it('cold-replays only its own reset receipt and retains later unrelated settings and task edits', async () => {
+        const env = await open(initial());
+        const { envelope, prepared } = await plannedReset(env);
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: prepared.result });
+        env.changeSaved((data) => ({ ...data, tasks: data.tasks.map((task) => ({ ...task, title: 'later edit' })),
+            settings: { ...data.settings, language: 'ko', gtd: { ...data.settings.gtd,
+                legacySibling: { marker: 146 } } } }));
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: prepared.result });
+        expect(cold.saves()).toBe(0);
+        expect(cold.data().tasks[0].title).toBe('later edit');
+        expect(cold.data().settings.language).toBe('ko');
+        expect(cold.data().settings.gtd?.legacySibling).toEqual({ marker: 146 });
     });
 });
 

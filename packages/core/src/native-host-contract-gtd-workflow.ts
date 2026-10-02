@@ -28,22 +28,24 @@ import type { AppData, AppSettings, Area, TaskEditorFieldId, TaskEditorSectionId
 export type { GtdWorkflowType, GtdWorkflowWitness } from './store-settings';
 export type GtdWorkflowEdit = Extract<GtdSettingsEdit,
     { type: GtdWorkflowDirectType | 'defaultArea' | 'taskEditorSectionOpen'
-        | 'taskEditorPreset' | 'taskEditorFieldVisible' | 'taskEditorFieldSection' }>
+        | 'taskEditorPreset' | 'taskEditorFieldVisible' | 'taskEditorFieldSection' | 'taskEditorReset' }>
     | { type: 'taskEditorOrder'; field: TaskEditorFieldId; value: TaskEditorFieldId[] }
     | { type: 'focusIncludeStartDates'; value: boolean }
     | { type: GtdWorkflowReviewType | GtdWorkflowInboxType | GtdWorkflowCaptureParseType; value: boolean };
 export type NativeGtdWorkflowRequest = { requestId: string; edit: GtdWorkflowEdit;
     expected: GtdWorkflowWitness };
 export type NativeGtdWorkflowResult = { type: Exclude<GtdWorkflowType,
-    'taskEditorSectionOpen' | 'taskEditorFieldVisible' | 'taskEditorFieldSection' | 'taskEditorOrder'>;
+    'taskEditorSectionOpen' | 'taskEditorFieldVisible' | 'taskEditorFieldSection' | 'taskEditorOrder'
+        | 'taskEditorReset'>;
     value: string | number | boolean; changed: boolean }
     | { type: 'taskEditorSectionOpen'; section: GtdWorkflowTaskEditorSection; value: boolean; changed: boolean }
     | { type: 'taskEditorFieldVisible'; field: TaskEditorFieldId; value: boolean; changed: boolean }
     | { type: 'taskEditorFieldSection'; field: TaskEditorFieldId; value: TaskEditorSectionId; changed: boolean }
-    | { type: 'taskEditorOrder'; field: TaskEditorFieldId; value: TaskEditorFieldId[]; changed: boolean };
+    | { type: 'taskEditorOrder'; field: TaskEditorFieldId; value: TaskEditorFieldId[]; changed: boolean }
+    | { type: 'taskEditorReset'; changed: boolean };
 export type NativePreparedGtdWorkflow = { version: 1; request: NativeGtdWorkflowRequest;
     preparedAt: string; deviceIdBefore: string | null; deviceIdToInitialize: string | null;
-    after: { value: string | number | boolean | TaskEditorFieldId[]; stamp: string;
+    after: { value?: string | number | boolean | TaskEditorFieldId[]; stamp: string;
         selected?: GtdWorkflowTaskEditorSelected | GtdWorkflowPresetSelected }; result: NativeGtdWorkflowResult;
     targetArea?: GtdWorkflowTargetArea | null; archiveEffects?: GtdArchiveEffect[] };
 export type NativeGtdWorkflowOptions = { hub: GtdSettingsModel['hub'];
@@ -61,7 +63,8 @@ export type NativeGtdTaskEditorOpenOptions = { taskEditor: { title: string; desc
         defaultOpen: NonNullable<GtdSettingsModel['taskEditor']['groups'][number]['defaultOpen']> }[] };
     expected: Record<GtdWorkflowTaskEditorSection, GtdWorkflowTaskEditorWitness> };
 export type NativeGtdTaskEditorPresetOptions = { taskEditor: { title: string; description: string;
-    presets: GtdSettingsModel['taskEditor']['presets'] }; expected: GtdWorkflowPresetWitness };
+    presets: GtdSettingsModel['taskEditor']['presets']; reset: GtdSettingsModel['taskEditor']['reset'] };
+    expected: GtdWorkflowPresetWitness };
 export type NativeGtdTaskEditorFieldOptions = { taskEditor: { title: string; description: string;
     initiallyExpanded: GtdSettingsModel['taskEditor']['initiallyExpanded'];
     expandedResetKey: GtdSettingsModel['taskEditor']['expandedResetKey'];
@@ -98,9 +101,10 @@ const isPreset = (type: GtdWorkflowType): type is 'taskEditorPreset' => type ===
 const isField = (type: GtdWorkflowType): type is 'taskEditorFieldVisible' => type === 'taskEditorFieldVisible';
 const isFieldSection = (type: GtdWorkflowType): type is 'taskEditorFieldSection' => type === 'taskEditorFieldSection';
 const isOrder = (type: GtdWorkflowType): type is 'taskEditorOrder' => type === 'taskEditorOrder';
+const isReset = (type: GtdWorkflowType): type is 'taskEditorReset' => type === 'taskEditorReset';
 const isLayout = (type: GtdWorkflowType): type is 'taskEditorPreset' | 'taskEditorFieldVisible'
-    | 'taskEditorFieldSection' | 'taskEditorOrder' => isPreset(type) || isField(type)
-        || isFieldSection(type) || isOrder(type);
+    | 'taskEditorFieldSection' | 'taskEditorOrder' | 'taskEditorReset' => isPreset(type) || isField(type)
+        || isFieldSection(type) || isOrder(type) || isReset(type);
 const isTaskEditorEdit = (edit: GtdWorkflowEdit): edit is Extract<GtdWorkflowEdit, { type: 'taskEditorSectionOpen' }> =>
     edit.type === 'taskEditorSectionOpen';
 const same = taskEditValuesEqual;
@@ -115,7 +119,8 @@ const fullOrder = (value: unknown): value is TaskEditorFieldId[] => Array.isArra
     && value.every((field) => DEFAULT_TASK_EDITOR_ORDER.includes(field));
 
 const validEdit = (value: unknown): value is GtdWorkflowEdit => {
-    if (!record(value) || !exact(value, value.type === 'taskEditorSectionOpen'
+    if (!record(value) || !exact(value, value.type === 'taskEditorReset' ? ['type']
+        : value.type === 'taskEditorSectionOpen'
         ? ['type', 'section', 'value'] : value.type === 'taskEditorFieldVisible'
             || value.type === 'taskEditorFieldSection' || value.type === 'taskEditorOrder'
         ? ['type', 'field', 'value'] : ['type', 'value'])) return false;
@@ -144,6 +149,7 @@ const validEdit = (value: unknown): value is GtdWorkflowEdit => {
                 && TASK_EDITOR_SECTION_ORDER.includes(value.value as TaskEditorSectionId);
         case 'taskEditorOrder':
             return DEFAULT_TASK_EDITOR_ORDER.includes(value.field as TaskEditorFieldId) && fullOrder(value.value);
+        case 'taskEditorReset': return true;
         case 'dailyReviewFocusStep':
         case 'weeklyReviewContextStep':
         case 'inboxTwoMinute':
@@ -321,6 +327,12 @@ const orderOfferedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitnes
     return !!row && [row.sheet.order.moveUp, row.sheet.order.moveDown]
         .some((move) => !move.disabled && same(move.edit, sharedEdit));
 };
+const resetOfferedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): boolean => {
+    if (edit.type !== 'taskEditorReset') return true;
+    const model = buildGtdSettingsModel({ settings: settingsByWitness(edit, witness), areas: [],
+        taskOpenMode: 'automatic', t: (key) => key });
+    return same(model.taskEditor.reset.edit, edit);
+};
 
 const validArchiveEffects = (request: NativeGtdWorkflowRequest, prepared: Record<string, unknown>): boolean => {
     if (request.edit.type !== 'autoArchiveDays') return prepared.archiveEffects === undefined;
@@ -363,9 +375,10 @@ const readPrepared = (input: unknown): NativePreparedGtdWorkflow | null => {
         || !(prepared.deviceIdBefore === null || bounded(prepared.deviceIdBefore) && Boolean(prepared.deviceIdBefore))
         || (prepared.deviceIdBefore === null ? !UUID.test(String(prepared.deviceIdToInitialize))
             : prepared.deviceIdToInitialize !== null)
-        || !record(prepared.after) || !exact(prepared.after, isTaskEditorEdit(request.edit) || isLayout(request.edit.type)
+        || !record(prepared.after) || !exact(prepared.after, isReset(request.edit.type)
+            ? ['stamp', 'selected'] : isTaskEditorEdit(request.edit) || isLayout(request.edit.type)
             ? ['value', 'stamp', 'selected'] : ['value', 'stamp'])
-        || !same(prepared.after.value, request.edit.value)
+        || request.edit.type !== 'taskEditorReset' && !same(prepared.after.value, request.edit.value)
         || prepared.after.stamp !== plannedStamp(prepared.preparedAt, request.expected)
         || isTaskEditorEdit(request.edit) && (!record(prepared.after.selected)
             || !exact(prepared.after.selected, ['taskEditorPresent', 'sectionOpenPresent', 'present', 'value'])
@@ -374,11 +387,13 @@ const readPrepared = (input: unknown): NativePreparedGtdWorkflow | null => {
             || !exact(prepared.after.selected, ['taskEditorPresent', 'order', 'hidden', 'sections', 'sectionOpen',
                 'featuresPresent', 'priorities', 'timeEstimates'])
             || !same(prepared.after.selected, presetSelectedAfter(request.edit, request.expected)))
-        || !record(prepared.result) || !exact(prepared.result, isTaskEditorEdit(request.edit)
+        || !record(prepared.result) || !exact(prepared.result, isReset(request.edit.type)
+            ? ['type', 'changed'] : isTaskEditorEdit(request.edit)
             ? ['type', 'section', 'value', 'changed'] : isField(request.edit.type) || isFieldSection(request.edit.type)
                 || isOrder(request.edit.type)
             ? ['type', 'field', 'value', 'changed'] : ['type', 'value', 'changed'])
-        || !same(prepared.result, isTaskEditorEdit(request.edit)
+        || !same(prepared.result, request.edit.type === 'taskEditorReset'
+            ? { type: request.edit.type, changed: true } : isTaskEditorEdit(request.edit)
             ? { type: request.edit.type, section: request.edit.section, value: request.edit.value, changed: true }
             : request.edit.type === 'taskEditorFieldVisible' || request.edit.type === 'taskEditorFieldSection'
                 || request.edit.type === 'taskEditorOrder'
@@ -392,6 +407,7 @@ const readPrepared = (input: unknown): NativePreparedGtdWorkflow | null => {
         || !presetOfferedByWitness(request.edit, request.expected)
         || !fieldOfferedByWitness(request.edit, request.expected)
         || !orderOfferedByWitness(request.edit, request.expected)
+        || !resetOfferedByWitness(request.edit, request.expected)
         || !validArchiveEffects(request, prepared)
         || request.edit.type === 'defaultArea' && (request.edit.value === ''
             || request.edit.value === GTD_DEFAULT_AREA_ACTIVE_OPTION
@@ -404,7 +420,8 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
     save: () => Promise<NativeHostResult<null>>; t: () => (key: string) => string }) {
     const saves = createAreaSaveGuard(deps.save);
     const resultFor = (edit: GtdWorkflowEdit, changed: boolean): NativeGtdWorkflowResult =>
-        isTaskEditorEdit(edit) ? { type: edit.type, section: edit.section, value: edit.value, changed }
+        edit.type === 'taskEditorReset' ? { type: edit.type, changed }
+            : isTaskEditorEdit(edit) ? { type: edit.type, section: edit.section, value: edit.value, changed }
             : edit.type === 'taskEditorFieldVisible'
                 ? { type: edit.type, field: edit.field, value: edit.value, changed }
                 : edit.type === 'taskEditorFieldSection'
@@ -473,7 +490,8 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
         const model = buildGtdSettingsModel({ settings: settingsByWitness(
             { type: 'taskEditorPreset', value: 'standard' }, expected), areas: [],
         taskOpenMode: 'automatic', t: deps.t() }).taskEditor;
-        return { title: model.title, description: model.description, presets: model.presets };
+        return { title: model.title, description: model.description, presets: model.presets,
+            reset: model.reset };
     };
     const taskEditorFieldFor = (expected: GtdWorkflowPresetWitness): NativeGtdTaskEditorFieldOptions['taskEditor'] => {
         const model = buildGtdSettingsModel({ settings: settingsByWitness(
@@ -678,6 +696,8 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             }
             if (isOrder(request.edit.type) && !orderOfferedByWitness(request.edit, current))
                 return fail('INVALID_INPUT', 'GTD Task Editor order choice is unavailable');
+            if (isReset(request.edit.type) && !resetOfferedByWitness(request.edit, current))
+                return fail('INVALID_INPUT', 'GTD Task Editor reset choice is unavailable');
             if (isGtdSettingStored(settings, request.edit))
                 return { ok: true, value: { kind: 'noop', result: resultFor(request.edit, false) } };
             if (isReview(request.edit.type)) {
@@ -736,7 +756,8 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             const prepared: NativePreparedGtdWorkflow = { version: 1, request, preparedAt,
                 deviceIdBefore: settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null,
-                after: { value: request.edit.value, stamp: plannedStamp(preparedAt, request.expected),
+                after: { ...(request.edit.type === 'taskEditorReset' ? {} : { value: request.edit.value }),
+                    stamp: plannedStamp(preparedAt, request.expected),
                     ...(selected ? { selected } : {}) },
                 result: resultFor(request.edit, true),
                 ...(request.edit.type === 'defaultArea' ? { targetArea } : {}),

@@ -424,6 +424,15 @@ struct SettingsScreen: View {
                         }
                     }.padding(14).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
                 }
+                let reset = model.gtdTaskEditor.object("reset")
+                if !reset.isEmpty {
+                    Button { Task { await model.chooseGtdWorkflow(reset.object("edit")) } } label: {
+                        Text(reset.text("label")).rnFont(16, .semibold).foregroundStyle(palette.tint)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, minHeight: 48).padding(.horizontal, 12)
+                    }.buttonStyle(.plain).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                        .disabled(!model.gtdWorkflowEnabled).accessibilityIdentifier("gtd-taskEditorReset")
+                }
                 if model.gtdTaskEditorFieldId == nil { gtdFeedback }
             }.padding(16).padding(.bottom, 24)
         }.accessibilityIdentifier("gtd-taskEditor-scroll")
