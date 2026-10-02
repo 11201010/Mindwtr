@@ -234,6 +234,18 @@ export type PreparedProjectDeleteUndo = {
     result: { id: string };
 };
 
+/** One RN-policy Project copy with frozen IDs and full source/order membership. */
+export type PreparedProjectDuplicate = {
+    version: 1;
+    request: { requestId: string; projectId: string; projectRevision: string };
+    scope: { project: Project; sections: Section[]; tasks: Task[];
+        sameAreaProjects: Project[]; area: Area | null };
+    ids: string[];
+    effect: { project: Project; sections: Section[]; tasks: Task[] };
+    deviceIdBefore: string | null; deviceIdToInitialize: string | null; updateAt: string;
+    result: { id: string; message: string };
+};
+
 /** One frozen Project date change and its complete Project receipt. */
 export type PreparedProjectDate = {
     scope: { project: Project };
@@ -667,6 +679,7 @@ export interface TaskStore {
     commitPreparedTrashProjectRestore: (input: PreparedTrashProjectRestore) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDelete: (input: PreparedProjectDelete) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDeleteUndo: (input: PreparedProjectDeleteUndo) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectDuplicate: (input: PreparedProjectDuplicate) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDate: (input: PreparedProjectDate & { request: { projectId: string; field: 'startDate' | 'dueDate' | 'reviewAt'; value: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectArea: (input: PreparedProjectArea & { request: { projectId: string; areaId: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionCreate: (input: PreparedProjectSectionCreate) => Promise<PreparedTaskEditResult>;

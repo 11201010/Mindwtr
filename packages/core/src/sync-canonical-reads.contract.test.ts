@@ -1493,6 +1493,25 @@ describe('canonical local reads contract', () => {
                 expect(useTaskStore.getState()._projectsById.get(id))
                     .toEqual(planned.prepared.effect.project.after);
             },
+            commitPreparedProjectDuplicate: async (control) => {
+                const host = await nativeHost(control);
+                const detail = nativeValue(host.getProjectDetail({ projectId, offset: 0, limit: 50 }));
+                const request = { requestId: 'e271e152-5674-4a6a-a8d9-b8bca8c62152', projectId,
+                    projectRevision: detail.projectRevision };
+                const planned = nativeValue(host.prepareProjectDuplicate(request));
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === planned.prepared.result.id))
+                        .toEqual(planned.prepared.effect.project);
+                    for (const row of planned.prepared.effect.sections) {
+                        expect(written.sections.find((entry) => entry.id === row.id)).toEqual(row);
+                    }
+                    for (const row of planned.prepared.effect.tasks) {
+                        expect(written.tasks.find((entry) => entry.id === row.id)).toEqual(row);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedProjectDuplicate({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+            },
             commitPreparedProjectDelete: async (control) => {
                 const host = await nativeHost(control);
                 const detail = nativeValue(host.getProjectDetail({ projectId, offset: 0, limit: 50 }));

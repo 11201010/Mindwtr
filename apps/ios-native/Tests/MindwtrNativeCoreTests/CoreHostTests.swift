@@ -109,6 +109,19 @@ final class CoreHostTests: XCTestCase {
         return try json(fields)
     }
 
+    private func semanticStoredTaskRow(_ row: [String: Any]) throws -> String {
+        var fields = row
+        // The JS store re-encodes these nested values when saving the whole
+        // store. Preserve the complete row comparison, including all CAS and
+        // ownership columns, while comparing JSON values rather than key order.
+        for name in ["checklist", "attachments"] {
+            if let encoded = fields[name] as? String {
+                fields[name] = try JSONSerialization.jsonObject(with: Data(encoded.utf8))
+            }
+        }
+        return try json(fields)
+    }
+
     private func tokenPreservedFields(_ row: [String: Any]) throws -> String {
         let changed: Set<String> = ["contexts", "tags", "rev", "revBy", "updatedAt"]
         var fields = row.filter { !changed.contains($0.key) }
@@ -25447,6 +25460,282 @@ final class CoreHostTests: XCTestCase {
         let recovered = host()
         let startup = try object(await recovered.start())
         XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "projectDeleteCommit")
+        await recovered.close()
+    }
+
+    private func seedProjectDuplicateSource() async throws -> String {
+        let taskID = try await seedDestinationTask()
+        let sqlite = try SQLiteBridge(url: database)
+        // The older destination fixture predates these Project defaults; a
+        // full-store save writes their canonical values on unrelated rows.
+        _ = try sqlite.execute("UPDATE projects SET orderNum = COALESCE(orderNum, rowid), tagIds = COALESCE(tagIds, '[]') WHERE id LIKE 'destination-project-%'")
+        sqlite.close()
+        return taskID
+    }
+
+    private func projectDuplicateRequest(_ core: CoreHost) async throws -> [String: Any] {
+        let detail = try object(await core.call("projectDetail", argumentsJSON: json(["destination-project-a", 0, 50, ""])))
+        return ["requestId": UUID().uuidString.lowercased(), "projectId": "destination-project-a",
+                "projectRevision": try XCTUnwrap(detail["projectRevision"] as? String)]
+    }
+
+    private func projectDuplicateJournal() throws -> [String: Any] {
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "projectDuplicateCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        XCTAssertEqual(args.count, 1)
+        return try object(XCTUnwrap(args.first))
+    }
+
+    func testProjectDuplicateStrictRequestFailedCommitAndExactCreatedIDsRetry() async throws {
+        let taskID = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        var confirmations = 0
+        faults.commandDiagnostic = { if $0 == "projectDuplicate" { confirmations += 1 } }
+        let core = host(faults)
+        _ = try await core.start()
+        let request = try await projectDuplicateRequest(core)
+        let sourceProject = try XCTUnwrap(projectRows("destination-project-a").first)
+        let sourceSection = try XCTUnwrap(projectSectionRows("destination-section-a").first)
+        let sourceTask = try storedTask(taskID)
+        let beforeDB = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(beforeDB)
+        beforeDB.close()
+        var sqlCalls = 0
+        var journalWrites = 0
+        faults.beforeSQL = { _ in sqlCalls += 1 }
+        faults.journalWrite = { journalWrites += 1 }
+        for invalid in [request.merging(["extra": true]) { _, new in new },
+                        request.merging(["projectRevision": NSNull()]) { _, new in new },
+                        request.merging(["requestId": UUID().uuidString]) { _, new in new }] {
+            await expectFailure("INVALID_INPUT") {
+                _ = try await core.call("projectDuplicateWrite", argumentsJSON: json([json(invalid)]))
+            }
+        }
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("projectDuplicateWrite", argumentsJSON: json([json(request.merging(["projectRevision": "stale"]) { _, new in new })]))
+        }
+        XCTAssertEqual(sqlCalls, 0)
+        XCTAssertEqual(journalWrites, 0)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project Duplicate COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("projectDuplicateWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try Data(contentsOf: journal)
+        let envelope = try projectDuplicateJournal()
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        let effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        let created = try XCTUnwrap(effect["project"] as? [String: Any])
+        let newID = try XCTUnwrap(created["id"] as? String)
+        XCTAssertNotEqual(newID, "destination-project-a")
+        XCTAssertNotEqual(newID, request["requestId"] as? String)
+        let failedDB = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failedDB), before)
+        failedDB.close()
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        try assertJournalContentUnchanged(pending)
+        faults.beforeSQL = nil
+        let retried = try await core.retryPending()
+        let result = try object(XCTUnwrap(retried))
+        XCTAssertEqual(result["id"] as? String, newID)
+        XCTAssertFalse((result["message"] as? String ?? "").isEmpty)
+        XCTAssertEqual(confirmations, 1)
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("destination-project-a").first)), try json(sourceProject))
+        XCTAssertEqual(try json(XCTUnwrap(projectSectionRows("destination-section-a").first)), try json(sourceSection))
+        XCTAssertEqual(try semanticStoredTaskRow(storedTask(taskID)), try semanticStoredTaskRow(sourceTask))
+        let copiedProject = try XCTUnwrap(projectRows(newID).first)
+        XCTAssertEqual(copiedProject["title"] as? String, "Alpha project (Copy)")
+        XCTAssertEqual(copiedProject["areaId"] as? String, "destination-area-a")
+        XCTAssertEqual(copiedProject["isFocused"] as? Int, 0)
+        let sqlite = try SQLiteBridge(url: database)
+        let copiedSections = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sqlite.execute("SELECT * FROM sections WHERE projectId = ?", parametersJSON: json([newID])).utf8)) as? [[String: Any]])
+        let copiedTasks = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sqlite.execute("SELECT * FROM tasks WHERE projectId = ?", parametersJSON: json([newID])).utf8)) as? [[String: Any]])
+        sqlite.close()
+        XCTAssertEqual(copiedSections.count, 1)
+        XCTAssertEqual(copiedTasks.count, 1)
+        XCTAssertNotEqual(copiedSections[0]["id"] as? String, "destination-section-a")
+        XCTAssertEqual(copiedTasks[0]["sectionId"] as? String, copiedSections[0]["id"] as? String)
+        XCTAssertNotEqual(copiedTasks[0]["id"] as? String, taskID)
+        XCTAssertEqual(copiedTasks[0]["status"] as? String, "next")
+        let sourceChecklist = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(sourceTask["checklist"] as? String).utf8)) as? [[String: Any]])
+        let copiedChecklist = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(copiedTasks[0]["checklist"] as? String).utf8)) as? [[String: Any]])
+        XCTAssertEqual(copiedChecklist.count, sourceChecklist.count)
+        XCTAssertNotEqual(copiedChecklist[0]["id"] as? String, sourceChecklist[0]["id"] as? String)
+        XCTAssertEqual(copiedChecklist[0]["isCompleted"] as? Bool, false)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("projectDuplicateRetryOutcome", argumentsJSON: json([json(request)]))
+        }
+        await core.close()
+    }
+
+    func testProjectDuplicateColdFailedCommitChangedSourceRefusesWithoutWrites() async throws {
+        let taskID = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectDuplicateRequest(writer)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project Duplicate COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectDuplicateWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try Data(contentsOf: journal)
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE tasks SET title = ?, rev = rev + 1 WHERE id = ?", parametersJSON: json(["Newer source task", taskID]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+        XCTAssertEqual(writes, 0)
+        try assertJournalContentUnchanged(pending)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        await reopened.close()
+    }
+
+    func testProjectDuplicateColdTerminalAckKeepsLaterTargetEdit() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectDuplicateRequest(writer)
+        faults.journalRemove = { throw HostFailure("Injected Project Duplicate terminal cleanup failure") }
+        await expectFailure("terminal cleanup failure") {
+            _ = try await writer.call("projectDuplicateWrite", argumentsJSON: json([json(request)]))
+        }
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertNotNil(saved["terminal"])
+        let envelope = try projectDuplicateJournal()
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        let result = try XCTUnwrap(prepared["result"] as? [String: Any])
+        let newID = try XCTUnwrap(result["id"] as? String)
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET title = ?, rev = rev + 1 WHERE id = ?", parametersJSON: json(["Later copied title", newID]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "projectDuplicateCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(result))
+        XCTAssertEqual(writes, 0)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+    }
+
+    func testProjectDuplicateColdLostReplyExactCreatedRowsReplayWithoutWrites() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectDuplicateRequest(writer)
+        var journalWrites = 0
+        faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Project Duplicate lost reply") } }
+        await expectFailure("lost reply") {
+            _ = try await writer.call("projectDuplicateWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
+        let envelope = try projectDuplicateJournal()
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        let result = try XCTUnwrap(prepared["result"] as? [String: Any])
+        await writer.close()
+        let beforeDB = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(beforeDB)
+        beforeDB.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "projectDuplicateCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(result))
+        XCTAssertEqual(writes, 0)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+    }
+
+    func testProjectDuplicateForgedIDsAndEffectRefuseBeforeSQLite() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectDuplicateRequest(writer)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project Duplicate COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectDuplicateWrite", argumentsJSON: json([json(request)]))
+        }
+        let original = try object(String(contentsOf: journal))
+        let envelope = try projectDuplicateJournal()
+        await writer.close()
+        let beforeDB = try SQLiteBridge(url: database)
+        let baseline = try nineTableSnapshot(beforeDB)
+        beforeDB.close()
+        for part in ["ids", "effect", "scope", "result", "request"] {
+            var forged = envelope
+            var prepared = try XCTUnwrap(forged["prepared"] as? [String: Any])
+            if part == "ids" {
+                var ids = try XCTUnwrap(prepared["ids"] as? [String])
+                XCTAssertFalse(ids.isEmpty)
+                ids[0] = "destination-project-a"
+                prepared["ids"] = ids
+            } else if part == "effect" {
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                var project = try XCTUnwrap(effect["project"] as? [String: Any])
+                project["title"] = "Forged copy"
+                effect["project"] = project
+                prepared["effect"] = effect
+            } else if part == "scope" {
+                var scope = try XCTUnwrap(prepared["scope"] as? [String: Any])
+                scope["tasks"] = [] as [[String: Any]]
+                prepared["scope"] = scope
+            } else if part == "result" {
+                prepared["result"] = ["id": "destination-project-a", "message": "Copied"]
+            } else {
+                forged["request"] = request.merging(["requestId": UUID().uuidString.lowercased()]) { _, new in new }
+            }
+            forged["prepared"] = prepared
+            var saved = original
+            saved["argumentsJSON"] = try json([json(forged)])
+            let bytes = Data(try json(saved).utf8)
+            try bytes.write(to: journal)
+            let replayFaults = HostIOFaults()
+            var sqlCalls = 0
+            replayFaults.beforeSQL = { _ in sqlCalls += 1 }
+            let reopened = host(replayFaults)
+            await expectFailure { _ = try await reopened.start() }
+            XCTAssertEqual(sqlCalls, 0, part)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, part)
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), baseline, part)
+            check.close()
+            await reopened.close()
+        }
+        try Data(try json(original).utf8).write(to: journal)
+        let recovered = host()
+        let startup = try object(await recovered.start())
+        XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "projectDuplicateCommit")
         await recovered.close()
     }
 

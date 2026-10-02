@@ -120,6 +120,12 @@ struct InboxScreen: View {
                             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                             .foregroundStyle(palette.text).background(palette.filter)
                         }
+                        if !model.projectDuplicateNotice.isEmpty && !model.taskPresented {
+                            Text(model.projectDuplicateNotice.text("message")).rnFont(14)
+                                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                                .foregroundStyle(palette.text).background(palette.filter)
+                                .accessibilityIdentifier("project-duplicate-notice")
+                        }
                         if !model.taskFocusNotice.isEmpty && !model.reviewGuidePresented {
                             TaskFocusNotice(model: model, palette: palette)
                         }

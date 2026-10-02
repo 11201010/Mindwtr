@@ -2120,6 +2120,15 @@ globalThis.MindwtrHost = {
     projectDeleteUndoCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectDeleteUndo(editorJson(json) as Parameters<typeof contract.commitPreparedProjectDeleteUndo>[0])));
     },
+    projectDuplicatePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareProjectDuplicate(editorJson(json) as Parameters<typeof contract.prepareProjectDuplicate>[0])); });
+    },
+    projectDuplicateValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedProjectDuplicate(editorJson(json) as Parameters<typeof contract.validatePreparedProjectDuplicate>[0])));
+    },
+    projectDuplicateCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedProjectDuplicate(editorJson(json) as Parameters<typeof contract.commitPreparedProjectDuplicate>[0])));
+    },
     /** Private native editor preparation freezes the raw Task effect before journaling. */
     draftPrepare(json: string): string {
         return submit(async () => {
