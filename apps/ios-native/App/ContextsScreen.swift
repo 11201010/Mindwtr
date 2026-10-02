@@ -1,6 +1,11 @@
 import SwiftUI
 import UIKit
 
+private struct ContextsTaskRow: Identifiable {
+    let row: CoreObject
+    var id: Data { Data(row.text("id").utf8) }
+}
+
 struct ContextsScreen: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
@@ -34,12 +39,11 @@ struct ContextsScreen: View {
                     // Row and More actions stay disabled until this response is current.
                     if !model.contexts.isEmpty {
                         let rows = model.contexts.objects("rows")
-                        ForEach(rows.indices, id: \.self) { index in
-                            let row = rows[index]
+                        ForEach(rows.map(ContextsTaskRow.init)) { entry in
+                            let row = entry.row
                             TaskCard(row: row, model: model, palette: palette,
                                      onProject: { project in Task { await model.openProject(project) } },
                                      onToken: { model.focusContextsToken($0) }, beforeAction: endInput)
-                                .id(row.text("id"))
                                 .disabled(!model.contextsActionsEnabled)
                         }
                         if rows.count < model.contexts.number("total") {
