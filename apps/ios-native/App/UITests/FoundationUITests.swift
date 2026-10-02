@@ -1,6 +1,108 @@
 import XCTest
 
 final class FoundationUITests: XCTestCase {
+    private func task147Mode(_ app: XCUIApplication, _ value: String) {
+        task144Open(app)
+        let option = app.buttons["gtd-taskOpenMode-" + value]
+        let scroll = app.scrollViews["gtd-taskEditor-scroll"]
+        for _ in 0..<8 where !option.exists { scroll.swipeDown() }
+        revealPagedElement(app, option, in: scroll); boardEnabled(option); option.tap()
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: option)
+        waitForExpectations(timeout: 30)
+    }
+
+    private func task147LeaveSettings(_ app: XCUIApplication) {
+        boardTap(app, "gtd-taskEditor-back"); boardTap(app, "gtd-back"); boardTap(app, "settings-back")
+    }
+
+    private func task147Open(_ app: XCUIApplication, inbox: Bool, tab: String) {
+        boardTap(app, inbox ? "tab-inbox" : "tab-focus")
+        let row = app.buttons[inbox ? "task-title-task147-inbox" : "task-title-task147-focus"]
+        boardEnabled(row, timeout: 30)
+        if !row.isHittable { revealPagedElement(app, row, in: app.scrollViews.containing(.button, identifier: row.identifier).firstMatch) }
+        row.tap()
+        let mode = app.buttons["task-mode-" + tab]
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: mode)
+        waitForExpectations(timeout: 30)
+        if tab == "edit" { XCTAssertTrue(app.textFields["task-editor-title"].exists) }
+        else { XCTAssertFalse(app.textFields["task-editor-title"].exists) }
+    }
+
+    private func task147Normal(_ library: String, largest: Bool = false) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task147Open(app, inbox: true, tab: "edit")
+        boardTap(app, "task-mode-view"); XCTAssertTrue(app.buttons["task-mode-view"].isSelected)
+        if !largest {
+            let link = app.links.matching(NSPredicate(format: "label == %@", "Task147 linked")).firstMatch
+            revealPagedElement(app, link, in: app.scrollViews["task-editor-scroll"]); boardEnabled(link)
+            link.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
+            expectation(for: NSPredicate(format: "label == 'Task147 focus'"), evaluatedWith: app.staticTexts["Task147 focus"])
+            waitForExpectations(timeout: 30)
+            expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: app.buttons["task-mode-view"])
+            waitForExpectations(timeout: 30)
+        }
+        boardTap(app, "task-view-close")
+        task147Open(app, inbox: false, tab: "view"); boardTap(app, "task-view-close")
+        task147Mode(app, "preview")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "RN task opening mode"; shot.lifetime = .keepAlways; add(shot)
+        task147LeaveSettings(app); task147Open(app, inbox: true, tab: "view"); boardTap(app, "task-view-close")
+        task147Mode(app, "edit"); task147LeaveSettings(app)
+        task147Open(app, inbox: false, tab: "edit"); boardTap(app, "task-view-close")
+        app.terminate(); app.launch(); task147Open(app, inbox: false, tab: "edit"); boardTap(app, "task-view-close")
+        if !largest {
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+            let group = app.buttons["projects-section-archived"]
+            revealPagedElement(app, group, in: app.scrollViews["projects-scroll"])
+            if group.value as? String == "Expand" { group.tap() }
+            let project = app.buttons["project-open-task147-project"]
+            revealPagedElement(app, project, in: app.scrollViews["projects-scroll"]); boardEnabled(project); project.tap()
+            let archived = app.buttons["task-title-task147-archived"]
+            revealPagedElement(app, archived, in: app.scrollViews["project-detail-scroll"]); boardEnabled(archived); archived.tap()
+            boardEnabled(app.buttons["task-view-close"], timeout: 30)
+            XCTAssertFalse(app.buttons["task-mode-edit"].exists); XCTAssertFalse(app.textFields["task-editor-title"].exists)
+            boardTap(app, "task-view-close"); boardTap(app, "project-back")
+        }
+        task147Mode(app, "preview"); task147Mode(app, "edit"); task147Mode(app, "automatic"); task147Mode(app, "automatic")
+        app.terminate(); app.launch(); task147Open(app, inbox: true, tab: "edit"); boardTap(app, "task-view-close"); app.terminate()
+    }
+
+    func testTaskOpeningModeNormal() { task147Normal("d77eba7f-50b2-48f0-a5d7-3e99f36e0c6f") }
+    func testTaskOpeningModeLargest() { task147Normal("b1104858-d497-438e-b6ae-c6a38842b63e", largest: true) }
+
+    func testTaskOpeningModeRecoveredManualTab() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "7dec5ad5-9d83-480d-91f0-4a512fcce3ab"]
+        app.launch(); task147Open(app, inbox: true, tab: "edit")
+        let title = app.textFields["task-editor-title"]
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap(); title.typeText(" draft")
+        boardEnabled(app.staticTexts["task-recovery-protected"], timeout: 20)
+        boardTap(app, "task-mode-view"); boardTap(app, "task-view-close"); boardTap(app, "task-editor-keep-for-later")
+        task147Mode(app, "edit"); app.terminate(); app.launch()
+        boardEnabled(app.buttons["task-mode-view"], timeout: 30)
+        XCTAssertTrue(app.buttons["task-mode-view"].isSelected)
+        XCTAssertTrue(app.staticTexts["Task147 inbox draft"].exists)
+        boardTap(app, "task-mode-edit")
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task147 inbox draft")
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard")
+        boardEnabled(app.buttons["tab-inbox"], timeout: 30)
+        app.terminate(); app.launch(); task147Open(app, inbox: true, tab: "edit")
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task147 inbox")
+        boardTap(app, "task-view-close"); app.terminate()
+    }
+
+    func testTaskOpeningModeExplicitEditOverridesPreview() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "d9583088-4219-4062-b34f-facdde203d6f"]
+        app.launch(); task147Mode(app, "preview"); task147LeaveSettings(app)
+        task147Open(app, inbox: true, tab: "view")
+        boardTap(app, "task-more"); boardTap(app, "task-duplicate")
+        expectation(for: NSPredicate(format: "selected == true AND enabled == true"), evaluatedWith: app.buttons["task-mode-edit"])
+        waitForExpectations(timeout: 30)
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task147 inbox")
+        boardTap(app, "task-view-close"); app.terminate()
+    }
+
     private func task141Open(_ app: XCUIApplication) {
         task103Open(app)
         let link = app.buttons["gtd-autoArchive"]

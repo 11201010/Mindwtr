@@ -1,7 +1,7 @@
 import { normalizeClockTimeInput } from './date';
 import { FOCUS_TASK_LIMIT_OPTIONS } from './focus-utils';
 import { buildGtdSettingsModel, buildGtdSettingsUpdate, GTD_AUTO_ARCHIVE_DAY_OPTIONS,
-    GTD_DEFAULT_AREA_ACTIVE_OPTION, isGtdSettingStored,
+    GTD_DEFAULT_AREA_ACTIVE_OPTION, isGtdSettingStored, readGtdTaskOpenMode, resolveTaskOpenTab,
     type GtdSettingsEdit, type GtdSettingsModel } from './gtd-settings-model';
 import { taskEditValuesEqual } from './json-value-equality';
 import { DEFAULT_TASK_EDITOR_ORDER, TASK_EDITOR_SECTIONABLE_FIELDS, TASK_EDITOR_SECTION_ORDER } from './task-editor-layout';
@@ -63,6 +63,7 @@ export type NativeGtdTaskEditorOpenOptions = { taskEditor: { title: string; desc
         defaultOpen: NonNullable<GtdSettingsModel['taskEditor']['groups'][number]['defaultOpen']> }[] };
     expected: Record<GtdWorkflowTaskEditorSection, GtdWorkflowTaskEditorWitness> };
 export type NativeGtdTaskEditorPresetOptions = { taskEditor: { title: string; description: string;
+    openMode: GtdSettingsModel['taskEditor']['openMode'];
     presets: GtdSettingsModel['taskEditor']['presets']; reset: GtdSettingsModel['taskEditor']['reset'] };
     expected: GtdWorkflowPresetWitness };
 export type NativeGtdTaskEditorFieldOptions = { taskEditor: { title: string; description: string;
@@ -486,11 +487,11 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
                 return { id, title: group!.title, defaultOpen: group!.defaultOpen! };
             }) };
     };
-    const taskEditorPresetFor = (expected: GtdWorkflowPresetWitness): NativeGtdTaskEditorPresetOptions['taskEditor'] => {
+    const taskEditorPresetFor = (expected: GtdWorkflowPresetWitness, rawMode: string | null): NativeGtdTaskEditorPresetOptions['taskEditor'] => {
         const model = buildGtdSettingsModel({ settings: settingsByWitness(
             { type: 'taskEditorPreset', value: 'standard' }, expected), areas: [],
-        taskOpenMode: 'automatic', t: deps.t() }).taskEditor;
-        return { title: model.title, description: model.description, presets: model.presets,
+        taskOpenMode: readGtdTaskOpenMode(rawMode), t: deps.t() }).taskEditor;
+        return { title: model.title, description: model.description, openMode: model.openMode, presets: model.presets,
             reset: model.reset };
     };
     const taskEditorFieldFor = (expected: GtdWorkflowPresetWitness): NativeGtdTaskEditorFieldOptions['taskEditor'] => {
@@ -518,6 +519,19 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
     const areaRevision = (areas: readonly Area[]): string => revisionsToken(areas.map((area) =>
         JSON.stringify([area.id, area.name, area.order, area.createdAt, area.updatedAt, area.rev ?? null, area.revBy ?? null])));
     return {
+        getTaskOpenTab(input: unknown): NativeHostResult<{ tab: 'task' | 'view' }> {
+            const ready = deps.readiness(); if (!ready.ok) return ready;
+            if (!record(input) || !exact(input, ['rawMode', 'automaticTab', 'explicitEdit', 'readOnly'])
+                || !(input.rawMode === null || bounded(input.rawMode, 200))
+                || !(input.automaticTab === 'task' || input.automaticTab === 'view')
+                || typeof input.explicitEdit !== 'boolean' || typeof input.readOnly !== 'boolean'
+                || !isNativeJsonWithinBytes(input, 8192))
+                return fail('INVALID_INPUT', 'Task opening needs a bounded mode, tab and flags');
+            return { ok: true, value: { tab: resolveTaskOpenTab({
+                mode: readGtdTaskOpenMode(input.rawMode), automaticTab: input.automaticTab,
+                explicitEdit: input.explicitEdit, readOnly: input.readOnly,
+            }) } };
+        },
         async getGtdTaskEditorFieldOptions(input: unknown): Promise<NativeHostResult<NativeGtdTaskEditorFieldOptions>> {
             const ready = deps.readiness(); if (!ready.ok) return ready;
             if (!record(input) || !exact(input, []) || !isNativeJsonWithinBytes(input, 8192))
@@ -531,12 +545,14 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
         },
         async getGtdTaskEditorPresetOptions(input: unknown): Promise<NativeHostResult<NativeGtdTaskEditorPresetOptions>> {
             const ready = deps.readiness(); if (!ready.ok) return ready;
-            if (!record(input) || !exact(input, []) || !isNativeJsonWithinBytes(input, 8192))
-                return fail('INVALID_INPUT', 'GTD Task Editor preset options take an empty object');
+            if (!record(input) || !exact(input, Object.prototype.hasOwnProperty.call(input, 'rawMode') ? ['rawMode'] : [])
+                || (Object.prototype.hasOwnProperty.call(input, 'rawMode') && !(input.rawMode === null || bounded(input.rawMode, 200)))
+                || !isNativeJsonWithinBytes(input, 8192))
+                return fail('INVALID_INPUT', 'GTD Task Editor preset options need a bounded raw mode');
             const read = await readAreaDurableData(); if (!read.ok) return read;
             const expected = gtdWorkflowWitness(read.value.authority.snapshot.settings, 'taskEditorPreset');
             if (!expected) return fail('INVALID_INPUT', 'Saved Task Editor preset has an unsupported value');
-            const value = { taskEditor: taskEditorPresetFor(expected), expected };
+            const value = { taskEditor: taskEditorPresetFor(expected, (input.rawMode as string | null | undefined) ?? null), expected };
             return isNativeJsonWithinBytes(value, 65_536) ? { ok: true, value }
                 : fail('INVALID_INPUT', 'GTD Task Editor preset options exceed the bounded response');
         },

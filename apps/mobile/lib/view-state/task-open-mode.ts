@@ -14,7 +14,8 @@ export const TASK_OPEN_MODE_STORAGE_KEY = MOBILE_TASK_OPEN_MODE_STORAGE_KEY;
 
 export const TASK_OPEN_MODES = GTD_TASK_OPEN_MODES;
 export type TaskOpenMode = GtdTaskOpenMode;
-export type TaskOpenTab = 'task' | 'view';
+export type { TaskOpenTab } from '@mindwtr/core';
+export { resolveTaskOpenTab } from '@mindwtr/core';
 
 type TaskOpenModeSnapshot = {
   hydrated: boolean;
@@ -56,24 +57,6 @@ const publish = (state: ScopedTaskOpenModeState, snapshot: TaskOpenModeSnapshot)
 };
 
 export const readTaskOpenMode: (raw: string | null) => TaskOpenMode = readGtdTaskOpenMode;
-
-export function resolveTaskOpenTab({
-  mode,
-  automaticTab,
-  explicitEdit = false,
-  readOnly = false,
-}: {
-  mode: TaskOpenMode;
-  automaticTab: TaskOpenTab;
-  explicitEdit?: boolean;
-  readOnly?: boolean;
-}): TaskOpenTab {
-  if (readOnly) return 'view';
-  if (explicitEdit) return 'task';
-  if (mode === 'preview') return 'view';
-  if (mode === 'edit') return 'task';
-  return automaticTab;
-}
 
 export async function ensureTaskOpenModeHydrated(): Promise<void> {
   const state = getScopedState();

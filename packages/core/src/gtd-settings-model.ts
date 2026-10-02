@@ -168,6 +168,27 @@ export const readGtdTaskOpenMode = (raw: unknown): GtdTaskOpenMode => (
     GTD_TASK_OPEN_MODES.includes(raw as GtdTaskOpenMode) ? raw as GtdTaskOpenMode : 'automatic'
 );
 
+export type TaskOpenTab = 'task' | 'view';
+
+/** Shared by RN and native: a read-only task wins even over an explicit Edit route. */
+export function resolveTaskOpenTab({
+    mode,
+    automaticTab,
+    explicitEdit = false,
+    readOnly = false,
+}: {
+    mode: GtdTaskOpenMode;
+    automaticTab: TaskOpenTab;
+    explicitEdit?: boolean;
+    readOnly?: boolean;
+}): TaskOpenTab {
+    if (readOnly) return 'view';
+    if (explicitEdit) return 'task';
+    if (mode === 'preview') return 'view';
+    if (mode === 'edit') return 'task';
+    return automaticTab;
+}
+
 export const GTD_AUTO_ARCHIVE_DAY_OPTIONS: readonly number[] = [0, 1, 3, 7, 14, 30, 60];
 /** The default-area choice "the current area filter"; '' is no area. */
 export const GTD_DEFAULT_AREA_ACTIVE_OPTION = '__active-area__';

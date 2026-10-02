@@ -14738,7 +14738,7 @@ final class CoreHostTests: XCTestCase {
         let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
         let options = try object(await core.call("gtdTaskEditorPresetOptions", argumentsJSON: json(["{}"])))
         let editor = try XCTUnwrap(options["taskEditor"] as? [String: Any])
-        XCTAssertEqual(Set(editor.keys), Set(["title", "description", "presets", "reset"]))
+        XCTAssertEqual(Set(editor.keys), Set(["title", "description", "presets", "reset", "openMode"]))
         let reset = try XCTUnwrap(editor["reset"] as? [String: Any])
         XCTAssertEqual(Set(reset.keys), Set(["label", "edit"]))
         XCTAssertFalse(try XCTUnwrap(reset["label"] as? String).isEmpty)
@@ -14771,6 +14771,96 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
         XCTAssertEqual(try nineTableSnapshot(reader), before)
         reader.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    func testTaskOpenTabSharedPrecedenceAndBoundary() async throws {
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let cases: [(Any, String, Bool, Bool, String)] = [
+            (NSNull(), "task", false, false, "task"),
+            ("automatic", "view", false, false, "view"),
+            ("automatic", "task", false, false, "task"),
+            ("preview", "task", false, false, "view"),
+            ("edit", "view", false, false, "task"),
+            ("preview", "view", true, false, "task"),
+            ("edit", "task", true, true, "view"),
+            ("invalid147", "task", false, false, "task"),
+        ]
+        var statements = 0, journals = 0
+        faults.beforeSQL = { _ in statements += 1 }
+        faults.journalWrite = { journals += 1 }
+        for (rawMode, automaticTab, explicitEdit, readOnly, expected) in cases {
+            let request: [String: Any] = ["rawMode": rawMode, "automaticTab": automaticTab,
+                                           "explicitEdit": explicitEdit, "readOnly": readOnly]
+            let result = try object(await core.call("taskOpenTab", argumentsJSON: json([json(request)])))
+            XCTAssertEqual(Set(result.keys), Set(["tab"]))
+            XCTAssertEqual(result["tab"] as? String, expected)
+        }
+        let valid: [String: Any] = ["rawMode": NSNull(), "automaticTab": "view",
+                                    "explicitEdit": false, "readOnly": false]
+        for malformed: [String: Any] in [
+            ["automaticTab": "view", "explicitEdit": false, "readOnly": false],
+            valid.merging(["rawMode": true]) { _, new in new },
+            valid.merging(["rawMode": 42]) { _, new in new },
+            valid.merging(["rawMode": String(repeating: "🧭", count: 101)]) { _, new in new },
+            valid.merging(["automaticTab": "edit"]) { _, new in new },
+            valid.merging(["explicitEdit": 1]) { _, new in new },
+            valid.merging(["readOnly": "false"]) { _, new in new },
+            valid.merging(["extra": true]) { _, new in new },
+        ] {
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("taskOpenTab", argumentsJSON: json([json(malformed)])) }
+        }
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journals, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    func testGtdTaskEditorOpenModeProjectionAndInputBoundary() async throws {
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let baseline = try SQLiteBridge(url: database), before = try nineTableSnapshot(baseline)
+        baseline.close()
+        var writes = 0, journals = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        faults.journalWrite = { journals += 1 }
+        let modes = ["automatic", "preview", "edit"]
+        for (rawMode, selected) in [(NSNull() as Any, "automatic"), ("preview" as Any, "preview"),
+                                    ("edit" as Any, "edit"), ("invalid147" as Any, "automatic")] {
+            let input: [String: Any] = ["rawMode": rawMode]
+            let options = try object(await core.call("gtdTaskEditorPresetOptions", argumentsJSON: json([json(input)])))
+            let editor = try XCTUnwrap(options["taskEditor"] as? [String: Any])
+            let openMode = try XCTUnwrap(editor["openMode"] as? [String: Any])
+            XCTAssertEqual(Set(openMode.keys), Set(["label", "description", "options"]))
+            XCTAssertTrue(openMode["label"] is String); XCTAssertTrue(openMode["description"] is String)
+            let rows = try XCTUnwrap(openMode["options"] as? [[String: Any]])
+            XCTAssertEqual(rows.count, 3)
+            XCTAssertEqual(rows.compactMap { $0["value"] as? String }, modes)
+            XCTAssertEqual(rows.filter { $0["selected"] as? Bool == true }.count, 1)
+            for row in rows {
+                XCTAssertEqual(Set(row.keys), Set(["value", "label", "selected", "edit"]))
+                let value = try XCTUnwrap(row["value"] as? String)
+                XCTAssertTrue(row["label"] is String)
+                XCTAssertEqual(row["selected"] as? Bool, value == selected)
+                let edit = try XCTUnwrap(row["edit"] as? [String: Any])
+                XCTAssertEqual(Set(edit.keys), Set(["type", "value"]))
+                XCTAssertEqual(edit["type"] as? String, "taskOpenMode")
+                XCTAssertEqual(edit["value"] as? String, value)
+            }
+        }
+        let absent = try object(await core.call("gtdTaskEditorPresetOptions", argumentsJSON: json(["{}"])))
+        let editor = try XCTUnwrap(absent["taskEditor"] as? [String: Any])
+        let openMode = try XCTUnwrap(editor["openMode"] as? [String: Any])
+        let rows = try XCTUnwrap(openMode["options"] as? [[String: Any]])
+        XCTAssertEqual(rows.first?["selected"] as? Bool, true)
+        for invalid: [String: Any] in [["rawMode": true], ["rawMode": 1], ["rawMode": ["preview"]],
+                                       ["rawMode": String(repeating: "🧭", count: 101)], ["extra": true]] {
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("gtdTaskEditorPresetOptions", argumentsJSON: json([json(invalid)])) }
+        }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+        let after = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(after), before); after.close()
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
         await core.close()
     }
