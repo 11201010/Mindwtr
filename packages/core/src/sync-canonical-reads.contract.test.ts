@@ -1512,6 +1512,24 @@ describe('canonical local reads contract', () => {
                 expect(nativeValue(await host.commitPreparedProjectDuplicate({ request, prepared: planned.prepared })))
                     .toEqual(planned.prepared.result);
             },
+            commitPreparedProjectLifecycle: async (control) => {
+                const host = await nativeHost(control);
+                const detail = nativeValue(host.getProjectDetail({ projectId, offset: 0, limit: 50 }));
+                const request = { requestId: 'aede1553-95af-4f8c-bd21-c1c5a4a63153', projectId,
+                    projectRevision: detail.projectRevision, action: 'complete' as const };
+                const deletion = { request, prepared: nativeValue(host.prepareProjectLifecycle(request)).prepared };
+                const planned = { prepared: deletion.prepared };
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === projectId)).toEqual(planned.prepared.effect.project.after);
+                    for (const pair of planned.prepared.effect.sections) {
+                        expect(written.sections.find((entry) => entry.id === pair.after.id)).toEqual(pair.after);
+                    }
+                    for (const pair of planned.prepared.effect.tasks) {
+                        expect(written.tasks.find((entry) => entry.id === pair.after.id)).toEqual(pair.after);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedProjectLifecycle(deletion))).toEqual(planned.prepared.result);
+            },
             commitPreparedProjectDelete: async (control) => {
                 const host = await nativeHost(control);
                 const detail = nativeValue(host.getProjectDetail({ projectId, offset: 0, limit: 50 }));

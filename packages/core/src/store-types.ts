@@ -246,6 +246,18 @@ export type PreparedProjectDuplicate = {
     result: { id: string; message: string };
 };
 
+/** One frozen RN Project Complete/Reactivate transition and child-row receipt. */
+export type PreparedProjectLifecycle = {
+    version: 1;
+    request: { requestId: string; projectId: string; projectRevision: string;
+        action: 'complete' | 'reactivate' };
+    scope: { project: Project; tasks: Task[]; sections: Section[] };
+    effect: { project: { before: Project; after: Project };
+        tasks: { before: Task; after: Task }[]; sections: { before: Section; after: Section }[] };
+    deviceIdBefore: string | null; deviceIdToInitialize: string | null; updateAt: string;
+    result: { id: string; status: 'archived' | 'active' };
+};
+
 /** One frozen Project date change and its complete Project receipt. */
 export type PreparedProjectDate = {
     scope: { project: Project };
@@ -680,6 +692,7 @@ export interface TaskStore {
     commitPreparedProjectDelete: (input: PreparedProjectDelete) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDeleteUndo: (input: PreparedProjectDeleteUndo) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDuplicate: (input: PreparedProjectDuplicate) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectLifecycle: (input: PreparedProjectLifecycle) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDate: (input: PreparedProjectDate & { request: { projectId: string; field: 'startDate' | 'dueDate' | 'reviewAt'; value: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectArea: (input: PreparedProjectArea & { request: { projectId: string; areaId: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionCreate: (input: PreparedProjectSectionCreate) => Promise<PreparedTaskEditResult>;

@@ -2129,6 +2129,15 @@ globalThis.MindwtrHost = {
     projectDuplicateCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectDuplicate(editorJson(json) as Parameters<typeof contract.commitPreparedProjectDuplicate>[0])));
     },
+    projectLifecyclePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareProjectLifecycle(editorJson(json) as Parameters<typeof contract.prepareProjectLifecycle>[0])); });
+    },
+    projectLifecycleValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedProjectLifecycle(editorJson(json) as Parameters<typeof contract.validatePreparedProjectLifecycle>[0])));
+    },
+    projectLifecycleCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedProjectLifecycle(editorJson(json) as Parameters<typeof contract.commitPreparedProjectLifecycle>[0])));
+    },
     /** Private native editor preparation freezes the raw Task effect before journaling. */
     draftPrepare(json: string): string {
         return submit(async () => {

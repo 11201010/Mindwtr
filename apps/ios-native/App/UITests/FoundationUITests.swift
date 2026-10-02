@@ -17029,4 +17029,117 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task153OpenProject(_ app: XCUIApplication, archived: Bool) {
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        if archived {
+            let closed = app.buttons["projects-section-archived"]
+            revealPagedElement(app, closed, in: app.scrollViews["projects-scroll"])
+            boardEnabled(closed)
+            if closed.value as? String == "Expand" { closed.tap() }
+        }
+        let row = app.buttons["project-open-task153-project"]
+        revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+        boardEnabled(row); row.tap()
+        boardEnabled(app.buttons["project-actions-menu"], timeout: 30)
+        XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task153 project")
+    }
+
+    private func task153TapLifecycle(_ app: XCUIApplication, action: String) {
+        boardTap(app, "project-actions-menu")
+        let id = action == "complete" ? "project-archive-button" : "project-reactivate-button"
+        let button = app.buttons.matching(identifier: id).firstMatch
+        boardEnabled(button)
+        XCTAssertEqual(button.label, action == "complete" ? "Complete" : "Reactivate")
+        button.tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists, "RN Project lifecycle action has no confirmation")
+    }
+
+    private func task153AssertDetail(_ app: XCUIApplication, archived: Bool, screenshot: String) {
+        boardEnabled(app.buttons["project-actions-menu"], timeout: 30)
+        let rename = app.buttons["project-rename-open"]
+        XCTAssertTrue(rename.waitForExistence(timeout: 30))
+        XCTAssertEqual(rename.isEnabled, !archived, "Archived Project details must be read-only")
+        boardTap(app, "project-actions-menu")
+        let id = archived ? "project-reactivate-button" : "project-archive-button"
+        let opposite = archived ? "project-archive-button" : "project-reactivate-button"
+        let action = app.buttons.matching(identifier: id).firstMatch
+        boardEnabled(action)
+        XCTAssertFalse(app.buttons.matching(identifier: opposite).firstMatch.exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = screenshot; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func task153AssertRestoredChildRows(_ app: XCUIApplication) {
+        let scroll = app.scrollViews["project-detail-scroll"]
+        for (id, status) in [
+            ("task153-task", "Next"),
+            ("task153-waiting", "Waiting"),
+            ("task153-someday", "Someday"),
+            ("task153-inbox", "Inbox"),
+            ("task153-recurring", "Next"),
+            ("task153-section-only", "Next"),
+        ] {
+            let badge = app.buttons["task-status-" + id]
+            revealPagedElement(app, badge, in: scroll)
+            XCTAssertTrue(badge.waitForExistence(timeout: 10), "Missing restored child row \(id)")
+            XCTAssertEqual(badge.label, "Change status. Current status: \(status)",
+                           "Project detail must show the saved child status immediately after Reactivate")
+        }
+    }
+
+    private func task153NormalFlow(_ library: String, action: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task153OpenProject(app, archived: action == "reactivate")
+        task153TapLifecycle(app, action: action)
+        if action == "reactivate" {
+            let rename = app.buttons["project-rename-open"]
+            boardEnabled(rename, timeout: 30); rename.tap()
+            boardEnabled(app.textFields["project-rename-title"], timeout: 30)
+            boardTap(app, "project-rename-cancel")
+            XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task153 project")
+            task153AssertRestoredChildRows(app)
+        }
+        task153AssertDetail(app, archived: action == "complete",
+                            screenshot: action == "complete" ? "Completed Project detail" : "Reactivated Project detail")
+        app.terminate()
+    }
+
+    func testTask153ProjectCompleteNormal() { task153NormalFlow("e0df1e8d-6902-4802-9d4e-2a8c239d1231", action: "complete") }
+    func testTask153ProjectReactivateNormal() { task153NormalFlow("e0df1e8d-6902-4802-9d4e-2a8c239d1231", action: "reactivate") }
+    func testTask153ProjectCompleteLargest() { task153NormalFlow("e1f28182-7fa0-45fb-97b5-07fa565bc21b", action: "complete") }
+    func testTask153ProjectReactivateLargest() { task153NormalFlow("e1f28182-7fa0-45fb-97b5-07fa565bc21b", action: "reactivate") }
+
+    private func task153FailedSave(_ library: String, action: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task153OpenProject(app, archived: action == "reactivate")
+        task153TapLifecycle(app, action: action)
+        for _ in 0..<2 {
+            let retry = app.buttons.matching(identifier: "project-lifecycle-retry").firstMatch
+            boardEnabled(retry, timeout: 30)
+            XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task153 project")
+            XCTAssertFalse(app.buttons["project-back"].isEnabled)
+            retry.tap()
+        }
+        boardEnabled(app.buttons.matching(identifier: "project-lifecycle-retry").firstMatch, timeout: 30)
+        app.terminate()
+    }
+
+    private func task153ColdRecovery(_ library: String, archived: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["project-detail-title"].waitForExistence(timeout: 30))
+        XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task153 project")
+        task153AssertDetail(app, archived: archived,
+                            screenshot: archived ? "Cold completed Project detail" : "Cold reactivated Project detail")
+        app.terminate()
+    }
+
+    func testTask153ProjectFailedComplete() { task153FailedSave("cff09158-23bc-4411-acd4-11137ef633ff", action: "complete") }
+    func testTask153ProjectColdCompleteRecovery() { task153ColdRecovery("cff09158-23bc-4411-acd4-11137ef633ff", archived: true) }
+    func testTask153ProjectFailedReactivate() { task153FailedSave("571597b8-5594-491d-8afa-67a67ca1d664", action: "reactivate") }
+    func testTask153ProjectColdReactivateRecovery() { task153ColdRecovery("571597b8-5594-491d-8afa-67a67ca1d664", archived: false) }
+
 }
