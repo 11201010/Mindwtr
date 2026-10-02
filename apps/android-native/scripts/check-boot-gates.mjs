@@ -1122,7 +1122,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // another tab's boot read, or a 3 s fallback; CoreWork's and the owed retry's start at once. One start at a time.
     // The reminder alarms start with sync (pass R1), held with it.
     assert.match(owner, /startSync = \{\s+val start = \{\s+startSync\(app, runtime\)\s+startReminders\(runtime\)\s+\}\s+if \(deferSync\) deferredSync\.set\(start\) else start\(\)\s+\},/);
-    assert.match(owner, /fun startDeferredSync\(\) \{\s+deferredSync\.getAndSet\(null\)\?\.let \{ start -> syncThread\.execute \{ start\(\) \} \}\s+\}/);
+    assert.match(owner, /fun startDeferredSync\(\) \{\s+deferredSync\.getAndSet\(null\)\?\.let \{ start -> syncThread\.execute \{ start\(\) \} \}\s+deferredWidgets\.getAndSet\(null\)\?\.let\(::refreshWidgets\)\s+\}/, 'the boot\'s widget publication waits with its sync start');
     assert.match(owner, /fun contentShown\(\) \{\s+startDeferredSync\(\)/);
     assert.match(owner, /private fun startSync\(app: Application, runtime: CoreHost\): Unit = synchronized\(syncLock\) \{\s+if \(syncHost != null\) return/);
     assert.match(model, /if \(screen != Screen\.Inbox\) ProcessCoreHost\.startDeferredSync\(\)\s+main\.postDelayed\(ProcessCoreHost::startDeferredSync, SYNC_FALLBACK_MS\)/);
@@ -3189,7 +3189,6 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // came before the validated load was not sent. It waits with the boot's sync start for the first screen's content (startup
     // pass). Resume publishes through the same call, off the engine's callers.
     const ownerKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/ProcessCoreHost.kt'), 'utf8');
-    assert.match(ownerKt, /fun startDeferredSync\(\) \{\s+deferredSync\.getAndSet\(null\)\?\.let \{ start -> syncThread\.execute \{ start\(\) \} \}\s+deferredWidgets\.getAndSet\(null\)\?\.let\(::refreshWidgets\)\s+\}/);
     assert.match(ownerKt, /private fun refreshWidgets\(runtime: CoreHost\) = widgetThread\.execute \{\s+runCatching \{ runtime\.refreshWidgets\(\) \}\.onFailure \{ Log\.w\(CoreHost\.TAG, "Native Android widget refresh failed", it\) \}\s+\}/);
     // Coming to the front and leaving it both publish (RN's resume refresh and its flush on leaving).
     assert.match(ownerKt, /if \(state == appState\) return\s+appState = state\s+(?:\/\/[^\n]*\s+)*boot\?\.takeIf \{ it\.isDone \}\?\.let \{ task -> runCatching \{ task\.get\(\) \}\.getOrNull\(\)\?\.let\(::refreshWidgets\) \}/);
