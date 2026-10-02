@@ -202,7 +202,7 @@ private final class Engine: @unchecked Sendable {
         "projectSectionDeleteOptions": 1, "projectSectionDelete": 1, "projectSectionDeleteRetryOutcome": 1,
         "projectSectionOrderOptions": 1, "projectSectionOrder": 1, "projectSectionOrderRetryOutcome": 1,
         "appLockOptions": 1, "appLock": 1, "appLockRetryOutcome": 1,
-        "gtdWorkflowOptions": 1, "gtdArchiveOptions": 1, "gtdReviewOptions": 1, "gtdInboxOptions": 1, "gtdCaptureAreaOptions": 1, "gtdCaptureParseOptions": 1, "gtdTaskEditorOpenOptions": 1, "gtdTaskEditorPresetOptions": 1, "gtdWorkflowDraft": 1, "gtdWorkflow": 1, "gtdWorkflowRetryOutcome": 1,
+        "gtdWorkflowOptions": 1, "gtdArchiveOptions": 1, "gtdReviewOptions": 1, "gtdInboxOptions": 1, "gtdCaptureAreaOptions": 1, "gtdCaptureParseOptions": 1, "gtdTaskEditorOpenOptions": 1, "gtdTaskEditorPresetOptions": 1, "gtdTaskEditorFieldOptions": 1, "gtdWorkflowDraft": 1, "gtdWorkflow": 1, "gtdWorkflowRetryOutcome": 1,
         "generalPreferenceOptions": 1, "generalPreference": 1, "generalPreferenceRetryOutcome": 1,
         "manageTaxonomyOptions": 1, "manageTaxonomy": 1, "manageTaxonomyRetryOutcome": 1,
         "managePersonEditOptions": 1, "managePersonEdit": 1, "managePersonEditRetryOutcome": 1,
@@ -945,13 +945,13 @@ private final class Engine: @unchecked Sendable {
                 "somedaySectionMoveRetryOutcome", "somedaySectionMoveUndoRetryOutcome"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
-            if method == "gtdArchiveOptions", pending == nil {
+            if ["gtdArchiveOptions", "gtdTaskEditorFieldOptions"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
             // Mind Sweep has no journal or write before argument validation.
             // Its UI may release an oversized draft only on a definite refusal.
             // With an older command still owed, keep every error uncertain.
-            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "savedSearchOptions", "focusSavedFilterWrite", "savedSearchWrite", "focusSavedFilterRetryOutcome", "savedSearchRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectAttachmentWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
+            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "focusGroupOptions", "focusGroupWrite", "focusGroupRetryOutcome", "taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome", "somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome", "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome", "somedaySectionTaskOptions", "somedaySectionTaskPrepare", "somedaySectionTaskCommit", "somedaySectionTaskRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "focusOrderOptions", "focusOrderWrite", "focusOrderRetryOutcome", "focusSavedFilterOptions", "savedSearchOptions", "focusSavedFilterWrite", "savedSearchWrite", "focusSavedFilterRetryOutcome", "savedSearchRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectAttachmentWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
             throw error
         }
         guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
@@ -1054,7 +1054,7 @@ private final class Engine: @unchecked Sendable {
                     if ["taskAttachmentList", "taskAttachmentOpen", "taskAttachmentLinks", "taskAttachmentRemove"].contains(method) {
                         throw HostFailure("Attachment draft command failed")
                     }
-                    guard method == "gtdTaskEditorPresetOptions", failure.message.hasPrefix("INVALID_INPUT:") else { throw failure }
+                    guard ["gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions"].contains(method), failure.message.hasPrefix("INVALID_INPUT:") else { throw failure }
                     throw CoreHostRejection(message: failure.message)
                 }
             }
@@ -1153,6 +1153,45 @@ private final class Engine: @unchecked Sendable {
                       }), Self.validGtdWorkflowExpected(options["expected"], type: "taskEditorPreset") else {
                     throw HostFailure("Malformed Task Editor preset options")
                 }
+            }
+            if method == "gtdTaskEditorFieldOptions" {
+                let sections = Set(["basic", "scheduling", "organization", "details"])
+                guard value.utf8.count <= 65_536,
+                      let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(options.keys) == Set(["taskEditor", "expected"]),
+                      Self.validGtdWorkflowExpected(options["expected"], type: "taskEditorFieldVisible"),
+                      let editor = options["taskEditor"] as? [String: Any],
+                      Set(editor.keys) == Set(["title", "description", "groups"]),
+                      editor["title"] is String, editor["description"] is String,
+                      let groups = editor["groups"] as? [[String: Any]], !groups.isEmpty, groups.count <= 4 else {
+                    throw HostFailure("Malformed Task Editor field options")
+                }
+                let groupIDs = groups.compactMap { $0["id"] as? String }
+                guard groupIDs.count == groups.count, Set(groupIDs).count == groups.count,
+                      Set(groupIDs).isSubset(of: sections), groupIDs.contains("basic") else {
+                    throw HostFailure("Malformed Task Editor field options")
+                }
+                var seen = Set<String>()
+                guard groups.allSatisfy({ group in
+                    guard Set(group.keys) == Set(["id", "title", "fields"]),
+                          let section = group["id"] as? String, group["title"] is String,
+                          let rows = group["fields"] as? [[String: Any]], !rows.isEmpty else { return false }
+                    return rows.allSatisfy { row in
+                        guard Set(row.keys) == Set(["id", "label", "visible", "status", "visibility"]),
+                              let field = row["id"] as? String, Self.taskEditorFields.contains(field),
+                              seen.insert(field).inserted,
+                              !Self.taskEditorFixedFields.contains(field) || section == "basic",
+                              row["label"] is String, Self.isBoolean(row["visible"]), row["status"] is String,
+                              let visibility = row["visibility"] as? [String: Any],
+                              Set(visibility.keys) == Set(["accessibilityLabel", "edit"]),
+                              visibility["accessibilityLabel"] is String,
+                              Self.validGtdWorkflowEdit(visibility["edit"]),
+                              let edit = visibility["edit"] as? [String: Any],
+                              edit["type"] as? String == "taskEditorFieldVisible", edit["field"] as? String == field,
+                              edit["value"] as? Bool == !(row["visible"] as? Bool ?? false) else { return false }
+                        return true
+                    }
+                }), seen == Self.taskEditorFields else { throw HostFailure("Malformed Task Editor field options") }
             }
             if method == "gtdTaskEditorOpenOptions" {
                 let sections = Set(["scheduling", "organization", "details"])
@@ -3335,6 +3374,7 @@ private final class Engine: @unchecked Sendable {
         }
         if command.method == "gtdWorkflowCommit", case .success(let value) = terminal {
             let result = (try? NativeJSON.jsonObject(with: Data(value.utf8))) as? [String: Any]
+            let fields = result?["type"] as? String == "taskEditorFieldVisible"
             let archiving = result?["type"] as? String == "autoArchiveDays"
             let startDates = result?["type"] as? String == "focusIncludeStartDates"
             let reviewing = ["dailyReviewFocusStep", "weeklyReviewContextStep"].contains(result?["type"] as? String ?? "")
@@ -3344,9 +3384,10 @@ private final class Engine: @unchecked Sendable {
             let editing = result?["type"] as? String == "taskEditorSectionOpen"
             let preset = result?["type"] as? String == "taskEditorPreset"
 #if DEBUG
-            faults?.commandDiagnostic?(archiving ? "gtdAutoArchiveApplied" : startDates ? "gtdFocusStartDatesApplied" : preset ? "gtdTaskEditorPresetApplied" : editing ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : reviewing ? "gtdReviewApplied" : "gtdWorkflowApplied")
+            faults?.commandDiagnostic?(fields ? "gtdTaskEditorFieldApplied" : archiving ? "gtdAutoArchiveApplied" : startDates ? "gtdFocusStartDatesApplied" : preset ? "gtdTaskEditorPresetApplied" : editing ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : reviewing ? "gtdReviewApplied" : "gtdWorkflowApplied")
 #endif
-            if archiving { NSLog("Native iOS Auto-archive preference saved releaseCheck=v1.3.4/ios-auto-archive outcome=confirmed") }
+            if fields { NSLog("Native iOS Task Editor field visibility saved releaseCheck=v1.3.4/ios-gtd-editor-fields outcome=confirmed") }
+            else if archiving { NSLog("Native iOS Auto-archive preference saved releaseCheck=v1.3.4/ios-auto-archive outcome=confirmed") }
             else if startDates { NSLog("Native iOS Focus start-date preference saved releaseCheck=v1.3.4/ios-focus-start-dates outcome=confirmed") }
             else if preset { NSLog("Native iOS Task Editor preset saved releaseCheck=v1.3.4/ios-gtd-editor-presets outcome=confirmed") }
             else if editing { NSLog("Native iOS Task Editor sections saved releaseCheck=v1.3.4/ios-gtd-editor-sections outcome=confirmed") }
@@ -3799,12 +3840,16 @@ private final class Engine: @unchecked Sendable {
         try validateProjectCreateResult(result, request: request, created: true)
     }
 
+    private static let taskEditorFields: Set<String> = Set(["status", "project", "area", "contexts", "dueDate", "section", "startTime", "reviewAt", "recurrence", "tags", "description", "attachments", "checklist", "priority", "energyLevel", "timeEstimate", "assignedTo", "location"])
+    private static let taskEditorFixedFields: Set<String> = Set(["status", "project", "section", "area"])
+
     private static func validGtdWorkflowEdit(_ value: Any?) -> Bool {
         guard let edit = value as? [String: Any], let type = edit["type"] as? String,
-              Set(edit.keys) == Set(type == "taskEditorSectionOpen" ? ["type", "section", "value"] : ["type", "value"]) else { return false }
+              Set(edit.keys) == Set(type == "taskEditorSectionOpen" ? ["type", "section", "value"] : type == "taskEditorFieldVisible" ? ["type", "field", "value"] : ["type", "value"]) else { return false }
         switch type {
         case "taskEditorPreset": return ["simple", "standard", "full"].contains(edit["value"] as? String ?? "")
         case "taskEditorSectionOpen": return ["scheduling", "organization", "details"].contains(edit["section"] as? String ?? "") && isBoolean(edit["value"])
+        case "taskEditorFieldVisible": return taskEditorFields.contains(edit["field"] as? String ?? "") && isBoolean(edit["value"])
         case "defaultArea": return (edit["value"] as? String).map { $0.utf16.count <= 500 } == true
         case "defaultScheduleTime": return (edit["value"] as? String).map { $0.utf16.count <= 50 } == true
         case "focusTaskLimit": return !isBoolean(edit["value"]) && (edit["value"] as? NSNumber).map {
@@ -3819,7 +3864,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private static func validGtdWorkflowExpected(_ value: Any?, type: String) -> Bool {
-        if type == "taskEditorPreset" {
+        if type == "taskEditorPreset" || type == "taskEditorFieldVisible" {
             let layout = ["order", "hidden", "sections", "sectionOpen"]
             let flags = ["priorities", "timeEstimates"]
             guard let expected = value as? [String: Any],
@@ -3828,7 +3873,7 @@ private final class Engine: @unchecked Sendable {
                   isBoolean(expected["stampPresent"]),
                   expected["stampPresent"] as? Bool == true
                     ? (expected["stamp"] as? String).map({ $0.utf16.count <= 500 }) == true : expected["stamp"] is NSNull else { return false }
-            let fields = Set(["status", "project", "area", "contexts", "dueDate", "section", "startTime", "reviewAt", "recurrence", "tags", "description", "attachments", "checklist", "priority", "energyLevel", "timeEstimate", "assignedTo", "location"])
+            let fields = taskEditorFields
             let sections = Set(["basic", "scheduling", "organization", "details"])
             return (layout + flags).allSatisfy { field in
                 guard let witness = expected[field] as? [String: Any], Set(witness.keys) == Set(["present", "value"]),
@@ -3901,9 +3946,11 @@ private final class Engine: @unchecked Sendable {
 
     private func validateGtdWorkflowResult(_ result: [String: Any], request: [String: Any], changed: Bool) throws {
         let editing = (request["edit"] as? [String: Any])?["type"] as? String == "taskEditorSectionOpen"
-        guard Set(result.keys) == Set(editing ? ["type", "section", "value", "changed"] : ["type", "value", "changed"]),
+        let fields = (request["edit"] as? [String: Any])?["type"] as? String == "taskEditorFieldVisible"
+        guard Set(result.keys) == Set(editing ? ["type", "section", "value", "changed"] : fields ? ["type", "field", "value", "changed"] : ["type", "value", "changed"]),
               let edit = request["edit"] as? [String: Any],
               !editing || Self.equalJSON(result["section"], edit["section"]),
+              !fields || Self.equalJSON(result["field"], edit["field"]),
               Self.equalJSON(result["type"], edit["type"]), Self.equalJSON(result["value"], edit["value"]),
               Self.isBoolean(result["changed"]), result["changed"] as? Bool == changed else {
             throw HostFailure("Malformed GTD workflow result")
@@ -6075,7 +6122,7 @@ private final class Engine: @unchecked Sendable {
         if method == "taskEditorResumeCheck" && json.utf8.count > 2_000_000 {
             throw HostFailure("INVALID_INPUT: Editor resume check is too large")
         }
-        if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "appLockOptions", "appLock", "appLockRetryOutcome", "generalPreferenceOptions", "generalPreference", "generalPreferenceRetryOutcome"].contains(method), json.utf8.count > 49_152 {
+        if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "appLockOptions", "appLock", "appLockRetryOutcome", "generalPreferenceOptions", "generalPreference", "generalPreferenceRetryOutcome"].contains(method), json.utf8.count > 49_152 {
             throw HostFailure("INVALID_INPUT: General preference transport is too large")
         }
         if method == "gtdArchiveOptions", json.utf8.count > 49_152 {
@@ -6552,7 +6599,7 @@ private final class Engine: @unchecked Sendable {
         }
         if ["inboxView", "captureView", "captureEdit", "captureSubmit", "setAreaFilter", "taskView", "taskViewReferenceTarget", "editDraft", "destinationPicker", "search", "mindSweepGuide", "mindSweepAdd",
             "calendarComposerOpen", "calendarComposerEdit", "calendarComposerSave", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome",
-            "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectAttachmentWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
+            "appLockOptions", "appLock", "appLockRetryOutcome", "gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "generalPreferenceOptions", "manageTaxonomyOptions", "managePersonEditOptions", "generalPreference", "manageTaxonomy", "managePersonEdit", "generalPreferenceRetryOutcome", "manageTaxonomyRetryOutcome", "managePersonEditRetryOutcome", "managePersonDeleteOptions", "managePersonDelete", "managePersonDeleteRetryOutcome", "managePersonCreateResolve", "managePersonCreate", "managePersonCreateRetryOutcome", "areaCreateResolve", "areaCreate", "manageAreaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "manageAreaEdit", "manageAreaEditRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "manageAreaDelete", "manageAreaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesReferenceTarget", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectAttachmentEditOptions", "projectAttachmentWrite", "projectAttachmentWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
             guard let json = args.first as? String,
                   (try NativeJSON.jsonObject(with: Data(json.utf8))) is [String: Any] else {
                 throw HostFailure("Core input must be a JSON object")
@@ -7132,7 +7179,7 @@ private final class Engine: @unchecked Sendable {
                 }
             }
         }
-        if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome"].contains(method) {
+        if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 8_192,
                   let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else {
                 throw HostFailure("INVALID_INPUT: GTD workflow requires a bounded object")
@@ -7144,7 +7191,7 @@ private final class Engine: @unchecked Sendable {
                       let limit = input["limit"] as? Int, (1...100).contains(limit),
                       input["revision"] == nil || (input["revision"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 100 }) == true,
                       offset == 0 || input["revision"] is String else { throw HostFailure("INVALID_INPUT: Invalid Capture default area page") }
-            } else if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions"].contains(method) {
+            } else if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions"].contains(method) {
                 guard input.isEmpty else { throw HostFailure("INVALID_INPUT: GTD workflow options take an empty object") }
             } else if method == "gtdWorkflowDraft" {
                 guard Set(input.keys) == Set(["value"]), (input["value"] as? String).map({ $0.utf16.count <= 50 }) == true else {

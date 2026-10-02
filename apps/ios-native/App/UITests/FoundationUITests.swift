@@ -15702,6 +15702,78 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task142Visibility(_ app: XCUIApplication, shown: Bool) {
+        let control = app.buttons["gtd-taskEditorFieldVisible-description"]
+        revealPagedElement(app, control, in: app.scrollViews["gtd-taskEditor-scroll"])
+        boardEnabled(control)
+        if control.value as? String != (shown ? "Shown" : "Hidden") { control.tap() }
+        expectation(for: NSPredicate(format: "value == %@ AND enabled == true", shown ? "Shown" : "Hidden"), evaluatedWith: control)
+        waitForExpectations(timeout: 30)
+    }
+
+    private func task142Consumer(_ app: XCUIApplication, shown: Bool) {
+        boardTap(app, "gtd-taskEditor-back"); boardTap(app, "gtd-back"); boardTap(app, "settings-back")
+        boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+        let input = app.textFields["search-input"]; boardEnabled(input); input.tap(); input.typeText("Task142 empty editor")
+        boardTap(app, "search-task-task142-empty"); boardTap(app, "task-mode-edit")
+        let scroll = app.scrollViews["task-editor-scroll"]
+        let section = app.buttons["task-editor-section-details"]
+        if section.exists {
+            revealPagedElement(app, section, in: scroll)
+            if section.value as? String == "Expand" { section.tap() }
+        }
+        let note = app.textViews["task-editor-note"]
+        if shown { revealPagedElement(app, note, in: scroll); XCTAssertTrue(note.exists) }
+        else { XCTAssertFalse(note.exists) }
+        boardTap(app, "task-view-close"); XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+    }
+
+    private func task142Normal(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task108Open(app)
+        task142Visibility(app, shown: false)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task Editor field hidden"; shot.lifetime = .keepAlways; add(shot)
+        task142Consumer(app, shown: false)
+        app.terminate(); app.launch(); task108Open(app)
+        let control = app.buttons["gtd-taskEditorFieldVisible-description"]
+        revealPagedElement(app, control, in: app.scrollViews["gtd-taskEditor-scroll"])
+        XCTAssertEqual(control.value as? String, "Hidden")
+        task142Visibility(app, shown: true); task142Consumer(app, shown: true)
+        app.terminate()
+    }
+
+    func testGtdTaskEditorFieldVisibilityNormal() { task142Normal("650c1d6e-872e-4209-ac6a-156490ccac4b") }
+    func testGtdTaskEditorFieldVisibilityLargest() { task142Normal("0a7f8a41-044f-483a-b8d8-6bcb5468afa8") }
+
+    func testGtdTaskEditorFieldVisibilityFailedSaveExactRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "74a6b51e-4ef5-4a51-b240-83c671c5f7fd"]
+        app.launch(); task108Open(app)
+        let control = app.buttons["gtd-taskEditorFieldVisible-description"]
+        revealPagedElement(app, control, in: app.scrollViews["gtd-taskEditor-scroll"]); boardEnabled(control); control.tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-taskEditor-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-taskEditor-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-retry"], timeout: 30); app.terminate()
+    }
+
+    func testGtdTaskEditorFieldVisibilityColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "74a6b51e-4ef5-4a51-b240-83c671c5f7fd"]
+        app.launch(); boardEnabled(app.buttons["gtd-taskEditor-back"], timeout: 30)
+        let control = app.buttons["gtd-taskEditorFieldVisible-description"]
+        revealPagedElement(app, control, in: app.scrollViews["gtd-taskEditor-scroll"])
+        XCTAssertEqual(control.value as? String, "Hidden")
+        XCTAssertFalse(app.buttons["gtd-retry"].exists)
+        task142Consumer(app, shown: false); app.terminate(); app.launch(); task108Open(app)
+        revealPagedElement(app, control, in: app.scrollViews["gtd-taskEditor-scroll"])
+        XCTAssertEqual(control.value as? String, "Hidden")
+        XCTAssertFalse(app.buttons["gtd-retry"].exists); app.terminate()
+    }
+
     private func task109RevealSimple(_ app: XCUIApplication) -> XCUIElement {
         let control = app.buttons["gtd-taskEditorPreset-simple"]
         revealPagedElement(app, control, in: app.scrollViews["gtd-taskEditor-scroll"])

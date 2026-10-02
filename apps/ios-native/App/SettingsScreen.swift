@@ -369,7 +369,25 @@ struct SettingsScreen: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(group.text("title")).rnFont(16, .semibold).foregroundStyle(palette.text)
                             .accessibilityAddTraits(.isHeader)
-                        gtdToggle(group.object("defaultOpen"))
+                        if !group.object("defaultOpen").isEmpty { gtdToggle(group.object("defaultOpen")) }
+                        ForEach(group.objects("fields").indices, id: \.self) { fieldIndex in
+                            let field = group.objects("fields")[fieldIndex]
+                            let visibility = field.object("visibility")
+                            Button { Task { await model.chooseGtdWorkflow(visibility.object("edit")) } } label: {
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(field.text("label")).rnFont(16).foregroundStyle(palette.text)
+                                        Text(field.text("status")).rnFont(13).foregroundStyle(palette.secondary)
+                                    }.fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 8)
+                                    Image(systemName: field.flag("visible") ? "eye" : "eye.slash")
+                                        .foregroundStyle(palette.secondary).accessibilityHidden(true)
+                                }.frame(minHeight: 44).contentShape(Rectangle())
+                            }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
+                                .accessibilityLabel(visibility.text("accessibilityLabel"))
+                                .accessibilityValue(field.text("status"))
+                                .accessibilityIdentifier("gtd-taskEditorFieldVisible-" + field.text("id"))
+                        }
                     }.padding(14).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
                 }
                 gtdFeedback

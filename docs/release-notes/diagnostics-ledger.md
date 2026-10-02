@@ -21,6 +21,7 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-gtd-editor-fields`** — native iOS `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Task Editor field visibility saved` with `outcome=confirmed` proves an individual field visibility preference settled durably through the existing GTD journal. Failed saves retain the exact prepared request through Retry and cold recovery. No field values or task content are logged.
 - **`v1.3.4/ios-auto-archive`** — native iOS `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Auto-archive preference saved` with `outcome=confirmed` proves the preference and eligible completed-task archival settled durably together. Failed saves retain the exact prepared GTD request through Retry and cold recovery. No task content or identifiers are logged.
 
 - **`v1.3.4/ios-focus-start-dates`** — native iOS `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Focus start-date preference saved` with `outcome=confirmed` proves the shared Today start-date preference settled durably. Failed saves retain the same prepared GTD request through Retry and cold recovery. No task content or identifiers are logged.

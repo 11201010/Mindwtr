@@ -2744,7 +2744,7 @@ final class CoreModel: ObservableObject {
                 settingsGtdReviewPresented = ["dailyReviewFocusStep", "weeklyReviewContextStep"].contains(recovery.object("result").text("type"))
                 settingsGtdInboxPresented = ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"].contains(recovery.object("result").text("type"))
                 settingsGtdCapturePresented = ["defaultArea", "quickAddAutoClean", "naturalLanguageDates"].contains(recovery.object("result").text("type"))
-                settingsGtdTaskEditorPresented = ["taskEditorSectionOpen", "taskEditorPreset"].contains(recovery.object("result").text("type"))
+                settingsGtdTaskEditorPresented = ["taskEditorSectionOpen", "taskEditorPreset", "taskEditorFieldVisible"].contains(recovery.object("result").text("type"))
             } else if ["generalPreferenceCommit", "appLockCommit"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsGeneralPresented = true
@@ -3100,8 +3100,20 @@ final class CoreModel: ObservableObject {
                 }) else { throw CocoaError(.coderReadCorrupt) }
                 content["presets"] = presets.object("taskEditor").object("presets")
                 expected["taskEditorPreset"] = presetExpected
+                let fieldOptions = try await query("gtdTaskEditorFieldOptions", ["{}"])
+                let fieldExpected = fieldOptions.object("expected")
+                guard try json(fieldExpected) == json(presetExpected) else { throw CocoaError(.coderReadCorrupt) }
+                let openGroups = content.objects("groups")
+                content["groups"] = fieldOptions.object("taskEditor").objects("groups").map { group in
+                    var merged = group
+                    if let original = openGroups.first(where: { $0.text("id") == group.text("id") }) {
+                        merged["defaultOpen"] = original.object("defaultOpen")
+                    }
+                    return merged
+                }
+                expected["taskEditorFieldVisible"] = fieldExpected
             } catch {
-                // Unsupported legacy layout prevents preset replacement, but section defaults remain usable.
+                // Unsupported legacy layout prevents layout changes, but section defaults remain usable.
                 guard isDefiniteRejection(error), error.localizedDescription.hasPrefix("INVALID_INPUT:") else { throw error }
                 gtdTaskEditorPresetError = error.localizedDescription
             }
@@ -3205,8 +3217,10 @@ final class CoreModel: ObservableObject {
 
     private func acknowledgeGtdWorkflow(_ result: CoreObject) throws {
         let editing = gtdWorkflowEdit.text("type") == "taskEditorSectionOpen"
-        guard gtdWorkflowRequest != nil, Set(result.keys) == Set(editing ? ["type", "section", "value", "changed"] : ["type", "value", "changed"]),
+        let fieldVisibility = gtdWorkflowEdit.text("type") == "taskEditorFieldVisible"
+        guard gtdWorkflowRequest != nil, Set(result.keys) == Set(editing ? ["type", "section", "value", "changed"] : fieldVisibility ? ["type", "field", "value", "changed"] : ["type", "value", "changed"]),
               !editing || result.text("section") == gtdWorkflowEdit.text("section"),
+              !fieldVisibility || result.text("field") == gtdWorkflowEdit.text("field"),
               result.text("type") == gtdWorkflowEdit.text("type"), result["changed"] is Bool,
               try json(["value": result["value"] ?? NSNull()]) == json(["value": gtdWorkflowEdit["value"] ?? NSNull()]) else { throw CocoaError(.coderReadCorrupt) }
         gtdWorkflowRequest = nil
@@ -18581,7 +18595,7 @@ final class CoreModel: ObservableObject {
             generalPreferenceThemeTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
-        if ["gtdWorkflowOptions", "gtdArchiveOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureParseOptions", "gtdTaskEditorPresetOptions"].contains(method), gtdWorkflowAwaitingRefresh, gtdWorkflowTestReadFailures > 0 {
+        if ["gtdWorkflowOptions", "gtdArchiveOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureParseOptions", "gtdTaskEditorPresetOptions", "gtdTaskEditorFieldOptions"].contains(method), gtdWorkflowAwaitingRefresh, gtdWorkflowTestReadFailures > 0 {
             gtdWorkflowTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }

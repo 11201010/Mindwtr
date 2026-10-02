@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createNativeHostContract } from './native-host-contract';
 import { canStarNewCapture } from './focus-star';
 import { normalizeFocusTaskLimit } from './focus-utils';
+import { DEFAULT_TASK_EDITOR_HIDDEN, DEFAULT_TASK_EDITOR_ORDER } from './task-editor-layout';
 import { getProcessInboxDefaultScheduleTime } from './process-inbox-model';
 import { createQuickCaptureOptions, resolveQuickCaptureDefaultAreaId } from './quick-capture-model';
 import type { GtdWorkflowEdit, NativeGtdWorkflowRequest } from './native-host-contract-gtd-workflow';
@@ -138,7 +139,178 @@ async function plannedPreset(env: Awaited<ReturnType<typeof open>>, value: 'simp
         envelope: { request, prepared: plan.value.prepared } };
 }
 
+async function plannedField(env: Awaited<ReturnType<typeof open>>, field: 'description' | 'priority', value: boolean) {
+    const options = await env.host.getGtdTaskEditorFieldOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const request: NativeGtdWorkflowRequest = { requestId: ID,
+        edit: { type: 'taskEditorFieldVisible', field, value }, expected: options.value.expected };
+    const plan = await env.host.prepareGtdWorkflow(request);
+    if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+    return { options: options.value, request, prepared: plan.value.prepared,
+        envelope: { request, prepared: plan.value.prepared } };
+}
+
 afterEach(async () => { vi.useRealTimers(); await flushPendingSave(); resetForTests(); });
+
+describe('prepared GTD Task Editor field visibility', () => {
+    it('hides Description through the shared field edit while retaining layout and task rows', async () => {
+        const start = initial();
+        start.tasks.push({ id: 'field-editor', title: 'Field editor', status: 'next',
+            tags: [], contexts: [], createdAt: AT, updatedAt: AT });
+        start.settings.gtd = { ...start.settings.gtd, taskEditor: {
+            order: [...DEFAULT_TASK_EDITOR_ORDER], hidden: [...DEFAULT_TASK_EDITOR_HIDDEN],
+            sections: {}, sectionOpen: {}, legacy: 'keep' } as never };
+        start.settings.features = { priorities: false, timeEstimates: false, legacy: 'keep' } as never;
+        const env = await open(start);
+        const beforeEditor = env.host.getTaskEditorModel({ id: 'field-editor' });
+        if (!beforeEditor.ok) throw new Error(JSON.stringify(beforeEditor));
+        expect(beforeEditor.value.layout.sections.flatMap((section) => section.fields)).toContain('description');
+        const { options, envelope, prepared } = await plannedField(env, 'description', false);
+        const field = options.taskEditor.groups.flatMap((group) => group.fields)
+            .find((row) => row.id === 'description');
+        expect(options.taskEditor.groups[0].id).toBe('basic');
+        expect(field).toMatchObject({ visible: true, visibility: {
+            edit: { type: 'taskEditorFieldVisible', field: 'description', value: false } } });
+        expect(prepared.result).toEqual({ type: 'taskEditorFieldVisible', field: 'description',
+            value: false, changed: true });
+        expect(prepared.after.selected?.hidden.value).toContain('description');
+        expect(env.host.validatePreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(env.data().settings.gtd?.taskEditor).toEqual({ ...start.settings.gtd?.taskEditor,
+            hidden: [...DEFAULT_TASK_EDITOR_HIDDEN, 'description'] });
+        expect(env.data().settings.features).toEqual(start.settings.features);
+        expect(env.data().tasks).toEqual(start.tasks);
+        const editor = env.host.getTaskEditorModel({ id: 'field-editor' });
+        if (!editor.ok) throw new Error(JSON.stringify(editor));
+        expect(editor.value.layout.sections.flatMap((section) => section.fields)).not.toContain('description');
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+    });
+
+    it('offers all shared fields, rejects unavailable edits, and treats an already stored choice as a no-op', async () => {
+        const env = await open(initial());
+        const options = await env.host.getGtdTaskEditorFieldOptions({});
+        if (!options.ok) throw new Error(JSON.stringify(options));
+        const groups = options.value.taskEditor.groups;
+        expect(groups[0].id).toBe('basic');
+        const fields = groups.flatMap((group) => group.fields);
+        expect(fields.map((row) => row.id).sort()).toEqual([...DEFAULT_TASK_EDITOR_ORDER].sort());
+        for (const row of fields) expect(row.visibility.edit).toEqual({
+            type: 'taskEditorFieldVisible', field: row.id, value: !row.visible });
+        expect(fields.find((row) => row.id === 'priority')).toMatchObject({ visible: false,
+            visibility: { edit: { value: true } } });
+        const expected = options.value.expected;
+        for (const edit of [
+            { type: 'taskEditorFieldVisible', field: 'textDirection', value: true },
+            { type: 'taskEditorFieldVisible', field: 'unknown', value: false },
+            { type: 'taskEditorFieldVisible', field: 'description', value: 'false' },
+            { type: 'taskEditorFieldVisible', field: 'description', value: false, extra: true },
+            { type: 'taskEditorFieldVisible', field: 'description', value: true },
+        ]) expect(await env.host.prepareGtdWorkflow({ requestId: ID, edit, expected }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(env.saves()).toBe(0);
+
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd, taskEditor: {
+            order: [...DEFAULT_TASK_EDITOR_ORDER], hidden: [...DEFAULT_TASK_EDITOR_HIDDEN],
+            sections: {}, sectionOpen: {} } };
+        start.settings.features = { priorities: false, timeEstimates: false };
+        const stored = await open(start);
+        const current = await stored.host.getGtdTaskEditorFieldOptions({});
+        if (!current.ok) throw new Error(JSON.stringify(current));
+        expect(await stored.host.prepareGtdWorkflow({ requestId: ID,
+            edit: { type: 'taskEditorFieldVisible', field: 'description', value: true },
+            expected: current.value.expected })).toMatchObject({ ok: true,
+                value: { kind: 'noop', result: { type: 'taskEditorFieldVisible', field: 'description',
+                    value: true, changed: false } } });
+        expect(stored.saves()).toBe(0);
+    });
+
+    it('enables and hides the Priority field through the shared feature flag policy', async () => {
+        for (const row of [
+            { initiallyVisible: false, value: true, enabled: true },
+            { initiallyVisible: true, value: false, enabled: false },
+        ]) {
+            const start = initial();
+            start.tasks.push({ id: 'feature-editor', title: 'Feature editor', status: 'next',
+                tags: [], contexts: [], createdAt: AT, updatedAt: AT });
+            start.settings.gtd = { ...start.settings.gtd, taskEditor: {
+                order: [...DEFAULT_TASK_EDITOR_ORDER],
+                hidden: row.initiallyVisible ? DEFAULT_TASK_EDITOR_HIDDEN.filter((field) => field !== 'priority')
+                    : [...DEFAULT_TASK_EDITOR_HIDDEN],
+                sections: {}, sectionOpen: {} } };
+            start.settings.features = { priorities: row.initiallyVisible, timeEstimates: false };
+            const env = await open(start);
+            const { options, envelope, prepared } = await plannedField(env, 'priority', row.value);
+            expect(options.taskEditor.groups.flatMap((group) => group.fields)
+                .find((field) => field.id === 'priority')?.visible).toBe(row.initiallyVisible);
+            expect(prepared.after.selected?.priorities.value).toBe(row.enabled);
+            expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+            expect(env.data().settings.features?.priorities).toBe(row.enabled);
+            const editor = env.host.getTaskEditorModel({ id: 'feature-editor' });
+            if (!editor.ok) throw new Error(JSON.stringify(editor));
+            expect(editor.value.layout.sections.flatMap((section) => section.fields).includes('priority'))
+                .toBe(row.enabled);
+            expect(env.data().tasks).toEqual(start.tasks);
+        }
+    });
+
+    it('rejects forged field identity, receipt, and changed layout/feature witnesses before writing', async () => {
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd, taskEditor: {
+            order: [...DEFAULT_TASK_EDITOR_ORDER], hidden: [...DEFAULT_TASK_EDITOR_HIDDEN],
+            sections: {}, sectionOpen: {} } };
+        start.settings.features = { priorities: false, timeEstimates: false };
+        const env = await open(start);
+        const { envelope } = await plannedField(env, 'description', false);
+        for (const mutate of [
+            (copy: typeof envelope) => { copy.prepared.result.field = 'priority'; },
+            (copy: typeof envelope) => { copy.prepared.after.selected!.hidden.value = ['tags']; },
+            (copy: typeof envelope) => { copy.prepared.request.edit.field = 'priority'; },
+        ]) {
+            const forged = structuredClone(envelope); mutate(forged);
+            expect(env.host.validatePreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+            expect(await env.host.commitPreparedGtdWorkflow(forged)).toMatchObject({ ok: false,
+                error: { code: 'INVALID_INPUT' } });
+        }
+        expect(env.saves()).toBe(0);
+        for (const change of [
+            (data: AppData) => ({ ...data, settings: { ...data.settings, gtd: { ...data.settings.gtd,
+                taskEditor: { ...data.settings.gtd?.taskEditor, order: [...DEFAULT_TASK_EDITOR_ORDER].reverse() } } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings, features: {
+                ...data.settings.features, priorities: true } } }),
+            (data: AppData) => ({ ...data, settings: { ...data.settings,
+                syncPreferencesUpdatedAt: { ...data.settings.syncPreferencesUpdatedAt,
+                    gtd: '2026-09-02T00:00:00.000Z' } } }),
+        ]) {
+            const other = await open(start);
+            const planned = await plannedField(other, 'description', false);
+            other.changeSaved(change);
+            expect(await other.host.commitPreparedGtdWorkflow(planned.envelope)).toMatchObject({ ok: false,
+                error: { code: 'STALE_REVISION' } });
+            expect(other.saves()).toBe(0);
+        }
+    });
+
+    it('replays the exact field receipt after unrelated settings and task edits', async () => {
+        const start = initial(); start.settings.gtd = { ...start.settings.gtd, taskEditor: {
+            order: [...DEFAULT_TASK_EDITOR_ORDER], hidden: [...DEFAULT_TASK_EDITOR_HIDDEN],
+            sections: {}, sectionOpen: {} } };
+        start.settings.features = { priorities: false, timeEstimates: false };
+        const env = await open(start);
+        const { envelope, prepared } = await plannedField(env, 'description', false);
+        expect(await env.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        env.changeSaved((data) => ({ ...data, tasks: data.tasks.map((task) => ({ ...task, title: 'later task edit' })),
+            settings: { ...data.settings, language: 'ko',
+                gtd: { ...data.settings.gtd, legacySibling: { marker: 204 } } } }));
+        const cold = await env.reopen();
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true, value: prepared.result });
+        expect(cold.saves()).toBe(0);
+        expect(cold.data().tasks[0].title).toBe('later task edit');
+        expect(cold.data().settings.language).toBe('ko');
+        expect(cold.data().settings.gtd?.legacySibling).toEqual({ marker: 204 });
+    });
+});
 
 describe('prepared GTD Task Editor presets', () => {
     it.each(['simple', 'standard', 'full'] as const)('uses shared %s preset layout and exact composite receipt', async (value) => {
