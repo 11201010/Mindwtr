@@ -202,7 +202,7 @@ private final class Engine: @unchecked Sendable {
         "projectSectionDeleteOptions": 1, "projectSectionDelete": 1, "projectSectionDeleteRetryOutcome": 1,
         "projectSectionOrderOptions": 1, "projectSectionOrder": 1, "projectSectionOrderRetryOutcome": 1,
         "appLockOptions": 1, "appLock": 1, "appLockRetryOutcome": 1,
-        "gtdWorkflowOptions": 1, "gtdReviewOptions": 1, "gtdInboxOptions": 1, "gtdCaptureAreaOptions": 1, "gtdCaptureParseOptions": 1, "gtdTaskEditorOpenOptions": 1, "gtdTaskEditorPresetOptions": 1, "gtdWorkflowDraft": 1, "gtdWorkflow": 1, "gtdWorkflowRetryOutcome": 1,
+        "gtdWorkflowOptions": 1, "gtdArchiveOptions": 1, "gtdReviewOptions": 1, "gtdInboxOptions": 1, "gtdCaptureAreaOptions": 1, "gtdCaptureParseOptions": 1, "gtdTaskEditorOpenOptions": 1, "gtdTaskEditorPresetOptions": 1, "gtdWorkflowDraft": 1, "gtdWorkflow": 1, "gtdWorkflowRetryOutcome": 1,
         "generalPreferenceOptions": 1, "generalPreference": 1, "generalPreferenceRetryOutcome": 1,
         "manageTaxonomyOptions": 1, "manageTaxonomy": 1, "manageTaxonomyRetryOutcome": 1,
         "managePersonEditOptions": 1, "managePersonEdit": 1, "managePersonEditRetryOutcome": 1,
@@ -945,6 +945,9 @@ private final class Engine: @unchecked Sendable {
                 "somedaySectionMoveRetryOutcome", "somedaySectionMoveUndoRetryOutcome"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
+            if method == "gtdArchiveOptions", pending == nil {
+                throw CoreHostRejection(message: error.localizedDescription)
+            }
             // Mind Sweep has no journal or write before argument validation.
             // Its UI may release an oversized draft only on a definite refusal.
             // With an older command still owed, keep every error uncertain.
@@ -1099,6 +1102,33 @@ private final class Engine: @unchecked Sendable {
                       let revision = options["revision"] as? String, !revision.isEmpty, revision.utf16.count <= 100 else {
                     throw HostFailure("Malformed Capture default area options")
                 }
+            }
+            if method == "gtdArchiveOptions" {
+                guard value.utf8.count <= 65_536,
+                      let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(options.keys) == Set(["archive", "expected"]),
+                      let archive = options["archive"] as? [String: Any],
+                      Set(archive.keys) == Set(["title", "description", "options"]),
+                      archive["title"] is String, archive["description"] is String,
+                      let witness = options["expected"] as? [String: Any],
+                      Self.validGtdWorkflowExpected(witness, type: "autoArchiveDays"),
+                      let rows = archive["options"] as? [[String: Any]], rows.count == 7 else {
+                    throw HostFailure("Malformed GTD Auto-archive options")
+                }
+                let rawDays = (witness["value"] as? NSNumber)?.doubleValue ?? 7
+                let displayedDays = max(0, floor(rawDays))
+                guard
+                      Set(rows.compactMap { ($0["value"] as? NSNumber)?.intValue }) == Set([0, 1, 3, 7, 14, 30, 60]),
+                      rows.filter({ $0["selected"] as? Bool == true }).count <= 1,
+                      rows.allSatisfy({ row in
+                          guard Set(row.keys) == Set(["value", "label", "selected", "edit"]),
+                                Self.validGtdWorkflowEdit(row["edit"]),
+                                let edit = row["edit"] as? [String: Any], edit["type"] as? String == "autoArchiveDays",
+                                Self.equalJSON(edit["value"], row["value"]), row["label"] is String,
+                                Self.isBoolean(row["selected"]) else { return false }
+                          let rowDays = (row["value"] as? NSNumber)?.doubleValue
+                          return (row["selected"] as? Bool) == (rowDays == displayedDays)
+                      }) else { throw HostFailure("Malformed GTD Auto-archive options") }
             }
             if method == "gtdTaskEditorPresetOptions" {
                 guard value.utf8.count <= 65_536,
@@ -2040,10 +2070,14 @@ private final class Engine: @unchecked Sendable {
                       let request = prepared["request"] as? [String: Any], Self.equalJSON(request, submitted) else {
                     throw HostFailure("Malformed prepared GTD workflow write")
                 }
+                let archive = (submitted["edit"] as? [String: Any])?["type"] as? String == "autoArchiveDays"
+                guard archive ? prepared["archiveEffects"] is [[String: Any]] : prepared["archiveEffects"] == nil else {
+                    throw HostFailure("Malformed prepared GTD workflow effects")
+                }
                 let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
-                guard commit.utf8.count <= 8_192 else { throw HostFailure("INVALID_INPUT: Prepared GTD workflow write is too large") }
+                guard commit.utf8.count <= (archive ? 2_000_000 : 8_192) else { throw HostFailure("INVALID_INPUT: Prepared GTD workflow write is too large") }
                 let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
-                guard encoded.utf8.count <= 18_192 else { throw HostFailure("INVALID_INPUT: Prepared GTD workflow write journal is too large") }
+                guard encoded.utf8.count <= (archive ? 12_000_000 : 18_192) else { throw HostFailure("INVALID_INPUT: Prepared GTD workflow write journal is too large") }
                 command = PendingCommand(version: 2, method: "gtdWorkflowCommit", argumentsJSON: encoded)
                 _ = try invoke("gtdWorkflowValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
@@ -3301,6 +3335,7 @@ private final class Engine: @unchecked Sendable {
         }
         if command.method == "gtdWorkflowCommit", case .success(let value) = terminal {
             let result = (try? NativeJSON.jsonObject(with: Data(value.utf8))) as? [String: Any]
+            let archiving = result?["type"] as? String == "autoArchiveDays"
             let startDates = result?["type"] as? String == "focusIncludeStartDates"
             let reviewing = ["dailyReviewFocusStep", "weeklyReviewContextStep"].contains(result?["type"] as? String ?? "")
             let inboxing = ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"].contains(result?["type"] as? String ?? "")
@@ -3309,9 +3344,10 @@ private final class Engine: @unchecked Sendable {
             let editing = result?["type"] as? String == "taskEditorSectionOpen"
             let preset = result?["type"] as? String == "taskEditorPreset"
 #if DEBUG
-            faults?.commandDiagnostic?(startDates ? "gtdFocusStartDatesApplied" : preset ? "gtdTaskEditorPresetApplied" : editing ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : reviewing ? "gtdReviewApplied" : "gtdWorkflowApplied")
+            faults?.commandDiagnostic?(archiving ? "gtdAutoArchiveApplied" : startDates ? "gtdFocusStartDatesApplied" : preset ? "gtdTaskEditorPresetApplied" : editing ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : reviewing ? "gtdReviewApplied" : "gtdWorkflowApplied")
 #endif
-            if startDates { NSLog("Native iOS Focus start-date preference saved releaseCheck=v1.3.4/ios-focus-start-dates outcome=confirmed") }
+            if archiving { NSLog("Native iOS Auto-archive preference saved releaseCheck=v1.3.4/ios-auto-archive outcome=confirmed") }
+            else if startDates { NSLog("Native iOS Focus start-date preference saved releaseCheck=v1.3.4/ios-focus-start-dates outcome=confirmed") }
             else if preset { NSLog("Native iOS Task Editor preset saved releaseCheck=v1.3.4/ios-gtd-editor-presets outcome=confirmed") }
             else if editing { NSLog("Native iOS Task Editor sections saved releaseCheck=v1.3.4/ios-gtd-editor-sections outcome=confirmed") }
             else if parsing { NSLog("Native iOS Capture parsing saved releaseCheck=v1.3.4/ios-gtd-capture-parsing outcome=confirmed") }
@@ -3775,6 +3811,7 @@ private final class Engine: @unchecked Sendable {
             $0.doubleValue.isFinite && $0.doubleValue.rounded() == $0.doubleValue && abs($0.doubleValue) <= 1_000_000
         } == true
         case "focusIncludeStartDates": return isBoolean(edit["value"])
+        case "autoArchiveDays": return [0, 1, 3, 7, 14, 30, 60].contains { isInteger(edit["value"], equalTo: $0) }
         case "defaultProjectFlowMode": return ["parallel", "sequential"].contains(edit["value"] as? String ?? "")
         case "dailyReviewFocusStep", "weeklyReviewContextStep", "inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule", "quickAddAutoClean", "naturalLanguageDates": return isBoolean(edit["value"])
         default: return false
@@ -3833,6 +3870,17 @@ private final class Engine: @unchecked Sendable {
             }
             return expected["stampPresent"] as? Bool == true
                 ? (expected["stamp"] as? String).map { $0.utf16.count <= 500 } == true : expected["stamp"] is NSNull
+        }
+        if type == "autoArchiveDays" {
+            guard let expected = value as? [String: Any],
+                  Set(expected.keys) == Set(["present", "value", "stampPresent", "stamp"]),
+                  isBoolean(expected["present"]), isBoolean(expected["stampPresent"]),
+                  let present = expected["present"] as? Bool, let stampPresent = expected["stampPresent"] as? Bool,
+                  present ? (!isBoolean(expected["value"]) && (expected["value"] as? NSNumber)?.doubleValue.isFinite == true)
+                    : expected["value"] is NSNull,
+                  stampPresent ? (expected["stamp"] as? String).map({ $0.utf16.count <= 500 }) == true
+                    : expected["stamp"] is NSNull else { return false }
+            return true
         }
         if ["dailyReviewFocusStep", "weeklyReviewContextStep", "inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"].contains(type) {
             guard let expected = value as? [String: Any],
@@ -5179,15 +5227,21 @@ private final class Engine: @unchecked Sendable {
             return args
         }
         if command.method == "gtdWorkflowCommit" {
-            guard command.argumentsJSON.utf8.count <= 49_152,
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
-                  args[0].utf8.count <= 8_192,
+                  args[0].utf8.count <= 2_000_000,
                   let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
                   Set(input.keys) == Set(["request", "prepared"]),
                   let request = input["request"] as? [String: Any],
                   let prepared = input["prepared"] as? [String: Any],
                   Self.isInteger(prepared["version"], equalTo: 1),
                   let original = prepared["request"] as? [String: Any], Self.equalJSON(request, original) else {
+                throw HostFailure("Malformed prepared GTD workflow journal")
+            }
+            let archive = (request["edit"] as? [String: Any])?["type"] as? String == "autoArchiveDays"
+            guard command.argumentsJSON.utf8.count <= (archive ? 12_000_000 : 49_152),
+                  args[0].utf8.count <= (archive ? 2_000_000 : 8_192),
+                  archive ? prepared["archiveEffects"] is [[String: Any]] : prepared["archiveEffects"] == nil else {
                 throw HostFailure("Malformed prepared GTD workflow journal")
             }
             let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
@@ -6023,6 +6077,9 @@ private final class Engine: @unchecked Sendable {
         }
         if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions", "gtdCaptureAreaOptions", "gtdCaptureParseOptions", "gtdTaskEditorOpenOptions", "gtdTaskEditorPresetOptions", "gtdWorkflowDraft", "gtdWorkflow", "gtdWorkflowRetryOutcome", "appLockOptions", "appLock", "appLockRetryOutcome", "generalPreferenceOptions", "generalPreference", "generalPreferenceRetryOutcome"].contains(method), json.utf8.count > 49_152 {
             throw HostFailure("INVALID_INPUT: General preference transport is too large")
+        }
+        if method == "gtdArchiveOptions", json.utf8.count > 49_152 {
+            throw HostFailure("INVALID_INPUT: GTD Auto-archive transport is too large")
         }
         if ["manageTaxonomyOptions", "manageTaxonomy", "manageTaxonomyRetryOutcome"].contains(method), json.utf8.count > 12_000_000 {
             throw HostFailure("INVALID_INPUT: Taxonomy transport is too large")
@@ -7100,6 +7157,12 @@ private final class Engine: @unchecked Sendable {
                       Self.validGtdWorkflowExpected(input["expected"], type: edit["type"] as? String ?? "") else {
                     throw HostFailure("INVALID_INPUT: GTD workflow requires a checked edit and lowercase UUID")
                 }
+            }
+        }
+        if method == "gtdArchiveOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 8_192,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any], input.isEmpty else {
+                throw HostFailure("INVALID_INPUT: GTD Auto-archive options take an empty object")
             }
         }
         if ["generalPreferenceOptions", "generalPreference", "generalPreferenceRetryOutcome"].contains(method) {

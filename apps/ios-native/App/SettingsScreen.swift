@@ -41,15 +41,16 @@ struct SettingsScreen: View {
                           || (model.settingsGtdPresented ? model.gtdWorkflowPending : model.generalPreferenceActive) || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
                           || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
                 .accessibilityLabel(model.label("common.back"))
-                .accessibilityIdentifier(model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
-                Text(model.settingsGtdTaskEditorPresented ? model.gtdTaskEditor.text("title") : model.settingsGtdCapturePresented ? (model.gtdCapture.text("title").isEmpty ? model.label("settings.captureSettings") : model.gtdCapture.text("title")) : model.settingsGtdInboxPresented ? (model.gtdInbox.text("title").isEmpty ? model.label("settings.inboxProcessing") : model.gtdInbox.text("title")) : model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
+                .accessibilityIdentifier(model.settingsGtdArchivePresented ? "gtd-archive-back" : model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
+                Text(model.settingsGtdArchivePresented ? (model.gtdArchive.text("title").isEmpty ? model.label("settings.autoArchive") : model.gtdArchive.text("title")) : model.settingsGtdTaskEditorPresented ? model.gtdTaskEditor.text("title") : model.settingsGtdCapturePresented ? (model.gtdCapture.text("title").isEmpty ? model.label("settings.captureSettings") : model.gtdCapture.text("title")) : model.settingsGtdInboxPresented ? (model.gtdInbox.text("title").isEmpty ? model.label("settings.inboxProcessing") : model.gtdInbox.text("title")) : model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
                     .rnFont(20, .bold).foregroundStyle(palette.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
             }
             .padding(.horizontal, 12).padding(.vertical, 5)
             .background(palette.card)
-            if model.settingsGtdTaskEditorPresented { gtdTaskEditorContent }
+            if model.settingsGtdArchivePresented { gtdArchiveContent }
+            else if model.settingsGtdTaskEditorPresented { gtdTaskEditorContent }
             else if model.settingsGtdCapturePresented { gtdCaptureContent }
             else if model.settingsGtdInboxPresented { gtdInboxContent }
             else if model.settingsGtdReviewPresented { gtdReviewContent }
@@ -266,6 +267,33 @@ struct SettingsScreen: View {
         }
     }
 
+    private var gtdArchiveContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(model.gtdArchive.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 0) {
+                    let options = model.gtdArchive.objects("options")
+                    ForEach(options.indices, id: \.self) { index in
+                        let option = options[index]
+                        Button { Task { await model.chooseGtdWorkflow(option.object("edit")) } } label: {
+                            HStack {
+                                Text(option.text("label")).rnFont(16).fixedSize(horizontal: false, vertical: true)
+                                Spacer()
+                                if option.flag("selected") { Image(systemName: "checkmark").accessibilityHidden(true) }
+                            }.foregroundStyle(option.flag("selected") ? palette.tint : palette.text)
+                                .padding(14).frame(maxWidth: .infinity, minHeight: 48)
+                                .contentShape(Rectangle())
+                        }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
+                            .accessibilityAddTraits(option.flag("selected") ? .isSelected : [])
+                            .accessibilityIdentifier("gtd-autoArchiveDays-" + String(option.number("value")))
+                    }
+                }.background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                gtdFeedback
+            }.padding(16).padding(.bottom, 24)
+        }.accessibilityIdentifier("gtd-archive-scroll")
+    }
+
     private var gtdReviewContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -441,7 +469,7 @@ struct SettingsScreen: View {
         return VStack(spacing: 0) {
             if divider { palette.border.frame(height: 0.5) }
             Button {
-                if ["review", "inbox", "capture", "taskEditor"].contains(field) { Task { await model.openGtdSubpage(field); gtdTimeFocused = false } }
+                if ["review", "inbox", "capture", "taskEditor", "autoArchive"].contains(field) { Task { await model.openGtdSubpage(field); gtdTimeFocused = false } }
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -451,8 +479,8 @@ struct SettingsScreen: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: "chevron.right").foregroundStyle(palette.secondary).accessibilityHidden(true)
                 }.padding(14).frame(minHeight: 48)
-            }.buttonStyle(.plain).disabled(!["review", "inbox", "capture", "taskEditor"].contains(field) || !model.gtdWorkflowEnabled)
-                .opacity(["review", "inbox", "capture", "taskEditor"].contains(field) ? 1 : 0.55).accessibilityIdentifier("gtd-" + field)
+            }.buttonStyle(.plain).disabled(!["review", "inbox", "capture", "taskEditor", "autoArchive"].contains(field) || !model.gtdWorkflowEnabled)
+                .opacity(["review", "inbox", "capture", "taskEditor", "autoArchive"].contains(field) ? 1 : 0.55).accessibilityIdentifier("gtd-" + field)
         }
     }
 

@@ -4,7 +4,7 @@ import { markCoreStartupPhase, measureCoreStartupPhase } from './startup-profile
 import { normalizeTaskForLoad } from './task-status';
 import { normalizeProjectLifecycleFields } from './project-status';
 import type { StorageAdapter } from './storage';
-import type { AppData, AppSettings, Area, SavedFilter, TaskEditorFieldId, TaskEditorSectionId } from './types';
+import type { AppData, AppSettings, Area, SavedFilter, Task, TaskEditorFieldId, TaskEditorSectionId } from './types';
 import type { DerivedCache, SavedSearchWriteScope, TaskStore } from './store-types';
 import type { FocusControlState } from './focus-controls';
 import { buildFocusControlsModel } from './focus-controls';
@@ -99,7 +99,8 @@ export const appLockWitness = (settings: AppSettings): AppLockWitness | null => 
     return present && typeof value !== 'boolean' ? null : { groupPresent: true, present, value: value ?? null };
 };
 
-export type GtdWorkflowDirectType = 'defaultScheduleTime' | 'focusTaskLimit' | 'focusIncludeStartDates' | 'defaultProjectFlowMode';
+export type GtdWorkflowDirectType = 'defaultScheduleTime' | 'focusTaskLimit' | 'focusIncludeStartDates'
+    | 'defaultProjectFlowMode' | 'autoArchiveDays';
 export type GtdWorkflowReviewType = 'dailyReviewFocusStep' | 'weeklyReviewContextStep';
 export type GtdWorkflowInboxType = 'inboxTwoMinute' | 'inboxProjectFirst' | 'inboxContextStep' | 'inboxSchedule';
 export type GtdWorkflowCaptureParseType = 'quickAddAutoClean' | 'naturalLanguageDates';
@@ -170,6 +171,8 @@ export const gtdWorkflowNestedPath = (type: GtdWorkflowReviewType | GtdWorkflowI
 const boundedRawGtdValue = (type: GtdWorkflowDirectType, value: unknown): value is string | number | boolean =>
     type === 'focusIncludeStartDates'
         ? typeof value === 'boolean'
+        : type === 'autoArchiveDays'
+        ? typeof value === 'number' && Number.isFinite(value)
         : type === 'focusTaskLimit'
         ? typeof value === 'number' && Number.isSafeInteger(value) && Math.abs(value) <= 1_000_000
         : typeof value === 'string' && value.length <= 500;
@@ -284,6 +287,15 @@ export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType,
     return { present, value: present ? value as string | number | boolean : null,
         stampPresent, stamp: stampPresent ? stamp! : null };
 }
+
+export type GtdArchiveEffect = { before: Task; after: Task };
+/** The shared RN archive pass projected at a frozen clock; an empty list is a complete no-effect batch. */
+export const gtdArchiveEffects = (tasks: Task[], settings: AppSettings,
+    at: string, deviceId: string): GtdArchiveEffect[] => {
+    const projected = runAutoArchive(tasks, settings, { nowIso: at, nowMs: Date.parse(at), deviceId });
+    return tasks.flatMap((before, index) => before === projected.allTasks[index]
+        ? [] : [{ before, after: projected.allTasks[index] }]);
+};
 
 export const prepareLocalSavedFilterUpdates = (
     previous: readonly SavedFilter[] | undefined,
@@ -1025,7 +1037,9 @@ export const createSettingsActions = ({
                 && current.stampPresent && current.stamp === input.after.stamp
                 && (durable.settings.deviceId ?? null)
                     === (input.deviceIdBefore ?? input.deviceIdToInitialize);
-            if (after) {
+            const archiveReceipt = edit.type !== 'autoArchiveDays' || input.archiveEffects?.every((effect) =>
+                taskEditValuesEqual(durable.tasks.find((task) => task.id === effect.after.id), effect.after));
+            if (after && archiveReceipt) {
                 result = { success: true, outcome: 'replayed' };
                 return memory;
             }
@@ -1057,13 +1071,20 @@ export const createSettingsActions = ({
                 : (fresh as GtdWorkflowDirectWitness | GtdWorkflowReviewWitness).present
                     && taskEditValuesEqual((fresh as GtdWorkflowDirectWitness | GtdWorkflowReviewWitness).value, input.after.value))
                 || !fresh.stampPresent || fresh.stamp !== input.after.stamp) return memory;
-            const freshTasks = durable.tasks.map((row) => normalizeTaskForLoad(row));
+            const archiveEffects = edit.type === 'autoArchiveDays'
+                ? gtdArchiveEffects(durable.tasks, settings, input.preparedAt,
+                    input.deviceIdBefore ?? input.deviceIdToInitialize!) : null;
+            if (archiveEffects && !taskEditValuesEqual(archiveEffects, input.archiveEffects)) return memory;
+            const archivedById = new Map(archiveEffects?.map((effect) => [effect.before.id, effect.after]) ?? []);
+            const writtenTasks = archiveEffects
+                ? durable.tasks.map((row) => archivedById.get(row.id) ?? row) : durable.tasks;
+            const freshTasks = writtenTasks.map((row) => normalizeTaskForLoad(row));
             const freshProjects = durable.projects.map(normalizeProjectLifecycleFields);
             clearDerivedCache();
             persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks,
                 _allProjects: durable.projects, _allSections: durable.sections ?? [],
                 _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [], settings: durable.settings },
-            { ...durable, settings });
+            { ...durable, tasks: writtenTasks, settings });
             const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
             authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
                 generation: getSaveGeneration(), failure: memory.persistenceFailure };
