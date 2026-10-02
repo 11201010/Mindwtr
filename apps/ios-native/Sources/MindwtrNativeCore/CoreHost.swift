@@ -1159,12 +1159,30 @@ private final class Engine: @unchecked Sendable {
                 guard value.utf8.count <= 65_536,
                       let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
                       Set(options.keys) == Set(["taskEditor", "expected"]),
-                      Self.validGtdWorkflowExpected(options["expected"], type: "taskEditorFieldVisible"),
+                      let expected = options["expected"] as? [String: Any],
+                      Self.validGtdWorkflowExpected(expected, type: "taskEditorFieldVisible"),
                       let editor = options["taskEditor"] as? [String: Any],
-                      Set(editor.keys) == Set(["title", "description", "groups"]),
+                      Set(editor.keys) == Set(["title", "description", "groups", "initiallyExpanded", "expandedResetKey"]),
                       editor["title"] is String, editor["description"] is String,
+                      let initiallyExpanded = editor["initiallyExpanded"] as? [String: Any],
+                      Set(initiallyExpanded.keys) == sections,
+                      initiallyExpanded.values.allSatisfy({ Self.isBoolean($0) }),
+                      let expandedResetKey = editor["expandedResetKey"] as? String,
+                      expandedResetKey.utf8.count <= 64,
                       let groups = editor["groups"] as? [[String: Any]], !groups.isEmpty, groups.count <= 4 else {
                     throw HostFailure("Malformed Task Editor field options")
+                }
+                let rawSectionOpen = ((expected["sectionOpen"] as? [String: Any])?["value"] as? [String: Any]) ?? [:]
+                let defaultExpanded: [String: Any] = [
+                    "basic": true,
+                    "scheduling": rawSectionOpen["scheduling"] as? Bool ?? false,
+                    "organization": rawSectionOpen["organization"] as? Bool ?? false,
+                    "details": rawSectionOpen["details"] as? Bool ?? false,
+                ]
+                let rawResetValues: [Any] = ["scheduling", "organization", "details"].map { rawSectionOpen[$0] ?? NSNull() }
+                let expectedResetKey = String(decoding: try JSONSerialization.data(withJSONObject: rawResetValues), as: UTF8.self)
+                guard Self.equalJSON(initiallyExpanded, defaultExpanded), expandedResetKey == expectedResetKey else {
+                    throw HostFailure("Malformed Task Editor field defaults")
                 }
                 let groupIDs = groups.compactMap { $0["id"] as? String }
                 guard groupIDs.count == groups.count, Set(groupIDs).count == groups.count,
@@ -1173,9 +1191,10 @@ private final class Engine: @unchecked Sendable {
                 }
                 var seen = Set<String>()
                 guard groups.allSatisfy({ group in
-                    guard Set(group.keys) == Set(["id", "title", "fields"]),
+                    guard Set(group.keys) == Set(["id", "title", "count", "fields"]),
                           let section = group["id"] as? String, group["title"] is String,
-                          let rows = group["fields"] as? [[String: Any]], !rows.isEmpty else { return false }
+                          let rows = group["fields"] as? [[String: Any]], !rows.isEmpty,
+                          Self.isInteger(group["count"], equalTo: rows.count) else { return false }
                     return rows.allSatisfy { row in
                         guard Set(row.keys) == Set(["id", "label", "visible", "status", "visibility", "sheet"]),
                               let field = row["id"] as? String, Self.taskEditorFields.contains(field),

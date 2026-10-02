@@ -263,6 +263,8 @@ final class CoreModel: ObservableObject {
     @Published private(set) var gtdTaskEditor: CoreObject = [:]
     @Published private(set) var gtdTaskEditorPresetError: String?
     @Published private(set) var gtdTaskEditorFieldId: String?
+    @Published private(set) var gtdTaskEditorExpanded: [String: Bool] = [:]
+    private var gtdTaskEditorExpandedResetKey: String?
     var gtdTaskEditorField: CoreObject {
         gtdTaskEditor.objects("groups").flatMap { $0.objects("fields") }
             .first { $0.text("id") == gtdTaskEditorFieldId } ?? [:]
@@ -3025,6 +3027,11 @@ final class CoreModel: ObservableObject {
         settingsGtdInboxPresented = page == "inbox"
         settingsGtdCapturePresented = page == "capture"
         settingsGtdTaskEditorPresented = page == "taskEditor"
+        if settingsGtdTaskEditorPresented {
+            gtdTaskEditorFieldId = nil
+            gtdTaskEditorExpandedResetKey = nil
+            gtdTaskEditorExpanded = [:]
+        }
         gtdWorkflowError = nil
         busy = true
         defer { finishOperation() }
@@ -3125,6 +3132,15 @@ final class CoreModel: ObservableObject {
                 }
                 expected["taskEditorFieldVisible"] = fieldExpected
                 expected["taskEditorFieldSection"] = fieldExpected
+                let editor = fieldOptions.object("taskEditor")
+                let resetKey = editor.text("expandedResetKey")
+                if gtdTaskEditorExpandedResetKey != resetKey {
+                    // Initial cold recovery retains its field sheet; later default changes follow RN's reset.
+                    if gtdTaskEditorExpandedResetKey != nil { gtdTaskEditorFieldId = nil }
+                    let defaults = editor.object("initiallyExpanded")
+                    gtdTaskEditorExpanded = defaults.mapValues { $0 as? Bool ?? false }
+                    gtdTaskEditorExpandedResetKey = resetKey
+                }
             } catch {
                 // Unsupported legacy layout prevents layout changes, but section defaults remain usable.
                 guard isDefiniteRejection(error), error.localizedDescription.hasPrefix("INVALID_INPUT:") else { throw error }
@@ -3141,6 +3157,12 @@ final class CoreModel: ObservableObject {
         gtdWorkflowExpected = expected
         gtdWorkflowReadError = nil
         gtdWorkflowAwaitingRefresh = false
+    }
+
+    func toggleGtdTaskEditorGroup(_ id: String) {
+        guard gtdWorkflowEnabled, settingsGtdTaskEditorPresented,
+              gtdTaskEditor.objects("groups").contains(where: { $0.text("id") == id }) else { return }
+        gtdTaskEditorExpanded[id] = !(gtdTaskEditorExpanded[id] ?? true)
     }
 
     func openGtdTaskEditorField(_ id: String) {

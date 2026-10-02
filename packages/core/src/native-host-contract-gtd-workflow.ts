@@ -61,7 +61,9 @@ export type NativeGtdTaskEditorOpenOptions = { taskEditor: { title: string; desc
 export type NativeGtdTaskEditorPresetOptions = { taskEditor: { title: string; description: string;
     presets: GtdSettingsModel['taskEditor']['presets'] }; expected: GtdWorkflowPresetWitness };
 export type NativeGtdTaskEditorFieldOptions = { taskEditor: { title: string; description: string;
-    groups: { id: GtdSettingsModel['taskEditor']['groups'][number]['id']; title: string;
+    initiallyExpanded: GtdSettingsModel['taskEditor']['initiallyExpanded'];
+    expandedResetKey: GtdSettingsModel['taskEditor']['expandedResetKey'];
+    groups: { id: GtdSettingsModel['taskEditor']['groups'][number]['id']; title: string; count: number;
         fields: (Pick<GtdSettingsModel['taskEditor']['groups'][number]['fields'][number],
             'id' | 'label' | 'visible' | 'status' | 'visibility'> & { sheet: Pick<
                 GtdSettingsModel['taskEditor']['groups'][number]['fields'][number]['sheet'],
@@ -453,7 +455,8 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
             { type: 'taskEditorFieldVisible', field: 'description', value: false }, expected), areas: [],
         taskOpenMode: 'automatic', t: deps.t() }).taskEditor;
         return { title: model.title, description: model.description,
-            groups: model.groups.map((group) => ({ id: group.id, title: group.title,
+            initiallyExpanded: model.initiallyExpanded, expandedResetKey: model.expandedResetKey,
+            groups: model.groups.map((group) => ({ id: group.id, title: group.title, count: group.count,
                 fields: group.fields.map((field) => ({ id: field.id, label: field.label,
                     visible: field.visible, status: field.status, visibility: field.visibility,
                     sheet: { title: field.sheet.title, section: field.sheet.section,

@@ -371,32 +371,55 @@ struct SettingsScreen: View {
                 ForEach(model.gtdTaskEditor.objects("groups").indices, id: \.self) { index in
                     let group = model.gtdTaskEditor.objects("groups")[index]
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(group.text("title")).rnFont(16, .semibold).foregroundStyle(palette.text)
+                        let expanded = model.gtdTaskEditorExpanded[group.text("id")] ?? true
+                        Button { model.toggleGtdTaskEditorGroup(group.text("id")) } label: {
+                            let layout = dynamicTypeSize.isAccessibilitySize
+                                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                                : AnyLayout(HStackLayout(spacing: 8))
+                            layout {
+                                Text(group.text("title")).rnFont(16, .semibold).foregroundStyle(palette.text)
+                                    .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                                HStack(spacing: 8) {
+                                    if group["count"] != nil {
+                                        Text(String(group.number("count"))).rnFont(13, .semibold).foregroundStyle(palette.tint)
+                                            .padding(.horizontal, 8).padding(.vertical, 4).background(palette.filter, in: Capsule())
+                                    }
+                                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                                        .foregroundStyle(palette.secondary).accessibilityHidden(true)
+                                }
+                            }.frame(minHeight: 44).contentShape(Rectangle())
+                        }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
+                            .accessibilityLabel(group.text("title") + (group["count"] == nil ? "" : ", " + String(group.number("count"))))
+                            .accessibilityValue(model.label(expanded ? "markdown.collapse" : "markdown.expand"))
                             .accessibilityAddTraits(.isHeader)
-                        if !group.object("defaultOpen").isEmpty { gtdToggle(group.object("defaultOpen")) }
-                        ForEach(group.objects("fields").indices, id: \.self) { fieldIndex in
-                            let field = group.objects("fields")[fieldIndex]
-                            let visibility = field.object("visibility")
-                            HStack(spacing: 12) {
-                                Button { Task { await model.chooseGtdWorkflow(visibility.object("edit")) } } label: {
-                                    Image(systemName: field.flag("visible") ? "eye" : "eye.slash")
-                                        .foregroundStyle(palette.secondary).frame(minWidth: 44, minHeight: 44)
-                                        .contentShape(Rectangle())
-                                }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
-                                    .accessibilityLabel(visibility.text("accessibilityLabel"))
-                                    .accessibilityValue(field.text("status"))
-                                    .accessibilityIdentifier("gtd-taskEditorFieldVisible-" + field.text("id"))
-                                Button { model.openGtdTaskEditorField(field.text("id")) } label: {
-                                    HStack(spacing: 8) {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(field.text("label")).rnFont(16).foregroundStyle(palette.text)
-                                            Text(field.text("status")).rnFont(13).foregroundStyle(palette.secondary)
-                                        }.fixedSize(horizontal: false, vertical: true)
-                                        Spacer(minLength: 4)
-                                        Image(systemName: "chevron.right").foregroundStyle(palette.secondary).accessibilityHidden(true)
-                                    }.frame(minHeight: 44).contentShape(Rectangle())
-                                }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
-                                    .accessibilityIdentifier("gtd-taskEditorField-" + field.text("id"))
+                            .accessibilityIdentifier("gtd-editor-group-" + group.text("id"))
+                        if expanded {
+                            if !group.object("defaultOpen").isEmpty { gtdToggle(group.object("defaultOpen")) }
+                            ForEach(group.objects("fields").indices, id: \.self) { fieldIndex in
+                                let field = group.objects("fields")[fieldIndex]
+                                let visibility = field.object("visibility")
+                                HStack(spacing: 12) {
+                                    Button { Task { await model.chooseGtdWorkflow(visibility.object("edit")) } } label: {
+                                        Image(systemName: field.flag("visible") ? "eye" : "eye.slash")
+                                            .foregroundStyle(palette.secondary).frame(minWidth: 44, minHeight: 44)
+                                            .contentShape(Rectangle())
+                                    }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
+                                        .accessibilityLabel(visibility.text("accessibilityLabel"))
+                                        .accessibilityValue(field.text("status"))
+                                        .accessibilityAddTraits(field.flag("visible") ? .isSelected : [])
+                                        .accessibilityIdentifier("gtd-taskEditorFieldVisible-" + field.text("id"))
+                                    Button { model.openGtdTaskEditorField(field.text("id")) } label: {
+                                        HStack(spacing: 8) {
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(field.text("label")).rnFont(16).foregroundStyle(palette.text)
+                                                Text(field.text("status")).rnFont(13).foregroundStyle(palette.secondary)
+                                            }.fixedSize(horizontal: false, vertical: true)
+                                            Spacer(minLength: 4)
+                                            Image(systemName: "chevron.right").foregroundStyle(palette.secondary).accessibilityHidden(true)
+                                        }.frame(minHeight: 44).contentShape(Rectangle())
+                                    }.buttonStyle(.plain).disabled(!model.gtdWorkflowEnabled)
+                                        .accessibilityIdentifier("gtd-taskEditorField-" + field.text("id"))
+                                }
                             }
                         }
                     }.padding(14).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
@@ -411,8 +434,14 @@ struct SettingsScreen: View {
         let sheet = field.object("sheet")
         return VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Text(sheet.text("title")).rnFont(20, .bold).foregroundStyle(palette.text)
-                    .accessibilityAddTraits(.isHeader).frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(sheet.text("title")).rnFont(20, .bold).foregroundStyle(palette.text)
+                        .accessibilityAddTraits(.isHeader)
+                    if !sheet.text("section").isEmpty {
+                        Text(sheet.text("section")).rnFont(13).foregroundStyle(palette.secondary)
+                            .accessibilityIdentifier("gtd-field-current-section")
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
                 Button(sheet.text("doneLabel").isEmpty ? model.label("common.done") : sheet.text("doneLabel")) {
                     model.closeGtdTaskEditorField()
                 }.rnFont(15).frame(minWidth: 48, minHeight: 48)
