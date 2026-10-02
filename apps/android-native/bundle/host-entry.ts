@@ -2048,6 +2048,15 @@ globalThis.MindwtrHost = {
     boardCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedBoardAction(JSON.parse(json))));
     },
+    prepareTaskPromotion(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareTaskPromotion(editorJson(json) as Parameters<typeof contract.prepareTaskPromotion>[0])); });
+    },
+    validatePreparedTaskPromotion(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTaskPromotion(editorJson(json) as Parameters<typeof contract.validatePreparedTaskPromotion>[0])));
+    },
+    taskPromoteCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedTaskPromotion(editorJson(json) as Parameters<typeof contract.commitPreparedTaskPromotion>[0])));
+    },
     taskDeletePrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.prepareTaskDelete(editorJson(json) as Parameters<typeof contract.prepareTaskDelete>[0])); });
     },

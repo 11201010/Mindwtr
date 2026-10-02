@@ -179,8 +179,9 @@ struct SearchScreen: View {
                         .buttonStyle(.plain).disabled(!model.searchActionsEnabled).accessibilityIdentifier("search-hidden-completed")
                     }
                     // Core follows RN's flat order: projects, then tasks.
-                    ForEach(projects.indices, id: \.self) { index in projectResult(projects[index]) }
-                    ForEach(tasks.indices, id: \.self) { index in taskResult(tasks[index]) }
+                    // Sibling lazy rows need distinct identities across both result types.
+                    ForEach(projects.map { (id: "project-" + $0.text("id"), row: $0) }, id: \.id) { projectResult($0.row) }
+                    ForEach(tasks.map { (id: "task-" + $0.text("id"), row: $0) }, id: \.id) { taskResult($0.row) }
                     if hasSearch && projects.isEmpty && tasks.isEmpty {
                         Text(model.label("search.noResults") + (model.searchView.text("query").isEmpty
                              ? "" : " \"" + model.searchView.text("query") + "\""))

@@ -1,6 +1,77 @@
 import XCTest
 
 final class FoundationUITests: XCTestCase {
+    func testTaskPromotionNormal() { taskPromotionFlow(library: "c3e4e434-b76b-48f6-9b3f-5eee04b6a4ef", editNotes: true) }
+    func testTaskPromotionLargestText() { taskPromotionFlow(library: "57c17ca9-6bb1-432a-96f8-ebb9090d3d75", editNotes: false) }
+    func testTaskPromotionReusesProject() { taskPromotionFlow(library: "0291b8b1-265a-43b2-9838-c2e885d5b346", editNotes: true) }
+
+    private func beginTaskPromotion(_ app: XCUIApplication, editNotes: Bool) {
+        boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+        let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText("Task139 saved task")
+        boardTap(app, "search-task-task139-task"); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]; boardEnabled(title)
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap(); title.typeText(" project")
+        XCTAssertEqual(title.value as? String, "Task139 saved task project")
+        if editNotes {
+            let scroll = app.scrollViews["task-editor-scroll"]
+            let note = app.textViews["task-editor-note"]
+            if !note.exists {
+                let details = app.buttons["task-editor-section-details"]
+                revealPagedElement(app, details, in: scroll); details.tap()
+            }
+            revealPagedElement(app, note, in: scroll)
+            note.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.9)).tap(); note.typeText(" unsaved")
+            XCTAssertTrue((note.value as? String ?? "").contains("unsaved"))
+        }
+        boardTap(app, "task-more")
+        let action = app.buttons["task-promote"]; boardEnabled(action)
+        XCTAssertEqual(action.label, "Create project from task")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Create project from task"; shot.lifetime = .keepAlways; add(shot)
+        action.tap()
+    }
+
+    private func assertPromotedProject(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["project-back"], timeout: 30)
+        XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task139 saved task project")
+        let task = app.buttons["task-title-task139-task"]
+        revealPagedElement(app, task, in: app.scrollViews["project-detail-scroll"])
+        boardEnabled(task); task.tap(); boardTap(app, "task-mode-edit")
+        boardEnabled(app.textFields["task-editor-title"])
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task139 saved task")
+        boardTap(app, "task-view-close"); boardEnabled(app.buttons["project-back"])
+    }
+
+    private func taskPromotionFlow(library: String, editNotes: Bool) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); beginTaskPromotion(app, editNotes: editNotes); assertPromotedProject(app)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        boardTap(app, "search-open"); let query = app.textFields["search-input"]; boardEnabled(query)
+        query.tap(); query.typeText("Task139 saved task")
+        boardTap(app, "search-task-task139-task"); boardTap(app, "task-mode-edit")
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task139 saved task")
+        boardTap(app, "task-view-close"); boardEnabled(app.textFields["search-input"]); app.terminate()
+    }
+
+    func testTaskPromotionFailureRetainsDraft() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "ff64e96f-c8ed-47db-90d7-ffc923381957"]
+        app.launch(); beginTaskPromotion(app, editNotes: true)
+        boardEnabled(app.buttons["task-view-retry"], timeout: 30)
+        XCTAssertEqual(app.textFields["task-editor-title"].value as? String, "Task139 saved task project")
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["task-view-close"].isEnabled)
+            boardTap(app, "task-view-retry"); boardEnabled(app.buttons["task-view-retry"], timeout: 30)
+        }
+        app.terminate()
+    }
+
+    func testTaskPromotionColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "ff64e96f-c8ed-47db-90d7-ffc923381957"]
+        app.launch(); assertPromotedProject(app)
+        XCTAssertFalse(app.buttons["task-recovery-open"].exists)
+        app.terminate(); app.launch(); boardEnabled(app.buttons["search-open"], timeout: 30); app.terminate()
+    }
+
     override func setUpWithError() throws {
         try super.setUpWithError()
         continueAfterFailure = false

@@ -106,6 +106,19 @@ final class EditorDraftRecoveryHostTests: XCTestCase {
             "SELECT * FROM tasks ORDER BY id", parametersJSON: "[]").utf8)) as? [[String: Any]])
     }
 
+    private func projectRows() throws -> [[String: Any]] {
+        let sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sqlite.execute(
+            "SELECT * FROM projects ORDER BY id", parametersJSON: "[]").utf8)) as? [[String: Any]])
+    }
+
+    private func promotionArguments(_ id: String, requestID: String, opening: [String: Any],
+                                    title: String = "Draft project") throws -> String {
+        try json([json(["requestId": requestID, "taskId": id,
+            "taskRevision": try XCTUnwrap(opening["taskRevision"] as? String), "title": title])])
+    }
+
     private func deletionArguments(_ id: String, requestID: String, opening: [String: Any]) throws -> String {
         try json([json(["requestId": requestID, "taskId": id,
             "taskRevision": try XCTUnwrap(opening["taskRevision"] as? String)])])
@@ -233,6 +246,141 @@ final class EditorDraftRecoveryHostTests: XCTestCase {
         XCTAssertEqual(undo["id"] as? String, id)
         XCTAssertTrue(try task(id)["deletedAt"] is NSNull)
         XCTAssertEqual(try task(id)["title"] as? String, "Before edit")
+    }
+
+    func testTaskPromoteFailedCommitRetainsDraftAndColdMovesSavedTaskOnce() async throws {
+        let faults = HostIOFaults(), writing = host(faults)
+        _ = try await writing.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(writing, id: id)
+        let requestID = UUID().uuidString.lowercased()
+        let args = try promotionArguments(id, requestID: requestID, opening: opening)
+        let beforeTask = try json(taskRows()), beforeProjects = try json(projectRows())
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: id,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Draft project","description":"Unsaved notes"}}"#)
+        try await writing.checkpointEditorDraft(draft)
+        do {
+            _ = try await writing.call("taskPromote", argumentsJSON: args)
+            XCTFail("A dirty editor must use its frozen promotion attempt")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("exact Save attempt")) }
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected promotion COMMIT") } }
+        do {
+            _ = try await writing.saveEditorDraft("taskPromote", argumentsJSON: args,
+                expectedSession: draft.sessionID, expectedGeneration: draft.generation)
+            XCTFail("Expected failed promotion")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("SAVE_FAILED"), error.localizedDescription) }
+        XCTAssertEqual(try json(taskRows()), beforeTask)
+        XCTAssertEqual(try json(projectRows()), beforeProjects)
+        let frozen = try XCTUnwrap(EditorDraftStore(databaseURL: database).read())
+        XCTAssertEqual(frozen.snapshot, draft)
+        XCTAssertEqual(frozen.attempt?.method, "taskPromote")
+        let owed = try object(String(contentsOf: journal))
+        do { _ = try await writing.retryPending(); XCTFail("Expected repeated promotion failure") } catch {}
+        let retried = try object(String(contentsOf: journal))
+        XCTAssertEqual(try json(retried), try json(owed))
+        XCTAssertEqual(retried["argumentsJSON"] as? String, owed["argumentsJSON"] as? String)
+        XCTAssertEqual(try json(taskRows()), beforeTask)
+        XCTAssertEqual(try json(projectRows()), beforeProjects)
+        await writing.close()
+
+        let recovered = host()
+        let startup = try object(await recovered.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "taskPromoteCommit")
+        let result = try XCTUnwrap(recovery["result"] as? [String: Any])
+        XCTAssertEqual(Set(result.keys), Set(["id", "reused"]))
+        XCTAssertEqual(result["id"] as? String, requestID)
+        XCTAssertEqual(result["reused"] as? Bool, false)
+        let moved = try task(id)
+        XCTAssertEqual(moved["id"] as? String, id)
+        XCTAssertEqual(moved["title"] as? String, "Before edit")
+        XCTAssertEqual(moved["projectId"] as? String, requestID)
+        let projects = try projectRows()
+        XCTAssertEqual(projects.count, 1)
+        XCTAssertEqual(projects.first?["title"] as? String, "Draft project")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let tasks = try taskRows()
+        await recovered.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(try json(taskRows()), try json(tasks))
+        XCTAssertEqual(try json(projectRows()), try json(projects))
+    }
+
+    func testTaskPromoteLostTerminalColdReturnsExactReceipt() async throws {
+        let faults = HostIOFaults(), writing = host(faults)
+        _ = try await writing.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(writing, id: id)
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: id,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Draft project"}}"#)
+        try await writing.checkpointEditorDraft(draft)
+        var writes = 0
+        faults.journalWrite = {
+            writes += 1
+            if writes == 2 { throw HostFailure("Injected promotion terminal loss") }
+        }
+        let requestID = UUID().uuidString.lowercased()
+        do {
+            _ = try await writing.saveEditorDraft("taskPromote",
+                argumentsJSON: promotionArguments(id, requestID: requestID, opening: opening),
+                expectedSession: draft.sessionID, expectedGeneration: draft.generation)
+            XCTFail("Expected lost terminal")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("terminal loss")) }
+        XCTAssertEqual(writes, 2)
+        let tasks = try taskRows(), projects = try projectRows()
+        XCTAssertEqual(tasks.count, 1)
+        XCTAssertEqual(projects.count, 1)
+        XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
+        XCTAssertEqual(try EditorDraftStore(databaseURL: database).read()?.snapshot, draft)
+        await writing.close()
+
+        let replayFaults = HostIOFaults()
+        var rowWrites = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects)\b"#,
+                         options: .regularExpression) != nil { rowWrites += 1 }
+        }
+        let recovered = host(replayFaults)
+        let startup = try object(await recovered.start())
+        let result = try XCTUnwrap((startup["recovery"] as? [String: Any])?["result"] as? [String: Any])
+        XCTAssertEqual(result["id"] as? String, requestID)
+        XCTAssertEqual(result["reused"] as? Bool, false)
+        XCTAssertEqual(rowWrites, 0)
+        XCTAssertEqual(try json(taskRows()), try json(tasks))
+        XCTAssertEqual(try json(projectRows()), try json(projects))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotFile.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTaskPromoteInvalidAndStaleRequestPreserveCheckpoint() async throws {
+        let writing = host()
+        _ = try await writing.start()
+        let id = UUID().uuidString.lowercased()
+        let opening = try await seed(writing, id: id)
+        let beforeTask = try json(taskRows()), beforeProjects = try json(projectRows())
+        let draft = EditorDraftSnapshot(sessionID: UUID().uuidString.lowercased(), taskID: id,
+            generation: 1, payloadJSON: #"{"raw":{"title":"Draft project"}}"#)
+        try await writing.checkpointEditorDraft(draft)
+        let invalid = try json([json(["requestId": "invalid", "taskId": id,
+            "taskRevision": try XCTUnwrap(opening["taskRevision"]), "title": "Draft project"])])
+        do {
+            _ = try await writing.saveEditorDraft("taskPromote", argumentsJSON: invalid,
+                expectedSession: draft.sessionID, expectedGeneration: draft.generation)
+            XCTFail("Expected invalid request refusal")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("INVALID_INPUT")) }
+        let stale = try json([json(["requestId": UUID().uuidString.lowercased(), "taskId": id,
+            "taskRevision": "stale-revision", "title": "Draft project"])])
+        do {
+            _ = try await writing.saveEditorDraft("taskPromote", argumentsJSON: stale,
+                expectedSession: draft.sessionID, expectedGeneration: draft.generation)
+            XCTFail("Expected stale revision refusal")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("STALE_REVISION")) }
+        XCTAssertEqual(try EditorDraftStore(databaseURL: database).read()?.snapshot, draft)
+        XCTAssertNil(try EditorDraftStore(databaseURL: database).read()?.attempt)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try json(taskRows()), beforeTask)
+        XCTAssertEqual(try json(projectRows()), beforeProjects)
     }
 
     func testTaskCancellationFailedCommitRetainsDraftAndColdAppliesOnce() async throws {
