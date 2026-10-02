@@ -5,6 +5,8 @@ import type { AppData, Area, Project, Section, Task } from './types';
 import { createTaskDraft } from './task-draft';
 import { en } from './i18n/locales/en';
 import { createNextRecurringTask } from './recurrence';
+import { openSqliteHost } from './screen-parity.replay';
+import { samePreparedTask } from './store-tasks';
 
 const clock = '2026-09-27T15:00:00.000Z';
 const item = (id: string, title: string, isCompleted = false) => ({ id, title, isCompleted });
@@ -923,5 +925,332 @@ describe('prepared native checklist Save and Reset', () => {
             checklist: malformed as never, edit: { kind: 'toggle', index: 0 } }))
             .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(saves()).toBe(before);
+    });
+});
+
+describe('prepared task completion and Undo', () => {
+    const completionRequest = (host: Awaited<ReturnType<typeof open>>['host'], requestId =
+        '00000000-0000-4000-8000-000000000401') => ({
+        id: 'checklist-task', requestId, taskRevision: unwrap(host.getTaskView({ id: 'checklist-task' })).taskRevision,
+    });
+    it('completes a displayed task once and restores its status with an exact Undo envelope', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(clock));
+        const original = source({ isFocusedToday: true, focusOrder: 2 });
+        const { host } = await open(original);
+        const request = { id: original.id, requestId: '00000000-0000-4000-8000-000000000401',
+            taskRevision: unwrap(host.getTaskView({ id: original.id })).taskRevision };
+        const completion = unwrap(host.prepareTaskCompletion(request));
+        expect(completion.kind).toBe('prepared');
+        expect(unwrap(host.validatePreparedTaskCompletion({ request, prepared: completion.prepared })))
+            .toMatchObject({ id: original.id, completion: { completedAt: clock, undoEnabled: true } });
+        expect(unwrap(await host.commitPreparedTaskCompletion({ request, prepared: completion.prepared })))
+            .toEqual(completion.prepared.result);
+        expect(savedTask()).toMatchObject({ status: 'done', completedAt: clock, isFocusedToday: false });
+
+        const undoRequest = { requestId: '00000000-0000-4000-8000-000000000402',
+            completionRequestId: request.requestId };
+        const undo = unwrap(host.prepareTaskCompletionUndo({ request: undoRequest,
+            completion: { request, prepared: completion.prepared } }));
+        expect(undo.kind).toBe('prepared');
+        expect(unwrap(host.validatePreparedTaskCompletionUndo({ request: undoRequest, prepared: undo.prepared })))
+            .toEqual({ id: original.id });
+        expect(unwrap(await host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: undo.prepared })))
+            .toEqual({ id: original.id });
+        expect(savedTask()).toMatchObject({ status: 'next', isFocusedToday: true });
+        expect(savedTask().completedAt).toBeUndefined();
+    });
+
+    it('freezes a bounded notice for a valid long or multiline title without changing task content', async () => {
+        const title = `First\n${'A'.repeat(700)}`;
+        const { host } = await open(source({ title }));
+        const request = completionRequest(host);
+        const prepared = unwrap(host.prepareTaskCompletion(request)).prepared;
+        expect(prepared.notice.message).toBe(en['common.done']);
+        expect(unwrap(await host.commitPreparedTaskCompletion({ request, prepared }))).toEqual(prepared.result);
+        expect(savedTask().title).toBe(title);
+        expect(unwrap(host.validatePreparedTaskCompletion({ request, prepared }))).toEqual(prepared.result);
+    });
+
+    it('tombstones only the occurrence this completion created and retains a later source note', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(clock));
+        const { host } = await open(source({ dueDate: '2026-09-27',
+            recurrence: { rule: 'daily', strategy: 'strict' } }));
+        const request = completionRequest(host);
+        const prepared = unwrap(host.prepareTaskCompletion(request)).prepared;
+        const owned = prepared.checklist.effect.tasks.find((row) => row.before === null)?.after;
+        expect(owned).toBeDefined();
+        unwrap(await host.commitPreparedTaskCompletion({ request, prepared }));
+        expect((await useTaskStore.getState().updateTask(request.id, { description: 'Later note' })).success).toBe(true);
+        const undoRequest = { requestId: '00000000-0000-4000-8000-000000000402',
+            completionRequestId: request.requestId };
+        const undo = unwrap(host.prepareTaskCompletionUndo({ request: undoRequest,
+            completion: { request, prepared } })).prepared;
+        expect(undo.effect.tasks.map((row) => row.after.id)).toEqual([request.id, owned!.id]);
+        unwrap(await host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: undo }));
+        expect(savedTask()).toMatchObject({ status: 'next', description: 'Later note' });
+        expect(useTaskStore.getState()._tasksById.get(owned!.id)?.deletedAt).toBeTruthy();
+    });
+
+    it('refuses an edited owned occurrence and forged completion before writing', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(clock));
+        const { host, saves } = await open(source({ dueDate: '2026-09-27',
+            recurrence: { rule: 'daily', strategy: 'strict' } }));
+        const request = completionRequest(host);
+        const prepared = unwrap(host.prepareTaskCompletion(request)).prepared;
+        unwrap(await host.commitPreparedTaskCompletion({ request, prepared }));
+        const child = prepared.checklist.effect.tasks.find((row) => row.before === null)!.after;
+        const forged = structuredClone(prepared);
+        forged.checklist.effect.tasks.find((row) => row.before === null)!.after.title = 'Forged child';
+        const before = saves();
+        expect(host.taskCompletionOutcome({ request, prepared: forged })).toMatchObject({ ok: false });
+        expect(host.prepareTaskCompletionUndo({ request: { requestId: '00000000-0000-4000-8000-000000000402',
+            completionRequestId: request.requestId }, completion: { request, prepared: forged } }))
+            .toMatchObject({ ok: false });
+        expect(saves()).toBe(before);
+        expect((await useTaskStore.getState().updateTask(child.id, { title: 'Edited child' })).success).toBe(true);
+        expect(host.prepareTaskCompletionUndo({ request: { requestId: '00000000-0000-4000-8000-000000000402',
+            completionRequestId: request.requestId }, completion: { request, prepared } }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    });
+
+    it('uses the saved UUID receipt after a cold boot and later edit, never target equality', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(clock));
+        const sqlite = await openSqliteHost({ tasks: [source({ dueDate: '2026-09-27',
+            recurrence: { rule: 'daily', strategy: 'strict' } })], settings: { deviceId: 'device-a' } });
+        try {
+            const request = completionRequest(sqlite.host);
+            const prepared = unwrap(sqlite.host.prepareTaskCompletion(request)).prepared;
+            const alternate = unwrap(sqlite.host.prepareTaskCompletion(request)).prepared;
+            expect(alternate.checklist.witness.ids).not.toEqual(prepared.checklist.witness.ids);
+            expect(unwrap(sqlite.host.validatePreparedTaskCompletion({ request, prepared: alternate }))).toEqual(alternate.result);
+            expect(unwrap(await sqlite.host.commitPreparedTaskCompletion({ request, prepared }))).toEqual(prepared.result);
+            const otherRequest = { ...request, requestId: '00000000-0000-4000-8000-000000000403' };
+            const otherPrepared = structuredClone(prepared);
+            otherPrepared.request = otherRequest;
+            otherPrepared.checklist.request.requestId = otherRequest.requestId;
+            expect(unwrap(sqlite.host.validatePreparedTaskCompletion({ request: otherRequest, prepared: otherPrepared })))
+                .toEqual(prepared.result);
+            expect(await sqlite.host.commitPreparedTaskCompletion({ request: otherRequest, prepared: otherPrepared }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(sqlite.host.taskCompletionOutcome({ request, prepared: alternate }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect((await useTaskStore.getState().updateTask(request.id, { description: 'Later edit' })).success).toBe(true);
+            await flushPendingSave();
+            await sqlite.restart();
+            vi.setSystemTime(new Date('2028-02-03T12:00:00.000Z'));
+            expect(await sqlite.host.setLanguage({ storedLanguage: 'de', systemLocale: 'de-DE' })).toMatchObject({ ok: true });
+            expect(unwrap(sqlite.host.taskCompletionOutcome({ request, prepared }))).toEqual(prepared.result);
+            const receiptIds = await sqlite.receiptIds();
+            const beforeReplay = structuredClone(useTaskStore.getState()._allTasks);
+            expect(unwrap(await sqlite.host.commitPreparedTaskCompletion({ request, prepared }))).toEqual(prepared.result);
+            expect(useTaskStore.getState()._allTasks).toEqual(beforeReplay);
+            expect(await sqlite.receiptIds()).toEqual(receiptIds);
+            expect(useTaskStore.getState()._tasksById.get(request.id)?.description).toBe('Later edit');
+            const undoRequest = { requestId: '00000000-0000-4000-8000-000000000402',
+                completionRequestId: request.requestId };
+            const undo = unwrap(sqlite.host.prepareTaskCompletionUndo({ request: undoRequest,
+                completion: { request, prepared } })).prepared;
+            expect(unwrap(sqlite.host.taskCompletionUndoOutcome({ request: undoRequest, prepared: undo }))).toBeNull();
+            expect(unwrap(await sqlite.host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: undo })))
+                .toEqual({ id: request.id });
+            const otherUndoRequest = { ...undoRequest, requestId: '00000000-0000-4000-8000-000000000404' };
+            const otherUndo = structuredClone(undo);
+            otherUndo.request = otherUndoRequest;
+            expect(unwrap(sqlite.host.validatePreparedTaskCompletionUndo({ request: otherUndoRequest, prepared: otherUndo })))
+                .toEqual({ id: request.id });
+            expect(await sqlite.host.commitPreparedTaskCompletionUndo({ request: otherUndoRequest, prepared: otherUndo }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect((await useTaskStore.getState().updateTask(request.id, { title: 'Even later title' })).success).toBe(true);
+            await flushPendingSave();
+            vi.setSystemTime(new Date(clock));
+            await sqlite.restart();
+            vi.setSystemTime(new Date('2028-02-03T12:00:00.000Z'));
+            expect(unwrap(sqlite.host.taskCompletionUndoOutcome({ request: undoRequest, prepared: undo })))
+                .toEqual({ id: request.id });
+            const undoReceiptIds = await sqlite.receiptIds();
+            const beforeUndoReplay = structuredClone(useTaskStore.getState()._allTasks);
+            expect(unwrap(await sqlite.host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: undo })))
+                .toEqual({ id: request.id });
+            expect(useTaskStore.getState()._allTasks).toEqual(beforeUndoReplay);
+            expect(await sqlite.receiptIds()).toEqual(undoReceiptIds);
+            expect(savedTask().title).toBe('Even later title');
+        } finally { await sqlite.close(); }
+    });
+
+    it('cold-undoes a legacy SQL-seeded series with show-future projection enabled', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-10-02T13:00:00.000Z'));
+        const taskID = '00000000-0000-4000-8000-000000000405';
+        const sqlite = await openSqliteHost({ tasks: [source({ id: taskID })], settings: { deviceId: 'device-a' } });
+        try {
+            await sqlite.client().run('UPDATE tasks SET status = ?, dueDate = ?, recurrence = ?, showFutureRecurrence = 1 WHERE id = ?',
+                ['next', '2026-10-02', JSON.stringify({ rule: 'daily', strategy: 'strict', seriesId: taskID }), taskID]);
+            await sqlite.restart();
+            const request = { id: taskID, requestId: '00000000-0000-4000-8000-000000000401',
+                taskRevision: unwrap(sqlite.host.getTaskView({ id: taskID })).taskRevision };
+            const prepared = unwrap(sqlite.host.prepareTaskCompletion(request)).prepared;
+            expect(prepared.checklist.effect.tasks.filter((row) => row.before === null)).toHaveLength(1);
+            unwrap(await sqlite.host.commitPreparedTaskCompletion({ request, prepared }));
+            const child = prepared.checklist.effect.tasks.find((row) => row.before === null)!.after;
+            const reordered: Task = { ...child, recurrence: Object.fromEntries(
+                Object.entries(child.recurrence as Record<string, unknown>).reverse()) as Task['recurrence'] };
+            expect(samePreparedTask(reordered, child)).toBe(true);
+            expect(samePreparedTask({ ...reordered, updatedAt: '2026-10-03T13:00:00.000Z' }, child)).toBe(false);
+            await sqlite.client().run('UPDATE tasks SET recurrence = ? WHERE id = ?',
+                [JSON.stringify(reordered.recurrence), child.id]);
+            vi.setSystemTime(new Date('2026-10-04T13:00:00.000Z'));
+            await sqlite.restart();
+            const live = useTaskStore.getState()._tasksById.get(child.id)!;
+            expect(live).toBeDefined();
+            const undoRequest = { requestId: '00000000-0000-4000-8000-000000000402',
+                completionRequestId: request.requestId };
+            const result = sqlite.host.prepareTaskCompletionUndo({ request: undoRequest,
+                completion: { request, prepared } });
+            expect(result, JSON.stringify({ source: useTaskStore.getState()._tasksById.get(taskID), child: live,
+                frozenChild: child })).toMatchObject({ ok: true });
+        } finally { await sqlite.close(); }
+    });
+
+    it('keeps a large valid completion undoable within the nested journal bounds', async () => {
+        const { host } = await open(source({ description: 'x'.repeat(390_000) }));
+        const request = completionRequest(host);
+        const prepared = unwrap(host.prepareTaskCompletion(request)).prepared;
+        const completeBytes = Buffer.byteLength(JSON.stringify({ request, prepared }), 'utf8');
+        expect(completeBytes).toBeGreaterThan(1_900_000);
+        expect(completeBytes).toBeLessThanOrEqual(2_100_000);
+        unwrap(await host.commitPreparedTaskCompletion({ request, prepared }));
+        const undoRequest = { requestId: '00000000-0000-4000-8000-000000000402',
+            completionRequestId: request.requestId };
+        const undo = unwrap(host.prepareTaskCompletionUndo({ request: undoRequest,
+            completion: { request, prepared } })).prepared;
+        const undoBytes = Buffer.byteLength(JSON.stringify({ request: undoRequest, prepared: undo }), 'utf8');
+        expect(undoBytes).toBeLessThanOrEqual(4_500_000);
+        expect(unwrap(await host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: undo })))
+            .toEqual({ id: request.id });
+        expect(savedTask().description).toHaveLength(390_000);
+    });
+
+    it('cold-retries a failed SQLite completion COMMIT from the frozen request', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(clock));
+        const fault = { commits: 0 };
+        const sqlite = await openSqliteHost({ tasks: [source()], settings: { deviceId: 'device-a' } },
+            (client) => ({ ...client, run: async (sql, params) => {
+                if (sql === 'COMMIT' && fault.commits > 0) { fault.commits--; throw new Error('injected commit failure'); }
+                return client.run(sql, params);
+            } }));
+        try {
+            const request = completionRequest(sqlite.host);
+            const prepared = unwrap(sqlite.host.prepareTaskCompletion(request)).prepared;
+            const rawBefore = await sqlite.sql('SELECT * FROM tasks ORDER BY id');
+            fault.commits = 10;
+            expect(await sqlite.host.commitPreparedTaskCompletion({ request, prepared }))
+                .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+            expect(await sqlite.sql('SELECT * FROM tasks ORDER BY id')).toEqual(rawBefore);
+            fault.commits = 0;
+            resetForTests();
+            await sqlite.restart();
+            expect(unwrap(await sqlite.host.commitPreparedTaskCompletion({ request, prepared }))).toEqual(prepared.result);
+            expect(useTaskStore.getState()._allTasks).toHaveLength(1);
+            expect(savedTask().status).toBe('done');
+            await sqlite.restart();
+            expect(unwrap(sqlite.host.taskCompletionOutcome({ request, prepared }))).toEqual(prepared.result);
+        } finally { await sqlite.close(); }
+    });
+
+    it('cold-retries a failed SQLite completion Undo COMMIT without a partial child tombstone', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(clock));
+        const fault = { commits: 0 };
+        const sqlite = await openSqliteHost({ tasks: [source({ dueDate: '2026-09-27',
+            recurrence: { rule: 'daily', strategy: 'strict' } })], settings: { deviceId: 'device-a' } },
+        (client) => ({ ...client, run: async (sql, params) => {
+            if (sql === 'COMMIT' && fault.commits > 0) { fault.commits--; throw new Error('injected commit failure'); }
+            return client.run(sql, params);
+        } }));
+        try {
+            const request = completionRequest(sqlite.host);
+            const prepared = unwrap(sqlite.host.prepareTaskCompletion(request)).prepared;
+            unwrap(await sqlite.host.commitPreparedTaskCompletion({ request, prepared }));
+            const undoRequest = { requestId: '00000000-0000-4000-8000-000000000402',
+                completionRequestId: request.requestId };
+            const undo = unwrap(sqlite.host.prepareTaskCompletionUndo({ request: undoRequest,
+                completion: { request, prepared } })).prepared;
+            const rawBefore = await sqlite.sql('SELECT * FROM tasks ORDER BY id');
+            fault.commits = 10;
+            expect(await sqlite.host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: undo }))
+                .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+            expect(await sqlite.sql('SELECT * FROM tasks ORDER BY id')).toEqual(rawBefore);
+            fault.commits = 0;
+            resetForTests();
+            await sqlite.restart();
+            expect(unwrap(await sqlite.host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: undo })))
+                .toEqual({ id: request.id });
+            expect(savedTask().status).toBe('next');
+            const child = prepared.checklist.effect.tasks.find((row) => row.before === null)!.after;
+            expect(useTaskStore.getState()._tasksById.get(child.id)?.deletedAt).toBeTruthy();
+            await sqlite.restart();
+            expect(unwrap(sqlite.host.taskCompletionUndoOutcome({ request: undoRequest, prepared: undo })))
+                .toEqual({ id: request.id });
+        } finally { await sqlite.close(); }
+    });
+
+    it('leaves a preexisting same-series follow-up alone when completion created no child', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(clock));
+        const original = source({ dueDate: '2026-09-27', recurrence: { rule: 'daily', strategy: 'strict' } });
+        const existing = createNextRecurringTask(original, clock, original.status)!;
+        const { host } = await open(original, { tasks: [existing] });
+        const request = completionRequest(host);
+        const prepared = unwrap(host.prepareTaskCompletion(request)).prepared;
+        expect(prepared.checklist.effect.tasks.filter((row) => row.before === null)).toHaveLength(0);
+        unwrap(await host.commitPreparedTaskCompletion({ request, prepared }));
+        const undoRequest = { requestId: '00000000-0000-4000-8000-000000000402',
+            completionRequestId: request.requestId };
+        const undo = unwrap(host.prepareTaskCompletionUndo({ request: undoRequest,
+            completion: { request, prepared } })).prepared;
+        expect(undo.effect.tasks).toHaveLength(1);
+        unwrap(await host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: undo }));
+        expect(useTaskStore.getState()._tasksById.get(existing.id)?.deletedAt).toBeUndefined();
+    });
+
+    it('restores the prior Today star only while the shared focus cap has room', async () => {
+        const original = source({ isFocusedToday: true, focusOrder: 4 });
+        const others = [1, 2, 3].map((index) => source({ id: `other-${index}`, title: `Other ${index}`,
+            isFocusedToday: index < 3 }));
+        const { host } = await open(original, { tasks: others });
+        const request = completionRequest(host);
+        const prepared = unwrap(host.prepareTaskCompletion(request)).prepared;
+        unwrap(await host.commitPreparedTaskCompletion({ request, prepared }));
+        expect((await useTaskStore.getState().updateTask('other-3', { isFocusedToday: true })).success).toBe(true);
+        const undoRequest = { requestId: '00000000-0000-4000-8000-000000000402',
+            completionRequestId: request.requestId };
+        const undo = unwrap(host.prepareTaskCompletionUndo({ request: undoRequest,
+            completion: { request, prepared } })).prepared;
+        expect(undo.effect.guards).toMatchObject({ focusCount: 3, focusLimit: 3 });
+        const forged = structuredClone(undo);
+        forged.witness.focusCount = 2;
+        expect(host.validatePreparedTaskCompletionUndo({ request: undoRequest, prepared: forged }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const coordinated = structuredClone(undo);
+        coordinated.witness.focusCount = 4;
+        coordinated.effect.guards.focusCount = 4;
+        expect(unwrap(host.validatePreparedTaskCompletionUndo({ request: undoRequest, prepared: coordinated })))
+            .toEqual({ id: request.id });
+        expect(await host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: coordinated }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect((await useTaskStore.getState().updateTask('other-3', { isFocusedToday: false })).success).toBe(true);
+        expect(await host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: undo }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        const refreshed = unwrap(host.prepareTaskCompletionUndo({ request: undoRequest,
+            completion: { request, prepared } })).prepared;
+        expect(refreshed.effect.guards).toMatchObject({ focusCount: 2, focusLimit: 3 });
+        unwrap(await host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: refreshed }));
+        expect(savedTask()).toMatchObject({ status: 'next', isFocusedToday: true });
+        expect(savedTask().focusOrder).toBeUndefined();
     });
 });

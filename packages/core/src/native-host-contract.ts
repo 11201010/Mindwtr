@@ -1589,7 +1589,7 @@ export function createNativeHostContract(options: {
         ...createTaskDraftSaveMethods({ readiness, save, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value) }),
         ...createTaskEditorResumeMethods({ readiness, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value),
             isReadOnly: isInArchivedProject }),
-        ...createTaskChecklistSaveMethods({ readiness, save, language: () => language,
+        ...createTaskChecklistSaveMethods({ readiness, save, receipts, language: () => language,
             validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value), isReadOnly: isInArchivedProject }),
         ...createTaskPromotionMethods({ readiness, save, isReadOnly: isInArchivedProject }),
         ...inboxProcessingMethods,

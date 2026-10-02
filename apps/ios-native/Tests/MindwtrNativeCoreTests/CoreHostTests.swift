@@ -26530,4 +26530,195 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: journal), retained)
         await cold.close()
     }
+
+    private func seedTask169Completion(recurring: Bool) async throws -> String {
+        let writer = host(bundleURL: try dateBundle(at: "2026-10-01T13:00:00.000Z"))
+        _ = try await writer.start()
+        let id = UUID().uuidString.lowercased()
+        _ = try await writer.call("captureSubmit", argumentsJSON: capture(writer, title: "Task169 host /next", id: id))
+        await writer.close()
+        if recurring {
+            let sqlite = try SQLiteBridge(url: database)
+            _ = try sqlite.execute("UPDATE tasks SET status = 'next', dueDate = ?, recurrence = ?, showFutureRecurrence = 1 WHERE id = ?",
+                                   parametersJSON: json(["2026-10-02", json(["rule": "daily", "strategy": "strict", "seriesId": id]), id]))
+            sqlite.close()
+        }
+        return id
+    }
+
+    private func task169CompletionRequest(_ core: CoreHost, id: String,
+                                          requestID: String = UUID().uuidString.lowercased()) async throws -> [String: Any] {
+        let focus = try object(await core.call("focus", argumentsJSON: "[50]"))
+        let sections = try XCTUnwrap(focus["sections"] as? [[String: Any]])
+        let rows = sections.flatMap { $0["rows"] as? [[String: Any]] ?? [] }
+        let row = try XCTUnwrap(rows.first { $0["id"] as? String == id })
+        return ["id": id, "requestId": requestID, "taskRevision": try XCTUnwrap(row["taskRevision"] as? String)]
+    }
+
+    private func task169ReceiptRows() throws -> [[String: Any]] {
+        let sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        let raw = try sqlite.execute("SELECT request_id, method, reply FROM native_request_receipts ORDER BY request_id")
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: Any]])
+    }
+
+    private func task169TaskRows() throws -> [[String: Any]] {
+        let sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        let raw = try sqlite.execute("SELECT * FROM tasks ORDER BY id")
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: Any]])
+    }
+
+    func testTask169OrdinaryCompletionFailedCommitExactRetryReceiptAndUndo() async throws {
+        let id = try await seedTask169Completion(recurring: false)
+        let faults = HostIOFaults()
+        let core = host(faults, bundleURL: try dateBundle(at: "2026-10-02T13:00:00.000Z"))
+        _ = try await core.start()
+        let request = try await task169CompletionRequest(core, id: id)
+        let original = try storedTask(id)
+        let sqlite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(sqlite)
+        sqlite.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Task169 COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("taskCompletion", argumentsJSON: json([json(request)]))
+        }
+        let frozen = try Data(contentsOf: journal)
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        try assertJournalContentUnchanged(frozen)
+        let failed = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failed), before)
+        failed.close()
+        XCTAssertTrue(try task169ReceiptRows().isEmpty)
+        faults.beforeSQL = nil
+        let retried = try await core.retryPending()
+        let completed = try object(XCTUnwrap(retried))
+        XCTAssertEqual(completed["id"] as? String, id)
+        let notice = try XCTUnwrap(completed["completion"] as? [String: Any])
+        XCTAssertEqual(notice["undoEnabled"] as? Bool, true)
+        XCTAssertFalse(try XCTUnwrap(notice["message"] as? String).isEmpty)
+        XCTAssertEqual(try storedTask(id)["status"] as? String, "done")
+        XCTAssertEqual(try task169ReceiptRows().count, 1)
+        let probe = try object(await core.call("taskCompletionRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(probe["kind"] as? String, "confirmed")
+        XCTAssertEqual(try json(XCTUnwrap(probe["result"])), try json(completed))
+        var otherRequest = request; otherRequest["requestId"] = UUID().uuidString.lowercased()
+        let unrelatedProbe = try object(await core.call("taskCompletionRetryOutcome", argumentsJSON: json([json(otherRequest)])))
+        XCTAssertEqual(unrelatedProbe["kind"] as? String, "unproven")
+        let undo: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+                                   "completionRequestId": try XCTUnwrap(request["requestId"])]
+        let undone = try object(await core.call("taskCompletionUndo", argumentsJSON: json([json(undo)])))
+        XCTAssertEqual(undone["id"] as? String, id)
+        let restored = try storedTask(id)
+        XCTAssertEqual(restored["status"] as? String, "next")
+        XCTAssertTrue(restored["completedAt"] is NSNull)
+        XCTAssertEqual(restored["rev"] as? Int, (original["rev"] as? Int ?? 0) + 2)
+        XCTAssertEqual(try task169ReceiptRows().count, 2)
+        let completionAfterUndo = try object(await core.call("taskCompletionRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(completionAfterUndo["kind"] as? String, "unproven")
+        let undoProbe = try object(await core.call("taskCompletionUndoRetryOutcome", argumentsJSON: json([json(undo)])))
+        XCTAssertEqual(undoProbe["kind"] as? String, "confirmed")
+        XCTAssertEqual((undoProbe["result"] as? [String: Any])?["id"] as? String, id)
+        await core.close()
+        let cold = host(bundleURL: try dateBundle(at: "2026-10-04T13:00:00.000Z"))
+        _ = try await cold.start()
+        XCTAssertEqual(try storedTask(id)["status"] as? String, "next")
+        XCTAssertEqual(try task169ReceiptRows().count, 2)
+        await cold.close()
+    }
+
+    func testTask169RecurringCompletionColdTerminalRecoveryUndoTombstonesOwnedChild() async throws {
+        let id = try await seedTask169Completion(recurring: true)
+        let faults = HostIOFaults()
+        let writer = host(faults, bundleURL: try dateBundle(at: "2026-10-02T13:00:00.000Z"))
+        _ = try await writer.start()
+        let request = try await task169CompletionRequest(writer, id: id)
+        let count = try taskCount()
+        faults.journalRemove = { throw HostFailure("Injected Task169 terminal cleanup failure") }
+        await expectFailure("cleanup failure") {
+            _ = try await writer.call("taskCompletion", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertEqual(try taskCount(), count + 1)
+        XCTAssertEqual(try task169ReceiptRows().count, 1)
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "taskCompletionCommit")
+        let rowsBeforeCold = try task169TaskRows()
+        await writer.close()
+        let cold = host(bundleURL: try dateBundle(at: "2026-10-04T13:00:00.000Z", suffix: """
+        MindwtrHost.taskCompletionPrepare = function () { throw new Error('Cold replay must not prepare completion'); };
+        """))
+        let window = try object(await cold.start())
+        let recovery = try XCTUnwrap(window["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "taskCompletionCommit")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["id"] as? String, id)
+        XCTAssertEqual(try taskCount(), count + 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let rowsAfterCold = try task169TaskRows()
+        XCTAssertEqual(rowsAfterCold.count, rowsBeforeCold.count, "Cold boot must not add a recurring child")
+        for (before, after) in zip(rowsBeforeCold, rowsAfterCold) {
+            XCTAssertEqual(after["id"] as? String, before["id"] as? String)
+            let changed = try Set(before.keys).union(after.keys).sorted().filter { field in
+                func comparable(_ row: [String: Any]) throws -> Any {
+                    guard field == "recurrence", let encoded = row[field] as? String else {
+                        return row[field] ?? NSNull()
+                    }
+                    return try JSONSerialization.jsonObject(with: Data(encoded.utf8))
+                }
+                let prior = try comparable(before)
+                let current = try comparable(after)
+                let earlier = try json([prior])
+                let later = try json([current])
+                return earlier != later
+            }
+            XCTAssertTrue(changed.isEmpty, "Cold boot changed persisted Task \(before["id"] ?? "?") fields: \(changed)")
+        }
+        let recoveredReceipt = try object(await cold.call("taskCompletionRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(recoveredReceipt["kind"] as? String, "confirmed")
+        let undo: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+                                   "completionRequestId": try XCTUnwrap(request["requestId"])]
+        let undone = try object(await cold.call("taskCompletionUndo", argumentsJSON: json([json(undo)])))
+        XCTAssertEqual(undone["id"] as? String, id)
+        XCTAssertEqual(try storedTask(id)["status"] as? String, "next")
+        let sqlite = try SQLiteBridge(url: database)
+        let children = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sqlite.execute("SELECT * FROM tasks WHERE id != ?", parametersJSON: json([id])).utf8)) as? [[String: Any]])
+        sqlite.close()
+        XCTAssertEqual(children.count, 1)
+        XCTAssertNotNil(children.first?["deletedAt"] as? String)
+        XCTAssertEqual(try task169ReceiptRows().count, 2)
+        await cold.close()
+    }
+
+    func testTask169CompletionUndoRejectsForgedRequestAndEditedChildWithoutWrites() async throws {
+        let id = try await seedTask169Completion(recurring: true)
+        let core = host(bundleURL: try dateBundle(at: "2026-10-02T13:00:00.000Z"))
+        _ = try await core.start()
+        let request = try await task169CompletionRequest(core, id: id)
+        let reply = try object(await core.call("taskCompletion", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(reply["id"] as? String, id)
+        let mismatched: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+                                         "completionRequestId": UUID().uuidString.lowercased()]
+        await expectFailure("exact confirmed completion") {
+            _ = try await core.call("taskCompletionUndo", argumentsJSON: json([json(mismatched)]))
+        }
+        let sqlite = try SQLiteBridge(url: database)
+        let children = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sqlite.execute("SELECT id FROM tasks WHERE id != ?", parametersJSON: json([id])).utf8)) as? [[String: Any]])
+        let childID = try XCTUnwrap(children.first?["id"] as? String)
+        sqlite.close()
+        let opening = try object(await core.call("editorModel", argumentsJSON: json([childID])))
+        _ = try await core.call("saveDraft", argumentsJSON: datePayload(childID, editor: opening,
+                                                                         patch: ["description": "Later child edit"]))
+        let saved = try SQLiteBridge(url: database)
+        let beforeUndo = try nineTableSnapshot(saved)
+        saved.close()
+        let undo: [String: Any] = ["requestId": UUID().uuidString.lowercased(),
+                                   "completionRequestId": try XCTUnwrap(request["requestId"])]
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("taskCompletionUndo", argumentsJSON: json([json(undo)]))
+        }
+        let after = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(after), beforeUndo)
+        after.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
 }

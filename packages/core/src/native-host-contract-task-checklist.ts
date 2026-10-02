@@ -7,13 +7,14 @@ import { createTaskDraft } from './task-draft';
 import { applyTaskDraftPatch, buildTaskEditUpdatePatch } from './task-editor-model';
 import {
     nativeTaskDraftPatchValues, readNativeTaskDraftSaveRequest,
-    validNativeTaskDraftBases, validNativeTaskDraftScheduleEffect, type NativeTaskDraftSaveRequest,
+    getNativeTaskScheduleBase, validNativeTaskDraftBases, validNativeTaskDraftScheduleEffect, validRawTask, type NativeTaskDraftSaveRequest,
 } from './native-host-contract-task-save';
 import { isNativeJsonWithinBytes, readChecklist, toChecklist } from './native-host-contract-task-view';
 import { buildResetTaskChecklistUpdates, planTaskUpdateEffects, prepareTaskUpdatesForStore,
-    planSkippedRecurringOccurrence, taskEditValuesEqual } from './store-tasks';
+    planSkippedRecurringOccurrence, samePreparedTask, taskEditValuesEqual } from './store-tasks';
 import { createProjectOrderReserver, ensureDeviceId, getNextProjectOrder, getTaskOrder,
     nextRevision } from './store-helpers';
+import { taskRevisionOf, type NativeRequestReceipts } from './native-request-receipts';
 import { countFocusedTasksBeforeBoundary } from './task-utils';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
@@ -26,6 +27,7 @@ import { getTranslator, resolveI18nText } from './i18n';
 import { isTaskActionable } from './task-status';
 import { isProjectedRecurringTaskId } from './recurrence';
 import { taskCancellationRestoreFields } from './undo-task-cancellation';
+import { formatTaskMarkedDoneMessage } from './undo-task-completion';
 
 export type NativeChecklistSaveRequest = NativeTaskDraftSaveRequest & {
     requestId: string;
@@ -85,8 +87,32 @@ export type NativePreparedTaskCancellationUndo = {
 export type NativeTaskCancellationUndoEnvelope = {
     request: NativeTaskCancellationUndoRequest; prepared: NativePreparedTaskCancellationUndo;
 };
+export type NativeTaskCompletionRequest = { id: string; requestId: string; taskRevision: string };
+export type NativeTaskCompletionResult = { id: string; completion: {
+    completedAt: string; undoEnabled: boolean; message: string; undoLabel: string;
+} };
+export type NativePreparedTaskCompletion = {
+    version: 1; kind: 'complete'; request: NativeTaskCompletionRequest;
+    checklist: NativePreparedChecklistWrite;
+    notice: { message: string; undoLabel: string };
+    result: NativeTaskCompletionResult;
+};
+export type NativeTaskCompletionEnvelope = {
+    request: NativeTaskCompletionRequest; prepared: NativePreparedTaskCompletion;
+};
+export type NativeTaskCompletionUndoRequest = { requestId: string; completionRequestId: string };
+export type NativePreparedTaskCompletionUndo = {
+    version: 1; kind: 'undo'; request: NativeTaskCompletionUndoRequest;
+    completion: NativeTaskCompletionEnvelope;
+    witness: Witness; effect: PreparedChecklistEffect; result: { id: string };
+};
+export type NativeTaskCompletionUndoEnvelope = {
+    request: NativeTaskCompletionUndoRequest; prepared: NativePreparedTaskCompletionUndo;
+};
 
 const LIMIT_BYTES = 2_000_000;
+const COMPLETION_BYTES = 2_100_000;
+const COMPLETION_UNDO_BYTES = 4_500_000;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const validCancelText = (value: unknown, maxLength: number): value is string =>
     typeof value === 'string' && value.length > 0 && value.length <= maxLength
@@ -101,20 +127,22 @@ const same = taskEditValuesEqual;
 const fail = (code: 'INVALID_INPUT' | 'STALE_REVISION' | 'TASK_NOT_FOUND' | 'SAVE_FAILED', message: string): NativeHostResult<never> =>
     ({ ok: false, error: { code, message } });
 
-const detach = <T>(value: T): T | null => {
+const detach = <T>(value: T, limit = LIMIT_BYTES): T | null => {
     const safe = (item: unknown, depth: number): boolean => {
         if (depth > 30) return false;
         if (item === null || typeof item === 'string' || typeof item === 'boolean') return true;
         if (typeof item === 'number') return Number.isFinite(item);
-        if (Array.isArray(item)) return item.length <= LIMIT_BYTES && item.every((entry) => safe(entry, depth + 1));
+        if (Array.isArray(item)) return item.length <= limit && item.every((entry) => safe(entry, depth + 1));
         return isRecord(item) && (Object.getPrototypeOf(item) === Object.prototype || Object.getPrototypeOf(item) === null)
             && Object.keys(item).length <= 256 && Object.entries(item).every(([key, entry]) =>
                 !['__proto__', 'prototype', 'constructor'].includes(key) && safe(entry, depth + 1));
     };
     if (!safe(value, 0)) return null;
     const encoded = JSON.stringify(value);
-    return isNativeJsonWithinBytes(value, LIMIT_BYTES) ? JSON.parse(encoded) as T : null;
+    return isNativeJsonWithinBytes(value, limit) ? JSON.parse(encoded) as T : null;
 };
+const canonicalJSON = (input: unknown): string => JSON.stringify(input, (_name, value) =>
+    isRecord(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : value);
 const isSave = (value: NativeChecklistWriteRequest): value is NativeChecklistSaveRequest => 'checklist' in value;
 const readUndoRequest = (value: unknown): NativeTaskCancellationUndoRequest | null => {
     const input = detach(value);
@@ -123,6 +151,29 @@ const readUndoRequest = (value: unknown): NativeTaskCancellationUndoRequest | nu
         && typeof input.cancelRequestId === 'string' && UUID.test(input.cancelRequestId)
         && input.requestId !== input.cancelRequestId ? input as NativeTaskCancellationUndoRequest : null;
 };
+const readCompletionRequest = (value: unknown): NativeTaskCompletionRequest | null => {
+    const input = detach(value);
+    return isRecord(input) && exact(input, ['id', 'requestId', 'taskRevision'])
+        && typeof input.id === 'string' && Boolean(input.id.trim()) && input.id.length <= 500
+        && typeof input.requestId === 'string' && UUID.test(input.requestId)
+        && typeof input.taskRevision === 'string' && Boolean(input.taskRevision)
+        && input.taskRevision.length <= 200 ? input as NativeTaskCompletionRequest : null;
+};
+const readCompletionUndoRequest = (value: unknown): NativeTaskCompletionUndoRequest | null => {
+    const input = detach(value);
+    return isRecord(input) && exact(input, ['requestId', 'completionRequestId'])
+        && typeof input.requestId === 'string' && UUID.test(input.requestId)
+        && typeof input.completionRequestId === 'string' && UUID.test(input.completionRequestId)
+        && input.requestId !== input.completionRequestId ? input as NativeTaskCompletionUndoRequest : null;
+};
+const completionSaveRequest = (source: Task, requestId: string): NativeChecklistSaveRequest => ({
+    id: source.id, requestId, base: { status: source.status }, patch: { status: 'done' },
+    scheduleBase: getNativeTaskScheduleBase(source),
+    checklist: { base: toChecklist(source.checklist), value: toChecklist(source.checklist) },
+});
+export const canCompleteNativeTask = (task: Task, projects: readonly Project[], readOnly = false): boolean =>
+    !readOnly && !task.deletedAt && !task.purgedAt && isTaskActionable(task)
+    && !isProjectedRecurringTaskId(task.id) && !isStatusListTaskReadOnly(task, projects);
 export const canCancelNativeTask = (task: Task, projects: readonly Project[], readOnly = false): boolean =>
     !readOnly && !task.deletedAt && !task.purgedAt && isTaskActionable(task)
     && !isProjectedRecurringTaskId(task.id) && !isStatusListTaskReadOnly(task, projects);
@@ -466,6 +517,125 @@ const readCancellation = (value: unknown,
         ? envelope as NativeChecklistCancellationEnvelope : null;
 };
 
+const readCompletion = (value: unknown,
+    validateField: (field: TaskDraftField, value: unknown) => boolean): NativeTaskCompletionEnvelope | null => {
+    const envelope = detach(value, COMPLETION_BYTES);
+    if (!isRecord(envelope) || !exact(envelope, ['request', 'prepared']) || !isRecord(envelope.prepared)) return null;
+    const request = readCompletionRequest(envelope.request);
+    const raw = envelope.prepared;
+    if (!request || !exact(raw, ['version', 'kind', 'request', 'checklist', 'notice', 'result'])
+        || raw.version !== 1 || raw.kind !== 'complete' || !same(raw.request, request)
+        || !isRecord(raw.checklist) || !isRecord(raw.notice) || !isRecord(raw.result)
+        || !exact(raw.notice, ['message', 'undoLabel'])
+        || !validCancelText(raw.notice.message, 512) || !validCancelText(raw.notice.undoLabel, 80)
+        || !exact(raw.result, ['id', 'completion']) || !isRecord(raw.result.completion)
+        || !exact(raw.result.completion, ['completedAt', 'undoEnabled', 'message', 'undoLabel'])) return null;
+    const prepared = raw as unknown as NativePreparedTaskCompletion;
+    const checklist = readPrepared({ request: prepared.checklist.request, prepared: prepared.checklist }, validateField);
+    if (!checklist || checklist.kind !== 'save' || !isSave(checklist.request)
+        || !canCompleteNativeTask(checklist.witness.source, checklist.witness.lists.projects)
+        || taskRevisionOf(checklist.witness.source) !== request.taskRevision
+        || !same(checklist.request, completionSaveRequest(checklist.witness.source, request.requestId))) return null;
+    const after = checklist.effect.tasks.find((row) => row.after.id === request.id)?.after;
+    const result = prepared.result;
+    return after && after.status === 'done' && typeof after.completedAt === 'string'
+        && after.completedAt === checklist.witness.preparedAt
+        && result.id === request.id && result.completion.completedAt === after.completedAt
+        && result.completion.undoEnabled === true
+        && result.completion.message === prepared.notice.message
+        && result.completion.undoLabel === prepared.notice.undoLabel
+        ? envelope as NativeTaskCompletionEnvelope : null;
+};
+
+const ownedCompletionChild = (completion: NativeTaskCompletionEnvelope): Task | null => {
+    const created = completion.prepared.checklist.effect.tasks.filter((row) => row.before === null);
+    return created.length === 1 && created[0].after.id !== completion.request.id ? created[0].after : null;
+};
+const sameSavedTask = (left: Task | undefined, right: Task): boolean =>
+    Boolean(left) && samePreparedTask(left!, right);
+const completionUndoDirect = (completion: NativeTaskCompletionEnvelope, witness: Witness): Partial<Task> => {
+    const before = completion.prepared.checklist.witness.source;
+    const restoreFocus = before.isFocusedToday === true && witness.focusCount < witness.focusLimit;
+    return { status: before.status, isFocusedToday: restoreFocus, focusOrder: undefined };
+};
+const planCompletionUndo = (completion: NativeTaskCompletionEnvelope, witness: Witness): PreparedChecklistEffect => {
+    const planned = plan('save', completion.prepared.checklist.request, witness, false, true);
+    const child = ownedCompletionChild(completion);
+    // A prior Today star makes even a no-star Undo result a cap-dependent
+    // decision. Freeze and compare the count/limit at the atomic write boundary.
+    const effect: PreparedChecklistEffect = completion.prepared.checklist.witness.source.isFocusedToday === true
+        ? { ...planned.effect, guards: { ...planned.effect.guards,
+            focusCount: witness.focusCount, focusLimit: witness.focusLimit,
+            focusBoundary: witness.futureBoundary } }
+        : planned.effect;
+    if (!child) return effect;
+    const frozen = witness.lists.tasks.find((row) => row.id === child.id);
+    if (!frozen || !sameSavedTask(frozen, child) || frozen.deletedAt || frozen.purgedAt)
+        throw new Error('Recurring follow-up changed');
+    const tombstone: Task = { ...child, deletedAt: witness.preparedAt, updatedAt: witness.preparedAt,
+        rev: nextRevision(child.rev), revBy: deviceId(witness) };
+    return { ...effect, tasks: [...effect.tasks, { before: child, after: tombstone }] };
+};
+const readCompletionUndo = (value: unknown,
+    validateField: (field: TaskDraftField, value: unknown) => boolean): NativeTaskCompletionUndoEnvelope | null => {
+    const envelope = detach(value, COMPLETION_UNDO_BYTES);
+    if (!isRecord(envelope) || !exact(envelope, ['request', 'prepared']) || !isRecord(envelope.prepared)) return null;
+    const request = readCompletionUndoRequest(envelope.request);
+    const raw = envelope.prepared;
+    const completion = readCompletion(raw.completion, validateField);
+    if (!request || !exact(raw, ['version', 'kind', 'request', 'completion', 'witness', 'effect', 'result'])
+        || raw.version !== 1 || raw.kind !== 'undo' || !same(raw.request, request)
+        || !completion || !same(raw.completion, completion) || request.completionRequestId !== completion.request.requestId
+        || !isRecord(raw.witness) || !isRecord(raw.effect) || !isRecord(raw.result)
+        || !exact(raw.result, ['id'])) return null;
+    const prepared = raw as unknown as NativePreparedTaskCompletionUndo;
+    const witness = prepared.witness;
+    const completed = completion.prepared.checklist.effect.tasks.find((row) => row.after.id === completion.request.id)?.after;
+    const owned = ownedCompletionChild(completion);
+    if (!completed || !isRecord(witness.source) || !validRawTask(witness.source, completion.request.id)
+        || !isRecord(witness.lists) || !exact(witness as unknown as Record<string, unknown>, [
+            'source', 'lists', 'settings', 'preparedAt', 'preparedLocalDay', 'preparedOffsetMinutes',
+            'boundaryOffsetMinutes', 'futureBoundary', 'deviceIdBefore', 'deviceIdToInitialize',
+            'recurrenceProjection', 'ids', 'directClears', 'direct', 'focusCount', 'focusLimit',
+        ]) || !exact(witness.lists, ['tasks', 'projects', 'sections', 'areas'])
+        || !Array.isArray(witness.lists.tasks) || !Array.isArray(witness.lists.projects)
+        || !Array.isArray(witness.lists.sections) || !Array.isArray(witness.lists.areas)
+        || !witness.lists.tasks.every((row: unknown) => isRecord(row) && validRawTask(row, row.id as string))
+        || !isRecord(witness.settings) || !isRecord(witness.direct)
+        || !Array.isArray(witness.directClears) || !validClears(witness.direct, witness.directClears)
+        || !Array.isArray(witness.ids) || witness.ids.length !== 0 || witness.recurrenceProjection !== null
+        || witness.source.deletedAt || witness.source.purgedAt || witness.source.status !== 'done'
+        || witness.source.completedAt !== completed.completedAt
+        || (witness.source.rev ?? 0) < (completed.rev ?? 0)
+        || isStatusListTaskReadOnly(witness.source, witness.lists.projects)
+        || witness.lists.tasks.filter((row) => row.id === witness.source.id).length !== 1
+        || !same(witness.lists.tasks.find((row) => row.id === witness.source.id), witness.source)
+        || (owned && (witness.lists.tasks.filter((row) => row.id === owned.id).length !== 1
+            || !sameSavedTask(witness.lists.tasks.find((row) => row.id === owned.id), owned)))
+        || typeof witness.preparedAt !== 'string' || !Number.isFinite(Date.parse(witness.preparedAt))
+        || new Date(witness.preparedAt).toISOString() !== witness.preparedAt
+        || typeof witness.preparedLocalDay !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(witness.preparedLocalDay)
+        || !Number.isInteger(witness.preparedOffsetMinutes) || Math.abs(witness.preparedOffsetMinutes) > 840
+        || !Number.isInteger(witness.boundaryOffsetMinutes) || Math.abs(witness.boundaryOffsetMinutes) > 840
+        || new Date(Date.parse(witness.preparedAt) - witness.preparedOffsetMinutes * 60_000).toISOString().slice(0, 10)
+            !== witness.preparedLocalDay
+        || new Date(Date.parse(`${witness.preparedLocalDay}T23:59:59.999Z`)
+            + witness.boundaryOffsetMinutes * 60_000).toISOString() !== witness.futureBoundary
+        || witness.deviceIdBefore !== (witness.settings.deviceId ?? null)
+        || (witness.deviceIdBefore === null
+            ? typeof witness.deviceIdToInitialize !== 'string' || !UUID.test(witness.deviceIdToInitialize)
+            : witness.deviceIdToInitialize !== null)
+        || !Number.isSafeInteger(witness.focusCount) || witness.focusCount < 0
+        || !Number.isSafeInteger(witness.focusLimit) || witness.focusLimit < 1
+        || witness.focusLimit !== normalizeFocusTaskLimit((witness.settings.gtd as { focusTaskLimit?: number } | undefined)?.focusTaskLimit)
+        || !same(restoreClears(witness.direct, witness.directClears), completionUndoDirect(completion, witness))
+        || prepared.result.id !== witness.source.id) return null;
+    try {
+        return same(planCompletionUndo(completion, witness), prepared.effect)
+            ? envelope as NativeTaskCompletionUndoEnvelope : null;
+    } catch { return null; }
+};
+
 const readPreparedUndo = (value: unknown,
     validateField: (field: TaskDraftField, value: unknown) => boolean): NativeTaskCancellationUndoEnvelope | null => {
     const envelope = detach(value);
@@ -529,6 +699,7 @@ export function createTaskChecklistSaveMethods(deps: {
     validateField: (field: TaskDraftField, value: unknown) => boolean;
     isReadOnly: (task: Task) => boolean;
     language: () => string;
+    receipts: NativeRequestReceipts;
 }) {
     const prepare = (kind: 'save' | 'reset', input: unknown): NativeHostResult<NativeChecklistPreparation> => {
         const ready = deps.readiness();
@@ -628,7 +799,159 @@ export function createTaskChecklistSaveMethods(deps: {
         const saved = await deps.save();
         return saved.ok ? { ok: true, value: result } : saved;
     };
+    const commitReceipted = <T>(requestId: string, payload: string, effect: PreparedChecklistEffect, result: T): Promise<NativeHostResult<T>> =>
+        deps.receipts.run(requestId, payload, async () => {
+            const applied = await useTaskStore.getState().commitPreparedChecklistEffect(effect, { requireBefore: true });
+            return applied.success ? { ok: true, value: result }
+                : fail('STALE_REVISION', applied.error ?? 'Prepared task change conflicts with current data');
+        });
     return {
+        prepareTaskCompletion(input: NativeTaskCompletionRequest): NativeHostResult<{ kind: 'prepared'; prepared: NativePreparedTaskCompletion }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const request = readCompletionRequest(input);
+            if (!request) return fail('INVALID_INPUT', 'A displayed task revision and request UUID are required');
+            const state = useTaskStore.getState();
+            const task = state._tasksById.get(request.id);
+            if (!task || task.deletedAt || task.purgedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            if (taskRevisionOf(task) !== request.taskRevision) return fail('STALE_REVISION', 'Task changed since it was shown');
+            if (!canCompleteNativeTask(task, state._allProjects, deps.isReadOnly(task)))
+                return fail('INVALID_INPUT', 'Task cannot be completed');
+            const planned = prepare('save', completionSaveRequest(task, request.requestId));
+            if (!planned.ok) return planned;
+            if (planned.value.kind !== 'prepared') return fail('INVALID_INPUT', 'Task completion made no change');
+            const translator = getTranslator(deps.language());
+            const formatted = formatTaskMarkedDoneMessage(translator, task.title);
+            const done = resolveI18nText(translator, 'common.done');
+            const message = validCancelText(formatted, 512) ? formatted
+                : validCancelText(done, 512) ? done : 'Done';
+            const translatedUndo = resolveI18nText(translator, 'common.undo');
+            const undoLabel = validCancelText(translatedUndo, 80) ? translatedUndo : 'Undo';
+            const completed = planned.value.prepared.effect.tasks.find((row) => row.after.id === request.id)?.after;
+            if (!completed?.completedAt)
+                return fail('INVALID_INPUT', 'Completion notice cannot be represented');
+            const result: NativeTaskCompletionResult = { id: request.id,
+                completion: { completedAt: completed.completedAt, undoEnabled: true, message, undoLabel } };
+            const prepared = detach({ version: 1 as const, kind: 'complete' as const, request,
+                checklist: planned.value.prepared, notice: { message, undoLabel }, result }, COMPLETION_BYTES);
+            return prepared && readCompletion({ request, prepared }, deps.validateField)
+                ? { ok: true, value: { kind: 'prepared', prepared } }
+                : fail('INVALID_INPUT', 'Completion cannot produce a valid bounded journal');
+        },
+        validatePreparedTaskCompletion(input: NativeTaskCompletionEnvelope): NativeHostResult<NativeTaskCompletionResult> {
+            const envelope = readCompletion(input, deps.validateField);
+            return envelope ? { ok: true, value: envelope.prepared.result }
+                : fail('INVALID_INPUT', 'Prepared completion is malformed');
+        },
+        async commitPreparedTaskCompletion(input: NativeTaskCompletionEnvelope): Promise<NativeHostResult<NativeTaskCompletionResult>> {
+            const envelope = readCompletion(input, deps.validateField);
+            if (!envelope) return fail('INVALID_INPUT', 'Prepared completion is malformed');
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const result = await commitReceipted(envelope.request.requestId,
+                canonicalJSON(['taskCompletion', envelope]), envelope.prepared.checklist.effect, envelope.prepared.result);
+            return result.ok && !same(result.value, envelope.prepared.result)
+                ? fail('INVALID_INPUT', 'Saved completion result does not match its journal') : result;
+        },
+        taskCompletionOutcome(input: NativeTaskCompletionEnvelope): NativeHostResult<NativeTaskCompletionResult | null> {
+            const envelope = readCompletion(input, deps.validateField);
+            if (!envelope) return fail('INVALID_INPUT', 'Prepared completion is malformed');
+            const saved = deps.receipts.saved<NativeTaskCompletionResult>(envelope.request.requestId,
+                canonicalJSON(['taskCompletion', envelope]));
+            return saved?.ok && !same(saved.value, envelope.prepared.result)
+                ? fail('INVALID_INPUT', 'Saved completion result does not match its journal')
+                : saved ?? { ok: true, value: null };
+        },
+        prepareTaskCompletionUndo(input: { request: NativeTaskCompletionUndoRequest; completion: NativeTaskCompletionEnvelope }): NativeHostResult<
+            { kind: 'prepared'; prepared: NativePreparedTaskCompletionUndo }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const request = readCompletionUndoRequest(input?.request);
+            const completion = readCompletion(input?.completion, deps.validateField);
+            if (!request || !completion || request.completionRequestId !== completion.request.requestId)
+                return fail('INVALID_INPUT', 'A confirmed completion and new Undo UUID are required');
+            const confirmed = deps.receipts.saved<NativeTaskCompletionResult>(completion.request.requestId,
+                canonicalJSON(['taskCompletion', completion]));
+            if (!confirmed?.ok || !same(confirmed.value, completion.prepared.result))
+                return fail('STALE_REVISION', 'Completion has no saved request receipt');
+            const state = useTaskStore.getState();
+            const matches = state._allTasks.filter((row) => row.id === completion.request.id);
+            const task = matches.length === 1 ? matches[0] : null;
+            const completed = completion.prepared.checklist.effect.tasks.find((row) => row.after.id === completion.request.id)?.after;
+            const child = ownedCompletionChild(completion);
+            if (!task || !completed || task.deletedAt || task.purgedAt || task.status !== 'done'
+                || task.completedAt !== completed.completedAt || (task.rev ?? 0) < (completed.rev ?? 0)
+                || deps.isReadOnly(task) || isStatusListTaskReadOnly(task, state._allProjects)
+                || (child && !sameSavedTask(state._allTasks.find((row) => row.id === child.id), child)))
+                return fail('STALE_REVISION', 'Completion or its recurring follow-up was superseded');
+            try {
+                const preparedAt = new Date().toISOString();
+                const boundary = futureBoundary(preparedAt);
+                const device = ensureDeviceId(state.settings);
+                const witness: Witness = {
+                    source: JSON.parse(JSON.stringify(task)) as Task,
+                    lists: { tasks: state._allTasks, projects: state._allProjects,
+                        sections: state._allSections, areas: state._allAreas },
+                    settings: JSON.parse(JSON.stringify({ deviceId: state.settings.deviceId,
+                        gtd: { autoArchiveDays: state.settings.gtd?.autoArchiveDays,
+                            focusTaskLimit: state.settings.gtd?.focusTaskLimit } })) as AppData['settings'],
+                    preparedAt, futureBoundary: boundary,
+                    preparedOffsetMinutes: new Date(preparedAt).getTimezoneOffset(),
+                    boundaryOffsetMinutes: new Date(boundary).getTimezoneOffset(),
+                    preparedLocalDay: new Date(Date.parse(preparedAt) - new Date(preparedAt).getTimezoneOffset() * 60_000)
+                        .toISOString().slice(0, 10),
+                    deviceIdBefore: state.settings.deviceId ?? null,
+                    deviceIdToInitialize: device.updated ? device.deviceId : null,
+                    recurrenceProjection: null, ids: [], directClears: [], direct: {},
+                    focusCount: countFocusedTasksBeforeBoundary(state.tasks, boundary),
+                    focusLimit: normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit),
+                };
+                const direct = completionUndoDirect(completion, witness);
+                witness.directClears = cleared(direct);
+                witness.direct = JSON.parse(JSON.stringify(direct));
+                const first = planCompletionUndo(completion, witness);
+                reduceWitness(witness, first, state);
+                const bounded = planCompletionUndo(completion, witness);
+                if (!same(first, bounded)) return fail('INVALID_INPUT', 'Undo effect exceeds the bounded witness');
+                const prepared = detach(JSON.parse(JSON.stringify({ version: 1 as const, kind: 'undo' as const, request, completion,
+                    witness, effect: bounded, result: { id: task.id } })), COMPLETION_UNDO_BYTES) as NativePreparedTaskCompletionUndo | null;
+                return prepared && readCompletionUndo({ request, prepared }, deps.validateField)
+                    ? { ok: true, value: { kind: 'prepared', prepared } }
+                    : fail('INVALID_INPUT', 'Undo cannot produce a valid bounded journal');
+            } catch { return fail('INVALID_INPUT', 'Undo could not be prepared'); }
+        },
+        validatePreparedTaskCompletionUndo(input: NativeTaskCompletionUndoEnvelope): NativeHostResult<{ id: string }> {
+            const envelope = readCompletionUndo(input, deps.validateField);
+            return envelope ? { ok: true, value: envelope.prepared.result }
+                : fail('INVALID_INPUT', 'Prepared completion Undo is malformed');
+        },
+        taskCompletionUndoOutcome(input: NativeTaskCompletionUndoEnvelope): NativeHostResult<{ id: string } | null> {
+            const envelope = readCompletionUndo(input, deps.validateField);
+            if (!envelope) return fail('INVALID_INPUT', 'Prepared completion Undo is malformed');
+            const saved = deps.receipts.saved<{ id: string }>(envelope.request.requestId,
+                canonicalJSON(['taskCompletionUndo', envelope]));
+            return saved?.ok && !same(saved.value, envelope.prepared.result)
+                ? fail('INVALID_INPUT', 'Saved completion Undo result does not match its journal')
+                : saved ?? { ok: true, value: null };
+        },
+        async commitPreparedTaskCompletionUndo(input: NativeTaskCompletionUndoEnvelope): Promise<NativeHostResult<{ id: string }>> {
+            const envelope = readCompletionUndo(input, deps.validateField);
+            if (!envelope) return fail('INVALID_INPUT', 'Prepared completion Undo is malformed');
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const payload = canonicalJSON(['taskCompletionUndo', envelope]);
+            const savedUndo = deps.receipts.saved<{ id: string }>(envelope.request.requestId, payload);
+            if (savedUndo) return savedUndo.ok && !same(savedUndo.value, envelope.prepared.result)
+                ? fail('INVALID_INPUT', 'Saved completion Undo result does not match its journal') : savedUndo;
+            const confirmed = deps.receipts.saved<NativeTaskCompletionResult>(envelope.prepared.completion.request.requestId,
+                canonicalJSON(['taskCompletion', envelope.prepared.completion]));
+            if (!confirmed?.ok || !same(confirmed.value, envelope.prepared.completion.prepared.result))
+                return fail('STALE_REVISION', 'Completion has no saved request receipt');
+            const result = await commitReceipted(envelope.request.requestId, payload,
+                envelope.prepared.effect, envelope.prepared.result);
+            return result.ok && !same(result.value, envelope.prepared.result)
+                ? fail('INVALID_INPUT', 'Saved completion Undo result does not match its journal') : result;
+        },
         prepareTaskChecklistSave: (request: NativeChecklistSaveRequest): NativeHostResult<NativeChecklistPreparation> => prepare('save', request),
         prepareTaskChecklistReset: (request: NativeChecklistResetRequest): NativeHostResult<NativeChecklistPreparation> => prepare('reset', request),
         /** Pure journal authority check, valid before storage activation and terminal cleanup. */

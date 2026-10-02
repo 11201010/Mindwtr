@@ -560,7 +560,7 @@ const samePreparedSqliteRow = (columns: readonly string[], jsonColumns: Readonly
 const taskJsonColumns = new Set(['relativeStartOffset', 'recurrence', 'tags', 'contexts',
     'checklist', 'attachments', 'viewSectionIds']);
 const projectJsonColumns = new Set(['tagIds', 'attachments']);
-const samePreparedTask = (left: Task, right: Task) => samePreparedSqliteRow(TASK_SQLITE_COLUMNS, taskJsonColumns,
+export const samePreparedTask = (left: Task, right: Task) => samePreparedSqliteRow(TASK_SQLITE_COLUMNS, taskJsonColumns,
     taskToSqliteRow(left), taskToSqliteRow(right));
 const samePreparedProject = (left: AppData['projects'][number], right: AppData['projects'][number]) =>
     samePreparedSqliteRow(PROJECT_SQLITE_COLUMNS, projectJsonColumns, projectToSqliteRow(left), projectToSqliteRow(right));
@@ -1197,13 +1197,16 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
     },
 
     /** A frozen checklist/editor Save or saved-list Reset, including induced rows. */
-    commitPreparedChecklistEffect: async (input: PreparedChecklistEffect) => {
+    commitPreparedChecklistEffect: async (input: PreparedChecklistEffect, options?: { requireBefore?: boolean }) => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared checklist change conflicts with current data' };
         set((state) => {
             // A complete target receipt takes precedence over every mutable
             // setting, source, membership, and order guard on cold recovery.
             const receipt = inspectPreparedAffectedRows(state, input);
             if (receipt === 'after') {
+                // A new receipted completion UUID must never claim another request's
+                // already-applied effect. Only its own durable receipt can replay.
+                if (options?.requireBefore) return state;
                 result = { success: true, id: input.sourceBefore.id, outcome: 'replayed' };
                 return state;
             }

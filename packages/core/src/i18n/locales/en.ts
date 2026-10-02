@@ -322,6 +322,8 @@ export const en: Record<string, string> = {
         'task.cancelRecurringSeries': 'Cancel recurring series',
         'task.cancelled': 'Cancelled',
         'task.cancelledWithRestore': 'Task cancelled. You can restore it from Archive.',
+        'task.completionOutcomeUnknown': 'Could not confirm whether the task was completed. Restart Mindwtr to reload saved data.',
+        'task.completionUndoOutcomeUnknown': 'Could not confirm whether completion was undone. Restart Mindwtr to reload saved data.',
         'task.cancelFailed': 'Failed to cancel task',
         'task.skipOccurrence': 'Skip this occurrence',
         'task.skipOccurrenceFailed': 'Failed to skip occurrence',
