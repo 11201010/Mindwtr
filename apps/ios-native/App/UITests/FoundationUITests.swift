@@ -3888,7 +3888,8 @@ final class FoundationUITests: XCTestCase {
             }
         }
         let clear = "review-task-markReviewed-task159-clear"
-        reveal(clear).tap()
+        let clearButton = reveal(clear)
+        clearButton.tap()
         settled(clear)
         XCTAssertFalse(app.buttons["task-title-task159-clear"].exists)
         XCTAssertFalse(app.buttons["task-title-task159-future"].exists)
@@ -3920,8 +3921,8 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
-    func testReviewRowActionsNormal() { task159ReviewRowActions("3caad5ec-4618-4007-ac74-8d5f446e7815") }
-    func testReviewRowActionsLargest() { task159ReviewRowActions("16ad5e1b-2170-4385-9319-16cf120dbf5f") }
+    func testReviewRowActionsNormal() { task159ReviewRowActions("7a2abbb9-a9d5-42a9-bb3a-e213ddb93d37") }
+    func testReviewRowActionsLargest() { task159ReviewRowActions("68838acc-c0b4-4748-90b8-892acb49a54a") }
 
     func testReviewRowActionFailedSaveRetainsRetry() {
         continueAfterFailure = false
@@ -17673,5 +17674,68 @@ final class FoundationUITests: XCTestCase {
 
     func testTask158ReviewOverviewIdentityNormal() { task158ReviewOverviewIdentity("f7a24f18-fc4e-4e2f-9c80-035a4b6f0dca") }
     func testTask158ReviewOverviewIdentityLargest() { task158ReviewOverviewIdentity("30d163bd-e9f8-4a68-9efc-e7c4e61d0cab") }
+
+    private func task161ReviewControlsScroll(_ library: String, largestText: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        task159OpenReview(app)
+        let scroll = app.scrollViews.firstMatch
+        XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+        XCTAssertGreaterThan(scroll.frame.height, app.frame.height * 0.45,
+                             "Review rows need a useful viewport even when controls wrap")
+        boardTap(app, "review-scope-all")
+        XCTAssertTrue(app.buttons["review-scope-all"].isSelected)
+        boardTap(app, "review-expand-cycle")
+        boardTap(app, "review-expand-cycle")
+
+        let future = app.buttons["task-title-task159-future"]
+        revealPagedElement(app, future, in: scroll)
+        XCTAssertEqual(future.label, "Task159 Future")
+        let viewport = scroll.frame.intersection(app.frame)
+        XCTAssertGreaterThan(viewport.height, app.frame.height * 0.45)
+        XCTAssertGreaterThanOrEqual(future.frame.minY, viewport.minY - 1)
+        XCTAssertLessThanOrEqual(future.frame.maxY, viewport.maxY + 1)
+        if largestText {
+            XCTAssertFalse(app.buttons["review-scope-all"].isHittable,
+                           "Large-text Review controls should scroll away to leave room for task rows")
+        }
+        let rowShot = XCTAttachment(screenshot: app.screenshot())
+        rowShot.name = "Review task viewport after controls scroll"
+        rowShot.lifetime = .keepAlways
+        add(rowShot)
+
+        let advance = app.buttons["review-task-advance-task159-clear"]
+        revealPagedElement(app, advance, in: scroll)
+        XCTAssertTrue(advance.isEnabled)
+        XCTAssertTrue(advance.label.contains("Task159 Clear"))
+
+        let all = app.buttons["review-scope-all"]
+        for _ in 0..<12 where !all.isHittable { scroll.swipeDown() }
+        XCTAssertTrue(all.isHittable, "The scope and Start Review controls must be reachable again")
+        boardTap(app, "review-scope-due")
+        XCTAssertTrue(app.buttons["review-scope-due"].isSelected)
+        boardTap(app, "review-scope-all")
+        XCTAssertTrue(all.isSelected)
+        boardEnabled(app.buttons["review-history"])
+        boardTap(app, "review-start")
+        boardEnabled(app.buttons["review-start-daily"])
+        boardTap(app, "review-start-cancel")
+        boardEnabled(app.buttons["review-start"])
+        let controlsShot = XCTAttachment(screenshot: app.screenshot())
+        controlsShot.name = "Review controls reachable after scrolling back"
+        controlsShot.lifetime = .keepAlways
+        add(controlsShot)
+        app.terminate()
+    }
+
+    func testTask161ReviewControlsScrollNormal() {
+        task161ReviewControlsScroll("a91e0cd1-e173-4c12-9f4d-aff53150f6bf", largestText: false)
+    }
+
+    func testTask161ReviewControlsScrollLargest() {
+        task161ReviewControlsScroll("f4ac99c0-259d-4264-b219-c7cae2fb1315", largestText: true)
+    }
 
 }
