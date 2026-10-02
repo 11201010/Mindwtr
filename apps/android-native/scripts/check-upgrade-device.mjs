@@ -36,6 +36,9 @@
 //   8   an RN user's widget check-off still in its Undo file (files/mindwtr-widget-checkoff-pending.json,
 //       RN's PendingCheckoffStore format) when the native app replaces RN: the native app's first boot
 //       completes that task once, through the queue, and a relaunch writes nothing more.
+// In 1, 2, 2b and 5b the native app also publishes RN's home-screen widget payload (shared_prefs/mindwtr_widget.xml,
+// pass W1): that one other file may change, and only as RN's format with its one `payload` key, the value equal to
+// core's publication on a copy of the database the app left (host-side core with bun, widget-payload.mjs).
 //
 // RN writes every seed row through its own code: queued captures in
 // files/pending-captures, which RN imports at launch (tasks, a +Project task,
@@ -54,6 +57,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { bootFailure, box, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, inboxCount, tab, tagged, withDescription } from './device.mjs';
 import { serveWebdav, webdavDocument } from './sync-harness.mjs';
+import { PUBLISHED, REFRESHED, WIDGET_PREFS, corePublication, count, firstDifference, publicationContext, widgetPrefs } from './widget-payload.mjs';
 
 const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6', '7', '8'];
 const USAGE = `usage: node check-upgrade-device.mjs <adb-serial> [--only=${SCENARIOS.join(',')}] [--keep]`;
@@ -127,6 +131,7 @@ const titlesFor = (n) => ({
 const device = connect({ serial, pkg: PKG, uiFile: `${TMP}-ui.xml` });
 const { adbRaw, sh, home, front, requireAppFront, pid, screen, waitFor, tap, type, pull } = device;
 const runAs = (command) => sh(`run-as ${PKG} ${command}`);
+const phoneZone = sh('getprop persist.sys.timezone');
 
 // ---- device ----
 const installed = () => sh(`pm list packages ${PKG}`).split('\n').some((line) => line.trim() === `package:${PKG}`);
@@ -206,6 +211,33 @@ const differences = (before, after, { changedOk = () => false, newOk = () => fal
     ...[...after.keys()].filter((path) => !before.has(path) && !isPlatformState(path) && !newOk(path) && path !== LEDGER).map((path) => `new ${path}`),
 ];
 const isDatabase = (path) => /^files\/SQLite\/mindwtr\.db(-wal|-shm)?$/.test(path);
+
+// The native app writes one other file on purpose (pass W1): RN's home-screen widget payload, RN's WidgetPayloadStore. A check
+// allows that write only with verifyWidgetPayload: RN's format with its one `payload` key, and the value core's own publication
+// for the database the app left, with the inputs the app logged.
+const widgetPrefsNow = () => widgetPrefs(runAs(`cat ${WIDGET_PREFS} 2>/dev/null || true`));
+const isWidgetPayload = (path) => path === WIDGET_PREFS;
+/** Before the app stops: waits until its last publication is stored and drawn, and returns that publication's logged inputs. */
+const widgetsPublished = async (label) => {
+    let context = null;
+    await sleep(1500); // a store change publishes one second later
+    await until(`(${label}) the widget payload to be stored`, () => {
+        const text = device.logs(pid(), TAG);
+        context = publicationContext(text);
+        return context !== null && count(text, REFRESHED) >= count(text, PUBLISHED);
+    }, 30_000);
+    return context;
+};
+const verifyWidgetPayload = (label, before, context) => {
+    const after = widgetPrefsNow();
+    const rnFormat = (prefs) => isDeepStrictEqual(prefs.entries, ['string:payload']);
+    check(rnFormat(after) && (before.payload === null || rnFormat(before)),
+        `(${label}) ${WIDGET_PREFS} is RN's widget payload store, its one key \`payload\` (before: ${before.entries.join(', ') || 'no file'}; after: ${after.entries.join(', ')})`);
+    const expected = corePublication({ db: pullDatabase(`${label}-widgets`), language: context.language, context, zone: phoneZone, out: resolve(work, `${label}-widgets.json`) });
+    const difference = firstDifference(JSON.parse(after.payload), JSON.parse(expected));
+    check(difference === null, `(${label}) the payload equals core's publication on a copy of the database the native app left (${context.language}, ${context.locale}, `
+        + `${context.scheme}, ${after.payload.length} characters)${difference ? `: ${difference}` : ''}`);
+};
 const isAsyncStorage = (path) => /^databases\/RKStorage(-wal|-shm|-journal)?$/.test(path);
 const isRnCheckpoint = (path) => path.startsWith(`${RN_CHECKPOINT}/`);
 
@@ -442,6 +474,7 @@ const scenarioUpgrade = async () => {
     queue([queued]);
     const queuedPath = `files/pending-captures/${queued.id}.json`;
     const before = snapshot();
+    const widgetsBefore = widgetPrefsNow();
     const pre = readState(pullDatabase('1-pre'));
     const preAsync = asyncStorage('1-pre-rkstorage');
     const expected = [...pre.tasks.filter((task) => task.status === 'inbox' && !task.deletedAt).map((task) => task.title), t.queued].sort();
@@ -459,6 +492,7 @@ const scenarioUpgrade = async () => {
     await tap(button(await screen(), 'Save'));
     nodes = await waitFor('the native capture', (current) => header(current) === expected.length + 1 && draftText(current) === '');
     check(hasText(nodes, t.native), '(1) native capture is listed');
+    const published = await widgetsPublished('1');
     await stopApp();
 
     const after = snapshot();
@@ -485,11 +519,12 @@ const scenarioUpgrade = async () => {
     check(asyncChanged.every((name) => name === ALARM_MAP), `(1) RKStorage: only RN's alarm map ${ALARM_MAP} changed${shortList(asyncChanged)}`);
     check(!rnStateWritten || checkpointMatches(before, after), `(1) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files byte for byte, taken before that write`);
     const changed = differences(before, after, {
-        changedOk: (path) => isDatabase(path) || path === queuedPath || isAsyncStorage(path),
-        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path),
+        changedOk: (path) => isDatabase(path) || path === queuedPath || isAsyncStorage(path) || isWidgetPayload(path),
+        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path) || isWidgetPayload(path),
     });
     checkLedger('1', after);
-    check(changed.length === 0, `(1) every other non-database file is unchanged (${[...before.keys()].filter((path) => !isDatabase(path)).length} files)${shortList(changed)}`);
+    check(changed.length === 0, `(1) every other non-database file is unchanged but RN's widget payload (${[...before.keys()].filter((path) => !isDatabase(path)).length} files)${shortList(changed)}`);
+    verifyWidgetPayload('1', widgetsBefore, published);
     return { t, pre, queued };
 };
 
@@ -572,6 +607,7 @@ const scenarioJsonAhead = async () => {
         + `INSERT OR REPLACE INTO catalystLocalStorage (key, value) VALUES ('${MARKER}', '1');`);
     console.log(`INJECTED (2): one Inbox task (rev 1, fresh timestamps, a non-ASCII description) in AsyncStorage ${JSON_BACKUP} that SQLite never took, and ${MARKER} = '1'`);
     const before = snapshot();
+    const widgetsBefore = widgetPrefsNow();
     const pre = readState(pullDatabase('2-pre'));
     const preAsync = asyncStorage('2-pre-rkstorage');
     check(pre.tasks.every((task) => task.id !== extra.id), '(2) SQLite does not hold the backup-only task before the upgrade');
@@ -585,6 +621,7 @@ const scenarioJsonAhead = async () => {
     check(hasText(nodes, t.backupOnly), '(2) native Inbox shows the task only the JSON backup held');
     check(nativeGuardLog().includes(`${GUARD} outcome=clear`), '(2) guard logged outcome=clear');
     importLine('2', { outcome: 'imported', path: 'json-ahead', rnState: 'updated' });
+    const published = await widgetsPublished('2');
     await stopApp();
 
     const after = snapshot();
@@ -600,10 +637,11 @@ const scenarioJsonAhead = async () => {
     check(asyncChanged.length === 0, `(2) no other AsyncStorage row changed, ${JSON_BACKUP} included${shortList(asyncChanged)}`);
     check(checkpointMatches(before, after), `(2) ${RN_CHECKPOINT} holds the pre-import RKStorage files byte for byte`);
     const changed = differences(before, after, {
-        changedOk: (path) => isDatabase(path) || isAsyncStorage(path),
-        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path),
+        changedOk: (path) => isDatabase(path) || isAsyncStorage(path) || isWidgetPayload(path),
+        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path) || isWidgetPayload(path),
     });
-    check(changed.length === 0, `(2) every other file is unchanged${shortList(changed)}`);
+    check(changed.length === 0, `(2) every other file is unchanged but RN's widget payload${shortList(changed)}`);
+    verifyWidgetPayload('2', widgetsBefore, published);
     pull(`${DB}.prewrite`, resolve(work, '2-post/mindwtr.db.prewrite'));
     check(rowChanges(pre.rows, resolve(work, '2-post/mindwtr.db.prewrite')).length === 0, '(2) .prewrite holds every pre-import row');
 
@@ -648,6 +686,7 @@ const scenarioCorruptBackup = async () => {
         + `INSERT OR REPLACE INTO catalystLocalStorage (key, value) VALUES ('${MARKER}', '1');`);
     console.log(`INJECTED (2b): AsyncStorage ${JSON_BACKUP} cut to text that does not parse, and ${MARKER} = '1'`);
     const before = snapshot();
+    const widgetsBefore = widgetPrefsNow();
     const pre = readState(pullDatabase('2b-pre'));
     const preAsync = asyncStorage('2b-pre-rkstorage');
 
@@ -657,6 +696,7 @@ const scenarioCorruptBackup = async () => {
     check(!unavailable(nodes), `(2b) native boot succeeded ${unavailable(nodes) ?? ''}`);
     check(header(nodes) === liveInbox(pre.tasks).length, '(2b) native Inbox shows the RN Inbox as SQLite held it');
     importLine('2b', { outcome: 'abandoned', path: 'json-ahead', reason: 'backup-corrupt', rnState: 'updated' });
+    const published = await widgetsPublished('2b');
     await stopApp();
 
     const after = snapshot();
@@ -672,10 +712,11 @@ const scenarioCorruptBackup = async () => {
     check(asyncChanged.length === 0, `(2b) no other AsyncStorage row changed; the corrupt backup stays as RN left it${shortList(asyncChanged)}`);
     check(checkpointMatches(before, after), `(2b) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files byte for byte`);
     const changed = differences(before, after, {
-        changedOk: (path) => isDatabase(path) || isAsyncStorage(path),
-        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path),
+        changedOk: (path) => isDatabase(path) || isAsyncStorage(path) || isWidgetPayload(path),
+        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path) || isWidgetPayload(path),
     });
-    check(changed.length === 0, `(2b) every other file is unchanged${shortList(changed)}`);
+    check(changed.length === 0, `(2b) every other file is unchanged but RN's widget payload${shortList(changed)}`);
+    verifyWidgetPayload('2b', widgetsBefore, published);
 };
 
 const scenarioUnreadable = async (label, withWal) => {
@@ -740,6 +781,7 @@ const scenarioMissingWithBackup = async () => {
     console.log(`INJECTED (5b): added to AsyncStorage ${JSON_BACKUP} one task with notes, dates, tags, a checklist and an assignee, one area, one person and two synced settings; deleted ${DB} and its -wal and -shm`);
     const preAsync = asyncStorage('5b-pre-rkstorage');
     const before = snapshot();
+    const widgetsBefore = widgetPrefsNow();
     const expected = liveInbox(backup.tasks);
 
     install(APKS.native153, true);
@@ -751,6 +793,7 @@ const scenarioMissingWithBackup = async () => {
     check(nativeGuardLog().includes(`${GUARD} outcome=clear`), '(5b) guard logged outcome=clear');
     const flagWasSet = preAsync.has(RECONCILED);
     importLine('5b', { outcome: 'imported', path: 'migrate', rnState: flagWasSet ? 'unchanged' : 'updated' });
+    const published = await widgetsPublished('5b');
     await stopApp();
 
     const after = snapshot();
@@ -778,11 +821,12 @@ const scenarioMissingWithBackup = async () => {
     check(flagWasSet && !alarmMapChanged ? after.get(ASYNC_STORAGE) === before.get(ASYNC_STORAGE) && ![...after.keys()].some(isRnCheckpoint) : checkpointMatches(before, after),
         flagWasSet && !alarmMapChanged ? '(5b) RN had set the reconcile flag, so RKStorage is untouched and not checkpointed' : `(5b) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files`);
     const changed = differences(before, after, {
-        changedOk: (path) => isAsyncStorage(path),
-        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path),
+        changedOk: (path) => isAsyncStorage(path) || isWidgetPayload(path),
+        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path) || isWidgetPayload(path),
     });
-    check(changed.length === 0, `(5b) every other file is unchanged${shortList(changed)}`);
+    check(changed.length === 0, `(5b) every other file is unchanged but RN's widget payload${shortList(changed)}`);
     checkLedger('5b', after);
+    verifyWidgetPayload('5b', widgetsBefore, published);
 };
 
 // ---- 6: an RN user's sync configuration ----

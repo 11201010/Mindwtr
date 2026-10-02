@@ -25,6 +25,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { box, check, connect, evidenced, fail, Stopped } from './device.mjs';
+import { WIDGET_PREFS, REFRESHED, PUBLISHED, corePublication, count, firstDifference, publicationContext, widgetPrefs } from './widget-payload.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -32,7 +33,6 @@ if (!serial) {
     process.exit(2);
 }
 const app = resolve(import.meta.dirname, '..');
-const coreSrc = resolve(app, '../../packages/core/src');
 const apk = apkArg ?? resolve(app, 'android/app/build/outputs/apk/debug/app-debug.apk');
 const adbBin = process.env.ADB ?? '/home/dd/Android/Sdk/platform-tools/adb';
 const aapt2 = process.env.AAPT2 ?? '/home/dd/Android/Sdk/build-tools/36.1.0/aapt2';
@@ -87,54 +87,13 @@ const enqueue = (item) => {
     runAs(`mkdir -p ${QUEUE} && echo ${bytes} | base64 -d > ${QUEUE}/${item.id}.tmp && mv ${QUEUE}/${item.id}.tmp ${QUEUE}/${item.id}.json`);
 };
 /** RN's stored widget payload (WidgetPayloadStore: SharedPreferences `mindwtr_widget`, key `payload`). */
-const storedPayload = () => {
-    const xml = runAs('cat shared_prefs/mindwtr_widget.xml 2>/dev/null || true');
-    const raw = /<string name="payload">([\s\S]*?)<\/string>/.exec(xml)?.[1];
-    if (raw === undefined) return null;
-    return raw.replace(/&(#x?[0-9a-fA-F]+|quot|apos|lt|gt|amp);/g, (_, entity) => ({ quot: '"', apos: '\'', lt: '<', gt: '>', amp: '&' })[entity]
-        ?? String.fromCodePoint(entity.startsWith('#x') ? parseInt(entity.slice(2), 16) : Number(entity.slice(1))));
-};
-
-/**
- * Core's own Android publication on a copy of the app's database (host-side core with bun, in the phone's time zone): the
- * payload RN's widget service would hand setPayload for that data, [language] and [inputs].
- */
-const corePublication = (language, inputs) => { execFileSync('bun', ['-e', `
-    import { Database } from 'bun:sqlite';
-    import { SqliteAdapter, buildAndroidWidgetPublication, createNativeHostContract, getFocusWidgetFilter, setStorageAdapter, useTaskStore } from '${coreSrc}/index.ts';
-    const db = new Database(process.env.CHECK_DB);
-    setStorageAdapter(new SqliteAdapter({
-        run: async (sql, params = []) => { db.query(sql).run(...params); },
-        all: async (sql, params = []) => db.query(sql).all(...params),
-        get: async (sql, params = []) => db.query(sql).get(...params) ?? undefined,
-        exec: async (sql) => { db.exec(sql); },
-    }));
-    const ready = await createNativeHostContract().activate({ writeSafetyReady: true });
-    if (!ready.ok) throw new Error(ready.error.message);
-    const state = useTaskStore.getState();
-    const data = { tasks: state._allTasks, projects: state._allProjects, sections: state._allSections, areas: state._allAreas, settings: state.settings ?? {} };
-    // The Focus screen's filter as a new process has it (the app starts on the Inbox and never opened Focus).
-    const inputs = { ...JSON.parse(process.env.CHECK_INPUTS), focusFilter: getFocusWidgetFilter() };
-    // A file, not stdout: core's own log lines go to the console.
-    await Bun.write(process.env.CHECK_OUT, JSON.stringify(buildAndroidWidgetPublication(data, process.env.CHECK_LANGUAGE, inputs)));
-    process.exit(0);
-`], { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, TZ: phoneZone, CHECK_DB: pullDatabase(), CHECK_LANGUAGE: language, CHECK_INPUTS: JSON.stringify(inputs),
-    CHECK_OUT: resolve(work, 'core-publication.json') } });
-    return readFileSync(resolve(work, 'core-publication.json'), 'utf8');
-};
+const storedPayload = () => widgetPrefs(runAs(`cat ${WIDGET_PREFS} 2>/dev/null || true`)).payload;
 
 // ---- the log ----
 const allLogs = () => execFileSync(adbBin, ['-s', serial, 'logcat', '-d', '-s', `${TAG}:*`], { encoding: 'utf8', maxBuffer: 64 << 20 }).replace(/\\/g, '');
-const count = (text, ...needles) => text.split('\n').filter((line) => needles.every((needle) => line.includes(needle))).length;
-const PUBLISHED = 'Native Android widget payload published';
-const REFRESHED = 'Native Android widgets refreshed';
 const INGESTED = ['Native Android core work', '"job":"ingest","outcome":"success"'];
-/** The inputs the last publication used, from its log line's context (core's logger: a JSON string). */
-const lastInputs = () => {
-    const line = allLogs().split('\n').filter((text) => text.includes(PUBLISHED)).pop() ?? fail('no publication line');
-    // Core's logger puts the context in as a JSON string; allLogs drops its escapes.
-    return JSON.parse(/"context":"(\{.*?\})"/.exec(line)?.[1] ?? fail(`no context in ${line}`));
-};
+/** The inputs the last publication used, from its log line's context. */
+const lastInputs = () => publicationContext(allLogs()) ?? fail('no publication line');
 const waitUntil = async (description, predicate, timeoutMs = 60_000, everyMs = 1000) => {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -216,23 +175,11 @@ const closeHost = async () => {
     }
 };
 
-/** Equal payloads, or the first differing field (a path) with both values. */
-const firstDifference = (actual, expected, path = '') => {
-    if (JSON.stringify(actual) === JSON.stringify(expected)) return null;
-    if (actual && expected && typeof actual === 'object' && typeof expected === 'object') {
-        for (const name of new Set([...Object.keys(actual), ...Object.keys(expected)])) {
-            const found = firstDifference(actual[name], expected[name], `${path}.${name}`);
-            if (found) return found;
-        }
-    }
-    return `${path || '(root)'}: app ${JSON.stringify(actual)?.slice(0, 200)} vs core ${JSON.stringify(expected)?.slice(0, 200)}`;
-};
 /** The stored payload equals core's publication for the same data, language and inputs (the last publication's). */
 const parity = (step) => {
     const context = lastInputs();
     const stored = storedPayload() ?? fail(`${step} no stored payload`);
-    const inputs = { systemColorScheme: context.scheme, systemLocale: context.locale, listSelections: context.lists };
-    const expected = corePublication(context.language, inputs);
+    const expected = corePublication({ db: pullDatabase(), language: context.language, context, zone: phoneZone, out: resolve(work, 'core-publication.json') });
     const difference = firstDifference(JSON.parse(stored), JSON.parse(expected));
     check(difference === null, `${step} the payload Kotlin stored equals core's publication on a copy of the database (${context.language}, ${context.locale}, `
         + `${context.scheme}, ${stored.length} characters)${difference ? `: ${difference}` : ''}`);
