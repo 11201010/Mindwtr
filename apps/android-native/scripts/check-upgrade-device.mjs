@@ -858,6 +858,8 @@ const packageAlarms = () => sh('dumpsys alarm').split(/\n(?=\s*(?:RTC_WAKEUP|RTC
     .filter((block) => block.includes(PKG))
     .map((block) => ({ rn: block.includes(RN_RECEIVER), native: block.includes(`*walarm*:${NATIVE_FIRE}`), at: Number(/origWhen[= ](\d+)/.exec(block)?.[1] ?? NaN) }))
     .filter((alarm) => alarm.rn || alarm.native);
+// RN's library sets the minute and second but keeps the current milliseconds (AlarmUtil's Calendar), so its alarm is in that minute.
+const rnMinute = (alarm) => Math.floor(alarm.at / 60_000) * 60_000;
 /** The process gone without a force-stop (a force-stop would drop the alarms this scenario is about). */
 const killWithoutStop = async () => {
     if (front().includes(`${PKG}/`)) sh('input keyevent KEYCODE_HOME');
@@ -895,7 +897,7 @@ const scenarioAlarms = async () => {
     device.launch(RN_ACTIVITY);
     await drained([item], 'the timed capture');
     try {
-        await until('RN\'s alarm for the task', () => packageAlarms().some((alarm) => alarm.rn && alarm.at === dueAt), 60_000);
+        await until('RN\'s alarm for the task', () => packageAlarms().some((alarm) => alarm.rn && rnMinute(alarm) === dueAt), 60_000);
     } catch (error) {
         console.log(`evidence - due ${dueAt} (${item.title}); this package's alarm lines:\n${sh('dumpsys alarm').split('\n').filter((line) => line.includes(PKG) || /origWhen/.test(line)).slice(0, 30).join('\n')}`);
         console.log(`evidence - RN's map: ${asyncStorage('7-evidence').get('mindwtr:local:alarms:v1')}`);
@@ -905,7 +907,7 @@ const scenarioAlarms = async () => {
     await killWithoutStop();
     const before = packageAlarms();
     const rnMap = JSON.parse(asyncStorage('7-rn').get('mindwtr:local:alarms:v1') ?? '{}');
-    check(before.filter((alarm) => alarm.rn && alarm.at === dueAt).length === 1 && !before.some((alarm) => alarm.native),
+    check(before.filter((alarm) => alarm.rn && rnMinute(alarm) === dueAt).length === 1 && !before.some((alarm) => alarm.native),
         `(7) before: RN holds one alarm for ${title} at its due time, to its library's AlarmReceiver; the native app none`);
     check(Number.isInteger(rnMap[`task:${item.id}`]?.id) && runAs('ls databases').split(/\s+/).includes('rnandb'), '(7) RN\'s alarm map and alarm database name it');
     sh('logcat -c');
@@ -927,9 +929,9 @@ const scenarioAlarms = async () => {
     // RN recovery over the native app: the map under RN's key is the native app's, whose alarms RN does not hold.
     install(APKS.rn154, true);
     device.launch(RN_ACTIVITY);
-    await until('RN recovery\'s alarm for the task', () => packageAlarms().some((alarm) => alarm.rn && alarm.at === dueAt), 90_000);
+    await until('RN recovery\'s alarm for the task', () => packageAlarms().some((alarm) => alarm.rn && rnMinute(alarm) === dueAt), 90_000);
     await sleep(3000);
-    check(packageAlarms().filter((alarm) => alarm.rn && alarm.at === dueAt).length === 1, '(7) RN recovery over the native app sets its own alarm for the task, once');
+    check(packageAlarms().filter((alarm) => alarm.rn && rnMinute(alarm) === dueAt).length === 1, '(7) RN recovery over the native app sets its own alarm for the task, once');
     await killWithoutStop();
 };
 
