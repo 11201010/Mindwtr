@@ -162,6 +162,27 @@ describe('native host contract: task View tab', () => {
         expect(writes).toEqual([]);
     });
 
+    it('shows the editor\'s draft attachments and answers the saved records as attachmentsBase', async () => {
+        freezeClock();
+        const host = await openHost();
+        const saved = TASKS[0].attachments!;
+        expect(value(host.getTaskView({ id: 't-list' })).attachmentsBase).toEqual(saved);
+        const draftAttachments = [
+            { ...saved[0], deletedAt: NOW },
+            { id: 'a2', kind: 'link' as const, title: 'Docs', uri: 'https://docs.example.com', createdAt: NOW, updatedAt: NOW },
+        ];
+        const view = value(host.getTaskView({ id: 't-list', draft: draftOf('t-list'), checklist: TASKS[0].checklist!, attachments: draftAttachments }));
+        const row = view.rows.find((entry) => entry.type === 'attachments');
+        expect(row?.type === 'attachments' && row.items.map((entry) => [entry.id, entry.title])).toEqual([['a2', 'Docs']]);
+        expect(view.attachmentsBase).toEqual(saved);
+        // The draft list rides in the revision, as the draft and checklist do.
+        expect(view.revision).not.toBe(value(host.getTaskView({ id: 't-list', draft: draftOf('t-list'), checklist: TASKS[0].checklist! })).revision);
+        // A read-only task shows its saved attachments; a list that is not one is refused.
+        expect(value(host.getTaskView({ id: 't-archived', attachments: draftAttachments })).rows.some((entry) => entry.type === 'attachments')).toBe(false);
+        expect(host.getTaskView({ id: 't-list', attachments: [{ id: 'x' }] as never })).toMatchObject(invalid);
+        expect(writes).toEqual([]);
+    });
+
     it('shows a task in an archived project as saved, read-only', async () => {
         freezeClock();
         const host = await openHost();
