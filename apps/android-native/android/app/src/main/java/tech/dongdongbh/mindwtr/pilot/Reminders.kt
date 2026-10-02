@@ -110,6 +110,17 @@ internal object RnAlarmCleanup {
         deleteTable()
         return ids.size
     }
+
+    /**
+     * Each row's request code (its `gson_data`'s `alarmId`, as RN's library cancels it). A row that cannot be read throws: its alarm
+     * may still be set under a code only that row holds, so the cleanup fails and keeps the table and the maps for the next start.
+     */
+    fun requestCodes(rows: List<String?>): List<Int> = rows.map { row ->
+        runCatching { JSONObject(row!!).getInt("alarmId") }.getOrElse { throw IllegalStateException("An RN alarm row cannot be read", it) }
+    }
+
+    /** RN's database without its table (a stop inside its onCreate) holds no alarm; any other failed read fails the cleanup. */
+    fun isMissingTable(failure: Throwable): Boolean = failure.message?.contains("no such table") == true
 }
 
 /**
@@ -238,11 +249,13 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
         val file = context.getDatabasePath(RN_DATABASE)
         if (!file.exists()) return null
         return SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { database ->
-            // A database RN never gave its table (a stop inside onCreate) holds no alarm.
-            val cursor = runCatching { database.rawQuery("SELECT gson_data FROM alarmtbl", null) }.getOrNull() ?: return emptyList()
-            cursor.use { rows ->
-                buildList { while (rows.moveToNext()) runCatching { JSONObject(rows.getString(0)).getInt("alarmId") }.onSuccess(::add) }
+            val cursor = try {
+                database.rawQuery("SELECT gson_data FROM alarmtbl", null)
+            } catch (failure: Exception) {
+                if (RnAlarmCleanup.isMissingTable(failure)) return emptyList()
+                throw failure
             }
+            RnAlarmCleanup.requestCodes(cursor.use { rows -> buildList { while (rows.moveToNext()) add(rows.getString(0)) } })
         }
     }
 

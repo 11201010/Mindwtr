@@ -114,6 +114,24 @@ class ReminderPlanTest {
         assertEquals(listOf("cancel 1", "cancel 2"), events)
     }
 
+    @Test fun aReactNativeRowThatCannotBeReadFailsTheCleanupAndKeepsEverything() {
+        assertEquals(listOf(1_790_000_001), RnAlarmCleanup.requestCodes(listOf("""{"alarmId":1790000001,"id":3}""")))
+        for (row in listOf(null, "{not json", """{"id":3}""", """{"alarmId":"x"}""")) {
+            assertThrows(IllegalStateException::class.java) { RnAlarmCleanup.requestCodes(listOf("""{"alarmId":1}""", row)) }
+        }
+        assertThrows(IllegalStateException::class.java) {
+            RnAlarmCleanup.run(rows = { RnAlarmCleanup.requestCodes(listOf("{not json")) }, cancel = { events += "cancel $it" },
+                forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
+        }
+        assertEquals(emptyList<String>(), events)
+    }
+
+    @Test fun onlyAMissingTableReadsAsNoReactNativeAlarm() {
+        assertEquals(true, RnAlarmCleanup.isMissingTable(RuntimeException("no such table: alarmtbl (code 1 SQLITE_ERROR)")))
+        assertEquals(false, RnAlarmCleanup.isMissingTable(RuntimeException("database disk image is malformed (code 11)")))
+        assertEquals(false, RnAlarmCleanup.isMissingTable(RuntimeException("no such column: gson_data")))
+    }
+
     @Test fun noReactNativeTableMeansNothingToDo() {
         assertEquals(0, RnAlarmCleanup.run(rows = { null }, cancel = { events += "cancel $it" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" }))
         assertEquals(emptyList<String>(), events)
