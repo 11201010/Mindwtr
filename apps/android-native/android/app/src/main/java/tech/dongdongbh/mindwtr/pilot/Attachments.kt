@@ -64,6 +64,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -590,7 +591,9 @@ private fun LinkSheetDialog(model: InboxViewModel, sheet: LinkSheet) = with(mode
     BackHandler(onBack = ::closeLink)
     val multiline = sheet.editing == null
     var focused by remember { mutableStateOf(false) }
-    Box(Modifier.fillMaxSize().background(theme.pickerScrim).imePadding().padding(20.dp).testTag("attachment-link-sheet"), contentAlignment = Alignment.Center) {
+    // Drawn over the screens, outside their semantics roots: its tags are resource IDs on their own (the device check finds them).
+    Box(Modifier.fillMaxSize().background(theme.pickerScrim).imePadding().padding(20.dp).semantics { testTagsAsResourceId = true }
+        .testTag("attachment-link-sheet"), contentAlignment = Alignment.Center) {
         val shape = RoundedCornerShape(12.dp)
         Column(Modifier.widthIn(max = 420.dp).fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
             .pointerInput(Unit) { detectTapGestures { } }.padding(16.dp)) {
