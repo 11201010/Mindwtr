@@ -17737,5 +17737,105 @@ final class FoundationUITests: XCTestCase {
     func testTask161ReviewControlsScrollLargest() {
         task161ReviewControlsScroll("f4ac99c0-259d-4264-b219-c7cae2fb1315", largestText: true)
     }
+    private func task162ContextsPriorityRow(_ app: XCUIApplication, title: String, priority: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@",
+            title, "Status: Next", "Priority: " + priority)).firstMatch
+    }
+
+    private func task162ContextsRowIdentity(_ library: String) throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu")
+        revealPagedElement(app, app.buttons["menu-contexts"], in: app.scrollViews.firstMatch)
+        boardTap(app, "menu-contexts")
+        let search = app.textFields["contexts-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 30))
+        let scrollers = app.scrollViews.allElementsBoundByIndex
+        let rowScroll = try XCTUnwrap(scrollers.max { $0.frame.height < $1.frame.height })
+        let chipScroll = try XCTUnwrap(scrollers.min { $0.frame.height < $1.frame.height })
+        XCTAssertGreaterThan(rowScroll.frame.height, chipScroll.frame.height)
+
+        func tapChip(_ token: String) {
+            let chip = app.buttons["contexts-chip-" + token]
+            XCTAssertTrue(chip.waitForExistence(timeout: 10), token)
+            func visiblePart() -> CGRect { chip.frame.intersection(chipScroll.frame).intersection(app.frame) }
+            for _ in 0..<6 {
+                if visiblePart().width >= 32 && visiblePart().height >= 32 { break }
+                if chip.frame.minX < chipScroll.frame.minX { chipScroll.swipeRight() }
+                else { chipScroll.swipeLeft() }
+            }
+            let target = visiblePart()
+            XCTAssertGreaterThanOrEqual(target.width, 32, token)
+            XCTAssertGreaterThanOrEqual(target.height, 32, token)
+            boardEnabled(chip)
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: target.midX, dy: target.midY)).tap()
+        }
+        func selected(_ token: String) {
+            expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons["contexts-chip-" + token])
+            waitForExpectations(timeout: 10)
+        }
+        func reveal(_ element: XCUIElement, preferUp: Bool = false) {
+            func visible() -> Bool {
+                guard element.exists, element.isHittable else { return false }
+                let overlap = element.frame.intersection(rowScroll.frame.intersection(app.frame))
+                return !overlap.isNull && overlap.height >= min(32, element.frame.height)
+            }
+            for _ in 0..<8 where !visible() {
+                if element.exists {
+                    if element.frame.minY < rowScroll.frame.minY { rowScroll.swipeDown() }
+                    else { rowScroll.swipeUp() }
+                } else if preferUp { rowScroll.swipeUp() }
+                else { rowScroll.swipeDown() }
+            }
+            XCTAssertTrue(visible(), "Contexts row control must be visible after bounded scrolling: \(element.identifier)")
+        }
+        func assertTask(_ id: String, title: String, priority: String, preferUp: Bool = false) {
+            let task = app.buttons["task-title-" + id]
+            reveal(task, preferUp: preferUp)
+            XCTAssertEqual(app.buttons.matching(identifier: "task-title-" + id).count, 1, id)
+            XCTAssertTrue(task162ContextsPriorityRow(app, title: title, priority: priority).exists,
+                          "Contexts card must keep the saved Task's title, Next status, and priority: \(id)")
+            let status = app.buttons["task-status-" + id]
+            reveal(status, preferUp: preferUp)
+            XCTAssertEqual(status.label, "Change status. Current status: Next", id)
+            boardEnabled(status, timeout: 30)
+            XCTAssertTrue(status.isEnabled, id)
+        }
+
+        search.tap(); search.typeText("@task162")
+        XCTAssertEqual(search.value as? String, "@task162")
+        tapChip("@task162-common"); selected("@task162-common")
+        assertTask("task162-first", title: "Task162 First", priority: "High")
+        assertTask("task162-second", title: "Task162 Second", priority: "Low", preferUp: true)
+        XCTAssertFalse(app.buttons["task-title-task162-other"].exists)
+
+        let firstStatus = app.buttons["task-status-task162-first"]
+        reveal(firstStatus)
+        boardEnabled(firstStatus); firstStatus.tap(); boardTap(app, "task-complete")
+        XCTAssertTrue(app.buttons["task-title-task162-first"].waitForNonExistence(timeout: 20))
+        assertTask("task162-second", title: "Task162 Second", priority: "Low")
+        XCTAssertFalse(app.buttons["task-title-task162-other"].exists)
+
+        // RN token taps are additive. Clear the selected chip before choosing
+        // another token, so the default All match mode does not form an AND.
+        tapChip("@task162-common"); selected("all")
+        tapChip("@task162-other"); selected("@task162-other")
+        assertTask("task162-other", title: "Task162 Other", priority: "Medium")
+        XCTAssertFalse(app.buttons["task-title-task162-second"].exists)
+        XCTAssertFalse(app.buttons["task-title-task162-first"].exists)
+
+        tapChip("@task162-other"); selected("all")
+        tapChip("@task162-common"); selected("@task162-common")
+        assertTask("task162-second", title: "Task162 Second", priority: "Low")
+        XCTAssertFalse(app.buttons["task-title-task162-first"].exists)
+        XCTAssertFalse(app.buttons["task-title-task162-other"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Contexts surviving Task identity after chip round trip"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testTask162ContextsRowIdentityNormal() throws { try task162ContextsRowIdentity("522c4d71-9724-4aaf-92c7-a61317a22034") }
+    func testTask162ContextsRowIdentityLargest() throws { try task162ContextsRowIdentity("8657b665-8b99-400e-8953-5ed128cba548") }
 
 }
