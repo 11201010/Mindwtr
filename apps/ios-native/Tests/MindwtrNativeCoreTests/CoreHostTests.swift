@@ -16653,7 +16653,7 @@ final class CoreHostTests: XCTestCase {
             if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:tasks|projects|areas|people|sections|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { libraryWrites += 1 }
         }
         replayFaults.commandDiagnostic = { if $0 == "managePersonCreateApplied" { diagnostics += 1 } }
-        let reopened = host(replayFaults)
+        let reopened = host(replayFaults, bundleURL: try dateBundle(at: "2026-10-01T13:00:00.000Z"))
         let startup = try object(await reopened.start())
         let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
         XCTAssertEqual(recovery["method"] as? String, "managePersonCreateCommit")
