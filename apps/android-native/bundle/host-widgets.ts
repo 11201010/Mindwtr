@@ -44,9 +44,9 @@ const PUBLISH_DELAY_MS = 1_000;
 /**
  * RN's widget service on the engine: core builds the whole Android payload (buildAndroidWidgetPublication) from the store, with
  * the device's inputs and the device language passed every time (QuickJS cannot detect either), and Kotlin writes it where RN's
- * module reads it and redraws the widgets. A store change publishes after a short delay; the host publishes at once after a
- * CoreWork job and when the app comes to the front (RN publishes on resume). A payload equal to the last one is not sent again,
- * unless Kotlin says that one never reached the widgets.
+ * module reads it and redraws the widgets. A store change publishes after a short delay; the host publishes at once after its
+ * boot, after a CoreWork job and when the app comes to the front (RN publishes on resume). A payload equal to the last one is
+ * not sent again, unless Kotlin says that one never reached the widgets.
  */
 export const createWidgetPublisher = (bridge: WidgetBridge) => {
     let last: string | null = null;

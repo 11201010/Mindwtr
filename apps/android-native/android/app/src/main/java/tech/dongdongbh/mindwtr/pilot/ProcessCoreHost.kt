@@ -124,6 +124,9 @@ internal object ProcessCoreHost {
             // finished or rolled back by RN's rules, so no attachment write meets a half-installed file.
             recoverInstalls(installer)
             if (replay(runtime)) recovered(app, runtime, deferSync = true)
+            // The widgets show what this boot loaded (a store change before the validated load published nothing), once the first
+            // screen shows its content, as the boot's sync start waits; a CoreWork job publishes at its end.
+            deferredWidgets.set(runtime)
             return runtime
         } catch (failure: Throwable) {
             runCatching { runtime.close() }
@@ -150,6 +153,8 @@ internal object ProcessCoreHost {
 
     /** The boot's sync start, held until the first screen shows its content ([startDeferredSync]); null once it ran. */
     private val deferredSync = AtomicReference<(() -> Unit)?>(null)
+    /** The boot's widget publication, held with it; null once it ran. */
+    private val deferredWidgets = AtomicReference<CoreHost?>(null)
 
     /**
      * The first screen shows its content (the Inbox's first rows, another tab's boot read, or the screen's fallback): the boot's
@@ -158,6 +163,7 @@ internal object ProcessCoreHost {
      */
     fun startDeferredSync() {
         deferredSync.getAndSet(null)?.let { start -> syncThread.execute { start() } }
+        deferredWidgets.getAndSet(null)?.let(::refreshWidgets)
     }
 
     /**
@@ -296,6 +302,11 @@ internal object ProcessCoreHost {
         return start.optBoolean("ask")
     }
 
+    /** The home-screen widgets published from the store now if what they show changed, off the caller's thread. */
+    private fun refreshWidgets(runtime: CoreHost) = widgetThread.execute {
+        runCatching { runtime.refreshWidgets() }.onFailure { Log.w(CoreHost.TAG, "Native Android widget refresh failed", it) }
+    }
+
     /** MainActivity resumed ("active") or paused ("background"): core's triggers sync on resume and on leaving. */
     fun appState(state: String) {
         // RN plans the reminder alarms again on every resume (its start runs one more cycle), so a permission that changed counts;
@@ -308,10 +319,8 @@ internal object ProcessCoreHost {
         if (state == appState) return
         appState = state
         // RN republishes the widgets when the app comes to the front (a new day, a changed theme); a boot still running publishes
-        // once it loaded.
-        if (state == "active") boot?.takeIf { it.isDone }?.let { task ->
-            widgetThread.execute { runCatching { task.get().refreshWidgets() }.onFailure { Log.w(CoreHost.TAG, "Native Android widget refresh failed", it) } }
-        }
+        // once it finished.
+        if (state == "active") boot?.takeIf { it.isDone }?.let { task -> runCatching { task.get() }.getOrNull()?.let(::refreshWidgets) }
         val runtime = syncHost ?: return
         syncThread.execute { runCatching { runtime.syncAppState(state) }.onFailure { Log.w(CoreHost.TAG, "Native Android sync app state failed ${failureForLog(it)}") } }
     }

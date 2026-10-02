@@ -1115,7 +1115,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(owner, /private fun replay\(runtime: CoreHost\): Boolean \{\s+val replay = runtime\.replayJournal\(\)\s+replay\.owed\?\.let \{ recordFailure\(PendingFailure\(FailedAction\("journal", ""\), it, null\)\); return false \}\s+(?:\/\/[^\n]*\s+)+if \(replay\.left > 0\) return true\s+runCatching \{ runtime\.pruneReceipts\(\) \}[\s\S]*?return true\s+\}/);
     // Sync (plan block 1): its triggers start only after the validated load, a replay that finished (no entry owed) and the queue
     // drain (ProcessCoreHost.recovered), or once the owed journal retry went through; nothing else starts them.
-    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
+    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+(?:\/\/[^\n]*\s+)*deferredWidgets\.set\(runtime\)\s+return runtime/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/syncStart\(/g).length, 1, 'one start of the triggers, in startSync');
     assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 1, 'startSync only in recovered, after the drain (at once, or held for the first screen\'s content)');
     // Startup follow-up: the boot's start is held until the first screen shows its content: the Inbox's first rows (contentShown),
@@ -1362,7 +1362,7 @@ assert.match(labelsKt, /strings = LABEL_KEYS\.filter\(values::has\)\.associateWi
 assert.match(labelsKt, /if \(logged\.add\(name\)\) Log\.w\(/, 'a missing key is logged once');
 assert.equal(kotlinFiles.join('\n').match(/Labels\.load\(/g).length, 1);
 assert.match(owner, /runtime\.language\(stored \?: "", Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
-assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
+assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+(?:\/\/[^\n]*\s+)*deferredWidgets\.set\(runtime\)\s+return runtime/);
 // After a finished replay (the boot's, the owed retry's, CoreWork's): the queue drain, then sync (StartOrder, StartOrderTest). Any
 // drain that did not finish becomes the screens' owed journal retry, holds sync back, and CoreWork retries it.
 assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost, deferSync: Boolean = false\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\), app\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+(?:\/\/[^\n]*\s+)*startSync = \{\s+val start = \{\s+startSync\(app, runtime\)\s+startReminders\(runtime\)\s+\}\s+if \(deferSync\) deferredSync\.set\(start\) else start\(\)\s+\},\s+\)/);
@@ -3161,6 +3161,13 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const coreHostKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');
     assert.match(coreHostKt, /bridge\.setProperty\("widgetInputs", guarded \{ _ -> widgets\.inputs\(\) \}\)/);
     assert.match(coreHostKt, /bridge\.setProperty\("widgetPublish", guarded \{ args -> widgets\.publish\(args\[0\] as String\); null \}\)/);
+    // A boot publishes once it finished (its load, replay and drain), whatever the store's own changes did meanwhile: one that
+    // came before the validated load was not sent. It waits with the boot's sync start for the first screen's content (startup
+    // pass). Resume publishes through the same call, off the engine's callers.
+    const ownerKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/ProcessCoreHost.kt'), 'utf8');
+    assert.match(ownerKt, /fun startDeferredSync\(\) \{\s+deferredSync\.getAndSet\(null\)\?\.let \{ start -> syncThread\.execute \{ start\(\) \} \}\s+deferredWidgets\.getAndSet\(null\)\?\.let\(::refreshWidgets\)\s+\}/);
+    assert.match(ownerKt, /private fun refreshWidgets\(runtime: CoreHost\) = widgetThread\.execute \{\s+runCatching \{ runtime\.refreshWidgets\(\) \}\.onFailure \{ Log\.w\(CoreHost\.TAG, "Native Android widget refresh failed", it\) \}\s+\}/);
+    assert.match(ownerKt, /if \(state == "active"\) boot\?\.takeIf \{ it\.isDone \}\?\.let \{ task -> runCatching \{ task\.get\(\) \}\.getOrNull\(\)\?\.let\(::refreshWidgets\) \}/);
     // Kotlin says when a publication did not reach the widgets (its store or redraw failed), so the publisher sends it again.
     const hostWidgetsKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/HostWidgets.kt'), 'utf8');
     assert.match(hostWidgetsKt, /\.put\("stale", stale\)/);
