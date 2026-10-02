@@ -438,10 +438,11 @@ const shootAttachments = async (prefix, rn) => {
     };
     const scrollTo = async (ready, unfold) => {
         let nodes = await screen();
-        for (let step = 0; step < 12 && !ready(nodes); step += 1) {
+        for (let step = 0; step < 20 && !ready(nodes); step += 1) {
             const next = await device.swipe(nodes, 'down');
             if (device.signature(next) === device.signature(nodes)) {
-                const fold = unfold && button(next, en['taskEdit.details']);
+                // Details unfolds only when it hides the field (an open Details would fold again).
+                const fold = unfold && !button(next, en['attachments.addFile']) && button(next, en['taskEdit.details']);
                 if (!fold) break;
                 await tap(fold);
                 unfold = false;
@@ -467,7 +468,8 @@ const shootAttachments = async (prefix, rn) => {
         await shoot(`${prefix}-attachments-editor-light`, fieldShown);
         await tap(button(await screen(), en['attachments.addLink']));
         // The sheet's hint line (RN's field reports its placeholder as the EditText's own text, which hasText skips).
-        const sheetShown = (current) => hasText(current, en['attachments.linkBatchHint']);
+        const sheetShown = (current) => current.some((node) => node.text === en['attachments.linkBatchHint']
+            || node.text === en['attachments.linkPlaceholder'] || node['content-desc'] === en['attachments.linkBatchHint']);
         await waitFor('the link sheet', sheetShown, 15_000);
         await hideKeyboard();
         await shoot(`${prefix}-attachments-link-sheet-light`, sheetShown);
@@ -488,6 +490,8 @@ const shootAttachments = async (prefix, rn) => {
         await shoot(`${prefix}-attachments-project-light`, projectShown);
     } catch (error) {
         console.log(`warn - ${prefix} attachments: ${error.message}`);
+        // The screen as it was, for the next run's fix.
+        try { writeFileSync(resolve(out, `${prefix}-attachments-failed.xml`), adbRaw('exec-out', 'uiautomator', 'dump', '/dev/tty')); } catch { /* best effort */ }
     }
     await toTabs();
 };
