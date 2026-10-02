@@ -301,7 +301,7 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
 /**
  * A reminder notification's buttons, as RN's AlarmReceiver takes them: Dismiss clears it; Done and Snooze go to CoreWork as core's
  * journaled commands under the request UUID the notification was posted with, so a second tap or a retry is the same request.
- * Snooze sends the tap's time with it. The notification goes once the job is queued. Not exported: only this app's notifications
+ * Snooze sends the tap's time with it. The notification goes once WorkManager stored the job. Not exported: only this app's notifications
  * send these.
  */
 class ReminderActionReceiver : BroadcastReceiver() {
@@ -316,23 +316,23 @@ class ReminderActionReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val id = intent.getIntExtra(EXTRA_ID, 0)
+        val dismiss = { context.getSystemService(NotificationManager::class.java).cancel(id) }
         runCatching {
             when (intent.action) {
-                DISMISS -> Unit
-                COMPLETE -> CoreWork.enqueue(context, CoreJob.REMINDER_DONE, mapOf(
-                    "requestId" to intent.getStringExtra(EXTRA_REQUEST)!!, "taskId" to intent.getStringExtra(EXTRA_TASK)!!))
+                DISMISS -> dismiss()
+                COMPLETE -> CoreWork.enqueueDurably(this, context, CoreJob.REMINDER_DONE, mapOf(
+                    "requestId" to intent.getStringExtra(EXTRA_REQUEST)!!, "taskId" to intent.getStringExtra(EXTRA_TASK)!!), done = dismiss)
                 SNOOZE -> {
                     val alarm = JSONObject(intent.getStringExtra(ReminderAlarms.EXTRA_ALARM)!!)
                     val details = alarm.getJSONObject("details")
                     // Debug builds only (check-reminders-device.mjs): `debug.mindwtr.native.snooze_minutes` shortens RN's 10 minutes.
                     debugProperty("snooze_minutes").toDoubleOrNull()?.let { details.put("snooze_interval", it) }
-                    CoreWork.enqueue(context, CoreJob.REMINDER_SNOOZE, mapOf("requestId" to intent.getStringExtra(EXTRA_REQUEST)!!,
+                    CoreWork.enqueueDurably(this, context, CoreJob.REMINDER_SNOOZE, mapOf("requestId" to intent.getStringExtra(EXTRA_REQUEST)!!,
                         "requestedAt" to System.currentTimeMillis().toString(), "details" to details.toString(),
-                        "channelName" to alarm.optString("channelName")))
+                        "channelName" to alarm.optString("channelName")), done = dismiss)
                 }
-                else -> return
+                else -> Unit
             }
-            context.getSystemService(NotificationManager::class.java).cancel(id)
         }.onFailure { Log.w(CoreHost.TAG, "Native Android reminder action not queued action=${intent.action}", it) }
     }
 }
@@ -355,7 +355,8 @@ class ReminderRescheduleReceiver : BroadcastReceiver() {
         val action = intent.action
         if (action !in ACTIONS && !(action == DEBUG_RESCHEDULE && BuildConfig.DEBUG)) return
         Log.i(CoreHost.TAG, "Native Android reminders reschedule action=$action")
-        runCatching { CoreWork.enqueue(context, CoreJob.REMINDERS, mapOf("mode" to "rebuild")) }
+        // Held until WorkManager stored the job: a process that ends first would lose the remake until the next start.
+        runCatching { CoreWork.enqueueDurably(this, context, CoreJob.REMINDERS, mapOf("mode" to "rebuild")) }
             .onFailure { Log.w(CoreHost.TAG, "Native Android reminders reschedule not queued", it) }
     }
 }

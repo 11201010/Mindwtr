@@ -3037,7 +3037,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const coreWork = source('CoreWork.kt');
     assert.match(coreWork, /val delayMs = debugProperty\("core_work_delay_ms"\)\.toLongOrNull\(\) \?: 0L/);
     assert.match(coreWork, /else if \(Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S\) setExpedited\(OutOfQuotaPolicy\.RUN_AS_NON_EXPEDITED_WORK_REQUEST\)/);
-    assert.match(coreWork, /fun enqueue\(context: Context, job: String, input: Map<String, String> = emptyMap\(\)\) = enqueue\(context, job, input, ExistingWorkPolicy\.REPLACE\)/, 'a new drain request never waits behind a back-off');
+    assert.match(coreWork, /fun enqueue\(context: Context, job: String, input: Map<String, String> = emptyMap\(\)\): Operation = enqueue\(context, job, input, ExistingWorkPolicy\.REPLACE\)/, 'a new drain request never waits behind a back-off');
     assert.match(coreWork, /work\.enqueueUniqueWork\(INGEST_WORK, policy, request\)/);
     assert.match(coreWork, /val host = ProcessCoreHost\.get\(app, language\)/, 'the job runs on this process\'s one host');
     // The queue's paths: RN's writer's folder is core's.
@@ -4032,6 +4032,9 @@ console.log('Entry points: RN\'s alias, links on the build\'s scheme, text share
     // Done and Snooze: CoreWork jobs, unique per request, journaled host methods (WriteJournal.SHAPES), the tap's time with Snooze.
     assert.match(source('CoreWork.kt'), /requestId != null -> work\.enqueueUniqueWork\("mindwtr-core-\$job-\$requestId", ExistingWorkPolicy\.KEEP, request\)/);
     assert.match(remindersKt, /"requestedAt" to System\.currentTimeMillis\(\)\.toString\(\)/);
+    // A receiver's job is stored before its notification goes and before its process may end (goAsync until WorkManager answered).
+    assert.doesNotMatch(code(remindersKt), /CoreWork\.enqueue\(/, 'every reminder receiver queues durably');
+    assert.equal([...code(remindersKt).matchAll(/CoreWork\.enqueueDurably\(this, context,/g)].length, 3, 'Done, Snooze and the reschedule');
     assert.match(hostEntry, /reminderDone\(requestId: string, taskId: string\): string \{\s+return submit\(async \(\) => taskResult\('reminderDone', await contract\.completeReminderTask\(\{ requestId, taskId \}\)\)\);/);
     assert.match(hostEntry, /reminderSnooze\(json: string\): string \{\s+return submit\(async \(\) => taskResult\('reminderSnooze', await contract\.snoozeReminder\(JSON\.parse\(json\)\)\)\);/);
     // The debug-only stops and the short snooze read a debug property (empty in a release build).

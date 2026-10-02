@@ -68,4 +68,26 @@ class ReminderJobTest {
         assertEquals(CoreJob.Outcome.Success, run(CoreJob.REMINDERS, mapOf("mode" to "rebuild")))
         assertEquals(listOf("boot", "recover", "drain", "reminders rebuild", "widgets"), events)
     }
+
+    // A receiver's job reaches CoreWork durably (DurableQueue): the notification goes, and the receiver's process may end, only
+    // once WorkManager stored the job.
+    private fun queueWith(queue: ((Throwable?) -> Unit) -> Unit) = DurableQueue.run(queue,
+        done = { events += "dismiss" }, finish = { events += "finish" }, failed = { events += "failed ${it.message}" })
+
+    @Test fun aButtonsNotificationGoesOnlyAfterWorkManagerStoredItsJob() {
+        var stored: ((Throwable?) -> Unit)? = null
+        queueWith { settle -> events += "enqueue"; stored = settle }
+        assertEquals(listOf("enqueue"), events)
+        stored!!(null)
+        stored!!(null)
+        assertEquals(listOf("enqueue", "dismiss", "finish"), events)
+    }
+
+    @Test fun aJobWorkManagerDidNotStoreKeepsTheNotificationAndStillEndsTheReceiver() {
+        queueWith { settle -> settle(IllegalStateException("disk full")) }
+        assertEquals(listOf("failed disk full", "finish"), events)
+        events.clear()
+        queueWith { throw IllegalStateException("no WorkManager") }
+        assertEquals(listOf("failed no WorkManager", "finish"), events)
+    }
 }

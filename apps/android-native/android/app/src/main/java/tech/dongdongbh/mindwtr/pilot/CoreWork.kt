@@ -1,12 +1,14 @@
 package tech.dongdongbh.mindwtr.pilot
 
 import android.app.Application
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.os.Build
 import android.util.Log
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequest
+import androidx.work.Operation
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.Worker
@@ -37,7 +39,25 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
          * (Android 12+). Debug builds only: `debug.mindwtr.native.core_work_delay_ms` holds it back that long, so
          * check-runner-device.mjs can run it through JobScheduler (`cmd jobscheduler run -f`).
          */
-        fun enqueue(context: Context, job: String, input: Map<String, String> = emptyMap()) = enqueue(context, job, input, ExistingWorkPolicy.REPLACE)
+        fun enqueue(context: Context, job: String, input: Map<String, String> = emptyMap()): Operation = enqueue(context, job, input, ExistingWorkPolicy.REPLACE)
+
+        /**
+         * Job [job] from a receiver whose process may end once it returns (a notification's button, a reboot): the receiver stays
+         * alive (goAsync) until WorkManager stored the job, and only then [done] runs (the notification goes). A job WorkManager did
+         * not store leaves the notification for another tap.
+         */
+        fun enqueueDurably(receiver: BroadcastReceiver, context: Context, job: String, input: Map<String, String>, done: () -> Unit = {}) {
+            val pending = receiver.goAsync()
+            DurableQueue.run(
+                queue = { settle ->
+                    val operation = enqueue(context, job, input)
+                    operation.result.addListener({ settle(runCatching { operation.result.get() }.exceptionOrNull()) }, Runnable::run)
+                },
+                done = done,
+                finish = pending::finish,
+                failed = { Log.w(CoreHost.TAG, "Native Android core work not queued job=$job", it) },
+            )
+        }
 
         /**
          * A drain that did not finish, retried as the ingest job (ProcessCoreHost.recovered). KEEP: a drain job already waiting or
@@ -45,7 +65,7 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
          */
         fun retryDrain(context: Context) = enqueue(context, CoreJob.INGEST, emptyMap(), ExistingWorkPolicy.KEEP)
 
-        private fun enqueue(context: Context, job: String, input: Map<String, String>, policy: ExistingWorkPolicy) {
+        private fun enqueue(context: Context, job: String, input: Map<String, String>, policy: ExistingWorkPolicy): Operation {
             val delayMs = debugProperty("core_work_delay_ms").toLongOrNull() ?: 0L
             val request = OneTimeWorkRequest.Builder(CoreWork::class.java)
                 .setInputData(Data.Builder().putAll(input + (JOB to job)).build())
@@ -56,7 +76,7 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
                 .build()
             val work = WorkManager.getInstance(context)
             val requestId = input["requestId"]
-            when {
+            return when {
                 job == CoreJob.INGEST -> work.enqueueUniqueWork(INGEST_WORK, policy, request)
                 // A reminder's Done or Snooze: a second tap on the same notification is the same request, queued once.
                 requestId != null -> work.enqueueUniqueWork("mindwtr-core-$job-$requestId", ExistingWorkPolicy.KEEP, request)
@@ -100,6 +120,31 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
             CoreJob.Outcome.Success -> Result.success()
             CoreJob.Outcome.Retry -> Result.retry()
             CoreJob.Outcome.Failure -> Result.failure()
+        }
+    }
+}
+
+/**
+ * A receiver's job handed to CoreWork (CoreWork.enqueueDurably; JVM-tested: ReminderJobTest): [queue] enqueues it and calls its
+ * argument once WorkManager answered (null: stored). [done] runs only once stored, [failed] otherwise, then [finish] (the receiver's
+ * end), once, whatever happened.
+ */
+internal object DurableQueue {
+    fun run(queue: ((Throwable?) -> Unit) -> Unit, done: () -> Unit, finish: () -> Unit, failed: (Throwable) -> Unit) {
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val settle = { failure: Throwable? ->
+            if (settled.compareAndSet(false, true)) {
+                try {
+                    if (failure == null) done() else failed(failure)
+                } finally {
+                    finish()
+                }
+            }
+        }
+        try {
+            queue(settle)
+        } catch (failure: Throwable) {
+            settle(failure)
         }
     }
 }
