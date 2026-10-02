@@ -117,7 +117,8 @@ const alarmMap = () => {
     const [row] = sql(resolve(dir, 'RKStorage'), `SELECT value FROM catalystLocalStorage WHERE key = '${MAP_KEY}'`);
     return row ? JSON.parse(row.value) : {};
 };
-const signedAt = (entry) => Date.parse(JSON.parse(entry?.signature ?? '{}').fireAt ?? '');
+// The native host marks each signature as its own (native-host-contract-reminders.ts), so an RN recovery build trusts none.
+const signedAt = (entry) => Date.parse(JSON.parse(entry?.signature?.replace(/^native:/, '') ?? '{}').fireAt ?? '');
 const journal = () => runAs('ls files/journal 2>/dev/null || true').split(/\s+/).filter((name) => /^\d{16}\.json$/.test(name))
     .map((name) => JSON.parse(runAs(`cat files/journal/${name}`)));
 const enqueue = (item) => {

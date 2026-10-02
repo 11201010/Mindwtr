@@ -123,6 +123,24 @@ describe('native host contract: reminders', () => {
         expect(plan.clearDelivered).toBe(false);
     });
 
+    it('stores its alarm map under React Native\'s key so that a React Native recovery build makes every alarm again', async () => {
+        freezeClock();
+        await seed();
+        const host = await openHost();
+        const first = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true }));
+        // The native host still holds what it made.
+        expect(value(await host.planReminderAlarms({ storedAlarms: first.alarms, permissionGranted: true }))).toMatchObject({ schedule: [], cancel: [] });
+        // A React Native build installed over the native app reads the same map, but holds none of these alarms: it keeps none.
+        const state = useTaskStore.getState();
+        const rn = planReminderAlarms({
+            settings: state.settings, tasks: state.tasks, projects: state.projects, now: new Date(NOW),
+            translations: await loadTranslations('en'), maxOneShotReminders: 200, alarms: readReminderAlarmMap(first.alarms),
+        });
+        expect(rn.keep).toEqual([]);
+        expect(rn.schedule).toEqual(first.schedule.map((alarm) => alarm.key));
+        expect(Object.values(rn.reasons).every((reason) => reason === 'expired')).toBe(true);
+    });
+
     it('replays an interrupted plan after a restart: the same alarms under the same ids, and none left behind', async () => {
         freezeClock();
         await seed();

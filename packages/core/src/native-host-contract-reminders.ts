@@ -18,6 +18,9 @@
  *   and REMINDER_STORE_RESCHEDULE_DELAY_MS after the last store change that
  *   shouldRescheduleReminderAlarms accepts. Without notification permission, every alarm
  *   is cancelled and `clearDelivered` asks the host to remove delivered reminders too.
+ *   The map lives under React Native's key, with each signature marked as the native
+ *   host's: a React Native build installed over the native app (a recovery build) holds
+ *   none of these alarms, finds no signature of its own, and makes every alarm again.
  * - completeReminderTask: Done. Completes the task through the store once per request
  *   UUID (native-request-receipts.ts). On the native host the receipt commits with the
  *   task's change, so a replay after a restart answers from the first reply and writes
@@ -103,6 +106,22 @@ const REMINDER_ID_BASE = 1;
 const SNOOZE_ID_BASE = 2 ** 30;
 const TASK_ID_LIMIT = 500;
 
+/**
+ * Marks each signature in the stored map as the native host's. React Native's planner keeps a
+ * held alarm only when its signature matches, so it keeps none of these.
+ */
+const NATIVE_SIGNATURE_MARK = 'native:';
+
+/** The stored map, with only the native host's signatures; one without the mark is made again. Throws on unreadable JSON. */
+const readNativeAlarmMap = (raw: string | null): Map<string, ReminderAlarmEntry> => new Map(Array.from(readReminderAlarmMap(raw), ([key, entry]) => {
+    const { signature, ...rest } = entry;
+    return [key, signature?.startsWith(NATIVE_SIGNATURE_MARK) ? { ...rest, signature: signature.slice(NATIVE_SIGNATURE_MARK.length) } : rest];
+}));
+
+const writeNativeAlarmMap = (map: ReadonlyMap<string, ReminderAlarmEntry>): string => writeReminderAlarmMap(new Map(Array.from(map, ([key, entry]) => (
+    [key, entry.signature === undefined ? entry : { ...entry, signature: `${NATIVE_SIGNATURE_MARK}${entry.signature}` }]
+))));
+
 /** A stable id for a key (FNV-1a), stepping past ids already taken. */
 const allocateAlarmId = (key: string, taken: Set<number>, base: number): number => {
     let hash = 0x811c9dc5;
@@ -140,7 +159,7 @@ export function createReminderMethods(deps: ReminderDeps) {
             }
             let held: Map<string, ReminderAlarmEntry>;
             try {
-                held = readReminderAlarmMap(input.storedAlarms);
+                held = readNativeAlarmMap(input.storedAlarms);
             } catch (error) {
                 // As on React Native: an unreadable map is replaced, since nothing in it can be cancelled.
                 void logWarn('Stored reminder alarm map unreadable; starting from none', { scope: 'notifications', error });
@@ -192,8 +211,8 @@ export function createReminderMethods(deps: ReminderDeps) {
                     mode: plan.mode,
                     cancel,
                     schedule,
-                    writeAhead: schedule.length > 0 ? writeReminderAlarmMap(writeAhead) : null,
-                    alarms: writeReminderAlarmMap(next),
+                    writeAhead: schedule.length > 0 ? writeNativeAlarmMap(writeAhead) : null,
+                    alarms: writeNativeAlarmMap(next),
                     topUpDelayMs: plan.topUpDelayMs,
                     clearDelivered: plan.mode === 'revoked',
                 },

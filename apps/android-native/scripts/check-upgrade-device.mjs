@@ -30,7 +30,8 @@
 //       the password in RN's secret store, shows them on its Sync screen, and syncs with them.
 //   7   an RN user's reminder alarms (task reminders turned on in RN's database): RN v1.3.2 sets its alarm for a task due in two hours (`dumpsys alarm`: one alarm to its
 //       library's AlarmReceiver); the native app's first start cancels it, deletes RN's alarm database and map, and sets its own
-//       alarm for the same task: RN's gone, the native one present, once each.
+//       alarm for the same task: RN's gone, the native one present, once each. Then the RN 154 recovery build over the native
+//       app: it reads the native app's map under RN's key, holds none of its alarms, and sets its own alarm for the task, once.
 //
 // RN writes every seed row through its own code: queued captures in
 // files/pending-captures, which RN imports at launch (tasks, a +Project task,
@@ -902,6 +903,13 @@ const scenarioAlarms = async () => {
     check(Number.isInteger(entry?.id) && !entry.pending && entry.id !== rnMap[`task:${item.id}`].id,
         `(7) the alarm map is the native plan's: the task under core's id ${entry?.id}, not RN's row ${rnMap[`task:${item.id}`].id}`);
     check(adbRaw('logcat', '-d', '-s', `${TAG}:*`).toString('utf8').includes('rnCancelled=1'), '(7) the native start logged one RN alarm cancelled');
+    await killWithoutStop();
+    // RN recovery over the native app: the map under RN's key is the native app's, whose alarms RN does not hold.
+    install(APKS.rn154, true);
+    device.launch(RN_ACTIVITY);
+    await until('RN recovery\'s alarm for the task', () => packageAlarms().some((alarm) => alarm.rn && alarm.at === dueAt), 90_000);
+    await sleep(3000);
+    check(packageAlarms().filter((alarm) => alarm.rn && alarm.at === dueAt).length === 1, '(7) RN recovery over the native app sets its own alarm for the task, once');
     await killWithoutStop();
 };
 
