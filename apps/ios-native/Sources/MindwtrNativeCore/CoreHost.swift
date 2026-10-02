@@ -139,6 +139,7 @@ private final class Engine: @unchecked Sendable {
     private var boardActionLogged = false
     private var startupBoardResult: String?
     private var startupTaskDeleteResult: String?
+    private var startupTrashTaskRestoreResult: String?
     private var startupTaskPromoteResult: String?
     private var startupCalendarResult: String?
     private var startupMindSweepResult: String?
@@ -223,7 +224,7 @@ private final class Engine: @unchecked Sendable {
         "somedaySectionDeleteOptions": 1, "somedaySectionDeleteWrite": 1, "somedaySectionDeleteRetryOutcome": 1,
         "somedaySectionOrderOptions": 1, "somedaySectionOrderWrite": 1, "somedaySectionOrderRetryOutcome": 1,
         "somedaySectionTaskOptions": 1, "somedaySectionTaskPrepare": 1, "somedaySectionTaskCommit": 1, "somedaySectionTaskRetryOutcome": 1,
-        "taskCancellationUndo": 1, "taskDelete": 1, "taskDeleteUndo": 1, "taskPromote": 1,
+        "taskCancellationUndo": 1, "taskDelete": 1, "taskDeleteUndo": 1, "taskPromote": 1, "trashTaskRestoreWrite": 1, "trashTaskRestoreRetryOutcome": 1,
         "somedaySectionMoveOptions": 1, "somedaySectionMoveWrite": 1, "somedaySectionMoveUndo": 1,
         "somedaySectionMoveRetryOutcome": 1, "somedaySectionMoveUndoRetryOutcome": 1,
         "taskFocusOptions": 1, "taskFocusWrite": 1, "taskFocusRetryOutcome": 1,
@@ -247,7 +248,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["taskDelete", "taskDeleteUndo", "taskPromote", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -354,6 +355,10 @@ private final class Engine: @unchecked Sendable {
             }
             if let command = pending, command.method == "taskDeleteUndoCommit" {
                 _ = try invoke("taskDeleteUndoValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "trashTaskRestoreCommit" {
+                _ = try invoke("trashTaskRestoreValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
             }
             if let command = pending, command.method == "calendarDeleteCommit" {
@@ -593,6 +598,7 @@ private final class Engine: @unchecked Sendable {
     private func startupWindow() throws -> String {
         let recoveringBoard = pending?.method == "boardCommit"
         let recoveringTaskDelete = pending?.method == "taskDeleteCommit"
+        let recoveringTrashTaskRestore = pending?.method == "trashTaskRestoreCommit"
         let recoveringTaskPromote = pending?.method == "taskPromoteCommit"
         let recoveringCalendarMethod = pending?.method == "calendarComposerCreateCommit" ? "calendarComposerCreateCommit"
             : pending?.method == "calendarComposerCommit" ? "calendarComposerCommit" : nil
@@ -646,6 +652,7 @@ private final class Engine: @unchecked Sendable {
         let terminal = try resolvePending()
         if recoveringBoard, let terminal, case .success(let value) = terminal { startupBoardResult = value }
         if recoveringTaskDelete, let terminal, case .success(let value) = terminal { startupTaskDeleteResult = value }
+        if recoveringTrashTaskRestore, let terminal, case .success(let value) = terminal { startupTrashTaskRestoreResult = value }
         if recoveringTaskPromote, let terminal, case .success(let value) = terminal { startupTaskPromoteResult = value }
         if recoveringCalendarMethod != nil, let terminal, case .success(let value) = terminal { startupCalendarResult = value }
         if recoveringMindSweep, let terminal, case .success(let value) = terminal { startupMindSweepResult = value }
@@ -716,7 +723,7 @@ private final class Engine: @unchecked Sendable {
         let recoveredLists = startupInboxResult ?? startupChecklistResult ?? startupTaskListSortResult
             ?? recoveredManage ?? recoveredSomedaySections
             ?? startupSomedaySectionMoveResult ?? startupSomedaySectionUndoResult
-        guard let recovered = startupTaskDeleteResult ?? startupTaskPromoteResult ?? startupBoardResult ?? startupCalendarResult ?? startupMindSweepResult
+        guard let recovered = startupTaskDeleteResult ?? startupTrashTaskRestoreResult ?? startupTaskPromoteResult ?? startupBoardResult ?? startupCalendarResult ?? startupMindSweepResult
             ?? recoveredProjects ?? recoveredFocus ?? recoveredLists else { return value }
         guard var window = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any] else {
             throw HostFailure("Malformed startup window")
@@ -745,6 +752,7 @@ private final class Engine: @unchecked Sendable {
             (startupProjectAreaResult, "projectAreaCommit"),
         ].first(where: { $0.0 != nil })?.1
         window["recovery"] = ["method": startupTaskDeleteResult != nil ? "taskDeleteCommit"
+            : startupTrashTaskRestoreResult != nil ? "trashTaskRestoreCommit"
             : startupTaskPromoteResult != nil ? "taskPromoteCommit"
             : startupBoardResult != nil ? "boardCommit"
             : startupCalendarResult != nil ? (recoveringCalendarMethod ?? "calendarComposerCommit")
@@ -776,6 +784,7 @@ private final class Engine: @unchecked Sendable {
         let encoded = String(decoding: try JSONSerialization.data(withJSONObject: window, options: [.sortedKeys]), as: UTF8.self)
         startupBoardResult = nil
         startupTaskDeleteResult = nil
+        startupTrashTaskRestoreResult = nil
         startupTaskPromoteResult = nil
         startupCalendarResult = nil
         startupMindSweepResult = nil
@@ -932,7 +941,7 @@ private final class Engine: @unchecked Sendable {
         let args: [Any]
         do { args = try arguments(method, argumentsJSON) }
         catch {
-            if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo", "taskPromote"].contains(method), pending == nil {
+            if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
             if ["unassignedAreaColorOptions", "unassignedAreaColorWrite", "unassignedAreaColorRetryOutcome"].contains(method), pending == nil {
@@ -956,6 +965,11 @@ private final class Engine: @unchecked Sendable {
         }
         guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
         guard Self.mutations.contains(method) else {
+            if method == "trashTaskRestoreRetryOutcome" {
+                // The journal is the only replay authority. A visible target or an
+                // absent journal cannot prove that this request committed.
+                throw CoreHostRejection(message: "STALE_REVISION: Trash Task restore has no pending journal")
+            }
             if ["somedaySectionMoveRetryOutcome", "somedaySectionMoveUndoRetryOutcome"].contains(method) {
                 let envelope = try confirmedSomedayMoveEnvelope(for: method, publicArguments: args)
                 do {
@@ -2649,6 +2663,26 @@ private final class Engine: @unchecked Sendable {
                 command = PendingCommand(version: 2, method: "taskDeleteUndoCommit", argumentsJSON: encoded)
                 _ = try invoke("taskDeleteUndoValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "trashTaskRestoreWrite" {
+            do {
+                guard let original = args.first as? String,
+                      let submitted = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("INVALID_INPUT: Trash Task restore needs a bounded request")
+                }
+                let value = try invoke("trashTaskRestorePrepare", arguments: args)
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+                      let prepared = response["prepared"] as? [String: Any],
+                      Self.equalJSON(prepared["request"], submitted) else {
+                    throw HostFailure("Malformed Trash Task restore preparation")
+                }
+                let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": submitted, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard envelope.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Trash Task restore journal is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Trash Task restore journal is too large") }
+                command = PendingCommand(version: 2, method: "trashTaskRestoreCommit", argumentsJSON: encoded)
+                _ = try invoke("trashTaskRestoreValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "taskCancellationUndo" {
             do {
                 guard let encodedRequest = args.first as? String,
@@ -3042,6 +3076,10 @@ private final class Engine: @unchecked Sendable {
             _ = try invoke("taskDeleteUndoValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
         }
+        if command.method == "trashTaskRestoreCommit" {
+            _ = try invoke("trashTaskRestoreValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
+        }
         if command.method == "calendarDeleteCommit" {
             _ = try invoke("calendarDeleteValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validateCalendarDeleteAcknowledgment(command, value: value) }
@@ -3288,6 +3326,12 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("taskDeleteUndo")
 #endif
             NSLog("Native iOS Task deletion saved releaseCheck=v1.3.4/ios-task-delete operation=undo outcome=confirmed")
+        }
+        if command.method == "trashTaskRestoreCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("trashTaskRestore")
+#endif
+            NSLog("Native iOS Trash Task restored releaseCheck=v1.3.4/ios-trash-task-restore outcome=confirmed")
         }
         if command.method == "taskCancellationUndoCommit", case .success = terminal {
 #if DEBUG
@@ -3697,7 +3741,7 @@ private final class Engine: @unchecked Sendable {
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
-            || (["taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
@@ -5331,6 +5375,12 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("Malformed Task Delete Undo acknowledgment")
             }
         }
+        if command.method == "trashTaskRestoreCommit" {
+            guard let request = envelope["request"] as? [String: Any],
+                  Set(result.keys) == Set(["id"]), result["id"] as? String == request["taskId"] as? String else {
+                throw HostFailure("Malformed Trash Task restore acknowledgment")
+            }
+        }
     }
 
     private func journalArguments(_ command: PendingCommand, checkingEditorSnapshot: Bool = true) throws -> [Any] {
@@ -5952,6 +6002,26 @@ private final class Engine: @unchecked Sendable {
             _ = try arguments(command.method == "taskDeleteCommit" ? "taskDelete" : "taskDeleteUndo", encoded)
             return args
         }
+        if command.method == "trashTaskRestoreCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let envelope = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(envelope.keys) == Set(["request", "prepared"]),
+                  let request = envelope["request"] as? [String: Any],
+                  let prepared = envelope["prepared"] as? [String: Any],
+                  Set(prepared.keys) == Set(["version", "request", "before", "after", "scope", "deviceIdBefore", "deviceIdToInitialize", "result"]),
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  Self.equalJSON(prepared["request"], request),
+                  let result = prepared["result"] as? [String: Any],
+                  Set(result.keys) == Set(["id"]), result["id"] as? String == request["taskId"] as? String else {
+                throw HostFailure("Malformed Trash Task restore journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self)
+            _ = try arguments("trashTaskRestoreWrite", encoded)
+            return args
+        }
         if command.method == "taskPromoteCommit" {
             guard command.argumentsJSON.utf8.count <= 12_000_000,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
@@ -6230,7 +6300,7 @@ private final class Engine: @unchecked Sendable {
         if method == "taskOpenTab", json.utf8.count > 4_096 {
             throw HostFailure("INVALID_INPUT: Task open tab request is too large")
         }
-        if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo"].contains(method), json.utf8.count > 4_096 {
+        if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome"].contains(method), json.utf8.count > 4_096 {
             throw HostFailure("INVALID_INPUT: Task mutation request too large")
         }
         if method == "taskPromote", json.utf8.count > 2_000_000 {
@@ -7555,6 +7625,17 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Task Delete needs an exact saved revision and lowercase UUID")
             }
         }
+        if ["trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome"].contains(method) {
+            guard let text = args.first as? String, text.utf8.count <= 4_096,
+                  let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                  Set(request.keys) == Set(["requestId", "taskId", "taskRevision"]),
+                  let id = request["requestId"] as? String,
+                  UUID(uuidString: id)?.uuidString.lowercased() == id,
+                  let taskID = request["taskId"] as? String, !taskID.isEmpty, taskID.utf16.count <= 200,
+                  let revision = request["taskRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 200 else {
+                throw HostFailure("INVALID_INPUT: Trash Task restore needs an exact saved revision and lowercase UUID")
+            }
+        }
         if method == "taskPromote" {
             guard let text = args.first as? String, text.utf8.count <= 2_000_000,
                   let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
@@ -8179,6 +8260,7 @@ private final class Engine: @unchecked Sendable {
         started = false
         recoveryActivationPending = false
         startupBoardResult = nil
+        startupTrashTaskRestoreResult = nil
         startupCalendarResult = nil
         startupMindSweepResult = nil
         startupInboxResult = nil

@@ -2084,6 +2084,15 @@ globalThis.MindwtrHost = {
     taskDeleteUndoCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedTaskDeleteUndo(editorJson(json) as Parameters<typeof contract.commitPreparedTaskDeleteUndo>[0])));
     },
+    trashTaskRestorePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareTrashTaskRestore(editorJson(json) as Parameters<typeof contract.prepareTrashTaskRestore>[0])); });
+    },
+    trashTaskRestoreValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTrashTaskRestore(editorJson(json) as Parameters<typeof contract.validatePreparedTrashTaskRestore>[0])));
+    },
+    trashTaskRestoreCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedTrashTaskRestore(editorJson(json) as Parameters<typeof contract.commitPreparedTrashTaskRestore>[0])));
+    },
     /** Private native editor preparation freezes the raw Task effect before journaling. */
     draftPrepare(json: string): string {
         return submit(async () => {

@@ -21,18 +21,31 @@ struct TrashScreen: View {
                 }
             }
             GeometryReader { geometry in
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                List {
+                    Group {
                         if let error = model.trashError {
-                            Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
-                                .accessibilityIdentifier("trash-error")
-                            Button(model.label("common.retry")) { Task { await model.retryTrash() } }
-                                .rnFont(14, .semibold).frame(minHeight: 44)
-                                .disabled(model.busy || model.retryNeeded).accessibilityIdentifier("trash-retry")
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                                    .accessibilityIdentifier("trash-error")
+                                Button(model.label("common.retry")) { Task { await model.retryTrash() } }
+                                    .rnFont(14, .semibold).frame(minHeight: 44)
+                                    .disabled(model.busy).accessibilityIdentifier("trash-retry")
+                            }
                         }
                         if model.trashCurrent {
                             ForEach(model.trash.objects("items").map(TrashRowEntry.init)) { entry in
                                 row(entry)
+                                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                        if entry.item.text("type") == "task", model.trashActionsEnabled {
+                                            Button {
+                                                Task { await model.restoreTrashTask(entry.item.object("row").text("id")) }
+                                            } label: {
+                                                Label(model.trash.object("labels").text("restore"), systemImage: "arrow.counterclockwise")
+                                            }
+                                            .tint(palette.tint)
+                                            .accessibilityIdentifier("trash-restore-" + entry.item.object("row").text("id"))
+                                        }
+                                    }
                             }
                             if model.trash.objects("items").count < model.trash.number("total") {
                                 Button { Task { await model.loadMoreTrash() } } label: {
@@ -42,15 +55,21 @@ struct TrashScreen: View {
                                 }
                                 .buttonStyle(.plain).disabled(!model.trashActionsEnabled).accessibilityIdentifier("trash-more")
                             }
-                            if !model.trash.object("empty").isEmpty { emptyState }
+                            if !model.trash.object("empty").isEmpty {
+                                emptyState.frame(minHeight: max(0, geometry.size.height - 32))
+                            }
                         }
                         if model.busy || (!model.trashCurrent && model.trashError == nil) {
                             ProgressView().frame(maxWidth: .infinity).padding(12)
                         }
                     }
-                    .padding(16)
-                    .frame(minHeight: geometry.size.height, alignment: model.trashCurrent && model.trash.number("total") == 0 ? .center : .top)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .accessibilityIdentifier("trash-scroll")
                 .refreshable { await model.refresh() }
             }
         }
