@@ -4035,7 +4035,13 @@ console.log('Entry points: RN\'s alias, links on the build\'s scheme, text share
     assert.match(remindersKt, /"requestedAt" to System\.currentTimeMillis\(\)\.toString\(\)/);
     // A receiver's job is stored before its notification goes and before its process may end (goAsync until WorkManager answered).
     assert.doesNotMatch(code(remindersKt), /CoreWork\.enqueue\(/, 'every reminder receiver queues durably');
-    assert.equal([...code(remindersKt).matchAll(/CoreWork\.enqueueDurably\(this, context,/g)].length, 3, 'Done, Snooze and the reschedule');
+    assert.equal([...code(remindersKt).matchAll(/CoreWork\.enqueueDurably\(this, context,/g)].length, 4, 'Done, Snooze, the reschedule and a repeat that fired');
+    // A daily or weekly alarm that fired is made again by core's plan, never at a time Kotlin works out; a delivery checks, under the
+    // lock each plan's apply holds, that no plan cancelled or moved its alarm meanwhile.
+    assert.doesNotMatch(code(remindersKt), /Calendar|TimeZone|nextRepeat/);
+    assert.match(remindersKt, /CoreJob\.REMINDERS, mapOf\("mode" to "fired", "key" to alarm\.getString\("key"\)\)/);
+    assert.match(remindersKt, /synchronized\(ReminderAlarms\.LOCK\) \{\s+ReminderAlarms\.deliveries\.accepts\(/);
+    assert.match(remindersKt, /synchronized\(LOCK\) \{ applyLocked\(parsed\) \}/);
     assert.match(hostEntry, /reminderDone\(requestId: string, taskId: string\): string \{\s+return submit\(async \(\) => taskResult\('reminderDone', await contract\.completeReminderTask\(\{ requestId, taskId \}\)\)\);/);
     // Snooze's alarm is made in the engine against the native state (core's planReminderSnooze), before the journaled reply.
     assert.match(hostEntry, /reminderSnooze\(json: string\): string \{\s+return submit\(async \(\) => \{\s+const result = await contract\.snoozeReminder\(JSON\.parse\(json\)\);\s+if \(result\.ok\) await requireReminders\(\)\.snooze\(result\.value\);\s+return taskResult\('reminderSnooze', result\);/);
@@ -4132,6 +4138,10 @@ globalThis.standStore = useTaskStore;
     topUp = null;
     await sleep(60);
     assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders', `plan ${stored} false`, 'apply Mindwtr reminders'], 'the top-up plans once more');
+    // A daily or weekly alarm that fired: core makes that one again (its next time, or cancels it when turned off).
+    calls.length = 0;
+    await reminders.fired('digest:morning');
+    assert.deepEqual(calls, [`plan ${stored} false remake digest:morning`, 'apply Mindwtr reminders']);
     // A Snooze: core's answer against the stored state, applied in the queue as a plan that only stores that state and makes it.
     applied.length = 0;
     calls.length = 0;

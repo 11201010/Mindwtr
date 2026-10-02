@@ -42,6 +42,8 @@
  *   with a Snooze of such a task. It is forgotten 30 days after its time.
  * - `remake: 'all'` (a reboot, a clock change, exact alarms just allowed, the first plan of
  *   a process) plans every held alarm as not made yet, so each is made again under its id.
+ *   `remake: [key]` does so for one: a daily or weekly alarm that just fired, which core
+ *   makes again at its next time (or cancels, when it was turned off meanwhile).
  * - routeNotificationOpen: what a tap opens (Review, a task, a project, a context, Daily
  *   or Weekly Review), or `complete` for Done, or nothing for Dismiss and Snooze.
  *
@@ -224,12 +226,13 @@ export function createReminderMethods(deps: ReminderDeps) {
             storedAlarms: string | null;
             permissionGranted: boolean;
             storedState?: string | null;
-            remake?: 'all';
+            remake?: 'all' | string[];
         }): Promise<NativeHostResult<NativeReminderAlarmPlan>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             if (!isObjectRecord(input) || (input.storedAlarms !== null && typeof input.storedAlarms !== 'string') || typeof input.permissionGranted !== 'boolean'
-                || (input.storedState != null && typeof input.storedState !== 'string') || (input.remake !== undefined && input.remake !== 'all')) {
+                || (input.storedState != null && typeof input.storedState !== 'string')
+                || (input.remake !== undefined && input.remake !== 'all' && !(Array.isArray(input.remake) && input.remake.every((key) => typeof key === 'string')))) {
                 return fail('INVALID_INPUT', 'The stored alarm map (a string or null) and the notification permission are required');
             }
             let held: Map<string, ReminderAlarmEntry>;
@@ -241,7 +244,11 @@ export function createReminderMethods(deps: ReminderDeps) {
                 held = new Map();
             }
             const remakeAll = input.remake === 'all';
-            if (remakeAll) for (const [key, entry] of held) held.set(key, { ...entry, pending: true });
+            const remake = remakeAll ? new Set(held.keys()) : new Set(input.remake ?? []);
+            for (const key of remake) {
+                const entry = held.get(key);
+                if (entry) held.set(key, { ...entry, pending: true });
+            }
             const state = useTaskStore.getState();
             const plan = planReminderAlarms({
                 settings: state.settings,

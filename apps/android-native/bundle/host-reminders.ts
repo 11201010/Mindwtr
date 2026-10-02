@@ -12,6 +12,7 @@
  *   core makes each held alarm and each Snooze still ahead again under its own id, which replaces it, and keeps or withdraws what
  *   it delivered by core's reason. The process's first plan is a rebuild too: Android drops every exact alarm when the user revokes
  *   exact-alarm access (it stops the app) and every alarm on a force-stop, while the stored map still says each is held;
+ * - a daily or weekly alarm that fired is made again by core's plan (`remake: [key]`), at the next time core's schedule gives;
  * - a Snooze's alarm is made in the same queue, against the native state core keeps for it (planReminderSnooze), once per request;
  * - React Native's own alarms are cancelled once (Kotlin's RnAlarmCleanup) before this host's first plan;
  * - none of this runs in sandbox mode, as RN's notification service does not.
@@ -47,7 +48,7 @@ type Stored = { alarms: string | null; state: string | null };
 
 export type NativeReminderBindings = {
     /** Core's planReminderAlarms; `remake: 'all'` makes every held alarm again. */
-    plan: (input: { storedAlarms: string | null; permissionGranted: boolean; storedState: string | null; remake?: 'all' }) => Promise<NativeHostResult<ReminderPlan>>;
+    plan: (input: { storedAlarms: string | null; permissionGranted: boolean; storedState: string | null; remake?: 'all' | string[] }) => Promise<NativeHostResult<ReminderPlan>>;
     /** Core's planReminderSnooze: whether to make a Snooze's alarm, and the native state before and after. */
     planSnooze: (input: { storedState: string | null; alarm: SnoozeAlarm }) => NativeHostResult<{ schedule: SnoozeAlarm[]; stateAhead: string | null; state: string | null }>;
     /** RN's alarm map and the native reminder state, as stored (RKStorage). */
@@ -75,13 +76,15 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
     let topUpTimer: ReturnType<typeof setTimeout> | null = null;
     let eventTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const runCycle = async (requested: boolean) => {
+    /** [requested]: true remakes every held alarm, keys remake those (a daily or weekly alarm that fired). */
+    const runCycle = async (requested: boolean | string[]) => {
         // RN's alarms go before the first plan; until that succeeds no plan runs (the next cycle tries again).
         if (rnCancelled === null) rnCancelled = bindings.cleanupRn();
-        const rebuild = requested || !rebuilt;
+        const rebuild = requested === true || !rebuilt;
         const stored = await bindings.readStored();
         const permissionGranted = bindings.permissionGranted();
-        const result = await bindings.plan({ storedAlarms: stored.alarms, permissionGranted, storedState: stored.state, ...(rebuild ? { remake: 'all' as const } : {}) });
+        const remake = rebuild ? { remake: 'all' as const } : Array.isArray(requested) ? { remake: requested } : {};
+        const result = await bindings.plan({ storedAlarms: stored.alarms, permissionGranted, storedState: stored.state, ...remake });
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         const plan = result.value;
         // Nothing to store when the stored value already says it (none stored reads as empty).
@@ -112,7 +115,7 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
         queue = next.catch(() => undefined);
         return next;
     };
-    const cycle = (rebuild: boolean) => serial(() => runCycle(rebuild));
+    const cycle = (requested: boolean | string[]) => serial(() => runCycle(requested));
 
     /** A Snooze's alarm made once against the native state, in the queue: the state as not yet made, the alarm, the state as made. */
     const runSnooze = async (alarm: SnoozeAlarm) => {
@@ -155,6 +158,11 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
         async cycle(rebuild: boolean) {
             if (isSandboxMode()) return { mode: 'sandbox' };
             return cycle(rebuild);
+        },
+        /** A daily or weekly alarm [key] that fired: core makes it again at its next time, or cancels it once it was turned off. */
+        async fired(key: string) {
+            if (isSandboxMode()) return { mode: 'sandbox' };
+            return cycle([key]);
         },
         /** A Snooze's alarm (snoozeReminder's reply), made unless it was made already; not in sandbox mode, where no alarm is made. */
         async snooze(alarm: SnoozeAlarm) {

@@ -5,8 +5,6 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
-import java.util.Calendar
-import java.util.TimeZone
 
 /** Core's reminder plan applied in core's order (native-host-contract-reminders.ts), and React Native's old alarms cancelled once. */
 class ReminderPlanTest {
@@ -109,14 +107,21 @@ class ReminderPlanTest {
         assertEquals(listOf("store {ahead}", "checkpoint write-ahead", "schedule 11 task:a", "checkpoint scheduled", "store {after}"), events)
     }
 
-    @Test fun aRepeatingAlarmComesBackAtTheSameLocalTimeAfterItsTimeHasPassed() {
-        val zone = TimeZone.getTimeZone("Europe/Berlin")
-        fun at(year: Int, month: Int, day: Int, hour: Int) = Calendar.getInstance(zone).apply { clear(); set(year, month - 1, day, hour, 30) }.timeInMillis
-        // Daily at 08:30 local, across the March clock change.
-        assertEquals(at(2026, 3, 30, 8), ReminderPlan.nextRepeat(at(2026, 3, 28, 8), "daily", at(2026, 3, 29, 9), zone))
-        // Weekly, three weeks stale: the first one still ahead.
-        assertEquals(at(2026, 10, 22, 8), ReminderPlan.nextRepeat(at(2026, 10, 1, 8), "weekly", at(2026, 10, 21, 9), zone))
-        assertEquals(null, ReminderPlan.nextRepeat(at(2026, 10, 1, 8), "once", at(2026, 10, 21, 9), zone))
+    @Test fun aDeliveryAlreadyOnItsWayShowsNothingOnceAPlanCancelledOrMovedItsAlarm() {
+        val deliveries = ReminderDeliveries()
+        val hour = 3_600_000L
+        // An alarm armed by an earlier process: shown.
+        assertEquals(true, deliveries.accepts(5, 10 * hour, "once", 10 * hour + 1))
+        deliveries.armed(5, 10 * hour)
+        assertEquals(true, deliveries.accepts(5, 10 * hour, "once", 10 * hour + 1))
+        // Made again for 11:00 (the task moved) while the 10:00 delivery was queued: that one shows nothing.
+        deliveries.armed(5, 11 * hour)
+        assertEquals(false, deliveries.accepts(5, 10 * hour, "once", 10 * hour + 1))
+        deliveries.cancelled(5)
+        assertEquals(false, deliveries.accepts(5, 11 * hour, "once", 11 * hour + 1))
+        // A daily digest that fired is made again by core's plan; until then, its delivery shows.
+        deliveries.armed(6, 8 * hour)
+        assertEquals(true, deliveries.accepts(6, 8 * hour, "daily", 8 * hour + 1))
     }
 
     @Test fun reactNativesAlarmsAreCancelledBeforeItsMapGoesAndTheTableLast() {

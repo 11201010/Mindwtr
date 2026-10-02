@@ -20,8 +20,6 @@ import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.RnKeyValue
 import tech.dongdongbh.mindwtr.pilot.core.debugProperty
-import java.util.Calendar
-import java.util.TimeZone
 
 /*
  * Reminder alarms on AlarmManager, as React Native's patched alarm library (react-native-alarm-notification, patched by
@@ -89,21 +87,24 @@ internal object ReminderPlan {
         }
         if (after.isNotEmpty()) port.store(after)
     }
+}
 
-    /**
-     * A repeating alarm's next time after [nowMs], at the same local time a day or a week on, as RN's library re-arms one when it
-     * fires (AlarmUtil.rescheduleRepeatingAlarm). Null for a one-shot alarm.
-     */
-    fun nextRepeat(fireAtMs: Long, repeat: String, nowMs: Long, zone: TimeZone = TimeZone.getDefault()): Long? {
-        val field = when (repeat) {
-            "daily" -> Calendar.DAY_OF_YEAR
-            "weekly" -> Calendar.WEEK_OF_YEAR
-            else -> return null
-        }
-        val next = Calendar.getInstance(zone).apply { timeInMillis = fireAtMs }
-        // ponytail: steps one at a time; a weekly alarm stale for years is a few hundred steps.
-        do next.add(field, 1) while (next.timeInMillis <= nowMs)
-        return next.timeInMillis
+/**
+ * What this process armed and cancelled, so a delivery already on its way when a plan cancelled its alarm or made it again for
+ * another time shows nothing (JVM-tested: ReminderPlanTest). Guarded by [ReminderAlarms.LOCK], which a plan's apply holds too.
+ * A process that did not arm or cancel an alarm knows nothing of it and shows its delivery.
+ */
+internal class ReminderDeliveries {
+    /** Each alarm id's armed time; null once cancelled. */
+    private val armed = HashMap<Int, Long?>()
+
+    fun armed(id: Int, fireAtMs: Long) { armed[id] = fireAtMs }
+
+    fun cancelled(id: Int) { armed[id] = null }
+
+    /** Whether a delivery of alarm [id], armed for [fireAtMs], shows at [nowMs]. */
+    fun accepts(id: Int, fireAtMs: Long, repeat: String, nowMs: Long): Boolean {
+        return !armed.containsKey(id) || armed[id] == fireAtMs
     }
 }
 
@@ -181,6 +182,11 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
         /** The alarm (core's NativeReminderAlarm, with the channel's name), as JSON. */
         const val EXTRA_ALARM = "alarm"
 
+        /** Held by each plan's apply and each delivery, so a delivery sees the plan before it or after it whole. */
+        val LOCK = Any()
+        /** Guarded by [LOCK]. */
+        val deliveries = ReminderDeliveries()
+
         private fun fireIntent(context: Context) = Intent(context, ReminderAlarmReceiver::class.java).setAction(FIRE)
 
         /**
@@ -192,6 +198,7 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
             val intent = PendingIntent.getBroadcast(context, alarm.getInt("id"), fireIntent(context).putExtra(EXTRA_ALARM, alarm.toString()),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val at = alarm.getLong("fireAtMs")
+            deliveries.armed(alarm.getInt("id"), at)
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || manager.canScheduleExactAlarms()) {
                 manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, intent)
             } else {
@@ -223,6 +230,10 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
     override fun apply(plan: String) {
         val parsed = JSONObject(plan)
         channelName = parsed.optString("channelName")
+        synchronized(LOCK) { applyLocked(parsed) }
+    }
+
+    private fun applyLocked(parsed: JSONObject) {
         ReminderPlan.apply(parsed, this) { point ->
             // Debug builds only (check-reminders-device.mjs): `debug.mindwtr.native.reminder_stop=<point>` kills the process there.
             if (debugProperty("reminder_stop") == point) {
@@ -245,6 +256,7 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
     override fun removeDelivered(id: Int) = notifications.cancel(id)
 
     override fun cancel(id: Int) {
+        deliveries.cancelled(id)
         PendingIntent.getBroadcast(context, id, fireIntent(context), PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)?.let {
             alarms.cancel(it)
             it.cancel()
@@ -297,16 +309,27 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
     }
 }
 
-/** An alarm fired: its notification, as RN's AlarmReceiver posts it; a repeating alarm comes back at the same local time. */
+/**
+ * An alarm fired: its notification, as RN's AlarmReceiver posts it, unless a plan cancelled the alarm or made it again for another
+ * time while this delivery was on its way. A daily or weekly alarm is then made again by
+ * core's plan (CoreWork), at the next time core's schedule gives, or not at all once it was turned off.
+ */
 class ReminderAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ReminderAlarms.FIRE) return
         val alarm = runCatching { JSONObject(intent.getStringExtra(ReminderAlarms.EXTRA_ALARM)!!) }.getOrNull() ?: return
-        runCatching { CoreNotifications.postReminder(context, alarm) }.onFailure { Log.w(CoreHost.TAG, "Native Android reminder not posted", it) }
-        runCatching {
-            ReminderPlan.nextRepeat(alarm.getLong("fireAtMs"), alarm.optString("repeat"), System.currentTimeMillis())
-                ?.let { next -> ReminderAlarms.arm(context, alarm.put("fireAtMs", next)) }
-        }.onFailure { Log.w(CoreHost.TAG, "Native Android repeating reminder not re-armed", it) }
+        val repeat = alarm.optString("repeat", "once")
+        val shown = runCatching {
+            synchronized(ReminderAlarms.LOCK) {
+                ReminderAlarms.deliveries.accepts(alarm.getInt("id"), alarm.getLong("fireAtMs"), repeat, System.currentTimeMillis())
+                    .also { if (it) CoreNotifications.postReminder(context, alarm) }
+            }
+        }.onFailure { Log.w(CoreHost.TAG, "Native Android reminder not posted", it) }.getOrDefault(false)
+        if (!shown) Log.i(CoreHost.TAG, "Native Android reminder delivery dropped repeat=$repeat")
+        if (repeat != "once") {
+            runCatching { CoreWork.enqueueDurably(this, context, CoreJob.REMINDERS, mapOf("mode" to "fired", "key" to alarm.getString("key"))) }
+                .onFailure { Log.w(CoreHost.TAG, "Native Android repeating reminder not queued", it) }
+        }
     }
 }
 

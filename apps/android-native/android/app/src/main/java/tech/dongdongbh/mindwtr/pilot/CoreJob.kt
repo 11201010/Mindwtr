@@ -13,7 +13,10 @@ internal object CoreJob {
     const val INGEST = "ingest"
     /** An automation trigger's notification (the ACTIVATE_CONTEXT and DEACTIVATE_CONTEXT broadcasts): `action` and `context`. */
     const val CONTEXT = "context"
-    /** Core's reminder plan applied again (Reminders.kt's reschedule receiver): `mode` "cycle", or "rebuild" to remake every alarm. */
+    /**
+     * Core's reminder plan applied again: `mode` "cycle", "rebuild" to remake every alarm (Reminders.kt's reschedule receiver), or
+     * "fired" with `key`, a daily or weekly alarm that fired, which core makes again at its next time.
+     */
     const val REMINDERS = "reminders"
     /** A reminder's Done: `requestId` (made when the notification was posted) and `taskId`; then the plan again. */
     const val REMINDER_DONE = "reminderDone"
@@ -33,8 +36,8 @@ internal object CoreJob {
         fun drain(): Boolean
         /** Core's runContextAutomation with [json] (`{ action, context }`): `{ notification }`, null for none. */
         fun contextAutomation(json: String): JSONObject
-        /** Core's reminder plan applied now ([mode] "cycle" or "rebuild"). */
-        fun reminders(mode: String): JSONObject = throw UnsupportedOperationException("reminders")
+        /** Core's reminder plan applied now ([mode] "cycle", "rebuild", or "fired" with [key]). */
+        fun reminders(mode: String, key: String): JSONObject = throw UnsupportedOperationException("reminders")
         /** Core's completeReminderTask, journaled under [requestId]. */
         fun reminderDone(requestId: String, taskId: String): JSONObject = throw UnsupportedOperationException("reminderDone")
         /** Core's snoozeReminder with [json] (`{ requestId, requestedAt, details }`), journaled; the engine makes its alarm once. */
@@ -64,12 +67,12 @@ internal object CoreJob {
             else when (name) {
                 INGEST -> Outcome.Success
                 REMINDERS -> {
-                    host.reminders(input["mode"] ?: "cycle")
+                    host.reminders(input["mode"] ?: "cycle", input["key"].orEmpty())
                     Outcome.Success
                 }
                 REMINDER_DONE -> {
                     host.reminderDone(input["requestId"].orEmpty(), input["taskId"].orEmpty())
-                    host.reminders("cycle")
+                    host.reminders("cycle", "")
                     Outcome.Success
                 }
                 REMINDER_SNOOZE -> {

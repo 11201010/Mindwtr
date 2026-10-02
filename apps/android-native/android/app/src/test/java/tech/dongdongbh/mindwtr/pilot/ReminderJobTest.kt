@@ -15,7 +15,7 @@ class ReminderJobTest {
         override fun recover(): Boolean { events += "recover"; return recovered }
         override fun drain(): Boolean { events += "drain"; return true }
         override fun contextAutomation(json: String): JSONObject = error("no context job here")
-        override fun reminders(mode: String): JSONObject { events += "reminders $mode"; return JSONObject() }
+        override fun reminders(mode: String, key: String): JSONObject { events += "reminders $mode $key".trim(); return JSONObject() }
         override fun reminderDone(requestId: String, taskId: String): JSONObject {
             events += "done $requestId $taskId"
             doneFailure?.let { throw it }
@@ -62,6 +62,11 @@ class ReminderJobTest {
         val details = JSONObject().put("title", "Pay rent").put("snooze_interval", 10).toString()
         assertEquals(CoreJob.Outcome.Success, run(CoreJob.REMINDER_SNOOZE, mapOf("requestId" to "r2", "requestedAt" to "1790000000000", "details" to details)))
         assertEquals(listOf("boot", "recover", "drain", "snooze r2 1790000000000 Pay rent", "widgets"), events)
+    }
+
+    @Test fun aRepeatingAlarmThatFiredIsMadeAgainByCoresPlan() {
+        assertEquals(CoreJob.Outcome.Success, run(CoreJob.REMINDERS, mapOf("mode" to "fired", "key" to "digest:morning")))
+        assertEquals(listOf("boot", "recover", "drain", "reminders fired digest:morning", "widgets"), events)
     }
 
     @Test fun aRescheduleRunsCoresPlanInItsMode() {

@@ -246,6 +246,26 @@ describe('native host contract: reminders', () => {
         expect(value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true, storedState: '{not json' }))).toMatchObject({ state: '{}' });
     });
 
+    it('makes a repeating alarm that fired again at its next time, by core\'s schedule, or cancels it when it was turned off', async () => {
+        freezeClock();
+        await seed();
+        const host = await openHost();
+        const first = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true }));
+        const morning = first.schedule.find((alarm) => alarm.key === 'digest:morning')!;
+        expect(morning.repeat).toBe('daily');
+        // The morning digest fired; a plain plan keeps it (its signature holds), the fired one's remake moves it a day on.
+        vi.setSystemTime(new Date(morning.fireAtMs + 2_000));
+        expect(value(await host.planReminderAlarms({ storedAlarms: first.alarms, permissionGranted: true })).schedule).toEqual([]);
+        const fired = value(await host.planReminderAlarms({ storedAlarms: first.alarms, permissionGranted: true, remake: ['digest:morning', 'digest:gone'] }));
+        expect(fired.schedule).toEqual([{ ...morning, fireAtMs: morning.fireAtMs + 24 * 60 * 60 * 1000, replacing: 'expired' }]);
+        expect(fired.cancel.map((entry) => entry.key)).not.toContain('digest:morning');
+        await useTaskStore.getState().updateSettings({ dailyDigestMorningEnabled: false });
+        const off = value(await host.planReminderAlarms({ storedAlarms: first.alarms, permissionGranted: true, remake: ['digest:morning'] }));
+        expect(off.schedule.map((alarm) => alarm.key)).not.toContain('digest:morning');
+        expect(off.cancel).toContainEqual({ key: 'digest:morning', id: morning.id, reason: 'withdrawn' });
+        expect(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true, remake: [7] as never })).toMatchObject(invalid);
+    });
+
     it('keeps an alarm\'s id when it changes, and gives a new key an id no held alarm has', async () => {
         freezeClock();
         await seed();

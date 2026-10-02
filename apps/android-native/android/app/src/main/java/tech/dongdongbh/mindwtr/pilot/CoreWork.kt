@@ -102,7 +102,7 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
                     override fun recover() = ProcessCoreHost.recover(host)
                     override fun drain() = ProcessCoreHost.recovered(app, host)
                     override fun contextAutomation(json: String) = host.contextAutomation(json)
-                    override fun reminders(mode: String) = host.remindersCycle(mode)
+                    override fun reminders(mode: String, key: String) = host.remindersCycle(mode, key)
                     override fun reminderDone(requestId: String, taskId: String) = host.reminderDone(requestId, taskId)
                     override fun reminderSnooze(json: String) = host.reminderSnooze(json)
                 }
