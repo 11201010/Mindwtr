@@ -167,6 +167,7 @@ function gtdDriver(host: Host, scenario: Scenario) {
                 drawn.texts.push(
                     hub.defaultScheduleTime.label, hub.defaultScheduleTime.description,
                     hub.focusTaskLimit.label, hub.focusTaskLimit.description, ...hub.focusTaskLimit.options.map((option) => option.label),
+                    ...toggleTexts(hub.focusIncludeStartDates),
                     hub.defaultProjectFlowMode.label, hub.defaultProjectFlowMode.description, ...hub.defaultProjectFlowMode.options.map((option) => option.label),
                     ...[hub.autoArchive, hub.taskEditor, hub.capture, hub.review, hub.inbox].flatMap(described),
                 );
@@ -176,7 +177,7 @@ function gtdDriver(host: Host, scenario: Scenario) {
                     ...optionControls(hub.defaultProjectFlowMode.options),
                     ...[hub.autoArchive, hub.taskEditor, hub.capture, hub.review, hub.inbox].map(link),
                 );
-                drawn.switches.push(toggleSwitch(hub.pomodoro));
+                drawn.switches.push(toggleSwitch(hub.pomodoro), toggleSwitch(hub.focusIncludeStartDates));
                 drawn.inputs.push({
                     label: null,
                     placeholder: hub.defaultScheduleTime.placeholder,

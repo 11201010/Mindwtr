@@ -184,7 +184,8 @@ export type GtdSettingsEdit =
             | 'pomodoro' | 'pomodoroLinkTask' | 'pomodoroAutoStartBreaks' | 'pomodoroAutoStartFocus' | 'pomodoroCompletionAlert'
             | 'saveAudioAttachments' | 'quickAddAutoClean' | 'naturalLanguageDates' | 'markdownEditorAssist'
             | 'dailyReviewFocusStep' | 'weeklyReviewContextStep'
-            | 'inboxTwoMinute' | 'inboxProjectFirst' | 'inboxContextStep' | 'inboxSchedule';
+            | 'inboxTwoMinute' | 'inboxProjectFirst' | 'inboxContextStep' | 'inboxSchedule'
+            | 'focusIncludeStartDates';
         value: boolean;
     }
     /** '' clears it; otherwise HH:MM, as normalizeClockTimeInput returns it. */
@@ -271,6 +272,8 @@ export function buildGtdSettingsUpdate(settings: AppSettings, edit: GtdSettingsE
             return withGtd({ saveAudioAttachments: edit.value });
         case 'naturalLanguageDates':
             return withGtd({ naturalLanguageDates: edit.value });
+        case 'focusIncludeStartDates':
+            return withGtd({ focusIncludeStartDates: edit.value });
         case 'pomodoroLinkTask':
         case 'pomodoroAutoStartBreaks':
         case 'pomodoroAutoStartFocus':
@@ -419,6 +422,7 @@ export type GtdSettingsModel = {
         /** Second card. Commit the text on blur: see the contract's setGtdSetting. */
         defaultScheduleTime: Labelled & { value: string; placeholder: string; invalidMessage: string };
         focusTaskLimit: Labelled & { options: GtdSettingsOption<number>[] };
+        focusIncludeStartDates: GtdSettingsToggle;
         defaultProjectFlowMode: Labelled & { options: GtdSettingsOption<DefaultProjectFlowMode>[] };
         autoArchive: GtdSettingsLink;
         /** Third card: task editor, capture. Fourth card: review, inbox. */
@@ -567,6 +571,12 @@ export function buildGtdSettingsModel(input: {
             description: tFallback(t, 'settings.focusTaskLimitDesc', tr('settings.focusTaskLimitDesc')),
             options: FOCUS_TASK_LIMIT_OPTIONS.map((value) => option<number>(value, String(value), focusTaskLimit === value, { type: 'focusTaskLimit', value })),
         },
+        focusIncludeStartDates: toggle(
+            t('settings.focusIncludeStartDates'),
+            t('settings.focusIncludeStartDatesDesc'),
+            gtd?.focusIncludeStartDates !== false,
+            flip('focusIncludeStartDates', gtd?.focusIncludeStartDates !== false),
+        ),
         defaultProjectFlowMode: {
             label: tFallback(t, 'settings.defaultProjectFlowMode', 'Default project flow'),
             description: tFallback(t, 'settings.defaultProjectFlowModeDesc', 'Applies only when creating new projects.'),

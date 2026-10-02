@@ -202,6 +202,7 @@ export const GTD_SYNCED_FIELD_KEYS = [
     'defaultAreaMode',
     'defaultAreaId',
     'focusTaskLimit',
+    'focusIncludeStartDates',
     'focusGroupBy',
     'defaultProjectFlowMode',
     'naturalLanguageDates',

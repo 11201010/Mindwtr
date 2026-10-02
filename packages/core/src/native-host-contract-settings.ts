@@ -291,7 +291,7 @@ function readGeneralEdit(value: unknown, calendarSystemShown: boolean): GeneralS
 
 const GTD_BOOLEAN_EDITS = new Set<string>([
     'pomodoro', 'pomodoroLinkTask', 'pomodoroAutoStartBreaks', 'pomodoroAutoStartFocus', 'pomodoroCompletionAlert',
-    'saveAudioAttachments', 'quickAddAutoClean', 'naturalLanguageDates', 'markdownEditorAssist',
+    'saveAudioAttachments', 'quickAddAutoClean', 'naturalLanguageDates', 'markdownEditorAssist', 'focusIncludeStartDates',
     'dailyReviewFocusStep', 'weeklyReviewContextStep',
     'inboxTwoMinute', 'inboxProjectFirst', 'inboxContextStep', 'inboxSchedule',
 ]);

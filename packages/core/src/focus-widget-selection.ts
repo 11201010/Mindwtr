@@ -35,6 +35,7 @@ export interface TodayFocusSelectionInput {
     sections: Section[];
     sortBy: TaskSortBy;
     now: Date;
+    focusIncludeStartDates?: boolean;
 }
 
 export interface TodayFocusSelection {
@@ -69,6 +70,7 @@ export function computeTodayFocusTasks({
     sections,
     sortBy,
     now,
+    focusIncludeStartDates,
 }: TodayFocusSelectionInput): TodayFocusSelection {
     const pools: FocusPools = {
         focused: activeTasks.filter((task) => isTaskFocusedNow(task, now)),
@@ -85,6 +87,7 @@ export function computeTodayFocusTasks({
         // order never reaches the payload; only their membership does.
         sortBy: 'default',
         prioritiesEnabled: false,
+        focusIncludeStartDates,
     });
 
     // Membership comes from the shared buckets; the ORDER is the payload's own

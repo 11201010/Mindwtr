@@ -1437,6 +1437,8 @@ export const zhHant: Record<string, string> = {
         'settings.autoArchiveNever': '從不（保留在已完成）',
         'settings.focusTaskLimit': '今日焦點上限',
         'settings.focusTaskLimitDesc': '每天可加星加入今日焦點的最大任務數。',
+        'settings.focusIncludeStartDates': '在今日顯示今天開始的任務',
+        'settings.focusIncludeStartDatesDesc': '開始日期仍決定任務何時可執行。關閉後，可執行的任務會顯示在下一步行動中，除非已到期、逾期或手動加入今日焦點。',
         'settings.defaultProjectFlowMode': '預設專案流程',
         'settings.defaultProjectFlowModeDesc': '僅在創建新專案時應用。現有專案保留當前流程。',
         'settings.projectFlowParallel': '並行',

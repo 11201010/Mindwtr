@@ -24,7 +24,8 @@
      "archive: defaults, stored values, and a value no option has: the second option reads '1 day', not '1 days' (core's count helper picks the singular noun, common.day)."
     ]
    }
-  ]
+  ],
+  "projected": "2026-10-01: New Focus toggle label, description, and default-on switch were inserted into hub observations from the current shared GTD model and RN row; test execution was not requested."
  },
  "now": "2026-09-24T14:00:00.000Z",
  "timeZone": "UTC",
@@ -772,6 +773,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -849,6 +852,11 @@
       "Pomodoro timer",
       false,
       false
+     ],
+     [
+      "Include tasks starting today in Today",
+      true,
+      false
      ]
     ],
     "inputs": [
@@ -883,6 +891,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -963,6 +973,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -1008,6 +1023,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -1088,6 +1105,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -1126,6 +1148,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -1206,6 +1230,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -1263,6 +1292,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -1343,6 +1374,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -1379,6 +1415,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -1459,6 +1497,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -1517,6 +1560,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -1597,6 +1642,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -1633,6 +1683,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -1713,6 +1765,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -1749,6 +1806,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -1829,6 +1888,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -1888,6 +1952,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -1968,6 +2034,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -2004,6 +2075,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -2084,6 +2157,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -2120,6 +2198,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -2200,6 +2280,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -2242,6 +2327,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -2322,6 +2409,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -2358,6 +2450,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -2438,6 +2532,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -2497,6 +2596,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -2577,6 +2678,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -2615,6 +2721,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -2695,6 +2803,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -2733,6 +2846,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -2813,6 +2928,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -2851,6 +2971,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -2931,6 +3053,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -2969,6 +3096,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -3051,6 +3180,11 @@
       "Pomodoro timer",
       true,
       false
+     ],
+     [
+      "Include tasks starting today in Today",
+      true,
+      false
      ]
     ],
     "inputs": [
@@ -3085,6 +3219,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -3161,6 +3297,11 @@
      [
       "Pomodoro timer",
       false,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
+      true,
       false
      ]
     ],
@@ -3207,6 +3348,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -3287,6 +3430,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -3323,6 +3471,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -3403,6 +3553,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -3489,6 +3644,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Default project flow",
      "Applies only when creating new projects. Existing projects keep their current flow.",
      "Parallel",
@@ -3569,6 +3726,11 @@
     "switches": [
      [
       "Pomodoro timer",
+      true,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
       true,
       false
      ]
@@ -3655,6 +3817,8 @@
      "3",
      "5",
      "10",
+     "Include tasks starting today in Today",
+     "Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.",
      "Standard-Projektablauf",
      "Gilt nur beim Erstellen neuer Projekte. Vorhandene Projekte behalten ihren aktuellen Ablauf.",
      "Parallel",
@@ -3731,6 +3895,11 @@
      [
       "Pomodoro-Timer",
       false,
+      false
+     ],
+     [
+      "Include tasks starting today in Today",
+      true,
       false
      ]
     ],

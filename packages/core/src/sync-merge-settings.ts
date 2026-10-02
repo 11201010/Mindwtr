@@ -634,7 +634,7 @@ export const sanitizeMergedSettingsForSync = (
             restoreGtdField('defaultCaptureMethod');
         }
 
-        for (const key of ['saveAudioAttachments', 'naturalLanguageDates'] as const) {
+        for (const key of ['saveAudioAttachments', 'naturalLanguageDates', 'focusIncludeStartDates'] as const) {
             if (next.gtd[key] !== undefined && typeof next.gtd[key] !== 'boolean') {
                 restoreGtdField(key);
             }

@@ -1479,6 +1479,8 @@ export const faOverrides: Record<string, string> = {
         'settings.autoArchiveNever': 'هرگز (در انجام‌شده نگه دار)',
         'settings.focusTaskLimit': 'حد تمرکز امروز',
         'settings.focusTaskLimitDesc': 'حداکثر تعداد کارهایی که می‌توانید برای تمرکز امروز ستاره بزنید.',
+        'settings.focusIncludeStartDates': 'نمایش کارهایی که امروز شروع می‌شوند در امروز',
+        'settings.focusIncludeStartDatesDesc': 'تاریخ شروع همچنان زمان در دسترس شدن کار را تعیین می‌کند. اگر خاموش باشد، کارهای در دسترس در اقدام‌های بعدی نمایش داده می‌شوند، مگر اینکه موعدشان رسیده یا گذشته باشد یا دستی به تمرکز افزوده شده باشند.',
         'settings.defaultProjectFlowMode': 'روند پیش‌فرض پروژه',
         'settings.defaultProjectFlowModeDesc': 'فقط هنگام ایجاد پروژه‌های جدید اعمال می‌شود. پروژه‌های موجود روند فعلی خود را حفظ می‌کنند.',
         'settings.projectFlowParallel': 'موازی',

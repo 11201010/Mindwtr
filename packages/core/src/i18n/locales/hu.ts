@@ -1460,6 +1460,8 @@ export const huOverrides: Record<string, string> = {
     'settings.autoArchiveNever': 'Soha (marad a Kész között)',
     'settings.focusTaskLimit': 'Mai fókusz limitje',
     'settings.focusTaskLimitDesc': 'A mai fókuszhoz csillagozható feladatok maximális száma.',
+    'settings.focusIncludeStartDates': 'A ma kezdődő feladatok megjelenítése a Mai nézetben',
+    'settings.focusIncludeStartDatesDesc': 'A kezdési dátum továbbra is meghatározza, mikortól végezhető el a feladat. Kikapcsolva az elérhető feladatok a Következő teendők között jelennek meg, kivéve ha esedékesek, lejártak vagy kézzel fókuszba kerültek.',
     'settings.defaultProjectFlowMode': 'Alapértelmezett projektfolyamat',
     'settings.defaultProjectFlowModeDesc': 'Csak új projektek létrehozásakor érvényes. A meglévő projektek megtartják a jelenlegi folyamatukat.',
     'settings.projectFlowParallel': 'Párhuzamos',

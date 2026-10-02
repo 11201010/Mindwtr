@@ -1456,6 +1456,8 @@ export const ukOverrides: Record<string, string> = {
     "settings.autoArchiveNever": "Ніколи (залишити в Готово)",
     "settings.focusTaskLimit": "Сьогоднішнє обмеження уваги",
     "settings.focusTaskLimitDesc": "Максимальна кількість завдань, які можна позначити для сьогоднішнього фокусу.",
+    "settings.focusIncludeStartDates": "Показувати в Сьогодні завдання, що починаються сьогодні",
+    "settings.focusIncludeStartDatesDesc": "Дата початку й далі визначає доступність завдання. Якщо вимкнути, доступні завдання з’являються в Наступних діях, крім тих, що мають термін сьогодні, прострочені або додані до фокусу вручну.",
     "settings.defaultProjectFlowMode": "Потік проекту за замовчуванням",
     "settings.defaultProjectFlowModeDesc": "Застосовується тільки при створенні нових проектів. Існуючі проекти зберігають поточний потік.",
     "settings.projectFlowParallel": "Паралельний",

@@ -1479,6 +1479,8 @@ export const svOverrides: Record<string, string> = {
         'settings.autoArchiveNever': 'Aldrig (behåll i Klar)',
         'settings.focusTaskLimit': 'Gräns för dagens fokus',
         'settings.focusTaskLimitDesc': 'Max antal uppgifter du kan stjärnmärka för dagens fokus.',
+        'settings.focusIncludeStartDates': 'Visa uppgifter som börjar idag i Idag',
+        'settings.focusIncludeStartDatesDesc': 'Startdatum styr fortfarande när en uppgift blir tillgänglig. När detta är av visas tillgängliga uppgifter i Nästa åtgärder, utom om de förfaller idag, är försenade eller har lagts till i fokus manuellt.',
         'settings.defaultProjectFlowMode': 'Standardflöde för projekt',
         'settings.defaultProjectFlowModeDesc': 'Gäller endast när nya projekt skapas. Befintliga projekt behåller sitt nuvarande flöde.',
         'settings.projectFlowParallel': 'Parallellt',

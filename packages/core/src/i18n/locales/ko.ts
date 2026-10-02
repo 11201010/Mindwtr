@@ -1401,6 +1401,8 @@ export const koOverrides: Record<string, string> = {
         'settings.autoArchiveNever': '없음(완료 상태로 유지)',
         'settings.focusTaskLimit': '오늘의 집중 한도',
         'settings.focusTaskLimitDesc': '오늘의 집중으로 별표를 지정할 수 있는 최대 할 일 수.',
+        'settings.focusIncludeStartDates': '오늘 시작하는 할 일을 오늘에 포함',
+        'settings.focusIncludeStartDatesDesc': '시작일은 계속 할 일이 가능한 시점을 결정합니다. 끄면 가능한 할 일은 마감일이 되었거나 지났거나 수동으로 집중에 추가한 경우를 제외하고 다음 행동에 표시됩니다.',
         'settings.defaultProjectFlowMode': '기본 프로젝트 흐름',
         'settings.defaultProjectFlowModeDesc': '새 프로젝트를 생성할 때만 적용됩니다. 기존 프로젝트는 현재 흐름을 유지합니다.',
         'settings.projectFlowParallel': '병렬',

@@ -368,6 +368,7 @@ export interface GtdSettings {
     defaultAreaMode?: DefaultTaskAreaMode;
     defaultAreaId?: string | null;
     focusTaskLimit?: number;
+    focusIncludeStartDates?: boolean;
     focusGroupBy?: FocusGroupBy;
     focusGroupByDefaultsVersion?: number;
     defaultProjectFlowMode?: DefaultProjectFlowMode;

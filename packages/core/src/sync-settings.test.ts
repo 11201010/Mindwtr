@@ -77,6 +77,29 @@ describe('Sync Logic', () => {
             expect(merged.settings.gtd?.inboxProcessing?.scheduleEnabled).toBe(true);
         });
 
+        it('retains an explicit Focus start-date choice when an older peer omits it', () => {
+            const local: AppData = {
+                ...mockAppData(),
+                settings: {
+                    gtd: { focusIncludeStartDates: false },
+                    syncPreferences: { gtd: true },
+                    syncPreferencesUpdatedAt: { gtd: '2024-01-01T00:00:00.000Z' },
+                },
+            };
+            const olderPeer: AppData = {
+                ...mockAppData(),
+                settings: {
+                    gtd: { focusTaskLimit: 5 },
+                    syncPreferences: { gtd: true },
+                    syncPreferencesUpdatedAt: { gtd: '2024-01-02T00:00:00.000Z' },
+                },
+            };
+            const merged = mergeAppData(local, olderPeer);
+            expect(merged.settings.gtd?.focusIncludeStartDates).toBe(false);
+            expect(merged.settings.gtd?.focusTaskLimit).toBe(5);
+            expect(mergeAppData(merged, olderPeer).settings.gtd?.focusIncludeStartDates).toBe(false);
+        });
+
         it('syncs clearing the default area mode as an explicit GTD setting', () => {
             const local: AppData = {
                 ...mockAppData(),

@@ -1556,6 +1556,8 @@ export const daOverrides: Record<string, string> = {
     'settings.autoArchiveNever': 'Aldrig (hold i Færdig)',
     'settings.focusTaskLimit': 'Dagens fokusgrænse',
     'settings.focusTaskLimitDesc': 'Maksimalt antal opgaver du kan stjerne for dagens fokus.',
+    'settings.focusIncludeStartDates': 'Vis opgaver, der starter i dag, i I dag',
+    'settings.focusIncludeStartDatesDesc': 'Startdatoer afgør stadig, hvornår en opgave bliver tilgængelig. Når dette er slået fra, vises tilgængelige opgaver i Næste handlinger, medmindre de forfalder i dag, er overskredet eller manuelt er sat i fokus.',
     'settings.defaultProjectFlowMode': 'Standard projektflow',
     'settings.defaultProjectFlowModeDesc':
         'Gælder kun ved oprettelse af nye projekter. Eksisterende projekter bevarer deres nuværende flow.',

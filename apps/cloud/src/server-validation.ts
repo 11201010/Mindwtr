@@ -432,6 +432,9 @@ export function validateAppData(
     if (isRecord(gtd) && gtd.archiveRetentionDays !== undefined && !isArchiveRetentionDays(gtd.archiveRetentionDays)) {
         return { ok: false, error: 'Invalid data: settings.gtd.archiveRetentionDays must be an integer from 0 to 36500' };
     }
+    if (isRecord(gtd) && gtd.focusIncludeStartDates !== undefined && typeof gtd.focusIncludeStartDates !== 'boolean') {
+        return { ok: false, error: 'Invalid data: settings.gtd.focusIncludeStartDates must be a boolean' };
+    }
     const attachments = settings && isRecord(settings) ? (settings as Record<string, unknown>).attachments : undefined;
     if (attachments !== undefined) {
         if (!isRecord(attachments)) {

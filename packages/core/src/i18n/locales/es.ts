@@ -1460,6 +1460,8 @@ export const esOverrides: Record<string, string> = {
 'settings.autoArchiveNever': "Nunca (mantener en Hecho)",
 'settings.focusTaskLimit': "Límite de enfoque de hoy",
 'settings.focusTaskLimitDesc': "Número máximo de tareas que puedes marcar para el enfoque de hoy.",
+'settings.focusIncludeStartDates': "Incluir en Hoy las tareas que empiezan hoy",
+'settings.focusIncludeStartDatesDesc': "La fecha de inicio sigue controlando cuándo está disponible una tarea. Si lo desactivas, las tareas disponibles aparecen en Próximas acciones, salvo que venzan hoy, estén vencidas o enfocadas manualmente.",
 'settings.defaultProjectFlowMode': "Flujo de proyecto predeterminado",
 'settings.defaultProjectFlowModeDesc': "Solo se aplica al crear proyectos nuevos. Los proyectos existentes conservan su flujo actual.",
 'settings.projectFlowParallel': "Paralelo",

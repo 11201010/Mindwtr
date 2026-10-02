@@ -1510,6 +1510,8 @@ export const jaOverrides: Record<string, string> = {
         'settings.autoArchiveNever': '移さない（「完了」に残す）',
         'settings.focusTaskLimit': '今日のフォーカスの上限',
         'settings.focusTaskLimitDesc': '今日のフォーカスとしてスターを付けられるタスクの最大数です。',
+        'settings.focusIncludeStartDates': '今日開始のタスクを「今日」に含める',
+        'settings.focusIncludeStartDatesDesc': '開始日は引き続きタスクが着手可能になる時期を決めます。オフにすると、着手可能なタスクは期限が今日・期限切れ・手動でフォーカスに追加した場合を除き、「次のアクション」に表示されます。',
         'settings.defaultProjectFlowMode': 'プロジェクトの既定の進め方',
         'settings.defaultProjectFlowModeDesc': '新しく作るプロジェクトにだけ適用されます。既存のプロジェクトの設定は変わりません。',
         'settings.projectFlowParallel': '並行',

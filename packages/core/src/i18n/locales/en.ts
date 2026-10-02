@@ -1504,6 +1504,8 @@ export const en: Record<string, string> = {
         'settings.autoArchiveNever': 'Never (keep in Done)',
         'settings.focusTaskLimit': "Today's focus limit",
         'settings.focusTaskLimitDesc': "Maximum tasks you can star for today's focus.",
+        'settings.focusIncludeStartDates': 'Include tasks starting today in Today',
+        'settings.focusIncludeStartDatesDesc': 'Start dates still control availability. When off, available tasks appear in Next Actions unless due, overdue, or manually focused.',
         'settings.defaultProjectFlowMode': 'Default project flow',
         'settings.defaultProjectFlowModeDesc': 'Applies only when creating new projects. Existing projects keep their current flow.',
         'settings.projectFlowParallel': 'Parallel',

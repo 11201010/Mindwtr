@@ -51,6 +51,7 @@ export const SETTINGS_SEARCH_PAGE_KEYS: Record<SettingsSearchPageId, readonly Se
         'autoArchive',
         'defaultScheduleTime',
         'focusTaskLimit',
+        'focusIncludeStartDates',
         'defaultProjectFlowMode',
         'features',
         { key: 'featureTimeline', section: 'features' },
