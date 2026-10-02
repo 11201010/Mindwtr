@@ -83,7 +83,9 @@ describe('native Project completed view', () => {
     it('binds paging to the exact project and controls while preserving the legacy detail shape', async () => {
         const host = createNativeHostContract();
         expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
-        useTaskStore.setState({ _allTasks: tasks, _allProjects: projects, _allSections: sections });
+        const revisedProjects = projects.map((item) => item.id === 'parallel'
+            ? { ...item, rev: 7, revBy: 'remote-device' } : item);
+        useTaskStore.setState({ _allTasks: tasks, _allProjects: revisedProjects, _allSections: sections });
         saveData.mockClear();
         const read = (projectId: string, showCompleted = true, completedCollapsed = false) => host.getProjectDetailView({
             projectId, offset: 0, limit: 2, showCompleted, completedCollapsed,
@@ -98,6 +100,7 @@ describe('native Project completed view', () => {
             const page = host.getProjectDetailView({ projectId: 'parallel', offset, limit: 2,
                 revision: first.value.revision, showCompleted: true, completedCollapsed: false });
             if (!page.ok) throw new Error(page.error.code);
+            expect(page.value.projectRevision).toBe('7:remote-device:2026-09-01T00:00:00.000Z');
             pages.push(...page.value.items);
         }
         expect(pages).toEqual(full.value.items);
@@ -116,8 +119,11 @@ describe('native Project completed view', () => {
             limit: NATIVE_HOST_MAX_WINDOW, showCompleted: false, completedCollapsed: false });
         if (!legacy.ok || !defaultView.ok) throw new Error('Project detail failed');
         expect(Object.keys(legacy.value).sort()).toEqual([
-            'items', 'metadata', 'mutationRevision', 'projectId', 'readOnly', 'revision', 'total', 'version',
+            'items', 'metadata', 'mutationRevision', 'projectId', 'projectRevision', 'readOnly', 'revision', 'total', 'version',
         ]);
+        expect(legacy.value.projectRevision).toBe('7:remote-device:2026-09-01T00:00:00.000Z');
+        expect(defaultView.value.projectRevision).toBe(legacy.value.projectRevision);
+        expect(defaultView.value.projectRevision).not.toBe(defaultView.value.mutationRevision);
         expect(legacy.value.items).toEqual(defaultView.value.items.map((item) => {
             if (item.type !== 'section') return item;
             const { collapsible: _collapsible, collapsed: _collapsed, ...section } = item;
@@ -125,7 +131,7 @@ describe('native Project completed view', () => {
         }));
         expect(legacy.value.revision).not.toBe(defaultView.value.revision);
         expect(legacy.value.mutationRevision).toBe(defaultView.value.mutationRevision);
-        useTaskStore.setState({ _allProjects: projects.map((item) => item.id === 'parallel' ? { ...item, title: 'renamed' } : item) });
+        useTaskStore.setState({ _allProjects: revisedProjects.map((item) => item.id === 'parallel' ? { ...item, title: 'renamed' } : item) });
         expect(host.getProjectDetailView({ projectId: 'parallel', offset: 0, limit: 2,
             revision: first.value.revision, showCompleted: true, completedCollapsed: false }))
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
