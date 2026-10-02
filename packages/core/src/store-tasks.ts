@@ -1005,7 +1005,9 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
     commitPreparedBoardTask: async ({ kind, before, after, deviceIdBefore, deviceIdToInitialize, respectReadOnly, strictBefore }) => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Board action conflicts with current data' };
         const persisted = (task: Task) => {
-            const values = taskToSqliteRow(task);
+            // Normal loading adds pushCount: 0 without saving it. A raw recovery
+            // row must match that default while retaining every other CAS field.
+            const values = taskToSqliteRow({ ...task, pushCount: task.pushCount ?? 0 });
             return taskFromSqliteRow(Object.fromEntries(TASK_SQLITE_COLUMNS.map((column, index) => [column, values[index]])));
         };
         const matches = (left: Task, right: Task) => taskEditValuesEqual(persisted(left), persisted(right));

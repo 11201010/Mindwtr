@@ -46,7 +46,10 @@ struct HistoryScreen: View {
                                   onFilters: { model.setHistoryPanel("filters") },
                                   onChipAction: { action in Task { await model.applyHistoryChipAction(action) } },
                                   onClear: clearFilters,
-                                  onCollapse: { id in Task { await model.toggleHistorySection(id) } })
+                                  onCollapse: { id in Task { await model.toggleHistorySection(id) } },
+                                  onDeleteTask: { id, revision in
+                                      Task { await model.deleteDoneTask(expectedID: id, expectedRevision: revision) }
+                                  })
             }
         }
         .task(id: scenePhase == .active) {

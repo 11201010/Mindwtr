@@ -310,6 +310,7 @@ export const daOverrides: Record<string, string> = {
     'task.completionUndoOutcomeUnknown': 'Det kunne ikke bekræftes, om fuldførelsen af opgaven blev fortrudt. Genstart Mindwtr for at genindlæse gemte data.',
     'task.archiveRestoreOutcomeUnknown': 'Det kunne ikke bekræftes, om den arkiverede opgave blev gendannet. Genstart Mindwtr for at genindlæse gemte data.',
     'task.archiveDeleteOutcomeUnknown': "Det kunne ikke bekræftes, om den arkiverede opgave blev slettet. Genstart Mindwtr for at genindlæse gemte data.",
+    'task.trashOutcomeUnknown': "Handlingen i papirkurven kunne ikke bekræftes. Genstart Mindwtr for at genindlæse gemte data.",
     'projects.archiveDeleteOutcomeUnknown': "Det kunne ikke bekræftes, om det arkiverede projekt blev slettet. Genstart Mindwtr for at genindlæse gemte data.",
     'projects.archiveRestoreOutcomeUnknown': "Det kunne ikke bekræftes, om det arkiverede projekt blev gendannet. Genstart Mindwtr for at genindlæse gemte data.",
     'task.cancelFailed': 'Opgaven kunne ikke annulleres',

@@ -156,7 +156,7 @@ export async function openSqliteHost(
     await new SqliteAdapter(clientOf(database)).saveData({
         tasks: [], projects: [], sections: [], areas: [], people: [], settings: {}, ...JSON.parse(JSON.stringify(seed)),
     });
-    const boot = async () => {
+    const boot = async (recoveryLoad = false) => {
         resetForTests();
         resetNativeRequestReceipts();
         useTaskStore.setState({
@@ -168,7 +168,7 @@ export async function openSqliteHost(
         await loadNativeRequestReceipts(client);
         const host = createNativeHostContract({ ...bindings, replayTokens: 'required' });
         value(await host.setLanguage({ storedLanguage: 'en', systemLocale: null }));
-        value(await host.activate({ writeSafetyReady: true }));
+        value(await host.activate({ writeSafetyReady: true, recoveryLoad }));
         return host;
     };
     let host = await boot();
@@ -183,13 +183,13 @@ export async function openSqliteHost(
         /** A folder for this host's files (copies of the database). */
         dir,
         /** Process death; `from` is a copy of the file taken earlier (the disk as it was then). */
-        async restart(from?: string) {
+        async restart(from?: string, options?: { recoveryLoad?: boolean }) {
             const status = getPersistenceStatus();
             if (status.queued || status.inFlight || status.immediate) throw new Error('Restart with a save still queued: flush the change first');
             database.close();
             if (from) copyFileSync(from, file);
             database = openDatabase(file);
-            host = await boot();
+            host = await boot(options?.recoveryLoad);
             return host;
         },
         /**

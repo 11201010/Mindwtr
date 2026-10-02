@@ -796,7 +796,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2157,6 +2157,9 @@ globalThis.MindwtrHost = {
     },
     taskDeleteUndoCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedTaskDeleteUndo(editorJson(json) as Parameters<typeof contract.commitPreparedTaskDeleteUndo>[0])));
+    },
+    taskDeleteUndoOutcome(json: string): string {
+        return submit(async () => unwrap(contract.taskDeleteUndoOutcome(editorJson(json) as Parameters<typeof contract.taskDeleteUndoOutcome>[0])));
     },
     taskCompletionPrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.prepareTaskCompletion(completionJson(json, 4_096) as Parameters<typeof contract.prepareTaskCompletion>[0])); });

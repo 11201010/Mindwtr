@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-done-task-trash`** — `packages/core/src/native-host-contract-board.ts`. `Native Done Task delete confirmed` with `outcome=confirmed` follows the durable Task Delete receipt for a Done Task moved to Trash. Failed persistence and unproven retries do not claim success. No Task content, identifiers, dates, or URLs are logged.
+
 - **`v1.3.4/ios-archive-project-trash`** — `packages/core/src/native-host-contract-project-delete.ts`. `Native archived Project delete confirmed` with `outcome=confirmed` follows the durable Project Delete receipt for an archived Project moved to Trash. Failed persistence and unproven retries do not claim success. No Project or Task content, identifiers, dates, or URLs are logged.
 
 - **`v1.3.4/ios-archive-task-trash`** — `packages/core/src/native-host-contract-board.ts`. `Native archived Task delete confirmed` with `outcome=confirmed` follows the durable Task Delete receipt for an archived Task moved to Trash. Failed persistence and unproven retries do not claim success. No Task content, identifiers, dates, or URLs are logged.

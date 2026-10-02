@@ -18694,4 +18694,97 @@ final class FoundationUITests: XCTestCase {
         app.terminate(); app.launch(); task175OpenTrash(app); task175CheckTrash(app, ids: ["task175-completed"]); app.terminate()
     }
 
+    private func task176OpenDone(_ app: XCUIApplication) {
+        let ready = NSPredicate { _, _ in app.buttons["tab-menu"].exists || app.buttons["trash-back"].exists || app.buttons["history-tab-done"].exists }
+        XCTAssertTrue(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 30) == .completed)
+        if app.buttons["trash-back"].exists { boardTap(app, "trash-back") }
+        if !app.buttons["history-tab-done"].exists {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30); boardTap(app, "tab-menu")
+            boardTap(app, "menu-history")
+        }
+        boardTap(app, "history-tab-done")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "done-scroll").firstMatch.waitForExistence(timeout: 30))
+    }
+
+    private func task176RevealDelete(_ app: XCUIApplication, _ id: String) -> XCUIElement {
+        let row = app.descendants(matching: .any).matching(identifier: "task-title-" + id).firstMatch
+        let list = app.descendants(matching: .any).matching(identifier: "done-scroll").firstMatch
+        for direction in [true, false] {
+            for _ in 0..<12 {
+                if row.isHittable && list.frame.intersection(app.frame).contains(CGPoint(x: row.frame.midX, y: row.frame.midY)) { break }
+                if direction { list.swipeUp() } else { list.swipeDown() }
+            }
+            if row.isHittable { break }
+        }
+        XCTAssertTrue(row.isHittable); row.swipeLeft()
+        let action = app.buttons["done-delete-" + id]; boardEnabled(action, timeout: 15)
+        return action
+    }
+
+    private func task176Delete(_ app: XCUIApplication, _ id: String, undo: Bool) {
+        task176RevealDelete(app, id).tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        if undo {
+            let button = app.buttons["task-delete-undo"]; boardEnabled(button, timeout: 5); button.tap()
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-" + id).firstMatch.waitForExistence(timeout: 30))
+        } else {
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-" + id).firstMatch.waitForNonExistence(timeout: 30))
+        }
+    }
+
+    private func task176Flow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task176OpenDone(app)
+        task176Delete(app, "task176-plain", undo: true)
+        task176Delete(app, "task176-parented", undo: false)
+        task176Delete(app, "task176-recurring", undo: true)
+        XCTAssertTrue(app.buttons["history-tab-done"].isSelected)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task176 Done Delete and Undo"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task176OpenDone(app)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task176-plain").firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task176-recurring").firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-title-task176-parented").firstMatch.exists)
+        app.terminate()
+    }
+
+    func testTask176DoneDeleteNormal() { task176Flow("4489ca55-b436-4ab0-b26c-1b234dc66dee") }
+    func testTask176DoneDeleteLargest() { task176Flow("0a2c93d3-46cf-4081-a96e-1fe21063716e") }
+
+    func testTask176DoneDeleteSwipeOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "8ebe03c1-71e6-4174-9ee6-8855d33b0194"]
+        app.launch(); task176OpenDone(app); _ = task176RevealDelete(app, "task176-plain")
+        XCTAssertFalse(app.alerts.firstMatch.exists); XCTAssertFalse(app.buttons["task-delete-undo"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task176 explicit Delete action"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    private func task176Fail(_ library: String, undo: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task176OpenDone(app); task176RevealDelete(app, "task176-plain").tap()
+        if undo { let button = app.buttons["task-delete-undo"]; boardEnabled(button, timeout: 5); button.tap() }
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+            XCTAssertFalse(app.buttons["history-tab-archived"].isEnabled)
+            boardTap(app, "persistence-retry")
+        }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); app.terminate()
+    }
+    func testTask176DoneDeleteFailedSave() { task176Fail("72700421-168e-4da3-8262-73d0be9ce0fc", undo: false) }
+    func testTask176DoneUndoFailedSave() { task176Fail("57393d32-bf88-41db-a80d-a1a9cf9b1c29", undo: true) }
+
+    private func task176Recovered(_ library: String, undo: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        for _ in 0..<2 {
+            app.launch(); task176OpenDone(app)
+            XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "task-title-task176-plain").firstMatch.exists, undo)
+            app.terminate()
+        }
+    }
+    func testTask176DoneDeleteColdRecovery() { task176Recovered("72700421-168e-4da3-8262-73d0be9ce0fc", undo: false) }
+    func testTask176DoneUndoColdRecovery() { task176Recovered("57393d32-bf88-41db-a80d-a1a9cf9b1c29", undo: true) }
+
 }

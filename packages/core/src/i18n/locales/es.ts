@@ -307,6 +307,7 @@ export const esOverrides: Record<string, string> = {
 'task.completionUndoOutcomeUnknown': 'No se pudo confirmar si se deshizo la finalización de la tarea. Reinicia Mindwtr para volver a cargar los datos guardados.',
 'task.archiveRestoreOutcomeUnknown': 'No se pudo confirmar si se restauró la tarea archivada. Reinicia Mindwtr para volver a cargar los datos guardados.',
 'task.archiveDeleteOutcomeUnknown': "No se pudo confirmar si se eliminó la tarea archivada. Reinicia Mindwtr para volver a cargar los datos guardados.",
+'task.trashOutcomeUnknown': "No se pudo confirmar la acción de la Papelera. Reinicia Mindwtr para volver a cargar los datos guardados.",
 'projects.archiveDeleteOutcomeUnknown': "No se pudo confirmar si se eliminó el proyecto archivado. Reinicia Mindwtr para volver a cargar los datos guardados.",
 'projects.archiveRestoreOutcomeUnknown': "No se pudo confirmar si se restauró el proyecto archivado. Reinicia Mindwtr para volver a cargar los datos guardados.",
 'task.cancelFailed': 'No se pudo cancelar la tarea',

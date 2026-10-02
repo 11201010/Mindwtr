@@ -14,7 +14,8 @@ struct ReferenceScreen: View {
                           onFilters: { model.referencePanel = "filters" },
                           onChipAction: { action in Task { await model.applyReferenceChipAction(action) } },
                           onClear: { Task { await model.editReferenceFilter(model.reference.object("filters").object("clearEdit")) } },
-                          onCollapse: { id in Task { await model.toggleReferenceSection(id) } })
+                          onCollapse: { id in Task { await model.toggleReferenceSection(id) } },
+                          onDeleteTask: nil)
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
@@ -55,47 +56,76 @@ struct StatusListContent: View {
     let onChipAction: (CoreObject) -> Void
     let onClear: () -> Void
     let onCollapse: (String) -> Void
+    let onDeleteTask: ((String, String) -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
             if current { activeFilters }
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    if let error = error {
-                        Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
-                            .accessibilityIdentifier(prefix + "-error")
-                        Button(model.label("common.retry")) { onRetry() }
-                            .rnFont(14, .semibold).frame(minHeight: 44).disabled(model.busy || model.retryNeeded)
-                            .accessibilityIdentifier(prefix + "-retry")
-                    }
-                    if current {
-                        let items = data.objects("items")
-                        ForEach(items.map(ListRowEntry.init)) { entry in
-                            let item = entry.item
-                            if item.text("type") == "task" {
-                                let row = item.object("row")
-                                TaskCard(row: row, model: model, palette: palette, readOnly: disableStatus || row.flag("readOnly"),
-                                         onProject: { project in Task { await model.openProject(project) } })
-                                    .id(entry.id)
-                            } else if item.text("type") == "section" { section(item) }
-                        }
-                        if items.count < data.number("total") {
-                            Button { onMore() } label: {
-                                Text(model.label("common.more")).rnFont(12, .semibold).padding(.horizontal, 12).frame(minHeight: 44)
-                                    .background(palette.filter, in: Capsule()).contentShape(Capsule())
-                            }
-                            .buttonStyle(.plain).disabled(!enabled).accessibilityIdentifier(prefix + "-more")
-                        }
-                        if items.isEmpty { emptyState }
-                    }
-                    if model.busy || (!current && error == nil) {
-                        ProgressView().frame(maxWidth: .infinity).padding(12)
-                    }
+            if prefix == "done" {
+                List {
+                    Group { contentRows }
+                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                 }
-                .padding(16)
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .accessibilityIdentifier(prefix + "-scroll")
+                .refreshable { await model.refresh() }
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) { contentRows }
+                        .padding(16)
+                }
+                .accessibilityIdentifier(prefix + "-scroll")
+                .refreshable { await model.refresh() }
             }
-            .accessibilityIdentifier(prefix + "-scroll")
-            .refreshable { await model.refresh() }
+        }
+    }
+
+    @ViewBuilder private var contentRows: some View {
+        if let error = error {
+            Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                .accessibilityIdentifier(prefix + "-error")
+            Button(model.label("common.retry")) { onRetry() }
+                .rnFont(14, .semibold).frame(minHeight: 44)
+                .disabled(model.busy || (model.retryNeeded && !model.historyDoneActionPending))
+                .accessibilityIdentifier(prefix + "-retry")
+        }
+        if current {
+            let items = data.objects("items")
+            ForEach(items.map(ListRowEntry.init)) { entry in
+                let item = entry.item
+                if item.text("type") == "task" {
+                    let row = item.object("row")
+                    TaskCard(row: row, model: model, palette: palette, readOnly: disableStatus || row.flag("readOnly"),
+                             onProject: { project in Task { await model.openProject(project) } })
+                        .id(entry.id)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            if let onDeleteTask, enabled, !row.flag("readOnly"),
+                               !row.text("id").isEmpty, !row.text("taskRevision").isEmpty {
+                                Button {
+                                    onDeleteTask(row.text("id"), row.text("taskRevision"))
+                                } label: {
+                                    Label(model.label("common.delete"), systemImage: "trash")
+                                }
+                                .tint(palette.danger)
+                                .accessibilityIdentifier("done-delete-" + row.text("id"))
+                            }
+                        }
+                } else if item.text("type") == "section" { section(item) }
+            }
+            if items.count < data.number("total") {
+                Button { onMore() } label: {
+                    Text(model.label("common.more")).rnFont(12, .semibold).padding(.horizontal, 12).frame(minHeight: 44)
+                        .background(palette.filter, in: Capsule()).contentShape(Capsule())
+                }
+                .buttonStyle(.plain).disabled(!enabled).accessibilityIdentifier(prefix + "-more")
+            }
+            if items.isEmpty { emptyState }
+        }
+        if model.busy || (!current && error == nil) {
+            ProgressView().frame(maxWidth: .infinity).padding(12)
         }
     }
 
