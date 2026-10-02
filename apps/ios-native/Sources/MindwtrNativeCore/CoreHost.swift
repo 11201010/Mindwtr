@@ -3538,8 +3538,7 @@ private final class Engine: @unchecked Sendable {
             NSLog("Native iOS Project duplicated releaseCheck=v1.3.4/ios-project-duplicate outcome=confirmed")
         }
         if command.method == "projectLifecycleCommit", case .success(let value) = terminal {
-            let result = (try? NativeJSON.jsonObject(with: Data(value.utf8))) as? [String: Any]
-            let action = result?["status"] as? String == "archived" ? "complete" : "reactivate"
+            let action = (try? projectLifecycleAction(command)) ?? "unknown"
 #if DEBUG
             faults?.commandDiagnostic?("projectLifecycle")
 #endif
@@ -5581,7 +5580,7 @@ private final class Engine: @unchecked Sendable {
               result["id"] as? String == request["projectId"] as? String,
               result["id"] as? String == after["id"] as? String,
               result["status"] as? String == after["status"] as? String,
-              ((request["action"] as? String == "complete" && result["status"] as? String == "archived")
+              ((["complete", "cancel"].contains(request["action"] as? String ?? "") && result["status"] as? String == "archived")
                 || (request["action"] as? String == "reactivate" && result["status"] as? String == "active")) else {
             throw HostFailure("Malformed Project lifecycle acknowledgment")
         }
@@ -5685,7 +5684,7 @@ private final class Engine: @unchecked Sendable {
               let id = request["requestId"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
               let projectID = request["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 200,
               let revision = request["projectRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 200,
-              let action = request["action"] as? String, ["complete", "reactivate"].contains(action) else {
+              let action = request["action"] as? String, ["complete", "cancel", "reactivate"].contains(action) else {
             throw HostFailure("INVALID_INPUT: Project lifecycle needs an exact saved revision, action, and lowercase UUID")
         }
         return [text]
@@ -5716,6 +5715,17 @@ private final class Engine: @unchecked Sendable {
         let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
         _ = try projectLifecycleRequestArguments(String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
         return [args[0]]
+    }
+
+    private func projectLifecycleAction(_ command: PendingCommand) throws -> String {
+        let args = try projectLifecycleJournalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let action = request["action"] as? String else {
+            throw HostFailure("Malformed Project lifecycle journal")
+        }
+        return action
     }
 
     private func journalArguments(_ command: PendingCommand, checkingEditorSnapshot: Bool = true) throws -> [Any] {

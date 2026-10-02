@@ -246,11 +246,11 @@ export type PreparedProjectDuplicate = {
     result: { id: string; message: string };
 };
 
-/** One frozen RN Project Complete/Reactivate transition and child-row receipt. */
+/** One frozen RN Project Complete/Cancel/Reactivate transition and child-row receipt. */
 export type PreparedProjectLifecycle = {
     version: 1;
     request: { requestId: string; projectId: string; projectRevision: string;
-        action: 'complete' | 'reactivate' };
+        action: 'complete' | 'cancel' | 'reactivate' };
     scope: { project: Project; tasks: Task[]; sections: Section[] };
     effect: { project: { before: Project; after: Project };
         tasks: { before: Task; after: Task }[]; sections: { before: Section; after: Section }[] };

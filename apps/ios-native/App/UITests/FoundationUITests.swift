@@ -17216,4 +17216,174 @@ final class FoundationUITests: XCTestCase {
     func testTask154FocusPriorityRegroupNormal() { task154FocusPriorityRegroup("8d77cb7b-8050-469f-8002-ac13ce7f00c1") }
     func testTask154FocusPriorityRegroupLargest() { task154FocusPriorityRegroup("f4542b36-c84e-47c5-8035-5a69b830b0aa") }
 
+    private func task155OpenProject(_ app: XCUIApplication, archived: Bool) {
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        if archived {
+            let closed = app.buttons["projects-section-archived"]
+            revealPagedElement(app, closed, in: app.scrollViews["projects-scroll"])
+            boardEnabled(closed)
+            if closed.value as? String == "Expand" { closed.tap() }
+        }
+        let row = app.buttons["project-open-task155-project"]
+        revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+        boardEnabled(row); row.tap()
+        boardEnabled(app.buttons["project-actions-menu"], timeout: 30)
+        XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task155 project")
+    }
+
+    private func task155CancelConfirmation(_ app: XCUIApplication) -> XCUIElement {
+        boardTap(app, "project-actions-menu")
+        let cancel = app.buttons.matching(identifier: "project-cancel-button").firstMatch
+        boardEnabled(cancel)
+        XCTAssertEqual(cancel.label, "Cancel project")
+        cancel.tap()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        XCTAssertEqual(alert.label, "Cancel project?")
+        XCTAssertTrue(alert.staticTexts["Cancel this project and its unfinished tasks? Completed work and project history will be kept."].exists)
+        XCTAssertTrue(alert.buttons["Cancel"].exists)
+        let confirm = alert.buttons.matching(identifier: "project-cancel-confirm").firstMatch
+        XCTAssertTrue(confirm.exists)
+        XCTAssertEqual(confirm.label, "Cancel project")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Project Cancel confirmation"; shot.lifetime = .keepAlways; add(shot)
+        return alert
+    }
+
+    private func task155TapCancel(_ app: XCUIApplication) {
+        let confirm = task155CancelConfirmation(app).buttons.matching(identifier: "project-cancel-confirm").firstMatch
+        boardEnabled(confirm); confirm.tap()
+    }
+
+    private func task155RevealProjectTop(_ app: XCUIApplication) {
+        let scroll = app.scrollViews["project-detail-scroll"]
+        let details = app.buttons["project-details-toggle"]
+        for _ in 0..<15 {
+            if details.exists && details.isHittable { break }
+            scroll.swipeDown()
+        }
+        boardEnabled(details)
+    }
+
+    private func task155AssertCancelled(_ app: XCUIApplication, screenshot: String) {
+        let scroll = app.scrollViews["project-detail-scroll"]
+        let completed = app.buttons["project-completed-toggle"]
+        if completed.exists && completed.value as? String == "Expand" {
+            revealPagedElement(app, completed, in: scroll)
+            boardEnabled(completed); completed.tap()
+        }
+        for id in ["task155-task", "task155-waiting", "task155-someday",
+                   "task155-inbox", "task155-recurring", "task155-section-only"] {
+            let title = app.buttons["task-title-" + id]
+            revealPagedElement(app, title, in: scroll)
+            XCTAssertTrue(title.waitForExistence(timeout: 30), id)
+            let badge = app.buttons["task-status-" + id]
+            XCTAssertTrue(badge.waitForExistence(timeout: 30), id)
+            XCTAssertEqual(badge.label, "Change status. Current status: Archived", id)
+            XCTAssertFalse(badge.isEnabled, "The cancelled detail must immediately make child actions read-only: \(id)")
+        }
+        task155RevealProjectTop(app)
+        let details = app.buttons["project-details-toggle"]
+        revealPagedElement(app, details, in: scroll)
+        boardEnabled(details)
+        if details.value as? String == "Expand" { details.tap() }
+        let status = app.staticTexts["project-detail-meta-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 30))
+        XCTAssertEqual(status.label, "Cancelled")
+        let rename = app.buttons["project-rename-open"]
+        XCTAssertTrue(rename.waitForExistence(timeout: 30))
+        XCTAssertFalse(rename.isEnabled)
+        boardTap(app, "project-actions-menu")
+        boardEnabled(app.buttons.matching(identifier: "project-reactivate-button").firstMatch)
+        XCTAssertFalse(app.buttons.matching(identifier: "project-cancel-button").firstMatch.exists)
+        XCTAssertFalse(app.buttons.matching(identifier: "project-archive-button").firstMatch.exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = screenshot; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func task155AssertRestoredChildren(_ app: XCUIApplication) {
+        task155RevealProjectTop(app)
+        let scroll = app.scrollViews["project-detail-scroll"]
+        for (id, status) in [
+            ("task155-task", "Next"), ("task155-waiting", "Waiting"),
+            ("task155-someday", "Someday"), ("task155-inbox", "Inbox"),
+            ("task155-recurring", "Next"), ("task155-section-only", "Next"),
+        ] {
+            let badge = app.buttons["task-status-" + id]
+            revealPagedElement(app, badge, in: scroll)
+            XCTAssertTrue(badge.waitForExistence(timeout: 10), id)
+            XCTAssertEqual(badge.label, "Change status. Current status: \(status)", id)
+            XCTAssertTrue(badge.isEnabled, "Restored child must immediately regain its action: \(id)")
+        }
+    }
+
+    func testTask155ProjectCancelDismiss() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "01abc447-cf5c-449f-b623-727109044180"]
+        app.launch(); task155OpenProject(app, archived: false)
+        let alert = task155CancelConfirmation(app)
+        alert.buttons["Cancel"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        boardEnabled(app.buttons["project-rename-open"])
+        boardTap(app, "project-actions-menu")
+        boardEnabled(app.buttons.matching(identifier: "project-cancel-button").firstMatch)
+        XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task155 project")
+        app.terminate()
+    }
+
+    private func task155CancelFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task155OpenProject(app, archived: false); task155TapCancel(app)
+        task155AssertCancelled(app, screenshot: "Cancelled Project detail")
+        app.terminate()
+    }
+
+    private func task155ReactivateFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task155OpenProject(app, archived: true)
+        task155AssertCancelled(app, screenshot: "Cancelled Project before Reactivate")
+        let reactivate = app.buttons.matching(identifier: "project-reactivate-button").firstMatch
+        boardEnabled(reactivate); reactivate.tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        let rename = app.buttons["project-rename-open"]
+        boardEnabled(rename, timeout: 30)
+        XCTAssertEqual(app.staticTexts["project-detail-meta-status"].label, "Active")
+        task155AssertRestoredChildren(app)
+        boardTap(app, "project-actions-menu")
+        boardEnabled(app.buttons.matching(identifier: "project-cancel-button").firstMatch)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Reactivated cancelled Project"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testTask155ProjectCancelNormal() { task155CancelFlow("01abc447-cf5c-449f-b623-727109044180") }
+    func testTask155ProjectReactivateNormal() { task155ReactivateFlow("01abc447-cf5c-449f-b623-727109044180") }
+    func testTask155ProjectCancelLargest() { task155CancelFlow("87159377-5f95-440d-b385-0aedad805e78") }
+    func testTask155ProjectReactivateLargest() { task155ReactivateFlow("87159377-5f95-440d-b385-0aedad805e78") }
+
+    func testTask155ProjectFailedCancel() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "1eb454e2-ffea-4123-b599-42ee6ac57a3d"]
+        app.launch(); task155OpenProject(app, archived: false); task155TapCancel(app)
+        for _ in 0..<2 {
+            let retry = app.buttons.matching(identifier: "project-lifecycle-retry").firstMatch
+            boardEnabled(retry, timeout: 30)
+            XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task155 project")
+            XCTAssertFalse(app.buttons["project-back"].isEnabled)
+            retry.tap()
+        }
+        boardEnabled(app.buttons.matching(identifier: "project-lifecycle-retry").firstMatch, timeout: 30)
+        app.terminate()
+    }
+
+    func testTask155ProjectColdCancelRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "1eb454e2-ffea-4123-b599-42ee6ac57a3d"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["project-detail-title"].waitForExistence(timeout: 30))
+        XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task155 project")
+        task155AssertCancelled(app, screenshot: "Cold recovered Cancelled Project")
+        app.terminate()
+    }
+
 }

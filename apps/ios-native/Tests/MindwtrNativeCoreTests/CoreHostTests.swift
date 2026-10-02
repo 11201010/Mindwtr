@@ -26076,4 +26076,192 @@ final class CoreHostTests: XCTestCase {
         await recovered.close()
     }
 
+    func testProjectCancelFailedCommitExactRetryAndReactivate() async throws {
+        let taskID = try await seedProjectDuplicateSource()
+        let completedAt = "2026-01-01T12:00:00.000Z"
+        let seed = try SQLiteBridge(url: database)
+        _ = try seed.execute("INSERT INTO tasks (id, title, status, projectId, sectionId, orderNum, tags, contexts, isFocusedToday, showFutureRecurrence, suppressMindwtrReminders, pushCount, completedAt, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                             parametersJSON: json(["lifecycle-cancel-done", "Completed history", "done", "destination-project-a", "destination-section-a", 41,
+                                                   "[]", "[]", 0, 0, 0, 0, completedAt, completedAt, completedAt, 1]))
+        // This fixture tests Cancel's treatment of completed history, so
+        // disable the independent startup auto-archive pass before boot.
+        let settingsRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(seed.execute("SELECT data FROM settings WHERE id = 1").utf8)) as? [[String: Any]])
+        var settings = try object(XCTUnwrap(settingsRows.first?["data"] as? String))
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        gtd["autoArchiveDays"] = 0
+        settings["gtd"] = gtd
+        _ = try seed.execute("UPDATE settings SET data = ? WHERE id = 1", parametersJSON: json([json(settings)]))
+        seed.close()
+        let faults = HostIOFaults()
+        var confirmations = 0
+        faults.commandDiagnostic = { if $0 == "projectLifecycle" { confirmations += 1 } }
+        let core = host(faults)
+        _ = try await core.start()
+        XCTAssertEqual(try storedTask("lifecycle-cancel-done")["status"] as? String, "done",
+                       "The startup archive pass must not consume the completed-history fixture")
+        let request = try await projectLifecycleRequest(core, action: "cancel")
+        let baselineDB = try SQLiteBridge(url: database)
+        let baseline = try nineTableSnapshot(baselineDB)
+        baselineDB.close()
+        var writes = 0
+        faults.beforeSQL = { _ in writes += 1 }
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("projectLifecycleWrite", argumentsJSON: json([json(request.merging(["action": "dismiss"]) { _, new in new })]))
+        }
+        XCTAssertEqual(writes, 0)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Cancel COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("projectLifecycleWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try Data(contentsOf: journal)
+        let envelope = try projectLifecycleJournal()
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        XCTAssertEqual(try json(XCTUnwrap(prepared["request"])), try json(request))
+        XCTAssertEqual(prepared["version"] as? Int, 1)
+        let effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        let project = try XCTUnwrap(effect["project"] as? [String: Any])
+        let after = try XCTUnwrap(project["after"] as? [String: Any])
+        let frozenAt = try XCTUnwrap(prepared["updateAt"] as? String)
+        XCTAssertEqual(after["status"] as? String, "archived")
+        XCTAssertEqual(after["cancelledAt"] as? String, frozenAt)
+        let failedDB = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(failedDB), baseline)
+        failedDB.close()
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        try assertJournalContentUnchanged(pending)
+        faults.beforeSQL = nil
+        let retried = try await core.retryPending()
+        let result = try object(XCTUnwrap(retried))
+        XCTAssertEqual(Set(result.keys), Set(["id", "status"]))
+        XCTAssertEqual(result["id"] as? String, "destination-project-a")
+        XCTAssertEqual(result["status"] as? String, "archived")
+        XCTAssertEqual(try projectRows("destination-project-a").first?["cancelledAt"] as? String, frozenAt)
+        let cancelledTask = try storedTask(taskID)
+        XCTAssertEqual(cancelledTask["status"] as? String, "archived")
+        XCTAssertEqual(cancelledTask["cancelledAt"] as? String, frozenAt)
+        XCTAssertTrue(cancelledTask["completedAt"] is NSNull)
+        let completedTask = try storedTask("lifecycle-cancel-done")
+        XCTAssertEqual(completedTask["status"] as? String, "done")
+        XCTAssertEqual(completedTask["completedAt"] as? String, completedAt)
+        XCTAssertTrue(completedTask["cancelledAt"] is NSNull)
+        XCTAssertEqual(confirmations, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let reactivate = try await projectLifecycleRequest(core, action: "reactivate")
+        let reopened = try object(await core.call("projectLifecycleWrite", argumentsJSON: json([json(reactivate)])))
+        XCTAssertEqual(reopened["status"] as? String, "active")
+        XCTAssertTrue(try projectRows("destination-project-a").first?["cancelledAt"] is NSNull)
+        XCTAssertEqual(try storedTask(taskID)["status"] as? String, "next")
+        XCTAssertEqual(try storedTask("lifecycle-cancel-done")["status"] as? String, "done")
+        XCTAssertEqual(confirmations, 2)
+        await core.close()
+    }
+
+    func testProjectCancelColdFailedCommitChangedChildRefusesWithoutWrites() async throws {
+        let taskID = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectLifecycleRequest(writer, action: "cancel")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Cancel COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectLifecycleWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try Data(contentsOf: journal)
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE tasks SET title = ?, rev = rev + 1 WHERE id = ?", parametersJSON: json(["Newer child title", taskID]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+        XCTAssertEqual(writes, 0)
+        try assertJournalContentUnchanged(pending)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        await reopened.close()
+    }
+
+    func testProjectCancelColdTerminalAckKeepsLaterProjectEdit() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectLifecycleRequest(writer, action: "cancel")
+        faults.journalRemove = { throw HostFailure("Injected Cancel terminal cleanup failure") }
+        await expectFailure("terminal cleanup failure") {
+            _ = try await writer.call("projectLifecycleWrite", argumentsJSON: json([json(request)]))
+        }
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertNotNil(saved["terminal"])
+        let envelope = try projectLifecycleJournal()
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        let result = try XCTUnwrap(prepared["result"] as? [String: Any])
+        XCTAssertEqual(result["status"] as? String, "archived")
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET title = ?, rev = rev + 1 WHERE id = ?", parametersJSON: json(["Later cancelled title", "destination-project-a"]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "projectLifecycleCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(result))
+        XCTAssertEqual(writes, 0)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+    }
+
+    func testProjectCancelColdLostReplyExactAfterZeroWrites() async throws {
+        _ = try await seedProjectDuplicateSource()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectLifecycleRequest(writer, action: "cancel")
+        var journalWrites = 0
+        faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Cancel lost reply") } }
+        await expectFailure("lost reply") {
+            _ = try await writer.call("projectLifecycleWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertNil(try object(String(contentsOf: journal))["terminal"])
+        let envelope = try projectLifecycleJournal()
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        let result = try XCTUnwrap(prepared["result"] as? [String: Any])
+        XCTAssertEqual(result["status"] as? String, "archived")
+        await writer.close()
+        let beforeDB = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(beforeDB)
+        beforeDB.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:tasks|projects|sections)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "projectLifecycleCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(result))
+        XCTAssertEqual(writes, 0)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+    }
+
 }

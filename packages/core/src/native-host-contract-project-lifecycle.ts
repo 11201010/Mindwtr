@@ -37,7 +37,7 @@ const readRequest = (value: unknown): NativeProjectLifecycleRequest | null => {
         && exact(input, ['requestId', 'projectId', 'projectRevision', 'action'])
         && typeof input.requestId === 'string' && UUID.test(input.requestId)
         && text(input.projectId) && text(input.projectRevision)
-        && (input.action === 'complete' || input.action === 'reactivate')
+        && (input.action === 'complete' || input.action === 'cancel' || input.action === 'reactivate')
         ? input as NativeProjectLifecycleRequest : null;
 };
 const validProjectRow = (value: unknown, id: string): value is Project => validProject(value, id)
@@ -68,13 +68,13 @@ const readEnvelope = (input: unknown): NativeProjectLifecycleEnvelope | null => 
         || !Array.isArray(raw.effect.tasks) || !Array.isArray(raw.effect.sections)
         || !validDevice(raw) || !record(raw.result) || !exact(raw.result, ['id', 'status'])
         || raw.result.id !== request.projectId
-        || raw.result.status !== (request.action === 'complete' ? 'archived' : 'active')) return null;
+        || raw.result.status !== (request.action === 'reactivate' ? 'active' : 'archived')) return null;
     try {
         const prepared = raw as unknown as NativePreparedProjectLifecycle;
         const { scope, effect } = prepared;
         if (!validProjectRow(scope.project, request.projectId)
             || scope.project.purgedAt || revisionOf(scope.project) !== request.projectRevision
-            || request.action === 'complete' && scope.project.status === 'archived'
+            || request.action !== 'reactivate' && scope.project.status === 'archived'
             || request.action === 'reactivate' && scope.project.status !== 'archived'
             || !unique(scope.tasks) || !unique(scope.sections)
             || scope.sections.some((row) => !validSection(row, row.id, request.projectId))
@@ -117,7 +117,7 @@ export function createProjectLifecycleMethods(deps: {
             const target = state._projectsById.get(request.projectId);
             if (!target || target.deletedAt || target.purgedAt
                 || revisionOf(target) !== request.projectRevision
-                || request.action === 'complete' && target.status === 'archived'
+                || request.action !== 'reactivate' && target.status === 'archived'
                 || request.action === 'reactivate' && target.status !== 'archived')
                 return fail('STALE_REVISION', 'Project changed since the detail was read');
             const sections = state._allSections.filter((row) => row.projectId === target.id);
@@ -131,7 +131,7 @@ export function createProjectLifecycleMethods(deps: {
             const prepared = jsonSafe<PreparedProjectLifecycle>({ version: 1, request, scope, effect,
                 deviceIdBefore: state.settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null,
-                updateAt, result: { id: target.id, status: request.action === 'complete' ? 'archived' : 'active' } });
+                updateAt, result: { id: target.id, status: request.action === 'reactivate' ? 'active' : 'archived' } });
             return prepared && readEnvelope({ request, prepared })
                 ? { ok: true, value: { kind: 'prepared', prepared } }
                 : fail('INVALID_INPUT', 'Project lifecycle exceeds the bounded native journal');

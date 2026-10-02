@@ -790,6 +790,9 @@ struct ProjectDetailScreen: View {
     @State private var deleteProjectConfirmPresented = false
     @State private var deleteProjectConfirmedID = ""
     @State private var deleteProjectConfirmedRevision = ""
+    @State private var cancelProjectConfirmPresented = false
+    @State private var cancelProjectConfirmedID = ""
+    @State private var cancelProjectConfirmedRevision = ""
     @State private var projectDateDraft = Date()
 
     var body: some View {
@@ -838,6 +841,18 @@ struct ProjectDetailScreen: View {
                         .disabled(!model.projectLifecycleOpenEnabled)
                         .accessibilityHint(model.projectLifecycleAction == "complete" ? model.label("projects.archiveHelp") : "")
                         .accessibilityIdentifier(model.projectLifecycleAction == "complete" ? "project-archive-button" : "project-reactivate-button")
+                        if model.projectLifecycleAction == "complete" {
+                            Button(role: .destructive) {
+                                guard model.projectLifecycleOpenEnabled else { return }
+                                cancelProjectConfirmedID = model.projectHeader.text("id")
+                                cancelProjectConfirmedRevision = model.projectDetail.text("projectRevision")
+                                cancelProjectConfirmPresented = true
+                            } label: {
+                                Label(model.label("projects.cancel"), systemImage: "xmark.circle")
+                            }
+                            .disabled(!model.projectLifecycleOpenEnabled)
+                            .accessibilityIdentifier("project-cancel-button")
+                        }
                         Button {
                             let id = model.projectHeader.text("id")
                             let revision = model.projectDetail.text("projectRevision")
@@ -1168,6 +1183,7 @@ struct ProjectDetailScreen: View {
                 notesFocused = false
                 discardNotesConfirm = false
                 deleteProjectConfirmPresented = false
+                cancelProjectConfirmPresented = false
             }
         }
         .onChange(of: model.projectSectionsPresented) {
@@ -1189,6 +1205,15 @@ struct ProjectDetailScreen: View {
             }
             .accessibilityIdentifier("project-delete-confirm")
         } message: { Text(model.label("projects.deleteConfirm")) }
+        .alert(model.label("projects.cancelConfirmTitle"), isPresented: $cancelProjectConfirmPresented) {
+            Button(model.label("common.cancel"), role: .cancel) {}
+            Button(model.label("projects.cancel"), role: .destructive) {
+                let id = cancelProjectConfirmedID
+                let revision = cancelProjectConfirmedRevision
+                Task { await model.changeProjectLifecycle(expectedID: id, expectedRevision: revision, action: "cancel") }
+            }
+            .accessibilityIdentifier("project-cancel-confirm")
+        } message: { Text(model.label("projects.cancelConfirmBody")) }
         .alert(model.label("attachments.title"), isPresented: Binding(
             get: { model.projectAttachmentOpenError != nil },
             set: { if !$0 { model.dismissProjectAttachmentOpenError() } })) {
