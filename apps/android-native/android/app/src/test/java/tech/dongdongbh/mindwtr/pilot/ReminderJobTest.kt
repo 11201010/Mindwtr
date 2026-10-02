@@ -32,8 +32,7 @@ class ReminderJobTest {
         boot = { events += "boot"; calls },
         post = { events += "post" },
         refreshWidgets = { events += "widgets" },
-        log = { message, fields -> lines += "$message ${fields.optString("job")} ${fields.optString("outcome")} ${fields.optString("error")}".trim() },
-        schedule = { events += "schedule ${it.getInt("id")} ${it.getString("key")}" })
+        log = { message, fields -> lines += "$message ${fields.optString("job")} ${fields.optString("outcome")} ${fields.optString("error")}".trim() })
 
     @Test fun doneCompletesThroughCoreThenPlansTheAlarmsAgain() {
         assertEquals(CoreJob.Outcome.Success, run(CoreJob.REMINDER_DONE, mapOf("requestId" to "r1", "taskId" to "t1")))
@@ -58,10 +57,11 @@ class ReminderJobTest {
         assertEquals(listOf("Native Android core work reminderDone failure INVALID_INPUT"), lines)
     }
 
-    @Test fun snoozeSendsTheTapTimeWithItsRequestAndMakesCoresAlarm() {
+    @Test fun snoozeSendsTheTapTimeWithItsRequestAndLeavesTheAlarmToTheEngine() {
+        // The engine makes the alarm against core's native state (planReminderSnooze), once per request; the job makes none itself.
         val details = JSONObject().put("title", "Pay rent").put("snooze_interval", 10).toString()
         assertEquals(CoreJob.Outcome.Success, run(CoreJob.REMINDER_SNOOZE, mapOf("requestId" to "r2", "requestedAt" to "1790000000000", "details" to details)))
-        assertEquals(listOf("boot", "recover", "drain", "snooze r2 1790000000000 Pay rent", "schedule 1073741900 snooze:r2", "widgets"), events)
+        assertEquals(listOf("boot", "recover", "drain", "snooze r2 1790000000000 Pay rent", "widgets"), events)
     }
 
     @Test fun aRescheduleRunsCoresPlanInItsMode() {

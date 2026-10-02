@@ -4037,7 +4037,8 @@ console.log('Entry points: RN\'s alias, links on the build\'s scheme, text share
     assert.doesNotMatch(code(remindersKt), /CoreWork\.enqueue\(/, 'every reminder receiver queues durably');
     assert.equal([...code(remindersKt).matchAll(/CoreWork\.enqueueDurably\(this, context,/g)].length, 3, 'Done, Snooze and the reschedule');
     assert.match(hostEntry, /reminderDone\(requestId: string, taskId: string\): string \{\s+return submit\(async \(\) => taskResult\('reminderDone', await contract\.completeReminderTask\(\{ requestId, taskId \}\)\)\);/);
-    assert.match(hostEntry, /reminderSnooze\(json: string\): string \{\s+return submit\(async \(\) => taskResult\('reminderSnooze', await contract\.snoozeReminder\(JSON\.parse\(json\)\)\)\);/);
+    // Snooze's alarm is made in the engine against the native state (core's planReminderSnooze), before the journaled reply.
+    assert.match(hostEntry, /reminderSnooze\(json: string\): string \{\s+return submit\(async \(\) => \{\s+const result = await contract\.snoozeReminder\(JSON\.parse\(json\)\);\s+if \(result\.ok\) await requireReminders\(\)\.snooze\(result\.value\);\s+return taskResult\('reminderSnooze', result\);/);
     // The debug-only stops and the short snooze read a debug property (empty in a release build).
     assert.match(remindersKt, /if \(debugProperty\("reminder_stop"\) == point\)/);
     assert.match(remindersKt, /debugProperty\("snooze_minutes"\)\.toDoubleOrNull\(\)/);
@@ -4078,12 +4079,13 @@ globalThis.standStore = useTaskStore;
     const applied = [];
     const reminders = mod.createNativeReminders({
         plan: async (input) => {
-            calls.push(`plan ${input.storedAlarms} ${input.permissionGranted}`);
+            calls.push(`plan ${input.storedAlarms} ${input.permissionGranted}${input.remake ? ` remake ${input.remake}` : ''}`);
             lastPlan = input;
             await sleep(5);
             return { ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', state: planState, topUpDelayMs: topUp } };
         },
         readStored: async () => ({ alarms: stored, state: storedState }),
+        planSnooze: (input) => { calls.push(`snooze ${input.storedState} ${input.alarm.key}`); return { ok: true, value: { schedule: [input.alarm], stateAhead: '{"ahead":1}', state: '{"after":1}' } }; },
         permissionGranted: () => false,
         apply: (json) => { calls.push(`apply ${JSON.parse(json).channelName}`); applied.push(JSON.parse(json)); },
         cleanupRn: () => { calls.push('cleanup'); if (cleanupFailure) throw new Error('rnandb locked'); return 2; },
@@ -4097,7 +4099,7 @@ globalThis.standStore = useTaskStore;
     assert.equal(started.ask, true, 'a feature on and no permission: RN asks at start');
     // The process's first plan remakes every held alarm: Android dropped them if exact-alarm access was revoked (it stops the app)
     // or the app was force-stopped, and the stored map still says each is held.
-    assert.deepEqual(calls, ['cleanup', 'plan {"task:a":{"id":7,"signature":"s","pending":true}} false', 'apply Mindwtr reminders']);
+    assert.deepEqual(calls, ['cleanup', `plan ${stored} false remake all`, 'apply Mindwtr reminders']);
     // Cycles run one at a time; the cleanup ran once.
     calls.length = 0;
     await Promise.all([reminders.cycle(false), reminders.cycle(false)]);
@@ -4105,7 +4107,7 @@ globalThis.standStore = useTaskStore;
     // The rebuild (a reboot, a clock change, exact alarms allowed) marks every held alarm pending.
     calls.length = 0;
     await reminders.cycle(true);
-    assert.deepEqual(calls, ['plan {"task:a":{"id":7,"signature":"s","pending":true}} false', 'apply Mindwtr reminders']);
+    assert.deepEqual(calls, [`plan ${stored} false remake all`, 'apply Mindwtr reminders']);
     // Store changes: one plan, REMINDER_STORE_RESCHEDULE_DELAY_MS after the last accepted change; other changes plan nothing.
     calls.length = 0;
     globalThis.standStore.setState({ tasks: [] });
@@ -4130,6 +4132,16 @@ globalThis.standStore = useTaskStore;
     topUp = null;
     await sleep(60);
     assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders', `plan ${stored} false`, 'apply Mindwtr reminders'], 'the top-up plans once more');
+    // A Snooze: core's answer against the stored state, applied in the queue as a plan that only stores that state and makes it.
+    applied.length = 0;
+    calls.length = 0;
+    storedState = '{"x":1}';
+    const snoozeAlarm = { key: 'snooze:u', id: 1073741900, fireAtMs: 5, repeat: 'once', details: { title: 'Pay rent' }, replacing: null };
+    await reminders.snooze(snoozeAlarm);
+    assert.deepEqual(calls, ['snooze {"x":1} snooze:u', 'apply Mindwtr reminders']);
+    assert.deepEqual(applied, [{ mode: 'active', cancel: [], schedule: [snoozeAlarm], writeAhead: null, stateAhead: '{"ahead":1}', alarms: stored,
+        unchanged: true, state: '{"after":1}', topUpDelayMs: null, clearDelivered: false, channelName: 'Mindwtr reminders' }]);
+    storedState = null;
     // The native state goes in and comes back; stored again only when it changed (none stored reads as an empty state).
     applied.length = 0;
     await reminders.cycle(false);

@@ -31,10 +31,17 @@
  *   task's change, so a replay after a restart answers from the first reply and writes
  *   nothing, even if the task was reopened since: a recurring task gets one next instance.
  * - snoozeReminder: Snooze. The fired alarm's details again, `snooze_interval` minutes
- *   after the tap, as an alarm of its own that no plan cancels (it can still fire after
- *   the task is done: a kept trade-off). The request UUID names it, and its first reply is
- *   a receipt, so a replay after a restart returns the same alarm and the host replaces it
- *   instead of adding one.
+ *   after the tap, as an alarm of its own that turning reminders off does not cancel. The
+ *   request UUID names it, and its first reply is a receipt, so a replay after a restart
+ *   returns the same alarm. planReminderSnooze then says whether to make it, against the
+ *   native state: stored as not yet made (`stateAhead`), made, then stored as made
+ *   (`state`); a request already made is never made again, so a retry after it fired
+ *   shows nothing twice. Each plan then keeps it: one never made is made (unless a day
+ *   late), a reboot's remake makes it again while its time is ahead, and no permission or
+ *   its task or project done, gone or archived withdraws it, as React Native's start does
+ *   with a Snooze of such a task. It is forgotten 30 days after its time.
+ * - `remake: 'all'` (a reboot, a clock change, exact alarms just allowed, the first plan of
+ *   a process) plans every held alarm as not made yet, so each is made again under its id.
  * - routeNotificationOpen: what a tap opens (Review, a task, a project, a context, Daily
  *   or Weekly Review), or `complete` for Done, or nothing for Dismiss and Snooze.
  *
@@ -49,6 +56,7 @@ import {
     buildReminderSnooze,
     getActiveCancelReason,
     getReminderAlarmCancelReason,
+    isReminderOwnerGone,
     MAX_PENDING_ONE_SHOT_REMINDER_ALARMS,
     planReminderAlarms,
     readReminderAlarmMap,
@@ -134,24 +142,44 @@ const writeNativeAlarmMap = (map: ReadonlyMap<string, ReminderAlarmEntry>): stri
 export const NATIVE_REMINDER_STATE_STORAGE_KEY = 'mindwtr:native:reminders:v1';
 const DELIVERED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
+const SNOOZE_LATE_LIMIT_MS = 24 * 60 * 60 * 1000;
+
 /** A task or project reminder whose alarm expired: what it delivered may still be in the tray, under `id`. */
 type DeliveredReminder = { kind: 'delivered'; id: number; signature?: string; firedAtMs: number };
-type NativeReminderState = Map<string, DeliveredReminder>;
+/** A Snooze's alarm (snoozeReminder's reply); `armed` once the host made it. */
+type SnoozeReminder = { kind: 'snooze'; id: number; fireAtMs: number; details: Record<string, unknown>; armed: boolean };
+type NativeReminderState = Map<string, DeliveredReminder | SnoozeReminder>;
 
-/** The stored state; an unreadable one is empty (it names only notifications that may be gone already). */
+/** The stored state; an unreadable one is empty (it names only notifications that may be gone already, and Snoozes). */
 const readNativeReminderState = (raw: string | null | undefined): NativeReminderState => {
     const state: NativeReminderState = new Map();
     if (!raw) return state;
     try {
-        for (const [key, entry] of Object.entries(JSON.parse(raw) as Record<string, Partial<DeliveredReminder>>)) {
-            if (entry?.kind === 'delivered' && Number.isInteger(entry.id) && Number.isFinite(entry.firedAtMs)) {
-                state.set(key, { kind: 'delivered', id: entry.id!, firedAtMs: entry.firedAtMs!, ...(typeof entry.signature === 'string' ? { signature: entry.signature } : {}) });
+        for (const [key, entry] of Object.entries(JSON.parse(raw) as Record<string, Record<string, unknown>>)) {
+            if (!isObjectRecord(entry) || !Number.isInteger(entry.id)) continue;
+            const id = entry.id as number;
+            if (entry.kind === 'delivered' && Number.isFinite(entry.firedAtMs)) {
+                state.set(key, { kind: 'delivered', id, firedAtMs: entry.firedAtMs as number, ...(typeof entry.signature === 'string' ? { signature: entry.signature } : {}) });
+            } else if (entry.kind === 'snooze' && Number.isFinite(entry.fireAtMs) && isObjectRecord(entry.details)) {
+                state.set(key, { kind: 'snooze', id, fireAtMs: entry.fireAtMs as number, details: entry.details, armed: entry.armed === true });
             }
         }
     } catch (error) {
         void logWarn('Stored native reminder state unreadable; starting from none', { scope: 'notifications', error });
     }
     return state;
+};
+
+const writeNativeReminderState = (state: NativeReminderState): string => JSON.stringify(Object.fromEntries(state));
+
+const snoozeAlarm = (key: string, entry: SnoozeReminder): NativeReminderAlarm => (
+    { key, id: entry.id, fireAtMs: entry.fireAtMs, repeat: 'once', details: entry.details, replacing: null }
+);
+
+/** The task or project key a Snooze reminds of again (its fired alarm's `alarmKey`). */
+const snoozedKey = (entry: SnoozeReminder): string => {
+    const data = entry.details.data;
+    return isObjectRecord(data) && typeof data.alarmKey === 'string' ? data.alarmKey : '';
 };
 
 const signedFireAtMs = (signature: string | undefined): number | null => {
@@ -192,11 +220,16 @@ export function createReminderMethods(deps: ReminderDeps) {
 
     return {
         /** The alarms to cancel and make now, from the stored alarm map (see the file comment for the order). */
-        async planReminderAlarms(input: { storedAlarms: string | null; permissionGranted: boolean; storedState?: string | null }): Promise<NativeHostResult<NativeReminderAlarmPlan>> {
+        async planReminderAlarms(input: {
+            storedAlarms: string | null;
+            permissionGranted: boolean;
+            storedState?: string | null;
+            remake?: 'all';
+        }): Promise<NativeHostResult<NativeReminderAlarmPlan>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             if (!isObjectRecord(input) || (input.storedAlarms !== null && typeof input.storedAlarms !== 'string') || typeof input.permissionGranted !== 'boolean'
-                || (input.storedState != null && typeof input.storedState !== 'string')) {
+                || (input.storedState != null && typeof input.storedState !== 'string') || (input.remake !== undefined && input.remake !== 'all')) {
                 return fail('INVALID_INPUT', 'The stored alarm map (a string or null) and the notification permission are required');
             }
             let held: Map<string, ReminderAlarmEntry>;
@@ -207,6 +240,8 @@ export function createReminderMethods(deps: ReminderDeps) {
                 void logWarn('Stored reminder alarm map unreadable; starting from none', { scope: 'notifications', error });
                 held = new Map();
             }
+            const remakeAll = input.remake === 'all';
+            if (remakeAll) for (const [key, entry] of held) held.set(key, { ...entry, pending: true });
             const state = useTaskStore.getState();
             const plan = planReminderAlarms({
                 settings: state.settings,
@@ -226,7 +261,20 @@ export function createReminderMethods(deps: ReminderDeps) {
                 : null;
             const remembered: NativeReminderState = new Map();
             const withdrawnDelivered: NativeReminderAlarmPlan['cancel'] = [];
+            const snoozes: NativeReminderAlarm[] = [];
+            const owners = { tasks: new Map(state.tasks.map((task) => [task.id, task])), projects: new Map(state.projects.map((project) => [project.id, project])) };
             for (const [key, entry] of readNativeReminderState(input.storedState)) {
+                if (entry.kind === 'snooze') {
+                    if (plan.mode === 'revoked' || isReminderOwnerGone(snoozedKey(entry), owners.tasks, owners.projects)) {
+                        withdrawnDelivered.push({ key, id: entry.id, reason: 'withdrawn' });
+                    } else if (!entry.armed && entry.fireAtMs < nowMs - SNOOZE_LATE_LIMIT_MS) {
+                        withdrawnDelivered.push({ key, id: entry.id, reason: 'expired' });
+                    } else if (entry.fireAtMs >= nowMs - DELIVERED_RETENTION_MS) {
+                        if (!entry.armed || (remakeAll && entry.fireAtMs > nowMs)) snoozes.push(snoozeAlarm(key, entry));
+                        remembered.set(key, { ...entry, armed: true });
+                    }
+                    continue;
+                }
                 if (nowMs - entry.firedAtMs > DELIVERED_RETENTION_MS) continue;
                 if (!judge || getActiveCancelReason(key, entry, false, judge) === 'withdrawn') withdrawnDelivered.push({ key, id: entry.id, reason: 'withdrawn' });
                 else remembered.set(key, entry);
@@ -269,10 +317,10 @@ export function createReminderMethods(deps: ReminderDeps) {
                 value: {
                     mode: plan.mode,
                     cancel: [...cancel, ...withdrawnDelivered],
-                    schedule,
+                    schedule: [...schedule, ...snoozes],
                     writeAhead: schedule.length > 0 ? writeNativeAlarmMap(writeAhead) : null,
                     alarms: writeNativeAlarmMap(next),
-                    state: JSON.stringify(Object.fromEntries(remembered)),
+                    state: writeNativeReminderState(remembered),
                     topUpDelayMs: plan.topUpDelayMs,
                     clearDelivered: plan.mode === 'revoked',
                 },
@@ -310,6 +358,29 @@ export function createReminderMethods(deps: ReminderDeps) {
             return receipts.run<NativeReminderAlarm>(input.requestId, JSON.stringify(['reminderSnooze', input.requestedAt, input.details]), async () => (
                 { ok: true, value: alarm }
             ));
+        },
+
+        /**
+         * Whether to make a Snooze's alarm (snoozeReminder's reply) now, against the stored native state: store `stateAhead`,
+         * make each `schedule` alarm, then store `state`. Nothing when it was made already (a retry, a replay after a restart).
+         */
+        planReminderSnooze(input: { storedState: string | null; alarm: NativeReminderAlarm }): NativeHostResult<{
+            schedule: NativeReminderAlarm[];
+            stateAhead: string | null;
+            state: string | null;
+        }> {
+            if (!isObjectRecord(input) || (input.storedState !== null && typeof input.storedState !== 'string') || !isObjectRecord(input.alarm)
+                || typeof input.alarm.key !== 'string' || !input.alarm.key.startsWith('snooze:') || !Number.isInteger(input.alarm.id)
+                || !Number.isFinite(input.alarm.fireAtMs) || !isObjectRecord(input.alarm.details)) {
+                return fail('INVALID_INPUT', 'The stored native state (a string or null) and a Snooze\'s alarm are required');
+            }
+            const { key, id, fireAtMs, details } = input.alarm;
+            const state = readNativeReminderState(input.storedState);
+            const held = state.get(key);
+            if (held?.kind === 'snooze' && held.armed) return { ok: true, value: { schedule: [], stateAhead: null, state: null } };
+            const entry: SnoozeReminder = { kind: 'snooze', id, fireAtMs, details, armed: false };
+            const stateAhead = writeNativeReminderState(new Map(state).set(key, entry));
+            return { ok: true, value: { schedule: [snoozeAlarm(key, entry)], stateAhead, state: writeNativeReminderState(new Map(state).set(key, { ...entry, armed: true })) } };
         },
 
         /** What a notification tap, or one of its buttons, opens or does. */

@@ -64,6 +64,15 @@ class ReminderPlanTest {
         assertEquals(listOf(setOf(ReminderPlan.MAP_KEY, ReminderPlan.STATE_KEY), setOf(ReminderPlan.STATE_KEY)), keys)
     }
 
+    @Test fun aSnoozesStateAheadIsStoredBeforeItsAlarmAndItsStateAfter() {
+        val snooze = plan(null, emptyList(), listOf(alarm("snooze:u", 1_073_741_900, null))).put("unchanged", true)
+            .put("stateAhead", "{pending}").put("state", "{made}")
+        ReminderPlan.apply(snooze, port)
+        ReminderPlan.apply(plan("{ahead}", emptyList(), listOf(alarm("task:a", 11, null))).put("stateAhead", "{pending}"), port)
+        assertEquals(listOf("store {pending}", "schedule 1073741900 snooze:u", "store {made}",
+            "store {ahead} + {pending}", "schedule 11 task:a", "store {after}"), events)
+    }
+
     @Test fun aPlanThatChangesNothingWritesNothing() {
         ReminderPlan.apply(plan(null, emptyList(), emptyList()).put("unchanged", true), port)
         assertEquals(emptyList<String>(), events)

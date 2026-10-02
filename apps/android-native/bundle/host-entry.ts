@@ -325,6 +325,7 @@ const contract = createNativeHostContract({ ...(nativeSync ? { syncSettings: nat
 const reminders = typeof (globalThis.__mindwtrNative as { alarmApply?: unknown } | undefined)?.alarmApply === 'function'
     ? createNativeReminders({
         plan: (input) => contract.planReminderAlarms(input),
+        planSnooze: (input) => contract.planReminderSnooze(input),
         readStored: async () => ({ alarms: await keyValue.get(REMINDER_ALARM_MAP_STORAGE_KEY), state: await keyValue.get(NATIVE_REMINDER_STATE_STORAGE_KEY) }),
         permissionGranted: () => checked(native().notificationsAllowed!()) === true,
         apply: (planJson) => { checked(native().alarmApply!(planJson)); },
@@ -2767,11 +2768,15 @@ globalThis.MindwtrHost = {
         return submit(async () => taskResult('reminderDone', await contract.completeReminderTask({ requestId, taskId })));
     },
     /**
-     * A reminder's Snooze (core's snoozeReminder, `json`: `{ requestId, requestedAt, details }`): a journaled write; its reply is the
-     * alarm to make, the same one on every retry of the request.
+     * A reminder's Snooze (core's snoozeReminder, `json`: `{ requestId, requestedAt, details }`): a journaled write whose alarm the
+     * engine makes once (host-reminders.ts); its reply is that alarm, the same one on every retry of the request.
      */
     reminderSnooze(json: string): string {
-        return submit(async () => taskResult('reminderSnooze', await contract.snoozeReminder(JSON.parse(json))));
+        return submit(async () => {
+            const result = await contract.snoozeReminder(JSON.parse(json));
+            if (result.ok) await requireReminders().snooze(result.value);
+            return taskResult('reminderSnooze', result);
+        });
     },
     /** A line of Kotlin's runner (CoreWork, the queue drain) through core's logger, its fields in `context`. */
     logLine(message: string, contextJson: string): string {

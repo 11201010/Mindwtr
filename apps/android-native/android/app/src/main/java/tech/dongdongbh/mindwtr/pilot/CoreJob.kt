@@ -17,7 +17,7 @@ internal object CoreJob {
     const val REMINDERS = "reminders"
     /** A reminder's Done: `requestId` (made when the notification was posted) and `taskId`; then the plan again. */
     const val REMINDER_DONE = "reminderDone"
-    /** A reminder's Snooze: `requestId`, `requestedAt` (the tap's time, ms), `details` (the fired alarm's) and `channelName`. */
+    /** A reminder's Snooze: `requestId`, `requestedAt` (the tap's time, ms) and `details` (the fired alarm's). */
     const val REMINDER_SNOOZE = "reminderSnooze"
     private val JOBS = setOf(INGEST, CONTEXT, REMINDERS, REMINDER_DONE, REMINDER_SNOOZE)
 
@@ -37,7 +37,7 @@ internal object CoreJob {
         fun reminders(mode: String): JSONObject = throw UnsupportedOperationException("reminders")
         /** Core's completeReminderTask, journaled under [requestId]. */
         fun reminderDone(requestId: String, taskId: String): JSONObject = throw UnsupportedOperationException("reminderDone")
-        /** Core's snoozeReminder with [json] (`{ requestId, requestedAt, details }`), journaled: the alarm to make, with the channel's name. */
+        /** Core's snoozeReminder with [json] (`{ requestId, requestedAt, details }`), journaled; the engine makes its alarm once. */
         fun reminderSnooze(json: String): JSONObject = throw UnsupportedOperationException("reminderSnooze")
     }
 
@@ -46,12 +46,12 @@ internal object CoreJob {
      * later (the files stay queued, and a trigger posts nothing from unfinished state). A trigger that core then fails never
      * retries: a late notification would describe a moment that has passed, and RN's headless task does not retry either.
      * A reminder's Done and Snooze are journaled core commands whose request UUID makes every try the same request, so they retry
-     * until core answers, unless core refuses the input itself (INVALID_INPUT). Snooze makes the alarm core answers ([schedule]), the
-     * same alarm on every try; Done plans the alarms again, as the store changed.
+     * until core answers, unless core refuses the input itself (INVALID_INPUT). Snooze's alarm is made in the engine against core's
+     * native state, once per request however many tries; Done plans the alarms again, as the store changed.
      * [log] gets one line per run, its fields apart (the job, its outcome, a failure's code: never a task's words).
      */
     fun run(name: String?, input: Map<String, String?>, boot: () -> Calls, post: (JSONObject) -> Unit, refreshWidgets: () -> Unit,
-            log: (String, JSONObject) -> Unit, schedule: (JSONObject) -> Unit = {}): Outcome {
+            log: (String, JSONObject) -> Unit): Outcome {
         val line = JSONObject().put("job", name ?: JSONObject.NULL)
         if (name !in JOBS) {
             log(LINE, line.put("outcome", "unknown"))
@@ -76,7 +76,7 @@ internal object CoreJob {
                     val request = JSONObject().put("requestId", input["requestId"].orEmpty())
                         .put("requestedAt", input["requestedAt"]?.toLongOrNull() ?: JSONObject.NULL)
                         .put("details", input["details"]?.let(::JSONObject) ?: JSONObject.NULL)
-                    schedule(host.reminderSnooze(request.toString()).put("channelName", input["channelName"].orEmpty()))
+                    host.reminderSnooze(request.toString())
                     Outcome.Success
                 }
                 else -> {

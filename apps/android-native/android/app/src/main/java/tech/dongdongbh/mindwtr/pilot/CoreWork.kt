@@ -114,8 +114,7 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
             },
             // The widgets pass refreshes the home-screen widgets here.
             refreshWidgets = {},
-            log = log,
-            schedule = { alarm -> ReminderAlarms.arm(app, alarm) })
+            log = log)
         return when (outcome) {
             CoreJob.Outcome.Success -> Result.success()
             CoreJob.Outcome.Retry -> Result.retry()

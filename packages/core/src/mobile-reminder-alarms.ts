@@ -584,6 +584,14 @@ function readNativeAlarmData(value: unknown): Record<string, string> {
     return data;
 }
 
+/** Whether the task or project an alarm key names is gone, done or archived; a key of another kind has none to lose. */
+export function isReminderOwnerGone(key: string, tasks: ReadonlyMap<string, Task>, projects: ReadonlyMap<string, Project>): boolean {
+    const task = key.startsWith('task:') ? tasks.get(key.slice('task:'.length).replace(/:r\d+$/, '')) : undefined;
+    const project = key.startsWith('project:') ? projects.get(key.slice('project:'.length)) : undefined;
+    return (key.startsWith('task:') && (!task || Boolean(task.deletedAt) || !isTaskActionable(task)))
+        || (key.startsWith('project:') && (!project || Boolean(project.deletedAt) || project.status === 'archived'));
+}
+
 /**
  * The Android alarm rows (`getScheduledAlarms`: id, scheduleType, local year/month/day/hour/
  * minute/second, data) that no cycle can cancel and nothing still wants, with why each goes.
@@ -608,10 +616,7 @@ export function findStaleNativeReminderAlarms(input: {
         const id = Number(row.id);
         if (!Number.isSafeInteger(id) || id <= 0 || input.trackedIds.has(id) || isPomodoroNativeAlarm(row)) continue;
         const key = readNativeAlarmData(row.data).alarmKey ?? '';
-        const task = key.startsWith('task:') ? tasks.get(key.slice('task:'.length).replace(/:r\d+$/, '')) : undefined;
-        const project = key.startsWith('project:') ? projects.get(key.slice('project:'.length)) : undefined;
-        const ownerGone = (key.startsWith('task:') && (!task || Boolean(task.deletedAt) || !isTaskActionable(task)))
-            || (key.startsWith('project:') && (!project || Boolean(project.deletedAt) || project.status === 'archived'));
+        const ownerGone = isReminderOwnerGone(key, tasks, projects);
         const fireAtMs = new Date(
             Number(row.year), Number(row.month) - 1, Number(row.day), Number(row.hour), Number(row.minute), Number(row.second),
         ).getTime();

@@ -50,7 +50,8 @@ internal object ReminderPlan {
     }
 
     /**
-     * [plan] (core's NativeReminderAlarmPlan): `writeAhead` stored (on disk), then each cancel, then each alarm made, then `alarms`
+     * [plan] (core's NativeReminderAlarmPlan): `writeAhead` and `stateAhead` (a Snooze about to be made) stored (on disk) in one
+     * write, then each cancel, then each alarm made, then `alarms`
      * (not when `unchanged`: the stored map already says it) and `state` (null when unchanged) stored in one write, so a delivered
      * reminder core lets expire is remembered whenever its alarm leaves the map. A withdrawn alarm's delivered notification goes before its
      * cancel; an expired one's stays. A failed removal never
@@ -58,8 +59,12 @@ internal object ReminderPlan {
      * again under the same ids, so nothing is made twice or left behind. [checkpoint] names each point a process death is safe at.
      */
     fun apply(plan: JSONObject, port: Port, checkpoint: (String) -> Unit = {}) {
-        if (!plan.isNull("writeAhead")) {
-            port.store(mapOf(MAP_KEY to plan.getString("writeAhead")))
+        val ahead = buildMap {
+            if (!plan.isNull("writeAhead")) put(MAP_KEY, plan.getString("writeAhead"))
+            if (plan.has("stateAhead") && !plan.isNull("stateAhead")) put(STATE_KEY, plan.getString("stateAhead"))
+        }
+        if (ahead.isNotEmpty()) {
+            port.store(ahead)
             checkpoint("write-ahead")
         }
         val cancel = plan.getJSONArray("cancel")
@@ -335,8 +340,7 @@ class ReminderActionReceiver : BroadcastReceiver() {
                     // Debug builds only (check-reminders-device.mjs): `debug.mindwtr.native.snooze_minutes` shortens RN's 10 minutes.
                     debugProperty("snooze_minutes").toDoubleOrNull()?.let { details.put("snooze_interval", it) }
                     CoreWork.enqueueDurably(this, context, CoreJob.REMINDER_SNOOZE, mapOf("requestId" to intent.getStringExtra(EXTRA_REQUEST)!!,
-                        "requestedAt" to System.currentTimeMillis().toString(), "details" to details.toString(),
-                        "channelName" to alarm.optString("channelName")), done = dismiss)
+                        "requestedAt" to System.currentTimeMillis().toString(), "details" to details.toString()), done = dismiss)
                 }
                 else -> Unit
             }

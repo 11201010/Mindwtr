@@ -8,10 +8,11 @@
  * - a store change that shouldRescheduleReminderAlarms accepts plans again REMINDER_STORE_RESCHEDULE_DELAY_MS after the last
  *   one (one store subscription; no polling), the capped one-shot window tops up after the plan's topUpDelayMs, and a tap on a
  *   task's or project's notification plans again after REMINDER_NOTIFICATION_EVENT_RESCHEDULE_DELAY_MS;
- * - a rebuild (a reboot dropped every alarm, a clock change, Android just allowed exact alarms) plans with every held alarm marked
- *   pending, core's mark for "not made yet": core makes each again under its own id, which replaces it, and keeps or withdraws what
+ * - a rebuild (a reboot dropped every alarm, a clock change, Android just allowed exact alarms) plans with core's `remake: 'all'`:
+ *   core makes each held alarm and each Snooze still ahead again under its own id, which replaces it, and keeps or withdraws what
  *   it delivered by core's reason. The process's first plan is a rebuild too: Android drops every exact alarm when the user revokes
  *   exact-alarm access (it stops the app) and every alarm on a force-stop, while the stored map still says each is held;
+ * - a Snooze's alarm is made in the same queue, against the native state core keeps for it (planReminderSnooze), once per request;
  * - React Native's own alarms are cancelled once (Kotlin's RnAlarmCleanup) before this host's first plan;
  * - none of this runs in sandbox mode, as RN's notification service does not.
  */
@@ -38,12 +39,17 @@ type ReminderPlan = {
     topUpDelayMs: number | null;
 };
 
+/** A Snooze's alarm (core's NativeReminderAlarm, snoozeReminder's reply). */
+type SnoozeAlarm = { key: string; id: number; fireAtMs: number; repeat: 'once'; details: Record<string, unknown>; replacing: null };
+
 /** What is stored: RN's alarm map (RN's key) and the native host's own reminder state (delivered reminders it may withdraw). */
 type Stored = { alarms: string | null; state: string | null };
 
 export type NativeReminderBindings = {
-    /** Core's planReminderAlarms. */
-    plan: (input: { storedAlarms: string | null; permissionGranted: boolean; storedState: string | null }) => Promise<NativeHostResult<ReminderPlan>>;
+    /** Core's planReminderAlarms; `remake: 'all'` makes every held alarm again. */
+    plan: (input: { storedAlarms: string | null; permissionGranted: boolean; storedState: string | null; remake?: 'all' }) => Promise<NativeHostResult<ReminderPlan>>;
+    /** Core's planReminderSnooze: whether to make a Snooze's alarm, and the native state before and after. */
+    planSnooze: (input: { storedState: string | null; alarm: SnoozeAlarm }) => NativeHostResult<{ schedule: SnoozeAlarm[]; stateAhead: string | null; state: string | null }>;
     /** RN's alarm map and the native reminder state, as stored (RKStorage). */
     readStored: () => Promise<Stored>;
     /** Kotlin: the notification permission, as RN reads it. */
@@ -52,20 +58,6 @@ export type NativeReminderBindings = {
     apply: (planJson: string) => void;
     /** Kotlin: RN's alarms cancelled and its alarm maps removed; how many were cancelled. */
     cleanupRn: () => number;
-};
-
-/** Every held alarm marked pending, so core makes each again under its id; an unreadable map goes as it is (core starts from none). */
-const allPending = (stored: string | null): string | null => {
-    if (!stored) return stored;
-    try {
-        const map = JSON.parse(stored) as Record<string, unknown>;
-        if (!map || typeof map !== 'object' || Array.isArray(map)) return stored;
-        return JSON.stringify(Object.fromEntries(Object.entries(map).map(([key, entry]) => [
-            key, entry && typeof entry === 'object' ? { ...(entry as object), pending: true } : entry,
-        ])));
-    } catch {
-        return stored;
-    }
 };
 
 const log = (message: string, context: Record<string, unknown>, warn = false) => {
@@ -89,7 +81,7 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
         const rebuild = requested || !rebuilt;
         const stored = await bindings.readStored();
         const permissionGranted = bindings.permissionGranted();
-        const result = await bindings.plan({ storedAlarms: rebuild ? allPending(stored.alarms) : stored.alarms, permissionGranted, storedState: stored.state });
+        const result = await bindings.plan({ storedAlarms: stored.alarms, permissionGranted, storedState: stored.state, ...(rebuild ? { remake: 'all' as const } : {}) });
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         const plan = result.value;
         // Nothing to store when the stored value already says it (none stored reads as empty).
@@ -114,11 +106,23 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
         return summary;
     };
 
-    /** One cycle after the ones queued before it (RN's queueRescheduleCycle); the queue itself never rejects. */
-    const cycle = (rebuild: boolean) => {
-        const next = queue.catch(() => undefined).then(() => runCycle(rebuild));
+    /** [work] after what was queued before it (RN's queueRescheduleCycle); the queue itself never rejects. */
+    const serial = <T>(work: () => Promise<T>): Promise<T> => {
+        const next = queue.catch(() => undefined).then(work);
         queue = next.catch(() => undefined);
         return next;
+    };
+    const cycle = (rebuild: boolean) => serial(() => runCycle(rebuild));
+
+    /** A Snooze's alarm made once against the native state, in the queue: the state as not yet made, the alarm, the state as made. */
+    const runSnooze = async (alarm: SnoozeAlarm) => {
+        const stored = await bindings.readStored();
+        const result = bindings.planSnooze({ storedState: stored.state, alarm });
+        if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+        const { schedule, stateAhead, state } = result.value;
+        bindings.apply(JSON.stringify({ mode: 'active', cancel: [], schedule, writeAhead: null, stateAhead, alarms: stored.alarms, unchanged: true, state,
+            topUpDelayMs: null, clearDelivered: false, channelName: REMINDER_NOTIFICATION_CHANNEL_NAME }));
+        log('Native Android reminder snooze', { made: schedule.length });
     };
     const enqueue = (rebuild: boolean) => {
         cycle(rebuild).catch((error) => log('Native Android reminder cycle failed', { error: error instanceof Error ? error.message : String(error) }, true));
@@ -151,6 +155,11 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
         async cycle(rebuild: boolean) {
             if (isSandboxMode()) return { mode: 'sandbox' };
             return cycle(rebuild);
+        },
+        /** A Snooze's alarm (snoozeReminder's reply), made unless it was made already; not in sandbox mode, where no alarm is made. */
+        async snooze(alarm: SnoozeAlarm) {
+            if (isSandboxMode()) return;
+            await serial(() => runSnooze(alarm));
         },
         /** A tap on a task's or project's notification: one cycle shortly after (RN's notification event re-arm). */
         event() {
