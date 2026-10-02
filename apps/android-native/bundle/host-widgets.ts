@@ -21,6 +21,8 @@ export type WidgetInputs = {
     listSelections: string[];
     /** Debug builds only (check-widgets-device.mjs): the widgets' language, in place of the app's. */
     language?: Language;
+    /** True when the last publication handed over was not stored and drawn (it failed): it is sent again even if unchanged. */
+    stale?: boolean;
 };
 
 /** Kotlin's half of RN's widget module (HostWidgets.kt): the device's inputs, and setPayload + updateWidgets in one call. */
@@ -43,7 +45,8 @@ const PUBLISH_DELAY_MS = 1_000;
  * RN's widget service on the engine: core builds the whole Android payload (buildAndroidWidgetPublication) from the store, with
  * the device's inputs and the device language passed every time (QuickJS cannot detect either), and Kotlin writes it where RN's
  * module reads it and redraws the widgets. A store change publishes after a short delay; the host publishes at once after a
- * CoreWork job and when the app comes to the front (RN publishes on resume). A payload equal to the last one is not sent again.
+ * CoreWork job and when the app comes to the front (RN publishes on resume). A payload equal to the last one is not sent again,
+ * unless Kotlin says that one never reached the widgets.
  */
 export const createWidgetPublisher = (bridge: WidgetBridge) => {
     let last: string | null = null;
@@ -64,7 +67,7 @@ export const createWidgetPublisher = (bridge: WidgetBridge) => {
             listSelections: input.listSelections,
         });
         const payload = JSON.stringify(publication);
-        if (payload === last) return false;
+        if (payload === last && !input.stale) return false;
         bridge.publish(payload);
         last = payload;
         logInfo('Native Android widget payload published', {

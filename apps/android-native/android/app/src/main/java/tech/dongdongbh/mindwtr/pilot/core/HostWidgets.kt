@@ -20,14 +20,20 @@ import java.util.concurrent.TimeUnit
  */
 class HostWidgets(private val app: Context) {
     private val worker = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-widgets") }
+    /** The last publication's store or redraw failed: the publisher sends it again on its next refresh, even if unchanged. */
+    @Volatile private var stale = false
 
-    /** `{ systemColorScheme, systemLocale, listSelections }`: what RN's widget service reads from React Native and the module. */
+    /**
+     * `{ systemColorScheme, systemLocale, listSelections, stale }`: what RN's widget service reads from React Native and the
+     * module, and whether the last publication failed.
+     */
     fun inputs(): String {
         val night = app.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         return JSONObject()
             .put("systemColorScheme", if (night) "dark" else "light")
             .put("systemLocale", Locale.getDefault().toLanguageTag())
             .put("listSelections", JSONArray(WidgetListStore.selections(app)))
+            .put("stale", stale)
             // Debug builds only (check-widgets-device.mjs): the widgets' language, whatever the synced setting says.
             .apply { debugProperty("widget_language").takeIf { it.isNotEmpty() }?.let { put("language", it) } }
             .toString()
@@ -42,13 +48,20 @@ class HostWidgets(private val app: Context) {
                 Log.i(CoreHost.TAG, "Native Android widgets refreshed bytes=${payload.length} legacy=${drawn.legacyWidgetCount} " +
                     "compact=${drawn.compactWidgetCount} rendered=${drawn.renderedTaskCount} hiddenCheckoffs=${CheckoffStore.consumeHiddenCount(app)} " +
                     "serializedCheckoffs=${CheckoffStore.consumeSerializedCount(app)}")
-            }.onFailure { Log.w(CoreHost.TAG, "Native Android widget refresh failed", it) }
+            }.onSuccess { stale = false }.onFailure {
+                stale = true
+                Log.w(CoreHost.TAG, "Native Android widget refresh failed", it)
+            }
         }
     }
 
-    /** Waits until every publication handed over so far is stored and drawn: CoreWork's job ends only after it. */
+    /**
+     * Waits until every publication handed over so far is stored and drawn: CoreWork's job ends only after it. One still running
+     * when the wait ends goes on; if it then fails, [stale] has the next refresh send it again.
+     */
     fun settle() {
         runCatching { worker.submit {}.get(SETTLE_SECONDS, TimeUnit.SECONDS) }
+            .onFailure { Log.w(CoreHost.TAG, "Native Android widget refresh still running after ${SETTLE_SECONDS}s", it) }
     }
 
     private companion object {

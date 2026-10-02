@@ -3100,6 +3100,13 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         assert.equal(published[0], expected(core.getFocusWidgetFilter()), 'the payload is core\'s publication with the device\'s inputs');
         assert.equal(widgets.publish(), false, 'an unchanged payload is not sent again');
         assert.equal(published.length, 1);
+        // Kotlin stores and draws off the engine thread; one that failed (or never finished) is sent again, the same payload too.
+        inputs.stale = true;
+        assert.equal(widgets.publish(), true, 'a publication that did not reach the widgets is sent again');
+        assert.equal(published[1], published[0]);
+        delete inputs.stale;
+        assert.equal(widgets.publish(), false, 'once it reached them, it is not sent again');
+        published.pop();
         widgets.focusFilter({ criteria: { contexts: ['@work'] }, sortBy: 'due', sortOrder: null });
         assert.deepEqual(timers, [1000], 'a new Focus filter republishes');
         assert.deepEqual(Object.entries(core.getFocusWidgetFilter()), [['criteria', { contexts: ['@work'] }], ['sortBy', 'due'], ['sortOrder', undefined]], 'core\'s null sortOrder is RN\'s absent one');
@@ -3154,6 +3161,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const coreHostKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');
     assert.match(coreHostKt, /bridge\.setProperty\("widgetInputs", guarded \{ _ -> widgets\.inputs\(\) \}\)/);
     assert.match(coreHostKt, /bridge\.setProperty\("widgetPublish", guarded \{ args -> widgets\.publish\(args\[0\] as String\); null \}\)/);
+    // Kotlin says when a publication did not reach the widgets (its store or redraw failed), so the publisher sends it again.
+    const hostWidgetsKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/HostWidgets.kt'), 'utf8');
+    assert.match(hostWidgetsKt, /\.put\("stale", stale\)/);
+    assert.match(hostWidgetsKt, /\}\.onSuccess \{ stale = false \}\.onFailure \{\s+stale = true/);
     console.log('Widgets: core\'s Android publication from the engine with the device\'s inputs and language, sent once per change, after the validated load, with the Focus screen\'s filter');
 }
 
