@@ -1770,7 +1770,7 @@ final class CoreModel: ObservableObject {
     }
     var historyDoneActionPending: Bool {
         selectedSurface == .history && !historyArchived && retryNeeded &&
-            (doneTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "done")
+            (doneTaskStatusRequest != nil || doneTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "done")
     }
     var historyPickerActionsEnabled: Bool { historyActionsEnabled && historyPickerCurrent }
     var trashActionsEnabled: Bool {
@@ -2783,6 +2783,10 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .history
                 historyTabs = ["tab": "archived"]
                 historyParamsByTab["archive", default: [:]]["segment"] = "tasks"
+            }
+            if recovery.text("method") == "doneTaskStatusCommit" {
+                selectedSurface = .history
+                historyTabs = ["tab": "done"]
             }
             if ["projectDeleteCommit", "projectDeleteUndoCommit"].contains(recovery.text("method")) { selectedSurface = .projects }
             if recovery.text("method") == "projectDuplicateCommit" {
@@ -12197,6 +12201,76 @@ final class CoreModel: ObservableObject {
     }
 
     private var doneTaskDeleteRequest: String?
+    private var doneTaskStatusRequest: String?
+
+    func doneTaskStatusOptions(_ displayed: CoreObject) async -> CoreObject? {
+        guard historyActionsEnabled, !historyArchived else { return nil }
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let id = displayed.text("id"), revision = displayed.text("taskRevision")
+            guard displayed.text("status") == "done", !displayed.flag("readOnly") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let options = try await query("doneTaskStatusOptions", [try json(["id": id, "taskRevision": revision])])
+            guard Set(options.keys) == Set(["title", "taskId", "taskRevision", "status", "options"]),
+                  options.text("taskId") == id, options.text("taskRevision") == revision,
+                  options.text("status") == displayed.text("status"), !options.text("title").isEmpty,
+                  options.objects("options").map({ $0.text("status") }) == ["inbox", "next", "waiting", "someday", "done", "reference"],
+                  options.objects("options").allSatisfy({ option in
+                      Set(option.keys) == Set(["status", "label", "selected"]) && !option.text("label").isEmpty
+                          && option.flag("selected") == (option.text("status") == displayed.text("status"))
+                          && (option["selected"] as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() }) == true
+                  }) else { throw CocoaError(.coderReadCorrupt) }
+            return options
+        } catch {
+            historyError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func changeDoneTaskStatus(_ displayed: CoreObject, status: String) async {
+        guard historyActionsEnabled, !historyArchived else { return }
+        let id = displayed.text("id"), revision = displayed.text("taskRevision")
+        guard displayed.text("status") == "done", !displayed.flag("readOnly") else {
+            historyError = label("task.updateFailed")
+            return
+        }
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "id": id,
+                                    "taskRevision": revision, "status": status])
+            doneTaskStatusRequest = request
+            let result = try await query("doneTaskStatusWrite", [request])
+            try acknowledgeDoneTaskStatus(result)
+            if status != "done" { _ = await readHistory() }
+        } catch { await handleDoneTaskStatusError(error) }
+    }
+
+    private func acknowledgeDoneTaskStatus(_ result: CoreObject) throws {
+        guard let request = doneTaskStatusRequest, Set(result.keys) == Set(["id"]),
+              result.text("id") == (try decode(request)).text("id") else { throw CocoaError(.coderReadCorrupt) }
+        doneTaskStatusRequest = nil
+        retryNeeded = false
+        historyError = nil
+        error = nil
+    }
+
+    private func handleDoneTaskStatusError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            doneTaskStatusRequest = nil
+            retryNeeded = false
+            error = nil
+            _ = await readHistory()
+        } else {
+            retryNeeded = doneTaskStatusRequest != nil
+            error = failure.localizedDescription
+        }
+        historyError = failure.localizedDescription
+    }
 
     func deleteDoneTask(expectedID: String, expectedRevision: String) async {
         guard historyActionsEnabled, !historyArchived else { return }
@@ -18238,6 +18312,25 @@ final class CoreModel: ObservableObject {
                 _ = await readHistory()
                 return
             }
+            if let request = doneTaskStatusRequest {
+                let outcome = try await query("doneTaskStatusRetryOutcome", [request])
+                if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                    let unknown = label("task.doneStatusOutcomeUnknown")
+                    historyError = unknown
+                    self.error = unknown
+                    return
+                }
+                guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let result = outcome.object("result")
+                if let acknowledgment, try json(result) != json(decode(acknowledgment)) {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try acknowledgeDoneTaskStatus(result)
+                _ = await readHistory()
+                return
+            }
             if let request = doneTaskDeleteRequest {
                 let outcome = try await query("taskDeleteReceiptOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
@@ -18595,6 +18688,10 @@ final class CoreModel: ObservableObject {
             }
             if archivedTaskDeleteRequest != nil {
                 await handleArchivedTaskDeleteError(error)
+                return
+            }
+            if doneTaskStatusRequest != nil {
+                await handleDoneTaskStatusError(error)
                 return
             }
             if doneTaskDeleteRequest != nil {

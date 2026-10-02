@@ -57,6 +57,8 @@ struct StatusListContent: View {
     let onClear: () -> Void
     let onCollapse: (String) -> Void
     let onDeleteTask: ((String, String) -> Void)?
+    var onStatusOptions: ((CoreObject) async -> CoreObject?)? = nil
+    var onStatusChange: ((CoreObject, String) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -99,7 +101,8 @@ struct StatusListContent: View {
                 if item.text("type") == "task" {
                     let row = item.object("row")
                     TaskCard(row: row, model: model, palette: palette, readOnly: disableStatus || row.flag("readOnly"),
-                             onProject: { project in Task { await model.openProject(project) } })
+                             onProject: { project in Task { await model.openProject(project) } },
+                             onStatusOptions: onStatusOptions, onStatusChange: onStatusChange)
                         .id(entry.id)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             if let onDeleteTask, enabled, !row.flag("readOnly"),

@@ -133,6 +133,7 @@ private final class Engine: @unchecked Sendable {
     private var preparedSomedaySectionTaskEnvelope: Data?
     private var confirmedTaskCancellationEnvelope: String?
     private var confirmedTaskCompletionEnvelope: String?
+    private var confirmedDoneTaskStatusEnvelope: String?
     private var confirmedTaskCompletionUndoEnvelope: String?
     private var confirmedArchivedTaskRestoreEnvelope: String?
     private var confirmedProjectLifecycleEnvelope: String?
@@ -147,6 +148,7 @@ private final class Engine: @unchecked Sendable {
     private var startupTaskDeleteResult: String?
     private var startupArchivedTaskRestoreResult: String?
     private var startupTaskCompletionResult: String?
+    private var startupDoneTaskStatusResult: String?
     private var startupTaskCompletionUndoResult: String?
     private var startupProjectDeleteResult: String?
     private var startupProjectDeleteUndoResult: String?
@@ -248,6 +250,7 @@ private final class Engine: @unchecked Sendable {
         "projectDuplicateWrite": 1, "projectDuplicateRetryOutcome": 1,
         "projectLifecycleWrite": 1, "projectLifecycleRetryOutcome": 1, "projectLifecycleReceiptOutcome": 1,
         "reviewTaskWrite": 1,
+        "doneTaskStatusOptions": 1, "doneTaskStatusWrite": 1, "doneTaskStatusRetryOutcome": 1,
         "somedaySectionMoveOptions": 1, "somedaySectionMoveWrite": 1, "somedaySectionMoveUndo": 1,
         "somedaySectionMoveRetryOutcome": 1, "somedaySectionMoveUndoRetryOutcome": 1,
         "taskFocusOptions": 1, "taskFocusWrite": 1, "taskFocusRetryOutcome": 1,
@@ -271,7 +274,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -374,6 +377,10 @@ private final class Engine: @unchecked Sendable {
             }
             if let command = pending, command.method == "taskDeleteCommit" {
                 _ = try invoke("taskDeleteValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "doneTaskStatusCommit" {
+                _ = try invoke("doneTaskStatusValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
             }
             if let command = pending, command.method == "archivedTaskRestoreCommit" {
@@ -656,6 +663,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringArchivedTaskRestore = pending?.method == "archivedTaskRestoreCommit"
         let recoveringArchivedTaskRestoreCommand = recoveringArchivedTaskRestore ? pending : nil
         let recoveringTaskCompletion = pending?.method == "taskCompletionCommit"
+        let recoveringDoneTaskStatus = pending?.method == "doneTaskStatusCommit"
         let recoveringTaskCompletionUndo = pending?.method == "taskCompletionUndoCommit"
         let recoveringCompletionCommand = recoveringTaskCompletion || recoveringTaskCompletionUndo ? pending : nil
         let recoveringProjectDelete = pending?.method == "projectDeleteCommit"
@@ -736,6 +744,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringTaskDelete, let terminal, case .success(let value) = terminal { startupTaskDeleteResult = value }
         if recoveringArchivedTaskRestore, let terminal, case .success(let value) = terminal { startupArchivedTaskRestoreResult = value }
         if recoveringTaskCompletion, let terminal, case .success(let value) = terminal { startupTaskCompletionResult = value }
+        if recoveringDoneTaskStatus, let terminal, case .success(let value) = terminal { startupDoneTaskStatusResult = value }
         if recoveringTaskCompletionUndo, let terminal, case .success(let value) = terminal { startupTaskCompletionUndoResult = value }
         if recoveringProjectDelete, let terminal, case .success(let value) = terminal { startupProjectDeleteResult = value }
         if recoveringProjectDeleteUndo, let terminal, case .success(let value) = terminal { startupProjectDeleteUndoResult = value }
@@ -813,7 +822,7 @@ private final class Engine: @unchecked Sendable {
             ?? startupSomedaySectionTaskResult
         let recoveredManage = startupGtdWorkflowResult ?? startupAppLockResult ?? startupGeneralPreferenceResult ?? startupUnassignedAreaColorResult ?? startupPersonCreateResult
             ?? startupPersonDeleteResult ?? startupPersonEditResult ?? startupTaxonomyResult
-        let recoveredLists = startupTaskCompletionResult ?? startupTaskCompletionUndoResult
+        let recoveredLists = startupDoneTaskStatusResult ?? startupTaskCompletionResult ?? startupTaskCompletionUndoResult
             ?? startupInboxResult ?? startupChecklistResult ?? startupTaskListSortResult
             ?? recoveredManage ?? recoveredSomedaySections
             ?? startupSomedaySectionMoveResult ?? startupSomedaySectionUndoResult
@@ -850,7 +859,8 @@ private final class Engine: @unchecked Sendable {
             (startupProjectDateResult, "projectDateCommit"),
             (startupProjectAreaResult, "projectAreaCommit"),
         ].first(where: { $0.0 != nil })?.1
-        let completionRecoveryMethod = startupTaskCompletionResult != nil ? "taskCompletionCommit"
+        let completionRecoveryMethod = startupDoneTaskStatusResult != nil ? "doneTaskStatusCommit"
+            : startupTaskCompletionResult != nil ? "taskCompletionCommit"
             : startupTaskCompletionUndoResult != nil ? "taskCompletionUndoCommit" : nil
         window["recovery"] = ["method": completionRecoveryMethod ?? (startupArchivedTaskRestoreResult != nil ? "archivedTaskRestoreCommit"
             : startupTaskDeleteResult != nil ? "taskDeleteCommit"
@@ -893,6 +903,7 @@ private final class Engine: @unchecked Sendable {
         startupArchivedTaskRestoreResult = nil
         startupTaskDeleteResult = nil
         startupTaskCompletionResult = nil
+        startupDoneTaskStatusResult = nil
         startupTaskCompletionUndoResult = nil
         startupProjectDeleteResult = nil
         startupProjectDeleteUndoResult = nil
@@ -1050,7 +1061,10 @@ private final class Engine: @unchecked Sendable {
     private func call(_ method: String, argumentsJSON: String, editorAttempt: EditorDraftAttempt?) throws -> String {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, !recoveryActivationPending else { throw HostFailure("Core host is not ready; retry startup") }
-        if editorAttempt == nil, ["saveDraft", "reviewTaskWrite", "checklistSave", "taskDelete", "taskPromote", "archivedTaskRestoreWrite"].contains(method), try editorDrafts.read() != nil {
+        if editorAttempt == nil, ["saveDraft", "reviewTaskWrite", "checklistSave", "taskDelete", "taskPromote", "archivedTaskRestoreWrite", "doneTaskStatusWrite"].contains(method), try editorDrafts.read() != nil {
+            if method == "doneTaskStatusWrite" {
+                throw CoreHostRejection(message: "INVALID_INPUT: Done status cannot replace a saved editor draft")
+            }
             if method == "reviewTaskWrite" {
                 throw CoreHostRejection(message: "INVALID_INPUT: Review row action cannot replace a saved editor draft")
             }
@@ -1070,6 +1084,9 @@ private final class Engine: @unchecked Sendable {
             }
         }
         catch {
+            if ["doneTaskStatusOptions", "doneTaskStatusWrite", "doneTaskStatusRetryOutcome"].contains(method), pending == nil {
+                throw CoreHostRejection(message: error.localizedDescription)
+            }
             if ["archivedTaskRestoreWrite", "archivedTaskRestoreRetryOutcome", "reviewTaskWrite", "taskCancellationUndo", "taskCompletion", "taskCompletionUndo", "taskCompletionRetryOutcome", "taskCompletionUndoRetryOutcome", "taskDelete", "taskDeleteReceiptOutcome", "taskDeleteUndo", "taskDeleteUndoReceiptOutcome", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteReceiptOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome", "projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
@@ -1096,6 +1113,9 @@ private final class Engine: @unchecked Sendable {
         guard Self.mutations.contains(method) else {
             if method == "taskDeleteReceiptOutcome" {
                 return try taskDeleteReceiptOutcome(arguments: args)
+            }
+            if method == "doneTaskStatusRetryOutcome" {
+                return try doneTaskStatusReceiptOutcome(arguments: args)
             }
             if method == "taskDeleteUndoReceiptOutcome" {
                 return try taskDeleteUndoReceiptOutcome(arguments: args)
@@ -2762,6 +2782,33 @@ private final class Engine: @unchecked Sendable {
         } else if method == "archivedTaskRestoreWrite" {
             do { command = try prepareArchivedTaskRestoreCommand(args) }
             catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "doneTaskStatusWrite" {
+            do {
+                guard let original = args.first as? String,
+                      let submitted = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("INVALID_INPUT: Done status needs a bounded request")
+                }
+                let value = try invoke("doneTaskStatusPrepare", arguments: args)
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed Done status preparation")
+                }
+                if response["kind"] as? String == "noop" {
+                    guard submitted["status"] as? String == "done", Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any], Set(result.keys) == Set(["id"]),
+                          Self.equalJSON(result["id"], submitted["id"]) else { throw HostFailure("Malformed Done status no-op") }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+                      let prepared = response["prepared"] as? [String: Any], Self.equalJSON(prepared["request"], submitted) else {
+                    throw HostFailure("Malformed Done status preparation")
+                }
+                let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": submitted, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard envelope.utf8.count <= 2_100_000 else { throw HostFailure("INVALID_INPUT: Done status journal is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_610_000 else { throw HostFailure("INVALID_INPUT: Done status journal is too large") }
+                command = PendingCommand(version: 2, method: "doneTaskStatusCommit", argumentsJSON: encoded)
+                _ = try invoke("doneTaskStatusValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "taskDelete" {
             do {
                 guard let original = args.first as? String,
@@ -3272,6 +3319,12 @@ private final class Engine: @unchecked Sendable {
         guard started, !closed else { throw HostFailure("Core host is not ready; retry startup") }
         guard let command = pending else { return nil }
         if let terminal = command.terminal {
+            if command.method == "doneTaskStatusCommit", case .success(let value) = terminal {
+                let probed = try invoke("doneTaskStatusOutcome", arguments: journalArguments(command))
+                guard probed != "null" else { throw HostFailure("STALE_REVISION: Done status has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: probed)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
             if command.method == "somedaySectionCreateWrite", case .success(let value) = terminal {
                 let probed = try invoke("somedaySectionCreateRetryOutcome", arguments: journalArguments(command))
                 try validateSomedaySectionCreateAcknowledgment(command, value: probed)
@@ -3333,6 +3386,10 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func finish(_ command: PendingCommand, with terminal: TerminalResult) throws -> TerminalResult {
+        if command.method == "doneTaskStatusCommit" {
+            _ = try invoke("doneTaskStatusValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
+        }
         if command.method == "draftCommit" {
             if case .success(let value) = terminal { try validateDraftAcknowledgment(command, value: value) }
             else { try validateDraftAcknowledgment(command) }
@@ -3575,6 +3632,10 @@ private final class Engine: @unchecked Sendable {
             try validateSomedaySectionMoveJournal(command)
             if case .success(let value) = terminal { try validateSomedaySectionMoveAcknowledgment(command, value: value) }
         }
+        if command.method == "doneTaskStatusCommit", case .success = terminal,
+           let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String] {
+            confirmedDoneTaskStatusEnvelope = args.first
+        }
         if command.method == "archivedTaskRestoreCommit", case .success = terminal {
             rememberConfirmedArchivedTaskRestore(command)
         }
@@ -3630,6 +3691,12 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("taskEditorTimeSpentApplied")
 #endif
             NSLog("Native iOS Task Editor time spent saved releaseCheck=v1.3.4/ios-editor-time-spent outcome=confirmed")
+        }
+        if command.method == "doneTaskStatusCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("doneTaskStatus")
+#endif
+            NSLog("Native iOS Done status saved releaseCheck=v1.3.4/ios-done-task-status outcome=confirmed")
         }
         if command.method == "taskDeleteCommit", case .success = terminal {
 #if DEBUG
@@ -4105,6 +4172,7 @@ private final class Engine: @unchecked Sendable {
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
+            || (method == "doneTaskStatusCommit" && message.hasPrefix("STALE_REVISION:"))
             || (["archivedTaskRestoreCommit", "taskCompletionCommit", "taskCompletionUndoCommit", "taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit", "projectDuplicateCommit", "projectLifecycleCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
@@ -5868,6 +5936,22 @@ private final class Engine: @unchecked Sendable {
         return args
     }
 
+    private func doneTaskStatusReceiptOutcome(arguments args: [Any]) throws -> String {
+        guard let encodedRequest = args.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(encodedRequest.utf8)) as? [String: Any],
+              let confirmed = confirmedDoneTaskStatusEnvelope,
+              let envelope = try NativeJSON.jsonObject(with: Data(confirmed.utf8)) as? [String: Any],
+              Self.equalJSON(envelope["request"], request) else { return #"{"kind":"unproven"}"# }
+        let command = PendingCommand(version: 2, method: "doneTaskStatusCommit",
+                                     argumentsJSON: String(decoding: try JSONSerialization.data(withJSONObject: [confirmed]), as: UTF8.self))
+        _ = try invoke("doneTaskStatusValidate", arguments: journalArguments(command))
+        let value = try invoke("doneTaskStatusOutcome", arguments: [confirmed])
+        if value == "null" { return #"{"kind":"unproven"}"# }
+        try validatePreparedAcknowledgment(command, value: value)
+        let result = try NativeJSON.jsonObject(with: Data(value.utf8))
+        return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "confirmed", "result": result], options: [.sortedKeys]), as: UTF8.self)
+    }
+
     private func rememberConfirmedTaskDelete(_ command: PendingCommand) {
         guard ["taskDeleteCommit", "taskDeleteUndoCommit"].contains(command.method),
               let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
@@ -6022,6 +6106,10 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("Malformed checklist acknowledgment")
             }
             try validateChecklistResult(result, request: request, kind: kind)
+        }
+        if command.method == "doneTaskStatusCommit" {
+            guard let request = envelope["request"] as? [String: Any], Set(result.keys) == Set(["id"]),
+                  result["id"] as? String == request["id"] as? String else { throw HostFailure("Malformed Done status acknowledgment") }
         }
         if command.method == "taskDeleteCommit" {
             guard let request = envelope["request"] as? [String: Any],
@@ -6268,6 +6356,27 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func journalArguments(_ command: PendingCommand, checkingEditorSnapshot: Bool = true) throws -> [Any] {
+        if command.method == "doneTaskStatusCommit" {
+            guard command.editorDraft == nil, command.argumentsJSON.utf8.count <= 12_610_000,
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+                  args.count == 1, args[0].utf8.count <= 2_100_000,
+                  let envelope = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(envelope.keys) == Set(["request", "prepared"]),
+                  let request = envelope["request"] as? [String: Any],
+                  let prepared = envelope["prepared"] as? [String: Any],
+                  (Self.isInteger(prepared["version"], equalTo: 1)
+                    && Set(prepared.keys) == Set(["version", "kind", "request", "checklist", "result"]))
+                    || (Self.isInteger(prepared["version"], equalTo: 2)
+                        && Set(prepared.keys) == Set(["version", "kind", "request", "rawBefore", "checklist", "result"])
+                        && prepared["rawBefore"] is [String: Any]),
+                  prepared["kind"] as? String == "doneStatus",
+                  Self.equalJSON(prepared["request"], request), prepared["checklist"] is [String: Any],
+                  let result = prepared["result"] as? [String: Any], Set(result.keys) == Set(["id"]),
+                  result["id"] as? String == request["id"] as? String else { throw HostFailure("Malformed Done status journal") }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("doneTaskStatusWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
         if command.method == "archivedTaskRestoreCommit" {
             return try archivedTaskRestoreJournalArguments(command)
         }
@@ -7308,6 +7417,9 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func validateArgumentTransportSize(_ method: String, _ json: String) throws {
+        if ["doneTaskStatusOptions", "doneTaskStatusWrite", "doneTaskStatusRetryOutcome"].contains(method), json.utf8.count > 4_096 {
+            throw HostFailure("INVALID_INPUT: Done status request is too large")
+        }
         if method == "taskOpenTab", json.utf8.count > 4_096 {
             throw HostFailure("INVALID_INPUT: Task open tab request is too large")
         }
@@ -8618,6 +8730,18 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func validatePreparedTaskArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
+        if ["doneTaskStatusOptions", "doneTaskStatusWrite", "doneTaskStatusRetryOutcome"].contains(method) {
+            let options = method == "doneTaskStatusOptions"
+            guard let text = args.first as? String, text.utf8.count <= 4_096,
+                  let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                  Set(request.keys) == (options ? Set(["id", "taskRevision"]) : Set(["id", "taskRevision", "status", "requestId"])),
+                  let taskID = request["id"] as? String, !taskID.isEmpty, taskID.utf16.count <= 500,
+                  let revision = request["taskRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 200,
+                  options || (request["status"] as? String).map({ ["inbox", "next", "waiting", "someday", "done", "reference"].contains($0) }) == true,
+                  options || (request["requestId"] as? String).map({ UUID(uuidString: $0)?.uuidString.lowercased() == $0 }) == true else {
+                throw HostFailure("INVALID_INPUT: Done status needs a displayed revision, quick status, and lowercase UUID")
+            }
+        }
         if method == "archivedTaskRestoreWrite" || method == "archivedTaskRestoreRetryOutcome" {
             guard let text = args.first as? String, text.utf8.count <= 4_096,
                   let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
@@ -9359,6 +9483,7 @@ private final class Engine: @unchecked Sendable {
         started = false
         recoveryActivationPending = false
         startupBoardResult = nil
+        startupDoneTaskStatusResult = nil
         startupTrashTaskRestoreResult = nil
         startupTrashProjectRestoreResult = nil
         startupCalendarResult = nil

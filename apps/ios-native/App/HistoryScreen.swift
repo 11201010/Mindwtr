@@ -40,7 +40,7 @@ struct HistoryScreen: View {
             else {
                 StatusListContent(model: model, palette: palette, data: model.history, prefix: "done",
                                   current: model.historyCurrent, enabled: model.historyActionsEnabled,
-                                  error: model.historyError, disableStatus: true,
+                                  error: model.historyError, disableStatus: false,
                                   onRetry: { Task { await model.retryHistory() } },
                                   onMore: { Task { await model.loadMoreHistory() } },
                                   onFilters: { model.setHistoryPanel("filters") },
@@ -49,6 +49,10 @@ struct HistoryScreen: View {
                                   onCollapse: { id in Task { await model.toggleHistorySection(id) } },
                                   onDeleteTask: { id, revision in
                                       Task { await model.deleteDoneTask(expectedID: id, expectedRevision: revision) }
+                                  },
+                                  onStatusOptions: { row in await model.doneTaskStatusOptions(row) },
+                                  onStatusChange: { row, status in
+                                      Task { await model.changeDoneTaskStatus(row, status: status) }
                                   })
             }
         }

@@ -1046,7 +1046,12 @@ struct TaskCard: View {
     var beforeAction: (() -> Void)? = nil
     var onMoveToSection: (() -> Void)? = nil
     var moveToSectionLabel: String = ""
+    var onStatusOptions: ((CoreObject) async -> CoreObject?)? = nil
+    var onStatusChange: ((CoreObject, String) -> Void)? = nil
     @State private var statusMenu = false
+    @State private var statusRow: CoreObject = [:]
+    @State private var statusOptions: CoreObject = [:]
+    @State private var statusOptionsTask: Task<Void, Never>?
     private var meta: CoreObject { row.object("meta") }
     private var statusColor: Color {
         Color(hex: model.theme.object("status").object(palette.dark ? "dark" : "light").object(row.text("status")).text("text"))
@@ -1126,11 +1131,22 @@ struct TaskCard: View {
                 Button {
                     beforeAction?()
                     model.taskStatusMenuPresented = true
-                    statusMenu = true
+                    if let onStatusOptions {
+                        let displayed = row
+                        statusRow = displayed
+                        statusOptionsTask = Task {
+                            defer { statusOptionsTask = nil }
+                            if let options = await onStatusOptions(displayed) {
+                                guard !Task.isCancelled else { return }
+                                statusOptions = options
+                                statusMenu = true
+                            } else { model.taskStatusMenuPresented = false }
+                        }
+                    } else { statusMenu = true }
                 } label: {
                     AppIcon(name: "status", size: 20).foregroundStyle(statusColor).frame(width: 44, height: 44)
                 }
-                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || row.flag("readOnly") || readOnly)
+                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || row.flag("readOnly") || readOnly || statusOptionsTask != nil)
                 .accessibilityLabel(model.label("task.aria.changeStatus").replacingOccurrences(of: "{{status}}", with: meta.text("statusLabel")))
                 .accessibilityHint(model.label("task.aria.changeStatusHint"))
                 .accessibilityIdentifier("task-status-" + row.text("id"))
@@ -1150,21 +1166,38 @@ struct TaskCard: View {
         .environment(\.layoutDirection, meta.text("textDirection") == "rtl" ? .rightToLeft : .leftToRight)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(meta.text("accessibilityLabel"))
-        .confirmationDialog(meta.text("statusLabel"), isPresented: $statusMenu, titleVisibility: .visible) {
-            Button(model.label("common.done")) {
-                Task { await model.complete(row.text("id"), taskRevision: row.text("taskRevision")) }
-            }
-                .accessibilityIdentifier("task-complete")
-            if let onMoveToSection, !moveToSectionLabel.isEmpty {
-                Button(moveToSectionLabel) { onMoveToSection() }
-                    .disabled(model.busy || model.retryNeeded || readOnly || row.flag("readOnly")
-                              || model.somedayMoveUndoAwaitingRefresh || model.somedayMoveUndoError != nil)
-                    .accessibilityIdentifier("task-move-section-" + row.text("id"))
+        .confirmationDialog(onStatusOptions == nil ? meta.text("statusLabel") : statusOptions.text("title"),
+                            isPresented: $statusMenu, titleVisibility: .visible) {
+            if let onStatusChange {
+                ForEach(statusOptions.objects("options").indices, id: \.self) { index in
+                    let option = statusOptions.objects("options")[index]
+                    Button((option.flag("selected") ? "✓ " : "") + option.text("label")) {
+                        onStatusChange(statusRow, option.text("status"))
+                    }
+                        .disabled(model.busy || model.retryNeeded || readOnly || statusRow.flag("readOnly"))
+                        .accessibilityAddTraits(option.flag("selected") ? .isSelected : [])
+                        .accessibilityIdentifier("done-status-" + option.text("status"))
+                }
+            } else {
+                Button(model.label("common.done")) {
+                    Task { await model.complete(row.text("id"), taskRevision: row.text("taskRevision")) }
+                }
+                    .accessibilityIdentifier("task-complete")
+                if let onMoveToSection, !moveToSectionLabel.isEmpty {
+                    Button(moveToSectionLabel) { onMoveToSection() }
+                        .disabled(model.busy || model.retryNeeded || readOnly || row.flag("readOnly")
+                                  || model.somedayMoveUndoAwaitingRefresh || model.somedayMoveUndoError != nil)
+                        .accessibilityIdentifier("task-move-section-" + row.text("id"))
+                }
             }
             Button(model.label("common.cancel"), role: .cancel) {}
         }
         .onChange(of: statusMenu) { model.taskStatusMenuPresented = $0 }
-        .onDisappear { if statusMenu { model.taskStatusMenuPresented = false } }
+        .onDisappear {
+            let ownsMenu = statusMenu || statusOptionsTask != nil
+            statusOptionsTask?.cancel()
+            if ownsMenu { model.taskStatusMenuPresented = false }
+        }
     }
 
     private func openTask() {

@@ -614,8 +614,9 @@ export interface TaskStore {
     }) => Promise<StoreActionResult>;
     /** Internal prepared edit; native validates the journal before this atomic guarded overlay. */
     commitPreparedTaskEdit: (input: PreparedTaskEdit) => Promise<PreparedTaskEditResult>;
-    /** Native Task Editor v2: one raw saved Task effect with an exact durable receipt. */
-    commitPreparedTaskDraftV2: (input: import('./native-host-contract-task-save').NativePreparedTaskDraftSaveV2,
+    /** Native one-task raw overlay; the calling contract validates its effect and guards. */
+    commitPreparedTaskDraftV2: (input: Pick<import('./native-host-contract-task-save').NativePreparedTaskDraftSaveV2,
+        'deviceIdBefore' | 'deviceIdToInitialize' | 'effect'> & { request: { id: string } },
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     commitPreparedArchivedTaskRestore: (input: import('./native-host-contract-archive-task-restore').NativePreparedArchivedTaskRestore,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;

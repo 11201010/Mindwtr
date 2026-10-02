@@ -18787,4 +18787,81 @@ final class FoundationUITests: XCTestCase {
     func testTask176DoneDeleteColdRecovery() { task176Recovered("72700421-168e-4da3-8262-73d0be9ce0fc", undo: false) }
     func testTask176DoneUndoColdRecovery() { task176Recovered("57393d32-bf88-41db-a80d-a1a9cf9b1c29", undo: true) }
 
+
+    private func task177OpenStatus(_ app: XCUIApplication, _ suffix: String) {
+        let button = app.buttons["task-status-task177-" + suffix]
+        let list = app.descendants(matching: .any).matching(identifier: "done-scroll").firstMatch
+        for direction in [true, false] {
+            for _ in 0..<12 {
+                if button.isHittable { break }
+                if direction { list.swipeUp() } else { list.swipeDown() }
+            }
+            if button.isHittable { break }
+        }
+        boardEnabled(button, timeout: 10); button.tap()
+        for status in ["inbox", "next", "waiting", "someday", "done", "reference"] {
+            boardEnabled(app.buttons["done-status-" + status].firstMatch, timeout: 15)
+        }
+    }
+
+    private func task177StatusFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task176OpenDone(app)
+        for status in ["inbox", "next", "waiting", "someday", "reference"] {
+            task177OpenStatus(app, status); app.buttons["done-status-" + status].firstMatch.tap()
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task177-" + status).firstMatch.waitForNonExistence(timeout: 30))
+            XCTAssertTrue(app.buttons["history-tab-done"].isSelected)
+            XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task177 Done status changes"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task176OpenDone(app)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task177-noop").firstMatch.exists)
+        for status in ["inbox", "next", "waiting", "someday", "reference"] {
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-title-task177-" + status).firstMatch.exists)
+        }
+        app.terminate()
+    }
+
+    func testTask177DoneStatusCanonical() { task177StatusFlow("859bd1ae-46b9-4679-b147-d7cf2662a428") }
+    func testTask177DoneStatusNormal() { task177StatusFlow("9871a26f-321f-4dbc-ad97-6942f7bdba1a") }
+    func testTask177DoneStatusLargest() { task177StatusFlow("bc9b8b00-2c6e-4f29-91a8-3033dbea0b27") }
+
+    func testTask177DoneStatusNoopAndCancel() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "34036132-5350-4c43-8126-a6cdb1be92d1"]
+        app.launch(); task176OpenDone(app); task177OpenStatus(app, "noop")
+        app.buttons["done-status-done"].firstMatch.tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task177-noop").firstMatch.waitForExistence(timeout: 30))
+        task177OpenStatus(app, "noop")
+        if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
+        else { app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap() }
+        XCTAssertTrue(app.buttons["done-status-inbox"].firstMatch.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task177-noop").firstMatch.exists)
+        app.terminate()
+    }
+
+    func testTask177DoneStatusFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "968a7d4f-edc1-456a-ac3c-e4da8637a9d2"]
+        app.launch(); task176OpenDone(app); task177OpenStatus(app, "inbox"); app.buttons["done-status-inbox"].firstMatch.tap()
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+            XCTAssertFalse(app.buttons["history-tab-archived"].isEnabled)
+            boardTap(app, "persistence-retry")
+        }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); app.terminate()
+    }
+
+    func testTask177DoneStatusColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "968a7d4f-edc1-456a-ac3c-e4da8637a9d2"]
+        for _ in 0..<2 {
+            app.launch(); task176OpenDone(app)
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-title-task177-inbox").firstMatch.exists)
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task177-noop").firstMatch.exists)
+            app.terminate()
+        }
+    }
+
 }
