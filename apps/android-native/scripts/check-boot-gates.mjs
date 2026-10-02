@@ -4082,7 +4082,9 @@ globalThis.standStore = useTaskStore;
     const started = await reminders.start();
     assert.equal(started.rnCancelled, 2);
     assert.equal(started.ask, true, 'a feature on and no permission: RN asks at start');
-    assert.deepEqual(calls, ['cleanup', `plan ${stored} false`, 'apply Mindwtr reminders']);
+    // The process's first plan remakes every held alarm: Android dropped them if exact-alarm access was revoked (it stops the app)
+    // or the app was force-stopped, and the stored map still says each is held.
+    assert.deepEqual(calls, ['cleanup', 'plan {"task:a":{"id":7,"signature":"s","pending":true}} false', 'apply Mindwtr reminders']);
     // Cycles run one at a time; the cleanup ran once.
     calls.length = 0;
     await Promise.all([reminders.cycle(false), reminders.cycle(false)]);

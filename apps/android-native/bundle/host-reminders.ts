@@ -10,7 +10,8 @@
  *   task's or project's notification plans again after REMINDER_NOTIFICATION_EVENT_RESCHEDULE_DELAY_MS;
  * - a rebuild (a reboot dropped every alarm, a clock change, Android just allowed exact alarms) plans with every held alarm marked
  *   pending, core's mark for "not made yet": core makes each again under its own id, which replaces it, and keeps or withdraws what
- *   it delivered by core's reason;
+ *   it delivered by core's reason. The process's first plan is a rebuild too: Android drops every exact alarm when the user revokes
+ *   exact-alarm access (it stops the app) and every alarm on a force-stop, while the stored map still says each is held;
  * - React Native's own alarms are cancelled once (Kotlin's RnAlarmCleanup) before this host's first plan;
  * - none of this runs in sandbox mode, as RN's notification service does not.
  */
@@ -71,15 +72,17 @@ const log = (message: string, context: Record<string, unknown>, warn = false) =>
 
 export const createNativeReminders = (bindings: NativeReminderBindings) => {
     let started = false;
+    let rebuilt = false;
     let rnCancelled: number | null = null;
     let queue: Promise<unknown> = Promise.resolve();
     let storeTimer: ReturnType<typeof setTimeout> | null = null;
     let topUpTimer: ReturnType<typeof setTimeout> | null = null;
     let eventTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const runCycle = async (rebuild: boolean) => {
+    const runCycle = async (requested: boolean) => {
         // RN's alarms go before the first plan; until that succeeds no plan runs (the next cycle tries again).
         if (rnCancelled === null) rnCancelled = bindings.cleanupRn();
+        const rebuild = requested || !rebuilt;
         const stored = await bindings.readStored();
         const permissionGranted = bindings.permissionGranted();
         const result = await bindings.plan({ storedAlarms: rebuild ? allPending(stored) : stored, permissionGranted });
@@ -88,6 +91,7 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
         // Nothing to make, cancel or store: the stored map already says it (none stored reads as an empty map).
         const unchanged = plan.schedule.length === 0 && plan.cancel.length === 0 && (plan.alarms === stored || (stored === null && plan.alarms === '{}'));
         bindings.apply(JSON.stringify({ ...plan, channelName: REMINDER_NOTIFICATION_CHANNEL_NAME, unchanged }));
+        rebuilt = true;
         if (topUpTimer) clearTimeout(topUpTimer);
         topUpTimer = plan.topUpDelayMs === null ? null : setTimeout(() => {
             topUpTimer = null;
