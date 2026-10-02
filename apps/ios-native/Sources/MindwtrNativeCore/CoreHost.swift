@@ -3394,6 +3394,7 @@ private final class Engine: @unchecked Sendable {
         }
         if command.method == "gtdWorkflowCommit", case .success(let value) = terminal {
             let result = (try? NativeJSON.jsonObject(with: Data(value.utf8))) as? [String: Any]
+            let fieldOrder = result?["type"] as? String == "taskEditorOrder"
             let fieldSection = result?["type"] as? String == "taskEditorFieldSection"
             let fields = result?["type"] as? String == "taskEditorFieldVisible"
             let archiving = result?["type"] as? String == "autoArchiveDays"
@@ -3405,9 +3406,10 @@ private final class Engine: @unchecked Sendable {
             let editing = result?["type"] as? String == "taskEditorSectionOpen"
             let preset = result?["type"] as? String == "taskEditorPreset"
 #if DEBUG
-            faults?.commandDiagnostic?(fieldSection ? "gtdTaskEditorFieldSectionApplied" : fields ? "gtdTaskEditorFieldApplied" : archiving ? "gtdAutoArchiveApplied" : startDates ? "gtdFocusStartDatesApplied" : preset ? "gtdTaskEditorPresetApplied" : editing ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : reviewing ? "gtdReviewApplied" : "gtdWorkflowApplied")
+            faults?.commandDiagnostic?(fieldOrder ? "gtdTaskEditorFieldOrderApplied" : fieldSection ? "gtdTaskEditorFieldSectionApplied" : fields ? "gtdTaskEditorFieldApplied" : archiving ? "gtdAutoArchiveApplied" : startDates ? "gtdFocusStartDatesApplied" : preset ? "gtdTaskEditorPresetApplied" : editing ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : reviewing ? "gtdReviewApplied" : "gtdWorkflowApplied")
 #endif
-            if fieldSection { NSLog("Native iOS Task Editor field section saved releaseCheck=v1.3.4/ios-gtd-editor-field-sections outcome=confirmed") }
+            if fieldOrder { NSLog("Native iOS Task Editor field order saved releaseCheck=v1.3.4/ios-gtd-editor-field-order outcome=confirmed") }
+            else if fieldSection { NSLog("Native iOS Task Editor field section saved releaseCheck=v1.3.4/ios-gtd-editor-field-sections outcome=confirmed") }
             else if fields { NSLog("Native iOS Task Editor field visibility saved releaseCheck=v1.3.4/ios-gtd-editor-fields outcome=confirmed") }
             else if archiving { NSLog("Native iOS Auto-archive preference saved releaseCheck=v1.3.4/ios-auto-archive outcome=confirmed") }
             else if startDates { NSLog("Native iOS Focus start-date preference saved releaseCheck=v1.3.4/ios-focus-start-dates outcome=confirmed") }
@@ -3868,14 +3870,17 @@ private final class Engine: @unchecked Sendable {
     private static func validTaskEditorFieldSheet(_ value: Any?, row: [String: Any], groupID: String, groupTitle: String) -> Bool {
         guard let field = row["id"] as? String,
               let sheet = value as? [String: Any],
-              Set(sheet.keys) == Set(["title", "section", "visible", "sections", "doneLabel"]),
+              Set(sheet.keys) == Set(["title", "section", "visible", "sections", "order", "doneLabel"]),
               equalJSON(sheet["title"], row["label"]), sheet["section"] as? String == groupTitle,
               sheet["doneLabel"] is String,
               let visible = sheet["visible"] as? [String: Any],
               Set(visible.keys) == Set(["label", "description", "value", "edit"]),
               visible["label"] is String, visible["description"] is String || visible["description"] is NSNull,
               isBoolean(visible["value"]), equalJSON(visible["value"], row["visible"]),
-              equalJSON(visible["edit"], (row["visibility"] as? [String: Any])?["edit"]) else { return false }
+              equalJSON(visible["edit"], (row["visibility"] as? [String: Any])?["edit"]),
+              let order = sheet["order"] as? [String: Any],
+              Set(order.keys) == Set(["label", "moveUp", "moveDown"]), order["label"] is String,
+              validTaskEditorMoveControl(order["moveUp"]), validTaskEditorMoveControl(order["moveDown"]) else { return false }
         if taskEditorFixedFields.contains(field) { return sheet["sections"] is NSNull }
         let sectionIDs = ["basic", "scheduling", "organization", "details"]
         guard let sections = sheet["sections"] as? [String: Any],
@@ -3896,9 +3901,26 @@ private final class Engine: @unchecked Sendable {
         }
     }
 
+    private static func validTaskEditorOrderValue(_ value: Any?) -> Bool {
+        guard let order = value as? [String], order.count == taskEditorFields.count else { return false }
+        return Set(order) == taskEditorFields
+    }
+
+    private static func validTaskEditorMoveControl(_ value: Any?) -> Bool {
+        guard let control = value as? [String: Any],
+              Set(control.keys) == Set(["label", "disabled", "edit"]),
+              control["label"] is String, isBoolean(control["disabled"]),
+              let disabled = control["disabled"] as? Bool else { return false }
+        if disabled { return control["edit"] is NSNull }
+        guard let edit = control["edit"] as? [String: Any],
+              Set(edit.keys) == Set(["type", "value"]),
+              edit["type"] as? String == "taskEditorOrder" else { return false }
+        return validTaskEditorOrderValue(edit["value"])
+    }
+
     private static func validGtdWorkflowEdit(_ value: Any?) -> Bool {
         guard let edit = value as? [String: Any], let type = edit["type"] as? String else { return false }
-        let fieldEdit = ["taskEditorFieldVisible", "taskEditorFieldSection"].contains(type)
+        let fieldEdit = ["taskEditorFieldVisible", "taskEditorFieldSection", "taskEditorOrder"].contains(type)
         let keys = type == "taskEditorSectionOpen" ? ["type", "section", "value"] : fieldEdit ? ["type", "field", "value"] : ["type", "value"]
         guard Set(edit.keys) == Set(keys) else { return false }
         switch type {
@@ -3906,6 +3928,7 @@ private final class Engine: @unchecked Sendable {
         case "taskEditorSectionOpen": return ["scheduling", "organization", "details"].contains(edit["section"] as? String ?? "") && isBoolean(edit["value"])
         case "taskEditorFieldVisible": return taskEditorFields.contains(edit["field"] as? String ?? "") && isBoolean(edit["value"])
         case "taskEditorFieldSection": return taskEditorFields.subtracting(taskEditorFixedFields).contains(edit["field"] as? String ?? "") && ["basic", "scheduling", "organization", "details"].contains(edit["value"] as? String ?? "")
+        case "taskEditorOrder": return taskEditorFields.contains(edit["field"] as? String ?? "") && validTaskEditorOrderValue(edit["value"])
         case "defaultArea": return (edit["value"] as? String).map { $0.utf16.count <= 500 } == true
         case "defaultScheduleTime": return (edit["value"] as? String).map { $0.utf16.count <= 50 } == true
         case "focusTaskLimit": return !isBoolean(edit["value"]) && (edit["value"] as? NSNumber).map {
@@ -3920,7 +3943,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private static func validGtdWorkflowExpected(_ value: Any?, type: String) -> Bool {
-        if type == "taskEditorPreset" || type == "taskEditorFieldVisible" || type == "taskEditorFieldSection" {
+        if type == "taskEditorPreset" || type == "taskEditorFieldVisible" || type == "taskEditorFieldSection" || type == "taskEditorOrder" {
             let layout = ["order", "hidden", "sections", "sectionOpen"]
             let flags = ["priorities", "timeEstimates"]
             guard let expected = value as? [String: Any],
@@ -4002,7 +4025,7 @@ private final class Engine: @unchecked Sendable {
 
     private func validateGtdWorkflowResult(_ result: [String: Any], request: [String: Any], changed: Bool) throws {
         let editing = (request["edit"] as? [String: Any])?["type"] as? String == "taskEditorSectionOpen"
-        let fields = ["taskEditorFieldVisible", "taskEditorFieldSection"].contains((request["edit"] as? [String: Any])?["type"] as? String ?? "")
+        let fields = ["taskEditorFieldVisible", "taskEditorFieldSection", "taskEditorOrder"].contains((request["edit"] as? [String: Any])?["type"] as? String ?? "")
         guard Set(result.keys) == Set(editing ? ["type", "section", "value", "changed"] : fields ? ["type", "field", "value", "changed"] : ["type", "value", "changed"]),
               let edit = request["edit"] as? [String: Any],
               !editing || Self.equalJSON(result["section"], edit["section"]),

@@ -433,7 +433,10 @@ struct SettingsScreen: View {
         let field = model.gtdTaskEditorField
         let sheet = field.object("sheet")
         return VStack(spacing: 0) {
-            HStack(spacing: 12) {
+            let headerLayout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .trailing, spacing: 8))
+                : AnyLayout(HStackLayout(spacing: 12))
+            headerLayout {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(sheet.text("title")).rnFont(20, .bold).foregroundStyle(palette.text)
                         .accessibilityAddTraits(.isHeader)
@@ -467,6 +470,30 @@ struct SettingsScreen: View {
                                 .disabled(!model.gtdWorkflowEnabled)
                                 .accessibilityAddTraits(option.flag("selected") ? .isSelected : [])
                                 .accessibilityIdentifier("gtd-field-section-" + option.text("value"))
+                        }
+                    }
+                    let order = sheet.object("order")
+                    if !order.isEmpty {
+                        Text(order.text("label")).rnFont(16, .semibold).foregroundStyle(palette.text)
+                            .accessibilityAddTraits(.isHeader)
+                        let layout = dynamicTypeSize.isAccessibilitySize
+                            ? AnyLayout(VStackLayout(spacing: 8))
+                            : AnyLayout(HStackLayout(spacing: 8))
+                        layout {
+                            ForEach(["moveUp", "moveDown"], id: \.self) { direction in
+                                let move = order.object(direction)
+                                Button {
+                                    var edit = move.object("edit")
+                                    edit["field"] = field.text("id")
+                                    Task { await model.chooseGtdWorkflow(edit) }
+                                } label: {
+                                    Label(move.text("label"), systemImage: direction == "moveUp" ? "arrow.up" : "arrow.down")
+                                        .rnFont(16).fixedSize(horizontal: false, vertical: true)
+                                        .frame(maxWidth: .infinity, minHeight: 48).padding(.horizontal, 12)
+                                }.buttonStyle(.plain).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                                    .disabled(!model.gtdWorkflowEnabled || move.flag("disabled") || move.object("edit").isEmpty)
+                                    .accessibilityIdentifier("gtd-field-" + direction)
+                            }
                         }
                     }
                     gtdFeedback

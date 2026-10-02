@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createNativeHostContract } from './native-host-contract';
 import type { NativeGtdWorkflowRequest } from './native-host-contract-gtd-workflow';
+import { buildGtdSettingsUpdate } from './gtd-settings-model';
 import { NativeReceiptSqliteAdapter, resetNativeRequestReceipts } from './native-request-receipts';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { SqliteClient } from './sqlite-adapter';
@@ -156,6 +157,21 @@ async function planFieldSection(host: ReturnType<typeof createNativeHostContract
     if (!options.ok) throw new Error(JSON.stringify(options));
     const request: NativeGtdWorkflowRequest = { requestId: ID,
         edit: { type: 'taskEditorFieldSection', field: 'description', value }, expected: options.value.expected };
+    const prepared = await host.prepareGtdWorkflow(request);
+    if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+    return { request, prepared: prepared.value.prepared };
+}
+
+async function planOrder(host: ReturnType<typeof createNativeHostContract>) {
+    const options = await host.getGtdTaskEditorFieldOptions({});
+    if (!options.ok) throw new Error(JSON.stringify(options));
+    const field = options.value.taskEditor.groups.flatMap((group) => group.fields)
+        .find((row) => row.id === 'status');
+    const move = field?.sheet.order.moveDown.edit;
+    if (!move || move.type !== 'taskEditorOrder') throw new Error('Expected shared Status move');
+    const request: NativeGtdWorkflowRequest = { requestId: ID,
+        edit: { type: 'taskEditorOrder', field: 'status', value: move.value },
+        expected: options.value.expected };
     const prepared = await host.prepareGtdWorkflow(request);
     if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
     return { request, prepared: prepared.value.prepared };
@@ -813,4 +829,56 @@ describe('GTD Task Editor field section uses the composite v1 SQLite receipt', (
             value: envelope.prepared.result });
         expect(nineTables(cold.db)).toEqual(saved);
     }, 20_000);
+});
+
+describe('GTD Task Editor field order uses the composite v1 SQLite receipt', () => {
+    it('preserves nine raw tables through failed COMMIT, then exact-retries and cold-replays the full order', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-editor-field-order-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const first = await open(path, true);
+        const before = nineTables(first.db);
+        const beforeSettings = (await first.adapter.getData()).settings;
+        const envelope = await planOrder(first.host);
+        expect(envelope.prepared.after.selected?.order.value).toEqual(envelope.request.edit.value);
+        first.fault.commits = 10;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            expect(await first.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+                error: { code: 'SAVE_FAILED' } });
+            expect(nineTables(first.db)).toEqual(before);
+        }
+        first.fault.commits = 0;
+        expect(await first.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        const saved = nineTables(first.db);
+        for (const table of tables.filter((name) => name !== 'settings')) expect(saved[table]).toEqual(before[table]);
+        const settings = (await first.adapter.getData()).settings;
+        expect(settings.gtd?.taskEditor?.order).toEqual(envelope.request.edit.value);
+        expect(settings.gtd?.legacySibling).toBe(beforeSettings.gtd?.legacySibling);
+        expect(settings.syncPreferencesUpdatedAt?.gtd).toBe(envelope.prepared.after.stamp);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toEqual({ ok: true,
+            value: envelope.prepared.result });
+        expect(nineTables(cold.db)).toEqual(saved);
+    }, 20_000);
+
+    it('cold-refuses an independently saved identical target with a different GTD stamp', async () => {
+        const dir = mkdtempSync(join(tempRoot, 'gtd-editor-field-order-')); directories.push(dir);
+        const path = join(dir, 'library.db');
+        const first = await open(path, true);
+        const envelope = await planOrder(first.host);
+        const independent = await first.adapter.getData();
+        const update = buildGtdSettingsUpdate(independent.settings, envelope.request.edit);
+        if (!update) throw new Error('Expected shared order update');
+        independent.settings = { ...independent.settings, ...update };
+        independent.settings.syncPreferencesUpdatedAt = { ...independent.settings.syncPreferencesUpdatedAt,
+            gtd: '2026-09-02T00:00:00.000Z' };
+        await first.adapter.saveData(independent);
+        first.db.close(); databases.splice(databases.indexOf(first.db), 1);
+        const cold = await open(path);
+        const before = nineTables(cold.db);
+        expect(await cold.host.commitPreparedGtdWorkflow(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(nineTables(cold.db)).toEqual(before);
+    });
 });

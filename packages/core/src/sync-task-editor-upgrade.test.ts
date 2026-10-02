@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { performSyncCycle } from './sync';
 import { mergeSettingsForSync } from './sync-merge-settings';
 import { buildLoadContext, runLoadMigrations } from './store-load-migrations';
-import { DEFAULT_TASK_EDITOR_HIDDEN } from './task-editor-layout';
+import { DEFAULT_TASK_EDITOR_HIDDEN, DEFAULT_TASK_EDITOR_ORDER } from './task-editor-layout';
+import { buildGtdSettingsUpdate } from './gtd-settings-model';
 import { consoleLogger, setLogger, type LogPayload } from './logger';
 import type { AppData, TaskEditorSettings } from './types';
 
@@ -46,6 +47,22 @@ describe('Task Editor Layout upgrade sync', () => {
         const a = settings(layoutA);
         const b = settings({ ...layoutA, order: layoutB.order });
         expect(mergeSettingsForSync(a, b).gtd?.taskEditor).toEqual(mergeSettingsForSync(b, a).gtd?.taskEditor);
+    });
+
+    it('lets the newer stamped shared order edit win without merging individual field positions', () => {
+        const original = settings({ order: [...DEFAULT_TASK_EDITOR_ORDER],
+            hidden: [...DEFAULT_TASK_EDITOR_HIDDEN], defaultsVersion: 5 }, NOW);
+        const moved = [DEFAULT_TASK_EDITOR_ORDER[1], DEFAULT_TASK_EDITOR_ORDER[0],
+            ...DEFAULT_TASK_EDITOR_ORDER.slice(2)];
+        const update = buildGtdSettingsUpdate(original, { type: 'taskEditorOrder', value: moved });
+        if (!update) throw new Error('Expected shared order update');
+        const later = { ...original, ...update,
+            syncPreferencesUpdatedAt: { gtd: '2026-09-13T12:00:00.000Z' } };
+        for (const merged of [mergeSettingsForSync(original, later), mergeSettingsForSync(later, original)]) {
+            expect(merged.gtd?.taskEditor).toEqual(later.gtd?.taskEditor);
+            expect(merged.gtd?.taskEditor?.order).toEqual(moved);
+            expect(merged.syncPreferencesUpdatedAt?.gtd).toBe(later.syncPreferencesUpdatedAt.gtd);
+        }
     });
 
     it.each([
