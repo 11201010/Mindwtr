@@ -83,3 +83,5 @@ Project Details → actions → Delete confirms before moving the Project and li
 Project Details → actions → Duplicate uses RN’s shared copy policy and opens the saved copy. Project settings and live Sections/Tasks carry over; Reference Tasks stay Reference, other Tasks become Next, checklists reset, and copied attachments clear remote transfer metadata. Failed saves and cold recovery reuse the original generated IDs.
 
 Project Details → actions → Complete files the Project in Completed using RN’s archive transition. The same action becomes Reactivate, which restores eligible child task states and Sections while retaining later edits and older history. Both actions keep the same detail screen, require durable acknowledgment, and retain the exact transition through failed saves and cold recovery.
+
+Project Details → actions → Cancel project uses RN’s destructive confirmation and preserves completed work and project history. It cancels unfinished tasks through the same shared lifecycle transaction; the cancelled detail remains read-only until Reactivate restores eligible child states. Dismissing confirmation writes nothing.

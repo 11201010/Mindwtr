@@ -3587,7 +3587,7 @@ final class CoreModel: ObservableObject {
                     "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone",
                     "nav.projects", "nav.review", "nav.calendar", "nav.board", "nav.contexts", "common.back", "common.tasks",
                     "task.aria.openContext", "task.aria.openTag",
-                    "projects.title", "projects.deleteConfirm", "projects.duplicate", "projects.duplicated", "projects.complete", "projects.reactivate", "projects.archiveHelp", "projects.activeSection", "projects.deferredSection", "projects.closed",
+                    "projects.title", "projects.deleteConfirm", "projects.duplicate", "projects.duplicated", "projects.complete", "projects.reactivate", "projects.cancel", "projects.cancelConfirmTitle", "projects.cancelConfirmBody", "projects.archiveHelp", "projects.activeSection", "projects.deferredSection", "projects.closed",
                     "projects.noArea", "projects.empty", "list.noTasks", "projects.noNextAction",
                     "projects.addPlaceholder", "projects.add", "projects.tagFilter", "projects.allTags", "projects.noTags", "projects.emptyTag",
                     "filters.show", "filters.hide", "projects.areaLabel",
@@ -12895,11 +12895,12 @@ final class CoreModel: ObservableObject {
     }
 
     func changeProjectLifecycle(expectedID: String, expectedRevision: String, action: String) async {
-        guard projectLifecycleOpenEnabled, ["complete", "reactivate"].contains(action) else { return }
+        guard projectLifecycleOpenEnabled, ["complete", "cancel", "reactivate"].contains(action) else { return }
         let id = projectHeader.text("id")
         let revision = projectDetail.text("projectRevision")
         guard !id.isEmpty, !revision.isEmpty, projectDetail.text("projectId") == id,
-              id == expectedID, revision == expectedRevision, action == projectLifecycleAction else {
+              id == expectedID, revision == expectedRevision,
+              (action == projectLifecycleAction || action == "cancel" && projectLifecycleAction == "complete") else {
             projectLifecycleError = label("task.updateFailed")
             return
         }
@@ -12927,7 +12928,7 @@ final class CoreModel: ObservableObject {
               Set(result.keys) == Set(["id", "status"]),
               result.text("id") == input.text("projectId"),
               projectHeader.text("id") == result.text("id"),
-              (input.text("action") == "complete" && result.text("status") == "archived"
+              (["complete", "cancel"].contains(input.text("action")) && result.text("status") == "archived"
                 || input.text("action") == "reactivate" && result.text("status") == "active") else {
             throw CocoaError(.coderReadCorrupt)
         }

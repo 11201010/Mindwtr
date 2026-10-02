@@ -372,12 +372,18 @@ export const projectStatusEffect = (project: Project, status: 'active' | 'waitin
     }) } };
 };
 
-/** RN updateProject's Complete/Reactivate helper and exact changed child rows. */
+/** RN updateProject's Complete/Cancel/Reactivate helper and exact changed child rows. */
 export const projectLifecycleEffect = (scope: PreparedProjectLifecycle['scope'],
     action: PreparedProjectLifecycle['request']['action'], deviceId: string,
     now: string): PreparedProjectLifecycle['effect'] => {
-    const targetStatus = action === 'complete' ? 'archived' : 'active';
-    const transition = applyProjectLifecycleTransition(scope.project, { status: targetStatus },
+    let updates: Partial<Project>;
+    switch (action) {
+        case 'complete': updates = { status: 'archived' }; break;
+        case 'cancel': updates = { status: 'archived', cancelledAt: now }; break;
+        case 'reactivate': updates = { status: 'active' }; break;
+        default: throw new Error('Unknown Project lifecycle action');
+    }
+    const transition = applyProjectLifecycleTransition(scope.project, updates,
         scope.tasks, scope.sections, now, deviceId);
     const incomingStatus = transition.projectUpdates.status ?? scope.project.status;
     const statusChanged = incomingStatus !== scope.project.status;
@@ -973,7 +979,7 @@ export const createProjectCoreActions = ({
                 result = { success: true, id: current.id, outcome: 'replayed' };
                 return state;
             }
-            const sourceStatusMatches = input.request.action === 'complete'
+            const sourceStatusMatches = input.request.action !== 'reactivate'
                 ? current.status !== 'archived' : current.status === 'archived';
             if (!sourceStatusMatches || (state.settings.deviceId ?? null) !== input.deviceIdBefore
                 || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
