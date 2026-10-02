@@ -25,6 +25,7 @@ import type { AppData, AppSettings, Area } from './types';
 export type { GtdWorkflowType, GtdWorkflowWitness } from './store-settings';
 export type GtdWorkflowEdit = Extract<GtdSettingsEdit,
     { type: GtdWorkflowDirectType | 'defaultArea' | 'taskEditorSectionOpen' | 'taskEditorPreset' }>
+    | { type: 'focusIncludeStartDates'; value: boolean }
     | { type: GtdWorkflowReviewType | GtdWorkflowInboxType | GtdWorkflowCaptureParseType; value: boolean };
 export type NativeGtdWorkflowRequest = { requestId: string; edit: GtdWorkflowEdit;
     expected: GtdWorkflowWitness };
@@ -58,7 +59,7 @@ export type NativeGtdWorkflowPreparation = { kind: 'noop'; result: NativeGtdWork
 export type NativeGtdWorkflowDraft = { valid: true; value: string } | { valid: false; value: null };
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const TYPES: GtdWorkflowDirectType[] = ['defaultScheduleTime', 'focusTaskLimit', 'defaultProjectFlowMode'];
+const TYPES: GtdWorkflowDirectType[] = ['defaultScheduleTime', 'focusTaskLimit', 'focusIncludeStartDates', 'defaultProjectFlowMode'];
 const REVIEW_TYPES: GtdWorkflowReviewType[] = ['dailyReviewFocusStep', 'weeklyReviewContextStep'];
 const INBOX_TYPES: GtdWorkflowInboxType[] = ['inboxTwoMinute', 'inboxProjectFirst', 'inboxContextStep', 'inboxSchedule'];
 const CAPTURE_PARSE_TYPES: GtdWorkflowCaptureParseType[] = ['quickAddAutoClean', 'naturalLanguageDates'];
@@ -91,6 +92,8 @@ const validEdit = (value: unknown): value is GtdWorkflowEdit => {
             return bounded(value.value, 50) && normalizeClockTimeInput(value.value) === value.value;
         case 'focusTaskLimit':
             return FOCUS_TASK_LIMIT_OPTIONS.includes(value.value as never);
+        case 'focusIncludeStartDates':
+            return typeof value.value === 'boolean';
         case 'defaultProjectFlowMode':
             return value.value === 'parallel' || value.value === 'sequential';
         case 'defaultArea':
@@ -130,7 +133,8 @@ const validWitness = (value: unknown, type: GtdWorkflowType): value is GtdWorkfl
         && (value.sectionOpenPresent || !value.present))
     && (!isNested(type) || typeof value.parentPresent === 'boolean'
         && (value.parentPresent || !value.present))
-    && (value.present ? isNested(type) || isCaptureParse(type) || isTaskEditor(type) ? typeof value.value === 'boolean' : type === 'focusTaskLimit'
+    && (value.present ? isNested(type) || isCaptureParse(type) || isTaskEditor(type) || type === 'focusIncludeStartDates'
+        ? typeof value.value === 'boolean' : type === 'focusTaskLimit'
         ? typeof value.value === 'number' && Number.isSafeInteger(value.value) && Math.abs(value.value) <= 1_000_000
         : bounded(value.value) : value.value === null))
     && (value.stampPresent ? iso(value.stamp) : value.stamp === null);
@@ -222,6 +226,12 @@ const captureParseOfferedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflo
         taskOpenMode: 'automatic', t: (key) => key });
     return same(model.capture[edit.type].edit, edit);
 };
+const focusStartDatesOfferedByWitness = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): boolean => {
+    if (edit.type !== 'focusIncludeStartDates') return true;
+    const model = buildGtdSettingsModel({ settings: settingsByWitness(edit, witness), areas: [],
+        taskOpenMode: 'automatic', t: (key) => key });
+    return same(model.hub.focusIncludeStartDates.edit, edit);
+};
 const taskEditorSelectedAfter = (edit: GtdWorkflowEdit, witness: GtdWorkflowWitness): GtdWorkflowTaskEditorSelected | null => {
     if (!isTaskEditorEdit(edit)) return null;
     const settings = settingsByWitness(edit, witness);
@@ -282,6 +292,7 @@ const readPrepared = (input: unknown): NativePreparedGtdWorkflow | null => {
         || storedByWitness(request.edit, request.expected)
         || !nestedOfferedByWitness(request.edit, request.expected)
         || !captureParseOfferedByWitness(request.edit, request.expected)
+        || !focusStartDatesOfferedByWitness(request.edit, request.expected)
         || !taskEditorOfferedByWitness(request.edit, request.expected)
         || !presetOfferedByWitness(request.edit, request.expected)
         || request.edit.type === 'defaultArea' && (request.edit.value === ''
@@ -303,7 +314,8 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
         // the raw saved Settings object remains the write authority.
         const gtd = data.settings.gtd;
         const display = { ...data.settings, gtd: { defaultScheduleTime: gtd?.defaultScheduleTime,
-            focusTaskLimit: gtd?.focusTaskLimit, defaultProjectFlowMode: gtd?.defaultProjectFlowMode } };
+            focusTaskLimit: gtd?.focusTaskLimit, focusIncludeStartDates: gtd?.focusIncludeStartDates,
+            defaultProjectFlowMode: gtd?.defaultProjectFlowMode } };
         return buildGtdSettingsModel({ settings: display, areas: [],
             taskOpenMode: 'automatic', t: deps.t() }).hub;
     };
@@ -549,6 +561,8 @@ export function createGtdWorkflowMethods(deps: { readiness: () => NativeHostResu
                 const hub = hubFor(read.value.authority.snapshot);
                 if (request.edit.type === 'focusTaskLimit'
                     && !hub.focusTaskLimit.options.some((option) => same(option.edit, request.edit))
+                    || request.edit.type === 'focusIncludeStartDates'
+                        && !same(hub.focusIncludeStartDates.edit, request.edit)
                     || request.edit.type === 'defaultProjectFlowMode'
                         && !hub.defaultProjectFlowMode.options.some((option) => same(option.edit, request.edit)))
                     return fail('INVALID_INPUT', 'GTD workflow choice is unavailable');

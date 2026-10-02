@@ -1172,7 +1172,7 @@ private final class Engine: @unchecked Sendable {
             if ["gtdWorkflowOptions", "gtdReviewOptions", "gtdInboxOptions"].contains(method) {
                 let reviewing = method == "gtdReviewOptions", inboxing = method == "gtdInboxOptions"
                 let contentKey = inboxing ? "inbox" : reviewing ? "review" : "hub"
-                let fields = inboxing ? ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"] : reviewing ? ["dailyReviewFocusStep", "weeklyReviewContextStep"] : ["defaultScheduleTime", "focusTaskLimit", "defaultProjectFlowMode"]
+                let fields = inboxing ? ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"] : reviewing ? ["dailyReviewFocusStep", "weeklyReviewContextStep"] : ["defaultScheduleTime", "focusTaskLimit", "focusIncludeStartDates", "defaultProjectFlowMode"]
                 guard value.utf8.count <= 65_536,
                       let options = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
                       Set(options.keys) == Set([contentKey, "expected"]),
@@ -1180,6 +1180,18 @@ private final class Engine: @unchecked Sendable {
                       let expected = options["expected"] as? [String: Any], Set(expected.keys) == Set(fields),
                       expected.allSatisfy({ Self.validGtdWorkflowExpected($0.value, type: $0.key) }) else {
                     throw HostFailure("Malformed GTD settings options")
+                }
+                if !reviewing && !inboxing {
+                    guard let row = content["focusIncludeStartDates"] as? [String: Any],
+                          Set(row.keys) == Set(["label", "description", "value", "edit"]),
+                          row["label"] is String, row["description"] is String || row["description"] is NSNull,
+                          Self.isBoolean(row["value"]), Self.validGtdWorkflowEdit(row["edit"]),
+                          let edit = row["edit"] as? [String: Any], edit["type"] as? String == "focusIncludeStartDates",
+                          Self.equalJSON(edit["value"], !(row["value"] as? Bool ?? false)),
+                          let witness = expected["focusIncludeStartDates"] as? [String: Any],
+                          Self.equalJSON(row["value"], witness["present"] as? Bool == true ? witness["value"] : true) else {
+                        throw HostFailure("Malformed Focus start-date options")
+                    }
                 }
             }
             if method == "gtdWorkflowDraft" {
@@ -3289,6 +3301,7 @@ private final class Engine: @unchecked Sendable {
         }
         if command.method == "gtdWorkflowCommit", case .success(let value) = terminal {
             let result = (try? NativeJSON.jsonObject(with: Data(value.utf8))) as? [String: Any]
+            let startDates = result?["type"] as? String == "focusIncludeStartDates"
             let reviewing = ["dailyReviewFocusStep", "weeklyReviewContextStep"].contains(result?["type"] as? String ?? "")
             let inboxing = ["inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule"].contains(result?["type"] as? String ?? "")
             let parsing = ["quickAddAutoClean", "naturalLanguageDates"].contains(result?["type"] as? String ?? "")
@@ -3296,9 +3309,10 @@ private final class Engine: @unchecked Sendable {
             let editing = result?["type"] as? String == "taskEditorSectionOpen"
             let preset = result?["type"] as? String == "taskEditorPreset"
 #if DEBUG
-            faults?.commandDiagnostic?(preset ? "gtdTaskEditorPresetApplied" : editing ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : reviewing ? "gtdReviewApplied" : "gtdWorkflowApplied")
+            faults?.commandDiagnostic?(startDates ? "gtdFocusStartDatesApplied" : preset ? "gtdTaskEditorPresetApplied" : editing ? "gtdTaskEditorOpenApplied" : parsing ? "gtdCaptureParseApplied" : capturing ? "gtdCaptureAreaApplied" : inboxing ? "gtdInboxApplied" : reviewing ? "gtdReviewApplied" : "gtdWorkflowApplied")
 #endif
-            if preset { NSLog("Native iOS Task Editor preset saved releaseCheck=v1.3.4/ios-gtd-editor-presets outcome=confirmed") }
+            if startDates { NSLog("Native iOS Focus start-date preference saved releaseCheck=v1.3.4/ios-focus-start-dates outcome=confirmed") }
+            else if preset { NSLog("Native iOS Task Editor preset saved releaseCheck=v1.3.4/ios-gtd-editor-presets outcome=confirmed") }
             else if editing { NSLog("Native iOS Task Editor sections saved releaseCheck=v1.3.4/ios-gtd-editor-sections outcome=confirmed") }
             else if parsing { NSLog("Native iOS Capture parsing saved releaseCheck=v1.3.4/ios-gtd-capture-parsing outcome=confirmed") }
             else if capturing { NSLog("Native iOS Capture default area saved releaseCheck=v1.3.4/ios-gtd-capture-area outcome=confirmed") }
@@ -3760,6 +3774,7 @@ private final class Engine: @unchecked Sendable {
         case "focusTaskLimit": return !isBoolean(edit["value"]) && (edit["value"] as? NSNumber).map {
             $0.doubleValue.isFinite && $0.doubleValue.rounded() == $0.doubleValue && abs($0.doubleValue) <= 1_000_000
         } == true
+        case "focusIncludeStartDates": return isBoolean(edit["value"])
         case "defaultProjectFlowMode": return ["parallel", "sequential"].contains(edit["value"] as? String ?? "")
         case "dailyReviewFocusStep", "weeklyReviewContextStep", "inboxTwoMinute", "inboxProjectFirst", "inboxContextStep", "inboxSchedule", "quickAddAutoClean", "naturalLanguageDates": return isBoolean(edit["value"])
         default: return false
@@ -3831,7 +3846,7 @@ private final class Engine: @unchecked Sendable {
         }
         guard validGeneralPreferenceExpected(value), let expected = value as? [String: Any] else { return false }
         if expected["present"] as? Bool == false { return true }
-        if ["quickAddAutoClean", "naturalLanguageDates"].contains(type) { return isBoolean(expected["value"]) }
+        if ["quickAddAutoClean", "naturalLanguageDates", "focusIncludeStartDates"].contains(type) { return isBoolean(expected["value"]) }
         if type == "focusTaskLimit" { return !isBoolean(expected["value"]) && expected["value"] is NSNumber }
         return expected["value"] is String
     }

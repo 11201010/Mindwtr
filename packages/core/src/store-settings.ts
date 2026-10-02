@@ -99,14 +99,14 @@ export const appLockWitness = (settings: AppSettings): AppLockWitness | null => 
     return present && typeof value !== 'boolean' ? null : { groupPresent: true, present, value: value ?? null };
 };
 
-export type GtdWorkflowDirectType = 'defaultScheduleTime' | 'focusTaskLimit' | 'defaultProjectFlowMode';
+export type GtdWorkflowDirectType = 'defaultScheduleTime' | 'focusTaskLimit' | 'focusIncludeStartDates' | 'defaultProjectFlowMode';
 export type GtdWorkflowReviewType = 'dailyReviewFocusStep' | 'weeklyReviewContextStep';
 export type GtdWorkflowInboxType = 'inboxTwoMinute' | 'inboxProjectFirst' | 'inboxContextStep' | 'inboxSchedule';
 export type GtdWorkflowCaptureParseType = 'quickAddAutoClean' | 'naturalLanguageDates';
 export type GtdWorkflowTaskEditorSection = 'scheduling' | 'organization' | 'details';
 export type GtdWorkflowType = GtdWorkflowDirectType | GtdWorkflowReviewType | GtdWorkflowInboxType
     | GtdWorkflowCaptureParseType | 'defaultArea' | 'taskEditorSectionOpen' | 'taskEditorPreset';
-export type GtdWorkflowDirectWitness = { present: boolean; value: string | number | null;
+export type GtdWorkflowDirectWitness = { present: boolean; value: string | number | boolean | null;
     stampPresent: boolean; stamp: string | null };
 export type GtdWorkflowCaptureParseWitness = { present: boolean; value: boolean | null;
     stampPresent: boolean; stamp: string | null };
@@ -167,8 +167,10 @@ export const gtdWorkflowNestedPath = (type: GtdWorkflowReviewType | GtdWorkflowI
         case 'inboxSchedule': return { parent: 'inboxProcessing' as const, field: 'scheduleEnabled' as const };
     }
 };
-const boundedRawGtdValue = (type: GtdWorkflowDirectType, value: unknown): value is string | number =>
-    type === 'focusTaskLimit'
+const boundedRawGtdValue = (type: GtdWorkflowDirectType, value: unknown): value is string | number | boolean =>
+    type === 'focusIncludeStartDates'
+        ? typeof value === 'boolean'
+        : type === 'focusTaskLimit'
         ? typeof value === 'number' && Number.isSafeInteger(value) && Math.abs(value) <= 1_000_000
         : typeof value === 'string' && value.length <= 500;
 const plain = (value: unknown): value is Record<string, unknown> =>
@@ -279,7 +281,7 @@ export function gtdWorkflowWitness(settings: AppSettings, type: GtdWorkflowType,
     const present = group !== undefined && owns(group, type) && group[type] !== undefined;
     const value = present ? group?.[type] : null;
     if (present && !boundedRawGtdValue(type, value)) return null;
-    return { present, value: present ? value as string | number : null,
+    return { present, value: present ? value as string | number | boolean : null,
         stampPresent, stamp: stampPresent ? stamp! : null };
 }
 

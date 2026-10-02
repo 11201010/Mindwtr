@@ -1,6 +1,65 @@
 import XCTest
 
 final class FoundationUITests: XCTestCase {
+    private func task140Toggle(_ app: XCUIApplication) -> XCUIElement {
+        let toggle = app.switches["gtd-focusIncludeStartDates"]
+        revealPagedElement(app, toggle, in: app.scrollViews["gtd-scroll"])
+        boardEnabled(toggle)
+        XCTAssertTrue(toggle.label.contains("Include tasks starting today in Today"))
+        return toggle
+    }
+
+    private func task140Focus(_ app: XCUIApplication, includesStarts: Bool) {
+        if app.buttons["gtd-back"].exists { boardTap(app, "gtd-back") }
+        if app.buttons["settings-back"].exists { boardTap(app, "settings-back") }
+        boardTap(app, "tab-focus"); boardEnabled(app.buttons["focus-view-options"], timeout: 30)
+        let scroll = app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch
+        let today = app.buttons["focus-section-schedule"]
+        revealPagedElement(app, today, in: scroll)
+        XCTAssertEqual(today.label, "Today · \(includesStarts ? 2 : 1)")
+        if !includesStarts {
+            let next = app.buttons["focus-section-next"]
+            revealPagedElement(app, next, in: scroll)
+            XCTAssertEqual(next.label, "Next Actions · 1")
+        }
+    }
+
+    private func task140Flow(_ library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task140Focus(app, includesStarts: true); task103Open(app)
+        let toggle = task140Toggle(app); XCTAssertEqual(toggle.value as? String, "1"); toggle.tap()
+        expectation(for: NSPredicate(format: "value == '0' AND enabled == true"), evaluatedWith: toggle)
+        waitForExpectations(timeout: 30)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Focus start-date preference"; shot.lifetime = .keepAlways; add(shot)
+        task140Focus(app, includesStarts: false)
+        app.terminate(); app.launch(); task140Focus(app, includesStarts: false); task103Open(app)
+        let restored = task140Toggle(app); XCTAssertEqual(restored.value as? String, "0"); restored.tap()
+        expectation(for: NSPredicate(format: "value == '1' AND enabled == true"), evaluatedWith: restored)
+        waitForExpectations(timeout: 30); task140Focus(app, includesStarts: true); app.terminate()
+    }
+
+    func testFocusStartDatesNormal() { task140Flow("8b7f204c-9d14-4edc-9938-63ad8132f2b9") }
+    func testFocusStartDatesLargest() { task140Flow("e81da8e1-11b2-4b8f-9e01-baf76939b839") }
+
+    func testFocusStartDatesFailedSave() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "06a8bdd4-39cf-46ce-8ae5-f48168faacbb"]
+        app.launch(); task103Open(app); task140Toggle(app).tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["gtd-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["gtd-back"].isEnabled)
+            revealPagedElement(app, retry, in: app.scrollViews["gtd-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["gtd-retry"], timeout: 30); app.terminate()
+    }
+
+    func testFocusStartDatesColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "06a8bdd4-39cf-46ce-8ae5-f48168faacbb"]
+        app.launch(); boardEnabled(app.buttons["gtd-back"], timeout: 30)
+        XCTAssertEqual(task140Toggle(app).value as? String, "0")
+        task140Focus(app, includesStarts: false)
+        app.terminate(); app.launch(); task140Focus(app, includesStarts: false); app.terminate()
+    }
+
     func testTaskPromotionNormal() { taskPromotionFlow(library: "c3e4e434-b76b-48f6-9b3f-5eee04b6a4ef", editNotes: true) }
     func testTaskPromotionLargestText() { taskPromotionFlow(library: "57c17ca9-6bb1-432a-96f8-ebb9090d3d75", editNotes: false) }
     func testTaskPromotionReusesProject() { taskPromotionFlow(library: "0291b8b1-265a-43b2-9838-c2e885d5b346", editNotes: true) }
