@@ -29,7 +29,7 @@
 // next run's prepare deletes it through core first); (m) the area switcher
 // narrows the list to core's projects for the fixture area, and "All areas"
 // widens it again (prepare also resets the filter); (n) restored on Focus after process death (the boot reads only the tab
-// on screen), with a Focus view-options read held 4 s (debug delay_action_ms), Projects chosen meanwhile fills once the
+// on screen), with a Focus view-options read held 15 s (debug delay_action_ms), Projects chosen meanwhile fills once the
 // read ends, without reopening the tab. Core's expected lists
 // come from core's own contract run on a fresh host copy of the database. It
 // touches only the development package (it refuses any other APK), never
@@ -671,7 +671,9 @@ try {
     await sleep(1500);
     sh(`run-as ${PKG} kill -9 ${processId}`);
     await waitFor('process death', () => pid() !== processId, 10_000);
-    setProp('delay_action_ms', '4000');
+    // Long enough for the Done tap and the tab switch, each through a UI dump of a few seconds.
+    const HOLD_MS = 15_000;
+    setProp('delay_action_ms', String(HOLD_MS));
     launch();
     nodes = await waitFor('Focus restored with its View options', (current) => tabSelected(current, 'Focus') && button(current, 'View options'), 60_000);
     processId = pid();
@@ -689,9 +691,9 @@ try {
     const heldAt = Date.now();
     await tap(button(await screen(), 'Done'));
     await showTab('Projects');
-    check(Date.now() - heldAt < 4000, `(n) Projects chosen while the Focus read was held (${Date.now() - heldAt} ms after it started)`);
+    check(Date.now() - heldAt < HOLD_MS, `(n) Projects chosen while the Focus read was held (${Date.now() - heldAt} ms after it started)`);
     const listed = (current) => tabSelected(current, 'Projects') && current.some((node) => /^active projects$/i.test(node.text ?? ''));
-    nodes = await waitFor('core\'s projects once the held read ends', listed, 20_000);
+    nodes = await waitFor('core\'s projects once the held read ends', listed, HOLD_MS + 20_000);
     check(listed(nodes) && pid() === processId, '(n) Projects filled after the held action, without reopening the tab, on the same process');
     setProp('delay_action_ms', '');
 
