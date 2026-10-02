@@ -6,6 +6,9 @@ struct HistoryScreen: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var searchFocused: Bool
+    @State private var archiveDeleteID = ""
+    @State private var archiveDeleteRevision = ""
+    @State private var archiveDeletePresented = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,6 +53,17 @@ struct HistoryScreen: View {
                 await model.refresh()
             }
         }
+        .alert(model.history.object("confirmations").object("trashTask").text("title"), isPresented: $archiveDeletePresented) {
+            Button(model.history.object("confirmations").object("trashTask").text("cancelLabel"), role: .cancel) {}
+            Button(model.history.object("confirmations").object("trashTask").text("confirmLabel"), role: .destructive) {
+                let id = archiveDeleteID
+                let revision = archiveDeleteRevision
+                Task { await model.deleteArchivedTask(expectedID: id, expectedRevision: revision) }
+            }
+            .accessibilityIdentifier("archive-delete-confirm")
+        } message: {
+            Text(model.history.object("confirmations").object("trashTask").text("message"))
+        }
     }
 
     private var archiveContent: some View {
@@ -90,7 +104,7 @@ struct HistoryScreen: View {
                             .accessibilityIdentifier("archive-error")
                         Button(model.label("common.retry")) { Task { await model.retryHistory() } }
                             .rnFont(14, .semibold).frame(minHeight: 44)
-                            .disabled(model.busy || (model.retryNeeded && !model.historyArchiveRestorePending))
+                            .disabled(model.busy || (model.retryNeeded && !model.historyArchiveActionPending))
                             .accessibilityIdentifier("archive-retry")
                     }
                     if model.historyCurrent {
@@ -113,6 +127,20 @@ struct HistoryScreen: View {
                                             }
                                             .tint(palette.tint)
                                             .accessibilityIdentifier("archive-restore-" + item.object("row").text("id"))
+                                        }
+                                    }
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        if model.historyActionsEnabled {
+                                            Button {
+                                                searchFocused = false
+                                                archiveDeleteID = item.object("row").text("id")
+                                                archiveDeleteRevision = item.object("row").text("taskRevision")
+                                                archiveDeletePresented = true
+                                            } label: {
+                                                Label(model.history.object("labels").text("delete"), systemImage: "trash")
+                                            }
+                                            .tint(palette.danger)
+                                            .accessibilityIdentifier("archive-delete-" + item.object("row").text("id"))
                                         }
                                     }
                             }

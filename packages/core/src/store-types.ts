@@ -442,6 +442,8 @@ export type PreparedBoardTask = {
     deviceIdToInitialize: string | null;
     /** Calendar and editor Delete refuse a newly archived parent inside the atomic commit. */
     respectReadOnly?: true;
+    /** Archive Delete requires its saved preimage; only its exact UUID receipt can replay. */
+    strictBefore?: true;
 };
 
 /** One frozen Calendar scheduling row; its complete after-row is the receipt. */

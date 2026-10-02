@@ -1002,7 +1002,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
     },
 
     // The contract validates action authority before this guarded one-row commit.
-    commitPreparedBoardTask: async ({ kind, before, after, deviceIdBefore, deviceIdToInitialize, respectReadOnly }) => {
+    commitPreparedBoardTask: async ({ kind, before, after, deviceIdBefore, deviceIdToInitialize, respectReadOnly, strictBefore }) => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Board action conflicts with current data' };
         const persisted = (task: Task) => {
             const values = taskToSqliteRow(task);
@@ -1013,7 +1013,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             const target = state._tasksById.get(after.id);
             // An unchanged durable copy is a receipt even if its source was
             // subsequently edited, deleted or moved to another container.
-            if (target && matches(target, after)) {
+            if (!strictBefore && target && matches(target, after)) {
                 result = { success: true, id: after.id, outcome: 'replayed' };
                 return state;
             }

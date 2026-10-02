@@ -314,6 +314,7 @@ export const faOverrides: Record<string, string> = {
         'task.completionOutcomeUnknown': 'مشخص نیست کار تکمیل شده است یا نه. برای بارگیری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را دوباره راه‌اندازی کنید.',
         'task.completionUndoOutcomeUnknown': 'مشخص نیست تکمیل کار لغو شده است یا نه. برای بارگیری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را دوباره راه‌اندازی کنید.',
         'task.archiveRestoreOutcomeUnknown': 'تأیید بازیابی کار بایگانی‌شده ممکن نشد. برای بارگذاری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را دوباره راه‌اندازی کنید.',
+        'task.archiveDeleteOutcomeUnknown': "تأیید حذف کار بایگانی‌شده ممکن نشد. برای بارگذاری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را دوباره راه‌اندازی کنید.",
         'projects.archiveRestoreOutcomeUnknown': "تأیید نشد که پروژهٔ بایگانی‌شده بازیابی شده است. برای بارگیری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را راه‌اندازی مجدد کنید.",
         'task.cancelFailed': 'لغو کار انجام نشد',
         'task.skipOccurrence': 'رد کردن این نوبت',

@@ -62,6 +62,7 @@ import { useTaskStore } from './store';
 import { validRawTask } from './native-host-contract-task-save';
 import type { Area, Project, Section, Task } from './types';
 import { resolveI18nText } from './i18n';
+import { logInfo } from './logger';
 
 type NativeHostErrorCode = Extract<NativeHostResult<never>, { ok: false }>['error']['code'];
 type Translate = (key: string) => string;
@@ -181,7 +182,7 @@ export type NativePreparedCalendarDelete = {
 };
 export type NativeCalendarDeletePreparation = { kind: 'prepared'; prepared: NativePreparedCalendarDelete };
 
-export type NativeTaskDeleteRequest = { requestId: string; taskId: string; taskRevision: string };
+export type NativeTaskDeleteRequest = { requestId: string; taskId: string; taskRevision: string; source?: 'archive' };
 export type NativeTaskDeleteResult = {
     id: string; deletion: { message: string; undoLabel: string; undoEnabled: true };
 };
@@ -600,8 +601,9 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
     const validNotice = (value: unknown, max: number): value is string => typeof value === 'string'
         && value.length > 0 && value.length <= max && value.trim() === value
         && Array.from(value).every((char) => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127);
-    const readTaskDeleteRequest = (input: unknown): NativeTaskDeleteRequest | null => isObjectRecord(input)
-        && exactKeys(input, ['requestId', 'taskId', 'taskRevision'])
+    const readTaskDeleteRequest = (input: unknown, allowArchive = false): NativeTaskDeleteRequest | null => isObjectRecord(input)
+        && (exactKeys(input, ['requestId', 'taskId', 'taskRevision'])
+            || allowArchive && exactKeys(input, ['requestId', 'taskId', 'taskRevision', 'source']) && input.source === 'archive')
         && typeof input.requestId === 'string' && deps.requestIdPattern.test(input.requestId)
         && typeof input.taskId === 'string' && input.taskId.length > 0 && input.taskId.length <= 200
         && typeof input.taskRevision === 'string' && input.taskRevision.length > 0 && input.taskRevision.length <= 200
@@ -613,14 +615,15 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             || !exactKeys(envelope.prepared, ['version', 'request', 'board', 'result'])
             || envelope.prepared.version !== 1 || !isObjectRecord(envelope.prepared.board)
             || !exactKeys(envelope.prepared.board, ['request', 'prepared'])) return null;
-        const request = readTaskDeleteRequest(envelope.request);
-        const wrapped = readTaskDeleteRequest(envelope.prepared.request);
+        const request = readTaskDeleteRequest(envelope.request, true);
+        const wrapped = readTaskDeleteRequest(envelope.prepared.request, true);
         const board = readPreparedCommand(envelope.prepared.board);
         const result = envelope.prepared.result;
         if (!request || !wrapped || !board || !taskEditValuesEqual(request, wrapped)
             || board.request.requestId !== request.requestId || board.request.action.type !== 'trashTask'
             || board.request.action.taskId !== request.taskId || board.before.id !== request.taskId
             || taskRevisionOf(board.before) !== request.taskRevision || board.before.deletedAt || board.before.purgedAt
+            || (request.source === 'archive' && board.before.status !== 'archived')
             || isProjectedRecurringTaskId(request.taskId)
             || !taskEditValuesEqual(board.result, { changed: true, open: null })
             || !isObjectRecord(result) || !exactKeys(result, ['id', 'deletion']) || result.id !== request.taskId
@@ -915,12 +918,13 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         prepareTaskDelete(input: NativeTaskDeleteRequest): NativeHostResult<NativeTaskDeletePreparation> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const request = readTaskDeleteRequest(input);
+            const request = readTaskDeleteRequest(input, true);
             if (!request) return fail('INVALID_INPUT', 'A Task Delete UUID, task and saved revision are required');
             const state = useTaskStore.getState();
             const task = state._tasksById.get(request.taskId);
             if (!task || task.deletedAt || task.purgedAt || isProjectedRecurringTaskId(request.taskId)
-                || isStatusListTaskReadOnly(task, state._allProjects)) return fail('TASK_NOT_FOUND', 'Task is not deletable');
+                || (request.source === 'archive' ? task.status !== 'archived'
+                    : isStatusListTaskReadOnly(task, state._allProjects))) return fail('TASK_NOT_FOUND', 'Task is not deletable');
             if (taskRevisionOf(task) !== request.taskRevision) return fail('STALE_REVISION', 'Task changed since the editor opened');
             const boardRequest: NativeBoardWriteRequest = { requestId: request.requestId,
                 action: { type: 'trashTask', taskId: request.taskId } };
@@ -945,20 +949,40 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 : fail('INVALID_INPUT', 'Prepared Task Delete request or journal does not match');
         },
 
+        /** Exact UUID and prepared effect only; current target equality is not a receipt. */
+        taskDeleteOutcome(input: NativeTaskDeleteEnvelope): NativeHostResult<NativeTaskDeleteResult | null> {
+            const envelope = readPreparedTaskDelete(input);
+            if (!envelope) return fail('INVALID_INPUT', 'Prepared Task Delete request or journal does not match');
+            const saved = receipts.saved<NativeTaskDeleteResult>(envelope.request.requestId,
+                canonicalJSON(['preparedTaskDelete', envelope]));
+            if (saved?.ok && !taskEditValuesEqual(saved.value, envelope.prepared.result))
+                return fail('INVALID_INPUT', 'Saved Task Delete result does not match the prepared request');
+            return saved === null ? { ok: true, value: null } : saved;
+        },
+
         async commitPreparedTaskDelete(input: NativeTaskDeleteEnvelope): Promise<NativeHostResult<NativeTaskDeleteResult>> {
             const envelope = readPreparedTaskDelete(input);
             if (!envelope) return fail('INVALID_INPUT', 'Prepared Task Delete request or journal does not match');
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            return receipts.run(envelope.request.requestId, canonicalJSON(['preparedTaskDelete', envelope]), async () => {
+            const payload = canonicalJSON(['preparedTaskDelete', envelope]);
+            const alreadySaved = receipts.saved<NativeTaskDeleteResult>(envelope.request.requestId, payload);
+            const confirmed = await receipts.run(envelope.request.requestId, payload, async () => {
                 const board = envelope.prepared.board.prepared;
                 const applied = await useTaskStore.getState().commitPreparedBoardTask({
                     kind: 'trashTask', before: board.before, after: board.after,
-                    deviceIdToInitialize: board.deviceIdToInitialize, respectReadOnly: true,
+                    deviceIdToInitialize: board.deviceIdToInitialize,
+                    ...(envelope.request.source === 'archive' ? { strictBefore: true as const } : { respectReadOnly: true as const }),
                 });
                 if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Task Delete conflicts with saved data');
                 return { ok: true, value: envelope.prepared.result };
             });
+            if (confirmed.ok && envelope.request.source === 'archive' && !alreadySaved?.ok) {
+                try { logInfo('Native archived Task delete confirmed', { scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: 'v1.3.4/ios-archive-task-trash', outcome: 'confirmed' } }); }
+                catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            }
+            return confirmed;
         },
 
         prepareTaskDeleteUndo(input: { request: NativeTaskDeleteUndoRequest; delete: NativeTaskDeleteEnvelope }): NativeHostResult<NativeTaskDeleteUndoPreparation> {

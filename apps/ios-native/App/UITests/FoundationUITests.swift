@@ -18506,4 +18506,99 @@ final class FoundationUITests: XCTestCase {
         app.terminate(); app.launch(); task173CheckProjects(app, suffixes: ["completed"]); app.terminate()
     }
 
+
+    private func task174RevealDelete(_ app: XCUIApplication, _ id: String) -> XCUIElement {
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "archive-task-", id)).firstMatch
+        let list = app.descendants(matching: .any).matching(identifier: "archive-scroll").firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 30))
+        for direction in [true, false] {
+            for _ in 0..<18 {
+                if row.isHittable && list.frame.intersection(app.frame).contains(CGPoint(x: row.frame.midX, y: row.frame.midY)) { break }
+                if direction { list.swipeUp() } else { list.swipeDown() }
+            }
+            if row.isHittable { break }
+        }
+        XCTAssertTrue(row.isHittable); row.swipeLeft()
+        let action = app.buttons["archive-delete-" + id]
+        boardEnabled(action, timeout: 15)
+        return action
+    }
+
+    private func task174ConfirmDelete(_ app: XCUIApplication, _ id: String) {
+        task174RevealDelete(app, id).tap()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        let confirm = alert.buttons.matching(identifier: "archive-delete-confirm").firstMatch
+        boardEnabled(confirm); confirm.tap()
+    }
+
+    private func task174CheckTrash(_ app: XCUIApplication, ids: [String]) {
+        let list = app.descendants(matching: .any).matching(identifier: "trash-scroll").firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 30))
+        for id in ids {
+            let row = app.descendants(matching: .any).matching(identifier: "trash-task-" + id).firstMatch
+            for _ in 0..<12 { if row.exists { break }; list.swipeUp() }
+            XCTAssertTrue(row.exists)
+        }
+    }
+
+    private func task174OpenTrash(_ app: XCUIApplication) {
+        if app.buttons["history-back"].exists { boardTap(app, "history-back") }
+        boardEnabled(app.buttons["tab-menu"], timeout: 30); boardTap(app, "tab-menu")
+        boardTap(app, "menu-trash")
+    }
+
+    private func task174TrashFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        let ids = ["task174-completed-archived", "task174-cancelled-next", "task174-other"]
+        app.launch(); task172OpenArchive(app)
+        for id in ids {
+            task174ConfirmDelete(app, id)
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "archive-task-", id)).firstMatch.waitForNonExistence(timeout: 30))
+            XCTAssertTrue(app.buttons["history-tab-archived"].isSelected)
+            XCTAssertTrue(app.buttons["archive-segment-tasks"].isSelected)
+        }
+        task174OpenTrash(app); task174CheckTrash(app, ids: ids)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task174 archived Tasks moved to Trash"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task174OpenTrash(app); task174CheckTrash(app, ids: ids); app.terminate()
+    }
+
+    func testTask174ArchiveTaskTrashNormal() { task174TrashFlow("a9e4973d-aa63-4ce6-a6bc-2d827d83b54a") }
+    func testTask174ArchiveTaskTrashLargest() { task174TrashFlow("342a7165-f052-4335-b11a-5848f21ca49f") }
+
+    func testTask174ArchiveTaskTrashSwipeOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "50d480b9-2fc7-48ba-9b45-9ed9ac92c22c"]
+        app.launch(); task172OpenArchive(app)
+        let action = task174RevealDelete(app, "task174-completed-archived")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task174 Delete requires confirmation"; shot.lifetime = .keepAlways; add(shot)
+        action.tap(); let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10)); alert.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "archive-task-", "task174-completed-archived")).firstMatch.exists); app.terminate()
+    }
+
+    func testTask174ArchiveTaskTrashFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "07258dc1-f732-4340-af4f-64f0b10916dd"]
+        app.launch(); task172OpenArchive(app); task174ConfirmDelete(app, "task174-completed-archived")
+        let list = app.descendants(matching: .any).matching(identifier: "archive-scroll").firstMatch
+        for _ in 0..<2 {
+            for _ in 0..<12 { if app.buttons["archive-retry"].isHittable { break }; list.swipeDown() }
+            boardEnabled(app.buttons["archive-retry"], timeout: 30)
+            XCTAssertFalse(app.buttons["history-back"].isEnabled)
+            XCTAssertTrue(app.buttons["history-tab-archived"].isSelected)
+            boardTap(app, "archive-retry")
+        }
+        boardEnabled(app.buttons["archive-retry"], timeout: 30); app.terminate()
+    }
+
+    func testTask174ArchiveTaskTrashColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "07258dc1-f732-4340-af4f-64f0b10916dd"]
+        app.launch(); task174CheckTrash(app, ids: ["task174-completed-archived"])
+        app.terminate(); app.launch(); task174OpenTrash(app); task174CheckTrash(app, ids: ["task174-completed-archived"]); app.terminate()
+    }
+
 }

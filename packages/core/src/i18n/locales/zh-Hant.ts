@@ -359,6 +359,7 @@ export const zhHant: Record<string, string> = {
         'task.completionOutcomeUnknown': '無法確認任務是否已完成。請重新啟動 Mindwtr 以重新載入已儲存的資料。',
         'task.completionUndoOutcomeUnknown': '無法確認是否已撤銷任務完成操作。請重新啟動 Mindwtr 以重新載入已儲存的資料。',
         'task.archiveRestoreOutcomeUnknown': '無法確認已封存任務是否已還原。請重新啟動 Mindwtr 以重新載入已儲存的資料。',
+        'task.archiveDeleteOutcomeUnknown': "無法確認已封存任務是否已刪除。請重新啟動 Mindwtr 以重新載入已儲存的資料。",
         'projects.archiveRestoreOutcomeUnknown': "無法確認已封存專案是否已還原。請重新啟動 Mindwtr 以重新載入已儲存的資料。",
         'task.cancelFailed': '無法取消任務',
         'task.skipOccurrence': '略過這次重複',

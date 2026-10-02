@@ -560,6 +560,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var historyPickerCurrent = false
     @Published private(set) var historyPickerError: String?
     private var archivedTaskRestoreRequest: String?
+    private var archivedTaskDeleteRequest: String?
     @Published private(set) var trash: CoreObject = [:]
     @Published private(set) var trashCurrent = false
     @Published private(set) var trashError: String?
@@ -1760,9 +1761,10 @@ final class CoreModel: ObservableObject {
     var historyActionsEnabled: Bool {
         ready && selectedSurface == .history && historyCurrent && !busy && !retryNeeded && !taskPresented
     }
-    var historyArchiveRestorePending: Bool {
+    var historyArchiveActionPending: Bool {
         selectedSurface == .history && historyArchived &&
-            (archivedTaskRestoreRequest != nil || projectLifecycleFromHistory && projectLifecycleRequest != nil) && retryNeeded
+            (archivedTaskRestoreRequest != nil || archivedTaskDeleteRequest != nil ||
+                projectLifecycleFromHistory && projectLifecycleRequest != nil) && retryNeeded
     }
     var historyPickerActionsEnabled: Bool { historyActionsEnabled && historyPickerCurrent }
     var trashActionsEnabled: Bool {
@@ -12182,10 +12184,65 @@ final class CoreModel: ObservableObject {
 
     func retryHistory() async {
         guard selectedSurface == .history, !busy, !taskPresented else { return }
-        if historyArchiveRestorePending { await retry(); return }
+        if historyArchiveActionPending { await retry(); return }
         guard !retryNeeded else { return }
         historyNeedsRead = true
         scheduleHistoryRead(delay: 0)
+    }
+
+    func deleteArchivedTask(expectedID: String, expectedRevision: String) async {
+        guard selectedSurface == .history, historyArchived, !busy, !retryNeeded, !taskPresented else { return }
+        guard historyCurrent, let item = history.objects("items").first(where: {
+                  $0.text("type") == "task" && $0.object("row").text("id") == expectedID
+              }), item.object("row").text("taskRevision") == expectedRevision,
+              !expectedID.isEmpty, expectedID.utf16.count <= 200,
+              !expectedRevision.isEmpty, expectedRevision.utf16.count <= 200 else {
+            historyError = label("task.updateFailed")
+            return
+        }
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    "taskId": expectedID, "taskRevision": expectedRevision, "source": "archive"])
+            archivedTaskDeleteRequest = request
+            let result = try await query("taskDelete", [request])
+            try acknowledgeArchivedTaskDelete(result)
+            _ = await readHistory()
+        } catch { await handleArchivedTaskDeleteError(error) }
+    }
+
+    private func acknowledgeArchivedTaskDelete(_ result: CoreObject) throws {
+        guard let request = archivedTaskDeleteRequest,
+              (try decode(request)).text("source") == "archive",
+              Set(result.keys) == Set(["id", "deletion"]),
+              result.text("id") == (try decode(request)).text("taskId"),
+              Set(result.object("deletion").keys) == Set(["message", "undoLabel", "undoEnabled"]),
+              !result.object("deletion").text("message").isEmpty,
+              !result.object("deletion").text("undoLabel").isEmpty,
+              let enabled = result.object("deletion")["undoEnabled"] as? NSNumber,
+              CFGetTypeID(enabled) == CFBooleanGetTypeID(), enabled.boolValue else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        archivedTaskDeleteRequest = nil
+        retryNeeded = false
+        historyError = nil
+        error = nil
+        historyCurrent = false
+    }
+
+    private func handleArchivedTaskDeleteError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            archivedTaskDeleteRequest = nil
+            retryNeeded = false
+            error = nil
+            _ = await readHistory()
+        } else {
+            retryNeeded = archivedTaskDeleteRequest != nil
+            error = failure.localizedDescription
+        }
+        historyError = failure.localizedDescription
     }
 
     func restoreArchivedProject(_ id: String) async {
@@ -18004,6 +18061,26 @@ final class CoreModel: ObservableObject {
                 _ = await readHistory()
                 return
             }
+            if let request = archivedTaskDeleteRequest {
+                let outcome = try await query("taskDeleteReceiptOutcome", [request])
+                if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                    let unknown = label("task.archiveDeleteOutcomeUnknown")
+                    _ = await readHistory()
+                    historyError = unknown
+                    self.error = unknown
+                    return
+                }
+                guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let result = outcome.object("result")
+                if let acknowledgment, try json(result) != json(decode(acknowledgment)) {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try acknowledgeArchivedTaskDelete(result)
+                _ = await readHistory()
+                return
+            }
             if let request = projectFocusRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -18336,6 +18413,10 @@ final class CoreModel: ObservableObject {
             }
             if archivedTaskRestoreRequest != nil {
                 await handleArchivedTaskRestoreError(error)
+                return
+            }
+            if archivedTaskDeleteRequest != nil {
+                await handleArchivedTaskDeleteError(error)
                 return
             }
             if projectFocusRequest != nil {

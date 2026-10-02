@@ -306,6 +306,7 @@ export const huOverrides: Record<string, string> = {
     'task.completionOutcomeUnknown': 'Nem sikerült megerősíteni, hogy a feladat befejeződött-e. Indítsd újra a Mindwtr alkalmazást a mentett adatok újratöltéséhez.',
     'task.completionUndoOutcomeUnknown': 'Nem sikerült megerősíteni, hogy visszavonták-e a feladat befejezését. Indítsd újra a Mindwtr alkalmazást a mentett adatok újratöltéséhez.',
     'task.archiveRestoreOutcomeUnknown': 'Nem sikerült megerősíteni, hogy az archivált feladat vissza lett-e állítva. Indítsd újra a Mindwtr alkalmazást a mentett adatok újratöltéséhez.',
+    'task.archiveDeleteOutcomeUnknown': "Nem sikerült megerősíteni, hogy az archivált feladat törölve lett-e. Indítsd újra a Mindwtr alkalmazást a mentett adatok újratöltéséhez.",
     'projects.archiveRestoreOutcomeUnknown': "Nem sikerült megerősíteni, hogy az archivált projekt visszaállítása megtörtént-e. Indítsd újra a Mindwtr alkalmazást a mentett adatok újratöltéséhez.",
     'task.cancelFailed': 'Nem sikerült elvetni a feladatot',
     'task.skipOccurrence': 'Alkalom kihagyása',
