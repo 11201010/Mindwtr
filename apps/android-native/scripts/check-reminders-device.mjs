@@ -11,7 +11,8 @@
 // (2) exact alarms: with Android's exact-alarm access off the alarms are inexact; allowing it (appops, development package only)
 //     sends Android's grant broadcast, and CoreWork remakes every alarm exact, still one per task;
 // (3) a reboot's loss: a force-stop drops every alarm (as a reboot does), and the reschedule receiver's path (its debug action,
-//     the same CoreWork remake a reboot, a clock change or an update starts) arms each again, once;
+//     the same CoreWork remake a reboot, a clock change or an update starts) arms each again, once; after a second force-stop
+//     (as when the user revokes exact-alarm access: Android stops the app) a plain start remakes each too, once;
 // (4) a process death after the plan's writeAhead is stored and before its alarm map is (debug property `reminder_stop`, both
 //     at the writeAhead and after the alarms were made): the next start makes each pending alarm once, none lost, none twice;
 // (5) a reminder fires once, on RN's channel `mindwtr_reminders_v2`, with core's title and text (core's own plan, run here on
@@ -21,7 +22,8 @@
 // (7) Done on a recurring task with the process killed after core's reply (debug property `journal_stop`): after the restart's
 //     journal replay and CoreWork's retry, the task is done once and has exactly one next instance;
 // (8) a delivered reminder whose task is completed before the next plan (a widget check-off while the app is closed) is withdrawn:
-//     its notification goes (core's `withdrawn`), an expired one stays;
+//     its notification goes (core's `withdrawn`), an expired one stays, remembered in the native reminder state; one completed
+//     after that plan (its alarm already expired) is withdrawn too at the plan after the completion;
 // (9) a tap on a task's reminder opens the app on that task's editor (core's routeNotificationOpen).
 // At the end this run's open tasks are checked off through the queue, so no alarm of this run stays, and Android's exact-alarm
 // access goes back to what it was. Titles are 87 + a 12-digit run id + one digit. It grants the development app the notification
@@ -60,6 +62,7 @@ const PROPS = ['reminder_stop', 'snooze_minutes', 'journal_stop'];
 const DB = 'mindwtr-native-dev.db';
 const QUEUE = 'files/pending-captures';
 const MAP_KEY = 'mindwtr:local:alarms:v1';
+const STATE_KEY = 'mindwtr:native:reminders:v1';
 const STAGED = '/data/local/tmp/mindwtr-native-dev-reminders.db';
 const work = resolve(app, 'android/build/reminders-check');
 const coreSrc = resolve(app, '../../packages/core/src');
@@ -112,11 +115,14 @@ const pullDb = () => resolve(pull([`files/${DB}`], resolve(work, 'db')), DB);
 /** The live tasks titled [text] as stored, oldest first. */
 const stored = (text) => sql(pullDb(), `SELECT id, status, rev, dueDate, recurrence FROM tasks WHERE title = '${text}' AND deletedAt IS NULL ORDER BY createdAt, id`);
 /** RN's alarm map in RN's RKStorage, as core's plan last stored it. */
-const alarmMap = () => {
+const storedValue = (key) => {
     const dir = pull(['databases/RKStorage'], resolve(work, 'rkstorage'));
-    const [row] = sql(resolve(dir, 'RKStorage'), `SELECT value FROM catalystLocalStorage WHERE key = '${MAP_KEY}'`);
+    const [row] = sql(resolve(dir, 'RKStorage'), `SELECT value FROM catalystLocalStorage WHERE key = '${key}'`);
     return row ? JSON.parse(row.value) : {};
 };
+const alarmMap = () => storedValue(MAP_KEY);
+/** The native host's own reminder state (core's): delivered reminders it may still withdraw, and Snoozes. */
+const nativeState = () => storedValue(STATE_KEY);
 // The native host marks each signature as its own (native-host-contract-reminders.ts), so an RN recovery build trusts none.
 const signedAt = (entry) => Date.parse(JSON.parse(entry?.signature?.replace(/^native:/, '') ?? '{}').fireAt ?? '');
 const journal = () => runAs('ls files/journal 2>/dev/null || true').split(/\s+/).filter((name) => /^\d{16}\.json$/.test(name))
@@ -326,19 +332,20 @@ try {
     // (1) Tasks queued while the app is closed are planned at the next start.
     const t0 = Math.ceil((phoneNow() + 4 * 60_000) / 60_000) * 60_000;
     const due = { A: t0, C: t0 + 60_000, D: t0 + 120_000, G: t0 + 120_000 };
-    const names = { A: title(1), B: title(2), C: title(3), D: title(4), G: title(5), E: title(6), F: title(7) };
-    for (const key of ['A', 'C', 'D', 'G']) capture(`${names[key]} /due:${clock(due[key])}`);
+    const names = { A: title(1), B: title(2), C: title(3), D: title(4), G: title(5), E: title(6), F: title(7), H: title(8) };
+    due.H = due.D;
+    for (const key of ['A', 'C', 'D', 'G', 'H']) capture(`${names[key]} /due:${clock(due[key])}`);
     const tomorrow = local(t0 + 24 * 3600_000).date;
     capture(names.B, { dueDate: tomorrow, startDate: tomorrow });
     await launchAndPlan();
     const ids = {};
-    for (const key of ['A', 'B', 'C', 'D', 'G']) {
+    for (const key of ['A', 'B', 'C', 'D', 'G', 'H']) {
         const rows = stored(names[key]);
         if (rows.length !== 1) fail(`(1) ${names[key]} is stored ${rows.length} times`);
         ids[key] = rows[0].id;
         openTasks.add(ids[key]);
     }
-    check(['A', 'C', 'D', 'G'].every((key) => Date.parse(stored(names[key])[0].dueDate) === due[key]), `(1) the timed tasks are due at ${clock(t0)}, +1 and +2 minutes (${zone})`);
+    check(['A', 'C', 'D', 'G', 'H'].every((key) => Date.parse(stored(names[key])[0].dueDate) === due[key]), `(1) the timed tasks are due at ${clock(t0)}, +1 and +2 minutes (${zone})`);
     // C repeats daily, and task reminders are on: both set in the database while the app is closed, as a synced edit would
     // arrive (Settings › Notifications comes with pass R2). The setting goes back at the end.
     {
@@ -350,15 +357,15 @@ try {
     await sleep(3000);
     let map = alarmMap();
     const keyOf = (key) => `task:${ids[key]}`;
-    check(['A', 'C', 'D', 'G'].every((key) => Number.isInteger(map[keyOf(key)]?.id) && !map[keyOf(key)].pending && signedAt(map[keyOf(key)]) === due[key]),
+    check(['A', 'C', 'D', 'G', 'H'].every((key) => Number.isInteger(map[keyOf(key)]?.id) && !map[keyOf(key)].pending && signedAt(map[keyOf(key)]) === due[key]),
         '(1) RN\'s alarm map holds each timed task under core\'s id, at its due time, none pending');
     check(!Object.keys(map).some((key) => key.includes(ids.B)), '(1) the task with only date-only dates holds no alarm');
     const onePerTask = (step, exact) => {
         const atT = alarmsAt(due.A);
         const atC = alarmsAt(due.C);
         const atDG = alarmsAt(due.D);
-        check(atT.length === 1 && atC.length === 1 && atDG.length === 2,
-            `${step} dumpsys alarm: one alarm at ${clock(due.A)}, one at +1 and two at +2 minutes (found ${atT.length}, ${atC.length}, ${atDG.length})`);
+        check(atT.length === 1 && atC.length === 1 && atDG.length === 3,
+            `${step} dumpsys alarm: one alarm at ${clock(due.A)}, one at +1 and three at +2 minutes (found ${atT.length}, ${atC.length}, ${atDG.length})`);
         if (exact !== undefined) check([...atT, ...atC, ...atDG].every((alarm) => alarm.exact === exact), `${step} each is ${exact ? 'exact' : 'inexact (exact alarms not allowed)'}`);
     };
     onePerTask('(1)', false);
@@ -384,7 +391,16 @@ try {
         check(!front().includes(`${PKG}/`), '(3) the remake ran in the background, with no screen');
         onePerTask('(3)', true);
         map = alarmMap();
-        check(['A', 'C', 'D', 'G'].every((key) => !map[keyOf(key)]?.pending), '(3) the map holds each again, none pending');
+        check(['A', 'C', 'D', 'G', 'H'].every((key) => !map[keyOf(key)]?.pending), '(3) the map holds each again, none pending');
+        // Revoking exact-alarm access stops the app and drops its exact alarms, as a force-stop does; no broadcast comes after it.
+        // The process's first plan remakes every alarm.
+        sh(`am force-stop ${PKG}`);
+        await sleep(1500);
+        check(alarms().length === 0, '(3) a second force-stop dropped every alarm');
+        await launchAndPlan();
+        await sleep(2000);
+        check(allLogs().split('\n').filter((line) => line.includes(CYCLE)).at(-1)?.includes('"rebuild":true'), '(3) the start\'s first plan remade every alarm');
+        onePerTask('(3 start)', true);
     }
 
     // (4) A process death after the writeAhead and before the alarm map: the next start makes each pending alarm once.
@@ -437,8 +453,8 @@ try {
     await killApp();
 
     // (5) The first reminder fires once, on RN's channel, with core's title and text and RN's buttons.
-    const expected = coreDetails(['A', 'C', 'D', 'G'].map(keyOf), t0 - 60_000);
-    check(Object.keys(expected).length === 4, '(5) core\'s plan on the pulled database names the four reminders');
+    const expected = coreDetails(['A', 'C', 'D', 'G', 'H'].map(keyOf), t0 - 60_000);
+    check(Object.keys(expected).length === 5, '(5) core\'s plan on the pulled database names the five reminders');
     setProp('snooze_minutes', '0.25');
     {
         const wait = due.A + 3000 - phoneNow();
@@ -521,11 +537,13 @@ try {
 
     // (8) A delivered reminder whose task is completed before the next plan is withdrawn: the app is closed when D fires (no plan
     // runs after it), a widget check-off completes D, and the next start drains it before its plan, which withdraws D's alarm and
-    // removes its notification. (Core drops an alarm from the map at the first plan after it fires, so a completion after that
-    // plan leaves the notification: RN's behavior too, reported in the pass result.) (9) A tap on a reminder opens its task.
+    // removes its notification. That plan lets G's and H's alarms expire and remembers them (core's native state); H completed
+    // after it is withdrawn at the plan after its completion (RN keeps such a notification: reported in the pass result).
+    // (9) A tap on a reminder opens its task.
     {
         await killApp();
-        await waitUntil(`the reminders for ${names.D} and ${names.G}`, () => shown(names.D).length > 0 && shown(names.G).length > 0, 150_000);
+        await waitUntil(`the reminders for ${names.D}, ${names.G} and ${names.H}`,
+            () => shown(names.D).length > 0 && shown(names.G).length > 0 && shown(names.H).length > 0, 150_000);
         await killApp();
         check(alarmMap()[keyOf('D')]?.id === map[keyOf('D')].id, '(8) D fired with the app closed: its alarm is still held');
         checkOff(ids.D);
@@ -535,8 +553,19 @@ try {
         await waitUntil('the start\'s plan to withdraw the delivered reminder', () => shown(names.D).length === 0, 30_000);
         check(stored(names.D)[0].status === 'done', `(8) the check-off completed ${names.D} at the start`);
         check(withdrawals() > withdrawnBefore, '(8) core\'s plan withdrew its alarm, and its delivered reminder is gone');
-        check(shown(names.G).length === 1, '(8) the other delivered reminder (only expired) stays');
+        check(shown(names.G).length === 1 && shown(names.H).length === 1, '(8) the other delivered reminders (only expired) stay');
+        await sleep(2000);
+        const remembered = nativeState();
+        check(['G', 'H'].every((key) => remembered[keyOf(key)]?.kind === 'delivered' && remembered[keyOf(key)].id === map[keyOf(key)].id)
+            && !alarmMap()[keyOf('H')], '(8) their alarms expired from the map, and core\'s native state remembers both under their ids');
         openTasks.delete(ids.D);
+        await killApp();
+        checkOff(ids.H);
+        await launchAndPlan();
+        await waitUntil(`the plan to withdraw ${names.H}`, () => shown(names.H).length === 0, 30_000);
+        check(stored(names.H)[0].status === 'done' && !nativeState()[keyOf('H')], `(8) ${names.H}, completed after its alarm expired, is withdrawn from the tray and forgotten`);
+        check(shown(names.G).length === 1, '(8) G stays');
+        openTasks.delete(ids.H);
         await toTabs();
         sh('input keyevent KEYCODE_HOME');
         await sleep(1000);
