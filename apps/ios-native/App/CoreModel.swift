@@ -77,6 +77,8 @@ final class CoreModel: ObservableObject {
     @Published private(set) var reviewKind = ""
     @Published private(set) var reviewCurrent = false
     @Published private(set) var reviewError: String?
+    @Published private(set) var reviewNotice: String?
+    private var reviewTaskWritePending = false
     @Published private(set) var reviewPickerPresented = false
     @Published private(set) var reviewGuidePresented = false
     @Published private(set) var reviewNested: [String: CoreObject] = [:]
@@ -3584,7 +3586,7 @@ final class CoreModel: ObservableObject {
                     "task.completedAtPromptTitle", "status.inbox", "status.next", "status.done", "status.reference",
                     "taskEdit.descriptionPlaceholder", "search.placeholder", "search.noResults", "search.searching",
                     "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators", "search.saveSearch", "search.saveSearchPrompt", "search.savedSearches",
-                    "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone",
+                    "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone", "review.markReviewedDone",
                     "nav.projects", "nav.review", "nav.calendar", "nav.board", "nav.contexts", "common.back", "common.tasks",
                     "task.aria.openContext", "task.aria.openTag",
                     "projects.title", "projects.deleteConfirm", "projects.duplicate", "projects.duplicated", "projects.complete", "projects.reactivate", "projects.cancel", "projects.cancelConfirmTitle", "projects.cancelConfirmBody", "projects.archiveHelp", "projects.activeSection", "projects.deferredSection", "projects.closed",
@@ -9867,7 +9869,47 @@ final class CoreModel: ObservableObject {
               !mindSweepPresented, !processInboxPresented else { return }
         morePresented = false
         selectedSurface = .review
+        reviewNotice = nil
         await refresh()
+    }
+
+    func performReviewTaskAction(_ action: CoreObject) async {
+        guard reviewActionsEnabled, !reviewGuidePresented,
+              reviewOverview.objects("items").contains(where: { item in
+                  item.text("type") == "task" && ["markReviewed", "advance"].contains(where: {
+                      NSDictionary(dictionary: item.object("review").object($0).object("action")).isEqual(to: action)
+                  })
+              }), !action.isEmpty else { return }
+        busy = true
+        reviewNotice = nil
+        invalidatePreview()
+        defer { finishOperation() }
+        do {
+            let request = try json(action)
+            reviewTaskWritePending = true
+            let result = try await query("reviewTaskWrite", [request])
+            if result["changed"] as? Bool == false {
+                reviewTaskWritePending = false
+                retryNeeded = false
+                error = nil
+            } else {
+                acknowledgeReviewTaskWrite()
+            }
+        } catch {
+            if isDefiniteRejection(error) { reviewTaskWritePending = false }
+            retryNeeded = reviewTaskWritePending
+            self.error = error.localizedDescription
+            return
+        }
+        await readReview()
+    }
+
+    private func acknowledgeReviewTaskWrite() {
+        reviewTaskWritePending = false
+        retryNeeded = false
+        error = nil
+        reviewNotice = label("review.markReviewedDone")
+        NSLog("Native iOS Review row action confirmed releaseCheck=v1.3.4/ios-review-row-actions outcome=confirmed")
     }
 
     func openReviewPicker() {
@@ -17951,6 +17993,10 @@ final class CoreModel: ObservableObject {
                 try await readMindSweepCaller()
                 return
             }
+            if reviewTaskWritePending {
+                guard acknowledgment != nil else { throw CocoaError(.coderValueNotFound) }
+                acknowledgeReviewTaskWrite()
+            }
             if capturePending {
                 guard let acknowledgment else { throw CocoaError(.coderValueNotFound) }
                 let result = try decode(acknowledgment)
@@ -18164,6 +18210,7 @@ final class CoreModel: ObservableObject {
                     processInboxRequestTaskID = nil
                     processInboxError = error.localizedDescription
                 }
+                reviewTaskWritePending = false
                 capturePending = false
                 taskSavePending = false
                 boardActionRequest = nil

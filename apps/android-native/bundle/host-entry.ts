@@ -2145,6 +2145,13 @@ globalThis.MindwtrHost = {
             return unwrap(await contract.prepareTaskDraftSaveV2(editorJson(json) as Parameters<typeof contract.prepareTaskDraftSaveV2>[0]));
         });
     },
+    /** Review row actions prepare the ordinary durable Task Draft V2 journal. */
+    reviewTaskPrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(await contract.prepareReviewTaskWrite(editorJson(json) as Parameters<typeof contract.prepareReviewTaskWrite>[0]));
+        });
+    },
     /** Pure check for both legacy v1 and exact v2 Task Editor journals. */
     draftValidate(json: string): string {
         return submit(async () => unwrap(contract.validatePreparedTaskDraftSave(editorJson(json) as Parameters<typeof contract.validatePreparedTaskDraftSave>[0])));

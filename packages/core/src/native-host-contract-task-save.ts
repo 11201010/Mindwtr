@@ -19,6 +19,9 @@ import { createAreaSaveGuard, readAreaDurableData } from './native-host-contract
 import { TASK_SYNC_FIELD_SCHEMA, taskToSqliteRow } from './task-sync-schema';
 import { sameSectionDeleteJson, sameTaskSqliteRow } from './store-projects/section-actions';
 import { mergeNativeTaskLinkHalf, readNativeTaskLinkHalf } from './native-host-contract-attachments';
+import { taskRevisionOf } from './native-request-receipts';
+import { getAdvancedReviewDate, isTaskDueForReview } from './review-utils';
+import type { NativeReviewAction } from './native-host-contract-review-views';
 
 export type NativeTaskScheduleBase = {
     startTime: string | null;
@@ -65,6 +68,7 @@ export type NativePreparedTaskDraftSaveV2 = {
     effect: { task: { before: Task; after: Task } };
 };
 export type NativePreparedTaskDraftSaveAny = NativePreparedTaskDraftSave | NativePreparedTaskDraftSaveV2;
+export type NativeReviewTaskWriteInput = Extract<NativeReviewAction, { type: 'markTaskReviewed' }>;
 
 const FIELDS: readonly SaveField[] = ['title', 'description', 'location', 'assignedTo', 'priority', 'energyLevel', 'timeEstimate', 'contexts', 'tags', 'status', 'focusedToday', 'completedAt', 'timeSpentMinutes',
     'projectId', 'areaId', 'sectionId', 'startTime', 'dueDate', 'reviewAt', 'relativeStartOffset',
@@ -534,7 +538,7 @@ export function createTaskDraftSaveMethods(deps: {
     const readAnyPrepared = (input: unknown): NativePreparedTaskDraftSaveAny | null =>
         record(input) && input.version === 2 ? readPreparedV2(input) : readPrepared(input);
 
-    return {
+    const methods = {
         /** Legacy v1 date/recurrence preparation remains strict for old callers and journals. */
         prepareTaskDraftSave(input: NativeTaskDraftSaveRequest): NativeHostResult<NativePreparedTaskDraftSave> {
             const ready = deps.readiness();
@@ -691,6 +695,45 @@ export function createTaskDraftSaveMethods(deps: {
                 });
             } catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
             return { ok: true, value: { id: request.id, draft: createTaskDraft(task) } };
+        },
+    };
+    return {
+        ...methods,
+        /** Reuse the exact Task Draft V2 journal for one Review row's saved Task action. */
+        async prepareReviewTaskWrite(input: NativeReviewTaskWriteInput): Promise<NativeHostResult<
+            { kind: 'noop'; result: { id: string; draft: TaskDraft } }
+            | { kind: 'prepared'; prepared: NativePreparedTaskDraftSaveV2 }>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const detached = detach(input, 4_096);
+            if (!record(detached) || !keys(detached, ['type', 'taskId', 'advance', 'taskRevision'])
+                || detached.type !== 'markTaskReviewed'
+                || typeof detached.taskId !== 'string' || !detached.taskId.trim() || detached.taskId.length > 500
+                || typeof detached.advance !== 'boolean'
+                || typeof detached.taskRevision !== 'string' || !detached.taskRevision
+                || detached.taskRevision.length > 200) {
+                return fail('INVALID_INPUT', 'A task, advance true or false, and the task revision the row showed are required');
+            }
+            const action = detached as NativeReviewTaskWriteInput;
+            const read = await readAreaDurableData(false, true);
+            if (!read.ok) return read;
+            const task = read.value.authority.snapshot.tasks.find((row) => row.id === action.taskId);
+            if (!task || task.deletedAt || task.purgedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            const now = new Date();
+            if (!isTaskDueForReview(task, now)) return { ok: true, value: { kind: 'noop', result: taskResult(task) } };
+            if (taskRevisionOf(task) !== action.taskRevision) return fail('STALE_REVISION', 'Task changed since the Review row was shown');
+            const request: NativeTaskDraftSaveRequest = {
+                id: task.id,
+                base: { reviewAt: createTaskDraft(task).reviewAt },
+                patch: { reviewAt: action.advance ? getAdvancedReviewDate(task.reviewAt, now) : '' },
+                scheduleBase: getNativeTaskScheduleBase(task),
+            };
+            const prepared = await methods.prepareTaskDraftSaveV2(request);
+            if (!prepared.ok) return prepared;
+            if (prepared.value.kind !== 'prepared'
+                || taskRevisionOf(prepared.value.prepared.effect.task.before) !== action.taskRevision)
+                return fail('STALE_REVISION', 'Task changed since the Review row was shown');
+            return prepared;
         },
     };
 }

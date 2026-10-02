@@ -26264,4 +26264,270 @@ final class CoreHostTests: XCTestCase {
         await reopened.close()
     }
 
+    private func task159Action(_ id: String, advance: Bool) throws -> [String: Any] {
+        let row = try storedTask(id)
+        let revision = "\(row["rev"] as? Int ?? 0):\(row["revBy"] as? String ?? ""):\(try XCTUnwrap(row["updatedAt"] as? String))"
+        return ["type": "markTaskReviewed", "taskId": id, "advance": advance, "taskRevision": revision]
+    }
+
+    private func task159DueTask(_ reviewAt: String) async throws -> String {
+        let id = try await seedDestinationTask()
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE tasks SET reviewAt = ? WHERE id = ?", parametersJSON: json([reviewAt, id]))
+        sqlite.close()
+        return id
+    }
+
+    private func task159Payload(_ action: [String: Any]) throws -> String { try json([json(action)]) }
+
+    func testTask159ReviewRowClearAdvanceAndNoop() async throws {
+        let clearID = try await task159DueTask("2026-09-26")
+        let dayID = try await task159DueTask("2026-09-25")
+        let futureID = try await task159DueTask("2036-10-01")
+        let core = host(bundleURL: try dateBundle(at: "2026-09-27T12:00:00.000Z"))
+        _ = try await core.start()
+        let clearBefore = try storedTask(clearID)
+        let dayBefore = try storedTask(dayID)
+        let futureBefore = try storedTask(futureID)
+        let cleared = try object(await core.call("reviewTaskWrite", argumentsJSON: task159Payload(task159Action(clearID, advance: false))))
+        XCTAssertEqual(cleared["id"] as? String, clearID)
+        XCTAssertTrue(cleared["draft"] is [String: Any])
+        XCTAssertNil(cleared["changed"])
+        let clearAfter = try storedTask(clearID)
+        XCTAssertTrue(clearAfter["reviewAt"] is NSNull)
+        XCTAssertEqual(try datePreservedFields(clearAfter, excluding: ["reviewAt", "rev", "revBy", "updatedAt"]),
+                       try datePreservedFields(clearBefore, excluding: ["reviewAt", "rev", "revBy", "updatedAt"]))
+        let advanced = try object(await core.call("reviewTaskWrite", argumentsJSON: task159Payload(task159Action(dayID, advance: true))))
+        XCTAssertEqual(advanced["id"] as? String, dayID)
+        XCTAssertNil(advanced["changed"])
+        XCTAssertEqual(try storedTask(dayID)["reviewAt"] as? String, "2026-10-04")
+        XCTAssertEqual(try datePreservedFields(storedTask(dayID), excluding: ["reviewAt", "rev", "revBy", "updatedAt"]),
+                       try datePreservedFields(dayBefore, excluding: ["reviewAt", "rev", "revBy", "updatedAt"]))
+        let noop = try object(await core.call("reviewTaskWrite", argumentsJSON: task159Payload(task159Action(futureID, advance: false))))
+        XCTAssertEqual(noop["id"] as? String, futureID)
+        XCTAssertTrue(noop["draft"] is [String: Any])
+        XCTAssertEqual(noop["changed"] as? Bool, false)
+        XCTAssertEqual(try semanticStoredTaskRow(storedTask(futureID)), try semanticStoredTaskRow(futureBefore))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTask159ReviewRowMalformedAndEditorDraftRefuseBeforeWrite() async throws {
+        let id = try await task159DueTask("2026-09-26")
+        let faults = HostIOFaults()
+        let core = host(faults, bundleURL: try dateBundle(at: "2026-09-27T12:00:00.000Z"))
+        _ = try await core.start()
+        let before = try storedTask(id)
+        var writes = 0, journalWrites = 0
+        faults.beforeSQL = { _ in writes += 1 }
+        faults.journalWrite = { journalWrites += 1 }
+        let good = try task159Action(id, advance: true)
+        var extra = good; extra["reviewAt"] = "2036-10-01"
+        var missing = good; missing.removeValue(forKey: "taskRevision")
+        var wrongBool = good; wrongBool["advance"] = 1
+        var emptyRevision = good; emptyRevision["taskRevision"] = ""
+        var longID = good; longID["taskId"] = String(repeating: "x", count: 501)
+        for input in [extra, missing, wrongBool, emptyRevision, longID] {
+            await expectFailure("INVALID_INPUT") {
+                _ = try await core.call("reviewTaskWrite", argumentsJSON: task159Payload(input))
+            }
+        }
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(journalWrites, 0)
+        XCTAssertEqual(try semanticStoredTaskRow(storedTask(id)), try semanticStoredTaskRow(before))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+
+        let session = UUID().uuidString.lowercased()
+        try await core.checkpointEditorDraft(EditorDraftSnapshot(sessionID: session, taskID: id,
+            generation: 1, payloadJSON: json(["version": 2, "taskID": id])))
+        await expectFailure("saved editor draft") {
+            _ = try await core.call("reviewTaskWrite", argumentsJSON: task159Payload(good))
+        }
+        let retainedDraft = try await core.readEditorDraft()
+        XCTAssertEqual(retainedDraft?.sessionID, session)
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(journalWrites, 0)
+        XCTAssertEqual(try semanticStoredTaskRow(storedTask(id)), try semanticStoredTaskRow(before))
+    }
+
+    func testTask159ReviewRowTimedFrozenRetryAndColdReplay() async throws {
+        let id = try await task159DueTask("2026-09-26T14:30:00.000Z")
+        let faults = HostIOFaults()
+        let core = host(faults, bundleURL: try dateBundle(at: "2026-09-27T12:00:00.000Z"))
+        _ = try await core.start()
+        let before = try storedTask(id)
+        let action = try task159Action(id, advance: true)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Review row COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("reviewTaskWrite", argumentsJSON: task159Payload(action))
+        }
+        let pending = try Data(contentsOf: journal)
+        let envelope = try pendingDraftCommit()
+        let request = try XCTUnwrap(envelope["request"] as? [String: Any])
+        XCTAssertEqual(Set(request.keys), Set(["id", "base", "patch", "scheduleBase"]))
+        XCTAssertEqual(request["id"] as? String, id)
+        XCTAssertEqual(Set(try XCTUnwrap(request["base"] as? [String: Any]).keys), Set(["reviewAt"]))
+        XCTAssertEqual(Set(try XCTUnwrap(request["patch"] as? [String: Any]).keys), Set(["reviewAt"]))
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        XCTAssertEqual(prepared["version"] as? Int, 2)
+        let effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        let task = try XCTUnwrap(effect["task"] as? [String: Any])
+        let after = try XCTUnwrap(task["after"] as? [String: Any])
+        let frozenReview = try XCTUnwrap(after["reviewAt"] as? String)
+        XCTAssertTrue(frozenReview.contains("T"), "Shared core retains the timed representation")
+        XCTAssertEqual(try json(storedTask(id)), try json(before))
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        try assertJournalContentUnchanged(pending)
+        await core.close()
+
+        let later = host(bundleURL: try dateBundle(at: "2026-10-10T12:00:00.000Z", rejectingPreparation: true,
+            suffix: "MindwtrHost.reviewTaskPrepare = function () { throw new Error('Cold replay must not reprepare Review row'); };"))
+        let startup = try object(await later.start())
+        XCTAssertNil(startup["recovery"], "Draft V2 replay returns the ordinary startup window")
+        XCTAssertEqual(try storedTask(id)["reviewAt"] as? String, frozenReview)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertNotEqual(try json(storedTask(id)), try json(before))
+        XCTAssertEqual(try datePreservedFields(storedTask(id), excluding: ["reviewAt", "rev", "revBy", "updatedAt"]),
+                       try datePreservedFields(before, excluding: ["reviewAt", "rev", "revBy", "updatedAt"]))
+        XCTAssertFalse(pending.isEmpty)
+    }
+
+    func testTask159ReviewRowSameHostRetryKeepsFrozenDate() async throws {
+        let id = try await task159DueTask("2026-09-26")
+        let faults = HostIOFaults()
+        let core = host(faults, bundleURL: try dateBundle(at: "2026-09-27T12:00:00.000Z"))
+        _ = try await core.start()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Review row COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("reviewTaskWrite", argumentsJSON: task159Payload(task159Action(id, advance: true)))
+        }
+        let envelope = try pendingDraftCommit()
+        let prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        let effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        let task = try XCTUnwrap(effect["task"] as? [String: Any])
+        let after = try XCTUnwrap(task["after"] as? [String: Any])
+        let frozenReview = try XCTUnwrap(after["reviewAt"] as? String)
+        faults.beforeSQL = nil
+        let retried = try await core.retryPending()
+        let result = try object(XCTUnwrap(retried))
+        XCTAssertEqual(result["id"] as? String, id)
+        XCTAssertEqual(try storedTask(id)["reviewAt"] as? String, frozenReview)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTask159ReviewRowColdLaterEditRefusesAndForgedEffectStaysUnwritten() async throws {
+        let id = try await task159DueTask("2026-09-26")
+        let faults = HostIOFaults()
+        let writer = host(faults, bundleURL: try dateBundle(at: "2026-09-27T12:00:00.000Z"))
+        _ = try await writer.start()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Review row COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("reviewTaskWrite", argumentsJSON: task159Payload(task159Action(id, advance: false)))
+        }
+        let pending = try Data(contentsOf: journal)
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE tasks SET description = ?, rev = rev + 1 WHERE id = ?",
+                             parametersJSON: json(["Independent later edit", id]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+tasks\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let stale = host(replayFaults, bundleURL: try dateBundle(at: "2026-10-10T12:00:00.000Z", rejectingPreparation: true))
+        await expectFailure("STALE_REVISION") { _ = try await stale.start() }
+        XCTAssertEqual(writes, 0)
+        try assertJournalContentUnchanged(pending)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        await stale.close()
+
+        var saved = try object(String(contentsOf: journal))
+        var commit = try pendingDraftCommit()
+        var prepared = try XCTUnwrap(commit["prepared"] as? [String: Any])
+        var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+        var task = try XCTUnwrap(effect["task"] as? [String: Any])
+        var after = try XCTUnwrap(task["after"] as? [String: Any])
+        after["reviewAt"] = "2036-01-01"
+        task["after"] = after; effect["task"] = task; prepared["effect"] = effect; commit["prepared"] = prepared
+        saved["argumentsJSON"] = try json([json(commit)])
+        try Data(json(saved).utf8).write(to: journal)
+        let forged = try Data(contentsOf: journal)
+        let refused = host(replayFaults, bundleURL: try dateBundle(at: "2026-10-10T12:00:00.000Z", rejectingPreparation: true))
+        await expectFailure("INVALID_INPUT") { _ = try await refused.start() }
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try Data(contentsOf: journal), forged)
+        let afterCheck = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(afterCheck), intervened)
+        afterCheck.close()
+        await refused.close()
+    }
+
+    func testTask159ReviewRowColdTerminalReceiptKeepsLaterEdit() async throws {
+        let id = try await task159DueTask("2026-09-26")
+        let faults = HostIOFaults()
+        let writer = host(faults, bundleURL: try dateBundle(at: "2036-10-01T12:00:00.000Z"))
+        _ = try await writer.start()
+        faults.journalRemove = { throw HostFailure("Injected Review row terminal cleanup failure") }
+        await expectFailure("cleanup") {
+            _ = try await writer.call("reviewTaskWrite", argumentsJSON: task159Payload(task159Action(id, advance: false)))
+        }
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertNotNil(saved["terminal"])
+        await writer.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE tasks SET description = ?, reviewAt = ?, rev = rev + 1 WHERE id = ?",
+                             parametersJSON: json(["Independent after ACK", "2036-11-01", id]))
+        let intervened = try nineTableSnapshot(edit)
+        edit.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+tasks\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let cold = host(replayFaults, bundleURL: try dateBundle(at: "2036-10-01T13:00:00.000Z", rejectingPreparation: true))
+        let startup = try object(await cold.start())
+        XCTAssertNil(startup["recovery"], "Terminal Draft V2 ACK returns the ordinary startup window")
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try storedTask(id)["description"] as? String, "Independent after ACK")
+        XCTAssertEqual(try storedTask(id)["reviewAt"] as? String, "2036-11-01")
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), intervened)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTask159ReviewRowForgedTerminalRefusesBeforeDatabaseOpen() async throws {
+        let id = try await task159DueTask("2026-09-26")
+        let faults = HostIOFaults()
+        let writer = host(faults, bundleURL: try dateBundle(at: "2026-09-27T12:00:00.000Z"))
+        _ = try await writer.start()
+        faults.journalRemove = { throw HostFailure("Injected Review row terminal cleanup failure") }
+        await expectFailure("cleanup") {
+            _ = try await writer.call("reviewTaskWrite", argumentsJSON: task159Payload(task159Action(id, advance: false)))
+        }
+        await writer.close()
+        var saved = try object(String(contentsOf: journal))
+        var terminal = try XCTUnwrap(saved["terminal"] as? [String: Any])
+        var success = try XCTUnwrap(terminal["success"] as? [String: Any])
+        var result = try object(XCTUnwrap(success["_0"] as? String))
+        var draft = try XCTUnwrap(result["draft"] as? [String: Any])
+        draft["title"] = "Forged Review row terminal"
+        result["draft"] = draft
+        success["_0"] = try json(result); terminal["success"] = success; saved["terminal"] = terminal
+        try Data(json(saved).utf8).write(to: journal)
+        let retained = try Data(contentsOf: journal)
+        let beforeDatabase = try Data(contentsOf: database)
+        let replayFaults = HostIOFaults()
+        var statements = 0
+        replayFaults.beforeSQL = { _ in statements += 1 }
+        let cold = host(replayFaults, bundleURL: try dateBundle(at: "2026-10-10T12:00:00.000Z", rejectingPreparation: true))
+        await expectFailure { _ = try await cold.start() }
+        XCTAssertEqual(statements, 0)
+        XCTAssertEqual(try Data(contentsOf: database), beforeDatabase)
+        XCTAssertEqual(try Data(contentsOf: journal), retained)
+        await cold.close()
+    }
 }
