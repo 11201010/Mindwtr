@@ -101,11 +101,15 @@ const queued = () => runAs(`ls ${QUEUE} 2>/dev/null || true`).split(/\s+/).filte
 let queueMode = null;
 const lockQueue = () => { queueMode = runAs(`stat -c %a ${QUEUE}`); runAs(`chmod 500 ${QUEUE}`); };
 const unlockQueue = () => { if (queueMode) runAs(`chmod ${queueMode} ${QUEUE}`); queueMode = null; };
-/** One queue item, written as RN's writer does (a temporary name, then a rename): the ingest reads only `*.json`. */
+/**
+ * One queue item, written as RN's writer does (a temporary name, then a rename): the ingest reads only `*.json`. The bytes are
+ * checked before the rename: once renamed, the running app may drain the file at once (it watches the queue folder, pass W1).
+ */
 const enqueue = (name, text) => {
     const bytes = Buffer.from(text, 'utf8').toString('base64');
-    runAs(`mkdir -p ${QUEUE} && echo ${bytes} | base64 -d > ${QUEUE}/${name}.tmp && mv ${QUEUE}/${name}.tmp ${QUEUE}/${name}.json`);
-    if (runAs(`cat ${QUEUE}/${name}.json 2>/dev/null || true`) !== text) fail(`the queue file ${name}.json was not written`);
+    runAs(`mkdir -p ${QUEUE} && echo ${bytes} | base64 -d > ${QUEUE}/${name}.tmp`);
+    if (runAs(`cat ${QUEUE}/${name}.tmp 2>/dev/null || true`) !== text) fail(`the queue file ${name}.tmp was not written`);
+    runAs(`mv ${QUEUE}/${name}.tmp ${QUEUE}/${name}.json`);
 };
 const journal = () => runAs('ls files/journal 2>/dev/null || true').split(/\s+/).filter((name) => /^\d{16}\.json$/.test(name))
     .map((name) => JSON.parse(runAs(`cat files/journal/${name}`)));
