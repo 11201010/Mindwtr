@@ -86,7 +86,6 @@ import { createNativeRequestReceipts, requestRowId, runStoreWrite, settleWrite, 
 import { useTaskStore } from './store';
 import type { Attachment, Project, Task } from './types';
 import { taskEditValuesEqual } from './json-value-equality';
-import { parseAttachmentLinkBatch } from './attachment-link-utils';
 import { isStatusListTaskReadOnly } from './menu-views-model';
 
 /** Core's mobile attachment modules, bound by the host to its file bridge. */
