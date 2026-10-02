@@ -817,6 +817,15 @@ struct ProjectDetailScreen: View {
                             }
                     }
                     Menu {
+                        Button {
+                            let id = model.projectHeader.text("id")
+                            let revision = model.projectDetail.text("projectRevision")
+                            Task { await model.duplicateProject(expectedID: id, expectedRevision: revision) }
+                        } label: {
+                            Label(model.label("projects.duplicate"), systemImage: "square.on.square")
+                        }
+                        .disabled(!model.projectDuplicateOpenEnabled)
+                        .accessibilityIdentifier("project-duplicate-button")
                         Button(role: .destructive) {
                             deleteProjectConfirmedID = model.projectHeader.text("id")
                             deleteProjectConfirmedRevision = model.projectDetail.text("projectRevision")
@@ -882,6 +891,16 @@ struct ProjectDetailScreen: View {
                         Button(model.label("common.retry")) { Task { await model.retry() } }
                             .rnFont(14, .semibold).frame(minHeight: 44)
                             .disabled(model.busy).accessibilityIdentifier("project-delete-retry")
+                    }
+                }
+                if let error = model.projectDuplicateError {
+                    Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("project-duplicate-error")
+                    if model.retryNeeded {
+                        Button(model.label("common.retry")) { Task { await model.retry() } }
+                            .rnFont(14, .semibold).frame(minHeight: 44)
+                            .disabled(model.busy).accessibilityIdentifier("project-duplicate-retry")
                     }
                 }
                 if let error = model.projectFlowError {

@@ -142,6 +142,7 @@ private final class Engine: @unchecked Sendable {
     private var startupTaskDeleteResult: String?
     private var startupProjectDeleteResult: String?
     private var startupProjectDeleteUndoResult: String?
+    private var startupProjectDuplicateResult: String?
     private var startupTrashTaskRestoreResult: String?
     private var startupTrashProjectRestoreResult: String?
     private var startupTaskPromoteResult: String?
@@ -231,6 +232,7 @@ private final class Engine: @unchecked Sendable {
         "taskCancellationUndo": 1, "taskDelete": 1, "taskDeleteUndo": 1, "taskPromote": 1, "trashTaskRestoreWrite": 1, "trashTaskRestoreRetryOutcome": 1,
         "trashProjectRestoreWrite": 1, "trashProjectRestoreRetryOutcome": 1,
         "projectDeleteWrite": 1, "projectDeleteRetryOutcome": 1, "projectDeleteUndo": 1, "projectDeleteUndoRetryOutcome": 1,
+        "projectDuplicateWrite": 1, "projectDuplicateRetryOutcome": 1,
         "somedaySectionMoveOptions": 1, "somedaySectionMoveWrite": 1, "somedaySectionMoveUndo": 1,
         "somedaySectionMoveRetryOutcome": 1, "somedaySectionMoveUndoRetryOutcome": 1,
         "taskFocusOptions": 1, "taskFocusWrite": 1, "taskFocusRetryOutcome": 1,
@@ -254,7 +256,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -366,6 +368,10 @@ private final class Engine: @unchecked Sendable {
             if let command = pending, ["projectDeleteCommit", "projectDeleteUndoCommit"].contains(command.method) {
                 _ = try invoke(command.method == "projectDeleteCommit" ? "projectDeleteValidate" : "projectDeleteUndoValidate",
                                arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectDuplicateCommit" {
+                _ = try invoke("projectDuplicateValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
             }
             if let command = pending, command.method == "trashTaskRestoreCommit" {
@@ -615,6 +621,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringTaskDelete = pending?.method == "taskDeleteCommit"
         let recoveringProjectDelete = pending?.method == "projectDeleteCommit"
         let recoveringProjectDeleteUndo = pending?.method == "projectDeleteUndoCommit"
+        let recoveringProjectDuplicate = pending?.method == "projectDuplicateCommit"
         let recoveringTrashTaskRestore = pending?.method == "trashTaskRestoreCommit"
         let recoveringTrashProjectRestore = pending?.method == "trashProjectRestoreCommit"
         let recoveringTaskPromote = pending?.method == "taskPromoteCommit"
@@ -672,6 +679,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringTaskDelete, let terminal, case .success(let value) = terminal { startupTaskDeleteResult = value }
         if recoveringProjectDelete, let terminal, case .success(let value) = terminal { startupProjectDeleteResult = value }
         if recoveringProjectDeleteUndo, let terminal, case .success(let value) = terminal { startupProjectDeleteUndoResult = value }
+        if recoveringProjectDuplicate, let terminal, case .success(let value) = terminal { startupProjectDuplicateResult = value }
         if recoveringTrashTaskRestore, let terminal, case .success(let value) = terminal { startupTrashTaskRestoreResult = value }
         if recoveringTrashProjectRestore, let terminal, case .success(let value) = terminal { startupTrashProjectRestoreResult = value }
         if recoveringTaskPromote, let terminal, case .success(let value) = terminal { startupTaskPromoteResult = value }
@@ -745,7 +753,8 @@ private final class Engine: @unchecked Sendable {
             ?? recoveredManage ?? recoveredSomedaySections
             ?? startupSomedaySectionMoveResult ?? startupSomedaySectionUndoResult
         let recoveredDeleteRestore = startupTaskDeleteResult ?? startupProjectDeleteResult
-            ?? startupProjectDeleteUndoResult ?? startupTrashTaskRestoreResult ?? startupTrashProjectRestoreResult
+            ?? startupProjectDeleteUndoResult ?? startupProjectDuplicateResult
+            ?? startupTrashTaskRestoreResult ?? startupTrashProjectRestoreResult
         let recoveredTaskActions = recoveredDeleteRestore ?? startupTaskPromoteResult ?? startupBoardResult
             ?? startupCalendarResult ?? startupMindSweepResult
         guard let recovered = recoveredTaskActions
@@ -779,6 +788,7 @@ private final class Engine: @unchecked Sendable {
         window["recovery"] = ["method": startupTaskDeleteResult != nil ? "taskDeleteCommit"
             : startupProjectDeleteResult != nil ? "projectDeleteCommit"
             : startupProjectDeleteUndoResult != nil ? "projectDeleteUndoCommit"
+            : startupProjectDuplicateResult != nil ? "projectDuplicateCommit"
             : startupTrashTaskRestoreResult != nil ? "trashTaskRestoreCommit"
             : startupTrashProjectRestoreResult != nil ? "trashProjectRestoreCommit"
             : startupTaskPromoteResult != nil ? "taskPromoteCommit"
@@ -814,6 +824,7 @@ private final class Engine: @unchecked Sendable {
         startupTaskDeleteResult = nil
         startupProjectDeleteResult = nil
         startupProjectDeleteUndoResult = nil
+        startupProjectDuplicateResult = nil
         startupTrashTaskRestoreResult = nil
         startupTrashProjectRestoreResult = nil
         startupTaskPromoteResult = nil
@@ -972,7 +983,7 @@ private final class Engine: @unchecked Sendable {
         let args: [Any]
         do { args = try arguments(method, argumentsJSON) }
         catch {
-            if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome"].contains(method), pending == nil {
+            if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
             if ["unassignedAreaColorOptions", "unassignedAreaColorWrite", "unassignedAreaColorRetryOutcome"].contains(method), pending == nil {
@@ -1006,6 +1017,9 @@ private final class Engine: @unchecked Sendable {
             }
             if ["projectDeleteRetryOutcome", "projectDeleteUndoRetryOutcome"].contains(method) {
                 throw CoreHostRejection(message: "STALE_REVISION: Project Delete has no pending journal")
+            }
+            if method == "projectDuplicateRetryOutcome" {
+                throw CoreHostRejection(message: "STALE_REVISION: Project Duplicate has no pending journal")
             }
             if ["somedaySectionMoveRetryOutcome", "somedaySectionMoveUndoRetryOutcome"].contains(method) {
                 let envelope = try confirmedSomedayMoveEnvelope(for: method, publicArguments: args)
@@ -2771,6 +2785,26 @@ private final class Engine: @unchecked Sendable {
                 command = PendingCommand(version: 2, method: undo ? "projectDeleteUndoCommit" : "projectDeleteCommit", argumentsJSON: encoded)
                 _ = try invoke(undo ? "projectDeleteUndoValidate" : "projectDeleteValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectDuplicateWrite" {
+            do {
+                guard let original = args.first as? String,
+                      let request = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("INVALID_INPUT: Project Duplicate needs a bounded request")
+                }
+                let value = try invoke("projectDuplicatePrepare", arguments: args)
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+                      let prepared = response["prepared"] as? [String: Any],
+                      Self.equalJSON(prepared["request"], request) else {
+                    throw HostFailure("Malformed Project Duplicate preparation")
+                }
+                let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard envelope.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Project Duplicate journal is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Project Duplicate journal is too large") }
+                command = PendingCommand(version: 2, method: "projectDuplicateCommit", argumentsJSON: encoded)
+                _ = try invoke("projectDuplicateValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "taskCancellationUndo" {
             do {
                 guard let encodedRequest = args.first as? String,
@@ -3171,6 +3205,10 @@ private final class Engine: @unchecked Sendable {
                            arguments: journalArguments(command))
             if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
         }
+        if command.method == "projectDuplicateCommit" {
+            _ = try invoke("projectDuplicateValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
+        }
         if command.method == "trashTaskRestoreCommit" {
             _ = try invoke("trashTaskRestoreValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
@@ -3437,6 +3475,12 @@ private final class Engine: @unchecked Sendable {
             faults?.commandDiagnostic?("projectDeleteUndo")
 #endif
             NSLog("Native iOS Project deletion undone releaseCheck=v1.3.4/ios-project-delete-undo outcome=confirmed")
+        }
+        if command.method == "projectDuplicateCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("projectDuplicate")
+#endif
+            NSLog("Native iOS Project duplicated releaseCheck=v1.3.4/ios-project-duplicate outcome=confirmed")
         }
         if command.method == "trashTaskRestoreCommit", case .success = terminal {
 #if DEBUG
@@ -3858,7 +3902,7 @@ private final class Engine: @unchecked Sendable {
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
-            || (["taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit", "projectDuplicateCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
@@ -5522,6 +5566,18 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("Malformed Project Delete Undo acknowledgment")
             }
         }
+        if command.method == "projectDuplicateCommit" {
+            guard let request = envelope["request"] as? [String: Any],
+                  let effect = prepared["effect"] as? [String: Any],
+                  let project = effect["project"] as? [String: Any],
+                  Set(result.keys) == Set(["id", "message"]),
+                  let id = result["id"] as? String, !id.isEmpty, id.utf16.count <= 200,
+                  id != request["projectId"] as? String,
+                  id == project["id"] as? String,
+                  (result["message"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 512 }) == true else {
+                throw HostFailure("Malformed Project Duplicate acknowledgment")
+            }
+        }
         if command.method == "trashTaskRestoreCommit" {
             guard let request = envelope["request"] as? [String: Any],
                   Set(result.keys) == Set(["id"]), result["id"] as? String == request["taskId"] as? String else {
@@ -6180,6 +6236,31 @@ private final class Engine: @unchecked Sendable {
             _ = try arguments(undo ? "projectDeleteUndo" : "projectDeleteWrite", encoded)
             return args
         }
+        if command.method == "projectDuplicateCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let envelope = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(envelope.keys) == Set(["request", "prepared"]),
+                  let request = envelope["request"] as? [String: Any],
+                  let prepared = envelope["prepared"] as? [String: Any],
+                  Set(prepared.keys) == Set(["version", "request", "scope", "ids", "effect", "deviceIdBefore", "deviceIdToInitialize", "updateAt", "result"]),
+                  Self.isInteger(prepared["version"], equalTo: 1), Self.equalJSON(prepared["request"], request),
+                  let scope = prepared["scope"] as? [String: Any],
+                  Set(scope.keys) == Set(["project", "sections", "tasks", "sameAreaProjects", "area"]),
+                  prepared["ids"] is [String],
+                  let effect = prepared["effect"] as? [String: Any],
+                  Set(effect.keys) == Set(["project", "sections", "tasks"]),
+                  let created = effect["project"] as? [String: Any],
+                  let result = prepared["result"] as? [String: Any],
+                  Set(result.keys) == Set(["id", "message"]),
+                  result["id"] as? String == created["id"] as? String else {
+                throw HostFailure("Malformed Project Duplicate journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("projectDuplicateWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
         if command.method == "trashTaskRestoreCommit" {
             guard command.argumentsJSON.utf8.count <= 12_000_000,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
@@ -6502,7 +6583,7 @@ private final class Engine: @unchecked Sendable {
         if method == "taskOpenTab", json.utf8.count > 4_096 {
             throw HostFailure("INVALID_INPUT: Task open tab request is too large")
         }
-        if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome"].contains(method), json.utf8.count > 4_096 {
+        if ["taskCancellationUndo", "taskDelete", "taskDeleteUndo", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome"].contains(method), json.utf8.count > 4_096 {
             throw HostFailure("INVALID_INPUT: Task mutation request too large")
         }
         if method == "taskPromote", json.utf8.count > 2_000_000 {
@@ -7857,6 +7938,16 @@ private final class Engine: @unchecked Sendable {
                   let projectID = request["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 200,
                   let revision = request["projectRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 200 else {
                 throw HostFailure("INVALID_INPUT: Project Delete needs an exact saved revision and lowercase UUID")
+            }
+        }
+        if ["projectDuplicateWrite", "projectDuplicateRetryOutcome"].contains(method) {
+            guard let text = args.first as? String, text.utf8.count <= 4_096,
+                  let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                  Set(request.keys) == Set(["requestId", "projectId", "projectRevision"]),
+                  let id = request["requestId"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+                  let projectID = request["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 200,
+                  let revision = request["projectRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 200 else {
+                throw HostFailure("INVALID_INPUT: Project Duplicate needs an exact saved revision and lowercase UUID")
             }
         }
         if ["projectDeleteUndo", "projectDeleteUndoRetryOutcome"].contains(method) {

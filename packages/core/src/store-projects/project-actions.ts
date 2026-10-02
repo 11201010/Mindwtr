@@ -25,7 +25,7 @@ import { taskEditValuesEqual } from '../json-value-equality';
 import { planAttachmentLinkBatch, softDeleteAttachment } from '../attachment-editor-model';
 import type { Area, TaskSortBy } from '../types';
 import type { Project, ProjectCoreActions, ProjectActionContext, Section, Task, TaskStatus } from './shared';
-import type { PreparedProjectArea, PreparedProjectAttachmentWrite, PreparedProjectCreate, PreparedProjectDate, PreparedProjectDelete, PreparedProjectDeleteUndo, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, PreparedTrashProjectRestore, ProjectAttachmentIntent, ProjectFlowAction, TaskStore } from '../store-types';
+import type { PreparedProjectArea, PreparedProjectAttachmentWrite, PreparedProjectCreate, PreparedProjectDate, PreparedProjectDelete, PreparedProjectDeleteUndo, PreparedProjectDuplicate, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, PreparedTrashProjectRestore, ProjectAttachmentIntent, ProjectFlowAction, TaskStore } from '../store-types';
 import { projectTagsForIntent, type ProjectTagsIntent } from '../project-tags';
 import { settingsWithPurgedParentAttachmentDeletes } from '../attachment-cleanup';
 import {
@@ -37,9 +37,10 @@ import { actionFail, actionOk, mutateEntities, projectDeleteUndoReattachments,
 import { sameSectionSqliteRow, sameTaskSqliteRow } from './section-actions';
 import { buildTaskContainerMovePatch, reserveTaskContainerProjectOrder } from '../task-container-rules';
 
-const duplicateProjectAttachmentCopy = (attachment: NonNullable<Project['attachments']>[number], now: string) => ({
+const duplicateProjectAttachmentCopy = (attachment: NonNullable<Project['attachments']>[number], now: string,
+    nextId: () => string) => ({
     ...attachment,
-    id: uuidv4(),
+    id: nextId(),
     createdAt: now,
     updatedAt: now,
     deletedAt: undefined,
@@ -50,6 +51,73 @@ const duplicateProjectAttachmentCopy = (attachment: NonNullable<Project['attachm
     contentMtimeMs: undefined,
     contentSize: undefined,
 });
+
+/** Exact RN duplicateProject allocation and row policy, with caller-owned IDs. */
+export const projectDuplicateEffect = (scope: PreparedProjectDuplicate['scope'], deviceId: string,
+    now: string, nextId: () => string): PreparedProjectDuplicate['effect'] => {
+    const source = scope.project;
+    const maxOrder = scope.sameAreaProjects
+        .reduce((max, row) => Math.max(max, Number.isFinite(row.order) ? row.order : -1), -1);
+    const projectAttachments = (source.attachments || [])
+        .filter((attachment) => !attachment.deletedAt)
+        .map((attachment) => duplicateProjectAttachmentCopy(attachment, now, nextId));
+    const project: Project = {
+        ...source,
+        id: nextId(),
+        title: `${source.title} (Copy)`,
+        order: maxOrder + 1,
+        isFocused: false,
+        cancelledAt: undefined,
+        archivedAt: source.status === 'archived' ? now : undefined,
+        attachments: projectAttachments.length > 0 ? projectAttachments : undefined,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: undefined,
+        rev: 1,
+        revBy: deviceId,
+    };
+    const sectionIdMap = new Map<string, string>();
+    const sections = scope.sections.filter((section) => !section.deletedAt).map((section) => {
+        const id = nextId();
+        sectionIdMap.set(section.id, id);
+        return { ...section, id, projectId: project.id, createdAt: now, updatedAt: now,
+            deletedAt: undefined, rev: 1, revBy: deviceId };
+    });
+    const tasks = scope.tasks.filter((task) => !task.deletedAt).map((task) => {
+        const checklist = task.checklist?.map((item) => ({
+            ...item, id: nextId(), isCompleted: false,
+        }));
+        const attachments = (task.attachments || [])
+            .filter((attachment) => !attachment.deletedAt)
+            .map((attachment) => duplicateProjectAttachmentCopy(attachment, now, nextId));
+        const nextSectionId = task.sectionId ? sectionIdMap.get(task.sectionId) : undefined;
+        const result: Task = {
+            ...task,
+            id: nextId(),
+            projectId: project.id,
+            sectionId: nextSectionId,
+            status: (task.status === 'reference' ? 'reference' : 'next') as TaskStatus,
+            startTime: undefined,
+            dueDate: undefined,
+            reviewAt: undefined,
+            completedAt: undefined,
+            cancelledAt: undefined,
+            archivedAt: undefined,
+            isFocusedToday: false,
+            pushCount: 0,
+            checklist,
+            attachments: attachments.length > 0 ? attachments : undefined,
+            createdAt: now,
+            updatedAt: now,
+            deletedAt: undefined,
+            purgedAt: undefined,
+            rev: 1,
+            revBy: deviceId,
+        };
+        return result;
+    });
+    return { project, sections, tasks };
+};
 
 type BuildNewProjectParams = {
     title: string;
@@ -1350,6 +1418,66 @@ export const createProjectCoreActions = ({
         return actionOk();
     },
 
+    commitPreparedProjectDuplicate: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project Duplicate conflicts with current data' };
+        set((state) => {
+            const source = state._projectsById.get(input.request.projectId);
+            if (!source || source.deletedAt || source.purgedAt) return state;
+            const areaId = input.scope.project.areaId;
+            const area = state._allAreas.find((row) => row.id === areaId) ?? null;
+            const sections = state._allSections.filter((row) => row.projectId === source.id);
+            const tasks = state._allTasks.filter((row) => row.projectId === source.id);
+            const sameAreaProjects = state._allProjects.filter((row) => !row.deletedAt
+                && (row.areaId ?? undefined) === (areaId ?? undefined));
+            const created = input.effect;
+            const copy = state._projectsById.get(created.project.id);
+            const copySections = state._allSections.filter((row) => row.projectId === created.project.id);
+            const copyTasks = state._allTasks.filter((row) => row.projectId === created.project.id);
+            const sameSource = sameProjectSqliteRow(source, input.scope.project)
+                && sameOwnedRows(sections, input.scope.sections, sameSectionSqliteRow)
+                && sameOwnedRows(tasks, input.scope.tasks, sameTaskSqliteRow)
+                && taskEditValuesEqual(area, input.scope.area);
+            if (copy && sameSource
+                && (state.settings.deviceId ?? null) === (input.deviceIdToInitialize ?? input.deviceIdBefore)
+                && sameProjectSqliteRow(copy, created.project)
+                && sameOwnedRows(copySections, created.sections, sameSectionSqliteRow)
+                && sameOwnedRows(copyTasks, created.tasks, sameTaskSqliteRow)
+                && sameOwnedRows(sameAreaProjects, [...input.scope.sameAreaProjects, created.project], sameProjectSqliteRow)) {
+                result = { success: true, id: created.project.id, outcome: 'replayed' };
+                return state;
+            }
+            if (copy || copySections.length || copyTasks.length || !sameSource
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || !sameOwnedRows(sameAreaProjects, input.scope.sameAreaProjects, sameProjectSqliteRow)) return state;
+            const allIds = new Set<string>();
+            for (const row of state._allProjects) {
+                allIds.add(row.id);
+                for (const attachment of row.attachments ?? []) allIds.add(attachment.id);
+            }
+            for (const row of state._allSections) allIds.add(row.id);
+            for (const row of state._allTasks) {
+                allIds.add(row.id);
+                for (const item of row.checklist ?? []) allIds.add(item.id);
+                for (const attachment of row.attachments ?? []) allIds.add(attachment.id);
+            }
+            if (input.ids.some((id) => allIds.has(id))) return state;
+            const projects = [...state._allProjects, created.project];
+            const nextSections = [...state._allSections, ...created.sections];
+            const nextTasks = [...state._allTasks, ...created.tasks];
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            clearDerivedCache();
+            persist(set, debouncedSave, state, { projects, sections: nextSections, tasks: nextTasks,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: created.project.id, outcome: 'applied' };
+            return { _allProjects: projects, _allSections: nextSections, _allTasks: nextTasks, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
     duplicateProject: async (id: string) => {
         const changeAt = Date.now();
         const now = new Date().toISOString();
@@ -1358,94 +1486,18 @@ export const createProjectCoreActions = ({
             const sourceProject = state._allProjects.find((project) => project.id === id && !project.deletedAt);
             if (!sourceProject) return state;
             const deviceState = ensureDeviceId(state.settings);
-            const targetAreaId = sourceProject.areaId;
-            const maxOrder = state._allProjects
-                .filter((project) => !project.deletedAt && (project.areaId ?? undefined) === (targetAreaId ?? undefined))
-                .reduce((max, project) => Math.max(max, Number.isFinite(project.order) ? project.order : -1), -1);
-            const baseOrder = maxOrder + 1;
+            const effect = projectDuplicateEffect({ project: sourceProject,
+                sections: state._allSections.filter((section) => section.projectId === id),
+                tasks: state._allTasks.filter((task) => task.projectId === id),
+                sameAreaProjects: state._allProjects.filter((project) => !project.deletedAt
+                    && (project.areaId ?? undefined) === (sourceProject.areaId ?? undefined)),
+                area: state._allAreas.find((area) => area.id === sourceProject.areaId) ?? null,
+            }, deviceState.deviceId, now, uuidv4);
+            createdProject = effect.project;
 
-            const projectAttachments = (sourceProject.attachments || [])
-                .filter((attachment) => !attachment.deletedAt)
-                .map((attachment) => duplicateProjectAttachmentCopy(attachment, now));
-
-            const newProject: Project = {
-                ...sourceProject,
-                id: uuidv4(),
-                title: `${sourceProject.title} (Copy)`,
-                order: baseOrder,
-                isFocused: false,
-                cancelledAt: undefined,
-                archivedAt: sourceProject.status === 'archived' ? now : undefined,
-                attachments: projectAttachments.length > 0 ? projectAttachments : undefined,
-                createdAt: now,
-                updatedAt: now,
-                deletedAt: undefined,
-                rev: 1,
-                revBy: deviceState.deviceId,
-            };
-            createdProject = newProject;
-
-            const sourceSections = state._allSections.filter(
-                (section) => section.projectId === sourceProject.id && !section.deletedAt
-            );
-            const sectionIdMap = new Map<string, string>();
-            const newSections = sourceSections.map((section) => {
-                const newId = uuidv4();
-                sectionIdMap.set(section.id, newId);
-                return {
-                    ...section,
-                    id: newId,
-                    projectId: newProject.id,
-                    createdAt: now,
-                    updatedAt: now,
-                    deletedAt: undefined,
-                    rev: 1,
-                    revBy: deviceState.deviceId,
-                };
-            });
-
-            const sourceTasks = state._allTasks.filter(
-                (task) => task.projectId === sourceProject.id && !task.deletedAt
-            );
-            const newTasks: Task[] = sourceTasks.map((task) => {
-                const checklist = task.checklist?.map((item) => ({
-                    ...item,
-                    id: uuidv4(),
-                    isCompleted: false,
-                }));
-                const attachments = (task.attachments || [])
-                    .filter((attachment) => !attachment.deletedAt)
-                    .map((attachment) => duplicateProjectAttachmentCopy(attachment, now));
-                const nextSectionId = task.sectionId ? sectionIdMap.get(task.sectionId) : undefined;
-                const newTask: Task = {
-                    ...task,
-                    id: uuidv4(),
-                    projectId: newProject.id,
-                    sectionId: nextSectionId,
-                    status: (task.status === 'reference' ? 'reference' : 'next') as TaskStatus,
-                    startTime: undefined,
-                    dueDate: undefined,
-                    reviewAt: undefined,
-                    completedAt: undefined,
-                    cancelledAt: undefined,
-                    archivedAt: undefined,
-                    isFocusedToday: false,
-                    pushCount: 0,
-                    checklist,
-                    attachments: attachments.length > 0 ? attachments : undefined,
-                    createdAt: now,
-                    updatedAt: now,
-                    deletedAt: undefined,
-                    purgedAt: undefined,
-                    rev: 1,
-                    revBy: deviceState.deviceId,
-                };
-                return newTask;
-            });
-
-            const newAllProjects = [...state._allProjects, newProject];
-            const newAllSections = [...state._allSections, ...newSections];
-            const newAllTasks = [...state._allTasks, ...newTasks];
+            const newAllProjects = [...state._allProjects, effect.project];
+            const newAllSections = [...state._allSections, ...effect.sections];
+            const newAllTasks = [...state._allTasks, ...effect.tasks];
             persist(set, debouncedSave, state, {
                 tasks: newAllTasks,
                 projects: newAllProjects,

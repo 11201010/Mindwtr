@@ -385,6 +385,10 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectHeader: CoreObject = [:]
     @Published private(set) var projectDetail: CoreObject = [:]
     @Published private(set) var projectDeleteNotice: CoreObject = [:]
+    @Published private(set) var projectDuplicateNotice: CoreObject = [:]
+    @Published private(set) var projectDuplicateError: String?
+    private var projectDuplicateRequest: String?
+    private var projectDuplicateNoticeGeneration = 0
     @Published private(set) var projectDeleteError: String?
     private var projectDeleteRequest: String?
     private var projectDeleteUndoRequest: String?
@@ -674,6 +678,7 @@ final class CoreModel: ObservableObject {
     @Published private var boardActionRequest: String?
     private var boardRecoveredResult: CoreObject?
     private var taskPromotionRecoveredResult: CoreObject?
+    private var projectDuplicateRecoveredResult: CoreObject?
     private var boardDepth: [String: Int] = [:]
     private var boardPickerName = ""
     private var boardGeneration = 0
@@ -1195,6 +1200,7 @@ final class CoreModel: ObservableObject {
             && projectDateField == nil && !projectStatusOpen && !projectAttachmentLinkPresented
             && !projectAttachmentEditOpening && !projectViewOptionsPresented && !projectFiltersPresented
     }
+    var projectDuplicateOpenEnabled: Bool { projectDeleteOpenEnabled && projectDuplicateRequest == nil }
     var projectAttachmentScopeCurrent: Bool {
         selectedSurface == .project && projectCurrent
             && projectAttachmentProjectID == projectHeader.text("id")
@@ -2753,6 +2759,10 @@ final class CoreModel: ObservableObject {
             }
             if ["taskDeleteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit"].contains(recovery.text("method")) { selectedSurface = .trash }
             if ["projectDeleteCommit", "projectDeleteUndoCommit"].contains(recovery.text("method")) { selectedSurface = .projects }
+            if recovery.text("method") == "projectDuplicateCommit" {
+                projectDuplicateRecoveredResult = recovery.object("result")
+                selectedSurface = .projects
+            }
             if recovery.text("method") == "taskPromoteCommit" {
                 taskPromotionRecoveredResult = recovery.object("result")
             }
@@ -2814,6 +2824,7 @@ final class CoreModel: ObservableObject {
             if calendarComposerRecoveredResult != nil { selectedSurface = .calendar }
             if mindSweepRecoveredResult != nil { selectedSurface = .inbox }
             if taskPromotionRecoveredResult != nil { selectedSurface = .projects }
+            if projectDuplicateRecoveredResult != nil { selectedSurface = .projects }
             try await readSelectedSurface()
             ready = true
             retryNeeded = false
@@ -2831,6 +2842,13 @@ final class CoreModel: ObservableObject {
                 }
                 await presentProject(["id": result.text("id")], caller: .projects)
                 taskPromotionRecoveredResult = nil
+            }
+            if let result = projectDuplicateRecoveredResult {
+                guard Set(result.keys) == Set(["id", "message"]), !result.text("id").isEmpty,
+                      !result.text("message").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+                await presentProject(["id": result.text("id")], caller: .projects)
+                showProjectDuplicateNotice(result)
+                projectDuplicateRecoveredResult = nil
             }
             mindSweepRecoveredResult = nil
             appLockRecoveryPending = false
@@ -3553,7 +3571,7 @@ final class CoreModel: ObservableObject {
                     "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone",
                     "nav.projects", "nav.review", "nav.calendar", "nav.board", "nav.contexts", "common.back", "common.tasks",
                     "task.aria.openContext", "task.aria.openTag",
-                    "projects.title", "projects.deleteConfirm", "projects.activeSection", "projects.deferredSection", "projects.closed",
+                    "projects.title", "projects.deleteConfirm", "projects.duplicate", "projects.duplicated", "projects.activeSection", "projects.deferredSection", "projects.closed",
                     "projects.noArea", "projects.empty", "list.noTasks", "projects.noNextAction",
                     "projects.addPlaceholder", "projects.add", "projects.tagFilter", "projects.allTags", "projects.noTags", "projects.emptyTag",
                     "filters.show", "filters.hide", "projects.areaLabel",
@@ -12616,6 +12634,7 @@ final class CoreModel: ObservableObject {
         projectLoadedDepth = pageSize
         projectCurrent = false
         projectError = nil
+        projectDuplicateError = nil
         projectNotes = [:]
         projectNotesExpanded = false
         projectNotesCurrent = false
@@ -12756,6 +12775,7 @@ final class CoreModel: ObservableObject {
         selectedSurface = projectCaller
         projectCurrent = false
         projectError = nil
+        projectDuplicateError = nil
         await refresh()
     }
 
@@ -12854,6 +12874,55 @@ final class CoreModel: ObservableObject {
         retryNeeded = false
         projectDeleteError = nil
         error = nil
+    }
+
+    func duplicateProject(expectedID: String, expectedRevision: String) async {
+        guard projectDuplicateOpenEnabled else { return }
+        let sourceID = projectHeader.text("id")
+        let revision = projectDetail.text("projectRevision")
+        guard !sourceID.isEmpty, !revision.isEmpty, projectDetail.text("projectId") == sourceID,
+              sourceID == expectedID, revision == expectedRevision else {
+            projectDuplicateError = label("task.updateFailed")
+            return
+        }
+        busy = true
+        projectDuplicateError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    "projectId": sourceID, "projectRevision": revision])
+            projectDuplicateRequest = request
+            let result = try await query("projectDuplicateWrite", [request])
+            try await acknowledgeProjectDuplicate(result)
+        } catch {
+            if isDefiniteRejection(error) { projectDuplicateRequest = nil }
+            retryNeeded = projectDuplicateRequest != nil
+            projectDuplicateError = error.localizedDescription
+            if retryNeeded { self.error = error.localizedDescription }
+        }
+    }
+
+    private func acknowledgeProjectDuplicate(_ result: CoreObject) async throws {
+        guard let request = projectDuplicateRequest,
+              Set(result.keys) == Set(["id", "message"]),
+              !result.text("id").isEmpty, result.text("id") != (try decode(request)).text("projectId"),
+              !result.text("message").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        projectDuplicateRequest = nil
+        retryNeeded = false
+        projectDuplicateError = nil
+        error = nil
+        await presentProject(["id": result.text("id")], caller: .projects)
+        showProjectDuplicateNotice(result)
+    }
+
+    private func showProjectDuplicateNotice(_ result: CoreObject) {
+        projectDuplicateNotice = ["message": result.text("message")]
+        projectDuplicateNoticeGeneration += 1
+        let generation = projectDuplicateNoticeGeneration
+        Task {
+            try? await Task.sleep(nanoseconds: 5_200_000_000)
+            if projectDuplicateNoticeGeneration == generation { projectDuplicateNotice = [:] }
+        }
     }
 
     func openProjectViewOptions() async {
@@ -17224,6 +17293,13 @@ final class CoreModel: ObservableObject {
                 do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
                 return
             }
+            if let request = projectDuplicateRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectDuplicateRetryOutcome", [request]) }
+                try await acknowledgeProjectDuplicate(result)
+                return
+            }
             if taskDeleteRequest != nil {
                 if let acknowledgment {
                     try await acknowledgeTaskDelete(try decode(acknowledgment))
@@ -18028,6 +18104,7 @@ final class CoreModel: ObservableObject {
                     projectDeleteNotice = [:]
                 }
                 if projectDeleteRequest != nil { projectDeleteRequest = nil }
+                if projectDuplicateRequest != nil { projectDuplicateRequest = nil }
                 if taskDeleteRequest != nil {
                     taskDeleteRequest = nil
                     taskRecoverySaving = false

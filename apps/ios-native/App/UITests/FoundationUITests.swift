@@ -16954,4 +16954,79 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task152OpenSource(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        let source = app.buttons["project-open-task152-project"]
+        revealPagedElement(app, source, in: app.scrollViews["projects-scroll"])
+        boardEnabled(source); source.tap()
+        boardEnabled(app.buttons["project-actions-menu"], timeout: 30)
+        XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task152 project")
+    }
+
+    private func task152TapDuplicate(_ app: XCUIApplication) {
+        boardTap(app, "project-actions-menu")
+        let action = app.buttons.matching(identifier: "project-duplicate-button").firstMatch
+        boardEnabled(action)
+        XCTAssertEqual(action.label, "Duplicate")
+        action.tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists, "RN Duplicate has no confirmation")
+    }
+
+    private func task152AssertCopy(_ app: XCUIApplication) {
+        let title = app.staticTexts["project-detail-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 30))
+        let copied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Task152 project (Copy)"), object: title)
+        XCTAssertEqual(XCTWaiter.wait(for: [copied], timeout: 30), .completed)
+        let section = app.staticTexts["Task152 section"]
+        if !section.isHittable { revealPagedElement(app, section, in: app.scrollViews["project-detail-scroll"]) }
+        XCTAssertTrue(section.exists)
+    }
+
+    private func task152NormalFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task152OpenSource(app); task152TapDuplicate(app)
+        XCTAssertTrue(app.staticTexts["project-duplicate-notice"].waitForExistence(timeout: 30))
+        XCTAssertEqual(app.staticTexts["project-duplicate-notice"].label, "Project duplicated")
+        task152AssertCopy(app)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Duplicated Project detail"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "project-back")
+        let source = app.buttons["project-open-task152-project"]
+        revealPagedElement(app, source, in: app.scrollViews["projects-scroll"])
+        boardEnabled(source)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["tab-menu"], timeout: 30); boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        revealPagedElement(app, source, in: app.scrollViews["projects-scroll"])
+        boardEnabled(source)
+        app.terminate()
+    }
+
+    func testTask152ProjectDuplicateNormal() { task152NormalFlow("14dbc752-3227-4d13-8775-b9926765f876") }
+    func testTask152ProjectDuplicateLargest() { task152NormalFlow("06b5564e-4a7d-477f-8d3b-5de61df91a81") }
+
+    func testTask152ProjectDuplicateFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "1e1377e0-d6bc-450b-9865-644a457e840c"]
+        app.launch(); task152OpenSource(app); task152TapDuplicate(app)
+        for _ in 0..<2 {
+            let retry = app.buttons.matching(identifier: "project-duplicate-retry").firstMatch
+            boardEnabled(retry, timeout: 30)
+            XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task152 project")
+            XCTAssertFalse(app.buttons["project-back"].isEnabled)
+            retry.tap()
+        }
+        boardEnabled(app.buttons.matching(identifier: "project-duplicate-retry").firstMatch, timeout: 30)
+        app.terminate()
+    }
+
+    func testTask152ProjectDuplicateColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "1e1377e0-d6bc-450b-9865-644a457e840c"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["project-duplicate-notice"].waitForExistence(timeout: 30))
+        task152AssertCopy(app)
+        app.terminate()
+    }
+
 }
