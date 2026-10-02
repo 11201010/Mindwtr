@@ -18313,4 +18313,108 @@ final class FoundationUITests: XCTestCase {
     func testTask170CompletionSurfacesNormal() { task170CompletionSurfaces("4c5c9d3c-57a3-457f-84bc-e77018c8c7d6") }
     func testTask170CompletionSurfacesLargest() { task170CompletionSurfaces("d43ae8c7-091d-44dc-8bff-825db269a034") }
 
+    private func task172OpenArchive(_ app: XCUIApplication) {
+        boardTap(app, "tab-menu")
+        let history = app.buttons["menu-history"]
+        if !history.isHittable { revealPagedElement(app, history, in: app.scrollViews.containing(.button, identifier: "menu-projects").firstMatch) }
+        boardTap(app, "menu-history"); boardEnabled(app.buttons["history-tab-archived"])
+        if !app.buttons["history-tab-archived"].isSelected { boardTap(app, "history-tab-archived") }
+        boardTap(app, "archive-segment-tasks")
+    }
+
+    private func task172RevealRestore(_ app: XCUIApplication, _ suffix: String) -> XCUIElement {
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "archive-task-", "task172-" + suffix)).firstMatch
+        let list = app.descendants(matching: .any).matching(identifier: "archive-scroll").firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 30))
+        for _ in 0..<10 {
+            if row.isHittable && list.frame.intersection(app.frame).contains(CGPoint(x: row.frame.midX, y: row.frame.midY)) { break }
+            list.swipeUp()
+        }
+        XCTAssertTrue(row.isHittable)
+        row.swipeRight()
+        let restore = app.buttons["archive-restore-task172-" + suffix]
+        boardEnabled(restore, timeout: 15)
+        return restore
+    }
+
+    private func task172CheckInbox(_ app: XCUIApplication) {
+        if app.buttons["history-back"].exists { boardTap(app, "history-back") }
+        boardTap(app, "tab-inbox")
+        let scroll = app.scrollViews.firstMatch
+        for suffix in ["cancelled", "parent"] {
+            let row = app.buttons["task-status-task172-" + suffix]
+            if !row.isHittable {
+                for _ in 0..<4 { scroll.swipeDown() }
+                for _ in 0..<12 {
+                    if row.isHittable { break }
+                    scroll.swipeUp()
+                }
+            }
+            boardEnabled(row); XCTAssertTrue(row.isHittable)
+        }
+        task172CheckScheduledRestore(app)
+    }
+
+    private func task172CheckScheduledRestore(_ app: XCUIApplication) {
+        if app.buttons["history-back"].exists { boardTap(app, "history-back") }
+        boardTap(app, "search-open")
+        let input = app.textFields["search-input"]
+        boardEnabled(input, timeout: 30)
+        if app.buttons["search-clear"].exists { boardTap(app, "search-clear") }
+        input.tap(); input.typeText("Task172 Completed")
+        boardEnabled(app.buttons["search-task-task172-completed"], timeout: 30)
+        boardTap(app, "search-close")
+    }
+
+    private func task172RestoreFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task172OpenArchive(app)
+        for suffix in ["completed", "cancelled", "parent"] {
+            task172RevealRestore(app, suffix).tap()
+            let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "archive-task-", "task172-" + suffix)).firstMatch
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: row); waitForExpectations(timeout: 30)
+        }
+        task172CheckInbox(app)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task172 restored archive tasks in Inbox"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); task172CheckInbox(app)
+        task172OpenArchive(app)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier CONTAINS %@", "archive-task-", "task172-")).firstMatch.exists)
+        app.terminate()
+    }
+
+    func testTask172ArchiveRestoreNormal() { task172RestoreFlow("201de2ed-1d28-4fc8-8d42-0b47589ad76b") }
+    func testTask172ArchiveRestoreLargest() { task172RestoreFlow("926df5ee-74fe-42b1-ac93-1fa467b9fb17") }
+
+    func testTask172ArchiveRestoreSwipeOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "2399e81e-0f3d-419d-b12a-7d484489c23c"]
+        app.launch(); task172OpenArchive(app); _ = task172RevealRestore(app, "completed")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task172 Archive Restore requires explicit tap"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testTask172ArchiveRestoreFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "96b9ab44-4d51-4c6c-9043-2730d817eb8c"]
+        app.launch(); task172OpenArchive(app); task172RevealRestore(app, "completed").tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["archive-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["history-back"].isEnabled)
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "archive-task-", "task172-completed")).firstMatch.exists)
+            retry.tap()
+        }
+        boardEnabled(app.buttons["archive-retry"], timeout: 30); app.terminate()
+    }
+
+    func testTask172ArchiveRestoreColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "96b9ab44-4d51-4c6c-9043-2730d817eb8c"]
+        app.launch(); boardEnabled(app.buttons["history-tab-archived"], timeout: 30)
+        XCTAssertTrue(app.buttons["history-tab-archived"].isSelected)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "archive-task-", "task172-completed")).firstMatch.exists)
+        task172CheckScheduledRestore(app)
+        app.terminate(); app.launch(); task172CheckScheduledRestore(app); app.terminate()
+    }
+
 }

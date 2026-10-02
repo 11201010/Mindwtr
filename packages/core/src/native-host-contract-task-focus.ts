@@ -101,7 +101,7 @@ const validWitnessRow = (value: unknown): value is TaskFocusWitnessRow => {
 };
 
 /** A frozen parse must remain tied to the raw calendar wall value, including each DST offset. */
-const validDate = (value: unknown): value is FocusDateProjection => {
+export const validFrozenFocusDate = (value: unknown): value is FocusDateProjection => {
     if (!record(value) || !exact(value, DATE_KEYS) || typeof value.value !== 'string' || !value.value
         || value.value.length > 10_000) return false;
     const raw = value.value;
@@ -220,7 +220,7 @@ const readPrepared = (value: unknown): NativePreparedTaskFocus | null => {
             || new Date(Date.parse(`${prepared.preparedLocalDay}T23:59:59.999Z`)
                 + prepared.boundaryOffsetMinutes * 60_000).toISOString() !== prepared.futureBoundary
             || !same(requiredDates(scope), prepared.dates.map((row) => row.value))
-            || prepared.dates.some((row) => !validDate(row))
+            || prepared.dates.some((row) => !validFrozenFocusDate(row))
             || !validTask(prepared.effect.task.before, request.taskId)
             || !validTask(prepared.effect.task.after, request.taskId)
             || !sameTaskSqliteRow(scope.task, prepared.effect.task.before)) return null;

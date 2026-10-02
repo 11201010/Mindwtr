@@ -334,6 +334,7 @@ export const jaOverrides: Record<string, string> = {
         'task.cancelledWithRestore': 'タスクを取り消しました。アーカイブから復元できます。',
         'task.completionOutcomeUnknown': 'タスクが完了したか確認できませんでした。Mindwtr を再起動して保存済みデータを再読み込みしてください。',
         'task.completionUndoOutcomeUnknown': 'タスクの完了が取り消されたか確認できませんでした。Mindwtr を再起動して保存済みデータを再読み込みしてください。',
+        'task.archiveRestoreOutcomeUnknown': 'アーカイブ済みタスクが復元されたか確認できませんでした。Mindwtrを再起動して保存済みデータを再読み込みしてください。',
         'task.cancelFailed': 'タスクを取り消せませんでした',
         'task.skipOccurrence': '今回の繰り返しをスキップ',
         'task.skipOccurrenceFailed': '今回の繰り返しをスキップできませんでした',

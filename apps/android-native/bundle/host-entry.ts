@@ -796,7 +796,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2187,6 +2187,18 @@ globalThis.MindwtrHost = {
     },
     trashTaskRestoreCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedTrashTaskRestore(editorJson(json) as Parameters<typeof contract.commitPreparedTrashTaskRestore>[0])));
+    },
+    archivedTaskRestorePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchivedTaskRestore(editorJson(json) as Parameters<typeof contract.prepareArchivedTaskRestore>[0])); });
+    },
+    archivedTaskRestoreValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedArchivedTaskRestore(editorJson(json) as Parameters<typeof contract.validatePreparedArchivedTaskRestore>[0])));
+    },
+    archivedTaskRestoreCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedArchivedTaskRestore(editorJson(json) as Parameters<typeof contract.commitPreparedArchivedTaskRestore>[0])));
+    },
+    archivedTaskRestoreOutcome(json: string): string {
+        return submit(async () => unwrap(contract.archivedTaskRestoreOutcome(editorJson(json) as Parameters<typeof contract.archivedTaskRestoreOutcome>[0])));
     },
     trashProjectRestorePrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.prepareTrashProjectRestore(editorJson(json) as Parameters<typeof contract.prepareTrashProjectRestore>[0])); });

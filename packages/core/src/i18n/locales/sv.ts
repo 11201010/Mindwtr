@@ -313,6 +313,7 @@ export const svOverrides: Record<string, string> = {
         'task.cancelledWithRestore': 'Uppgiften avbröts. Du kan återställa den från Arkiv.',
         'task.completionOutcomeUnknown': 'Det gick inte att bekräfta om uppgiften slutfördes. Starta om Mindwtr för att läsa in sparade data igen.',
         'task.completionUndoOutcomeUnknown': 'Det gick inte att bekräfta om slutförandet av uppgiften ångrades. Starta om Mindwtr för att läsa in sparade data igen.',
+        'task.archiveRestoreOutcomeUnknown': 'Det gick inte att bekräfta om den arkiverade uppgiften återställdes. Starta om Mindwtr för att läsa in sparade data igen.',
         'task.cancelFailed': 'Det gick inte att avbryta uppgiften',
         'task.skipOccurrence': 'Hoppa över denna gång',
         'task.skipOccurrenceFailed': 'Det gick inte att hoppa över denna gång',

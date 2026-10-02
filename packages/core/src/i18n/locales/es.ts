@@ -305,6 +305,7 @@ export const esOverrides: Record<string, string> = {
 'task.cancelledWithRestore': 'Tarea cancelada. Puedes restaurarla desde Archivadas.',
 'task.completionOutcomeUnknown': 'No se pudo confirmar si la tarea se completó. Reinicia Mindwtr para volver a cargar los datos guardados.',
 'task.completionUndoOutcomeUnknown': 'No se pudo confirmar si se deshizo la finalización de la tarea. Reinicia Mindwtr para volver a cargar los datos guardados.',
+'task.archiveRestoreOutcomeUnknown': 'No se pudo confirmar si se restauró la tarea archivada. Reinicia Mindwtr para volver a cargar los datos guardados.',
 'task.cancelFailed': 'No se pudo cancelar la tarea',
 'task.skipOccurrence': 'Omitir esta repetición',
 'task.skipOccurrenceFailed': 'No se pudo omitir esta repetición',
