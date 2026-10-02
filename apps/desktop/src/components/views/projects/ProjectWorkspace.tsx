@@ -8,6 +8,7 @@ import { Attachment,
     collectProjectTaskLinks,
     compareTasksByProjectOrder,
     getProjectSectionsForView,
+    getProjectToSectionEligibility,
     getSequentialProjectTaskCues,
     isTaskFinished,
     isTaskCompleted,
@@ -359,6 +360,7 @@ type ProjectWorkspaceProps = {
     language: string;
     // Duplicate-then-select action; also wired to the sidebar in ProjectsView.
     onDuplicateProject: (projectId: string) => Promise<void> | void;
+    onConvertProjectToSection?: (projectId: string) => Promise<void> | void;
     // Opens the AreaManagerModal, whose open/close state lives in ProjectsView.
     onManageAreas: () => void;
     // Opens the quick-area prompt, whose state lives in ProjectsView.
@@ -402,6 +404,7 @@ export function ProjectWorkspace({
     isCreatingProject,
     language,
     onDuplicateProject,
+    onConvertProjectToSection,
     onManageAreas,
     onRequestQuickArea,
     onToggleShowCompletedTasks,
@@ -1765,6 +1768,11 @@ export function ProjectWorkspace({
                                 detailsExpanded={projectDetailsExpanded}
                                 onToggleDetails={() => setProjectDetailsExpanded((prev) => !prev)}
                                 onDuplicate={() => onDuplicateProject(selectedProject.id)}
+                                onConvertToSection={onConvertProjectToSection ? () => { void onConvertProjectToSection(selectedProject.id); } : undefined}
+                                convertToSectionBlockedReason={onConvertProjectToSection ? (() => {
+                                    const eligibility = getProjectToSectionEligibility(useTaskStore.getState(), selectedProject.id);
+                                    return eligibility.ok ? undefined : tFallback(t, `projects.convertBlocked.${eligibility.reason}`, eligibility.reason);
+                                })() : undefined}
                                 onArchive={handleArchiveProject}
                                 onCancel={handleCancelProject}
                                 onReactivate={() => {

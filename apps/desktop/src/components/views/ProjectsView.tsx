@@ -23,10 +23,13 @@ import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import {
     AREA_FILTER_ALL,
     AREA_FILTER_NONE,
+    areaFilterSelectionToFilters,
+    flushPendingSave,
     buildProjectGroups,
     formatI18nTemplate,
     isManageAreaNameTaken,
     projectMatchesAreaFilterSelection,
+    resolveAreaFilterSelection,
     tFallback,
     useTaskStore,
     type Project,
@@ -40,6 +43,7 @@ import { PromptModal } from '../PromptModal';
 import { ProjectsSidebar } from './projects/ProjectsSidebar';
 import { AreaManagerModal } from './projects/AreaManagerModal';
 import { ProjectWorkspace } from './projects/ProjectWorkspace';
+import { ProjectToSectionDialog } from './projects/ProjectToSectionDialog';
 import { computeProjectAreaDragResult } from './projects/project-area-dnd';
 import {
     projectsViewCollisionDetection,
@@ -194,6 +198,7 @@ export function ProjectsView() {
     const [isCreating, setIsCreating] = useState(false);
     const [newProjectTitle, setNewProjectTitle] = useState('');
     const [newProjectAreaId, setNewProjectAreaId] = useState('');
+    const [convertSource, setConvertSource] = useState<Project | null>(null);
     const [persistedViewState, setPersistedViewState] = usePersistedViewState(
         PROJECTS_VIEW_STATE_STORAGE_KEY,
         DEFAULT_PROJECTS_VIEW_STATE,
@@ -436,6 +441,17 @@ export function ProjectsView() {
             showToast(tFallback(t, 'projects.duplicateFailed', 'Failed to duplicate project'), 'error');
         }
     }, [duplicateProject, setSelectedProjectId, showToast, t]);
+
+    const handleConvertProjectToSection = useCallback(async (projectId: string) => {
+        // The title and notes editors commit on blur. Flush them before freezing the preview.
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        try {
+            await flushPendingSave();
+            setConvertSource(useTaskStore.getState()._allProjects.find((project) => project.id === projectId) ?? null);
+        } catch {
+            showToast(tFallback(t, 'projects.convertFailure.save-failed', 'Could not save. Retry the same conversion.'), 'error');
+        }
+    }, [showToast, t]);
 
     useEffect(() => {
         if (!perf.enabled) return;
@@ -702,6 +718,26 @@ export function ProjectsView() {
 
     const selectedProject = projects.find(p => p.id === selectedProjectId);
 
+    const navigateToProject = async (projectId: string) => {
+        const state = useTaskStore.getState();
+        const project = state._allProjects.find((item) => item.id === projectId && !item.deletedAt);
+        if (!project) return;
+        const selection = resolveAreaFilterSelection(state.settings?.filters, state.areas);
+        if (!projectMatchesAreaFilterSelection(project, selection, new Map(state.areas.map((area) => [area.id, area])))) {
+            try {
+                await state.updateSettings({ filters: {
+                    ...(state.settings?.filters ?? {}),
+                    ...areaFilterSelectionToFilters({ included: [project.areaId ?? AREA_FILTER_NONE], excluded: [] }),
+                } });
+            } catch (error) {
+                reportError('Failed to reveal converted project', error);
+                showToast(tFallback(t, 'projects.convertNavigationFailed', 'Converted, but could not change the Area filter.'), 'error');
+                return;
+            }
+        }
+        setSelectedProjectId(projectId);
+    };
+
     useEffect(() => {
         if (selectedProject?.status === 'archived' && !showArchivedProjects) {
             setShowArchivedProjects(true);
@@ -835,6 +871,7 @@ export function ProjectsView() {
                             isCreatingProject={isCreatingProject}
                             language={language}
                             onDuplicateProject={handleDuplicateProject}
+                            onConvertProjectToSection={handleConvertProjectToSection}
                             onManageAreas={() => setShowAreaManager(true)}
                             onRequestQuickArea={(projectId) => {
                                 setPendingAreaAssignProjectId(projectId);
@@ -942,6 +979,37 @@ export function ProjectsView() {
                         }
                     }}
                 />
+                {convertSource && <ProjectToSectionDialog
+                    key={convertSource.id}
+                    source={convertSource}
+                    projects={projects}
+                    t={t}
+                    onCancel={() => setConvertSource(null)}
+                    onSuccess={(result) => {
+                        setConvertSource(null);
+                        void navigateToProject(result.destinationProjectId);
+                        const undo = async () => {
+                            if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+                            try {
+                                await flushPendingSave();
+                            } catch {
+                                showToast(tFallback(t, 'projects.convertUndoFailure.save-failed', 'Could not save the Undo. Retry.'), 'error', 5000,
+                                    { label: tFallback(t, 'common.retry', 'Retry'), onClick: () => { void undo(); } });
+                                return;
+                            }
+                            const outcome = await useTaskStore.getState().undoProjectToSection(result.receipt);
+                            if (outcome.success) {
+                                await navigateToProject(result.receipt.sourceProjectId);
+                                return;
+                            }
+                            const message = tFallback(t, `projects.convertUndoFailure.${outcome.reason}`, 'Could not undo the conversion.');
+                            showToast(message, 'error', 5000, outcome.reason === 'save-failed'
+                                ? { label: tFallback(t, 'common.retry', 'Retry'), onClick: () => { void undo(); } }
+                                : undefined);
+                        };
+                        showUndoToast(tFallback(t, 'projects.convertSuccess', 'Project converted to section.'), () => { void undo(); }, t);
+                    }}
+                />}
                 {confirmModal}
             </div>
         </ErrorBoundary>

@@ -97,6 +97,8 @@ vi.mock('../../contexts/language-context', () => ({
 // the store is a plain selector over spies.
 const storeActions = vi.hoisted(() => ({
     _allProjects: [] as Project[],
+    _allSections: [] as Section[],
+    _allTasks: [] as Task[],
     addSection: vi.fn(),
     cancelProject: vi.fn(),
     deleteSection: vi.fn(),
@@ -330,6 +332,8 @@ const expandProjectDetails = (tree: ReturnType<typeof create>) => {
 
 beforeEach(() => {
     storeActions._allProjects = [];
+    storeActions._allSections = [];
+    storeActions._allTasks = [];
     for (const action of Object.values(storeActions)) {
         if (typeof action === 'function') action.mockReset();
     }
@@ -351,6 +355,20 @@ afterEach(() => {
 });
 
 describe('ProjectDetailModal archive retention guard', () => {
+    it('shows a disabled conversion action with the source reason', () => {
+        const source = { ...project('active'), isSequential: true };
+        storeActions._allProjects = [source];
+        let tree!: ReturnType<typeof create>;
+        act(() => { tree = create(<ProjectDetailModal {...createProjectDetailModalProps({
+            project: source,
+            onBeforeConvertToSection: vi.fn(async () => true),
+            onConvertedToSection: vi.fn(),
+        })} />); });
+        act(() => tree.root.findByProps({ testID: 'project-actions-menu-button' }).props.onPress());
+        const action = tree.root.findByProps({ testID: 'project-convert-to-section-button' });
+        expect(action.props.disabled).toBe(true);
+        expect(action.props.description).toBeTruthy();
+    });
     it('holds the edit lock while a project draft is open and releases it on close', () => {
         const props = createProjectDetailModalProps();
         let tree!: ReturnType<typeof create>;

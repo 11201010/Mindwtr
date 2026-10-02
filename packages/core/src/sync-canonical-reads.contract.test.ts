@@ -40,6 +40,7 @@ import { toStableSyncJson } from './sync-helpers';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createNativeHostContract } from './native-host-contract';
 import { createTaskDraft } from './task-draft';
+import { prepareProjectToSection } from './project-to-section';
 import { DEFAULT_FOCUS_CONTROL_STATE } from './focus-controls';
 import { TASK_SQLITE_COLUMNS, TASK_SYNC_FIELD_SCHEMA, TASK_SYNC_SCHEMA_FIXTURE, taskToSqliteRow } from './task-sync-schema';
 import { mapSqliteTaskRow } from './sqlite-adapter';
@@ -908,6 +909,17 @@ describe('canonical local reads contract', () => {
         const projectTaskIds = liveTasks.filter((entry) => entry.projectId === projectId).map((entry) => entry.id);
         const nextTaskIds = liveTasks.filter((entry) => entry.status === 'next').slice(0, 6).map((entry) => entry.id);
         const focusIds = settled.tasks.filter((entry) => entry.isFocusedToday).map((entry) => entry.id);
+        const convertedProjectReceipt = async () => {
+            const source = await call('addProject', 'Contract conversion source', '#123456', { isSequential: false }) as Project | null;
+            const destination = await call('addProject', 'Contract conversion destination', '#123456', { isSequential: false }) as Project | null;
+            if (!source || !destination) throw new Error('Conversion fixture projects missing');
+            await call('addTask', 'Contract conversion child', { projectId: source.id, status: 'next' });
+            const prepared = prepareProjectToSection(useTaskStore.getState(), source.id, destination.id, 'Contract section');
+            if (!prepared.ok) throw new Error(`Conversion fixture blocked: ${prepared.reason}`);
+            const converted = await useTaskStore.getState().convertProjectToSection(prepared.command);
+            if (!converted.success) throw new Error(`Conversion fixture failed: ${converted.reason}`);
+            return converted.receipt;
+        };
 
         expect(
             [taskId, deletedTaskId, checklistTaskId, sectionId].every((value) => typeof value === 'string'),
@@ -934,6 +946,7 @@ describe('canonical local reads contract', () => {
             }))),
             cancelProject: () => call('cancelProject', projectId),
             cancelTask: () => call('cancelTask', taskId),
+            convertProjectToSection: () => convertedProjectReceipt(),
             commitPreparedAreaCreate: async (control) => {
                 const host = await nativeHost(control);
                 const request = { requestId: 'a41285b2-c665-4a18-9764-38e321191cde',
@@ -1724,6 +1737,7 @@ describe('canonical local reads contract', () => {
             duplicateTask: () => call('duplicateTask', taskId),
             moveTask: () => call('moveTask', taskId, 'waiting'),
             promoteTaskToProject: () => call('promoteTaskToProject', taskId),
+            undoProjectToSection: async () => call('undoProjectToSection', await convertedProjectReceipt()),
             purgeDeletedProjects: async () => {
                 await call('deleteProject', projectId);
                 await call('purgeDeletedProjects');

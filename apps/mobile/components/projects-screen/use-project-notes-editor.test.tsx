@@ -18,7 +18,7 @@ const makeProject = (supportNotes = ''): Project => ({
 });
 
 describe('useProjectNotesEditor', () => {
-  it('commits the latest project notes draft without waiting for state persistence', () => {
+  it('commits the latest project notes draft and waits for its write', async () => {
     const updateProject = vi.fn();
     let editor!: ReturnType<typeof useProjectNotesEditor>;
 
@@ -37,19 +37,34 @@ describe('useProjectNotesEditor', () => {
       create(<Harness />);
     });
 
-    act(() => {
+    await act(async () => {
       editor.handleSelectedProjectNotesChange('Draft notes');
-      editor.commitSelectedProjectNotes();
+      await editor.commitSelectedProjectNotes();
     });
 
     expect(updateProject).toHaveBeenCalledTimes(1);
     expect(updateProject).toHaveBeenCalledWith('project-1', { supportNotes: 'Draft notes' });
 
-    act(() => {
-      editor.commitSelectedProjectNotes();
+    await act(async () => {
+      await editor.commitSelectedProjectNotes();
     });
 
     expect(updateProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries the notes write after a rejected commit', async () => {
+    const updateProject = vi.fn().mockRejectedValueOnce(new Error('save failed')).mockResolvedValueOnce(undefined);
+    let editor!: ReturnType<typeof useProjectNotesEditor>;
+    function Harness() {
+      const [selectedProject, setSelectedProject] = React.useState<Project | null>(() => makeProject());
+      editor = useProjectNotesEditor({ selectedProject, setSelectedProject, updateProject, language: 'en' });
+      return null;
+    }
+    act(() => { create(<Harness />); });
+    act(() => { editor.handleSelectedProjectNotesChange('Draft notes'); });
+    await expect(editor.commitSelectedProjectNotes()).rejects.toThrow('save failed');
+    await act(async () => { await editor.commitSelectedProjectNotes(); });
+    expect(updateProject).toHaveBeenCalledTimes(2);
   });
 
   it('discards a pending notes draft when the project becomes archived', () => {

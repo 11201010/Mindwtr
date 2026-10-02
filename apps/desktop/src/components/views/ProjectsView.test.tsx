@@ -117,15 +117,18 @@ vi.mock('./projects/ProjectWorkspace', () => ({
         onToggleProjectsSidebar,
         onRequestQuickArea,
         onManageAreas,
+        onConvertProjectToSection,
     }: {
         projectsSidebarCollapsed?: boolean;
         onToggleProjectsSidebar?: () => void;
         onRequestQuickArea?: (projectId: string) => void;
         onManageAreas?: () => void;
+        onConvertProjectToSection?: (projectId: string) => void;
     }) => (
         <div data-testid="project-workspace">
             Workspace
             {onManageAreas && <button type="button" onClick={onManageAreas}>Manage areas</button>}
+            {onConvertProjectToSection && <button type="button" onClick={() => onConvertProjectToSection('project-1')}>Convert project</button>}
             {onRequestQuickArea && (
                 <button type="button" onClick={() => onRequestQuickArea('project-1')}>Request quick area</button>
             )}
@@ -137,6 +140,15 @@ vi.mock('./projects/ProjectWorkspace', () => ({
         </div>
     ),
 }));
+
+vi.mock('./projects/ProjectToSectionDialog', () => ({
+    ProjectToSectionDialog: ({ source, onSuccess }: { source: Project; onSuccess: (result: unknown) => void }) => <div role="dialog">
+        <span>{source.title}</span>
+        <button type="button" onClick={() => onSuccess({ destinationProjectId: 'project-2', receipt: { sourceProjectId: source.id } })}>Complete conversion</button>
+    </div>,
+}));
+
+vi.mock('../../lib/undo-registry', () => ({ registerUndoableAction: vi.fn(), showUndoToast: vi.fn() }));
 
 vi.mock('../../contexts/language-context', () => ({
     useLanguage: () => ({
@@ -283,6 +295,33 @@ describe('ProjectsView', () => {
         expect(keyboardSensor?.options).toMatchObject({
             coordinateGetter: sortableKeyboardCoordinates,
         });
+    });
+
+    it('keeps the conversion dialog mounted after the source leaves live projects and reveals the destination Area', async () => {
+        const now = '2026-08-31T12:00:00.000Z';
+        const source: Project = { id: 'project-1', title: 'Source', status: 'active', color: '#f00', order: 0, tagIds: [], areaId: 'area-1', createdAt: now, updatedAt: now };
+        const destination: Project = { ...source, id: 'project-2', title: 'Destination', areaId: 'area-2' };
+        const areas: Area[] = [
+            { id: 'area-1', name: 'Area one', order: 0, createdAt: now, updatedAt: now },
+            { id: 'area-2', name: 'Area two', order: 1, createdAt: now, updatedAt: now },
+        ];
+        const updateSettings = vi.fn(async (updates: Parameters<typeof initialTaskState.updateSettings>[0]) => {
+            useTaskStore.setState((state) => ({ settings: { ...state.settings, ...updates } }));
+        });
+        useTaskStore.setState({ _allProjects: [source, destination], _allAreas: areas, areas, settings: { ...initialTaskState.settings, filters: { areaId: 'area-1', areaIds: ['area-1'], excludedAreaIds: [] } }, updateSettings });
+        projectsViewStoreOverrides.current = { projects: [source, destination], areas };
+        const view = render(<ProjectsView />);
+        fireEvent.click(screen.getByRole('button', { name: 'Convert project' }));
+        await waitFor(() => expect(screen.getByRole('dialog')).toHaveTextContent('Source'));
+        projectsViewStoreOverrides.current = { projects: [destination], areas };
+        useTaskStore.setState({ _allProjects: [{ ...source, deletedAt: now }, destination], _allAreas: areas, areas });
+        view.rerender(<ProjectsView />);
+        expect(screen.getByRole('dialog')).toHaveTextContent('Source');
+        expect(useTaskStore.getState().settings.filters?.areaIds).toEqual(['area-1']);
+        expect(useTaskStore.getState().areas).toHaveLength(2);
+        fireEvent.click(screen.getByRole('button', { name: 'Complete conversion' }));
+        await waitFor(() => expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({ filters: expect.objectContaining({ areaIds: ['area-2'] }) })));
+        await waitFor(() => expect(setProjectView).toHaveBeenCalledWith({ selectedProjectId: 'project-2' }));
     });
 
     it('does not assign a newly created area after the target project archives', async () => {

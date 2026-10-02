@@ -1,5 +1,5 @@
 import React from 'react';
-import { isGettingStartedProject } from '@mindwtr/core';
+import { getProjectToSectionEligibility, isGettingStartedProject } from '@mindwtr/core';
 import { GettingStartedActions, type GettingStartedAction } from '../GettingStartedActions';
 import {
     Alert,
@@ -51,6 +51,7 @@ import { MarkdownReferenceAutocomplete } from '../../components/markdown-referen
 import { MarkdownText } from '../../components/markdown-text';
 import { ThemedAlertHost } from '../../components/themed-alert';
 import { ProjectTaskList, getProjectDetailTaskListOptions } from './ProjectTaskList';
+import { ProjectToSectionModal } from './ProjectToSectionModal';
 import { TaskListBulkBar, type TaskListBulkBarProps } from '../task-list/TaskListBulkBar';
 import { TaskListSortModal } from '../task-list/TaskListSortModal';
 import { AttachmentProgressIndicator } from '../../components/AttachmentProgressIndicator';
@@ -73,6 +74,8 @@ type ProjectDetailModalProps = {
     onClose: () => void;
     onDeleteProject: (projectId: string) => void;
     onDuplicateProject: (projectId: string) => void;
+    onBeforeConvertToSection?: () => Promise<boolean>;
+    onConvertedToSection?: (result: { destinationProjectId: string; receipt: import('@mindwtr/core').ProjectToSectionReceipt }) => void;
     onOpenAreaPicker: () => void;
     onOpenQuickAdd: (project: Project) => void;
     onOpenTagPicker: () => void;
@@ -492,7 +495,7 @@ function ProjectOptionRow({
     const labelColor = tone === 'danger' ? tc.danger : tc.text;
     return (
         <TouchableOpacity
-            accessibilityHint={accessibilityHint}
+            accessibilityHint={accessibilityHint ?? description}
             accessibilityRole="button"
             accessibilityState={{ selected, disabled }}
             disabled={disabled}
@@ -530,6 +533,8 @@ export function ProjectDetailModal({
     onClose,
     onDeleteProject,
     onDuplicateProject,
+    onBeforeConvertToSection,
+    onConvertedToSection,
     onOpenAreaPicker,
     onOpenQuickAdd,
     onOpenTagPicker,
@@ -634,6 +639,11 @@ export function ProjectDetailModal({
     }];
     const [showProjectMeta, setShowProjectMeta] = React.useState(false);
     const [showStatusMenu, setShowStatusMenu] = React.useState(false);
+    const [convertVisible, setConvertVisible] = React.useState(false);
+    const convertAfterActionsDismissRef = React.useRef(false);
+    const openConversion = async () => {
+        if (await onBeforeConvertToSection?.()) setConvertVisible(true);
+    };
     const [showStartDatePicker, setShowStartDatePicker] = React.useState(false);
     const [showDueDatePicker, setShowDueDatePicker] = React.useState(false);
     const [showReviewPicker, setShowReviewPicker] = React.useState(false);
@@ -1822,6 +1832,11 @@ export function ProjectDetailModal({
                                 </ProjectOptionsModal>
                                 <ProjectOptionsModal
                                     closeLabel={closeLabel}
+                                    onDismiss={() => {
+                                        if (!convertAfterActionsDismissRef.current) return;
+                                        convertAfterActionsDismissRef.current = false;
+                                        void openConversion();
+                                    }}
                                     onClose={() => setProjectActionsVisible(false)}
                                     title={projectActionsLabel}
                                     visible={projectActionsVisible}
@@ -1837,6 +1852,25 @@ export function ProjectDetailModal({
                                         testID="project-duplicate-button"
                                         tc={tc}
                                     />
+                                    {onBeforeConvertToSection && onConvertedToSection && <ProjectOptionRow
+                                        icon="folder-open-outline"
+                                        label={tFallback(t, 'projects.convertToSection', 'Convert to section…')}
+                                        description={selectedProject ? (() => {
+                                            const eligibility = getProjectToSectionEligibility(useTaskStore.getState(), selectedProject.id);
+                                            return eligibility.ok ? undefined : tFallback(t, `projects.convertBlocked.${eligibility.reason}`, eligibility.reason);
+                                        })() : undefined}
+                                        disabled={!selectedProject || !getProjectToSectionEligibility(useTaskStore.getState(), selectedProject.id).ok}
+                                        onPress={() => {
+                                            convertAfterActionsDismissRef.current = true;
+                                            setProjectActionsVisible(false);
+                                            if (Platform.OS !== 'ios') {
+                                                convertAfterActionsDismissRef.current = false;
+                                                void openConversion();
+                                            }
+                                        }}
+                                        testID="project-convert-to-section-button"
+                                        tc={tc}
+                                    />}
                                     <ProjectOptionRow
                                         description={isArchivedProject ? undefined : projectActionsHelpText}
                                         icon={isArchivedProject ? 'refresh-outline' : 'archive-outline'}
@@ -1894,6 +1928,16 @@ export function ProjectDetailModal({
                                         tc={tc}
                                     />
                                 </ProjectOptionsModal>
+                                {onConvertedToSection && <ProjectToSectionModal
+                                    visible={convertVisible}
+                                    source={selectedProject}
+                                    projects={allProjects ?? []}
+                                    onClose={() => setConvertVisible(false)}
+                                    onSuccess={(result) => {
+                                        setConvertVisible(false);
+                                        onConvertedToSection(result);
+                                    }}
+                                />}
                                 <ProjectSectionManagerModal
                                     addSection={addSection}
                                     canManage={canManageProjectSections}
