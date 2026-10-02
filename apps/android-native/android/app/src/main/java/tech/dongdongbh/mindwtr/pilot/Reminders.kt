@@ -2,6 +2,7 @@ package tech.dongdongbh.mindwtr.pilot
 
 import android.Manifest
 import android.app.AlarmManager
+import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -97,15 +98,17 @@ internal object ReminderPlan {
 /**
  * React Native's alarms, cancelled once at the first native start, before the first plan (JVM-tested: ReminderPlanTest). RN's
  * library keeps them in `databases/rnandb`, table `alarmtbl`; each is a broadcast to its AlarmReceiver under the request code in
- * the row's `alarmId`. Their order makes a process death safe anywhere: every alarm is cancelled, then RN's maps go (core plans
- * every alarm afresh, and RN's Pomodoro record no longer names a cancelled alarm), then the table. Until the table is gone each
+ * the row's `alarmId`. Their order makes a process death safe anywhere: every alarm is cancelled, then RN's delivered reminders lose
+ * their buttons (Done, Snooze and Dismiss target RN's receiver, which is gone; a tap still opens the app), then RN's maps go (core
+ * plans every alarm afresh, and RN's Pomodoro record no longer names a cancelled alarm), then the table. Until the table is gone each
  * start runs it again, and cancelling twice is harmless; no plan runs before it finished.
  */
 internal object RnAlarmCleanup {
     /** [rows]: each RN alarm's request code, null when RN left no table. The number cancelled. */
-    fun run(rows: () -> List<Int>?, cancel: (Int) -> Unit, forgetMaps: () -> Unit, deleteTable: () -> Unit): Int {
+    fun run(rows: () -> List<Int>?, cancel: (Int) -> Unit, stripButtons: () -> Unit, forgetMaps: () -> Unit, deleteTable: () -> Unit): Int {
         val ids = rows() ?: return 0
         ids.forEach(cancel)
+        stripButtons()
         forgetMaps()
         deleteTable()
         return ids.size
@@ -219,7 +222,7 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
 
     override fun permissionGranted() = permissionGranted(context)
 
-    override fun cleanupRn(): Int = RnAlarmCleanup.run(rows = ::rnAlarmIds, cancel = ::cancelRn,
+    override fun cleanupRn(): Int = RnAlarmCleanup.run(rows = ::rnAlarmIds, cancel = ::cancelRn, stripButtons = ::stripRnButtons,
         // Only maps that exist: an RN user who never had reminders keeps RKStorage untouched.
         forgetMaps = { keyValue.multiGet(listOf(ReminderPlan.MAP_KEY, POMODORO_KEY)).filterValues { it != null }.keys.toList()
             .takeIf { it.isNotEmpty() }?.let(keyValue::multiRemove); Unit },
@@ -256,6 +259,19 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
                 throw failure
             }
             RnAlarmCleanup.requestCodes(cursor.use { rows -> buildList { while (rows.moveToNext()) add(rows.getString(0)) } })
+        }
+    }
+
+    /**
+     * RN's delivered reminders, shown again as they are without their buttons (RN's library posts each under its alarm's id on the
+     * reminder channel). The first native plan runs after this cleanup, so a native reminder is here only after an RN recovery build
+     * ran in between; it keeps its tap too.
+     */
+    private fun stripRnButtons() {
+        for (shown in notifications.activeNotifications) {
+            val notification = shown.notification
+            if (NotificationCompat.getChannelId(notification) != CoreNotifications.REMINDER_CHANNEL || notification.actions.isNullOrEmpty()) continue
+            notifications.notify(shown.tag, shown.id, Notification.Builder.recoverBuilder(context, notification).setActions().build())
         }
     }
 

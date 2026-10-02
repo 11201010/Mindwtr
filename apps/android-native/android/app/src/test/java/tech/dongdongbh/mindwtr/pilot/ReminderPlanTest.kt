@@ -59,8 +59,8 @@ class ReminderPlanTest {
     }
 
     @Test fun reactNativesMapsAreRemovedOnlyWhenTheyExist() {
-        RnAlarmCleanup.run(rows = { emptyList() }, cancel = { events += "cancel $it" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
-        assertEquals(listOf("forget", "delete"), events)
+        RnAlarmCleanup.run(rows = { emptyList() }, cancel = { events += "cancel $it" }, stripButtons = { events += "strip" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
+        assertEquals(listOf("strip", "forget", "delete"), events)
     }
 
     @Test fun noPermissionClearsTheDeliveredRemindersBeforeTheEmptyMapIsStored() {
@@ -101,15 +101,16 @@ class ReminderPlanTest {
 
     @Test fun reactNativesAlarmsAreCancelledBeforeItsMapGoesAndTheTableLast() {
         val done = RnAlarmCleanup.run(rows = { listOf(1_790_000_001, 1_790_000_002) }, cancel = { events += "cancel $it" },
-            forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
+            stripButtons = { events += "strip" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
         assertEquals(2, done)
-        assertEquals(listOf("cancel 1790000001", "cancel 1790000002", "forget", "delete"), events)
+        // RN's delivered reminders lose their buttons (they target RN's receiver, which is gone) while RN's inventory still exists.
+        assertEquals(listOf("cancel 1790000001", "cancel 1790000002", "strip", "forget", "delete"), events)
     }
 
     @Test fun aCleanupStoppedPartWayKeepsTheMapAndTheTableForTheNextStart() {
         assertThrows(IllegalStateException::class.java) {
             RnAlarmCleanup.run(rows = { listOf(1, 2) }, cancel = { events += "cancel $it"; if (it == 2) throw IllegalStateException("stopped") },
-                forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
+                stripButtons = { events += "strip" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
         }
         assertEquals(listOf("cancel 1", "cancel 2"), events)
     }
@@ -121,7 +122,7 @@ class ReminderPlanTest {
         }
         assertThrows(IllegalStateException::class.java) {
             RnAlarmCleanup.run(rows = { RnAlarmCleanup.requestCodes(listOf("{not json")) }, cancel = { events += "cancel $it" },
-                forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
+                stripButtons = { events += "strip" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
         }
         assertEquals(emptyList<String>(), events)
     }
@@ -133,7 +134,7 @@ class ReminderPlanTest {
     }
 
     @Test fun noReactNativeTableMeansNothingToDo() {
-        assertEquals(0, RnAlarmCleanup.run(rows = { null }, cancel = { events += "cancel $it" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" }))
+        assertEquals(0, RnAlarmCleanup.run(rows = { null }, cancel = { events += "cancel $it" }, stripButtons = { events += "strip" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" }))
         assertEquals(emptyList<String>(), events)
     }
 }
