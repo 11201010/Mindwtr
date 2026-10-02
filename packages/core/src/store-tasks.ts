@@ -13,7 +13,7 @@ import type { AppData, Section, Task, TaskStatus } from './types';
 import { settingsWithPurgedParentAttachmentDeletes } from './attachment-cleanup';
 import type { StorageAdapter, TaskQueryOptions } from './storage';
 import { taskMatchesQuery } from './task-query';
-import type { PreparedAreaAuthority, PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedFocusOrder, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, PreparedTaskFocus, StoreActionResult, TaskFocusWitnessRow, TaskStore } from './store-types';
+import type { PreparedAreaAuthority, PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedFocusOrder, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, PreparedTaskFocus, PreparedTaskPromotion, StoreActionResult, TaskFocusWitnessRow, TaskStore } from './store-types';
 import { buildFocusControlsModel } from './focus-controls';
 import {
     applyTaskProjectReactivationTransition,
@@ -65,7 +65,7 @@ import {
 } from './task-container-rules';
 import { findSelectableProjectByTitleAndArea, isSelectableProjectForTaskAssignment } from './project-utils';
 import { isStatusListTaskReadOnly } from './menu-views-model';
-import { buildNewProject } from './store-projects/project-actions';
+import { buildNewProject, projectAreaOrderMax } from './store-projects/project-actions';
 import {
     compactPurgedTaskForLocalStorage,
 } from './tombstone-compaction';
@@ -98,6 +98,7 @@ type TaskActions = Pick<
     | 'duplicateTask'
     | 'convertTaskToSection'
     | 'promoteTaskToProject'
+    | 'commitPreparedTaskPromotion'
     | 'resetTaskChecklist'
     | 'moveTask'
     | 'batchUpdateTasks'
@@ -589,6 +590,52 @@ const applyPreparedAffectedRows = (state: TaskStore, input: PreparedAffectedRows
     sections: [...replaceEntitiesInArray(state._allSections, input.sections.filter((row) => row.before).map((row) => row.after)),
         ...input.sections.filter((row) => !row.before).map((row) => row.after)],
 });
+
+/** The RN action and native journal share the same saved-source promotion policy. */
+export const planTaskPromotion = ({ sourceTask, title, color, areaId, allTasks, allProjects, allSections,
+    allAreas, settings, deviceId, now, projectId }: {
+    sourceTask: Task; title?: string; color?: string; areaId?: string;
+    allTasks: Task[]; allProjects: AppData['projects']; allSections: Section[]; allAreas: AppData['areas'];
+    settings: AppData['settings']; deviceId: string; now: string; projectId?: string;
+}): { ok: true; taskAfter: Task; targetProject: AppData['projects'][number];
+    createdProject: AppData['projects'][number] | null; targetAreaId: string | undefined }
+    | { ok: false; error: string } => {
+    const trimmedTitle = (typeof title === 'string' ? title : sourceTask.title).trim();
+    if (!trimmedTitle) return { ok: false, error: 'Project title is required' };
+    const explicitAreaId = normalizeOptionalContainerId(areaId);
+    const sourceProject = sourceTask.projectId ? allProjects.find((project) => project.id === sourceTask.projectId) : undefined;
+    const inheritedAreaId = explicitAreaId ?? sourceTask.areaId ?? sourceProject?.areaId;
+    const targetAreaId = inheritedAreaId && allAreas.some((area) => area.id === inheritedAreaId && !area.deletedAt)
+        ? inheritedAreaId : undefined;
+    if (explicitAreaId && !targetAreaId) return { ok: false, error: 'Area not found' };
+    const existingProject = findSelectableProjectByTitleAndArea(allProjects, trimmedTitle, targetAreaId);
+    const projectSupportNotes = typeof sourceTask.description === 'string' && sourceTask.description.trim()
+        ? sourceTask.description.trim() : undefined;
+    const projectTagIds = Array.from(new Set((sourceTask.tags || [])
+        .map((tag) => typeof tag === 'string' ? tag.trim() : '').filter(Boolean)));
+    const createdProject = existingProject ? null : buildNewProject({
+        title: trimmedTitle, color,
+        initialProps: {
+            ...(targetAreaId ? { areaId: targetAreaId } : {}),
+            ...(projectSupportNotes ? { supportNotes: projectSupportNotes } : {}),
+            tagIds: projectTagIds,
+        },
+        existingProjects: allProjects, existingAreas: allAreas, settings, deviceId, now, id: projectId,
+    });
+    const targetProject = existingProject ?? createdProject!;
+    const preparedUpdates = prepareTaskUpdatesForStore({
+        task: sourceTask,
+        updates: { projectId: targetProject.id, sectionId: undefined, areaId: undefined },
+        allProjects: createdProject ? [...allProjects, createdProject] : allProjects,
+        allSections, allAreas,
+        projectOrderReserver: createProjectOrderReserver(allTasks),
+    });
+    if (!preparedUpdates.ok) return preparedUpdates;
+    const { updatedTask } = applyTaskUpdates(sourceTask, {
+        ...preparedUpdates.updates, rev: nextRevision(sourceTask.rev), revBy: deviceId,
+    }, now);
+    return { ok: true, taskAfter: updatedTask, targetProject, createdProject, targetAreaId };
+};
 
 export const applyPreparedTaskEditChanges = ({ before, changes }: PreparedTaskEdit): Task => ({
     ...before,
@@ -2029,86 +2076,19 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 return state;
             }
 
-            const trimmedTitle = (typeof options?.title === 'string' ? options.title : sourceTask.title).trim();
-            if (!trimmedTitle) {
-                errorMessage = 'Project title is required';
-                return { error: errorMessage };
-            }
-
-            const explicitAreaId = normalizeOptionalContainerId(options?.areaId);
-            const sourceProject = sourceTask.projectId ? state._projectsById.get(sourceTask.projectId) : undefined;
-            const inheritedAreaId = explicitAreaId ?? sourceTask.areaId ?? sourceProject?.areaId;
-            const targetAreaId = inheritedAreaId && state._allAreas.some((area) => area.id === inheritedAreaId && !area.deletedAt)
-                ? inheritedAreaId
-                : undefined;
-            if (explicitAreaId && !targetAreaId) {
-                errorMessage = 'Area not found';
-                return { error: errorMessage };
-            }
-
-            const existingProject = findSelectableProjectByTitleAndArea(
-                state._allProjects,
-                trimmedTitle,
-                targetAreaId
-            );
-            reusedExistingProject = Boolean(existingProject);
-            const projectSupportNotes = typeof sourceTask.description === 'string' && sourceTask.description.trim()
-                ? sourceTask.description.trim()
-                : undefined;
-            const projectTagIds = Array.from(new Set((sourceTask.tags || [])
-                .map((tag) => typeof tag === 'string' ? tag.trim() : '')
-                .filter(Boolean)));
             const deviceState = ensureDeviceId(state.settings);
-            let targetProject = existingProject;
-            let nextAllProjects = state._allProjects;
-            if (!targetProject) {
-                const newProject = buildNewProject({
-                    title: trimmedTitle,
-                    color: options?.color,
-                    initialProps: {
-                        ...(targetAreaId ? { areaId: targetAreaId } : {}),
-                        ...(projectSupportNotes ? { supportNotes: projectSupportNotes } : {}),
-                        tagIds: projectTagIds,
-                    },
-                    existingProjects: state._allProjects,
-                    existingAreas: state._allAreas,
-                    settings: state.settings,
-                    deviceId: deviceState.deviceId,
-                    now,
-                });
-                targetProject = newProject;
-                nextAllProjects = [...state._allProjects, newProject];
-            }
-
-            promotedProjectId = targetProject.id;
-            const projectOrderReserver = createProjectOrderReserver(state._allTasks);
-            const preparedUpdates = prepareTaskUpdatesForStore({
-                task: sourceTask,
-                updates: {
-                    projectId: targetProject.id,
-                    sectionId: undefined,
-                    areaId: undefined,
-                },
-                allProjects: nextAllProjects,
-                allSections: state._allSections,
-                allAreas: state._allAreas,
-                projectOrderReserver,
-            });
-            if (!preparedUpdates.ok) {
-                errorMessage = preparedUpdates.error;
+            const plan = planTaskPromotion({ sourceTask, title: options?.title, color: options?.color,
+                areaId: options?.areaId, allTasks: state._allTasks, allProjects: state._allProjects,
+                allSections: state._allSections, allAreas: state._allAreas,
+                settings: state.settings, deviceId: deviceState.deviceId, now });
+            if (!plan.ok) {
+                errorMessage = plan.error;
                 return { error: errorMessage };
             }
-
-            const { updatedTask } = applyTaskUpdates(
-                sourceTask,
-                {
-                    ...preparedUpdates.updates,
-                    rev: nextRevision(sourceTask.rev),
-                    revBy: deviceState.deviceId,
-                },
-                now
-            );
-            const nextAllTasks = replaceEntityInArray(state._allTasks, id, updatedTask);
+            promotedProjectId = plan.targetProject.id;
+            reusedExistingProject = !plan.createdProject;
+            const nextAllProjects = plan.createdProject ? [...state._allProjects, plan.createdProject] : state._allProjects;
+            const nextAllTasks = replaceEntityInArray(state._allTasks, id, plan.taskAfter);
             persist(set, debouncedSave, state, {
                 tasks: nextAllTasks,
                 projects: nextAllProjects,
@@ -2124,6 +2104,64 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         if (missingTask) return actionFail('Task not found');
         if (errorMessage) return actionFail(errorMessage);
         return actionOk({ id: promotedProjectId, reused: reusedExistingProject });
+    },
+
+    /** Atomic saved-task move and optional project creation for the native journal. */
+    commitPreparedTaskPromotion: async (input: PreparedTaskPromotion & { request: { requestId: string;
+        taskId: string; taskRevision: string; title: string }; result: { id: string; reused: boolean } }) => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared task promotion conflicts with current data' };
+        set((state) => {
+            const receipt = inspectPreparedAffectedRows(state, input);
+            if (receipt === 'after') {
+                result = { success: true, id: input.result.id, reused: input.result.reused, outcome: 'replayed' };
+                return state;
+            }
+            if (receipt !== 'before') return state;
+            const source = state._tasksById.get(input.sourceBefore.id);
+            if (!source || !samePreparedTask(source, input.sourceBefore)
+                || source.deletedAt || source.purgedAt
+                || isStatusListTaskReadOnly(source, state._allProjects)
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)) return state;
+            const sourceProject = source.projectId ? state._projectsById.get(source.projectId) : undefined;
+            if (input.sourceProject
+                ? !sourceProject || sourceProject.areaId !== input.sourceProject.areaId
+                : Boolean(sourceProject)) return state;
+            if (input.selectedArea) {
+                const current = state._areasById.get(input.selectedArea.id);
+                if (!current || !taskEditValuesEqual(current, input.selectedArea) || current.deletedAt) return state;
+            } else {
+                // A missing/deleted inherited Area is a decision too. If it
+                // becomes live before the write, the shared planner would now
+                // assign the project to it instead of creating an unassigned one.
+                const inheritedAreaId = input.sourceBefore.areaId ?? input.sourceProject?.areaId;
+                const current = inheritedAreaId ? state._areasById.get(inheritedAreaId) : undefined;
+                if (current && !current.deletedAt) return state;
+            }
+            const destination = input.selectedProject;
+            const expectedMatch = findSelectableProjectByTitleAndArea(state._allProjects,
+                input.request.title, input.selectedArea?.id);
+            if (destination) {
+                const current = state._projectsById.get(destination.id);
+                if (!current || !samePreparedProject(current, destination)
+                    || !isSelectableProjectForTaskAssignment(current) || expectedMatch?.id !== destination.id) return state;
+            } else if (expectedMatch) return state;
+            if (input.projectOrderMax !== null
+                && projectAreaOrderMax(state._allProjects, input.selectedArea?.id ?? null) !== input.projectOrderMax) return state;
+            if (input.taskOrderMax !== null
+                && ((getNextProjectOrder(input.result.id, state._allTasks) ?? 0) - 1) !== input.taskOrderMax) return state;
+            if (input.projects.length && (state.settings.gtd?.defaultProjectFlowMode ?? null) !== input.defaultProjectFlowMode) return state;
+            const { tasks, projects } = applyPreparedAffectedRows(state, input);
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { tasks, projects,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: input.result.id, reused: input.result.reused, outcome: 'applied' };
+            return { _allTasks: tasks, _allProjects: projects, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
     },
 
     /**

@@ -73,3 +73,5 @@ Task editor More → Delete removes the saved Task, matching RN, and offers tran
 Reference Tasks expose Convert to action in More from Preview and Edit, using the existing draft status action. Save applies it; Discard retains Reference.
 
 Task editor More → Skip this occurrence saves the draft, archives the current fixed-schedule occurrence as cancelled, and creates at most one next occurrence through the shared RN recurrence planner. The existing prepared Save command applies both changes atomically and retains the exact request and draft through failed writes and cold recovery. A draft that no longer supports Skip must be saved or discarded first.
+
+Task editor More → Create project from task uses the current draft title to create or reuse a Project, then opens Project Details. It moves the same saved Task and derives a new Project’s notes, tags and Area from that saved Task, matching RN; other unsaved editor fields are discarded only after durable acknowledgment. The shared promotion planner and existing prepared journal preserve the exact creation/move through failed saves and cold recovery.

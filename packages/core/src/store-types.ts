@@ -107,6 +107,22 @@ export type PreparedProjectCreate = {
     defaultProjectFlowMode: string | null;
 };
 
+/** One saved task move, with an optional new project, and complete written-row receipts. */
+export type PreparedTaskPromotion = {
+    sourceBefore: Task;
+    sourceProject: Project | null;
+    selectedArea: Area | null;
+    selectedProject: Project | null;
+    projectOrderMax: number | null;
+    taskOrderMax: number | null;
+    defaultProjectFlowMode: string | null;
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    tasks: Array<{ before: Task; after: Task }>;
+    projects: Array<{ before: null; after: Project }>;
+    sections: [];
+};
+
 /** One frozen native Project Focus star change and its complete Project receipt. */
 export type PreparedProjectFocus = {
     scope: { project: Project; focusedProjectCount: number };
@@ -605,6 +621,7 @@ export interface TaskStore {
     addProject: (title: string, color: string, initialProps?: Partial<Project>) => Promise<Project | null>;
     /** Private native journal writer; the contract validates the frozen project first. */
     commitPreparedProjectCreate: (input: PreparedProjectCreate) => Promise<PreparedTaskEditResult>;
+    commitPreparedTaskPromotion: (input: PreparedTaskPromotion & { request: { requestId: string; taskId: string; taskRevision: string; title: string }; result: { id: string; reused: boolean } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectFocus: (input: PreparedProjectFocus & { request: { projectId: string; focused: boolean } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectRename: (input: PreparedProjectRename & { request: { projectId: string; title: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectFlow: (input: PreparedProjectFlow & { request: { projectId: string; action: ProjectFlowAction } }) => Promise<PreparedTaskEditResult>;

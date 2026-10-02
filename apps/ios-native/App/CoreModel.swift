@@ -657,6 +657,7 @@ final class CoreModel: ObservableObject {
     private var boardPendingEdit: CoreObject?
     @Published private var boardActionRequest: String?
     private var boardRecoveredResult: CoreObject?
+    private var taskPromotionRecoveredResult: CoreObject?
     private var boardDepth: [String: Int] = [:]
     private var boardPickerName = ""
     private var boardGeneration = 0
@@ -2708,6 +2709,9 @@ final class CoreModel: ObservableObject {
                 historyTabs = ["tab": "archived"]
             }
             if recovery.text("method") == "taskDeleteCommit" { selectedSurface = .trash }
+            if recovery.text("method") == "taskPromoteCommit" {
+                taskPromotionRecoveredResult = recovery.object("result")
+            }
             if recovery.text("method") == "boardCommit" {
                 // Keep the durable acknowledgement if a later startup read fails.
                 boardRecoveredResult = recovery.object("result")
@@ -2759,6 +2763,7 @@ final class CoreModel: ObservableObject {
             if boardRecoveredResult != nil { selectedSurface = .board }
             if calendarComposerRecoveredResult != nil { selectedSurface = .calendar }
             if mindSweepRecoveredResult != nil { selectedSurface = .inbox }
+            if taskPromotionRecoveredResult != nil { selectedSurface = .projects }
             try await readSelectedSurface()
             ready = true
             retryNeeded = false
@@ -2769,6 +2774,13 @@ final class CoreModel: ObservableObject {
             if let result = calendarComposerRecoveredResult {
                 await acknowledgeCalendarComposerSave(result)
                 calendarComposerRecoveredResult = nil
+            }
+            if let result = taskPromotionRecoveredResult {
+                guard !result.text("id").isEmpty, result["reused"] is Bool else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                await presentProject(["id": result.text("id")], caller: .projects)
+                taskPromotionRecoveredResult = nil
             }
             mindSweepRecoveredResult = nil
             appLockRecoveryPending = false
@@ -14634,7 +14646,11 @@ final class CoreModel: ObservableObject {
         let notice = result.object(operation == "delete" ? "deletion" : "cancellation")
         guard !notice.isEmpty else { return }
         taskActionRequestID = nil
-        taskActionNotice = notice.merging(["requestId": requestID, "id": result.text("id"), "operation": operation]) { _, new in new }
+        showTaskActionNotice(notice.merging(["requestId": requestID, "id": result.text("id"), "operation": operation]) { _, new in new })
+    }
+
+    private func showTaskActionNotice(_ notice: CoreObject) {
+        taskActionNotice = notice
         taskActionNoticeGeneration += 1
         let generation = taskActionNoticeGeneration
         Task {
@@ -14782,6 +14798,63 @@ final class CoreModel: ObservableObject {
         do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
         prepareTaskPresentation(copiedID, initialTab: "task")
         Task { await readTaskView() }
+    }
+
+    private var taskPromotionRequest: String?
+
+    func promoteTaskToProject() async {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              !taskScheduleUpdating, !taskAttachmentOpening, !taskLinkSheetActive,
+              !taskPersonCreateOwed, !taskPersonCreateNeedsReview,
+              taskChecklistWriteKind == nil, !taskChecklistReadPending, let host else { return }
+        // RN uses the draft title for the project name, but moves the saved task.
+        let title = (taskTitleDraft.isEmpty ? taskOriginalDraft.text("title") : taskTitleDraft)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        taskRecoveryOwn(["title"])
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            checkpointTaskDraft(force: true)
+            await flushTaskDraftCheckpoint()
+            guard taskRecoveryCheckpointError == nil, let snapshot = taskRecoverySnapshot else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    "taskId": viewedTaskID, "taskRevision": taskEditor.text("taskRevision"),
+                                    "title": title])
+            taskPromotionRequest = request
+            taskRecoverySaving = true
+            let result = try decode(try await host.saveEditorDraft("taskPromote",
+                argumentsJSON: try json([request]), expectedSession: snapshot.sessionID,
+                expectedGeneration: snapshot.generation))
+            try await acknowledgeTaskPromotion(result)
+        } catch {
+            if isDefiniteRejection(error) { taskPromotionRequest = nil }
+            retryNeeded = taskPromotionRequest != nil
+            taskRecoverySaving = retryNeeded
+            taskError = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeTaskPromotion(_ result: CoreObject) async throws {
+        guard let request = taskPromotionRequest, let host else { throw CocoaError(.coderReadCorrupt) }
+        let requestID = (try decode(request)).text("requestId")
+        guard Set(result.keys) == Set(["id", "reused"]), let reused = result["reused"] as? Bool,
+              !result.text("id").isEmpty, reused || result.text("id") == requestID else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        taskRecoverySnapshot = try await host.readEditorDraft()
+        guard taskRecoverySnapshot == nil else { throw CocoaError(.coderReadCorrupt) }
+        let projectID = result.text("id")
+        taskPromotionRequest = nil
+        taskRecoverySaving = false
+        retryNeeded = false
+        taskError = nil
+        dismissTask(refreshCaller: false)
+        await presentProject(["id": projectID], caller: .projects)
+        showTaskActionNotice(["message": label(reused ? "task.promoteToProjectMoved" : "task.promoteToProjectCreated"),
+                              "operation": "promote", "undoEnabled": false])
     }
 
     enum TaskSaveIntent: String { case cancel, skip }
@@ -15952,7 +16025,7 @@ final class CoreModel: ObservableObject {
 
     private func readTaskEditorLabels(_ editor: CoreObject) async throws {
         let options = editor.object("options")
-        var keys = ["taskEdit.duplicateTask", "task.skipOccurrence", "task.updateFailed", "common.none", "common.share", "common.more", "share.unavailable", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
+        var keys = ["taskEdit.duplicateTask", "task.skipOccurrence", "task.createProjectFromTask", "task.promoteToProjectCreated", "task.promoteToProjectMoved", "task.updateFailed", "common.none", "common.share", "common.more", "share.unavailable", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
                     "taskEdit.scheduling", "taskEdit.organization", "taskEdit.details",
                     "taskEdit.contextsLabel", "taskEdit.contextsPlaceholder", "taskEdit.tagsLabel", "taskEdit.tagsPlaceholder",
                     "taskEdit.assignedTo", "taskEdit.assignedToPlaceholder", "people.new", "taskEdit.statusLabel", "reference.convertToAction",
@@ -16846,6 +16919,19 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if taskPromotionRequest != nil {
+                if let acknowledgment {
+                    try await acknowledgeTaskPromotion(try decode(acknowledgment))
+                } else {
+                    taskRecoverySnapshot = try await host!.readEditorDraft()
+                    guard taskRecoverySnapshot != nil else { throw CocoaError(.coderReadCorrupt) }
+                    taskPromotionRequest = nil
+                    taskRecoverySaving = false
+                    retryNeeded = false
+                    taskError = label("task.updateFailed")
+                }
+                return
+            }
             if taskDuplicateRequest != nil {
                 if let acknowledgment {
                     try await acknowledgeTaskDuplicate(try decode(acknowledgment))
@@ -17613,6 +17699,10 @@ final class CoreModel: ObservableObject {
                 }
                 if taskDuplicateRequest != nil {
                     taskDuplicateRequest = nil
+                    taskRecoverySaving = false
+                }
+                if taskPromotionRequest != nil {
+                    taskPromotionRequest = nil
                     taskRecoverySaving = false
                 }
                 if mindSweepRequest != nil {

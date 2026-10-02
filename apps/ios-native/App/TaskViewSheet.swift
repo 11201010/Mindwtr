@@ -135,6 +135,10 @@ struct TaskViewSheet: View {
                             endEditingBeforeAction()
                             Task { await model.duplicateTask() }
                         }.accessibilityIdentifier("task-duplicate")
+                        Button(strings.text("task.createProjectFromTask")) {
+                            endEditingBeforeAction()
+                            Task { await model.promoteTaskToProject() }
+                        }.accessibilityIdentifier("task-promote")
                         Button(strings.text("common.share")) {
                             endEditingBeforeAction()
                             Task { await model.shareTask() }

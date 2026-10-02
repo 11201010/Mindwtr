@@ -262,6 +262,7 @@ import { createFocusOrderMethods } from './native-host-contract-focus-order';
 import { createFocusSavedFilterMethods } from './native-host-contract-focus-saved-filter';
 import { createSavedSearchWriteMethods } from './native-host-contract-saved-search-write';
 import { createProjectCreateMethods } from './native-host-contract-project-create';
+import { createTaskPromotionMethods } from './native-host-contract-task-promote';
 import { createProjectFocusMethods } from './native-host-contract-project-focus';
 import { createProjectRenameMethods } from './native-host-contract-project-rename';
 import { createProjectFlowMethods } from './native-host-contract-project-flow';
@@ -1581,6 +1582,7 @@ export function createNativeHostContract(options: {
             isReadOnly: isInArchivedProject }),
         ...createTaskChecklistSaveMethods({ readiness, save, language: () => language,
             validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value), isReadOnly: isInArchivedProject }),
+        ...createTaskPromotionMethods({ readiness, save, isReadOnly: isInArchivedProject }),
         ...inboxProcessingMethods,
         // Settings › AI and the AI actions: native-host-contract-ai.ts.
         ...createAIMethods({
