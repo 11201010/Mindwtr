@@ -185,6 +185,18 @@ describe('native host contract: reminders', () => {
         expect(readReminderAlarmMap(replay.alarms)).toEqual(readReminderAlarmMap(moved.alarms));
     });
 
+    it('judges the store as it is after loading the alarm texts, not before', async () => {
+        freezeClock();
+        await seed();
+        const host = await openHost();
+        const first = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true }));
+        const rentId = first.schedule.find((alarm) => alarm.key === 'task:t-rent')!.id;
+        // The rent task is done (a sync, a Done) while the plan loads its texts.
+        const planned = host.planReminderAlarms({ storedAlarms: first.alarms, permissionGranted: true });
+        useTaskStore.setState({ tasks: useTaskStore.getState().tasks.map((entry) => (entry.id === 't-rent' ? { ...entry, status: 'done' as const } : entry)) });
+        expect(value(await planned).cancel).toContainEqual({ key: 'task:t-rent', id: rentId, reason: 'withdrawn' });
+    });
+
     it('lets an alarm whose time passed expire, keeping what it delivered', async () => {
         freezeClock();
         await seed();

@@ -249,13 +249,15 @@ export function createReminderMethods(deps: ReminderDeps) {
                 const entry = held.get(key);
                 if (entry) held.set(key, { ...entry, pending: true });
             }
+            // The texts first: the store and the clock are read after the last await, so a change meanwhile is judged too.
+            const translations = await loadTranslations(deps.language());
             const state = useTaskStore.getState();
             const plan = planReminderAlarms({
                 settings: state.settings,
                 tasks: state.tasks,
                 projects: state.projects,
                 now: new Date(),
-                translations: await loadTranslations(deps.language()),
+                translations,
                 maxOneShotReminders: MAX_PENDING_ONE_SHOT_REMINDER_ALARMS.android,
                 alarms: held,
                 permissionGranted: input.permissionGranted,

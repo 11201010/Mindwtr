@@ -138,7 +138,7 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
          */
         async start() {
             if (isSandboxMode()) return { mode: 'sandbox', ask: false };
-            const first = await cycle(false);
+            // Armed before the first cycle, so a change while it plans (a sync, a Done) plans again after it.
             if (!started) {
                 started = true;
                 useTaskStore.subscribe(nameNotifyListener('notification-reschedule', (state, previous) => {
@@ -150,6 +150,7 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
                     }, REMINDER_STORE_RESCHEDULE_DELAY_MS);
                 }));
             }
+            const first = await cycle(false);
             const active = hasActiveMobileNotificationFeature(useTaskStore.getState().settings);
             const permissionGranted = bindings.permissionGranted();
             return { ...first, rnCancelled, active, permissionGranted, ask: active && !permissionGranted };

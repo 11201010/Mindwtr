@@ -4166,12 +4166,29 @@ globalThis.standStore = useTaskStore;
     // Sandbox mode: no plan at all.
     calls.length = 0;
     globalThis.reminderSandbox = true;
+    // (A fresh controller further below: a store change during the first cycle plans again.)
     assert.deepEqual(await reminders.start(), { mode: 'sandbox', ask: false });
     await reminders.cycle(false);
     reminders.event();
     await sleep(20);
     assert.deepEqual(calls, []);
     globalThis.reminderSandbox = false;
+    // The store subscription is armed before the first cycle: a change while it plans (a sync, a Done) plans again after it.
+    const early = [];
+    const fresh = mod.createNativeReminders({
+        plan: async () => { early.push('plan'); await sleep(20); return { ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', state: '{}', topUpDelayMs: null } }; },
+        planSnooze: () => { throw new Error('no snooze here'); },
+        readStored: async () => ({ alarms: null, state: null }),
+        permissionGranted: () => true,
+        apply: () => early.push('apply'),
+        cleanupRn: () => 0,
+    });
+    const starting = fresh.start();
+    await sleep(5);
+    globalThis.standStore.setState({ tasks: [] });
+    await starting;
+    await sleep(80);
+    assert.deepEqual(early, ['plan', 'apply', 'plan', 'apply'], 'a change during the first cycle plans again');
 }
 console.log('Reminders: core plans and times every alarm in the engine, Kotlin applies each plan in core\'s order, the buttons and the reschedule go through CoreWork as core\'s commands, RN\'s alarms cancelled once before the first plan');
 console.log('Runner: CoreWork on the one host after the app\'s boot order, the queue drain after the journal replay, the queue\'s file and RKStorage ports, RN\'s capture intent and context receivers under RN\'s names, RN\'s capture intent Kotlin compiled in, the token only in Kotlin');
