@@ -778,6 +778,9 @@ struct ProjectDetailScreen: View {
     @State private var detailsProjectID = ""
     @State private var discardNotesConfirm = false
     @State private var deleteSectionConfirmPresented = false
+    @State private var deleteProjectConfirmPresented = false
+    @State private var deleteProjectConfirmedID = ""
+    @State private var deleteProjectConfirmedRevision = ""
     @State private var projectDateDraft = Date()
 
     var body: some View {
@@ -813,12 +816,23 @@ struct ProjectDetailScreen: View {
                                 .accessibilityIdentifier("project-rename-open")
                             }
                     }
-                    Button {} label: {
+                    Menu {
+                        Button(role: .destructive) {
+                            deleteProjectConfirmedID = model.projectHeader.text("id")
+                            deleteProjectConfirmedRevision = model.projectDetail.text("projectRevision")
+                            deleteProjectConfirmPresented = true
+                        } label: {
+                            Label(model.label("common.delete"), systemImage: "trash")
+                        }
+                        .accessibilityIdentifier("project-delete-button")
+                    } label: {
                         Image(systemName: "ellipsis").font(.system(size: 20)).foregroundStyle(palette.secondary)
                             .frame(width: 44, height: 44).background(palette.filter, in: RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
                     }
-                    .buttonStyle(.plain).disabled(true).accessibilityLabel(model.label("projects.actionsLabel"))
+                    .disabled(!model.projectDeleteOpenEnabled)
+                    .accessibilityLabel(model.label("projects.actionsLabel"))
+                    .accessibilityIdentifier("project-actions-menu")
                 }
                 if model.projectRenameEditing {
                     HStack(spacing: 12) {
@@ -859,6 +873,16 @@ struct ProjectDetailScreen: View {
                         .rnFont(14, .semibold).frame(minHeight: 44)
                         .disabled(model.busy || model.retryNeeded || model.projectRenamePending)
                         .accessibilityIdentifier("project-rename-read-retry")
+                }
+                if let error = model.projectDeleteError {
+                    Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("project-delete-error")
+                    if model.retryNeeded {
+                        Button(model.label("common.retry")) { Task { await model.retry() } }
+                            .rnFont(14, .semibold).frame(minHeight: 44)
+                            .disabled(model.busy).accessibilityIdentifier("project-delete-retry")
+                    }
                 }
                 if let error = model.projectFlowError {
                     Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
@@ -1094,6 +1118,7 @@ struct ProjectDetailScreen: View {
                 detailsExpanded = false
                 notesFocused = false
                 discardNotesConfirm = false
+                deleteProjectConfirmPresented = false
             }
         }
         .onChange(of: model.projectSectionsPresented) {
@@ -1106,6 +1131,15 @@ struct ProjectDetailScreen: View {
             .accessibilityIdentifier("project-notes-discard-confirm")
             Button(model.label("common.cancel"), role: .cancel) {}
         } message: { Text(model.label("taskEdit.discardChangesDesc")) }
+        .alert(model.label("projects.title"), isPresented: $deleteProjectConfirmPresented) {
+            Button(model.label("common.cancel"), role: .cancel) {}
+            Button(model.label("common.delete"), role: .destructive) {
+                let id = deleteProjectConfirmedID
+                let revision = deleteProjectConfirmedRevision
+                Task { await model.deleteProject(expectedID: id, expectedRevision: revision) }
+            }
+            .accessibilityIdentifier("project-delete-confirm")
+        } message: { Text(model.label("projects.deleteConfirm")) }
         .alert(model.label("attachments.title"), isPresented: Binding(
             get: { model.projectAttachmentOpenError != nil },
             set: { if !$0 { model.dismissProjectAttachmentOpenError() } })) {

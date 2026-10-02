@@ -22,6 +22,8 @@ export type ProjectActions = Pick<
     | 'commitPreparedProjectAttachmentWrite'
     | 'commitPreparedProjectStatus'
     | 'commitPreparedTrashProjectRestore'
+    | 'commitPreparedProjectDelete'
+    | 'commitPreparedProjectDeleteUndo'
     | 'commitPreparedProjectDate'
     | 'commitPreparedProjectArea'
     | 'commitPreparedProjectSectionCreate'
@@ -91,6 +93,8 @@ export type ProjectCoreActions = Pick<
     | 'commitPreparedProjectAttachmentWrite'
     | 'commitPreparedProjectStatus'
     | 'commitPreparedTrashProjectRestore'
+    | 'commitPreparedProjectDelete'
+    | 'commitPreparedProjectDeleteUndo'
     | 'commitPreparedProjectDate'
     | 'commitPreparedProjectArea'
     | 'updateProject'
@@ -115,6 +119,23 @@ export type PeopleActions = Pick<ProjectActions, 'addPerson' | 'commitPreparedPe
 export type TaxonomyActions = Pick<ProjectActions, 'deleteTag' | 'renameTag' | 'deleteContext' | 'renameContext' | 'commitPreparedTaxonomy'>;
 
 export type { AppData, Area, Person, Project, Section, Task, TaskStatus };
+
+export type DetachedProjectTask = { id: string; sectionId?: string };
+
+/** RN Undo's eligible-current-Task rule, shared with the native prepared effect. */
+export function projectDeleteUndoReattachments(projectId: string, links: readonly DetachedProjectTask[],
+    sections: readonly Section[], tasks: readonly Task[]): { id: string; updates: Pick<Task, 'projectId' | 'sectionId'> }[] {
+    const liveSectionIds = new Set(sections
+        .filter((section) => section.projectId === projectId && !section.deletedAt)
+        .map((section) => section.id));
+    const linkById = new Map(links.map((link) => [link.id, link]));
+    return tasks.filter((task) => linkById.has(task.id) && !task.deletedAt && !task.projectId && !task.areaId)
+        .map((task) => {
+            const sectionId = linkById.get(task.id)?.sectionId;
+            return { id: task.id,
+                updates: { projectId, sectionId: sectionId && liveSectionIds.has(sectionId) ? sectionId : undefined } };
+        });
+}
 
 export const actionOk = (extra?: Omit<StoreActionResult, 'success'>): StoreActionResult => ({ success: true, ...extra });
 export const actionFail = (error: string): StoreActionResult => ({ success: false, error });

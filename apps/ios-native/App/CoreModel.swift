@@ -384,6 +384,11 @@ final class CoreModel: ObservableObject {
     @Published private(set) var areaDeleteReadError: String?
     @Published private(set) var projectHeader: CoreObject = [:]
     @Published private(set) var projectDetail: CoreObject = [:]
+    @Published private(set) var projectDeleteNotice: CoreObject = [:]
+    @Published private(set) var projectDeleteError: String?
+    private var projectDeleteRequest: String?
+    private var projectDeleteUndoRequest: String?
+    private var projectDeleteNoticeGeneration = 0
     @Published private(set) var projectCurrent = false
     @Published private(set) var projectError: String?
     @Published private(set) var projectViewOptionsPresented = false
@@ -1180,6 +1185,15 @@ final class CoreModel: ObservableObject {
     var projectActionsEnabled: Bool {
         ready && selectedSurface == .project && projectCurrent && !busy && !retryNeeded && !taskPresented
             && !projectRenameEditing && !projectTaskOrderPresented
+    }
+    var projectDeleteOpenEnabled: Bool {
+        projectActionsEnabled && !appLock.concealed && !projectDetail.text("projectRevision").isEmpty
+            && projectDeleteRequest == nil && projectDeleteUndoRequest == nil
+            && !projectNotesEditMode && !projectNotesDirty && !projectNotesWritePending && !capturePresented
+            && !areaPickerPresented && !areaManagerPresented && !morePresented
+            && !projectSectionsPresented && !projectAreaPresented && !projectTagsPresented
+            && projectDateField == nil && !projectStatusOpen && !projectAttachmentLinkPresented
+            && !projectAttachmentEditOpening && !projectViewOptionsPresented && !projectFiltersPresented
     }
     var projectAttachmentScopeCurrent: Bool {
         selectedSurface == .project && projectCurrent
@@ -2738,6 +2752,7 @@ final class CoreModel: ObservableObject {
                 historyTabs = ["tab": "archived"]
             }
             if ["taskDeleteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit"].contains(recovery.text("method")) { selectedSurface = .trash }
+            if ["projectDeleteCommit", "projectDeleteUndoCommit"].contains(recovery.text("method")) { selectedSurface = .projects }
             if recovery.text("method") == "taskPromoteCommit" {
                 taskPromotionRecoveredResult = recovery.object("result")
             }
@@ -3538,7 +3553,7 @@ final class CoreModel: ObservableObject {
                     "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone",
                     "nav.projects", "nav.review", "nav.calendar", "nav.board", "nav.contexts", "common.back", "common.tasks",
                     "task.aria.openContext", "task.aria.openTag",
-                    "projects.title", "projects.activeSection", "projects.deferredSection", "projects.closed",
+                    "projects.title", "projects.deleteConfirm", "projects.activeSection", "projects.deferredSection", "projects.closed",
                     "projects.noArea", "projects.empty", "list.noTasks", "projects.noNextAction",
                     "projects.addPlaceholder", "projects.add", "projects.tagFilter", "projects.allTags", "projects.noTags", "projects.emptyTag",
                     "filters.show", "filters.hide", "projects.areaLabel",
@@ -12744,6 +12759,103 @@ final class CoreModel: ObservableObject {
         await refresh()
     }
 
+    func deleteProject(expectedID: String, expectedRevision: String) async {
+        guard projectDeleteOpenEnabled else { return }
+        let id = projectHeader.text("id")
+        let revision = projectDetail.text("projectRevision")
+        guard !id.isEmpty, !revision.isEmpty, projectDetail.text("projectId") == id,
+              id == expectedID, revision == expectedRevision else {
+            projectDeleteError = label("task.updateFailed")
+            return
+        }
+        busy = true
+        projectDeleteError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    "projectId": id, "projectRevision": revision])
+            projectDeleteRequest = request
+            let result = try await query("projectDeleteWrite", [request])
+            try acknowledgeProjectDelete(result)
+            // The saved Project is now in Trash; the detail cannot remain selected.
+            selectedSurface = projectCaller
+            projectCurrent = false
+            projectFilterSession += 1
+            projectFilterReadTask?.cancel()
+            resetProjectAttachments()
+            do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+        } catch {
+            if isDefiniteRejection(error) { projectDeleteRequest = nil }
+            retryNeeded = projectDeleteRequest != nil
+            projectDeleteError = error.localizedDescription
+            if retryNeeded { self.error = error.localizedDescription }
+        }
+    }
+
+    private func acknowledgeProjectDelete(_ result: CoreObject) throws {
+        guard let request = projectDeleteRequest,
+              Set(result.keys) == Set(["id", "deletion"]),
+              result.text("id") == (try decode(request)).text("projectId"),
+              let enabled = result.object("deletion")["undoEnabled"] as? NSNumber,
+              CFGetTypeID(enabled) == CFBooleanGetTypeID(), enabled.boolValue,
+              !result.object("deletion").text("message").isEmpty,
+              !result.object("deletion").text("undoLabel").isEmpty else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let requestID = (try decode(request)).text("requestId")
+        projectDeleteRequest = nil
+        retryNeeded = false
+        projectDeleteError = nil
+        error = nil
+        projectDeleteNotice = result.object("deletion").merging(["id": result.text("id"), "requestId": requestID]) { _, new in new }
+        projectDeleteNoticeGeneration += 1
+        let generation = projectDeleteNoticeGeneration
+        Task {
+            try? await Task.sleep(nanoseconds: 5_200_000_000)
+            if projectDeleteNoticeGeneration == generation && projectDeleteUndoRequest == nil {
+                projectDeleteNotice = [:]
+            }
+        }
+    }
+
+    func undoProjectDelete() async {
+        guard !busy, !retryNeeded, !taskPresented, !capturePresented, !appLock.concealed,
+              !areaPickerPresented, !morePresented, !projectRenameEditing, !projectNotesEditMode,
+              !projectSectionsPresented, !projectAreaPresented, !projectTagsPresented,
+              !projectAttachmentLinkPresented, !projectAttachmentEditOpening,
+              !projectDeleteNotice.isEmpty,
+              projectDeleteNotice.flag("undoEnabled"), projectDeleteUndoRequest == nil else { return }
+        busy = true
+        projectDeleteError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    "deleteRequestId": projectDeleteNotice.text("requestId")])
+            projectDeleteUndoRequest = request
+            let result = try await query("projectDeleteUndo", [request])
+            try acknowledgeProjectDeleteUndo(result)
+            do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+        } catch {
+            if isDefiniteRejection(error) {
+                projectDeleteUndoRequest = nil
+                projectDeleteNotice = [:]
+            }
+            retryNeeded = projectDeleteUndoRequest != nil
+            projectDeleteError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectDeleteUndo(_ result: CoreObject) throws {
+        guard projectDeleteUndoRequest != nil, Set(result.keys) == Set(["id"]),
+              result.text("id") == projectDeleteNotice.text("id") else { throw CocoaError(.coderReadCorrupt) }
+        projectDeleteUndoRequest = nil
+        projectDeleteNotice = [:]
+        retryNeeded = false
+        projectDeleteError = nil
+        error = nil
+    }
+
     func openProjectViewOptions() async {
         guard await flushProjectNotesEdit(), projectViewOpenEnabled else { return }
         projectViewOptionsPresented = true
@@ -13061,7 +13173,7 @@ final class CoreModel: ObservableObject {
                 let filterView = next.object("filters")
                 let resolved = filterView.object("state")
                 guard next.text("projectId") == id, !next.text("revision").isEmpty,
-                      !next.text("mutationRevision").isEmpty,
+                      !next.text("mutationRevision").isEmpty, !next.text("projectRevision").isEmpty,
                       next.number("total") >= 0,
                       !filterView.isEmpty, !resolved.isEmpty,
                       next["chips"] is [CoreObject], !next.text("filterButtonLabel").isEmpty,
@@ -13165,6 +13277,7 @@ final class CoreModel: ObservableObject {
         guard window.text("projectId") == snapshot.text("projectId"),
               window.text("revision") == snapshot.text("revision"),
               window.text("mutationRevision") == snapshot.text("mutationRevision"),
+              window.text("projectRevision") == snapshot.text("projectRevision"),
               window.number("total") == snapshot.number("total"),
               window.flag("readOnly") == snapshot.flag("readOnly"),
               NSDictionary(dictionary: window.object("controls")).isEqual(to: snapshot.object("controls")),
@@ -17090,6 +17203,27 @@ final class CoreModel: ObservableObject {
                 do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
                 return
             }
+            if let request = projectDeleteUndoRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectDeleteUndoRetryOutcome", [request]) }
+                try acknowledgeProjectDeleteUndo(result)
+                do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+                return
+            }
+            if let request = projectDeleteRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectDeleteRetryOutcome", [request]) }
+                try acknowledgeProjectDelete(result)
+                selectedSurface = projectCaller
+                projectCurrent = false
+                projectFilterSession += 1
+                projectFilterReadTask?.cancel()
+                resetProjectAttachments()
+                do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+                return
+            }
             if taskDeleteRequest != nil {
                 if let acknowledgment {
                     try await acknowledgeTaskDelete(try decode(acknowledgment))
@@ -17889,6 +18023,11 @@ final class CoreModel: ObservableObject {
                     taskActionUndoRequest = nil
                     taskActionNotice = [:]
                 }
+                if projectDeleteUndoRequest != nil {
+                    projectDeleteUndoRequest = nil
+                    projectDeleteNotice = [:]
+                }
+                if projectDeleteRequest != nil { projectDeleteRequest = nil }
                 if taskDeleteRequest != nil {
                     taskDeleteRequest = nil
                     taskRecoverySaving = false

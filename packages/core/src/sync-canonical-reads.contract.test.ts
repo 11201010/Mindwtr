@@ -1493,6 +1493,46 @@ describe('canonical local reads contract', () => {
                 expect(useTaskStore.getState()._projectsById.get(id))
                     .toEqual(planned.prepared.effect.project.after);
             },
+            commitPreparedProjectDelete: async (control) => {
+                const host = await nativeHost(control);
+                const detail = nativeValue(host.getProjectDetail({ projectId, offset: 0, limit: 50 }));
+                const request = { requestId: 'aede1551-95af-4f8c-bd21-c1c5a4a63151', projectId,
+                    projectRevision: detail.projectRevision };
+                const deletion = { request, prepared: nativeValue(host.prepareProjectDelete(request)).prepared };
+                const planned = { prepared: deletion.prepared };
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === projectId)).toEqual(planned.prepared.effect.project.after);
+                    for (const pair of planned.prepared.effect.sections) {
+                        expect(written.sections.find((entry) => entry.id === pair.after.id)).toEqual(pair.after);
+                    }
+                    for (const pair of planned.prepared.effect.tasks) {
+                        expect(written.tasks.find((entry) => entry.id === pair.after.id)).toEqual(pair.after);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedProjectDelete(deletion))).toEqual(planned.prepared.result);
+            },
+            commitPreparedProjectDeleteUndo: async (control) => {
+                const host = await nativeHost(control);
+                const detail = nativeValue(host.getProjectDetail({ projectId, offset: 0, limit: 50 }));
+                const request = { requestId: 'aede1551-95af-4f8c-bd21-c1c5a4a63151', projectId,
+                    projectRevision: detail.projectRevision };
+                const deletion = { request, prepared: nativeValue(host.prepareProjectDelete(request)).prepared };
+                nativeValue(await host.commitPreparedProjectDelete(deletion));
+                await flushPendingSave(); control.resetBaseline();
+                const undoRequest = { requestId: 'bdd31551-95af-4f8c-bd21-c1c5a4a63151', deleteRequestId: request.requestId };
+                const planned = nativeValue(host.prepareProjectDeleteUndo({ request: undoRequest, delete: deletion }));
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === projectId)).toEqual(planned.prepared.effect.project.after);
+                    for (const pair of planned.prepared.effect.sections) {
+                        expect(written.sections.find((entry) => entry.id === pair.after.id)).toEqual(pair.after);
+                    }
+                    for (const pair of planned.prepared.effect.tasks) {
+                        expect(written.tasks.find((entry) => entry.id === pair.after.id)).toEqual(pair.after);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedProjectDeleteUndo({ request: undoRequest, prepared: planned.prepared })))
+                    .toEqual({ id: projectId });
+            },
             commitPreparedTrashProjectRestore: async (control) => {
                 await call('deleteProject', projectId);
                 const host = await nativeHost(control);

@@ -212,6 +212,28 @@ export type PreparedTrashProjectRestore = {
     result: { id: string };
 };
 
+/** Frozen Project Delete: section-linked inconsistent Tasks are part of the relevant scope. */
+export type PreparedProjectDelete = {
+    request: { requestId: string; projectId: string; projectRevision: string };
+    scope: { project: Project; tasks: Task[]; sections: Section[] };
+    effect: { project: { before: Project; after: Project };
+        tasks: { before: Task; after: Task }[]; sections: { before: Section; after: Section }[] };
+    deviceIdBefore: string | null; deviceIdToInitialize: string | null; updateAt: string;
+    result: { id: string; deletion: { message: string; undoLabel: string; undoEnabled: true } };
+};
+
+/** Frozen Undo reads current Task content and the confirmed Delete relationship proof. */
+export type PreparedProjectDeleteUndo = {
+    request: { requestId: string; deleteRequestId: string };
+    delete: { request: PreparedProjectDelete['request']; prepared: PreparedProjectDelete & { version: 1 } };
+    scope: { project: Project; tasks: Task[]; sections: Section[]; area: Area | null;
+        linkedTasks: { id: string; row: Task | null }[] };
+    effect: { project: { before: Project; after: Project };
+        tasks: { before: Task; after: Task }[]; sections: { before: Section; after: Section }[] };
+    deviceIdBefore: string | null; deviceIdToInitialize: string | null; updateAt: string;
+    result: { id: string };
+};
+
 /** One frozen Project date change and its complete Project receipt. */
 export type PreparedProjectDate = {
     scope: { project: Project };
@@ -643,6 +665,8 @@ export interface TaskStore {
     commitPreparedProjectAttachmentWrite: (input: PreparedProjectAttachmentWrite & { request: { projectId: string; requestId: string; intent: ProjectAttachmentIntent }; result: { id: string; attachmentIds: string[] } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectStatus: (input: PreparedProjectStatus & { request: { projectId: string; status: 'active' | 'waiting' | 'someday' } }) => Promise<PreparedTaskEditResult>;
     commitPreparedTrashProjectRestore: (input: PreparedTrashProjectRestore) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectDelete: (input: PreparedProjectDelete) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectDeleteUndo: (input: PreparedProjectDeleteUndo) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDate: (input: PreparedProjectDate & { request: { projectId: string; field: 'startDate' | 'dueDate' | 'reviewAt'; value: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectArea: (input: PreparedProjectArea & { request: { projectId: string; areaId: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionCreate: (input: PreparedProjectSectionCreate) => Promise<PreparedTaskEditResult>;

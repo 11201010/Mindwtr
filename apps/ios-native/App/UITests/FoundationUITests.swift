@@ -16842,4 +16842,116 @@ final class FoundationUITests: XCTestCase {
         app.terminate(); app.launch(); task149OpenTrash(app); task150Restored(app); app.terminate()
     }
 
+    private func task151OpenProject(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        let row = app.buttons["project-open-task151-project"]
+        revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+        boardEnabled(row); row.tap()
+        boardEnabled(app.buttons["project-actions-menu"], timeout: 30)
+        XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Task151 project")
+    }
+
+    private func task151DeleteConfirmation(_ app: XCUIApplication) -> XCUIElement {
+        boardTap(app, "project-actions-menu")
+        boardTap(app, "project-delete-button")
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        XCTAssertTrue(alert.label.contains("Projects"))
+        XCTAssertTrue(alert.staticTexts["Delete this project? Tasks in this project will be kept and moved to unassigned."].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Project Delete confirmation"; shot.lifetime = .keepAlways; add(shot)
+        return alert
+    }
+
+    private func task151TapDelete(_ app: XCUIApplication) {
+        let alert = task151DeleteConfirmation(app)
+        let confirm = alert.buttons.matching(identifier: "project-delete-confirm").firstMatch
+        boardEnabled(confirm); confirm.tap()
+    }
+
+    func testTask151ProjectDeleteCancelLeavesProjectOpen() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "6988d8e8-a268-4fd9-901a-3c9675c2460d"]
+        app.launch(); task151OpenProject(app)
+        let alert = task151DeleteConfirmation(app)
+        alert.buttons["Cancel"].tap()
+        XCTAssertTrue(app.staticTexts["project-detail-title"].exists)
+        XCTAssertFalse(app.staticTexts["project-delete-notice"].exists)
+        app.terminate()
+    }
+
+    func testTask151ProjectDeleteDetachesTasks() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e4d3c86b-e18b-4312-b4c5-76340db3c2ef"]
+        app.launch(); task151OpenProject(app); task151TapDelete(app)
+        XCTAssertTrue(app.staticTexts["projects-title"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["project-open-task151-project"].exists)
+        boardEnabled(app.buttons["project-delete-undo"])
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Project Delete Undo notice"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    private func task151UndoFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task151OpenProject(app); task151TapDelete(app)
+        boardEnabled(app.buttons["project-delete-undo"], timeout: 20)
+        app.buttons["project-delete-undo"].tap()
+        let restored = app.buttons["project-open-task151-project"]
+        revealPagedElement(app, restored, in: app.scrollViews["projects-scroll"])
+        boardEnabled(restored, timeout: 30)
+        XCTAssertFalse(app.staticTexts["project-delete-notice"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Project Delete Undo restored"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["tab-menu"], timeout: 30); boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        revealPagedElement(app, restored, in: app.scrollViews["projects-scroll"])
+        boardEnabled(restored, timeout: 30)
+        app.terminate()
+    }
+
+    func testTask151ProjectDeleteUndoNormal() { task151UndoFlow("cde35b08-919c-450b-8dcf-e36698bbcc87") }
+    func testTask151ProjectDeleteUndoLargest() { task151UndoFlow("e80b54e4-c13c-4881-bb6f-797c7b6ce048") }
+
+    func testTask151ProjectDeleteFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "46313fad-a924-4e6d-aeea-3590cf88fae2"]
+        app.launch(); task151OpenProject(app); task151TapDelete(app)
+        for _ in 0..<2 {
+            let retry = app.buttons["project-delete-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertTrue(app.staticTexts["project-detail-title"].exists)
+            XCTAssertFalse(app.buttons["project-back"].isEnabled)
+            retry.tap()
+        }
+        boardEnabled(app.buttons["project-delete-retry"], timeout: 30); app.terminate()
+    }
+
+    func testTask151ProjectDeleteColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "46313fad-a924-4e6d-aeea-3590cf88fae2"]
+        app.launch(); XCTAssertTrue(app.staticTexts["projects-title"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["project-open-task151-project"].exists)
+        app.terminate()
+    }
+
+    func testTask151ProjectDeleteUndoFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "133e3be8-66c7-4301-92b1-55ec537c7d93"]
+        app.launch(); task151OpenProject(app); task151TapDelete(app)
+        boardEnabled(app.buttons["project-delete-undo"], timeout: 20)
+        app.buttons["project-delete-undo"].tap()
+        for _ in 0..<2 {
+            let retry = app.buttons.matching(identifier: "persistence-retry").firstMatch
+            boardEnabled(retry, timeout: 30); retry.tap()
+        }
+        boardEnabled(app.buttons.matching(identifier: "persistence-retry").firstMatch, timeout: 30); app.terminate()
+    }
+
+    func testTask151ProjectDeleteUndoColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "133e3be8-66c7-4301-92b1-55ec537c7d93"]
+        app.launch(); XCTAssertTrue(app.staticTexts["projects-title"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["project-open-task151-project"].waitForExistence(timeout: 30))
+        app.terminate()
+    }
+
 }

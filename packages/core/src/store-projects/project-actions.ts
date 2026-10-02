@@ -1,8 +1,11 @@
 import {
     applyProjectLifecycleTransition,
+    applyTaskUpdates,
+    createProjectOrderReserver,
     ensureDeviceId,
     getNextDataChangeAt,
     nextRevision,
+    normalizeTaskUpdate,
     persist,
     replaceEntitiesInArray,
 } from '../store-helpers';
@@ -22,15 +25,17 @@ import { taskEditValuesEqual } from '../json-value-equality';
 import { planAttachmentLinkBatch, softDeleteAttachment } from '../attachment-editor-model';
 import type { Area, TaskSortBy } from '../types';
 import type { Project, ProjectCoreActions, ProjectActionContext, Section, Task, TaskStatus } from './shared';
-import type { PreparedProjectArea, PreparedProjectAttachmentWrite, PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, PreparedTrashProjectRestore, ProjectAttachmentIntent, ProjectFlowAction, TaskStore } from '../store-types';
+import type { PreparedProjectArea, PreparedProjectAttachmentWrite, PreparedProjectCreate, PreparedProjectDate, PreparedProjectDelete, PreparedProjectDeleteUndo, PreparedProjectFlow, PreparedProjectTaskSort, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, PreparedTrashProjectRestore, ProjectAttachmentIntent, ProjectFlowAction, TaskStore } from '../store-types';
 import { projectTagsForIntent, type ProjectTagsIntent } from '../project-tags';
 import { settingsWithPurgedParentAttachmentDeletes } from '../attachment-cleanup';
 import {
     compactPurgedProjectForLocalStorage,
     compactPurgedProjectSectionTombstone,
 } from '../tombstone-compaction';
-import { actionFail, actionOk, mutateEntities } from './shared';
+import { actionFail, actionOk, mutateEntities, projectDeleteUndoReattachments,
+    type DetachedProjectTask } from './shared';
 import { sameSectionSqliteRow, sameTaskSqliteRow } from './section-actions';
+import { buildTaskContainerMovePatch, reserveTaskContainerProjectOrder } from '../task-container-rules';
 
 const duplicateProjectAttachmentCopy = (attachment: NonNullable<Project['attachments']>[number], now: string) => ({
     ...attachment,
@@ -113,6 +118,53 @@ export const projectRestoreEffect = (scope: PreparedTrashProjectRestore['scope']
     return { project: { before: target, after: restoredProject }, tasks, sections };
 };
 
+/** RN deleteProject's complete Project/Section/Task update, without broad snapshot replacement. */
+export const projectDeleteEffect = (scope: PreparedProjectDelete['scope'], deviceId: string,
+    now: string): PreparedProjectDelete['effect'] => {
+    const project = scope.project;
+    return {
+        project: { before: project, after: { ...project, deletedAt: now, updatedAt: now,
+            rev: nextRevision(project.rev), revBy: deviceId } },
+        sections: scope.sections.filter((row) => !row.deletedAt).map((before) => ({ before,
+            after: { ...before, deletedAt: now, updatedAt: now,
+                rev: nextRevision(before.rev), revBy: deviceId } })),
+        tasks: scope.tasks.filter((row) => !row.deletedAt).map((before) => ({ before,
+            after: { ...before, projectId: undefined, sectionId: undefined, updatedAt: now,
+                rev: nextRevision(before.rev), revBy: deviceId } })),
+    };
+};
+
+/** RN Undo eligibility applied to current rows after the shared Project restore projection. */
+export const projectDeleteUndoEffect = (scope: PreparedProjectDeleteUndo['scope'],
+    links: readonly DetachedProjectTask[], deviceId: string, now: string): PreparedProjectDeleteUndo['effect'] => {
+    // RN restores children owned by the Project, while the prepared witness also
+    // tracks inconsistent section-only rows for the mutation-boundary CAS.
+    const restored = projectRestoreEffect({ ...scope,
+        tasks: scope.tasks.filter((row) => row.projectId === scope.project.id) }, deviceId, now);
+    const restoredSections = replaceEntitiesInArray(scope.sections, restored.sections.map((row) => row.after));
+    const restoredTasks = replaceEntitiesInArray(scope.tasks, restored.tasks.map((row) => row.after));
+    const candidates = scope.linkedTasks.flatMap(({ row }) => row ? [row] : []);
+    const projectedCandidates = candidates.map((row) =>
+        restored.tasks.find((pair) => pair.before.id === row.id)?.after ?? row);
+    const reattachments = projectDeleteUndoReattachments(scope.project.id, links,
+        restoredSections, projectedCandidates);
+    const reserveOrder = createProjectOrderReserver(restoredTasks);
+    return { project: restored.project, sections: restored.sections,
+        tasks: [...restored.tasks, ...reattachments.map(({ id, updates }) => {
+            const before = candidates.find((row) => row.id === id)!;
+            const container = buildTaskContainerMovePatch({ task: before, updates,
+                allProjects: [restored.project.after], allSections: restoredSections,
+                allAreas: scope.area ? [scope.area] : [], reserveProjectOrder: false });
+            if (!container.ok) throw new Error(container.error);
+            const normalized = normalizeTaskUpdate(before, { ...updates, ...container.updates });
+            const adjusted = reserveTaskContainerProjectOrder({ task: before,
+                updates: { ...normalized, ...container.updates }, projectOrderReserver: reserveOrder });
+            const { updatedTask } = applyTaskUpdates(before, { ...adjusted,
+                rev: nextRevision(before.rev), revBy: deviceId }, now);
+            return { before, after: updatedTask };
+        })] };
+};
+
 const sameOwnedRows = <T extends { id: string }>(current: T[], frozen: T[], same: (a: T, b: T) => boolean) => {
     if (current.length !== frozen.length || new Set(frozen.map((row) => row.id)).size !== frozen.length) return false;
     const byId = new Map(current.map((row) => [row.id, row]));
@@ -121,6 +173,23 @@ const sameOwnedRows = <T extends { id: string }>(current: T[], frozen: T[], same
         return saved !== undefined && same(saved, row);
     });
 };
+
+const projectDeleteScopeRows = (state: TaskStore, projectId: string) => {
+    const sections = state._allSections.filter((section) => section.projectId === projectId);
+    const sectionIds = new Set(sections.map((section) => section.id));
+    const tasks = state._allTasks.filter((task) => task.projectId === projectId
+        || (task.sectionId !== undefined && sectionIds.has(task.sectionId)));
+    return { sections, tasks };
+};
+
+const afterRows = <T extends { id: string }>(scope: T[], effect: { before: T; after: T }[]) =>
+    scope.map((row) => effect.find((pair) => pair.before.id === row.id)?.after ?? row);
+
+const sameLinkedTasks = (state: TaskStore, linked: PreparedProjectDeleteUndo['scope']['linkedTasks']) =>
+    linked.every(({ id, row }) => {
+        const current = state._tasksById.get(id) ?? null;
+        return current === null || row === null ? current === row : sameTaskSqliteRow(current, row);
+    });
 
 export const projectFocusEffect = (project: Project, focusedProjectCount: number, focused: boolean,
     deviceId: string, now: string): PreparedProjectFocus['effect'] | null => {
@@ -891,45 +960,15 @@ export const createProjectCoreActions = ({
                 return state;
             }
             const deviceState = ensureDeviceId(state.settings);
-            const newAllProjects = state._allProjects.map((project) =>
-                project.id === id
-                    ? {
-                        ...project,
-                        deletedAt: now,
-                        updatedAt: now,
-                        rev: nextRevision(project.rev),
-                        revBy: deviceState.deviceId,
-                    }
-                    : project
-            );
-            const sectionIdsForProject = new Set(
-                state._allSections
-                    .filter((section) => section.projectId === id)
-                    .map((section) => section.id)
-            );
-            const newAllSections = state._allSections.map((section) =>
-                sectionIdsForProject.has(section.id) && !section.deletedAt
-                    ? {
-                        ...section,
-                        deletedAt: now,
-                        updatedAt: now,
-                        rev: nextRevision(section.rev),
-                        revBy: deviceState.deviceId,
-                    }
-                    : section
-            );
-            const newAllTasks = state._allTasks.map(task =>
-                !task.deletedAt && (task.projectId === id || (task.sectionId && sectionIdsForProject.has(task.sectionId)))
-                    ? {
-                        ...task,
-                        projectId: undefined,
-                        sectionId: undefined,
-                        updatedAt: now,
-                        rev: nextRevision(task.rev),
-                        revBy: deviceState.deviceId,
-                    }
-                    : task
-            );
+            const sections = state._allSections.filter((section) => section.projectId === id);
+            const sectionIdsForProject = new Set(sections.map((section) => section.id));
+            const scope = { project: target, sections,
+                tasks: state._allTasks.filter((task) => task.projectId === id
+                    || (task.sectionId !== undefined && sectionIdsForProject.has(task.sectionId))) };
+            const effect = projectDeleteEffect(scope, deviceState.deviceId, now);
+            const newAllProjects = replaceEntitiesInArray(state._allProjects, [effect.project.after]);
+            const newAllSections = replaceEntitiesInArray(state._allSections, effect.sections.map((row) => row.after));
+            const newAllTasks = replaceEntitiesInArray(state._allTasks, effect.tasks.map((row) => row.after));
             clearDerivedCache();
             persist(set, debouncedSave, state, {
                 tasks: newAllTasks,
@@ -956,6 +995,106 @@ export const createProjectCoreActions = ({
             return actionFail(message);
         }
         return actionOk();
+    },
+
+    commitPreparedProjectDelete: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project Delete conflicts with current data' };
+        set((state) => {
+            const current = state._projectsById.get(input.request.projectId);
+            if (!current || current.purgedAt) return state;
+            const { tasks, sections } = projectDeleteScopeRows(state, current.id);
+            const planned = projectDeleteEffect(input.scope,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!taskEditValuesEqual(planned, input.effect)) return state;
+            const expectedTasks = afterRows(input.scope.tasks, planned.tasks);
+            const expectedSections = afterRows(input.scope.sections, planned.sections);
+            const relevantAfterSections = new Set(expectedSections.map((row) => row.id));
+            const relevantAfterTasks = expectedTasks.filter((row) => row.projectId === current.id
+                || (row.sectionId !== undefined && relevantAfterSections.has(row.sectionId)));
+            if (sameProjectSqliteRow(current, planned.project.after)
+                && (state.settings.deviceId ?? null) === (input.deviceIdToInitialize ?? input.deviceIdBefore)
+                && sameOwnedRows(sections, expectedSections, sameSectionSqliteRow)
+                && expectedTasks.every((row) => {
+                    const saved = state._tasksById.get(row.id);
+                    return saved && sameTaskSqliteRow(saved, row);
+                }) && sameOwnedRows(tasks, relevantAfterTasks, sameTaskSqliteRow)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            if (current.deletedAt || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || !sameProjectSqliteRow(current, input.scope.project)
+                || !sameOwnedRows(tasks, input.scope.tasks, sameTaskSqliteRow)
+                || !sameOwnedRows(sections, input.scope.sections, sameSectionSqliteRow)) return state;
+            const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
+            const nextTasks = replaceEntitiesInArray(state._allTasks, planned.tasks.map((row) => row.after));
+            const nextSections = replaceEntitiesInArray(state._allSections, planned.sections.map((row) => row.after));
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            clearDerivedCache();
+            persist(set, debouncedSave, state, { projects, tasks: nextTasks, sections: nextSections,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allProjects: projects, _allTasks: nextTasks, _allSections: nextSections, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedProjectDeleteUndo: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project Delete Undo conflicts with current data' };
+        set((state) => {
+            const current = state._projectsById.get(input.delete.request.projectId);
+            if (!current || current.purgedAt) return state;
+            const links = input.delete.prepared.effect.tasks.map((pair) => ({ id: pair.before.id,
+                ...(pair.before.sectionId ? { sectionId: pair.before.sectionId } : {}) }));
+            const { tasks, sections } = projectDeleteScopeRows(state, current.id);
+            const area = state._allAreas.find((row) => row.id === input.scope.project.areaId) ?? null;
+            const planned = projectDeleteUndoEffect(input.scope, links,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!taskEditValuesEqual(planned, input.effect)) return state;
+            const expectedTasks = afterRows(input.scope.tasks, planned.tasks);
+            for (const row of planned.tasks) {
+                if (!expectedTasks.some((entry) => entry.id === row.after.id)) expectedTasks.push(row.after);
+            }
+            const expectedSections = afterRows(input.scope.sections, planned.sections);
+            const expectedSectionIds = new Set(expectedSections.map((row) => row.id));
+            const expectedRelevantTasks = expectedTasks.filter((row) => row.projectId === current.id
+                || (row.sectionId !== undefined && expectedSectionIds.has(row.sectionId)));
+            const untouchedLinked = input.scope.linkedTasks.filter(({ id }) =>
+                !planned.tasks.some((pair) => pair.before.id === id));
+            if (sameProjectSqliteRow(current, planned.project.after)
+                && (state.settings.deviceId ?? null) === (input.deviceIdToInitialize ?? input.deviceIdBefore)
+                && taskEditValuesEqual(area, input.scope.area)
+                && sameOwnedRows(tasks, expectedRelevantTasks, sameTaskSqliteRow)
+                && sameOwnedRows(sections, expectedSections, sameSectionSqliteRow)
+                && sameLinkedTasks(state, untouchedLinked)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            if (!current.deletedAt || !sameProjectSqliteRow(current, input.delete.prepared.effect.project.after)
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || !sameProjectSqliteRow(current, input.scope.project)
+                || !sameOwnedRows(tasks, input.scope.tasks, sameTaskSqliteRow)
+                || !sameOwnedRows(sections, input.scope.sections, sameSectionSqliteRow)
+                || !taskEditValuesEqual(area, input.scope.area)
+                || !sameLinkedTasks(state, input.scope.linkedTasks)) return state;
+            const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
+            const nextTasks = replaceEntitiesInArray(state._allTasks, planned.tasks.map((row) => row.after));
+            const nextSections = replaceEntitiesInArray(state._allSections, planned.sections.map((row) => row.after));
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            clearDerivedCache();
+            persist(set, debouncedSave, state, { projects, tasks: nextTasks, sections: nextSections,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allProjects: projects, _allTasks: nextTasks, _allSections: nextSections, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
     },
 
     restoreProject: async (id: string) => {
