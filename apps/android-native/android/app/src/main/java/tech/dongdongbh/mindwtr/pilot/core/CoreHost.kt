@@ -61,6 +61,8 @@ class CoreHost(
         fun permissionGranted(): Boolean
         /** React Native's alarms cancelled and its alarm maps removed; how many were cancelled (0 once none is left). */
         fun cleanupRn(): Int
+        /** `{ dropped, notQueued }` since the last call, then zero (ReminderReceiverCounts). */
+        fun receiverCounts(): String
     }
 
     companion object {
@@ -359,6 +361,7 @@ class CoreHost(
             bridge.setProperty("alarmApply", guarded { args -> alarms.apply(args[0] as String); null })
             bridge.setProperty("notificationsAllowed", guarded { _ -> alarms.permissionGranted() })
             bridge.setProperty("rnAlarmCleanup", guarded { _ -> alarms.cleanupRn() })
+            bridge.setProperty("reminderReceiverCounts", guarded { _ -> alarms.receiverCounts() })
         }
         engine.globalObject.setProperty("__mindwtrNative", bridge)
     }

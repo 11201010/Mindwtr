@@ -59,6 +59,8 @@ export type NativeReminderBindings = {
     apply: (planJson: string) => void;
     /** Kotlin: RN's alarms cancelled and its alarm maps removed; how many were cancelled. */
     cleanupRn: () => number;
+    /** Kotlin: deliveries its receiver dropped and receiver jobs WorkManager did not store, since the last call (then zero). */
+    receiverCounts?: () => { dropped: number; notQueued: number };
 };
 
 const log = (message: string, context: Record<string, unknown>, warn = false) => {
@@ -104,6 +106,7 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
             withdrawn: plan.cancel.filter((item) => item.reason === 'withdrawn').length,
             expired: plan.cancel.filter((item) => item.reason === 'expired').length,
             held: Object.keys(JSON.parse(plan.alarms) as object).length,
+            ...bindings.receiverCounts?.(),
         };
         log('Native Android reminder cycle', summary);
         return summary;

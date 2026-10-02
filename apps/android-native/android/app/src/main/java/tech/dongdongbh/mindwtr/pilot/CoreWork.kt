@@ -55,7 +55,11 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
                 },
                 done = done,
                 finish = pending::finish,
-                failed = { Log.w(CoreHost.TAG, "Native Android core work not queued job=$job", it) },
+                failed = {
+                    Log.w(CoreHost.TAG, "Native Android core work not queued job=$job", it)
+                    // Every caller is a reminder receiver: the next plan's summary line reports it.
+                    runCatching { ReminderReceiverCounts.of(context).add(ReminderReceiverCounts.NOT_QUEUED) }
+                },
             )
         }
 

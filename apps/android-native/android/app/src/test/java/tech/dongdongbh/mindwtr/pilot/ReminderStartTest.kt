@@ -30,4 +30,15 @@ class ReminderStartTest {
         start.start("host")
         assertEquals(listOf("start host", "start host", "cycle host"), events)
     }
+
+    @Test fun aReceiversDropsAndUnstoredJobsAreCountedUntilThePlansSummaryTakesThem() {
+        val stored = mutableMapOf<String, Int>()
+        val counts = ReminderReceiverCounts(read = { stored[it] ?: 0 }, write = { stored.putAll(it) })
+        counts.add(ReminderReceiverCounts.DROPPED)
+        counts.add(ReminderReceiverCounts.DROPPED)
+        counts.add(ReminderReceiverCounts.NOT_QUEUED)
+        fun text(counts: org.json.JSONObject) = "${counts.getInt("dropped")} ${counts.getInt("notQueued")}"
+        assertEquals("2 1", text(counts.take()))
+        assertEquals("0 0", text(counts.take()))
+    }
 }

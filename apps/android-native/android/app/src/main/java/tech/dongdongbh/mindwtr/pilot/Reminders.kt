@@ -90,6 +90,31 @@ internal object ReminderPlan {
 }
 
 /**
+ * Deliveries the alarm receiver dropped and receiver jobs WorkManager did not store, counted on disk (a receiver may run with no
+ * engine) until the next plan's summary line takes them (JVM-tested: ReminderStartTest). Guarded by [ReminderAlarms.LOCK].
+ */
+internal class ReminderReceiverCounts(private val read: (String) -> Int, private val write: (Map<String, Int>) -> Unit) {
+    companion object {
+        const val DROPPED = "dropped"
+        const val NOT_QUEUED = "notQueued"
+        private const val PREFS = "mindwtr_reminder_receiver"
+
+        fun of(context: Context): ReminderReceiverCounts {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            return ReminderReceiverCounts(read = { prefs.getInt(it, 0) },
+                write = { values -> prefs.edit().apply { values.forEach { (name, value) -> putInt(name, value) } }.commit() })
+        }
+    }
+
+    fun add(name: String) = synchronized(ReminderAlarms.LOCK) { write(mapOf(name to read(name) + 1)) }
+
+    fun take(): JSONObject = synchronized(ReminderAlarms.LOCK) {
+        JSONObject().put(DROPPED, read(DROPPED)).put(NOT_QUEUED, read(NOT_QUEUED))
+            .also { taken -> if (taken.getInt(DROPPED) + taken.getInt(NOT_QUEUED) > 0) write(mapOf(DROPPED to 0, NOT_QUEUED to 0)) }
+    }
+}
+
+/**
  * What this process armed and cancelled, so a delivery already on its way when a plan cancelled its alarm or made it again for
  * another time shows nothing (JVM-tested: ReminderPlanTest). Guarded by [ReminderAlarms.LOCK], which a plan's apply holds too.
  * A process that did not arm or cancel an alarm knows nothing of it and shows its delivery.
@@ -256,6 +281,8 @@ internal class ReminderAlarms(
 
     override fun permissionGranted() = permissionGranted(context)
 
+    override fun receiverCounts(): String = ReminderReceiverCounts.of(context).take().toString()
+
     override fun cleanupRn(): Int = RnAlarmCleanup.run(rows = ::rnAlarmIds, cancel = ::cancelRn, stripButtons = ::stripRnButtons,
         // Only maps that exist: an RN user who never had reminders keeps RKStorage untouched.
         forgetMaps = { keyValue.multiGet(listOf(ReminderPlan.MAP_KEY, POMODORO_KEY)).filterValues { it != null }.keys.toList()
@@ -347,7 +374,10 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
                     .also { if (it) CoreNotifications.postReminder(context, alarm) }
             }
         }.onFailure { Log.w(CoreHost.TAG, "Native Android reminder not posted", it) }.getOrDefault(false)
-        if (!shown) Log.i(CoreHost.TAG, "Native Android reminder delivery dropped repeat=$repeat")
+        if (!shown) {
+            Log.i(CoreHost.TAG, "Native Android reminder delivery dropped repeat=$repeat")
+            runCatching { ReminderReceiverCounts.of(context).add(ReminderReceiverCounts.DROPPED) }
+        }
         if (repeat != "once") {
             runCatching { CoreWork.enqueueDurably(this, context, CoreJob.REMINDERS, mapOf("mode" to "fired", "key" to alarm.getString("key"))) }
                 .onFailure { Log.w(CoreHost.TAG, "Native Android repeating reminder not queued", it) }

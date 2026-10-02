@@ -731,7 +731,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 34, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: each guarded');
+assert.equal(bridgeCallbacks.length, 35, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: each guarded');
 assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })'));
 // The attachment file port and the installer only start their call on the engine thread; HostIo's files thread runs it.
@@ -4196,6 +4196,17 @@ globalThis.standStore = useTaskStore;
         apply: () => early.push('apply'),
         cleanupRn: () => 0,
     });
+    // What a receiver dropped or could not queue since the last plan goes in that plan's summary line.
+    const counted = mod.createNativeReminders({
+        plan: async () => ({ ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', state: '{}', topUpDelayMs: null } }),
+        planSnooze: () => { throw new Error('no snooze here'); },
+        readStored: async () => ({ alarms: null, state: null }),
+        permissionGranted: () => true,
+        apply: () => {},
+        cleanupRn: () => 0,
+        receiverCounts: () => ({ dropped: 2, notQueued: 1 }),
+    });
+    assert.deepEqual(await counted.cycle(false), { mode: 'active', rebuild: true, scheduled: 0, withdrawn: 0, expired: 0, held: 0, dropped: 2, notQueued: 1 });
     const starting = fresh.start();
     await sleep(5);
     globalThis.standStore.setState({ tasks: [] });
