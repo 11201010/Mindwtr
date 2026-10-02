@@ -117,6 +117,14 @@ struct TaskViewSheet: View {
                                 Task { await model.saveTask(cancel: true) }
                             }.accessibilityIdentifier("task-cancel")
                         }
+                        if model.taskEditor.object("draft").text("status") == "reference" {
+                            Button(strings.text("reference.convertToAction")) {
+                                endEditingBeforeAction()
+                                Task { _ = await model.editTaskStatus("next") }
+                            }
+                            .disabled(!model.taskStatusEditable("next"))
+                            .accessibilityIdentifier("task-reference-action-menu")
+                        }
                         Button(strings.text("taskEdit.duplicateTask")) {
                             endEditingBeforeAction()
                             Task { await model.duplicateTask() }

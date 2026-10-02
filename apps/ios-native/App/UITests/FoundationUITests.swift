@@ -13113,6 +13113,40 @@ final class FoundationUITests: XCTestCase {
         close(); app.terminate()
     }
 
+    func testReferenceActionMenuNormal() { referenceActionMenu(library: "47d5d0f3-d69e-4d8b-a379-e0372e6f43b9") }
+    func testReferenceActionMenuLargest() { referenceActionMenu(library: "66ca893f-7c87-4446-88cf-5625c61705d0") }
+
+    private func referenceActionMenu(library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        func open() {
+            boardEnabled(app.buttons["search-open"], timeout: 30); boardTap(app, "search-open")
+            let query = app.textFields["search-input"]; boardEnabled(query); query.tap(); query.typeText("Task137 reference task")
+            boardTap(app, "search-task-task137-task")
+            boardTap(app, "task-mode-view")
+        }
+        func convert() {
+            boardTap(app, "task-more")
+            let action = app.buttons["task-reference-action-menu"]; boardEnabled(action)
+            XCTAssertTrue(action.isHittable) // Native Menu owns its row metrics.
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Reference action menu"; shot.lifetime = .keepAlways; add(shot)
+            action.tap()
+            boardTap(app, "task-mode-edit")
+            let next = app.buttons["task-editor-status-next"]; boardEnabled(next)
+            XCTAssertTrue(next.isSelected)
+        }
+        open(); convert()
+        boardTap(app, "task-view-close"); boardTap(app, "task-editor-discard")
+        app.terminate(); app.launch()
+        open(); convert() // Discard retained Reference, so the menu action exists again.
+        boardTap(app, "task-editor-save")
+        boardEnabled(app.textFields["search-input"])
+        app.terminate(); app.launch(); open()
+        boardTap(app, "task-more")
+        XCTAssertFalse(app.buttons["task-reference-action-menu"].exists)
+        app.terminate()
+    }
+
     func testTaskStatusWaitingCancelCascadesAndRestart() {
         taskStatusEditor(library: "ce387a12-ec26-41a4-81c7-e7e5c75f5bb4")
     }
