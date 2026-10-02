@@ -113,6 +113,34 @@ internal object RnAlarmCleanup {
 }
 
 /**
+ * The reminder alarms' start on the process's host (ProcessCoreHost; JVM-tested: ReminderStartTest): once the boot reached it,
+ * [start] runs core's first plan and arms core's timers. A resume plans once more after a start (RN's start runs one more cycle),
+ * or starts again after a start that failed, so a transient failure never leaves the timers unarmed until the next process.
+ */
+internal class ReminderStart<H : Any>(private val start: (H) -> JSONObject, private val cycle: (H) -> Unit) {
+    /** The start's reply (`ask`: RN would ask for the notification permission now); null until a start succeeded. */
+    @Volatile var reply: JSONObject? = null; private set
+    @Volatile private var started: H? = null
+    @Volatile private var failed: H? = null
+
+    /** True when it started now; throws what the start threw. A host already started is not started again. */
+    @Synchronized fun start(host: H): Boolean {
+        if (started != null) return false
+        failed = host
+        reply = start.invoke(host)
+        started = host
+        failed = null
+        return true
+    }
+
+    /** Throws what the plan or the start threw. */
+    fun resume() {
+        started?.let { cycle(it); return }
+        failed?.let(::start)
+    }
+}
+
+/**
  * The Android side of core's reminder alarms (CoreHost's alarm bridges): AlarmManager, the tray, RN's old alarms. Called on the
  * engine thread, which alone opens RKStorage.
  */

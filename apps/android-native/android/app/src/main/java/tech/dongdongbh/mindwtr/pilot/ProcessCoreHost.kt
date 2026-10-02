@@ -256,25 +256,23 @@ internal object ProcessCoreHost {
 
     // ---- Reminder alarms (bundle/host-reminders.ts: core plans every alarm and runs the timers) ----
 
-    /** Set once the reminder alarms started; a resume plans them again on [syncThread]. */
-    @Volatile private var reminderHost: CoreHost? = null
-    /** remindersStart's reply: whether to ask for the notification permission (RN asks at start). */
-    @Volatile private var reminderStart: JSONObject? = null
+    /** The reminder alarms' start, and what a resume does (ReminderStart): plan again, or start again after a failed start. */
+    private val reminders = ReminderStart<CoreHost>(start = { it.remindersStart() }, cycle = { it.remindersCycle("cycle") })
     @Volatile private var askedNotifications = false
 
     /**
      * Started where sync starts, after the validated load, the journal replay and the queue drain: RN's old alarms are cancelled
-     * once, then core plans every alarm. A failure never fails the boot: the next start, a resume or a reschedule plans again.
+     * once, then core plans every alarm. A failure never fails the boot: the next resume starts again, and a reschedule plans.
      */
     private fun startReminders(runtime: CoreHost) {
-        if (reminderHost != null) return
-        runCatching { runtime.remindersStart() }
-            .onSuccess { reply ->
-                reminderStart = reply
-                reminderHost = runtime
-                Log.i(CoreHost.TAG, "Native Android reminders started mode=${reply.optString("mode")} rnCancelled=${reply.optInt("rnCancelled")}")
-            }
+        runCatching { reminders.start(runtime) }
+            .onSuccess { now -> if (now) logRemindersStarted() }
             .onFailure { Log.w(CoreHost.TAG, "Native Android reminders start failed", it) }
+    }
+
+    private fun logRemindersStarted() {
+        val reply = reminders.reply ?: return
+        Log.i(CoreHost.TAG, "Native Android reminders started mode=${reply.optString("mode")} rnCancelled=${reply.optInt("rnCancelled")}")
     }
 
     /**
@@ -283,16 +281,17 @@ internal object ProcessCoreHost {
      */
     @Synchronized fun askNotifications(): Boolean {
         if (askedNotifications || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return false
-        val start = reminderStart ?: return false
+        val start = reminders.reply ?: return false
         askedNotifications = true
         return start.optBoolean("ask")
     }
 
     /** MainActivity resumed ("active") or paused ("background"): core's triggers sync on resume and on leaving. */
     fun appState(state: String) {
-        // RN plans the reminder alarms again on every resume (its start runs one more cycle), so a permission that changed counts.
-        if (state == "active") reminderHost?.let { host ->
-            syncThread.execute { runCatching { host.remindersCycle("cycle") }.onFailure { Log.w(CoreHost.TAG, "Native Android reminders cycle failed", it) } }
+        // RN plans the reminder alarms again on every resume (its start runs one more cycle), so a permission that changed counts;
+        // a start that failed starts again.
+        if (state == "active") syncThread.execute {
+            runCatching { reminders.resume() }.onFailure { Log.w(CoreHost.TAG, "Native Android reminders cycle failed", it) }
         }
         if (state == appState) return
         appState = state
