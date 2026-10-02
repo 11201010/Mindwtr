@@ -676,10 +676,16 @@ try {
     nodes = await waitFor('Focus restored with its View options', (current) => tabSelected(current, 'Focus') && button(current, 'View options'), 60_000);
     processId = pid();
     await tap(button(nodes, 'View options'));
-    nodes = await waitFor('the view options sheet', (current) => button(current, 'Done')
-        && current.some((node) => node.selected === 'true' && node['content-desc'] && !['Focus', 'Inbox', 'Projects', 'Menu'].includes(node['content-desc'])), 10_000);
+    // The chosen sort chip: a selectable chip is a checked node (its label is a child), between "SORT" and the group heading.
+    const chosenSort = (current) => {
+        const top = current.find((node) => node.text === 'SORT');
+        const end = current.find((node) => /^GROUP /.test(node.text ?? ''));
+        return top && end && current.find((node) => node.checkable === 'true' && node.checked === 'true'
+            && box(node)[1] > box(top)[1] && box(node)[3] < box(end)[1]);
+    };
+    nodes = await waitFor('the view options sheet', (current) => button(current, 'Done') && chosenSort(current), 10_000);
     // The current sort again: a read-only Focus controls request (no command, so no full refresh follows it).
-    await tap(nodes.find((node) => node.selected === 'true' && node['content-desc'] && !['Focus', 'Inbox', 'Projects', 'Menu'].includes(node['content-desc'])));
+    await tap(chosenSort(nodes));
     const heldAt = Date.now();
     await tap(button(await screen(), 'Done'));
     await showTab('Projects');
