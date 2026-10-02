@@ -3481,6 +3481,8 @@ ready.newInputs.length = 0;
     ready.menuInputs.length = 0;
 }
 ready.persistenceFailure = { message: 'disk full' };
+// A blocked read keeps the SAVE_FAILED code and never quotes the store's failure text.
+const readRefusal = { ok: false, error: 'SAVE_FAILED: Previous changes could not be saved; retry before continuing' };
 const queriesBeforeFailure = ready.queryCount;
 const blockedRefresh = await poll(ready, ready.MindwtrHost.window(0, 50, ''));
 assert.equal(blockedRefresh.ok, false);
@@ -3489,12 +3491,12 @@ assert.equal(ready.queryCount, queriesBeforeFailure);
 // The editor cannot load unsaved in-memory values as if they were stored.
 for (const blocked of [ready.MindwtrHost.editorModel('t'), ready.MindwtrHost.taskView('{"id":"t"}'), ready.MindwtrHost.editChecklist(JSON.stringify(checklistInput)),
     ready.MindwtrHost.editorSuggestions('t', 'tags', 'x', 4), ready.MindwtrHost.editDraft(JSON.stringify(editInput))]) {
-    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.deepEqual(await poll(ready, blocked), readRefusal);
 }
 assert.equal(ready.editorInputs.length, 5);
 // Focus cannot show unsaved in-memory values as stored either.
 for (const blocked of [ready.MindwtrHost.focus(50), ready.MindwtrHost.focusWindow('next', 0, 50, 'f')]) {
-    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.deepEqual(await poll(ready, blocked), readRefusal);
 }
 assert.equal(ready.focusInputs.length, 4);
 // Commands never wait on requireSaved: the exact retry of a failed command must reach core, which retries the save.
@@ -3503,7 +3505,7 @@ assert.equal((await poll(ready, ready.MindwtrHost.complete('t'))).ok, true);
 assert.equal((await poll(ready, ready.MindwtrHost.captureSubmit('{"text":"Retry","options":{},"captureId":"123"}'))).ok, true);
 // The popup's reads wait for the retry; its commands (a capture, several lines, a picker create) reach core so the retry can save.
 for (const blocked of [ready.MindwtrHost.captureOpen(), ready.MindwtrHost.captureView('{"text":"a","options":{}}'), ready.MindwtrHost.captureEdit('{"text":"a","options":{},"edit":{}}')]) {
-    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.deepEqual(await poll(ready, blocked), readRefusal);
 }
 for (const command of [ready.MindwtrHost.captureLines('{"text":"a\\nb","options":{},"captureIds":["1","2"],"snapshotFileName":null}'),
     ready.MindwtrHost.capturePicker('{"picker":"area","query":"x","text":"","options":{},"requestId":"9"}')]) {
@@ -3515,11 +3517,11 @@ assert.equal((await poll(ready, ready.MindwtrHost.saveDraft(draftInput))).ok, tr
 assert.equal(ready.completeCount + ready.createCount + ready.updateInputs.length, commandsBefore + 4);
 // Projects cannot show unsaved in-memory values as stored either; labels still load.
 for (const blocked of [ready.MindwtrHost.projects(), ready.MindwtrHost.projectDetail('p1', 0, 50, '')]) {
-    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.deepEqual(await poll(ready, blocked), readRefusal);
 }
 assert.equal(ready.projectInputs.length, 3);
 // The area filter is a read: it waits for the retry. Its commands, like every command, reach core so the retry can save.
-assert.deepEqual(await poll(ready, ready.MindwtrHost.areaFilter()), { ok: false, error: 'SAVE_FAILED: disk full' });
+assert.deepEqual(await poll(ready, ready.MindwtrHost.areaFilter()), readRefusal);
 ready.taskFocusResult = { ok: true, value: { id: 't', focused: true } };
 for (const command of [ready.MindwtrHost.taskFocus('t', true), ready.MindwtrHost.projectFocus('p', true),
     ready.MindwtrHost.createProject('New', 'a', '123'), ready.MindwtrHost.setAreaFilter('{"included":[],"excluded":[]}')]) {
@@ -3529,7 +3531,7 @@ assert.equal(ready.newInputs.length, 4);
 // Search and Process Inbox reads wait for the retry; their commands reach core so the retry can save.
 for (const blocked of [ready.MindwtrHost.search('{"query":"a","filters":{},"limit":50}'), ready.MindwtrHost.inboxStart('guided'),
     ready.MindwtrHost.inboxStep('{"sessionId":"x","taskId":"t","step":"actionable"}')]) {
-    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.deepEqual(await poll(ready, blocked), readRefusal);
 }
 assert.equal(ready.newInputs.length, 4);
 ready.inboxCommitResult = { ok: true, value: { view: null, notice: null, toast: null } };
@@ -3541,7 +3543,7 @@ for (const command of [ready.MindwtrHost.saveSearch('{"query":"a","requestId":"r
 assert.equal(ready.newInputs.length, 7);
 // Menu screen reads wait for the retry; the More sheet's tiles (navigation) do not, so Menu never opens empty;
 // menu commands reach core so the retry can save.
-assert.deepEqual(await poll(ready, ready.MindwtrHost.menuRead('archive', '{"offset":0,"limit":50}')), { ok: false, error: 'SAVE_FAILED: disk full' });
+assert.deepEqual(await poll(ready, ready.MindwtrHost.menuRead('archive', '{"offset":0,"limit":50}')), readRefusal);
 assert.equal(ready.menuInputs.length, 0);
 assert.equal((await poll(ready, ready.MindwtrHost.menuRead('more', '{}'))).ok, true);
 assert.equal(ready.menuInputs.length, 1);
