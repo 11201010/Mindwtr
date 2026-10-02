@@ -359,7 +359,9 @@ describe('task editor schedule parity with the mobile editor', () => {
 
     it('round-trips the last weekday through the shared custom monthly editor', () => {
         const rrule = 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1';
-        const state = getTaskEditorMonthlyCustom(rrule, new Date(2026, 0, 30));
+        const anchor = new Date(2026, 0, 30);
+        expect(getTaskEditorMonthlyPattern('monthly', rrule, anchor)).toBe('custom');
+        const state = getTaskEditorMonthlyCustom(rrule, anchor);
         expect(state).toMatchObject({ mode: 'nth', ordinal: '-1', weekday: 'WEEKDAY' });
         expect(buildTaskEditorMonthlyCustomRRule(rrule, state))
             .toBe('FREQ=MONTHLY;BYDAY=FR,MO,TH,TU,WE;BYSETPOS=-1');

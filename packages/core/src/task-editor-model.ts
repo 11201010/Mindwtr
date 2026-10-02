@@ -139,14 +139,13 @@ export function getTaskEditorMonthlyPattern(
 ): 'date' | 'custom' {
     if (rule !== 'monthly') return 'date';
     const parsed = parseRRuleString(rrule);
-    const hasLast = parsed.byDay?.some((day) => String(day).startsWith('-1'));
-    const hasNth = parsed.byDay?.some((day) => /^[1-4]/.test(String(day)));
+    const hasByDay = Boolean(parsed.byDay?.length);
     const hasByMonthDay = parsed.byMonthDay && parsed.byMonthDay.length > 0;
-    // A multi-day list is always custom, even when its first day happens to
-    // match the anchor.
+    // A multi-day BYMONTHDAY list is always custom, even when its first day
+    // happens to match the anchor.
     const isCustomDay = hasByMonthDay
         && (parsed.byMonthDay!.length > 1 || parsed.byMonthDay![0] !== anchorDate.getDate());
-    return hasNth || hasLast || isCustomDay ? 'custom' : 'date';
+    return hasByDay || isCustomDay ? 'custom' : 'date';
 }
 
 export type TaskEditorFieldLayoutInput = {

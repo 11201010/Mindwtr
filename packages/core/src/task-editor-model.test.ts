@@ -363,6 +363,30 @@ describe('task editor model parity: Someday sections and suggestions', () => {
 });
 
 describe('task editor model rules', () => {
+    it('selects Custom for the last weekday of a month', () => {
+        expect(getTaskEditorMonthlyPattern(
+            'monthly', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', new Date(2026, 0, 30),
+        )).toBe('custom');
+    });
+
+    it.each(['1', '2', '3', '4', '-1'])(
+        'selects Custom for positioned weekdays at position %s',
+        (position) => {
+            expect(getTaskEditorMonthlyPattern(
+                'monthly', `FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=${position}`, new Date(2026, 0, 30),
+            )).toBe('custom');
+        },
+    );
+
+    it('selects Custom for a plain weekday, but Date for the anchor day', () => {
+        const anchor = new Date(2026, 0, 30);
+        expect(getTaskEditorMonthlyPattern('monthly', 'FREQ=MONTHLY;BYDAY=MO', anchor)).toBe('custom');
+        expect(getTaskEditorMonthlyPattern('monthly', 'FREQ=MONTHLY', anchor)).toBe('date');
+        expect(getTaskEditorMonthlyPattern('monthly', 'FREQ=MONTHLY;BYMONTHDAY=30', anchor)).toBe('date');
+        expect(getTaskEditorMonthlyPattern('monthly', 'FREQ=MONTHLY;BYMONTHDAY=29', anchor)).toBe('custom');
+        expect(getTaskEditorMonthlyPattern('weekly', 'FREQ=WEEKLY;BYDAY=MO', anchor)).toBe('date');
+    });
+
     const task: Task = {
         id: 't', title: 'Task', status: 'next', tags: [], contexts: [], createdAt: CREATED, updatedAt: CREATED,
     };
