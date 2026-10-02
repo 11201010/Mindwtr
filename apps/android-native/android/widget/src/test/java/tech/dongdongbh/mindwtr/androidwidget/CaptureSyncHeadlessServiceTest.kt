@@ -1,11 +1,13 @@
 package tech.dongdongbh.mindwtr.androidwidget
 
 import android.content.Context
+import android.os.FileObserver
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,9 +23,7 @@ class CaptureSyncHeadlessServiceTest {
 
   @Before
   fun clean() {
-    context.getSharedPreferences(CheckoffStore.COMMITTED_PREFS_NAME, Context.MODE_PRIVATE).edit().clear().commit()
     File(context.filesDir, PendingCaptureWriter.DIRECTORY).deleteRecursively()
-    PendingCheckoffStore(context).write(emptyMap())
   }
 
   @After
@@ -42,16 +42,19 @@ class CaptureSyncHeadlessServiceTest {
   }
 
   @Test
-  fun aCheckOffRnsSweepQueuesStartsTheHookAndAPruneDoesNot() {
+  fun anItemRnsWriterPublishesInTheQueueStartsTheHook() {
+    val queue = File(context.filesDir, PendingCaptureWriter.DIRECTORY)
     CaptureSyncHeadlessService.install(context) { started += it }
-    PendingCheckoffStore(context).write(mapOf("task-1" to 0L))
-    val swept = CheckoffStore.sweep(context, now = 10_000L)
-    assertEquals(1, swept.newlyCommitted)
-    assertEquals(1, File(context.filesDir, PendingCaptureWriter.DIRECTORY).list()!!.size)
-    assertEquals("the queued check-off starts the drain", 1, started.size)
-    CheckoffStore.prune(context, emptySet())
-    assertEquals("a prune (the app stored it) starts nothing", 1, started.size)
-    CheckoffStore.sweep(context, now = 20_000L)
-    assertEquals("a sweep with nothing new starts nothing", 1, started.size)
+    assertTrue("the watched queue folder exists", queue.isDirectory)
+    // RN's writer (the dialog, the capture intent receiver, a check-off's sweep) renames `<id>.tmp` to `<id>.json`.
+    CaptureSyncHeadlessService.queueEvent(context, FileObserver.MOVED_TO, "a.json")
+    assertEquals(1, started.size)
+    CaptureSyncHeadlessService.queueEvent(context, FileObserver.CREATE, "b.tmp")
+    CaptureSyncHeadlessService.queueEvent(context, FileObserver.MOVED_TO, "b.tmp")
+    CaptureSyncHeadlessService.queueEvent(context, FileObserver.DELETE, "a.json")
+    assertEquals("a half-written file or the drain's delete starts nothing", 1, started.size)
+    CaptureSyncHeadlessService.install(context, null)
+    CaptureSyncHeadlessService.queueEvent(context, FileObserver.MOVED_TO, "c.json")
+    assertEquals("no hook: nothing starts", 1, started.size)
   }
 }

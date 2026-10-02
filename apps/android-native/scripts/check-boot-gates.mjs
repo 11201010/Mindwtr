@@ -3006,13 +3006,14 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(contextFilters[0], /<data /);
     assert.match(contextFilters[1], /<data android:scheme="mindwtr" \/>/);
     assert.match(manifest, /<uses-permission android:name="android\.permission\.POST_NOTIFICATIONS" \/>/);
-    // RN's capture intent Kotlin compiled as it is in the widget module (pass W1), with RN's tests; the receiver is RN's but for its
-    // lines marked `native`, and it is the module's own (it reads RN's internal extras reader).
-    assert.match(widgetGradle, /val rnExcluded = listOf\("AndroidWidgetModule", "CaptureSyncHeadlessService", "CaptureIntentReceiver"\)/, 'RN\'s receiver is replaced, not compiled in');
-    const nativeReceiver = widgetKt('CaptureIntentReceiver.kt');
-    assert.equal(nativeReceiver.split('\n').filter((line) => !line.endsWith('// native')).join('\n').replace(/\n \*\n \* Native:[\s\S]*?(?=\n \*\/)/, ''),
-        rnWidget('CaptureIntentReceiver.kt'), 'the capture intent receiver is RN\'s but for its native lines');
-    assert.match(nativeReceiver, /if \(queued && ordered\) pendingResult\.resultCode = Activity\.RESULT_OK\n[^\n]*\/\/ native\n\s+if \(queued\) CaptureSyncHeadlessService\.start\(appContext\) \/\/ native\n/, 'a queued capture starts CoreWork after the sender is told');
+    // RN's capture intent Kotlin, its receiver included, compiled as it is in the widget module (pass W1), with RN's tests. No
+    // native copy of an RN file: a queued capture wakes CoreWork through the headless task's stand-in, which watches the queue.
+    const allowedExclusions = /val rnExcluded = listOf\("AndroidWidgetModule", "CaptureSyncHeadlessService"\)/;
+    assert.match(widgetGradle, allowedExclusions, 'only the Expo bridge and the headless task stay out');
+    assert.deepEqual(readdirSync(resolve(app, 'android/widget/src/main/java/tech/dongdongbh/mindwtr/androidwidget')), ['CaptureSyncHeadlessService.kt'], 'the module\'s one native file is the headless task\'s stand-in');
+    const shim = widgetKt('CaptureSyncHeadlessService.kt');
+    assert.match(shim, /object : FileObserver\(queue\.path, FileObserver\.MOVED_TO\)/, 'the stand-in watches RN\'s queue folder for a published item');
+    assert.match(shim, /internal fun queueEvent\(context: Context, event: Int, path: String\?\) \{\s+if \(event and FileObserver\.MOVED_TO != 0 && path\?\.endsWith\("\.json"\) == true\) start\(context\)\s+\}/);
     assert(!existsSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/androidwidget')), 'RN\'s CheckoffStore.kt is compiled in; no native copy is left');
     // The context receiver reads the intent as RN's does; where RN starts its headless task, CoreWork asks core.
     const rnContext = readFileSync(resolve(app, '../mobile/modules/context-automation/android/src/main/java/tech/dongdongbh/mindwtr/contextautomation/ContextAutomationReceiver.kt'), 'utf8');
@@ -3142,7 +3143,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(rnWidgetKt('CheckoffStore.kt'), /ACTION_SWEEP = "tech\.dongdongbh\.mindwtr\.androidwidget\.CHECKOFF_SWEEP"[\s\S]*REQUEST_SWEEP = 4614/);
     const widgetGradle = readFileSync(resolve(app, 'android/widget/build.gradle.kts'), 'utf8');
     assert.match(widgetGradle, /namespace = "tech\.dongdongbh\.mindwtr\.androidwidget"/, 'RN\'s R and namespace');
-    assert.match(widgetGradle, /val rnExcluded = listOf\("AndroidWidgetModule", "CaptureSyncHeadlessService", "CaptureIntentReceiver"\)/, 'only the Expo bridge, the headless task and the receiver stay out');
+    assert.match(widgetGradle, /val rnExcluded = listOf\("AndroidWidgetModule", "CaptureSyncHeadlessService"\)/, 'only the Expo bridge and the headless task stay out');
     assert.equal(realpathSync(resolve(app, 'android/widget/src/main/res')), realpathSync(resolve(app, '../mobile/modules/android-widget/android/src/main/res')), 'the module\'s resources are RN\'s');
     // The widget module's hook is CoreWork's ingest job, set before any component runs.
     assert.match(readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/MindwtrApplication.kt'), 'utf8'),

@@ -5,11 +5,11 @@ plugins {
 
 // RN's home-screen widget module, compiled as it is: RN's Kotlin, resources and JVM tests (apps/mobile/modules/android-widget),
 // under RN's namespace, so class names and R stay RN's and placed widgets keep their providers. Left out: the Expo bridge
-// (AndroidWidgetModule.kt; the engine publishes the payload, HostWidgets.kt) and RN's headless task (CaptureSyncHeadlessService.kt)
-// and capture receiver (CaptureIntentReceiver.kt), whose native versions are in src/main: they start CoreWork through the app's
-// hook. The manifest entries and the plugins' XML are generated per build type in the app (scripts/build-widgets.mjs).
+// (AndroidWidgetModule.kt; the engine publishes the payload, HostWidgets.kt) and RN's headless task (CaptureSyncHeadlessService.kt),
+// whose native stand-in is in src/main: it starts CoreWork through the app's hook. The manifest entries and the plugins' XML are
+// generated per build type in the app (scripts/build-widgets.mjs).
 val rnModule = rootProject.projectDir.resolve("../../mobile/modules/android-widget/android")
-val rnExcluded = listOf("AndroidWidgetModule", "CaptureSyncHeadlessService", "CaptureIntentReceiver")
+val rnExcluded = listOf("AndroidWidgetModule", "CaptureSyncHeadlessService")
 
 android {
     namespace = "tech.dongdongbh.mindwtr.androidwidget"
