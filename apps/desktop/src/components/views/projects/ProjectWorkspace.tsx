@@ -926,6 +926,7 @@ export function ProjectWorkspace({
     const focusedHighlightIdRef = useRef<string | null>(null);
     useTaskListScope({
         getTasks: () => keyboardVisibleTasks,
+        getSelectedIds: () => multiSelectedIds,
         getSelectedIndex: () => selectedTaskIndex,
         setSelectedIndex: setSelectedTaskIndex,
         t,

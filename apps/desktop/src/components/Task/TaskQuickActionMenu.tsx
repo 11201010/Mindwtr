@@ -29,6 +29,7 @@ import {
 import { joinDateTime, splitDateTime } from '@mindwtr/core/date-draft';
 
 import { reportError } from '../../lib/report-error';
+import { copyTaskTitles } from '../../lib/task-clipboard';
 import { cn } from '../../lib/utils';
 import { FocusStarIcon } from '../FocusStarIcon';
 import { Button } from '../ui/Button';
@@ -834,6 +835,14 @@ export function TaskQuickActionMenu({
                     showChevron: true,
                 })}
                 {!readOnly ? <div className="my-1 h-px bg-border/70" role="separator" /> : null}
+                {renderMenuAction({
+                    icon: <Copy className="h-4 w-4" />,
+                    label: tFallback(t, 'task.copyTitle', 'Copy Title'),
+                    onClick: () => {
+                        void copyTaskTitles([task], t);
+                        onClose();
+                    },
+                })}
                 {renderMenuAction({
                     icon: <Copy className="h-4 w-4" />,
                     label: duplicateLabel,

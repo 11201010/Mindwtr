@@ -40,7 +40,7 @@ export interface TaskListScope {
     renameSelected?: () => void;
     deleteSelected: () => void;
     setStatusSelected?: (status: TaskStatus) => void;
-    copySelected?: (includeDescription: boolean) => void;
+    copySelected?: (includeDescription: boolean, requireHighlight?: boolean) => boolean;
     focusAddInput?: () => boolean;
     // Move DOM focus onto the currently selected task's title and render its
     // highlight, so entering the list from the sidebar (ArrowRight / `l`)
@@ -87,7 +87,8 @@ const KeybindingContext = createContext<KeybindingContextType | undefined>(undef
 function isEditableTarget(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) return false;
     const tag = target.tagName.toLowerCase();
-    return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+    return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable
+        || target.closest('[contenteditable]:not([contenteditable="false"])') !== null;
 }
 
 // An open modal dialog (global search, quick add, prompts) owns the keyboard:
@@ -853,6 +854,7 @@ export function KeybindingProvider({
         };
 
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.defaultPrevented) return;
             if (pendingRef.current.key === 'y' && (style !== 'vim' || e.key === 'F11' || e.metaKey || e.ctrlKey || e.altKey
                 || CHORD_MODIFIER_KEYS.has(e.key) || editingTaskIdRef.current || isEditableTarget(e.target)
                 || hasModalDialogOpen()
@@ -899,6 +901,18 @@ export function KeybindingProvider({
             // keystrokes. In particular, dnd-kit uses Space/Arrow keys and
             // must not also move or mutate a stale task selection.
             if (hasProjectNestedControlFocus(e.target)) return;
+            if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c') {
+                if (
+                    !e.repeat
+                    && !isEditableTarget(e.target)
+                    && !isEditableTarget(document.activeElement)
+                    && !window.getSelection()?.toString()
+                    && !hasOpenPopup()
+                    && !(projectScopeRef.current?.ownsFocus() ?? false)
+                    && scopeRef.current?.copySelected?.(false, true)
+                ) e.preventDefault();
+                return;
+            }
             if (pendingRef.current.key === 'y') {
                 handleVim(e);
                 return;

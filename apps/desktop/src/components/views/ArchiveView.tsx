@@ -363,6 +363,7 @@ export function ArchiveView() {
         // The projects segment renders no task rows, so the keyboard must not
         // act on archived tasks the user cannot see.
         getTasks: () => (segment === 'tasks' ? orderedTasks : []),
+        getSelectedIds: () => selectedIds,
         getSelectedIndex: () => selectedTaskIndex,
         setSelectedIndex: setSelectedTaskIndex,
         t,

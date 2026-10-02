@@ -166,6 +166,7 @@ export function KeybindingHelpModal({
 
     const globalItems = style === 'emacs' ? emacsGlobal : vimGlobal;
     const listItems: HelpItem[] = [
+        { keys: `${primary}+C`, labelKey: 'keybindings.list.copyTitle' },
         { keys: `${primary}+Click / Shift+Click`, labelKey: 'keybindings.list.select' },
         ...(style === 'emacs' ? emacsList : style === 'standard' ? standardList : vimList),
     ];

@@ -251,8 +251,8 @@ export function TrashView() {
     // delete key purges — the only two things this view actually does — and the
     // status chords stay unbound.
     const [selectedTaskIndex, setSelectedTaskIndex] = useState(0);
-    const scopeRef = useRef({ timelineTasks, selectedTaskIndex, restoreTask, handlePurgeTask, toggleTaskSelection, t });
-    scopeRef.current = { timelineTasks, selectedTaskIndex, restoreTask, handlePurgeTask, toggleTaskSelection, t };
+    const scopeRef = useRef({ timelineTasks, selectedTaskIds, selectedTaskIndex, restoreTask, handlePurgeTask, toggleTaskSelection, t });
+    scopeRef.current = { timelineTasks, selectedTaskIds, selectedTaskIndex, restoreTask, handlePurgeTask, toggleTaskSelection, t };
 
     const trashScope = useMemo(() => {
         // Same resolution rule as the shared scope: DOM focus wins over the
@@ -270,6 +270,7 @@ export function TrashView() {
         return {
             ...createTaskListScope({
                 getTasks: () => scopeRef.current.timelineTasks,
+                getSelectedIds: () => scopeRef.current.selectedTaskIds,
                 getSelectedIndex: () => scopeRef.current.selectedTaskIndex,
                 setSelectedIndex: setSelectedTaskIndex,
                 t: (key) => scopeRef.current.t(key),

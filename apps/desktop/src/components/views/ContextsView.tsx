@@ -297,6 +297,7 @@ export function ContextsView() {
     const [selectedTaskIndex, setSelectedTaskIndex] = useState(0);
     useTaskListScope({
         getTasks: () => visibleTasks,
+        getSelectedIds: () => multiSelectedIds,
         getSelectedIndex: () => selectedTaskIndex,
         setSelectedIndex: setSelectedTaskIndex,
         t,

@@ -135,6 +135,7 @@ export function SearchView({ savedSearchId, onDelete }: SearchViewProps) {
     const [selectedTaskIndex, setSelectedTaskIndex] = useState(0);
     useTaskListScope({
         getTasks: () => filteredTasks,
+        getSelectedIds: () => multiSelectedIds,
         getSelectedIndex: () => selectedTaskIndex,
         setSelectedIndex: setSelectedTaskIndex,
         t,
