@@ -308,11 +308,12 @@ try {
     console.log(`apk: ${apk}\napk sha256: ${sha256(readFileSync(apk))}\nrun: ${run}`);
     const beforeInstall = front();
     if (!beforeInstall.includes(`${PKG}/`) && !beforeInstall.includes(`${home}/`)) throw new Stopped(`another app is in front: ${beforeInstall.trim()}`);
-    // The test files, newest last so the photo picker lists the PNG first; the media scanner indexes them.
+    // The test files; the media scanner indexes them. The PNG is dated far ahead (removed on exit) so the photo picker, which
+    // lists the newest first, shows it before any photo another check or the user left (run 2: "29.png" was newer).
     sh(`mkdir -p ${PHONE_DIR}`);
     execFileSync(adbBin, ['-s', serial, 'push', resolve(work, names.pdf), `${PHONE_DIR}/${names.pdf}`], { stdio: 'ignore' });
     execFileSync(adbBin, ['-s', serial, 'push', pngFile, `${PHONE_DIR}/${names.png}`], { stdio: 'ignore' });
-    sh(`touch ${PHONE_DIR}/${names.png}`);
+    sh(`touch -t 203712312359 ${PHONE_DIR}/${names.png}`);
     for (const file of [names.pdf, names.png]) sh(`am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://${PHONE_DIR}/${file} >/dev/null 2>&1 || true`);
     await until('the media store to list the PNG', () => sh(`content query --uri content://media/external/images/media --projection _display_name --where "_display_name='${names.png}'"`)
         .includes(names.png), 30_000, 1_000);
@@ -366,9 +367,14 @@ try {
     await until('the app back with a photo row', async () => front().includes(`${PKG}/`) && rowTitles(await screen()).length >= 2, 30_000, 1_000);
     const photoRow = rowTitles(await screen()).find((title) => title !== names.pdf);
     if (photoRow !== names.png) {
-        // Not this run's PNG (the picker's newest is someone's photo): discard the draft, so its copy goes, and stop.
+        // Not this run's PNG (the picker's newest is someone's photo): discard the draft, so its copies go, and stop.
         await backToApp();
-        throw new Stopped(`the photo picker's newest photo is "${photoRow}", not ${names.png}; the draft is left unsaved (close it with Discard)`);
+        await hideKeyboard();
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        const discard = button(await waitFor('the discard question', (current) => Boolean(button(current, en['common.discard'])), 10_000), en['common.discard']);
+        await tapExpecting(discard, (current) => !inEditor(current), 'the draft discarded');
+        throw new Stopped(`the photo picker's newest photo is "${photoRow}", not ${names.png}; the draft was discarded`);
     }
     check(true, `(2) Add photo picked ${names.png} in the photo picker; the editor lists it`);
     await revealAttachments();
