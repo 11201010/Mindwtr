@@ -83,6 +83,10 @@ for (const keys of keyboardStyles) {
         await main.focus();
         for (const key of keys.navigateInbox) await page.keyboard.press(key);
         await expect(page.locator('[data-sidebar-item][data-view="inbox"]')).toHaveAttribute('aria-current', 'page');
+        // The sidebar updates before the view transition finishes. Wait for
+        // the Inbox-owned input so `a` cannot fall through to global Quick Add.
+        const inboxAddInput = main.getByRole('combobox', { name: 'Add Task', exact: true });
+        await expect(inboxAddInput).toBeVisible();
 
         await main.focus();
         await page.keyboard.press(keys.search);
@@ -93,7 +97,8 @@ for (const keys of keyboardStyles) {
         await expect(main).toBeFocused();
 
         await page.keyboard.press('a');
-        await expect(page.getByRole('combobox', { name: 'Add Task', exact: true })).toBeFocused();
+        await expect(inboxAddInput).toBeFocused();
+        await expect(page.getByRole('dialog', { name: 'Add Task', exact: true })).toHaveCount(0);
 
         const contexts = page.locator('[data-sidebar-item][data-view="contexts"]');
         const more = page.getByRole('button', { name: 'More', exact: true });
