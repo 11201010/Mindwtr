@@ -278,8 +278,9 @@ const rewriteAsyncStorage = (name, statements) => {
     pushPrivate(copy, ASYNC_STORAGE);
     runAs(`rm -f ${ASYNC_STORAGE}-wal ${ASYNC_STORAGE}-shm ${ASYNC_STORAGE}-journal`);
 };
-// Names (never values) of the AsyncStorage rows that differ, other than the marker and a newly set reconcile flag.
-const asyncChanges = (before, after) => [...new Set([...before.keys(), ...after.keys()])].filter((name) => name !== MARKER
+// Names (never values) of the AsyncStorage rows that differ, other than the marker, a newly set reconcile flag, and RN's alarm map
+// (the reminder alarms clear RN's and keep theirs under RN's key: each scenario that allows it also checks RKStorage's checkpoint).
+const asyncChanges = (before, after) => [...new Set([...before.keys(), ...after.keys()])].filter((name) => name !== MARKER && name !== ALARM_MAP
     && before.get(name) !== after.get(name) && !(name === RECONCILED && !before.has(name) && after.get(name) === '1'));
 // The RKStorage checkpoint must hold exactly the pre-import RKStorage files, byte for byte.
 const checkpointMatches = (before, after) => ['', '-wal', '-journal', '-shm'].every((suffix) =>
@@ -723,8 +724,10 @@ const scenarioMissingWithBackup = async () => {
     check(postAsync.get(RECONCILED) === '1', '(5b) the reconcile flag is set');
     const asyncChanged = asyncChanges(preAsync, postAsync);
     check(asyncChanged.length === 0, `(5b) no other AsyncStorage row changed, ${JSON_BACKUP} included${shortList(asyncChanged)}`);
-    check(flagWasSet ? after.get(ASYNC_STORAGE) === before.get(ASYNC_STORAGE) && ![...after.keys()].some(isRnCheckpoint) : checkpointMatches(before, after),
-        flagWasSet ? '(5b) RN had set the reconcile flag, so RKStorage is untouched and not checkpointed' : `(5b) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files`);
+    // With the flag already set only the reminder alarms write RKStorage (RN's alarm map), and only after its checkpoint.
+    const alarmMapChanged = preAsync.get(ALARM_MAP) !== postAsync.get(ALARM_MAP);
+    check(flagWasSet && !alarmMapChanged ? after.get(ASYNC_STORAGE) === before.get(ASYNC_STORAGE) && ![...after.keys()].some(isRnCheckpoint) : checkpointMatches(before, after),
+        flagWasSet && !alarmMapChanged ? '(5b) RN had set the reconcile flag, so RKStorage is untouched and not checkpointed' : `(5b) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files`);
     const changed = differences(before, after, {
         changedOk: (path) => isAsyncStorage(path),
         newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path),
