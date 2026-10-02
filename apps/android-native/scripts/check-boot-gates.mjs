@@ -4045,6 +4045,19 @@ console.log('Entry points: RN\'s alias, links on the build\'s scheme, text share
     assert.match(hostEntry, /reminderDone\(requestId: string, taskId: string\): string \{\s+return submit\(async \(\) => taskResult\('reminderDone', await contract\.completeReminderTask\(\{ requestId, taskId \}\)\)\);/);
     // Snooze's alarm is made in the engine against the native state (core's planReminderSnooze), before the journaled reply.
     assert.match(hostEntry, /reminderSnooze\(json: string\): string \{\s+return submit\(async \(\) => \{\s+const result = await contract\.snoozeReminder\(JSON\.parse\(json\)\);\s+if \(result\.ok\) await requireReminders\(\)\.snooze\(result\.value\);\s+return taskResult\('reminderSnooze', result\);/);
+    // RN's look (react-native-alarm-notification's sendNotification and channel, patched): private on the lock screen (#823), a
+    // reminder at default priority with the notification sound; the channel at default importance, lights, no vibration, no DnD
+    // bypass. Only reminder notifications are cleared without permission (the quick-capture one is not, #819). Snooze and Done
+    // take the notification away once their job is stored (RN's snooze dismissal).
+    assert.match(notificationsKt, /\.setPriority\(NotificationCompat\.PRIORITY_DEFAULT\)/);
+    assert.match(notificationsKt, /\.setVisibility\(NotificationCompat\.VISIBILITY_PRIVATE\)/);
+    assert.match(notificationsKt, /\.setCategory\(NotificationCompat\.CATEGORY_REMINDER\)/);
+    assert.match(notificationsKt, /if \(details\.optBoolean\("play_sound", true\)\) Settings\.System\.DEFAULT_NOTIFICATION_URI else null/);
+    assert.match(notificationsKt, /NotificationChannel\(id, name, NotificationManager\.IMPORTANCE_DEFAULT\)\.apply \{\s+description = name\s+enableLights\(true\)\s+color\?\.let \{ lightColor = it \}\s+enableVibration\(false\)\s+setSound\(Settings\.System\.DEFAULT_NOTIFICATION_URI, AudioAttributes\.Builder\(\)\s+\.setUsage\(AudioAttributes\.USAGE_NOTIFICATION\)/);
+    assert.doesNotMatch(code(notificationsKt), /setBypassDnd|setOngoing|FLAG_INSISTENT/);
+    assert.match(remindersKt, /override fun clearDelivered\(\) \{\s+for \(shown in notifications\.activeNotifications\) \{\s+if \(NotificationCompat\.getChannelId\(shown\.notification\) == CoreNotifications\.REMINDER_CHANNEL\)/);
+    assert.doesNotMatch(code(remindersKt + notificationsKt), /cancelAll\(\)/, 'nothing clears the whole tray');
+    assert.equal([...code(remindersKt).matchAll(/\), done = dismiss\)/g)].length, 2, 'Done and Snooze dismiss once stored');
     // The debug-only stops and the short snooze read a debug property (empty in a release build).
     assert.match(remindersKt, /if \(debugProperty\("reminder_stop"\) == point\)/);
     assert.match(remindersKt, /debugProperty\("snooze_minutes"\)\.toDoubleOrNull\(\)/);
