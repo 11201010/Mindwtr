@@ -12909,6 +12909,7 @@ final class FoundationUITests: XCTestCase {
 
     func testTaskRecurrenceFocusedSaveWeeklyCustomUntilDiscardAndRestart() {
         let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "52c00e42-3c56-4a2b-a843-234072fef280"]
         app.launch()
         func enabled(_ element: XCUIElement, timeout: TimeInterval = 10) {
             XCTAssertTrue(element.waitForExistence(timeout: timeout))
@@ -13075,14 +13076,14 @@ final class FoundationUITests: XCTestCase {
         let day = Int(dayWheel!.value as! String)!
         dayWheel!.adjust(toPickerWheelValue: String(day < 27 ? day + 1 : day - 1))
         let wheelValues = picker.pickerWheels.allElementsBoundByIndex.map { $0.value as? String ?? "" }
-        tap("task-recurrence-until-done", upward: false)
+        tap("task-recurrence-until-done")
         let untilLabel = app.buttons["task-recurrence-until"].value as? String ?? ""
         XCTAssertFalse(untilLabel.isEmpty)
         saveAndOpen(relaunch: true)
         tap("task-recurrence-until")
         assertValue(app.buttons["task-recurrence-until"], untilLabel)
         XCTAssertEqual(picker.pickerWheels.allElementsBoundByIndex.map { $0.value as? String ?? "" }, wheelValues)
-        tap("task-recurrence-until-done", upward: false)
+        tap("task-recurrence-until-done")
         tap("task-recurrence-rule-none", upward: false)
         saveAndOpen(relaunch: true)
         selected("task-recurrence-rule-none")
@@ -18061,6 +18062,148 @@ final class FoundationUITests: XCTestCase {
 
     func testTask166DeferredRowIdentityLargest() {
         task166DeferredRowIdentity("c0a39c9f-5d5d-44df-828d-6a87691c732b")
+    }
+
+    private func task167MonthlyCustomSelection(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        let title = "Task167 Monthly"
+
+        func reveal(_ element: XCUIElement, in scroll: XCUIElement) {
+            XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+            for _ in 0..<16 {
+                var viewport = scroll.frame.intersection(app.frame)
+                let keyboard = app.keyboards.firstMatch
+                if keyboard.exists && keyboard.frame.intersects(viewport) {
+                    viewport.size.height = max(0, keyboard.frame.minY - viewport.minY)
+                }
+                XCTAssertGreaterThan(viewport.height, 0)
+                if element.exists {
+                    let overlap = element.frame.intersection(viewport)
+                    if !overlap.isNull && overlap.height >= min(32, element.frame.height) && element.isHittable { return }
+                    if element.frame.minY < viewport.minY { scroll.swipeDown() }
+                    else { scroll.swipeUp() }
+                } else { scroll.swipeUp() }
+            }
+            XCTFail("Monthly recurrence control could not be revealed: " + element.identifier)
+        }
+
+        func tapEditor(_ id: String) {
+            let button = app.buttons[id]
+            reveal(button, in: app.scrollViews["task-editor-scroll"])
+            boardEnabled(button, timeout: 30)
+            button.tap()
+        }
+
+        func selected(_ id: String, _ expected: Bool = true) {
+            let button = app.buttons[id]
+            XCTAssertTrue(button.waitForExistence(timeout: 15), id)
+            expectation(for: NSPredicate(format: "selected == %@", NSNumber(value: expected)), evaluatedWith: button)
+            waitForExpectations(timeout: 10)
+        }
+
+        func screenshot(_ name: String) {
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = name
+            shot.lifetime = .keepAlways
+            add(shot)
+        }
+
+        func openTask() {
+            if !app.textFields["search-input"].exists { boardTap(app, "search-open") }
+            let query = app.textFields["search-input"]
+            boardEnabled(query, timeout: 30)
+            if query.value as? String != title {
+                query.tap()
+                let previous = query.value as? String ?? ""
+                query.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previous.count) + title)
+            }
+            let result = app.buttons["search-task-task167-monthly"]
+            boardEnabled(result, timeout: 30)
+            result.tap()
+            boardTap(app, "task-mode-edit")
+            boardEnabled(app.buttons["task-editor-section-scheduling"], timeout: 30)
+            let scheduling = app.buttons["task-editor-section-scheduling"]
+            reveal(scheduling, in: app.scrollViews["task-editor-scroll"])
+            if scheduling.value as? String == "Expand" { scheduling.tap() }
+            boardEnabled(app.buttons["task-recurrence-rule-monthly"], timeout: 30)
+            reveal(app.buttons["task-recurrence-rule-monthly"], in: app.scrollViews["task-editor-scroll"])
+        }
+
+        func assertMonthlyCustom() {
+            selected("task-recurrence-rule-monthly")
+            selected("task-recurrence-monthly-custom")
+            selected("task-recurrence-monthly-day", false)
+        }
+
+        func customScroll() -> XCUIElement {
+            app.scrollViews.containing(.button, identifier: "task-recurrence-custom-mode-nth").firstMatch
+        }
+
+        func tapCustom(_ id: String) {
+            let button = app.buttons[id]
+            reveal(button, in: customScroll())
+            boardEnabled(button, timeout: 30)
+            button.tap()
+        }
+
+        func assertCustom(_ ordinal: String) {
+            selected("task-recurrence-custom-mode-nth")
+            selected("task-recurrence-custom-ordinal-" + ordinal)
+            selected("task-recurrence-custom-weekday-WEEKDAY")
+            let interval = app.textFields["task-recurrence-custom-interval"]
+            XCTAssertTrue(interval.waitForExistence(timeout: 10))
+            XCTAssertEqual(interval.value as? String, "3")
+        }
+
+        app.launch()
+        openTask()
+        // Old production identifies this saved last-weekday rule as the day-of-month choice.
+        // Stop here on the old build, before changing a draft or touching the database.
+        assertMonthlyCustom()
+        screenshot("Task167 saved monthly custom selection")
+
+        tapEditor("task-recurrence-monthly-custom")
+        assertCustom("-1")
+        screenshot("Task167 saved last weekday custom dialog")
+        tapCustom("task-recurrence-custom-ordinal-2")
+        selected("task-recurrence-custom-ordinal-2")
+        boardTap(app, "task-recurrence-custom-apply")
+        XCTAssertTrue(app.buttons["task-recurrence-custom-apply"].waitForNonExistence(timeout: 10))
+        assertMonthlyCustom()
+        tapEditor("task-recurrence-monthly-custom")
+        assertCustom("2")
+        boardTap(app, "task-recurrence-custom-cancel")
+
+        // Apply changed only the editor draft. Discard restores the complete saved rule.
+        boardTap(app, "task-view-close")
+        boardTap(app, "task-editor-discard")
+        openTask()
+        assertMonthlyCustom()
+        tapEditor("task-recurrence-monthly-custom")
+        assertCustom("-1")
+        boardTap(app, "task-recurrence-custom-cancel")
+        boardTap(app, "task-view-close")
+
+        app.terminate()
+        app.launch()
+        openTask()
+        assertMonthlyCustom()
+        tapEditor("task-recurrence-monthly-custom")
+        assertCustom("-1")
+        screenshot("Task167 cold saved last weekday custom dialog")
+        boardTap(app, "task-recurrence-custom-cancel")
+        boardTap(app, "task-view-close")
+        app.terminate()
+    }
+
+    func testTask167MonthlyCustomSelectionNormal() {
+        task167MonthlyCustomSelection("efd0cbfc-c5c9-4571-b59d-edb65804f16a")
+    }
+
+    func testTask167MonthlyCustomSelectionLargest() {
+        task167MonthlyCustomSelection("e21055d9-b15b-4eaa-8f98-d47d50b8ee62")
     }
 
 }
