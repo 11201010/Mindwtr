@@ -36,7 +36,7 @@ describe('ProjectToSectionDialog', () => {
         render(<ProjectToSectionDialog source={source} projects={[source, destination]} onCancel={vi.fn()} onSuccess={vi.fn()} t={t} />);
         fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dest' } });
         fireEvent.change(screen.getByRole('textbox', { name: 'Section name' }), { target: { value: 'Milestones' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Next' }));
         expect(screen.getByText('New section: Milestones')).toBeInTheDocument();
         expect(screen.getByText(/Move 3 tasks \(1 done, 1 archived\)/)).toBeInTheDocument();
         expect(mocks.prepare).toHaveBeenCalledWith(expect.anything(), 'source', 'dest', 'Milestones');
@@ -49,7 +49,7 @@ describe('ProjectToSectionDialog', () => {
         const onSuccess = vi.fn();
         const view = render(<ProjectToSectionDialog source={source} projects={[source, destination]} onCancel={vi.fn()} onSuccess={onSuccess} t={t} />);
         fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dest' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Next' }));
         fireEvent.click(screen.getByRole('button', { name: 'Convert to section…' }));
         view.rerender(<ProjectToSectionDialog source={source} projects={[destination]} onCancel={vi.fn()} onSuccess={onSuccess} t={t} />);
         await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument());

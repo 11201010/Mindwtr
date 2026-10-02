@@ -279,7 +279,9 @@ export const LOCALES = {
         // Include the newly translated sandbox and Reference strings; keep the native translation above
         // the mixed-English brand-name check threshold as the English dictionary grows.
         // Includes subsequent shipped translations and the UI simplification labels.
-        translatedKeyFloor: 2444,
+        // Re-pin to the 2482 keys currently present after English grew to 2735 keys;
+        // the old 2444 floor fell below the 90% brand-name check ceiling.
+        translatedKeyFloor: 2482,
     },
     it: {
         loadSync: () => require('./locales/it') as typeof import('./locales/it'),

@@ -100,7 +100,7 @@ export function ProjectToSectionDialog({ source, projects, onCancel, onSuccess, 
         </DialogBody>
         <DialogFooter className="flex justify-end gap-2 border-t border-border px-5 py-4">
             <button type="button" disabled={busy || retryOnly} onClick={prepared ? () => { setPrepared(null); setError(null); } : onCancel} className="rounded-lg border border-border px-4 py-2 disabled:opacity-50">{prepared ? tFallback(t, 'common.back', 'Back') : t('common.cancel')}</button>
-            <button type="button" disabled={busy || (!prepared && (!preview?.ok || !name.trim()))} aria-busy={busy} onClick={() => { if (prepared) void save(); else confirm(); }} className="rounded-lg bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50">{prepared ? (error ? tFallback(t, 'common.retry', 'Retry') : label) : tFallback(t, 'common.continue', 'Continue')}</button>
+            <button type="button" disabled={busy || (!prepared && (!preview?.ok || !name.trim()))} aria-busy={busy} onClick={() => { if (prepared) void save(); else confirm(); }} className="rounded-lg bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50">{prepared ? (error ? tFallback(t, 'common.retry', 'Retry') : label) : tFallback(t, 'common.next', 'Next')}</button>
         </DialogFooter>
     </Dialog>;
 }

@@ -34,7 +34,7 @@ describe('ProjectToSectionModal', () => {
         act(() => { tree = create(<ProjectToSectionModal visible source={source} projects={[source, destination]} onClose={vi.fn()} onSuccess={onSuccess} />); });
         act(() => tree.root.findAllByType(TouchableOpacity).find((item) => item.props.accessibilityRole === 'radio' && item.props.children?.props?.children === 'Destination')?.props.onPress());
         act(() => tree.root.findByType(TextInput).props.onChangeText('Milestones'));
-        act(() => button(tree, 'Continue').props.onPress());
+        act(() => button(tree, 'Next').props.onPress());
         expect(text(tree)).toContain('New section: Milestones');
         expect(text(tree)).toContain('Move 2 tasks (1 done, 0 archived) from Source into Destination.');
         await act(async () => { await button(tree, 'Convert to section…').props.onPress(); });

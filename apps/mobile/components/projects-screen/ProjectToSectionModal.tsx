@@ -30,14 +30,18 @@ export function ProjectToSectionModal({ visible, source, projects, onClose, onSu
     const [busy, setBusy] = React.useState(false);
     const [retryOnly, setRetryOnly] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
+    const resetSourceId = React.useRef<string | null | undefined>(undefined);
     React.useEffect(() => {
-        if (!visible) return;
+        if (!visible) { resetSourceId.current = undefined; return; }
+        const sourceId = source?.id ?? null;
+        if (resetSourceId.current === sourceId) return;
+        resetSourceId.current = sourceId;
         setDestinationId('');
         setName(source?.title ?? '');
         setPrepared(null);
         setRetryOnly(false);
         setError(null);
-    }, [visible, source?.id]);
+    }, [visible, source?.id, source?.title]);
     const preview = source && destinationId
         ? previewProjectToSection(useTaskStore.getState(), source.id, destinationId)
         : null;
@@ -109,7 +113,7 @@ export function ProjectToSectionModal({ visible, source, projects, onClose, onSu
                 </ScrollView>
                 <View style={styles.linkModalButtons}>
                     {button(prepared ? tFallback(t, 'common.back', 'Back') : t('common.cancel'), prepared ? () => { setPrepared(null); setError(null); } : onClose, busy || retryOnly)}
-                    {button(prepared ? (error ? tFallback(t, 'common.retry', 'Retry') : tFallback(t, 'projects.convertToSection', 'Convert to section…')) : tFallback(t, 'common.continue', 'Continue'),
+                    {button(prepared ? (error ? tFallback(t, 'common.retry', 'Retry') : tFallback(t, 'projects.convertToSection', 'Convert to section…')) : tFallback(t, 'common.next', 'Next'),
                         () => { if (prepared) void save(); else confirm(); }, busy || (!prepared && (!preview?.ok || !name.trim())))}
                 </View>
             </View>

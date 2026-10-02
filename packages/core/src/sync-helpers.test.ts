@@ -87,6 +87,7 @@ const GTD_SYNCED_FIELD_SAMPLE_VALUES: Record<GtdSyncedFieldKey, GtdSettings[GtdS
     defaultAreaMode: 'fixed',
     defaultAreaId: 'area-1',
     focusTaskLimit: 5,
+    focusIncludeStartDates: false,
     focusGroupBy: 'project',
     defaultProjectFlowMode: 'sequential',
     naturalLanguageDates: false,
