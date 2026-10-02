@@ -250,7 +250,7 @@ function getSignedFireAtMs(entry: ReminderAlarmEntry): number | null {
  * project would still give the same key at the same moment, judged just before that moment;
  * otherwise it was withdrawn. An alarm whose moment cannot be read is taken as expired.
  */
-function getActiveCancelReason(
+export function getActiveCancelReason(
     key: string,
     entry: ReminderAlarmEntry,
     requested: boolean,

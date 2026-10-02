@@ -21,6 +21,11 @@
  *   The map lives under React Native's key, with each signature marked as the native
  *   host's: a React Native build installed over the native app (a recovery build) holds
  *   none of these alarms, finds no signature of its own, and makes every alarm again.
+ *   A task or project reminder whose alarm expires (its time passed, so it may sit in the
+ *   tray) is remembered in the native host's own state (`storedState`, stored with `alarms`)
+ *   for up to 30 days, by core's rule for a held alarm: once its task or project would no
+ *   longer give it (done, gone, moved, its reminders off), a cancel `withdrawn` removes what
+ *   it delivered. Its id stays taken meanwhile.
  * - completeReminderTask: Done. Completes the task through the store once per request
  *   UUID (native-request-receipts.ts). On the native host the receipt commits with the
  *   task's change, so a replay after a restart answers from the first reply and writes
@@ -42,6 +47,7 @@ import { logWarn } from './logger';
 import {
     buildReminderAlarmDetails,
     buildReminderSnooze,
+    getActiveCancelReason,
     getReminderAlarmCancelReason,
     MAX_PENDING_ONE_SHOT_REMINDER_ALARMS,
     planReminderAlarms,
@@ -85,6 +91,8 @@ export type NativeReminderAlarmPlan = {
     writeAhead: string | null;
     /** Store after applying. */
     alarms: string;
+    /** The native host's own reminder state (delivered reminders it may still withdraw): store with `alarms`. */
+    state: string;
     /** Plan again after this long so the capped one-shot window tops up; null when no one-shot is armed. */
     topUpDelayMs: number | null;
     /** No notification permission: remove every delivered reminder notification too. */
@@ -122,6 +130,39 @@ const writeNativeAlarmMap = (map: ReadonlyMap<string, ReminderAlarmEntry>): stri
     [key, entry.signature === undefined ? entry : { ...entry, signature: `${NATIVE_SIGNATURE_MARK}${entry.signature}` }]
 ))));
 
+/** RKStorage key of the native host's own reminder state; React Native never reads it. */
+export const NATIVE_REMINDER_STATE_STORAGE_KEY = 'mindwtr:native:reminders:v1';
+const DELIVERED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** A task or project reminder whose alarm expired: what it delivered may still be in the tray, under `id`. */
+type DeliveredReminder = { kind: 'delivered'; id: number; signature?: string; firedAtMs: number };
+type NativeReminderState = Map<string, DeliveredReminder>;
+
+/** The stored state; an unreadable one is empty (it names only notifications that may be gone already). */
+const readNativeReminderState = (raw: string | null | undefined): NativeReminderState => {
+    const state: NativeReminderState = new Map();
+    if (!raw) return state;
+    try {
+        for (const [key, entry] of Object.entries(JSON.parse(raw) as Record<string, Partial<DeliveredReminder>>)) {
+            if (entry?.kind === 'delivered' && Number.isInteger(entry.id) && Number.isFinite(entry.firedAtMs)) {
+                state.set(key, { kind: 'delivered', id: entry.id!, firedAtMs: entry.firedAtMs!, ...(typeof entry.signature === 'string' ? { signature: entry.signature } : {}) });
+            }
+        }
+    } catch (error) {
+        void logWarn('Stored native reminder state unreadable; starting from none', { scope: 'notifications', error });
+    }
+    return state;
+};
+
+const signedFireAtMs = (signature: string | undefined): number | null => {
+    try {
+        const fireAtMs = Date.parse((JSON.parse(signature ?? '') as { fireAt?: string }).fireAt ?? '');
+        return Number.isFinite(fireAtMs) ? fireAtMs : null;
+    } catch {
+        return null;
+    }
+};
+
 /** A stable id for a key (FNV-1a), stepping past ids already taken. */
 const allocateAlarmId = (key: string, taken: Set<number>, base: number): number => {
     let hash = 0x811c9dc5;
@@ -151,10 +192,11 @@ export function createReminderMethods(deps: ReminderDeps) {
 
     return {
         /** The alarms to cancel and make now, from the stored alarm map (see the file comment for the order). */
-        async planReminderAlarms(input: { storedAlarms: string | null; permissionGranted: boolean }): Promise<NativeHostResult<NativeReminderAlarmPlan>> {
+        async planReminderAlarms(input: { storedAlarms: string | null; permissionGranted: boolean; storedState?: string | null }): Promise<NativeHostResult<NativeReminderAlarmPlan>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            if (!isObjectRecord(input) || (input.storedAlarms !== null && typeof input.storedAlarms !== 'string') || typeof input.permissionGranted !== 'boolean') {
+            if (!isObjectRecord(input) || (input.storedAlarms !== null && typeof input.storedAlarms !== 'string') || typeof input.permissionGranted !== 'boolean'
+                || (input.storedState != null && typeof input.storedState !== 'string')) {
                 return fail('INVALID_INPUT', 'The stored alarm map (a string or null) and the notification permission are required');
             }
             let held: Map<string, ReminderAlarmEntry>;
@@ -177,7 +219,19 @@ export function createReminderMethods(deps: ReminderDeps) {
                 permissionGranted: input.permissionGranted,
             });
             const requests = new Map([...plan.recurring, ...plan.oneShot].map((request) => [request.key, request]));
-            const taken = new Set(Array.from(held.values(), (entry) => entry.id));
+            const nowMs = Date.now();
+            // Delivered reminders it remembers: withdrawn by core's rule for a held alarm, else kept (up to 30 days), their ids taken.
+            const judge = plan.mode === 'active'
+                ? { diagnostics: plan.diagnostics, tasks: new Map(state.tasks.map((task) => [task.id, task])), projects: new Map(state.projects.map((project) => [project.id, project])) }
+                : null;
+            const remembered: NativeReminderState = new Map();
+            const withdrawnDelivered: NativeReminderAlarmPlan['cancel'] = [];
+            for (const [key, entry] of readNativeReminderState(input.storedState)) {
+                if (nowMs - entry.firedAtMs > DELIVERED_RETENTION_MS) continue;
+                if (!judge || getActiveCancelReason(key, entry, false, judge) === 'withdrawn') withdrawnDelivered.push({ key, id: entry.id, reason: 'withdrawn' });
+                else remembered.set(key, entry);
+            }
+            const taken = new Set([...held.values(), ...remembered.values()].map((entry) => entry.id));
             const next = new Map(held);
             const writeAhead = new Map(held);
             const schedule: NativeReminderAlarm[] = [];
@@ -203,16 +257,22 @@ export function createReminderMethods(deps: ReminderDeps) {
             const cancel = plan.cancel.flatMap((key) => {
                 const entry = held.get(key);
                 next.delete(key);
-                return entry ? [{ key, id: entry.id, reason: getReminderAlarmCancelReason(plan, key) }] : [];
+                if (!entry) return [];
+                const reason = getReminderAlarmCancelReason(plan, key);
+                if (reason === 'expired' && (key.startsWith('task:') || key.startsWith('project:'))) {
+                    remembered.set(key, { kind: 'delivered', id: entry.id, ...(entry.signature ? { signature: entry.signature } : {}), firedAtMs: signedFireAtMs(entry.signature) ?? nowMs });
+                }
+                return [{ key, id: entry.id, reason }];
             });
             return {
                 ok: true,
                 value: {
                     mode: plan.mode,
-                    cancel,
+                    cancel: [...cancel, ...withdrawnDelivered],
                     schedule,
                     writeAhead: schedule.length > 0 ? writeNativeAlarmMap(writeAhead) : null,
                     alarms: writeNativeAlarmMap(next),
+                    state: JSON.stringify(Object.fromEntries(remembered)),
                     topUpDelayMs: plan.topUpDelayMs,
                     clearDelivered: plan.mode === 'revoked',
                 },

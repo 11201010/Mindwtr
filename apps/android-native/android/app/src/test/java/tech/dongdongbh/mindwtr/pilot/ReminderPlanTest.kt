@@ -14,7 +14,7 @@ class ReminderPlanTest {
     private var scheduleFailure: Throwable? = null
 
     private val port = object : ReminderPlan.Port {
-        override fun store(map: String) { events += "store $map" }
+        override fun store(entries: Map<String, String>) { events += "store ${entries.values.joinToString(" + ")}" }
         override fun removeDelivered(id: Int) { events += "remove $id" }
         override fun cancel(id: Int) { events += "cancel $id" }
         override fun schedule(alarm: JSONObject) {
@@ -51,6 +51,17 @@ class ReminderPlanTest {
     @Test fun aPlanThatMakesNothingStoresOnlyTheAlarms() {
         ReminderPlan.apply(plan(null, listOf(7 to "expired"), emptyList()), port)
         assertEquals(listOf("cancel 7", "store {after}"), events)
+    }
+
+    @Test fun theNativeStateIsStoredWithTheAlarmsInOneWrite() {
+        val keys = mutableListOf<Set<String>>()
+        val recording = object : ReminderPlan.Port by port {
+            override fun store(entries: Map<String, String>) { keys += entries.keys; port.store(entries) }
+        }
+        ReminderPlan.apply(plan(null, listOf(7 to "expired"), emptyList()).put("state", "{delivered}"), recording)
+        ReminderPlan.apply(plan(null, emptyList(), emptyList()).put("unchanged", true).put("state", "{none}"), recording)
+        assertEquals(listOf("cancel 7", "store {after} + {delivered}", "store {none}"), events)
+        assertEquals(listOf(setOf(ReminderPlan.MAP_KEY, ReminderPlan.STATE_KEY), setOf(ReminderPlan.STATE_KEY)), keys)
     }
 
     @Test fun aPlanThatChangesNothingWritesNothing() {

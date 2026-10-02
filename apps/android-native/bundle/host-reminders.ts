@@ -34,14 +34,18 @@ type ReminderPlan = {
     cancel: { reason: 'withdrawn' | 'expired' }[];
     schedule: unknown[];
     alarms: string;
+    state: string;
     topUpDelayMs: number | null;
 };
 
+/** What is stored: RN's alarm map (RN's key) and the native host's own reminder state (delivered reminders it may withdraw). */
+type Stored = { alarms: string | null; state: string | null };
+
 export type NativeReminderBindings = {
     /** Core's planReminderAlarms. */
-    plan: (input: { storedAlarms: string | null; permissionGranted: boolean }) => Promise<NativeHostResult<ReminderPlan>>;
-    /** RN's alarm map as stored (RKStorage). */
-    readStored: () => Promise<string | null>;
+    plan: (input: { storedAlarms: string | null; permissionGranted: boolean; storedState: string | null }) => Promise<NativeHostResult<ReminderPlan>>;
+    /** RN's alarm map and the native reminder state, as stored (RKStorage). */
+    readStored: () => Promise<Stored>;
     /** Kotlin: the notification permission, as RN reads it. */
     permissionGranted: () => boolean;
     /** Kotlin: the plan applied in core's order. */
@@ -85,12 +89,13 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
         const rebuild = requested || !rebuilt;
         const stored = await bindings.readStored();
         const permissionGranted = bindings.permissionGranted();
-        const result = await bindings.plan({ storedAlarms: rebuild ? allPending(stored) : stored, permissionGranted });
+        const result = await bindings.plan({ storedAlarms: rebuild ? allPending(stored.alarms) : stored.alarms, permissionGranted, storedState: stored.state });
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         const plan = result.value;
-        // Nothing to make, cancel or store: the stored map already says it (none stored reads as an empty map).
-        const unchanged = plan.schedule.length === 0 && plan.cancel.length === 0 && (plan.alarms === stored || (stored === null && plan.alarms === '{}'));
-        bindings.apply(JSON.stringify({ ...plan, channelName: REMINDER_NOTIFICATION_CHANNEL_NAME, unchanged }));
+        // Nothing to store when the stored value already says it (none stored reads as empty).
+        const same = (next: string, previous: string | null) => next === previous || (previous === null && next === '{}');
+        const unchanged = plan.schedule.length === 0 && plan.cancel.length === 0 && same(plan.alarms, stored.alarms);
+        bindings.apply(JSON.stringify({ ...plan, channelName: REMINDER_NOTIFICATION_CHANNEL_NAME, unchanged, state: same(plan.state, stored.state) ? null : plan.state }));
         rebuilt = true;
         if (topUpTimer) clearTimeout(topUpTimer);
         topUpTimer = plan.topUpDelayMs === null ? null : setTimeout(() => {

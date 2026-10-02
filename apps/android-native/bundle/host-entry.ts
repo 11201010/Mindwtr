@@ -4,6 +4,7 @@ import {
     PENDING_CAPTURES_DIRECTORY,
     PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY,
     NATIVE_HOST_CONTRACT_VERSION,
+    NATIVE_REMINDER_STATE_STORAGE_KEY,
     REMINDER_ALARM_MAP_STORAGE_KEY,
     REMINDER_NOTIFICATION_CHANNEL_NAME,
     STATUS_COLORS_BY_THEME,
@@ -324,7 +325,7 @@ const contract = createNativeHostContract({ ...(nativeSync ? { syncSettings: nat
 const reminders = typeof (globalThis.__mindwtrNative as { alarmApply?: unknown } | undefined)?.alarmApply === 'function'
     ? createNativeReminders({
         plan: (input) => contract.planReminderAlarms(input),
-        readStored: () => keyValue.get(REMINDER_ALARM_MAP_STORAGE_KEY),
+        readStored: async () => ({ alarms: await keyValue.get(REMINDER_ALARM_MAP_STORAGE_KEY), state: await keyValue.get(NATIVE_REMINDER_STATE_STORAGE_KEY) }),
         permissionGranted: () => checked(native().notificationsAllowed!()) === true,
         apply: (planJson) => { checked(native().alarmApply!(planJson)); },
         cleanupRn: () => Number(checked(native().rnAlarmCleanup!())),

@@ -3114,6 +3114,7 @@ export const PENDING_CAPTURES_DIRECTORY = 'pending-captures';
 export const PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY = 'mindwtr:pending-captures:last-applied:v1';
 export const REMINDER_NOTIFICATION_CHANNEL_NAME = 'Mindwtr reminders';
 export const REMINDER_ALARM_MAP_STORAGE_KEY = 'mindwtr:local:alarms:v1';
+export const NATIVE_REMINDER_STATE_STORAGE_KEY = 'mindwtr:native:reminders:v1';
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export function buildImmediateNotificationDetails(title, message, data) { return { title, message, channel: 'mindwtr_reminders_v2', data: { kind: 'pomodoro', ...data } }; }
 export function isSandboxMode() { return globalThis.sandbox === true; }
@@ -4071,11 +4072,20 @@ globalThis.standStore = useTaskStore;
     let stored = '{"task:a":{"id":7,"signature":"s"}}';
     let cleanupFailure = true;
     let topUp = null;
+    let storedState = null;
+    let planState = '{}';
+    let lastPlan = null;
+    const applied = [];
     const reminders = mod.createNativeReminders({
-        plan: async (input) => { calls.push(`plan ${input.storedAlarms} ${input.permissionGranted}`); await sleep(5); return { ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', topUpDelayMs: topUp } }; },
-        readStored: async () => stored,
+        plan: async (input) => {
+            calls.push(`plan ${input.storedAlarms} ${input.permissionGranted}`);
+            lastPlan = input;
+            await sleep(5);
+            return { ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', state: planState, topUpDelayMs: topUp } };
+        },
+        readStored: async () => ({ alarms: stored, state: storedState }),
         permissionGranted: () => false,
-        apply: (json) => calls.push(`apply ${JSON.parse(json).channelName}`),
+        apply: (json) => { calls.push(`apply ${JSON.parse(json).channelName}`); applied.push(JSON.parse(json)); },
         cleanupRn: () => { calls.push('cleanup'); if (cleanupFailure) throw new Error('rnandb locked'); return 2; },
     });
     await assert.rejects(reminders.start(), /rnandb locked/);
@@ -4120,6 +4130,17 @@ globalThis.standStore = useTaskStore;
     topUp = null;
     await sleep(60);
     assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders', `plan ${stored} false`, 'apply Mindwtr reminders'], 'the top-up plans once more');
+    // The native state goes in and comes back; stored again only when it changed (none stored reads as an empty state).
+    applied.length = 0;
+    await reminders.cycle(false);
+    storedState = '{"task:b":{"kind":"delivered","id":8,"firedAtMs":1}}';
+    await reminders.cycle(false);
+    assert.equal(lastPlan.storedState, storedState);
+    planState = storedState;
+    await reminders.cycle(false);
+    assert.deepEqual(applied.map((plan) => plan.state), [null, '{}', null], 'the state is stored only when it changed');
+    storedState = null;
+    planState = '{}';
     // Sandbox mode: no plan at all.
     calls.length = 0;
     globalThis.reminderSandbox = true;

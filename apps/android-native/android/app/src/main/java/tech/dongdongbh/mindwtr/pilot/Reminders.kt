@@ -34,10 +34,12 @@ import java.util.TimeZone
 internal object ReminderPlan {
     /** RN's alarm map in RN's RKStorage (core's REMINDER_ALARM_MAP_STORAGE_KEY). */
     const val MAP_KEY = "mindwtr:local:alarms:v1"
+    /** The native host's own reminder state beside it (core's NATIVE_REMINDER_STATE_STORAGE_KEY); RN never reads it. */
+    const val STATE_KEY = "mindwtr:native:reminders:v1"
 
     interface Port {
-        /** RN's alarm map, on disk before this returns. */
-        fun store(map: String)
+        /** RKStorage [entries] in one write, on disk before this returns. */
+        fun store(entries: Map<String, String>)
         /** The notification alarm [id] delivered, if it is still shown. */
         fun removeDelivered(id: Int)
         fun cancel(id: Int)
@@ -49,14 +51,15 @@ internal object ReminderPlan {
 
     /**
      * [plan] (core's NativeReminderAlarmPlan): `writeAhead` stored (on disk), then each cancel, then each alarm made, then `alarms`
-     * stored (not when `unchanged`: the stored map already says it). A withdrawn alarm's delivered notification goes before its
+     * (not when `unchanged`: the stored map already says it) and `state` (null when unchanged) stored in one write, so a delivered
+     * reminder core lets expire is remembered whenever its alarm leaves the map. A withdrawn alarm's delivered notification goes before its
      * cancel; an expired one's stays. A failed removal never
      * stops a cancel. A refused alarm throws before `alarms` is stored: the next plan, from `writeAhead`, makes the pending alarms
      * again under the same ids, so nothing is made twice or left behind. [checkpoint] names each point a process death is safe at.
      */
     fun apply(plan: JSONObject, port: Port, checkpoint: (String) -> Unit = {}) {
         if (!plan.isNull("writeAhead")) {
-            port.store(plan.getString("writeAhead"))
+            port.store(mapOf(MAP_KEY to plan.getString("writeAhead")))
             checkpoint("write-ahead")
         }
         val cancel = plan.getJSONArray("cancel")
@@ -75,7 +78,11 @@ internal object ReminderPlan {
         checkpoint("scheduled")
         if (plan.optBoolean("clearDelivered")) runCatching { port.clearDelivered() }
         // As RN's saveAlarmMap: a map that did not change is not written again (#766).
-        if (!plan.optBoolean("unchanged")) port.store(plan.getString("alarms"))
+        val after = buildMap {
+            if (!plan.optBoolean("unchanged")) put(MAP_KEY, plan.getString("alarms"))
+            if (plan.has("state") && !plan.isNull("state")) put(STATE_KEY, plan.getString("state"))
+        }
+        if (after.isNotEmpty()) port.store(after)
     }
 
     /**
@@ -228,7 +235,7 @@ internal class ReminderAlarms(private val context: Context, private val keyValue
             .takeIf { it.isNotEmpty() }?.let(keyValue::multiRemove); Unit },
         deleteTable = { check(context.deleteDatabase(RN_DATABASE) || !context.getDatabasePath(RN_DATABASE).exists()) { "Cannot delete $RN_DATABASE" } })
 
-    override fun store(map: String) { keyValue.set(ReminderPlan.MAP_KEY, map) }
+    override fun store(entries: Map<String, String>) { keyValue.multiSet(entries.toList()) }
 
     override fun removeDelivered(id: Int) = notifications.cancel(id)
 
