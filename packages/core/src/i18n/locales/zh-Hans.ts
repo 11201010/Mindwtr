@@ -356,6 +356,8 @@ export const zhHans: Record<string, string> = {
         'task.cancelRecurringSeries': '取消重复系列',
         'task.cancelled': '已取消',
         'task.cancelledWithRestore': '任务已取消。你可以在归档中恢复它。',
+        'task.completionOutcomeUnknown': '无法确认任务是否已完成。请重新启动 Mindwtr 以重新加载已保存的数据。',
+        'task.completionUndoOutcomeUnknown': '无法确认是否已撤销任务完成操作。请重新启动 Mindwtr 以重新加载已保存的数据。',
         'task.cancelFailed': '无法取消任务',
         'task.skipOccurrence': '跳过本次重复',
         'task.skipOccurrenceFailed': '无法跳过本次重复',
