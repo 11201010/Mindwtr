@@ -83,13 +83,14 @@ struct HistoryScreen: View {
                 }
                 .padding(.horizontal, 16).padding(.bottom, 8)
             }
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+            List {
+                Group {
                     if let error = model.historyError {
                         Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
                             .accessibilityIdentifier("archive-error")
                         Button(model.label("common.retry")) { Task { await model.retryHistory() } }
-                            .rnFont(14, .semibold).frame(minHeight: 44).disabled(model.busy || model.retryNeeded)
+                            .rnFont(14, .semibold).frame(minHeight: 44)
+                            .disabled(model.busy || (model.retryNeeded && !model.historyArchiveRestorePending))
                             .accessibilityIdentifier("archive-retry")
                     }
                     if model.historyCurrent {
@@ -100,6 +101,21 @@ struct HistoryScreen: View {
                         ForEach(model.history.objects("items").map(ListRowEntry.init)) { entry in
                             let item = entry.item
                             if item.text("type") == "section" { archiveSection(item) }
+                            else if item.text("type") == "task" {
+                                archiveCard(item)
+                                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                        if model.historyActionsEnabled {
+                                            Button {
+                                                searchFocused = false
+                                                Task { await model.restoreArchivedTask(item.object("row").text("id")) }
+                                            } label: {
+                                                Label(model.history.object("labels").text("restore"), systemImage: "arrow.counterclockwise")
+                                            }
+                                            .tint(palette.tint)
+                                            .accessibilityIdentifier("archive-restore-" + item.object("row").text("id"))
+                                        }
+                                    }
+                            }
                             else { archiveCard(item) }
                         }
                         if model.history.objects("items").count < model.history.number("total") {
@@ -114,8 +130,12 @@ struct HistoryScreen: View {
                         ProgressView().frame(maxWidth: .infinity).padding(12)
                     }
                 }
-                .padding(16)
+                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             .accessibilityIdentifier("archive-scroll")
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await model.refresh() }

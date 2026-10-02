@@ -53,6 +53,9 @@ import { resolveProcessInboxPlan } from './process-inbox-plan';
 import { boardOrderForDuplicate, countFocusedTasksBeforeBoundary, isTaskFutureFocusCandidate,
     type FocusDateLookup } from './task-utils';
 import { sameTaskSqliteRow, sameSectionDeleteJson } from './store-projects/section-actions';
+import { sameSectionSqliteRow } from './store-projects/section-actions';
+import { sameProjectSqliteRow } from './store-projects/project-actions';
+import { archiveRestoreEffect, archiveRestoreScope } from './native-host-contract-archive-task-restore';
 import { normalizeTaskForLoad } from './task-status';
 import { normalizeProjectLifecycleFields } from './project-status';
 import { clearDerivedCache } from './store-settings';
@@ -79,6 +82,7 @@ type TaskActions = Pick<
     | 'commitPreparedCapture'
     | 'commitPreparedTaskEdit'
     | 'commitPreparedTaskDraftV2'
+    | 'commitPreparedArchivedTaskRestore'
     | 'commitPreparedTaskFocus'
     | 'commitPreparedFocusOrder'
     | 'commitPreparedBoardTask'
@@ -1312,6 +1316,66 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             persist(set, debouncedSave, state, { tasks, ...(device.updated ? { settings: device.settings } : {}) });
             result = { success: true, id: current.id, outcome: 'applied' };
             return { _allTasks: tasks, ...(device.updated ? { settings: device.settings } : {}), lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedArchivedTaskRestore: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Archived Task restore conflicts with saved data' };
+        set((memory) => {
+            const before = authority.state;
+            if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                || memory._allAreas !== before._allAreas || memory._allSections !== before._allSections
+                || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
+            const durable = authority.snapshot;
+            const currentRows = durable.tasks.filter((row) => row.id === input.request.taskId);
+            const current = currentRows.length === 1 ? currentRows[0] : null;
+            if (!current || current.status !== 'archived' || current.deletedAt || current.purgedAt
+                || (durable.settings.deviceId ?? null) !== input.deviceIdBefore) return memory;
+            const scope = archiveRestoreScope(current, durable);
+            const sameRows = <T extends { id: string }>(left: T[], right: T[], sameRow: (a: T, b: T) => boolean) => {
+                if (left.length !== right.length || new Set(left.map((row) => row.id)).size !== left.length) return false;
+                const byId = new Map(left.map((row) => [row.id, row]));
+                return right.every((row) => {
+                    const saved = byId.get(row.id);
+                    return saved !== undefined && sameRow(saved, row);
+                });
+            };
+            if (scope.fullParent !== input.scope.fullParent
+                || !sameTaskSqliteRow(current, input.scope.task)
+                || (scope.parentProject === null) !== (input.scope.parentProject === null)
+                || scope.parentProject && input.scope.parentProject
+                    && !sameProjectSqliteRow(scope.parentProject, input.scope.parentProject)
+                || (scope.sourceArea === null) !== (input.scope.sourceArea === null)
+                || scope.sourceArea && input.scope.sourceArea
+                    && !taskEditValuesEqual(scope.sourceArea, input.scope.sourceArea)
+                || !sameRows(scope.parentTasks, input.scope.parentTasks, sameTaskSqliteRow)
+                || !sameRows(scope.parentSections, input.scope.parentSections, sameSectionSqliteRow)) return memory;
+            const effect = archiveRestoreEffect(input.scope,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt,
+                input.futureBoundary, new Map(input.dates.map((row) => [row.value, row])));
+            if (!effect || !taskEditValuesEqual(effect, input.effect)) return memory;
+            const taskAfter = new Map(effect.tasks.map((pair) => [pair.before.id, pair.after]));
+            const sectionAfter = new Map(effect.sections.map((pair) => [pair.before.id, pair.after]));
+            const tasks = durable.tasks.map((row) => taskAfter.get(row.id) ?? row);
+            const projects = durable.projects.map((row) => row.id === effect.project?.before.id
+                ? effect.project.after : row);
+            const sections = durable.sections.map((row) => sectionAfter.get(row.id) ?? row);
+            const settings = input.deviceIdToInitialize
+                ? { ...durable.settings, deviceId: input.deviceIdToInitialize } : durable.settings;
+            const freshTasks = tasks.map((row) => normalizeTaskForLoad(row));
+            const freshProjects = projects.map(normalizeProjectLifecycleFields);
+            clearDerivedCache();
+            persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks,
+                _allProjects: durable.projects, _allSections: durable.sections,
+                _allAreas: durable.areas, _allPeople: durable.people ?? [], settings: durable.settings },
+            { ...durable, tasks, projects, sections, settings });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: sections,
+                _allAreas: durable.areas, _allPeople: durable.people ?? [], settings,
+                lastDataChangeAt: getNextDataChangeAt(memory.lastDataChangeAt) };
         });
         return result;
     },

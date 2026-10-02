@@ -615,6 +615,8 @@ export interface TaskStore {
     /** Native Task Editor v2: one raw saved Task effect with an exact durable receipt. */
     commitPreparedTaskDraftV2: (input: import('./native-host-contract-task-save').NativePreparedTaskDraftSaveV2,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    commitPreparedArchivedTaskRestore: (input: import('./native-host-contract-archive-task-restore').NativePreparedArchivedTaskRestore,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     commitPreparedTaskFocus: (input: PreparedTaskFocus & { request: { taskId: string; focused: boolean } }) => Promise<PreparedTaskEditResult>;
     commitPreparedFocusOrder: (input: PreparedFocusOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedFocusSavedFilter: (input: PreparedFocusSavedFilter) => Promise<PreparedTaskEditResult>;

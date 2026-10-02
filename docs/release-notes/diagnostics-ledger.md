@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-archive-task-restore`** — `packages/core/src/native-host-contract-archive-task-restore.ts`. `Native archived Task restore confirmed` with `outcome=confirmed` follows the durable request receipt for a single Task restored to Inbox, including shared RN parent reactivation effects. The native host also emits a local confirmation marker after its journal settles; the core `logInfo` line is the field-test proof. Failed persistence or an unproven outcome does not claim success. No task content, identifiers, dates, or URLs are logged.
+
 - **`v1.3.4/ios-completion-undo`** — native iOS `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Task completion saved` with `operation=complete` or `operation=undo` and `outcome=confirmed` proves the exact prepared completion or Undo settled durably, including retry or cold journal recovery. No task content, dates, identifiers or URLs are logged.
 
 - **`v1.3.4/ios-review-row-actions`** — `apps/ios-native/App/CoreModel.swift`. `Native iOS Review row action confirmed` with `outcome=confirmed` follows the host acknowledgment for Mark reviewed or Review in 1 week, including an in-process Retry. The existing Draft V2 journal owns failed-save and cold recovery. No Task content, identifiers or dates are logged.

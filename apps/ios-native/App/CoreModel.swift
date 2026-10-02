@@ -558,6 +558,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var historyPicker: CoreObject = [:]
     @Published private(set) var historyPickerCurrent = false
     @Published private(set) var historyPickerError: String?
+    private var archivedTaskRestoreRequest: String?
     @Published private(set) var trash: CoreObject = [:]
     @Published private(set) var trashCurrent = false
     @Published private(set) var trashError: String?
@@ -1758,6 +1759,9 @@ final class CoreModel: ObservableObject {
     var historyActionsEnabled: Bool {
         ready && selectedSurface == .history && historyCurrent && !busy && !retryNeeded && !taskPresented
     }
+    var historyArchiveRestorePending: Bool {
+        selectedSurface == .history && historyArchived && archivedTaskRestoreRequest != nil && retryNeeded
+    }
     var historyPickerActionsEnabled: Bool { historyActionsEnabled && historyPickerCurrent }
     var trashActionsEnabled: Bool {
         ready && selectedSurface == .trash && trashCurrent && !busy && !retryNeeded && !taskPresented
@@ -2765,6 +2769,11 @@ final class CoreModel: ObservableObject {
                 historyTabs = ["tab": "archived"]
             }
             if ["taskDeleteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit"].contains(recovery.text("method")) { selectedSurface = .trash }
+            if recovery.text("method") == "archivedTaskRestoreCommit" {
+                selectedSurface = .history
+                historyTabs = ["tab": "archived"]
+                historyParamsByTab["archive", default: [:]]["segment"] = "tasks"
+            }
             if ["projectDeleteCommit", "projectDeleteUndoCommit"].contains(recovery.text("method")) { selectedSurface = .projects }
             if recovery.text("method") == "projectDuplicateCommit" {
                 projectDuplicateRecoveredResult = recovery.object("result")
@@ -12170,9 +12179,58 @@ final class CoreModel: ObservableObject {
     }
 
     func retryHistory() async {
-        guard selectedSurface == .history, !busy, !retryNeeded, !taskPresented else { return }
+        guard selectedSurface == .history, !busy, !taskPresented else { return }
+        if historyArchiveRestorePending { await retry(); return }
+        guard !retryNeeded else { return }
         historyNeedsRead = true
         scheduleHistoryRead(delay: 0)
+    }
+
+    func restoreArchivedTask(_ id: String) async {
+        guard historyArchived, historyActionsEnabled,
+              let item = history.objects("items").first(where: {
+                  $0.text("type") == "task" && $0.object("row").text("id") == id
+              }) else { return }
+        let revision = item.object("row").text("taskRevision")
+        guard !revision.isEmpty, revision.utf16.count <= 200 else { return }
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    "taskId": id, "taskRevision": revision])
+            archivedTaskRestoreRequest = request
+            let result = try await query("archivedTaskRestoreWrite", [request])
+            try acknowledgeArchivedTaskRestore(result)
+            _ = await readHistory()
+        } catch { await handleArchivedTaskRestoreError(error) }
+    }
+
+    private func acknowledgeArchivedTaskRestore(_ result: CoreObject) throws {
+        guard let request = archivedTaskRestoreRequest,
+              Set(result.keys) == Set(["id", "status"]),
+              result.text("status") == "inbox",
+              result.text("id") == (try decode(request)).text("taskId") else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        archivedTaskRestoreRequest = nil
+        retryNeeded = false
+        historyError = nil
+        error = nil
+        historyCurrent = false
+    }
+
+    private func handleArchivedTaskRestoreError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            archivedTaskRestoreRequest = nil
+            retryNeeded = false
+            error = nil
+            _ = await readHistory()
+        } else {
+            retryNeeded = archivedTaskRestoreRequest != nil
+            error = failure.localizedDescription
+        }
+        historyError = failure.localizedDescription
     }
 
     private func scheduleHistoryRead(delay: UInt64 = 200_000_000) {
@@ -17871,6 +17929,24 @@ final class CoreModel: ObservableObject {
                 await readTrash()
                 return
             }
+            if let request = archivedTaskRestoreRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else {
+                    let outcome = try await query("archivedTaskRestoreRetryOutcome", [request])
+                    guard outcome.text("kind") == "confirmed" else {
+                        let unknown = label("task.archiveRestoreOutcomeUnknown")
+                        _ = await readHistory()
+                        historyError = unknown
+                        self.error = unknown
+                        return
+                    }
+                    result = outcome.object("result")
+                }
+                try acknowledgeArchivedTaskRestore(result)
+                _ = await readHistory()
+                return
+            }
             if let request = projectFocusRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -18199,6 +18275,10 @@ final class CoreModel: ObservableObject {
             }
             if trashRestoreRequest != nil {
                 await handleTrashRestoreError(error)
+                return
+            }
+            if archivedTaskRestoreRequest != nil {
+                await handleArchivedTaskRestoreError(error)
                 return
             }
             if projectFocusRequest != nil {
