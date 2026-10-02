@@ -279,6 +279,7 @@ import { createProjectNotesWriteMethods } from './native-host-contract-project-n
 import { createProjectTagsWriteMethods } from './native-host-contract-project-tags';
 import { createProjectAttachmentWriteMethods } from './native-host-contract-project-attachments';
 import { createProjectStatusMethods } from './native-host-contract-project-status';
+import { createTrashProjectRestoreMethods } from './native-host-contract-trash-project-restore';
 import { createProjectDateMethods } from './native-host-contract-project-date';
 import { createProjectAreaMethods } from './native-host-contract-project-area';
 import { createProjectSectionMethods } from './native-host-contract-project-section';
@@ -1810,6 +1811,7 @@ export function createNativeHostContract(options: {
             revision: projectMutationRevision, t: () => translate }),
         ...createProjectStatusMethods({ readiness, save,
             revision: projectMutationRevision }),
+        ...createTrashProjectRestoreMethods({ readiness, save }),
         ...createProjectDateMethods({ readiness, save,
             revision: projectMutationRevision }),
         ...createProjectAreaMethods({ readiness, save,

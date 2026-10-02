@@ -548,7 +548,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var trash: CoreObject = [:]
     @Published private(set) var trashCurrent = false
     @Published private(set) var trashError: String?
-    private var trashRestoreRequest: String?
+    private var trashRestoreRequest: (project: Bool, json: String)?
     @Published private(set) var theme: CoreObject = [:]
     @Published private(set) var area: CoreObject = [:]
     @Published private(set) var strings: CoreObject = [:]
@@ -2500,8 +2500,13 @@ final class CoreModel: ObservableObject {
                 }
                 let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                     appropriateFor: nil, create: true)
-                #if DEBUG && targetEnvironment(simulator)
+                #if DEBUG && (targetEnvironment(simulator) || NATIVE_DEVICE_TEST)
                 let arguments = ProcessInfo.processInfo.arguments
+                #if !targetEnvironment(simulator)
+                guard !arguments.contains("--native-app-lock-auth"), !arguments.contains("--native-rn-rehearsal") else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                #endif
                 let testLibraryPositions = arguments.indices.filter { arguments[$0] == "--native-ui-test-library" }
                 if let position = testLibraryPositions.first {
                     guard testLibraryPositions.count == 1, !arguments.contains("--native-rn-rehearsal"),
@@ -2523,10 +2528,11 @@ final class CoreModel: ObservableObject {
                     guard let isolatedDefaults = UserDefaults(suiteName: "nativeUITests.\(identifier.uuidString.lowercased())") else {
                         throw CocoaError(.fileReadCorruptFile)
                     }
+                    preferenceDefaults = isolatedDefaults
+                    #if targetEnvironment(simulator)
                     if let position = arguments.firstIndex(of: "--native-app-lock-auth"), position + 1 < arguments.count {
                         appLock.testOutcomes = arguments[position + 1].split(separator: ",").map(String.init)
                     }
-                    preferenceDefaults = isolatedDefaults
                     projectAreaTestReadFailure = arguments.contains("--native-project-area-read-failure")
                     projectAreaTestBlockedWrite = arguments.contains("--native-project-area-blocked-write")
                     projectTagTestReadFailure = arguments.contains("--native-project-tag-read-failure")
@@ -2584,6 +2590,7 @@ final class CoreModel: ObservableObject {
                     manageAreaEditTestReadFailures = arguments.contains("--native-manage-area-edit-read-failure") ? 2 : 0
                     manageAreaEditTestRefusals = arguments.contains("--native-manage-area-edit-refusal") ? 1 : 0
                     taskRecoveryResolverTestFailure = arguments.contains("--native-task116-resolver-failure-once")
+                    #endif
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -2730,7 +2737,7 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .history
                 historyTabs = ["tab": "archived"]
             }
-            if ["taskDeleteCommit", "trashTaskRestoreCommit"].contains(recovery.text("method")) { selectedSurface = .trash }
+            if ["taskDeleteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit"].contains(recovery.text("method")) { selectedSurface = .trash }
             if recovery.text("method") == "taskPromoteCommit" {
                 taskPromotionRecoveredResult = recovery.object("result")
             }
@@ -11851,18 +11858,22 @@ final class CoreModel: ObservableObject {
         else { await refresh() }
     }
 
-    func restoreTrashTask(_ id: String) async {
+    func restoreTrashItem(_ id: String, project: Bool) async {
         guard trashActionsEnabled, let item = trash.objects("items").first(where: {
-            $0.text("type") == "task" && $0.object("row").text("id") == id
-        }), !item.object("row").text("taskRevision").isEmpty else { return }
+            $0.text("type") == (project ? "project" : "task")
+                && (project ? $0.text("id") : $0.object("row").text("id")) == id
+        }) else { return }
+        let revision = project ? item.text("projectRevision") : item.object("row").text("taskRevision")
+        guard !revision.isEmpty else { return }
         busy = true
         trashError = nil
         defer { finishOperation() }
         do {
-            let request = try json(["requestId": UUID().uuidString.lowercased(), "taskId": id,
-                                    "taskRevision": item.object("row").text("taskRevision")])
-            trashRestoreRequest = request
-            let result = try await query("trashTaskRestoreWrite", [request])
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    (project ? "projectId" : "taskId"): id,
+                                    (project ? "projectRevision" : "taskRevision"): revision])
+            trashRestoreRequest = (project, request)
+            let result = try await query(project ? "trashProjectRestoreWrite" : "trashTaskRestoreWrite", [request])
             try acknowledgeTrashRestore(result)
             await readTrash()
         } catch { await handleTrashRestoreError(error) }
@@ -11870,7 +11881,8 @@ final class CoreModel: ObservableObject {
 
     private func acknowledgeTrashRestore(_ result: CoreObject) throws {
         guard let request = trashRestoreRequest, Set(result.keys) == Set(["id"]),
-              result.text("id") == (try decode(request)).text("taskId") else { throw CocoaError(.coderReadCorrupt) }
+              result.text("id") == (try decode(request.json)).text(request.project ? "projectId" : "taskId")
+        else { throw CocoaError(.coderReadCorrupt) }
         trashRestoreRequest = nil
         retryNeeded = false
         trashError = nil
@@ -17470,7 +17482,7 @@ final class CoreModel: ObservableObject {
             if let request = trashRestoreRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
-                else { result = try await query("trashTaskRestoreRetryOutcome", [request]) }
+                else { result = try await query(request.project ? "trashProjectRestoreRetryOutcome" : "trashTaskRestoreRetryOutcome", [request.json]) }
                 try acknowledgeTrashRestore(result)
                 await readTrash()
                 return

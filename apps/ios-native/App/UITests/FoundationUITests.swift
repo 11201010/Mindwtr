@@ -16735,7 +16735,7 @@ final class FoundationUITests: XCTestCase {
         app.terminate(); app.launch(); task149OpenTrash(app); task149Restored(app); app.terminate()
     }
 
-    func testTrashTaskRestoreNormal() { task149RestoreFlow("b672dc07-a347-4111-8565-4e909de5bfde") }
+    func testTrashTaskRestoreNormal() { task149RestoreFlow("a1bc4ceb-57b5-48f2-bb5c-ab1fb080533a") }
     func testTrashTaskRestoreLargest() { task149RestoreFlow("4fc168a7-3b68-4026-b424-9ecad0b6e129") }
 
     func testTrashTaskRestoreFailedSave() {
@@ -16756,6 +16756,90 @@ final class FoundationUITests: XCTestCase {
         let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e42c775b-1f7e-4ef3-8791-4b10400213b0"]
         app.launch(); XCTAssertTrue(app.staticTexts["trash-title"].waitForExistence(timeout: 30)); task149Restored(app)
         app.terminate(); app.launch(); task149OpenTrash(app); task149Restored(app); app.terminate()
+    }
+
+    private func task150RevealRestore(_ app: XCUIApplication) -> XCUIElement {
+        let row = app.descendants(matching: .any).matching(identifier: "trash-project-task150-project").firstMatch
+        let list = app.descendants(matching: .any).matching(identifier: "trash-scroll").firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 30))
+        for _ in 0..<8 {
+            if row.exists && row.isHittable && list.frame.intersection(app.frame).contains(CGPoint(x: row.frame.midX, y: row.frame.midY)) { break }
+            list.swipeUp()
+        }
+        XCTAssertTrue(row.isHittable)
+        row.swipeRight()
+        let action = app.buttons["trash-restore-project-task150-project"]
+        boardEnabled(action, timeout: 15)
+        XCTAssertEqual(action.label, "Restore")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Project Restore requires a tap"; shot.lifetime = .keepAlways; add(shot)
+        return action
+    }
+
+    private func task150Restored(_ app: XCUIApplication) {
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "trash-project-task150-project").firstMatch.exists)
+        boardTap(app, "search-open")
+        let search = app.textFields["search-input"]; boardEnabled(search); search.tap(); search.typeText("Task150 cascade task")
+        boardTap(app, "search-task-task150-task"); boardTap(app, "task-mode-edit")
+        let title = app.textFields["task-editor-title"]; boardEnabled(title)
+        XCTAssertEqual(title.value as? String, "Task150 cascade task")
+        boardEnabled(app.buttons["task-editor-destination"], timeout: 30)
+        expectation(for: NSPredicate(format: "value == %@", "Task150 restored project"), evaluatedWith: app.buttons["task-editor-destination"])
+        waitForExpectations(timeout: 15)
+        let section = app.buttons["task-editor-project-section"]; boardEnabled(section)
+        XCTAssertEqual(section.value as? String, "Task150 section")
+        let details = app.buttons["task-editor-section-details"]
+        let scroll = app.scrollViews["task-editor-scroll"]
+        for _ in 0..<12 {
+            if details.exists && details.isHittable && scroll.frame.intersection(app.frame).contains(CGPoint(x: details.frame.midX, y: details.frame.midY)) { break }
+            scroll.swipeUp()
+        }
+        XCTAssertTrue(details.isHittable)
+        if details.value as? String == "Expand" { details.tap() }
+        let note = app.textViews["task-editor-note"]; boardEnabled(note)
+        XCTAssertEqual(note.value as? String, "Retained150 body")
+        boardTap(app, "task-view-close"); boardTap(app, "search-close")
+    }
+
+    func testTrashProjectRestoreSwipeOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "ca5b39db-5e6b-4c89-abca-d872679a209a"]
+        app.launch(); task149OpenTrash(app); _ = task150RevealRestore(app)
+        XCTAssertFalse(app.buttons["task-view-close"].exists, "A Trash row does not open the editor")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Trash Restore requires a tap"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    private func task150RestoreFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task149OpenTrash(app); task150RevealRestore(app).tap()
+        let row = app.descendants(matching: .any).matching(identifier: "trash-project-task150-project").firstMatch
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: row); waitForExpectations(timeout: 30)
+        task150Restored(app)
+        app.terminate(); app.launch(); task149OpenTrash(app); task150Restored(app); app.terminate()
+    }
+
+    func testTrashProjectRestoreNormal() { task150RestoreFlow("86cba5e6-ab45-4925-997b-7ff0d476267f") }
+    func testTrashProjectRestoreLargest() { task150RestoreFlow("1fd8cab7-17aa-4833-acd2-d0bbf6f392d7") }
+
+    func testTrashProjectRestoreFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "0b17ead4-bca6-479d-a000-75cf85fe4315"]
+        app.launch(); task149OpenTrash(app); task150RevealRestore(app).tap()
+        for _ in 0..<2 {
+            let retry = app.buttons["trash-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertFalse(app.buttons["trash-back"].isEnabled)
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "trash-project-task150-project").firstMatch.exists)
+            retry.tap()
+        }
+        boardEnabled(app.buttons["trash-retry"], timeout: 30); app.terminate()
+    }
+
+    func testTrashProjectRestoreColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "0b17ead4-bca6-479d-a000-75cf85fe4315"]
+        app.launch(); XCTAssertTrue(app.staticTexts["trash-title"].waitForExistence(timeout: 30)); task150Restored(app)
+        app.terminate(); app.launch(); task149OpenTrash(app); task150Restored(app); app.terminate()
     }
 
 }
