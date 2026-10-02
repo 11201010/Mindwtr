@@ -366,7 +366,10 @@ try {
     await pickNewestPhoto();
     await until('the app back with a photo row', async () => front().includes(`${PKG}/`) && rowTitles(await screen()).length >= 2, 30_000, 1_000);
     const photoRow = rowTitles(await screen()).find((title) => title !== names.pdf);
-    if (photoRow !== names.png) {
+    // The photo picker names a pick by its media ID ("31.png": its DISPLAY_NAME, which RN's expo-image-picker reads too), so the
+    // pick is told by its bytes: the draft's new copy under files/attachments/ must be this run's PNG.
+    const pngSha = sha256(pngBytes);
+    if (!attachmentFiles().some((name) => phoneSha(`file:///data/user/0/${PKG}/files/attachments/${name}`) === pngSha)) {
         // Not this run's PNG (the picker's newest is someone's photo): discard the draft, so its copies go, and stop.
         await backToApp();
         await hideKeyboard();
@@ -374,9 +377,9 @@ try {
         sh('input keyevent KEYCODE_BACK');
         const discard = button(await waitFor('the discard question', (current) => Boolean(button(current, en['common.discard'])), 10_000), en['common.discard']);
         await tapExpecting(discard, (current) => !inEditor(current), 'the draft discarded');
-        throw new Stopped(`the photo picker's newest photo is "${photoRow}", not ${names.png}; the draft was discarded`);
+        throw new Stopped(`the photo picker's newest photo ("${photoRow}") is not this run's PNG ${names.png}; the draft was discarded`);
     }
-    check(true, `(2) Add photo picked ${names.png} in the photo picker; the editor lists it`);
+    check(true, `(2) Add photo picked ${names.png} in the photo picker (its bytes; the picker names it "${photoRow}"); the editor lists it`);
     await revealAttachments();
     await tapExpecting(tagged(await screen(), 'attachment-add-link') ?? fail('no Add link'), (current) => Boolean(tagged(current, 'attachment-link-sheet')), 'the link sheet');
     await typeInto(tagged(await screen(), 'attachment-link-input'), names.link);
@@ -389,7 +392,7 @@ try {
     await tapExpecting(button(await screen(), en['common.save']) ?? fail('no Save'), (current) => !inEditor(current) && commands('saveTaskDraft') > savesBefore, 'the editor saved');
     let saved = stored('tasks', names.task);
     const pdf = saved.find((attachment) => attachment.title === names.pdf);
-    const png = saved.find((attachment) => attachment.title === names.png);
+    const png = saved.find((attachment) => attachment.title === photoRow);
     const link = saved.find((attachment) => attachment.kind === 'link');
     check(saved.length === 3 && pdf && png && link?.uri === names.link && live(saved).length === 3, `(2) Save stored the three attachments once (${saved.map((a) => a.title).join(', ')})`);
     check(pdf.uri.endsWith(`/files/attachments/${pdf.id}.pdf`) && png.uri.endsWith(`/files/attachments/${png.id}.png`), '(2) the files are managed copies named by their IDs');
