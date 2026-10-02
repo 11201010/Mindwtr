@@ -18259,4 +18259,58 @@ final class FoundationUITests: XCTestCase {
         task169CompletionUndo("dc67e8c9-dd95-4cba-b687-2fb6708bfe15")
     }
 
+    private func task170CompletionSurfaces(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        func undo() {
+            boardEnabled(app.buttons["task-completion-undo"], timeout: 5)
+            boardTap(app, "task-completion-undo")
+        }
+        func calendarItem() -> XCUIElement {
+            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+                "calendar-item-", "Task170 Recurring")).firstMatch
+        }
+        func calendar() {
+            openUnscheduleCalendar(app)
+            XCTAssertTrue(app.buttons["calendar-mode-month"].isSelected)
+            boardTap(app, "calendar-today")
+            let layout = app.scrollViews["calendar-layout-scroll"]
+            for _ in 0..<12 {
+                if calendarItem().isHittable { break }
+                (layout.exists ? layout : app.scrollViews["calendar-details"]).swipeUp()
+            }
+            boardEnabled(calendarItem(), timeout: 30)
+            XCTAssertTrue(calendarItem().isHittable)
+        }
+        app.launch()
+        boardTap(app, "tab-inbox")
+        boardTap(app, "task-status-task170-ordinary")
+        boardTap(app, "task-complete")
+        undo()
+        boardEnabled(app.buttons["task-status-task170-ordinary"])
+        calendar()
+        let itemID = String(calendarItem().identifier.dropFirst("calendar-item-".count))
+        boardTap(app, "calendar-item-done-" + itemID)
+        undo()
+        boardEnabled(calendarItem())
+        calendarItem().tap()
+        boardTap(app, "calendar-action-done")
+        undo()
+        boardEnabled(calendarItem())
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Task170 Calendar completion Undo restored recurring source"
+        shot.lifetime = .keepAlways
+        add(shot)
+        app.terminate(); app.launch()
+        boardTap(app, "tab-inbox")
+        boardEnabled(app.buttons["task-status-task170-ordinary"])
+        calendar()
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        app.terminate()
+    }
+
+    func testTask170CompletionSurfacesNormal() { task170CompletionSurfaces("4c5c9d3c-57a3-457f-84bc-e77018c8c7d6") }
+    func testTask170CompletionSurfacesLargest() { task170CompletionSurfaces("d43ae8c7-091d-44dc-8bff-825db269a034") }
+
 }
