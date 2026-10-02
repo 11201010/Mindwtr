@@ -1493,6 +1493,28 @@ describe('canonical local reads contract', () => {
                 expect(useTaskStore.getState()._projectsById.get(id))
                     .toEqual(planned.prepared.effect.project.after);
             },
+            commitPreparedTrashProjectRestore: async (control) => {
+                await call('deleteProject', projectId);
+                const host = await nativeHost(control);
+                const trash = nativeValue(host.getTrashView({ offset: 0, limit: 50 }));
+                const row = trash.items.find((entry) => entry.type === 'project' && entry.id === projectId);
+                if (!row || row.type !== 'project') throw new Error('Deleted Project missing from Trash');
+                const request = { requestId: '5bebf523-dd4e-40dc-9fce-37e456295d49', projectId,
+                    projectRevision: row.projectRevision };
+                const planned = nativeValue(host.prepareTrashProjectRestore(request));
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === projectId))
+                        .toEqual(planned.prepared.effect.project.after);
+                    for (const pair of planned.prepared.effect.sections) {
+                        expect(written.sections.find((entry) => entry.id === pair.after.id)).toEqual(pair.after);
+                    }
+                    for (const pair of planned.prepared.effect.tasks) {
+                        expect(written.tasks.find((entry) => entry.id === pair.after.id)).toEqual(pair.after);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedTrashProjectRestore({ request, prepared: planned.prepared })))
+                    .toEqual({ id: projectId });
+            },
             commitPreparedProjectStatus: async (control) => {
                 const host = await nativeHost(control);
                 const options = nativeValue(host.getProjectStatusOptions({ projectId: settled.projects[1].id }));
