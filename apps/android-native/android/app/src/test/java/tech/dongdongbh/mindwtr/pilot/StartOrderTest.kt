@@ -35,4 +35,9 @@ class StartOrderTest {
         assertEquals(false, run(StartOrder.Drain.Waiting))
         assertEquals(listOf("drain", "retry"), events)
     }
+
+    @Test fun aDrainWhoseCheckOffSweepFailedStartsSyncKeepsTheScreensAndRetries() {
+        assertEquals(false, run(StartOrder.Drain.Unswept))
+        assertEquals(listOf("drain", "sync", "retry"), events)
+    }
 }

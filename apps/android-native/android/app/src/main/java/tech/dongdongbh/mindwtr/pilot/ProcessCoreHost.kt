@@ -338,13 +338,16 @@ internal object ProcessCoreHost {
     private fun drain(runtime: CoreHost, queue: File, app: Application): StartOrder.Drain {
         if (failure != null) return StartOrder.Drain.Waiting
         // RN's widget check-offs past their Undo window (an RN user's pending file on the first native start, or a sweep a killed
-        // process missed) go into the queue first, through RN's CheckoffStore, so this drain stores them.
-        runCatching { CheckoffStore.sweep(app) }.onFailure { Log.w(CoreHost.TAG, "Native Android widget check-off sweep failed", it) }
-        if (queue.list().isNullOrEmpty()) return StartOrder.Drain.Done
+        // process missed) go into the queue first, through RN's CheckoffStore, so this drain stores them. One that did not (a
+        // failed read or queue write, which RN's sweep keeps pending) is retried: the queue still drains, and CoreWork runs again.
+        val unswept = runCatching { CheckoffStore.sweep(app).failed > 0 }.onFailure { Log.w(CoreHost.TAG, "Native Android widget check-off sweep failed", it) }.getOrDefault(true)
+        if (unswept) runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "unswept"))
+        val drained = if (unswept) StartOrder.Drain.Unswept else StartOrder.Drain.Done
+        if (queue.list().isNullOrEmpty()) return drained
         return try {
             val ingested = runtime.ingestPendingCaptures(UUID.randomUUID().toString()).optInt("ingested")
             runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "drained").put("ingested", ingested))
-            StartOrder.Drain.Done
+            drained
         } catch (error: Throwable) {
             val message = error.message ?: error.javaClass.simpleName
             runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "failed").put("error", message.substringBefore(':')))
