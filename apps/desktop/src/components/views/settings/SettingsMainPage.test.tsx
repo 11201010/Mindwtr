@@ -169,19 +169,23 @@ describe('SettingsMainPage', () => {
     });
 
     it('browses and searches the installed fonts, applying only an exact pick (#1244)', async () => {
+        let resolveFonts!: (fonts: string[]) => void;
         fontMocks.canListInstalledFonts.mockReturnValue(true);
-        fontMocks.loadInstalledFontFamilies.mockResolvedValue(['Inter', 'Roboto']);
+        fontMocks.loadInstalledFontFamilies.mockReturnValue(new Promise((resolve) => { resolveFonts = resolve; }));
         const onFontFamilyChange = vi.fn();
-        const { findByRole, getByLabelText, getByRole, queryByRole } = render(
+        const { getByLabelText, getByRole, queryByRole } = render(
             <SettingsMainPage {...baseProps} fontFamily="Inter" onFontFamilyChange={onFontFamilyChange} />,
         );
         const listedFonts = () => within(getByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
 
-        const input = await findByRole('combobox', { name: 'Font' }) as HTMLInputElement;
+        // This case exercises browsing after the list loads; the next test covers
+        // focusing while loading. Resolve explicitly so the two paths cannot race.
+        await act(async () => { resolveFonts(['Inter', 'Roboto']); });
+        const input = getByRole('combobox', { name: 'Font' }) as HTMLInputElement;
         // With a font already chosen, focusing must still open the whole list: the
         // field clears for browsing and keeps the current font as its placeholder.
         fireEvent.focus(input);
-        await findByRole('option', { name: 'Roboto' });
+        expect(getByRole('option', { name: 'Roboto' })).toBeInTheDocument();
         expect(input.value).toBe('');
         expect(input.placeholder).toBe('Inter');
         expect(listedFonts()).toEqual(['App default', 'Inter', 'Roboto']);

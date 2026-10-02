@@ -39,6 +39,7 @@ import { createNextRecurringTask } from './recurrence';
 import { toStableSyncJson } from './sync-helpers';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createNativeHostContract } from './native-host-contract';
+import { taskRevisionOf } from './native-request-receipts';
 import { createTaskDraft } from './task-draft';
 import { prepareProjectToSection } from './project-to-section';
 import { DEFAULT_FOCUS_CONTROL_STATE } from './focus-controls';
@@ -1724,6 +1725,30 @@ describe('canonical local reads contract', () => {
                 });
                 expect(nativeValue(await host.commitPreparedTaskFocus({ request, prepared: planned.prepared })))
                     .toEqual(planned.prepared.result);
+            },
+            commitPreparedTaskPromotion: async (control) => {
+                const host = await nativeHost(control);
+                const source = useTaskStore.getState()._tasksById.get(taskId);
+                if (!source) throw new Error('fixture needs a saved promotion source Task');
+                const request = { requestId: '2ed8eb7f-7541-445c-aada-c071a1dbf139', taskId,
+                    taskRevision: taskRevisionOf(source), title: 'Contract promoted project' };
+                const planned = nativeValue(host.prepareTaskPromotion(request));
+                expect(planned.kind).toBe('prepared');
+                expect(planned.prepared.result).toEqual({ id: request.requestId, reused: false });
+                expect(planned.prepared.projects).toHaveLength(1);
+                control.expectPersisted((written) => {
+                    expect(written.tasks.find((entry) => entry.id === taskId))
+                        .toEqual(planned.prepared.tasks[0].after);
+                    expect(written.tasks).toHaveLength(settled.tasks.length);
+                    expect(written.projects.filter((entry) => entry.id === request.requestId))
+                        .toEqual([planned.prepared.projects[0].after]);
+                });
+                expect(nativeValue(await host.commitPreparedTaskPromotion({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._tasksById.get(taskId))
+                    .toEqual(planned.prepared.tasks[0].after);
+                expect(useTaskStore.getState()._projectsById.get(request.requestId))
+                    .toEqual(planned.prepared.projects[0].after);
             },
             convertTaskToSection: () => call('convertTaskToSection', projectTaskIds[0]),
             deleteArea: () => call('deleteArea', areaId),
