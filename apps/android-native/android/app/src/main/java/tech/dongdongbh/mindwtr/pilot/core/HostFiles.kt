@@ -127,18 +127,38 @@ class HostFiles(
         if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) throw IOException("Cannot make directory ${dir.name}")
     }
 
-    private fun open(uri: String): InputStream = if (uri.startsWith("content://")) checkNotNull(content) { "No content resolver" }.open(uri).also { source = it }
+    private fun open(uri: String): InputStream = if (uri.startsWith("content://")) openDocument(uri)
         else local(uri).let { file -> if (file.isFile) file.inputStream() else missing() }
 
-    /** The picked document the running call reads, for [abortRead]. */
-    @Volatile private var source: InputStream? = null
+    /** The picked document each call's thread reads, for [abortRead]; and the threads whose call was aborted. */
+    private val sources = java.util.concurrent.ConcurrentHashMap<Thread, InputStream>()
+    private val abortedReaders: MutableSet<Thread> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    private fun openDocument(uri: String): InputStream {
+        val thread = Thread.currentThread()
+        val stream = checkNotNull(content) { "No content resolver" }.open(uri)
+        sources[thread] = stream
+        // Aborted while its provider's open() was stuck: the stream goes as soon as it came.
+        if (thread in abortedReaders) {
+            runCatching { stream.close() }
+            throw IOException("Request cancelled")
+        }
+        return stream
+    }
 
     /**
-     * Closes the picked document the running call reads (HostIo.fileAbort, once the call's operation passed its deadline): a read
-     * stalled on its document provider then ends with an IOException, and the files thread is free for the next call.
+     * Ends [reader]'s read of a picked document (FileJobs.abort, once the call's operation passed its deadline): a read stalled on
+     * its provider ends with an IOException; one still stuck in open() closes its stream once open() returns.
      */
-    fun abortRead() {
-        runCatching { source?.close() }
+    fun abortRead(reader: Thread) {
+        abortedReaders.add(reader)
+        sources[reader]?.let { runCatching { it.close() } }
+    }
+
+    /** [reader]'s call ended (FileJobs): nothing of it is kept. */
+    fun readDone(reader: Thread) {
+        sources.remove(reader)
+        abortedReaders.remove(reader)
     }
 
     /** [length] bytes from [position] (to the end with Long.MAX_VALUE). A read past [maxReadBytes] throws, never answers short. */

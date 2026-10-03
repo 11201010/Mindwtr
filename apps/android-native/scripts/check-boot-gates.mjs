@@ -786,8 +786,12 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.match(hostIo, /fun close\(\) \{\s*calls\.values\.forEach \{ it\.cancel\(\) \}/);
     assert.match(hostIo, /secretThread\.execute \{\s*answers\.add\(runCatching \{/, 'a secret call runs on the secrets thread');
     // A file call (the attachment file port, the installer) runs on the files thread, its request read there too.
-    // An aborted call that has not started never runs (review finding 2).
-    assert.match(hostIo, /fileThread\.execute \{\s*answers\.add\(runCatching \{\s*synchronized\(fileLock\) \{\s*if \(abortedFiles\.remove\(id\)\) throw IOException\("Request cancelled"\)\s*runningFile = id\s*\}\s*val request = JSONObject\(json\)/, 'a file call runs on the files thread');
+    // A file call runs off the engine (FileJobs: the files thread, or a picked document's own thread), its request read there too;
+    // an aborted call that has not started never runs (review finding 2).
+    assert.match(hostIo, /fileJobs\.start\(id, FileJobs\.readsPickedDocument\(json\), \{\s*val request = JSONObject\(json\)/, 'a file call runs off the engine');
+    const fileJobs = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/FileJobs.kt'), 'utf8');
+    assert.match(fileJobs, /if \(aborted\.remove\(id\)\) throw IOException\("Request cancelled"\)/);
+    assert.match(fileJobs, /if \(readsDocument\) Thread\(job, "mindwtr-document-\$id"\)\.apply \{ isDaemon = true \}\.start\(\) else queue\.execute\(job\)/);
     assert.equal(hostIo.match(/answers\.add\(/g).length, 4, 'the answer queue is the only way back');
     // A body leaves apart from its answer's JSON (ioBody), and only for the answer just taken.
     assert.match(hostIo, /taken = answer\.body\s+return answer\.json/);
@@ -800,7 +804,10 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.doesNotMatch(read, /catch|runCatching|getOrNull|getOrDefault|getOrElse|\?: ""|orEmpty/, 'HostIo.read swallows no IOException');
     // The only places HostIo catches: each turns the failure into the call's error answer, so fetch rejects.
     assert.doesNotMatch(hostIo, /catch \(|getOrNull|getOrDefault/);
-    assert.deepEqual(hostIo.match(/runCatching \{[\s\S]*?\}\.getOrElse \{ [^\n]*/g).map((line) => /getOrElse \{ (failure\(id, call, it\)|(Answer\()?JSONObject\(\)\.put\("id", id\)\.put\("error")/.test(line)), [true, true, true]);
+    assert.deepEqual(hostIo.match(/runCatching \{[\s\S]*?\}\.getOrElse \{ [^\n]*/g).map((line) => /getOrElse \{ (failure\(id, call, it\)|(Answer\()?JSONObject\(\)\.put\("id", id\)\.put\("error")/.test(line)), [true, true]);
+    // A file call's failure (FileJobs runs it in runCatching and delivers the Result) is its error answer.
+    assert.match(fileJobs, /val result = runCatching \{[\s\S]*?compute\(\)\s*\}[\s\S]*?deliver\(result\)/);
+    assert.match(hostIo, /\}\) \{ Answer\(JSONObject\(\)\.put\("id", id\)\.put\("error", it\.message \?: it\.javaClass\.simpleName\)\.toString\(\)\) \}\)/);
     // Review 5: the ceiling is core's largest limit (a sync document), bounded by a fifth of the heap; core applies its
     // smaller limits itself. The lower limit the net check uses exists only in a debug build (debugProperty is "" in release).
     const coreHttp = readFileSync(resolve(app, '../../packages/core/src/http-utils.ts'), 'utf8');

@@ -168,8 +168,9 @@ class CoreHost(
                 install(engine, database)
                 // A fetch or secret answer queued while no call runs wakes the idle pump, which settles it at once.
                 io.wake = { runCatching { executor.execute { idlePump() } } }
-                // An aborted file call's stalled document read ends (fileAbort).
-                io.abortRunningFile = { files.abortRead() }
+                // An aborted file call's stalled document read ends (fileAbort), and each call's reader is forgotten when it ends.
+                io.abortReader = files::abortRead
+                io.readDone = files::readDone
                 load(engine, database, bundle)
             })
         }

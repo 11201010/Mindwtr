@@ -259,7 +259,7 @@ class HostFilesTest {
         }.apply { start() }
         Thread.sleep(200)
         assertTrue("the copy is stalled", copy.isAlive)
-        files.abortRead()
+        files.abortRead(copy)
         copy.join(5_000)
         assertFalse("the copy ended", copy.isAlive)
         assertTrue(failure.get() is IOException)
