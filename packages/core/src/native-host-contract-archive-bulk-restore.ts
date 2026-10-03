@@ -23,10 +23,13 @@ import { buildBulkTaskTokenUpdates } from './bulk-task-tokens';
 
 export type NativeArchivedTasksRestoreRequest = {
     requestId: string; taskIds: string[]; taskRevisions: Record<string, string>;
-} & ({ source?: never; status?: never; action?: never; tag?: never }
-    | { source: 'done'; status: Exclude<TaskStatus, 'done'>; action?: never; tag?: never }
-    | { source: 'done'; action: 'addTag'; tag: string; status?: never });
+} & ({ source?: never; status?: never; action?: never; tag?: never; tags?: never }
+    | { source: 'done'; status: Exclude<TaskStatus, 'done'>; action?: never; tag?: never; tags?: never }
+    | { source: 'done'; action: 'addTag'; tag: string; status?: never; tags?: never }
+    | { source: 'done'; action: 'removeTag'; tags: string[]; status?: never; tag?: never });
 type AddTagRequest = Extract<NativeArchivedTasksRestoreRequest, { action: 'addTag' }>;
+type RemoveTagRequest = Extract<NativeArchivedTasksRestoreRequest, { action: 'removeTag' }>;
+type TagEditRequest = AddTagRequest | RemoveTagRequest;
 export type NativeArchivedTasksRestoreResult = { count: number; status: Exclude<TaskStatus, 'done'> }
     | { count: number; changed: true };
 export type NativeArchivedTasksRestoreScope = {
@@ -86,9 +89,13 @@ const jsonSafe = <T>(value: unknown): T | null => {
 const readRequest = (input: unknown): NativeArchivedTasksRestoreRequest | null => {
     const request = detach<Record<string, unknown>>(input);
     const addTag = request?.source === 'done' && request.action === 'addTag';
+    const removeTag = request?.source === 'done' && request.action === 'removeTag';
     if (!request || !exact(request, addTag ? ['requestId', 'taskIds', 'taskRevisions', 'source', 'action', 'tag']
+        : removeTag ? ['requestId', 'taskIds', 'taskRevisions', 'source', 'action', 'tags']
         : request.source === 'done' ? ['requestId', 'taskIds', 'taskRevisions', 'source', 'status'] : ['requestId', 'taskIds', 'taskRevisions'])
         || (addTag ? !text(request.tag, 2000)
+            : removeTag ? !Array.isArray(request.tags) || request.tags.length === 0 || request.tags.length > 10_000
+                || !request.tags.every((tag) => text(tag, 2_000_000)) || new Set(request.tags).size !== request.tags.length
             : request.source === 'done' && !getBulkMoveStatusOptions('done').includes(request.status as TaskStatus))
         || typeof request.requestId !== 'string' || !UUID.test(request.requestId)
         || !Array.isArray(request.taskIds) || request.taskIds.length === 0 || request.taskIds.length > 10_000
@@ -98,13 +105,17 @@ const readRequest = (input: unknown): NativeArchivedTasksRestoreRequest | null =
     return request as NativeArchivedTasksRestoreRequest;
 };
 const isAddTag = (request: NativeArchivedTasksRestoreRequest): request is AddTagRequest => request.source === 'done' && request.action === 'addTag';
-const targetStatus = (request: Exclude<NativeArchivedTasksRestoreRequest, AddTagRequest>): Exclude<TaskStatus, 'done'> => request.source === 'done' ? request.status : 'inbox';
+const isRemoveTag = (request: NativeArchivedTasksRestoreRequest): request is RemoveTagRequest => request.source === 'done' && request.action === 'removeTag';
+const isTagEdit = (request: NativeArchivedTasksRestoreRequest): request is TagEditRequest => isAddTag(request) || isRemoveTag(request);
+const targetStatus = (request: Exclude<NativeArchivedTasksRestoreRequest, TagEditRequest>): Exclude<TaskStatus, 'done'> => request.source === 'done' ? request.status : 'inbox';
 const requestUpdates = (request: NativeArchivedTasksRestoreRequest, tasks: Task[]) => isAddTag(request)
     ? buildBulkTaskTokenUpdates(request.taskIds, buildEntityMap(tasks), 'tags', request.tag, 'add')
+    : isRemoveTag(request) ? buildBulkTaskTokenUpdates(request.taskIds, buildEntityMap(tasks), 'tags', request.tags, 'remove')
     : request.taskIds.map((id) => ({ id, updates: { status: targetStatus(request) } }));
 const sourceName = (request: unknown): 'Done' | 'Archive' => record(request) && request.source === 'done' ? 'Done' : 'Archive';
 const actionName = (request: unknown): string => sourceName(request) === 'Done'
-    ? record(request) && request.action === 'addTag' ? 'Done Add tag' : 'Done Move' : 'Archive Restore';
+    ? record(request) && request.action === 'addTag' ? 'Done Add tag'
+        : record(request) && request.action === 'removeTag' ? 'Done Remove tag' : 'Done Move' : 'Archive Restore';
 const validTask = (row: unknown): row is Task => record(row) && text(row.id, 500) && validRawTask(row, row.id);
 const validArea = (row: unknown): row is Area => record(row) && text(row.id, 500)
     && typeof row.name === 'string' && iso(row.createdAt) && iso(row.updatedAt)
@@ -201,7 +212,7 @@ const readEnvelope = (input: unknown): NativeArchivedTasksRestoreEnvelope | null
         || !Number.isInteger(raw.preparedOffsetMinutes) || Math.abs(raw.preparedOffsetMinutes as number) > 840
         || !Number.isInteger(raw.boundaryOffsetMinutes) || Math.abs(raw.boundaryOffsetMinutes as number) > 840
         || !Array.isArray(raw.dates) || !raw.dates.every(validFrozenFocusDate)
-        || !record(raw.result) || (isAddTag(request)
+        || !record(raw.result) || (isTagEdit(request)
             ? !exact(raw.result, ['count', 'changed']) || raw.result.changed !== true
                 || !Number.isInteger(raw.result.count) || (raw.result.count as number) < 1 || (raw.result.count as number) > request.taskIds.length
             : !exact(raw.result, ['count', 'status']) || raw.result.count !== request.taskIds.length || raw.result.status !== targetStatus(request))) return null;
@@ -214,12 +225,12 @@ const readEnvelope = (input: unknown): NativeArchivedTasksRestoreEnvelope | null
             || new Date(Date.parse(`${prepared.preparedLocalDay}T23:59:59.999Z`) + prepared.boundaryOffsetMinutes * 60_000).toISOString() !== prepared.futureBoundary
             || !same(requiredDates(prepared.scope), prepared.dates.map((row) => row.value))) return null;
         const expected = archivedTasksRestoreEffect(prepared);
-        const changedIds = isAddTag(request) ? new Set(requestUpdates(request, prepared.scope.tasks.map((row) => historyRowLoadProjection(row, prepared.updateAt))).map((row) => row.id)) : null;
+        const changedIds = isTagEdit(request) ? new Set(requestUpdates(request, prepared.scope.tasks.map((row) => historyRowLoadProjection(row, prepared.updateAt))).map((row) => row.id)) : null;
         const selectedIds = new Set(request.taskIds);
         const selectedPairs = expected?.tasks.filter((pair) => selectedIds.has(pair.before.id)) ?? [];
-        const restoredIds = isAddTag(request) ? null : new Set(selectedPairs.filter((pair) => pair.after.status === targetStatus(request)).map((pair) => pair.before.id));
+        const restoredIds = isTagEdit(request) ? null : new Set(selectedPairs.filter((pair) => pair.after.status === targetStatus(request)).map((pair) => pair.before.id));
         if (!expected || !same(expected, prepared.effect)
-            || (isAddTag(request)
+            || (isTagEdit(request)
                 ? prepared.result.count !== changedIds!.size || selectedPairs.length !== changedIds!.size
                     || selectedPairs.some((pair) => !changedIds!.has(pair.before.id) || pair.after.status !== 'done')
                 : !request.taskIds.every((id) => restoredIds!.has(id)))
@@ -236,7 +247,8 @@ export function createArchivedTasksRestoreMethods(deps: {
     let pending: { envelope: NativeArchivedTasksRestoreEnvelope; adapter: ReturnType<typeof getStorageAdapter>;
         boundary: PreparedNativeSaveBoundary | undefined } | null = null;
     const payload = (envelope: NativeArchivedTasksRestoreEnvelope) => canonicalPayload([
-        isAddTag(envelope.request) ? 'doneTasksAddTag' : envelope.request.source === 'done' ? 'doneTasksMove' : 'archivedTasksRestore', envelope]);
+        isRemoveTag(envelope.request) ? 'doneTasksRemoveTag' : isAddTag(envelope.request) ? 'doneTasksAddTag'
+            : envelope.request.source === 'done' ? 'doneTasksMove' : 'archivedTasksRestore', envelope]);
     const checkAuthority = (envelope: NativeArchivedTasksRestoreEnvelope, authority: PreparedAreaAuthority): NativeHostResult<null> => {
         const prepared = envelope.prepared;
         const current = archivedTasksRestoreScope(envelope.request, authority.snapshot);
@@ -281,15 +293,15 @@ export function createArchivedTasksRestoreMethods(deps: {
             const scope = archivedTasksRestoreScope(request, read.value.authority.snapshot);
             if (!selectedSourcesMatch(request, scope)) return fail('STALE_REVISION', `Saved ${sourceName(request)} selection changed`);
             const now = new Date(); const end = new Date(now); end.setHours(23, 59, 59, 999);
-            const count = isAddTag(request) ? requestUpdates(request, scope.tasks.map((row) => historyRowLoadProjection(row, now.toISOString()))).length : request.taskIds.length;
-            if (isAddTag(request) && count === 0) return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
+            const count = isTagEdit(request) ? requestUpdates(request, scope.tasks.map((row) => historyRowLoadProjection(row, now.toISOString()))).length : request.taskIds.length;
+            if (isTagEdit(request) && count === 0) return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
             const device = ensureDeviceId(scope.settings);
             const base = { version: 1 as const, request, scope, deviceIdBefore: scope.settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null, updateAt: now.toISOString(),
                 preparedLocalDay: new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10),
                 preparedOffsetMinutes: now.getTimezoneOffset(), boundaryOffsetMinutes: end.getTimezoneOffset(),
                 futureBoundary: end.toISOString(), dates: projectFocusDateValues(requiredDates(scope)),
-                result: isAddTag(request) ? { count, changed: true as const } : { count, status: targetStatus(request) } };
+                result: isTagEdit(request) ? { count, changed: true as const } : { count, status: targetStatus(request) } };
             let effect;
             try { effect = archivedTasksRestoreEffect(base); } catch { effect = null; }
             const prepared = effect && jsonSafe<NativePreparedArchivedTasksRestore>({ ...base, effect });
@@ -331,9 +343,9 @@ export function createArchivedTasksRestoreMethods(deps: {
             if (prewriteFailure) return prewriteFailure;
             if (confirmed.ok && !same(confirmed.value, envelope.prepared.result)) return fail('INVALID_INPUT', `Saved ${actionName(envelope.request)} result does not match its journal`);
             if (confirmed.ok) {
-                try { logInfo(isAddTag(envelope.request) ? 'Native Done bulk tag confirmed' : envelope.request.source === 'done' ? 'Native Done bulk status confirmed' : 'Native Archive bulk Restore confirmed', { scope: 'native-host', category: 'storage',
-                    context: { releaseCheck: isAddTag(envelope.request) ? 'v1.3.4/ios-done-bulk-tag' : envelope.request.source === 'done' ? 'v1.3.4/ios-done-bulk-status' : 'v1.3.4/ios-archive-bulk-restore',
-                        outcome: isAddTag(envelope.request) ? 'added' : envelope.request.source === 'done' ? 'moved' : 'confirmed' } }); }
+                try { logInfo(isRemoveTag(envelope.request) ? 'Native Done bulk tag removal confirmed' : isAddTag(envelope.request) ? 'Native Done bulk tag confirmed' : envelope.request.source === 'done' ? 'Native Done bulk status confirmed' : 'Native Archive bulk Restore confirmed', { scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: isRemoveTag(envelope.request) ? 'v1.3.4/ios-done-bulk-tag-remove' : isAddTag(envelope.request) ? 'v1.3.4/ios-done-bulk-tag' : envelope.request.source === 'done' ? 'v1.3.4/ios-done-bulk-status' : 'v1.3.4/ios-archive-bulk-restore',
+                        outcome: isRemoveTag(envelope.request) ? 'removed' : isAddTag(envelope.request) ? 'added' : envelope.request.source === 'done' ? 'moved' : 'confirmed' } }); }
                 catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
             }
             return confirmed;

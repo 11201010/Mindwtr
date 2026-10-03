@@ -578,6 +578,22 @@ final class CoreModel: ObservableObject {
     private var doneBulkTagReadGeneration = 0
     private var doneBulkTagIDs: [String] = []
     private var doneBulkTagRevisions: CoreObject = [:]
+    @Published private(set) var doneBulkRemovePresented = false
+    @Published private(set) var doneBulkRemoveQuery = ""
+    @Published private(set) var doneBulkRemovePicks: [String] = []
+    @Published private(set) var doneBulkRemoveOptions: CoreObject = [:]
+    @Published private(set) var doneBulkRemoveItems: [CoreObject] = []
+    @Published private(set) var doneBulkRemoveTotal = 0
+    @Published private(set) var doneBulkRemoveCurrent = false
+    @Published private(set) var doneBulkRemoveReading = false
+    @Published private(set) var doneBulkRemoveReadError: String?
+    @Published private(set) var doneBulkRemoveWriteError = false
+    private var doneBulkRemoveTask: Task<Void, Never>?
+    private var doneBulkRemoveGeneration = 0
+    private var doneBulkRemoveIDs: [String] = []
+    private var doneBulkRemoveRevisions: CoreObject = [:]
+    private var doneBulkRemoveParams: CoreObject = [:]
+    private var doneBulkRemoveRevision = ""
     private var historyDoneSelectedRevisions: CoreObject = [:]
     private var historyDoneAnchorID: String?
     private var historyDoneRangeSelectMode = false
@@ -1825,6 +1841,22 @@ final class CoreModel: ObservableObject {
             && selectedSurface == .history && !historyArchived && historyCurrent && historyDoneSelectionMode
             && historyDoneSelectedIDs == doneBulkTagIDs
             && (try? json(historyDoneSelectedRevisions)) == (try? json(doneBulkTagRevisions))
+    }
+    var historyDoneBulkRemoveEnabled: Bool {
+        historyActionsEnabled && !historyArchived && historyDoneSelectionMode && !taskStatusMenuPresented
+            && historyTextEdits.isEmpty && historyPendingEdit == nil
+            && (historyPickerName.isEmpty || historyPickerCurrent)
+            && !historyDoneSelectedIDs.isEmpty && historyDoneSelectedRevisions.count == historyDoneSelectedIDs.count
+            && historyDoneBulk.object("bar").object("removeTag").flag("enabled")
+    }
+    var doneBulkRemoveSaveEnabled: Bool {
+        doneBulkRemovePresented && doneBulkRemoveCurrent && !doneBulkRemoveReading && doneBulkRemoveReadError == nil
+            && !doneBulkRemovePicks.isEmpty && !busy && !retryNeeded && historyCurrent
+            && doneBulkRemoveContextIsCurrent()
+    }
+    var doneBulkRemoveCanLoadMore: Bool {
+        doneBulkRemoveCurrent && !doneBulkRemoveReading && doneBulkRemoveReadError == nil
+            && doneBulkRemoveItems.count < doneBulkRemoveTotal && doneBulkRemoveContextIsCurrent()
     }
     var historyArchiveRowActionsEnabled: Bool { historyActionsEnabled && !historyArchiveSelectionMode }
     var historyArchiveBulkRestoreEnabled: Bool {
@@ -3652,7 +3684,7 @@ final class CoreModel: ObservableObject {
         let keys = ["tab.next", "tab.inbox", "tab.review", "tab.menu", "nav.addTask", "search.title",
                     "appLock.title", "appLock.description", "appLock.prompt", "appLock.enablePrompt", "appLock.unlock",
                     "appLock.authenticating", "appLock.useDevicePasscode", "appLock.unavailable", "appLock.cancelled", "appLock.failed",
-                    "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading", "common.ok",
+                    "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading", "common.ok", "common.noMatches",
                     "attachments.title", "attachments.missing", "attachments.download", "attachments.addLink",
                     "attachments.remove", "attachments.linkPlaceholder", "attachments.linkBatchHint",
                     "task.aria.changeStatus", "task.aria.changeStatusHint", "quickAdd.audioRecord",
@@ -12283,6 +12315,7 @@ final class CoreModel: ObservableObject {
 
     private func clearDoneTaskSelection() {
         closeDoneBulkTag()
+        closeDoneBulkRemove()
         cancelArchiveBulkDeleteConfirmation()
         historyDoneSelectionMode = false
         historyDoneSelectedIDs = []
@@ -12377,6 +12410,160 @@ final class CoreModel: ObservableObject {
                               "message": notice.text("title") + ": " + notice.text("message")])
     }
 
+    func openDoneBulkRemove() {
+        guard historyDoneBulkRemoveEnabled else { return }
+        closeDoneBulkRemove()
+        doneBulkRemoveOptions = historyDoneBulk.object("removeTag")
+        let labels = historyDoneBulk.object("addTag")
+        doneBulkRemoveOptions["cancelLabel"] = labels["cancelLabel"]
+        doneBulkRemoveOptions["saveLabel"] = labels["saveLabel"]
+        doneBulkRemoveIDs = historyDoneSelectedIDs
+        doneBulkRemoveRevisions = historyDoneSelectedRevisions
+        doneBulkRemoveParams = historyParamsByTab["done"] ?? [:]
+        doneBulkRemovePresented = true
+        doneBulkRemoveWriteError = false
+        taskStatusMenuPresented = true
+        readDoneBulkRemove(reset: true)
+    }
+
+    func closeDoneBulkRemove() {
+        if doneBulkRemovePresented { taskStatusMenuPresented = false }
+        doneBulkRemovePresented = false
+        doneBulkRemoveGeneration += 1
+        doneBulkRemoveTask?.cancel()
+        doneBulkRemoveTask = nil
+        doneBulkRemoveReading = false
+        doneBulkRemoveCurrent = false
+        doneBulkRemoveReadError = nil
+        doneBulkRemoveQuery = ""
+        doneBulkRemovePicks = []
+        doneBulkRemoveItems = []
+        doneBulkRemoveTotal = 0
+        doneBulkRemoveIDs = []
+        doneBulkRemoveRevisions = [:]
+        doneBulkRemoveParams = [:]
+        doneBulkRemoveRevision = ""
+    }
+
+    private func doneBulkRemoveContextIsCurrent() -> Bool {
+        guard doneBulkRemovePresented, ready, selectedSurface == .history, !historyArchived, historyDoneSelectionMode,
+              !retryNeeded, !taskPresented, historyTextEdits.isEmpty, historyPendingEdit == nil,
+              let ids = try? json(historyDoneSelectedIDs), let frozenIDs = try? json(doneBulkRemoveIDs),
+              ids.utf8.elementsEqual(frozenIDs.utf8),
+              let revisions = try? json(historyDoneSelectedRevisions), let frozenRevisions = try? json(doneBulkRemoveRevisions),
+              revisions.utf8.elementsEqual(frozenRevisions.utf8),
+              let params = try? json(historyParamsByTab["done"] ?? [:]), let frozenParams = try? json(doneBulkRemoveParams) else { return false }
+        return params.utf8.elementsEqual(frozenParams.utf8)
+    }
+
+    func setDoneBulkRemoveQuery(_ query: String) {
+        guard doneBulkRemovePresented, !busy, !retryNeeded else { return }
+        doneBulkRemoveQuery = query
+        readDoneBulkRemove(reset: true, delay: 200_000_000)
+    }
+
+    func doneBulkRemovePicked(_ value: String) -> Bool {
+        doneBulkRemovePicks.contains { $0.utf8.elementsEqual(value.utf8) }
+    }
+
+    func toggleDoneBulkRemove(_ value: String) {
+        guard doneBulkRemoveCurrent, !doneBulkRemoveReading, doneBulkRemoveContextIsCurrent(),
+              doneBulkRemoveItems.contains(where: { $0.text("value").utf8.elementsEqual(value.utf8) }) else { return }
+        if let index = doneBulkRemovePicks.firstIndex(where: { $0.utf8.elementsEqual(value.utf8) }) { doneBulkRemovePicks.remove(at: index) }
+        else { doneBulkRemovePicks.append(value) }
+    }
+
+    func retryDoneBulkRemoveRead() { readDoneBulkRemove(reset: true) }
+    func loadMoreDoneBulkRemove() {
+        guard doneBulkRemoveCanLoadMore else { return }
+        readDoneBulkRemove(reset: false)
+    }
+
+    private func readDoneBulkRemove(reset: Bool, delay: UInt64 = 0) {
+        guard doneBulkRemoveContextIsCurrent() else { return }
+        doneBulkRemoveGeneration += 1
+        let generation = doneBulkRemoveGeneration, queryText = doneBulkRemoveQuery
+        let offset = reset ? 0 : doneBulkRemoveItems.count
+        let revision = doneBulkRemoveRevision
+        if reset { doneBulkRemoveItems = []; doneBulkRemoveTotal = 0; doneBulkRemoveRevision = "" }
+        doneBulkRemoveCurrent = false
+        doneBulkRemoveReading = true
+        doneBulkRemoveReadError = nil
+        doneBulkRemoveTask?.cancel()
+        doneBulkRemoveTask = Task {
+            defer { if generation == doneBulkRemoveGeneration { doneBulkRemoveReading = false } }
+            do {
+                if delay > 0 { try await Task.sleep(nanoseconds: delay) }
+                var start = offset
+                for attempt in 0..<2 {
+                    guard !Task.isCancelled, generation == doneBulkRemoveGeneration, doneBulkRemoveContextIsCurrent(),
+                          queryText.utf8.elementsEqual(doneBulkRemoveQuery.utf8) else { return }
+                    var picker: CoreObject = ["kind": "removeTag", "query": queryText, "offset": start, "limit": 100]
+                    if start > 0 { picker["revision"] = revision }
+                    let request: CoreObject = ["list": "done", "params": doneBulkRemoveParams, "taskIds": doneBulkRemoveIDs, "picker": picker]
+                    do {
+                        let bulk = try await self.query("menuRead", ["bulk", try json(request)])
+                        guard !Task.isCancelled, generation == doneBulkRemoveGeneration, doneBulkRemoveContextIsCurrent(),
+                              queryText.utf8.elementsEqual(doneBulkRemoveQuery.utf8) else { return }
+                        let acceptedIDs = try json(bulk["selectedIds"] ?? NSNull()), acceptedRevisions = try json(bulk.object("taskRevisions"))
+                        guard acceptedIDs.utf8.elementsEqual(try json(doneBulkRemoveIDs).utf8),
+                              acceptedRevisions.utf8.elementsEqual(try json(doneBulkRemoveRevisions).utf8) else {
+                            doneBulkRemoveReadError = label("task.updateFailed")
+                            return
+                        }
+                        let options = bulk.object("picker")
+                        guard bulk.text("list") == "done", !bulk.text("revision").isEmpty, bulk["selectAll"] is NSNull,
+                              try json(bulk).utf8.count <= 2_000_000,
+                              Set(options.keys) == Set(["kind", "total", "items", "create", "submit"]), options.text("kind") == "removeTag",
+                              options["create"] is NSNull, options["submit"] is NSNull,
+                              let total = options["total"] as? NSNumber, CFGetTypeID(total) != CFBooleanGetTypeID(),
+                              total.doubleValue >= Double(start), total.doubleValue <= 9_007_199_254_740_991, total.doubleValue.rounded() == total.doubleValue,
+                              let items = options["items"] as? [CoreObject], items.count == min(100, total.intValue - start),
+                              items.allSatisfy({ Set($0.keys) == Set(["value", "label", "selected", "edit"])
+                                  && ($0["value"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 2_000_000 }) == true
+                                  && $0["label"] is String && $0["edit"] is NSNull
+                                  && ($0["selected"] as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() && !$0.boolValue }) == true }) else { throw CocoaError(.coderReadCorrupt) }
+                        let combined = start == 0 ? items : doneBulkRemoveItems + items
+                        guard Set(combined.map { Data($0.text("value").utf8) }).count == combined.count,
+                              start == 0 || (bulk.text("revision").utf8.elementsEqual(revision.utf8) && total.intValue == doneBulkRemoveTotal) else {
+                            throw CocoaError(.coderReadCorrupt)
+                        }
+                        doneBulkRemoveItems = combined
+                        doneBulkRemoveTotal = total.intValue
+                        doneBulkRemoveRevision = bulk.text("revision")
+                        doneBulkRemoveCurrent = true
+                        return
+                    } catch {
+                        guard start > 0, attempt == 0, error.localizedDescription.hasPrefix("STALE_REVISION:") else { throw error }
+                        // Replace stale pages under one fresh list revision; hidden picks remain exact.
+                        start = 0
+                    }
+                }
+            } catch {
+                guard !Task.isCancelled, generation == doneBulkRemoveGeneration, doneBulkRemovePresented else { return }
+                doneBulkRemoveReadError = error.localizedDescription
+            }
+        }
+    }
+
+    func saveDoneBulkRemove() async {
+        guard doneBulkRemoveSaveEnabled else { return }
+        let tags = doneBulkRemovePicks, ids = doneBulkRemoveIDs, revisions = doneBulkRemoveRevisions
+        closeDoneBulkRemove()
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "taskIds": ids, "taskRevisions": revisions,
+                                    "source": "done", "action": "removeTag", "tags": tags])
+            archivedTasksRestoreRequest = request
+            let result = try await query("archivedTasksRestoreWrite", [request])
+            try acknowledgeArchivedTasksRestore(result, allowNoop: true)
+            _ = await readHistory()
+            await showDoneBulkTagNotice(result)
+        } catch { doneBulkRemoveWriteError = true; await handleArchivedTasksRestoreError(error) }
+    }
+
     private func doneTaskBulkInput(params: CoreObject) -> CoreObject {
         var input: CoreObject = ["list": "done", "params": params, "taskIds": historyDoneSelectedIDs,
             "anchorId": historyDoneAnchorID as Any? ?? NSNull(), "rangeSelectMode": historyDoneRangeSelectMode]
@@ -12389,6 +12576,18 @@ final class CoreModel: ObservableObject {
               let ids = bulk["selectedIds"] as? [String], bulk.number("selectedCount") == ids.count,
               try json(bulk).utf8.count <= 2_000_000 else { throw CocoaError(.coderReadCorrupt) }
         let revisions = try archiveTaskSelectionRevisions(bulk, ids: ids)
+        if doneBulkRemovePresented {
+            let sameIDs = try json(ids).utf8.elementsEqual(json(doneBulkRemoveIDs).utf8)
+            let sameRevisions = try json(revisions).utf8.elementsEqual(json(doneBulkRemoveRevisions).utf8)
+            guard sameIDs && sameRevisions else {
+                doneBulkRemoveGeneration += 1
+                doneBulkRemoveTask?.cancel()
+                doneBulkRemoveReading = false
+                doneBulkRemoveCurrent = false
+                doneBulkRemoveReadError = label("task.updateFailed")
+                throw CocoaError(.coderReadCorrupt)
+            }
+        }
         historyDoneSelectedIDs = ids
         historyDoneSelectedRevisions = revisions
         historyDoneAnchorID = bulk["anchorId"] as? String
@@ -12652,10 +12851,11 @@ final class CoreModel: ObservableObject {
         let frozen = try decode(request)
         let done = frozen.text("source") == "done"
         let addTag = done && frozen.text("action") == "addTag"
+        let removeTag = done && frozen.text("action") == "removeTag"
         guard let ids = frozen["taskIds"] as? [String],
               let count = result["count"] as? NSNumber, CFGetTypeID(count) != CFBooleanGetTypeID(),
               count.doubleValue.rounded(.towardZero) == count.doubleValue else { throw CocoaError(.coderReadCorrupt) }
-        if addTag {
+        if addTag || removeTag {
             guard Set(result.keys) == Set(["count", "changed"]),
                   let changed = result["changed"] as? NSNumber, CFGetTypeID(changed) == CFBooleanGetTypeID(),
                   changed.boolValue ? count.doubleValue > 0 && count.doubleValue <= Double(ids.count) : allowNoop && count.doubleValue == 0 else {
@@ -12667,10 +12867,13 @@ final class CoreModel: ObservableObject {
         }
         archivedTasksRestoreRequest = nil
         if addTag { doneBulkTagWriteError = false }
+        if removeTag { doneBulkRemoveWriteError = false }
         retryNeeded = false
         historyError = nil
         error = nil
-        if addTag && !result.flag("changed") { closeDoneBulkTag() }
+        if (addTag || removeTag) && !result.flag("changed") {
+            if addTag { closeDoneBulkTag() } else { closeDoneBulkRemove() }
+        }
         else if done { clearDoneTaskSelection() } else { clearArchiveTaskSelection() }
     }
 
@@ -18986,8 +19189,8 @@ final class CoreModel: ObservableObject {
                 let outcome = try await query("archivedTasksRestoreRetryOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
                     let done = try decode(request).text("source") == "done"
-                    let addTag = try decode(request).text("action") == "addTag"
-                    let unknown = label(addTag ? "task.doneTagOutcomeUnknown" : done ? "task.doneStatusOutcomeUnknown" : "task.archiveRestoreOutcomeUnknown")
+                    let tagEdit = ["addTag", "removeTag"].contains(try decode(request).text("action"))
+                    let unknown = label(tagEdit ? "task.doneTagOutcomeUnknown" : done ? "task.doneStatusOutcomeUnknown" : "task.archiveRestoreOutcomeUnknown")
                     historyError = unknown
                     self.error = unknown
                     return

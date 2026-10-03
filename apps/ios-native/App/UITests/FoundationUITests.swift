@@ -19584,4 +19584,153 @@ final class FoundationUITests: XCTestCase {
             task184CheckRows(app); app.terminate()
         }
     }
+
+    private func task185SelectRange(_ app: XCUIApplication) {
+        historyViewChoice(app, "done", "group", "none")
+        historyViewChoice(app, "done", "sort", "title")
+        task182Filter(app, "Task185 batch")
+        let first = app.descendants(matching: .any).matching(identifier: "task-title-task185-batch-01").firstMatch
+        task182Reveal(app, first); first.press(forDuration: 0.8)
+        boardTap(app, "done-bulk-range")
+        let last = app.buttons["done-select-none-task185-batch-05"]
+        task182Reveal(app, last); last.tap()
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "4"), evaluatedWith: app.staticTexts["done-bulk-count"])
+        waitForExpectations(timeout: 15)
+        XCTAssertFalse(app.buttons["done-select-none-task185-readonly"].exists)
+    }
+    private func task185Option(_ app: XCUIApplication, _ token: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "done-bulk-remove-tag-option-", token)).firstMatch
+    }
+    private func task185Open(_ app: XCUIApplication) {
+        let actions = app.scrollViews["done-bulk-actions-scroll"]
+        if actions.exists {
+            for _ in 0..<6 {
+                if app.buttons["done-bulk-remove-tag"].isHittable { break }
+                actions.swipeLeft()
+            }
+            XCTAssertTrue(app.buttons["done-bulk-remove-tag"].isHittable)
+        }
+        boardTap(app, "done-bulk-remove-tag")
+        let input = app.textFields["done-bulk-remove-tag-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["done-bulk-remove-tag-save"].isEnabled)
+        XCTAssertTrue(task185Option(app, "#blue sky,review").waitForExistence(timeout: 15))
+        XCTAssertFalse(task185Option(app, "#blue sky,review").isSelected)
+    }
+    private func task185Query(_ app: XCUIApplication, _ query: String) {
+        let input = app.textFields["done-bulk-remove-tag-input"]
+        let scroll = app.scrollViews["done-bulk-remove-tag-scroll"]
+        for _ in 0..<45 {
+            if input.exists && input.frame.minY >= scroll.frame.minY && input.frame.maxY <= scroll.frame.maxY { break }
+            scroll.swipeDown(velocity: .fast)
+        }
+        XCTAssertTrue(input.exists)
+        XCTAssertGreaterThanOrEqual(input.frame.minY, scroll.frame.minY)
+        XCTAssertLessThanOrEqual(input.frame.maxY, scroll.frame.maxY)
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        let previous = input.value as? String ?? ""
+        let actual = previous == input.placeholderValue ? "" : previous
+        input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: actual.count) + query)
+        if !query.isEmpty { XCTAssertEqual(input.value as? String, query) }
+    }
+    private func task185Pick(_ app: XCUIApplication, _ token: String) {
+        let option = task185Option(app, token)
+        XCTAssertTrue(option.waitForExistence(timeout: 15)); boardEnabled(option)
+        option.tap()
+        expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: option)
+        waitForExpectations(timeout: 15)
+    }
+    private func task185Cancel(_ app: XCUIApplication) {
+        task185Open(app); task185Query(app, "blue sky,review")
+        XCTAssertFalse(app.buttons["done-bulk-remove-tag-save"].isEnabled)
+        task185Pick(app, "#blue sky,review")
+        boardEnabled(app.buttons["done-bulk-remove-tag-save"])
+        app.buttons["done-bulk-remove-tag-cancel"].coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.85)).tap()
+        XCTAssertTrue(app.textFields["done-bulk-remove-tag-input"].waitForNonExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["done-bulk-count"].label.contains("4"))
+        task185Open(app)
+        XCTAssertFalse(app.buttons["done-bulk-remove-tag-save"].isEnabled)
+        app.buttons["done-bulk-remove-tag-cancel"].tap()
+        XCTAssertTrue(app.textFields["done-bulk-remove-tag-input"].waitForNonExistence(timeout: 15))
+    }
+    private func task185Choose(_ app: XCUIApplication, paging: Bool) {
+        task185Open(app)
+        if paging {
+            let more = app.buttons["done-bulk-remove-tag-more"]
+            XCTAssertTrue(more.waitForExistence(timeout: 15))
+            let scroll = app.scrollViews["done-bulk-remove-tag-scroll"]
+            for _ in 0..<45 {
+                if more.isHittable { break }
+                scroll.swipeUp(velocity: .fast)
+            }
+            // Crossing a minute can refresh a stale page back to offset zero.
+            // Keep the final-page assertion; only repeat the visible readonly More action.
+            for _ in 0..<3 {
+                XCTAssertTrue(more.isHittable); boardEnabled(more); more.tap()
+                if task185Option(app, "#page129").waitForExistence(timeout: 3) { break }
+                XCTAssertFalse(app.staticTexts["done-bulk-remove-tag-error"].exists)
+                XCTAssertTrue(more.exists)
+            }
+            XCTAssertTrue(task185Option(app, "#page129").exists)
+            scroll.swipeDown(velocity: .fast)
+        }
+        task185Query(app, "blue sky,review"); task185Pick(app, "#blue sky,review")
+        task185Query(app, "page129"); task185Pick(app, "#page129")
+        task185Query(app, "no-such-token185")
+        XCTAssertTrue(app.staticTexts["done-bulk-remove-tag-no-matches"].waitForExistence(timeout: 15))
+        boardEnabled(app.buttons["done-bulk-remove-tag-save"], timeout: 15)
+    }
+    private func task185Save(_ app: XCUIApplication) {
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task185 Remove hidden tags"; shot.lifetime = .keepAlways; add(shot)
+        app.buttons["done-bulk-remove-tag-save"].coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.85)).tap()
+        XCTAssertTrue(app.textFields["done-bulk-remove-tag-input"].waitForNonExistence(timeout: 15))
+    }
+    private func task185Check(_ app: XCUIApplication) {
+        task182Filter(app, "Task185 batch")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task185-batch-01").firstMatch.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.buttons["task-doneBulkTag-undo"].exists)
+    }
+    private func task185Flow(_ library: String, cancelOnly: Bool = false, paging: Bool = false) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task176OpenDone(app); task185SelectRange(app); task185Cancel(app)
+        if cancelOnly { boardTap(app, "done-bulk-exit") }
+        else {
+            task185Choose(app, paging: paging); task185Save(app)
+            XCTAssertTrue(app.staticTexts["done-bulk-count"].waitForNonExistence(timeout: 30))
+            let notice = app.descendants(matching: .any).matching(identifier: "task-doneBulkTag-notice").firstMatch
+            XCTAssertTrue(notice.waitForExistence(timeout: 5)); XCTAssertTrue(notice.label.contains("3"))
+        }
+        task185Check(app); app.terminate()
+        app.launch(); task176OpenDone(app); task185Check(app); app.terminate()
+    }
+    func testTask185DoneBulkRemoveTag() { task185Flow("cc97210b-57a4-4eb0-9a12-8a46e7034b56", paging: true) }
+    func testTask185DoneBulkRemoveTagCancel() { task185Flow("53e1c4bd-e348-4698-bbf2-67465e8473ec", cancelOnly: true) }
+    func testTask185DoneBulkRemoveTagLargest() { task185Flow("acda33c3-c853-4d60-8249-0606188f4b66") }
+    func testTask185DoneBulkRemoveTagFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e16f511b-79ce-4d50-b530-06b75e935d4c"]
+        app.launch(); task176OpenDone(app); task185SelectRange(app)
+        task185Choose(app, paging: false); task185Save(app)
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+            XCTAssertFalse(app.buttons["history-tab-archived"].isEnabled)
+            XCTAssertTrue(app.staticTexts["done-bulk-count"].label.contains("4"))
+            boardTap(app, "persistence-retry")
+        }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); app.terminate()
+    }
+    func testTask185DoneBulkRemoveTagColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "f04ee35d-ff0a-4cd3-8b72-45735edde3b0"]
+        for launch in 0..<2 {
+            app.launch()
+            if app.buttons["persistence-retry"].waitForExistence(timeout: 5) { boardTap(app, "persistence-retry") }
+            if launch > 0 { task176OpenDone(app) }
+            boardEnabled(app.buttons["history-tab-done"], timeout: 30)
+            XCTAssertFalse(app.staticTexts["done-bulk-count"].exists)
+            task185Check(app); app.terminate()
+        }
+    }
 }

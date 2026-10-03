@@ -12,20 +12,20 @@ import type { AppData, Task } from './types';
 
 const NOW = '2026-10-03T13:00:00.000Z';
 const BEFORE = '2026-10-02T12:34:56.789Z';
-const UUID = '00000000-0000-4000-8000-000000000184';
-const DEVICE = 'tag-device';
+const UUID = '00000000-0000-4000-8000-000000000185';
+const DEVICE = 'remove-tag-device';
 const clone = <T>(input: T): T => JSON.parse(JSON.stringify(input)) as T;
 const value = <T>(result: { ok: true; value: T } | { ok: false; error: { code: string; message: string } }): T => {
     if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`); return result.value;
 };
 const task = (id: string, fields: Partial<Task> = {}): Task => ({ id, title: `Task ${id}`, status: 'done',
     createdAt: BEFORE, updatedAt: BEFORE, completedAt: BEFORE, tags: ['#keep'], contexts: ['@desk'], rev: 3, revBy: DEVICE, ...fields });
-const seed = (): Partial<AppData> => ({ tasks: [task('b', { projectId: 'p2', sectionId: 's2',
+const seed = (): Partial<AppData> => ({ tasks: [task('b', { tags: ['#keep', '#new'], projectId: 'p2', sectionId: 's2',
     recurrence: { rule: 'daily', strategy: 'strict', seriesId: 'series' },
     attachments: [{ id: 'link', kind: 'link', title: 'Fixture', uri: 'https://example.com', createdAt: BEFORE, updatedAt: BEFORE }],
     checklist: [{ id: 'step', title: 'Step', isCompleted: true }], timeSpentMinutes: 45,
     dueDate: '2026-10-05', startTime: '2026-10-04', reviewAt: '2026-10-06' }),
-task('a', { projectId: 'p1', sectionId: 's1', tags: ['#new'] }),
+task('a', { projectId: 'p1', sectionId: 's1', tags: ['#keep'] }),
 task('sibling', { status: 'next', completedAt: undefined, projectId: 'p1', order: 8, orderNum: 8 }),
 task('history', { projectId: 'p1', deletedAt: BEFORE }), task('unrelated')],
 projects: ['p1', 'p2'].map((id) => ({ id, title: `Parent ${id}`, status: 'active', color: '#94a3b8', order: 0,
@@ -46,96 +46,78 @@ const methods = () => createArchivedTasksRestoreMethods({ readiness: () => ({ ok
     return useTaskStore.getState().persistenceFailure
         ? { ok: false, error: { code: 'SAVE_FAILED', message: 'Unresolved failure' } } : { ok: true, value: null };
 } });
-const request = (tag = 'new', taskIds = ['a', 'b'], requestId = UUID) => ({ requestId,
+const request = (tags = ['new'], taskIds = ['a', 'b'], requestId = UUID) => ({ requestId,
     taskIds, taskRevisions: Object.fromEntries(taskIds.map((id) => [id, taskRevisionOf(useTaskStore.getState()._tasksById.get(id)!)])),
-    source: 'done' as const, action: 'addTag' as const, tag });
+    source: 'done' as const, action: 'removeTag' as const, tags });
 const prepare = async (host = methods(), input = request()) => {
     const result = value(await host.prepareArchivedTasksRestore(input));
     expect(result.kind).toBe('prepared');
-    if (result.kind !== 'prepared') throw new Error('Changed Add tag must prepare');
+    if (result.kind !== 'prepared') throw new Error('Changed Remove tag must prepare');
     return { request: input, prepared: result.prepared } as NativeArchivedTasksRestoreEnvelope;
 };
 const clock = () => { logger.setLogger(() => {}); vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(NOW)); };
 afterEach(async () => { await flushPendingSave(); resetForTests(); vi.useRealTimers(); vi.restoreAllMocks(); logger.setLogger(logger.consoleLogger); });
 
-describe('guarded Done bulk Add tag', () => {
-    it('preserves exact pre-Remove Add-tag request/envelope/canonical fingerprint and full receipt columns after cold restart', async () => {
-        clock(); const sqlite = await openSqliteHost(seed());
-        try {
-            const host = methods(); const command = await prepare(host);
-            expect(Object.keys(command.request).sort()).toEqual(['requestId', 'taskIds', 'taskRevisions', 'source', 'action', 'tag'].sort());
-            expect(Object.keys(command.prepared).sort()).toEqual(['version', 'request', 'scope', 'effect', 'deviceIdBefore', 'deviceIdToInitialize',
-                'updateAt', 'preparedLocalDay', 'preparedOffsetMinutes', 'boundaryOffsetMinutes', 'futureBoundary', 'dates', 'result'].sort());
-            const payload = JSON.stringify(['doneTasksAddTag', command], (_name, item) => item && typeof item === 'object' && !Array.isArray(item)
-                ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item);
-            const expected = [{ _rowid: 1, request_id: UUID, method: `doneTasksAddTag:${deterministicHash128(payload).map((part) => part.toString(16).padStart(8, '0')).join('')}`,
-                reply: JSON.stringify({ count: 1, changed: true }), saved_at: NOW }];
-            expect(value(await host.commitPreparedArchivedTasksRestore(command))).toEqual({ count: 1, changed: true }); expect(await receipts(sqlite)).toEqual(expected);
-            await sqlite.restart(undefined, { recoveryLoad: true });
-            expect(value(await methods().commitPreparedArchivedTasksRestore(command))).toEqual({ count: 1, changed: true }); expect(await receipts(sqlite)).toEqual(expected);
-        } finally { await sqlite.close(); }
-    });
+describe('guarded Done bulk Remove tag', () => {
     it.each([
-        ['mixed changed selection', 'new'],
-        ['all changed', 'different'],
-        ['one comma/space token', ' one,two words '],
-        ['repeated mixed prefixes', '@@## new'],
-        ['Unicode exact case and shared sorting', 'École'],
-    ])('matches actual RN builder plus batchUpdateTasks full AppData/all nine canonical tables: %s', async (_name, tag) => {
-        clock(); const initial = seed(); initial.tasks![0].tags = ['#a', '#A', '#école', '#排序', ''];
+        ['mixed carriers', ['#new']],
+        ['distinct exact picks normalizing to one removal', ['#new', 'new', '@@##new']],
+        ['multiple picked tags/all cleared', ['#keep', '#new']],
+        ['exact case/Unicode/one comma-space token', ['#École', '#one,two words']],
+        ['normalized Task184 2001-unit and imported longer tags', ['#' + 'x'.repeat(2000), '#' + '界'.repeat(5000)]],
+    ])('matches actual RN removal builder/batch full AppData and all nine canonical SQL tables: %s', async (_name, tags) => {
+        clock(); const initial = seed();
+        initial.tasks![0].tags = ['#keep', '#new', '#École', '#école', '#one,two words', '#' + 'x'.repeat(2000), '#' + '界'.repeat(5000)];
+        if (tags.length === 2 && tags[0] === '#keep') initial.tasks![0].tags = ['#keep', '#new'];
         const rn = await openSqliteHost(initial); let expected; let expectedRaw; let count = 0;
         try {
-            await canonical(); const updates = buildBulkTaskTokenUpdates(['a', 'b'], useTaskStore.getState()._tasksById, 'tags', tag.trim(), 'add');
+            await canonical(); const updates = buildBulkTaskTokenUpdates(['a', 'b'], useTaskStore.getState()._tasksById, 'tags', tags, 'remove');
             count = updates.length; expect(count).toBeGreaterThan(0);
             expect(await useTaskStore.getState().batchUpdateTasks(updates)).toEqual({ success: true });
             await flushPendingSave(); expected = rows(); expectedRaw = await raw(rn);
         } finally { await rn.close(); }
         const sqlite = await openSqliteHost(initial);
         try {
-            await canonical(); const host = methods(); const before = rows(); const command = await prepare(host, request(tag));
+            await canonical(); const host = methods(); const before = rows(); const command = await prepare(host, request(tags));
             expect(value(host.validatePreparedArchivedTasksRestore(command))).toEqual({ count, changed: true });
             expect(value(await host.commitPreparedArchivedTasksRestore(command))).toEqual({ count, changed: true });
             expect(rows()).toEqual(expected); expect(await raw(sqlite)).toEqual(expectedRaw);
             expect(rows().tasks).toHaveLength(5); expect(command.prepared.effect.projects).toEqual([]);
             expect(rows().tasks.find((row) => row.id === 'a')?.rev).toBe(before.tasks.find((row) => row.id === 'a')!.rev + (count === 1 ? 0 : 1));
             expect(await sqlite.receiptIds()).toEqual([UUID]);
+            if (tags[0] === '#keep') expect(rows().tasks.filter((row) => ['a', 'b'].includes(row.id)).every((row) => row.tags?.length === 0)).toBe(true);
         } finally { await sqlite.close(); }
     });
 
-    it.each(['#new', '@#@', ' @@## '])('returns fresh noop without mutation, initialization, receipt or diagnostic for %s', async (tag) => {
-        clock(); const initial = seed(); initial.tasks![0].tags = ['new', '#new', '#new'];
-        const writes = vi.fn(); const sqlite = await openSqliteHost(initial, (client) => ({ ...client,
+    it.each([['#gone'], ['@#@'], ['#NEW']])('returns guarded fresh noop for noncarried/prefix-only/exact-case picks %j without writes or initialization', async (...picked) => {
+        clock(); const tags = picked as string[]; const writes = vi.fn(); const sqlite = await openSqliteHost(seed(), (client) => ({ ...client,
             run: async (sql, params) => { if (/^(INSERT|UPDATE|DELETE|BEGIN|COMMIT|ROLLBACK)/i.test(sql)) writes(sql); return client.run(sql, params); },
         }));
         try {
             await sqlite.client().run("UPDATE settings SET data = json_remove(data, '$.deviceId') WHERE id = 1");
-            await sqlite.restart(undefined, { recoveryLoad: true }); const before = await raw(sqlite); writes.mockClear();
-            const logs = vi.spyOn(logger, 'logInfo');
-            expect(value(await methods().prepareArchivedTasksRestore(request(tag)))).toEqual({ kind: 'noop', result: { count: 0, changed: false } });
-            expect(await raw(sqlite)).toEqual(before); expect(await receipts(sqlite)).toEqual([]); expect(writes).not.toHaveBeenCalled();
-            expect(logs).not.toHaveBeenCalled();
+            await sqlite.restart(undefined, { recoveryLoad: true }); const before = await raw(sqlite); writes.mockClear(); const logs = vi.spyOn(logger, 'logInfo');
+            expect(value(await methods().prepareArchivedTasksRestore(request(tags)))).toEqual({ kind: 'noop', result: { count: 0, changed: false } });
+            expect(await raw(sqlite)).toEqual(before); expect(await receipts(sqlite)).toEqual([]); expect(writes).not.toHaveBeenCalled(); expect(logs).not.toHaveBeenCalled();
             expect(useTaskStore.getState().settings.deviceId).toBeUndefined();
-            expect(buildBulkTaskTokenUpdates(['a', 'b'], useTaskStore.getState()._tasksById, 'tags', tag.trim(), 'add')).toEqual([]);
-            // Keep the displayed memory revision while saved storage advances.
-            // A fresh no-op still must reject that durable CAS mismatch.
-            const displayed = request(tag); await sqlite.client().run('UPDATE tasks SET rev = rev + 1 WHERE id = ?', ['a']);
-            const changed = await raw(sqlite); writes.mockClear();
+            const displayed = request(tags); await sqlite.client().run('UPDATE tasks SET rev = rev + 1 WHERE id = ?', ['a']); const changed = await raw(sqlite); writes.mockClear();
             expect(await methods().prepareArchivedTasksRestore(displayed)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
-            expect(await raw(sqlite)).toEqual(changed); expect(await receipts(sqlite)).toEqual([]); expect(writes).not.toHaveBeenCalled(); expect(logs).not.toHaveBeenCalled();
+            expect(await raw(sqlite)).toEqual(changed); expect(await receipts(sqlite)).toEqual([]); expect(writes).not.toHaveBeenCalled();
         } finally { await sqlite.close(); }
     });
-
-    it('refuses malformed/missing/stale/protected accepted rows, including unchanged and prefix-only noops, without mutation', async () => {
+    it('refuses malformed/missing/stale/protected full accepted selections before changed or noop writes', async () => {
         clock(); const sqlite = await openSqliteHost(seed());
         try {
             const host = methods(); const input = request(); const before = await raw(sqlite);
-            for (const invalid of [{ ...input, tag: '' }, { ...input, tag: '  ' }, { ...input, tag: 'x'.repeat(2001) },
-                { ...input, tag: 42 }, { ...input, action: 'removeTag' }, { ...input, status: 'inbox' },
+            for (const invalid of [{ ...input, tags: [] }, { ...input, tags: [''] }, { ...input, tags: [' '] },
+                { ...input, tags: ['#new', '#new'] }, { ...input, tags: [42] }, { ...input, tags: '#new' },
+                { ...input, tags: Array.from({ length: 10_001 }, (_, index) => String(index)) },
+                { ...input, tags: ['x'.repeat(2_000_001)] }, { ...input, tags: ['界'.repeat(700_000)] },
+                { ...input, tag: '#new' }, { ...input, status: 'inbox' }, { ...input, action: 'other' },
                 { ...input, source: 'archived' }, { ...input, source: undefined }, { ...input, requestId: 'bad' },
                 { ...input, taskIds: [] }, { ...input, taskIds: ['a', 'a'] },
                 { ...input, taskIds: ['missing'], taskRevisions: { missing: 'rev' } },
                 { ...input, taskRevisions: { ...input.taskRevisions, a: 'stale' } },
-                { ...input, tag: '@#', taskRevisions: { ...input.taskRevisions, a: 'stale' } },
+                { ...input, tags: ['#gone'], taskRevisions: { ...input.taskRevisions, a: 'stale' } },
                 { ...input, taskRevisions: { ...input.taskRevisions, extra: 'rev' } }])
                 expect(await host.prepareArchivedTasksRestore(invalid as never)).toMatchObject({ ok: false });
             expect(await raw(sqlite)).toEqual(before); expect(await receipts(sqlite)).toEqual([]);
@@ -150,14 +132,14 @@ describe('guarded Done bulk Add tag', () => {
                 await sqlite.client().run(sql, params); await sqlite.restart(undefined, { recoveryLoad: true });
                 if (sql.includes('purgedAt = NULL')) continue;
                 const saved = await raw(sqlite);
-                for (const tag of ['new', '@#']) expect(await methods().prepareArchivedTasksRestore(request(tag)))
+                for (const tags of [['new'], ['#gone']]) expect(await methods().prepareArchivedTasksRestore(request(tags)))
                     .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
                 expect(await raw(sqlite)).toEqual(saved); expect(await receipts(sqlite)).toEqual([]);
             }
         } finally { await sqlite.close(); }
-    }, 15_000);
+    }, 20_000);
 
-    it('purely rejects forged tags/counts/changed subsets/noop journals before all SQLite operations; raw guard also refuses malformed intents', async () => {
+    it('rejects forged tags/count/subset/noop journals before all SQL and malformed direct raw-writer intents', async () => {
         clock(); const sql = vi.fn(); const sqlite = await openSqliteHost(seed(), (client) => ({ ...client,
             all: async (query, params) => { sql(query); return client.all(query, params); },
             get: async (query, params) => { sql(query); return client.get(query, params); },
@@ -166,9 +148,9 @@ describe('guarded Done bulk Add tag', () => {
         }));
         try {
             const host = methods(); const command = await prepare(host);
-            for (const mutate of [
-                (item: NativeArchivedTasksRestoreEnvelope) => { (item.request as { tag: string }).tag = 'other'; (item.prepared.request as { tag: string }).tag = 'other'; },
-                (item: NativeArchivedTasksRestoreEnvelope) => { (item.request as { tag: string }).tag = '@#'; (item.prepared.request as { tag: string }).tag = '@#'; },
+            const mutations = [
+                (item: NativeArchivedTasksRestoreEnvelope) => { (item.request as { tags: string[] }).tags = ['#gone']; (item.prepared.request as { tags: string[] }).tags = ['#gone']; },
+                (item: NativeArchivedTasksRestoreEnvelope) => { (item.request as { tag?: string }).tag = '#new'; (item.prepared.request as { tag?: string }).tag = '#new'; },
                 (item: NativeArchivedTasksRestoreEnvelope) => { (item.request as { status?: string }).status = 'next'; (item.prepared.request as { status?: string }).status = 'next'; },
                 (item: NativeArchivedTasksRestoreEnvelope) => { item.prepared.result.count = 2; },
                 (item: NativeArchivedTasksRestoreEnvelope) => { (item.prepared.result as { changed: boolean }).changed = false; },
@@ -180,21 +162,21 @@ describe('guarded Done bulk Add tag', () => {
                 (item: NativeArchivedTasksRestoreEnvelope) => { item.prepared.scope.tasks.push(task('extra')); },
                 (item: NativeArchivedTasksRestoreEnvelope) => { item.prepared.dates = []; },
                 (item: NativeArchivedTasksRestoreEnvelope) => { item.prepared.futureBoundary = NOW; },
-            ]) {
+            ];
+            for (const mutate of mutations) {
                 const forged = clone(command); mutate(forged); sql.mockClear();
                 expect(host.validatePreparedArchivedTasksRestore(forged)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
                 expect(await host.commitPreparedArchivedTasksRestore(forged)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-                expect(host.archivedTasksRestoreOutcome(forged)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-                expect(sql).not.toHaveBeenCalled();
+                expect(host.archivedTasksRestoreOutcome(forged)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } }); expect(sql).not.toHaveBeenCalled();
             }
             const noop = { request: command.request, prepared: { kind: 'noop', result: { count: 0, changed: false } } };
-            sql.mockClear(); expect(await host.commitPreparedArchivedTasksRestore(noop as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-            expect(sql).not.toHaveBeenCalled();
+            sql.mockClear(); expect(await host.commitPreparedArchivedTasksRestore(noop as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } }); expect(sql).not.toHaveBeenCalled();
             const durable = value(await readAreaDurableData(false, true));
             for (const mutate of [
-                (item: NativeArchivedTasksRestoreEnvelope) => { (item.request as { action: string }).action = 'removeTag'; },
+                (item: NativeArchivedTasksRestoreEnvelope) => { (item.request as { action: string }).action = 'addTag'; },
                 (item: NativeArchivedTasksRestoreEnvelope) => { (item.request as { source: string }).source = 'other'; },
                 (item: NativeArchivedTasksRestoreEnvelope) => { (item.request as { status?: string }).status = 'inbox'; },
+                (item: NativeArchivedTasksRestoreEnvelope) => { (item.request as { tags: string[] }).tags = ['new', 'new']; },
                 (item: NativeArchivedTasksRestoreEnvelope) => { item.prepared.effect.tasks[0].after.tags = ['#new']; },
                 (item: NativeArchivedTasksRestoreEnvelope) => { item.prepared.effect.tasks = []; },
             ]) {
@@ -204,7 +186,6 @@ describe('guarded Done bulk Add tag', () => {
             }
         } finally { await sqlite.close(); }
     });
-
     it('guards unchanged accepted row and complete raw parent/member/section/area/device authority across cold recreation', async () => {
         clock(); const initial = seed(); initial.projects![0].areaId = 'area';
         for (const [sql, params] of [
@@ -253,11 +234,11 @@ describe('guarded Done bulk Add tag', () => {
             for (let attempt = 0; attempt < 2; attempt++) {
                 fault.commits = 10; expect(await host.commitPreparedArchivedTasksRestore(command)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
                 expect(await raw(sqlite)).toEqual(before); expect(await receipts(sqlite)).toEqual([]); expect(value(host.archivedTasksRestoreOutcome(command))).toBeNull();
-                expect(logs).not.toHaveBeenCalledWith('Native Done bulk tag confirmed', expect.anything());
+                expect(logs).not.toHaveBeenCalledWith('Native Done bulk tag removal confirmed', expect.anything());
             }
             fault.commits = 0; if (recovery === 'cold') { await sqlite.restart(undefined, { recoveryLoad: true }); host = methods(); }
             expect(value(await host.commitPreparedArchivedTasksRestore(command))).toEqual({ count: 1, changed: true });
-            expect(logs).toHaveBeenCalledWith('Native Done bulk tag confirmed', { scope: 'native-host', category: 'storage', context: { releaseCheck: 'v1.3.4/ios-done-bulk-tag', outcome: 'added' } });
+            expect(logs).toHaveBeenCalledWith('Native Done bulk tag removal confirmed', { scope: 'native-host', category: 'storage', context: { releaseCheck: 'v1.3.4/ios-done-bulk-tag-remove', outcome: 'removed' } });
             expect(await raw(sqlite)).toEqual(expectedRaw); expect(await receipts(sqlite)).toEqual(expectedReceipts);
             expect((await raw(sqlite)).tasks.find((row: { id: string }) => row.id === 'unrelated')).toEqual(before.tasks.find((row: { id: string }) => row.id === 'unrelated'));
             await sqlite.restart(undefined, { recoveryLoad: true }); const after = await raw(sqlite);
@@ -284,7 +265,7 @@ describe('guarded Done bulk Add tag', () => {
     it('uses exact cold receipts before later edits/deletion/container changes, never unused UUID equality or a different bound payload', async () => {
         clock(); const sqlite = await openSqliteHost(seed());
         try {
-            const command = await prepare(); const unused = clone(command); unused.request.requestId = '00000000-0000-4000-8000-000000000185'; unused.prepared.request.requestId = unused.request.requestId;
+            const command = await prepare(); const unused = clone(command); unused.request.requestId = '00000000-0000-4000-8000-000000001185'; unused.prepared.request.requestId = unused.request.requestId;
             value(await methods().commitPreparedArchivedTasksRestore(command)); await sqlite.restart(undefined, { recoveryLoad: true }); let fresh = methods(); const landed = await raw(sqlite);
             expect(value(fresh.archivedTasksRestoreOutcome(unused))).toBeNull(); expect(await fresh.commitPreparedArchivedTasksRestore(unused)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
             expect(await raw(sqlite)).toEqual(landed);
@@ -299,9 +280,9 @@ describe('guarded Done bulk Add tag', () => {
             expect(value(fresh.validatePreparedArchivedTasksRestore(rebound))).toEqual({ count: 1, changed: true });
             expect(fresh.archivedTasksRestoreOutcome(rebound)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
             expect(await fresh.commitPreparedArchivedTasksRestore(rebound)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } }); expect(await raw(sqlite)).toEqual(before); expect(await receipts(sqlite)).toEqual(saved);
-            const payload = JSON.stringify(['doneTasksAddTag', command], (_name, item) => item && typeof item === 'object' && !Array.isArray(item)
+            const payload = JSON.stringify(['doneTasksRemoveTag', command], (_name, item) => item && typeof item === 'object' && !Array.isArray(item)
                 ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item);
-            expect(saved).toEqual([{ _rowid: 1, request_id: UUID, method: `doneTasksAddTag:${deterministicHash128(payload).map((part) => part.toString(16).padStart(8, '0')).join('')}`,
+            expect(saved).toEqual([{ _rowid: 1, request_id: UUID, method: `doneTasksRemoveTag:${deterministicHash128(payload).map((part) => part.toString(16).padStart(8, '0')).join('')}`,
                 reply: JSON.stringify({ count: 1, changed: true }), saved_at: NOW }]);
         } finally { await sqlite.close(); }
     });
@@ -334,7 +315,7 @@ describe('guarded Done bulk Add tag', () => {
         try {
             await canonical(); await getStorageAdapter().saveData({ ...buildSaveSnapshot(useTaskStore.getState()), settings: { ...useTaskStore.getState().settings, gtd: { autoArchiveDays: 1 } } });
             await rn.restart(undefined, { recoveryLoad: true });
-            const updates = buildBulkTaskTokenUpdates(['a', 'b'], useTaskStore.getState()._tasksById, 'tags', 'new', 'add');
+            const updates = buildBulkTaskTokenUpdates(['a', 'b'], useTaskStore.getState()._tasksById, 'tags', ['new'], 'remove');
             expect(await useTaskStore.getState().batchUpdateTasks(updates)).toEqual({ success: true }); await flushPendingSave(); expected = rows(); expectedRaw = await raw(rn);
         } finally { await rn.close(); }
         const changed = await openSqliteHost(seed());
@@ -357,7 +338,7 @@ describe('guarded Done bulk Add tag', () => {
         };
         const rn = await setup(); let expected; let expectedRaw;
         try {
-            const updates = buildBulkTaskTokenUpdates(['a', 'b'], useTaskStore.getState()._tasksById, 'tags', 'new', 'add');
+            const updates = buildBulkTaskTokenUpdates(['a', 'b'], useTaskStore.getState()._tasksById, 'tags', ['new'], 'remove');
             expect(await useTaskStore.getState().batchUpdateTasks(updates)).toEqual({ success: true }); await flushPendingSave(); expected = rows(); expectedRaw = await raw(rn);
         } finally { await rn.close(); }
         const sqlite = await setup();
@@ -387,19 +368,22 @@ describe('guarded Done bulk Add tag', () => {
             useTaskStore.setState({ persistenceFailure: { message: 'Unrelated failure', failedAt: NOW, retrying: false } });
             expect(await host.commitPreparedArchivedTasksRestore(command)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } }); useTaskStore.setState({ persistenceFailure: null });
             expect(await receipts(sqlite)).toEqual([]); expect(logs).not.toHaveBeenCalled(); value(await host.commitPreparedArchivedTasksRestore(command));
-            expect(await sqlite.receiptIds()).toEqual([UUID]); expect(logs).toHaveBeenCalledExactlyOnceWith('Native Done bulk tag confirmed', { scope: 'native-host', category: 'storage', context: { releaseCheck: 'v1.3.4/ios-done-bulk-tag', outcome: 'added' } });
+            expect(await sqlite.receiptIds()).toEqual([UUID]); expect(logs).toHaveBeenCalledExactlyOnceWith('Native Done bulk tag removal confirmed', { scope: 'native-host', category: 'storage', context: { releaseCheck: 'v1.3.4/ios-done-bulk-tag-remove', outcome: 'removed' } });
             expect(JSON.stringify(logs.mock.calls)).not.toContain('#new');
         } finally { fault.read = false; await sqlite.close(); }
     });
 
-    it('accepts the 2000-unit tag and >128 revision map but refuses oversized UTF8 prepared scope without writes', async () => {
-        clock(); const initial = seed(); initial.tasks = Array.from({ length: 140 }, (_, index) => task(`selected-${index}`)); initial.projects = []; initial.sections = [];
+    it('accepts 10000 picked values and more than128 selected revisions, but rejects oversized prepared scope before writes', async () => {
+        clock(); const initial = seed(); initial.tasks = Array.from({ length: 140 }, (_, index) => task(`selected-${index}`, { tags: ['#new', '#keep'] })); initial.projects = []; initial.sections = [];
         const sqlite = await openSqliteHost(initial);
         try {
-            const command = await prepare(methods(), request('界'.repeat(2000), initial.tasks.map((row) => row.id)));
-            expect(value(await methods().commitPreparedArchivedTasksRestore(command))).toEqual({ count: 140, changed: true }); expect(await sqlite.receiptIds()).toEqual([UUID]);
+            const host = methods(); const largePicks = Array.from({ length: 10_000 }, (_, index) => `#not-carried-${index}`); const before = await raw(sqlite);
+            expect(value(await host.prepareArchivedTasksRestore(request(largePicks, initial.tasks.map((row) => row.id))))).toEqual({ kind: 'noop', result: { count: 0, changed: false } });
+            expect(await raw(sqlite)).toEqual(before); expect(await receipts(sqlite)).toEqual([]);
+            const command = await prepare(host, request(['#new'], initial.tasks.map((row) => row.id)));
+            expect(value(await host.commitPreparedArchivedTasksRestore(command))).toEqual({ count: 140, changed: true }); expect(await sqlite.receiptIds()).toEqual([UUID]);
         } finally { await sqlite.close(); }
-        const huge = await openSqliteHost({ ...seed(), tasks: [task('a', { description: '界'.repeat(700_000) }), task('b')], projects: [], sections: [] });
+        const huge = await openSqliteHost({ ...seed(), tasks: [task('a', { description: '界'.repeat(700_000), tags: ['#new'] }), task('b', { tags: ['#new'] })], projects: [], sections: [] });
         try {
             const before = await raw(huge); expect(await methods().prepareArchivedTasksRestore(request())).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT', message: expect.stringContaining('select fewer') } });
             expect(await raw(huge)).toEqual(before); expect(await receipts(huge)).toEqual([]);
