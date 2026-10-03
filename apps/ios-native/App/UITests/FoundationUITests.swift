@@ -20996,7 +20996,7 @@ extension FoundationUITests {
     }
 
     private func task192Exact(_ app: XCUIApplication, _ id: String, buttons: Bool = false) -> XCUIElement {
-        let matches = buttons ? app.buttons.matching(identifier: id) : app.staticTexts.matching(identifier: id)
+        let matches = buttons ? app.buttons.matching(identifier: id) : app.descendants(matching: .any).matching(identifier: id)
         // ASCII selectors remain live during List virtualization. Only Unicode
         // twins need enumeration, since XCTest matches canonical equivalents.
         if id.utf8.allSatisfy({ $0 < 128 }) { return matches.firstMatch }
@@ -21147,13 +21147,13 @@ extension FoundationUITests {
         XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists); XCTAssertFalse(app.buttons["task-referenceBulkDelete-undo"].exists); app.terminate()
     }
 
-    func testTask192ReferenceBulkTrashUndoNormal() { task192Flow("17664d7a-8c5d-47da-a9e5-562cfc958f5f") }
-    func testTask192ReferenceBulkTrashUndoLargestDark() { task192Flow("6e1621c5-3b9b-44b8-aee2-90de5b3619e1", largest: true) }
-    func testTask192ReferenceBulkTrashUndoArabicRTL() { task192Flow("5211b88f-d2c9-4c29-84c6-c038993efdf6", rtl: true) }
+    func testTask192ReferenceBulkTrashUndoNormal() { task192Flow("ff8fe471-324f-4c62-b051-c9faad567436") }
+    func testTask192ReferenceBulkTrashUndoLargestDark() { task192Flow("8b774b93-02f6-476a-91ad-cf17b956ade1", largest: true) }
+    func testTask192ReferenceBulkTrashUndoArabicRTL() { task192Flow("95cf6e5b-da39-44a0-8d93-eeb2ce089985", rtl: true) }
 
     func testTask192ReferencePagedRangeFilterFoldAndDuplicatePruning() {
         continueAfterFailure = false
-        let app = XCUIApplication(); app.launchArguments = task192Arguments("a8629565-a880-427a-b721-9170556b8d76")
+        let app = XCUIApplication(); app.launchArguments = task192Arguments("93d48245-8545-44dd-9007-15c0b7d85bb9")
         app.launch(); task186Open(app); referenceGroup(app, "none"); task186Filter(app, "Task192 Page")
         task192Start(app, "task192-page-000"); task192Tap(app, "reference-bulk-range")
         for _ in 0..<2 {
@@ -21183,7 +21183,7 @@ extension FoundationUITests {
 
     func testTask192ReferenceNFDSelectionLeavesNFCReadonlyTwin() {
         continueAfterFailure = false
-        let library = "aedd486b-0a8f-4f53-afda-f016e39a984f", nfc = "task192-café", nfd = "task192-cafe\u{301}"
+        let library = "f9f6f953-d20f-4635-ac97-36ec7849a300", nfc = "task192-café", nfd = "task192-cafe\u{301}"
         let app = XCUIApplication(); app.launchArguments = task192Arguments(library)
         app.launch(); task186Open(app); referenceGroup(app, "none"); task186Filter(app, "Task192 Unicode")
         task192Start(app, nfd)
@@ -21221,8 +21221,8 @@ extension FoundationUITests {
         app.terminate()
     }
 
-    func testTask192ReferenceBulkTrashTwoFailedSaveRetries() { task192Failure("10848f72-bce7-4734-8e11-140443ce56f9", undo: false) }
-    func testTask192ReferenceBulkUndoTwoFailedSaveRetries() { task192Failure("83fd7fd0-9126-496d-b5e6-dcae787f8169", undo: true) }
+    func testTask192ReferenceBulkTrashTwoFailedSaveRetries() { task192Failure("4541953b-4813-4811-965d-bcdc5e6ea216", undo: false) }
+    func testTask192ReferenceBulkUndoTwoFailedSaveRetries() { task192Failure("d52a39ab-e504-4a44-8157-a86bcaf6e8d9", undo: true) }
 
     private func task192Cold(_ library: String, undo: Bool) {
         continueAfterFailure = false
@@ -21238,6 +21238,6 @@ extension FoundationUITests {
         }
     }
 
-    func testTask192ReferenceBulkTrashOriginalJournalColdRecovery() { task192Cold("704bbf63-5be3-4fbe-8301-df723d8b4828", undo: false) }
-    func testTask192ReferenceBulkUndoOriginalJournalColdRecovery() { task192Cold("8196bdf9-22f5-4439-b7ed-4e6c06b8d860", undo: true) }
+    func testTask192ReferenceBulkTrashOriginalJournalColdRecovery() { task192Cold("0db5794f-3e72-43b9-897e-1ebccf72ae85", undo: false) }
+    func testTask192ReferenceBulkUndoOriginalJournalColdRecovery() { task192Cold("4cab3239-a1bc-4063-912b-8033e671161c", undo: true) }
 }

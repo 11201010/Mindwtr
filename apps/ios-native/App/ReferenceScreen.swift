@@ -378,7 +378,7 @@ struct StatusListContent: View {
                             Button { onSelection?(row) } label: {
                                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                                     .font(.system(size: 22)).foregroundStyle(palette.tint)
-                                    .frame(width: 44, height: 44).contentShape(Rectangle())
+                                    .frame(width: 45, height: 45).contentShape(Rectangle())
                             }
                             .buttonStyle(.plain).disabled(!enabled || ownsReferenceStatusMenu)
                             .accessibilityLabel(row.text("title"))

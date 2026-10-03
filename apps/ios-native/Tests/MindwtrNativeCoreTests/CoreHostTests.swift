@@ -34741,8 +34741,18 @@ extension CoreHostTests {
         XCTAssertTrue(selected.contains("task192-page-100")); XCTAssertTrue(range["selectAll"] is NSNull)
         let filtered = try object(await core.call("menuRead", argumentsJSON: json(["bulk", json(["list": "reference", "params": ["groupBy": "none", "filters": ["searchQuery": "Task192 Page 129"]], "taskIds": selected])])))
         XCTAssertEqual(filtered["selectedIds"] as? [String], ["task192-page-129"])
-        let tagged = try object(await core.call("menuRead", argumentsJSON: json(["reference", json(["groupBy": "tag", "includeArchivedProjects": true, "offset": 0, "limit": 200])])))
-        let items = try XCTUnwrap(tagged["items"] as? [[String: Any]])
+        let tagged = try object(await core.call("menuRead", argumentsJSON: json(["reference", json(["groupBy": "tag", "includeArchivedProjects": true, "offset": 0, "limit": 100])])))
+        var items = try XCTUnwrap(tagged["items"] as? [[String: Any]])
+        let taggedTotal = try XCTUnwrap(tagged["total"] as? Int)
+        let taggedRevision = try XCTUnwrap(tagged["revision"] as? String)
+        while items.count < taggedTotal {
+            let next = try object(await core.call("menuRead", argumentsJSON: json(["reference", json(["groupBy": "tag", "includeArchivedProjects": true, "offset": items.count, "limit": 100, "revision": taggedRevision])])))
+            let page = try XCTUnwrap(next["items"] as? [[String: Any]])
+            XCTAssertFalse(page.isEmpty); guard !page.isEmpty else { break }
+            XCTAssertEqual(next["revision"] as? String, taggedRevision)
+            items += page
+        }
+        XCTAssertEqual(items.count, taggedTotal)
         XCTAssertGreaterThan(items.filter { ($0["row"] as? [String: Any])?["id"] as? String == ids[0] }.count, 1)
         let headers = items.filter { $0["type"] as? String != "task" }.compactMap { $0["id"] as? String }
         let folded = try object(await core.call("menuRead", argumentsJSON: json(["bulk", json(["list": "reference", "params": ["groupBy": "tag", "includeArchivedProjects": true, "collapsedGroupIds": headers], "taskIds": ids])])))
@@ -34750,7 +34760,12 @@ extension CoreHostTests {
         let protected = ids[0] + "-protected"
         let readonly = try object(await core.call("menuRead", argumentsJSON: json(["bulk", json(["list": "reference", "params": ["groupBy": "none", "includeArchivedProjects": true], "taskIds": ids + [protected]])])))
         XCTAssertEqual(readonly["selectedIds"] as? [String], ids)
-        await expectFailure("not on screen") { _ = try await core.call("menuRead", argumentsJSON: json(["bulk", json(["list": "reference", "params": ["includeArchivedProjects": true], "taskIds": [], "selectionEdit": ["taskId": protected]])])) }
+        // A visible readonly row is a safe selection no-op, as on RN. A row
+        // hidden by the accepted filter is a distinct invalid selection edit.
+        let readonlyClick = try object(await core.call("menuRead", argumentsJSON: json(["bulk", json(["list": "reference", "params": ["includeArchivedProjects": true], "taskIds": [], "selectionEdit": ["taskId": protected]])])))
+        XCTAssertEqual(readonlyClick["selectedIds"] as? [String], []); XCTAssertEqual(readonlyClick["selectedCount"] as? Int, 0)
+        XCTAssertTrue(readonlyClick["anchorId"] is NSNull); XCTAssertEqual((readonlyClick["taskRevisions"] as? [String: String])?.count, 0)
+        await expectFailure("not on screen") { _ = try await core.call("menuRead", argumentsJSON: json(["bulk", json(["list": "reference", "params": params, "taskIds": [], "selectionEdit": ["taskId": protected]])])) }
         XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
         let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), baseline); XCTAssertEqual(try doneTask176Receipts(check), receipts); check.close(); await core.close()
     }
@@ -35129,7 +35144,7 @@ extension CoreHostTests {
     func testReferenceBulkTrash192StaleReadonlyAndProspectiveUndoSizeRefuseBeforeJournal() async throws {
         let ids = try await seedReferenceBulk192(), faults = HostIOFaults(), core = host(faults, bundleURL: try dateBundle(at: archive180Clock)); _ = try await core.start()
         let original = try await referenceBulk192Request(core, ids: [ids[0]])
-        let view = try object(await core.call("menuRead", argumentsJSON: json(["reference", json(["groupBy": "none", "includeArchivedProjects": true, "limit": 50])])))
+        let view = try object(await core.call("menuRead", argumentsJSON: json(["reference", json(["groupBy": "none", "includeArchivedProjects": true, "offset": 0, "limit": 50])])))
         let protectedID = ids[0] + "-protected"
         let readonly = try XCTUnwrap((view["items"] as? [[String: Any]])?.compactMap { $0["row"] as? [String: Any] }.first { ($0["id"] as? String)?.utf8.elementsEqual(protectedID.utf8) == true })
         XCTAssertEqual(readonly["readOnly"] as? Bool, true)
@@ -35147,14 +35162,19 @@ extension CoreHostTests {
         await expectFailure("STALE_REVISION") { _ = try await core.call("archivedTasksDeleteWrite", argumentsJSON: json([json(original)])) }
         XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
         faults.beforeSQL = nil; faults.journalWrite = nil
-        let fresh = try await referenceBulk192Request(core, ids: [ids[0]])
         let edit = try SQLiteBridge(url: database)
         _ = try edit.execute("UPDATE tasks SET description=? WHERE id=?", parametersJSON: json([String(repeating: "x", count: 550_000), ids[0]]))
-        let before = try nineTableSnapshot(edit), receipts = try doneTask176Receipts(edit); edit.close()
+        edit.close(); await core.close()
+        // The oversized row must be the displayed/accepted baseline. Editing it
+        // after preparing selection correctly exercises stale CAS instead.
+        let largeCore = host(faults, bundleURL: try dateBundle(at: archive180Clock)); _ = try await largeCore.start()
+        let fresh = try await referenceBulk192Request(largeCore, ids: [ids[0]])
+        let largeBaseline = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(largeBaseline), receipts = try doneTask176Receipts(largeBaseline); largeBaseline.close()
         writes = 0; journals = 0; faults.beforeSQL = { if self.archive180IsDomainWrite($0) { writes += 1 } }; faults.journalWrite = { journals += 1 }
-        await expectFailure("select fewer") { _ = try await core.call("archivedTasksDeleteWrite", argumentsJSON: json([json(fresh)])) }
+        await expectFailure("select fewer") { _ = try await largeCore.call("archivedTasksDeleteWrite", argumentsJSON: json([json(fresh)])) }
         XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
-        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), before); XCTAssertEqual(try doneTask176Receipts(check), receipts); check.close(); await core.close()
+        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), before); XCTAssertEqual(try doneTask176Receipts(check), receipts); check.close(); await largeCore.close()
     }
 
 }

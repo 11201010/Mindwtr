@@ -9934,18 +9934,25 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("Unsupported native menu read or JSON object input")
             }
             if name == "bulk" {
-                guard json.utf8.count <= 2_000_000, input["list"] as? String == "done",
-                      Set(input.keys).isSubset(of: ["list", "params", "taskIds", "anchorId", "selectionEdit", "rangeSelectMode", "busy", "picker"]),
+                let referenceSelection = input["list"] as? String == "reference"
+                let selectionKeys: Set<String> = referenceSelection
+                    ? ["list", "params", "taskIds", "anchorId", "selectionEdit", "rangeSelectMode", "busy"]
+                    : ["list", "params", "taskIds", "anchorId", "selectionEdit", "rangeSelectMode", "busy", "picker"]
+                guard json.utf8.count <= 2_000_000, ["done", "reference"].contains(input["list"] as? String ?? ""),
+                      Set(input.keys).isSubset(of: selectionKeys),
                       input["rangeSelectMode"] == nil || Self.isBoolean(input["rangeSelectMode"]),
                       input["busy"] == nil || Self.isBoolean(input["busy"]),
                       input["anchorId"] == nil || input["anchorId"] is NSNull
                         || (input["anchorId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true else {
-                    throw HostFailure("INVALID_INPUT: Unsupported native Done selection read")
+                    throw HostFailure(referenceSelection ? "INVALID_INPUT: Unsupported native Reference selection read" : "INVALID_INPUT: Unsupported native Done selection read")
                 }
                 if let params = input["params"] {
+                    let parameterKeys: Set<String> = referenceSelection
+                        ? ["groupBy", "includeArchivedProjects", "collapsedGroupIds", "filters"]
+                        : ["groupBy", "sortBy", "collapsedGroupIds", "filters"]
                     guard let value = params as? [String: Any],
-                          Set(value.keys).isSubset(of: ["groupBy", "sortBy", "collapsedGroupIds", "filters"]) else {
-                        throw HostFailure("INVALID_INPUT: Done selection requires the list's own view params")
+                          Set(value.keys).isSubset(of: parameterKeys) else {
+                        throw HostFailure(referenceSelection ? "INVALID_INPUT: Reference selection requires the list's own view params" : "INVALID_INPUT: Done selection requires the list's own view params")
                     }
                 }
                 if let selected = input["taskIds"] {

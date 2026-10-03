@@ -12685,7 +12685,7 @@ final class CoreModel: ObservableObject {
                   referenceRangeSelectMode == range else { return false }
             return try json(referenceParams).utf8.elementsEqual(json(params).utf8)
                 && json(referenceSelectedIDs).utf8.elementsEqual(json(selected).utf8)
-                && json(referenceAnchorID as Any? ?? NSNull()).utf8.elementsEqual(json(anchor as Any? ?? NSNull()).utf8)
+                && referenceAnchorID.map({ Data($0.utf8) }) == anchor.map({ Data($0.utf8) })
         }
         busy = true
         referenceError = nil
