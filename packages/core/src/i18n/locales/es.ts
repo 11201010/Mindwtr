@@ -314,6 +314,7 @@ export const esOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "No se pudo confirmar el cambio de etiquetas. Reinicia Mindwtr para volver a cargar los datos guardados.",
     'task.doneCompletedAtOutcomeUnknown': "No se pudo confirmar el cambio de la fecha de finalización. Reinicia Mindwtr para volver a cargar los datos guardados.",
     'task.destinationOutcomeUnknown': "No se pudo confirmar el cambio de destino. Reinicia Mindwtr para volver a cargar los datos guardados.",
+    'task.projectNextActionOutcomeUnknown': "No se pudo confirmar la siguiente acción. Reinicia Mindwtr para volver a cargar los datos guardados.",
 'task.trashOutcomeUnknown': "No se pudo confirmar la acción de la Papelera. Reinicia Mindwtr para volver a cargar los datos guardados.",
 'projects.archiveDeleteOutcomeUnknown': "No se pudo confirmar si se eliminó el proyecto archivado. Reinicia Mindwtr para volver a cargar los datos guardados.",
 'projects.archiveRestoreOutcomeUnknown': "No se pudo confirmar si se restauró el proyecto archivado. Reinicia Mindwtr para volver a cargar los datos guardados.",

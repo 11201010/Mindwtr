@@ -37,6 +37,7 @@ export const ukOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "Не вдалося підтвердити зміну тегів. Перезапустіть Mindwtr, щоб повторно завантажити збережені дані.",
     'task.doneCompletedAtOutcomeUnknown': "Не вдалося підтвердити зміну часу завершення. Перезапустіть Mindwtr, щоб повторно завантажити збережені дані.",
     'task.destinationOutcomeUnknown': "Не вдалося підтвердити зміну місця призначення. Перезапустіть Mindwtr, щоб повторно завантажити збережені дані.",
+    'task.projectNextActionOutcomeUnknown': "Не вдалося підтвердити наступну дію. Перезапустіть Mindwtr, щоб повторно завантажити збережені дані.",
     'task.trashOutcomeUnknown': "Не вдалося підтвердити дію з Кошиком. Перезапустіть Mindwtr, щоб повторно завантажити збережені дані.",
     'projects.archiveDeleteOutcomeUnknown': "Не вдалося підтвердити, чи видалено архівований проєкт. Перезапустіть Mindwtr, щоб повторно завантажити збережені дані.",
     'projects.archiveRestoreOutcomeUnknown': "Не вдалося підтвердити, чи відновлено архівований проєкт. Перезапустіть Mindwtr, щоб знову завантажити збережені дані.",

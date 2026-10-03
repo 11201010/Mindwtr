@@ -282,6 +282,7 @@ struct StatusListContent: View {
         referenceStatusRow = [:]
         referenceStatusOpeningContext = ""
         if ownsReferenceStatusMenu { model.taskStatusMenuPresented = false }
+        model.presentQueuedReferenceProjectNextAction()
         ownsReferenceStatusMenu = false
         if let destination {
             // Navigation may have reached refresh before this owner's menu gate

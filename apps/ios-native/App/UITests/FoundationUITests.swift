@@ -20355,6 +20355,16 @@ extension FoundationUITests {
         boardEnabled(button)
         if edge { button.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap() } else { button.tap() }
         XCTAssertTrue(app.datePickers["reference-backdate-picker"].waitForNonExistence(timeout: 30))
+        if save && suffix == "plain" {
+            // This specific historical fixture is the sole active-project source.
+            // Task191 now offers its normal-session prompt after the backdate ACK.
+            let description = app.staticTexts["reference-project-next-action-description"]
+            XCTAssertTrue(description.waitForExistence(timeout: 20))
+            XCTAssertTrue(description.label.contains("Task189 Active Project"))
+            XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+            task191Tap(app, app.buttons["reference-project-next-action-skip"], scrollable: false)
+            XCTAssertTrue(task191Prompt(app).waitForNonExistence(timeout: 15))
+        }
         XCTAssertFalse(app.buttons["task-completion-undo"].exists, "Chosen-time completion has no Undo notice")
         XCTAssertFalse(app.buttons["persistence-retry"].exists)
         let row = app.descendants(matching: .any).matching(identifier: "task-title-task189-" + suffix).firstMatch
@@ -20691,4 +20701,286 @@ extension FoundationUITests {
             app.terminate()
         }
     }
+
+    private var task191Prefix: String { "reference-project-next-action" }
+
+    private func task191LaunchArguments(_ fixture: String, rtl: Bool = false) -> [String] {
+        ["--native-ui-test-library", fixture, "-AppleLanguages", rtl ? "(ar)" : "(en-US)", "-AppleLocale", rtl ? "ar_SA" : "en_US"]
+    }
+
+    private func task191Prompt(_ app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: task191Prefix + "-prompt").firstMatch
+    }
+
+    @discardableResult
+    private func task191OpenPrompt(_ app: XCUIApplication, suffix: String, backdate: Bool = false, rtl: Bool = false) -> (title: String, description: String) {
+        if rtl { task186Filter(app, "Task191 action " + suffix, rtl: true) }
+        else { task190Filter(app, "Task191 action " + suffix) }
+        task190StatusAction(app, "task191-source-" + suffix, rtl: rtl)
+        if backdate {
+            let openingEpoch = Date().timeIntervalSince1970 * 1000
+            boardTap(app, "reference-status-completion-time")
+            XCTAssertTrue(app.datePickers["reference-backdate-picker"].waitForExistence(timeout: 20))
+            let opened: [String: Any] = ["source": "task191-source-" + suffix, "origin": "backdate", "phase": "opened", "openingEpochMilliseconds": openingEpoch,
+                "wallEpochMilliseconds": Date().timeIntervalSince1970 * 1000, "testTimeZone": TimeZone.current.identifier,
+                "wheels": app.pickerWheels.allElementsBoundByIndex.map { ["label": $0.label, "value": $0.value as? String ?? ""] }]
+            if let data = try? JSONSerialization.data(withJSONObject: opened, options: [.sortedKeys]), let value = String(data: data, encoding: .utf8) { print("Task191 backdate observation " + value) }
+            let minute = app.pickerWheels.element(boundBy: 2)
+            guard let value = minute.value as? String,
+                  let match = value.range(of: "[0-9]+", options: .regularExpression),
+                  let number = Int(value[match]) else { XCTFail("Missing observed Task191 minute"); return ("", "") }
+            minute.adjust(toPickerWheelValue: String(format: "%02d", (number + 7) % 60))
+            let minutesInput = app.textFields["reference-backdate-time-spent"]
+            let observations: [String: Any] = ["source": "task191-source-" + suffix, "origin": "backdate", "phase": "before-save", "wallEpochMilliseconds": Date().timeIntervalSince1970 * 1000,
+                "timeSpentVisible": minutesInput.exists, "timeSpentText": minutesInput.exists ? minutesInput.value as? String ?? "" : "",
+                "testTimeZone": TimeZone.current.identifier, "wheels": app.pickerWheels.allElementsBoundByIndex.map { ["label": $0.label, "value": $0.value as? String ?? ""] }]
+            if let data = try? JSONSerialization.data(withJSONObject: observations, options: [.sortedKeys]), let value = String(data: data, encoding: .utf8) { print("Task191 backdate observation " + value) }
+            boardTap(app, "reference-backdate-save")
+            XCTAssertTrue(app.datePickers["reference-backdate-picker"].waitForNonExistence(timeout: 30))
+            XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        } else { boardTap(app, "reference-status-done") }
+        let description = app.staticTexts[task191Prefix + "-description"]
+        XCTAssertTrue(description.waitForExistence(timeout: 30)); XCTAssertTrue(description.label.contains("Task191 Project " + suffix))
+        XCTAssertTrue(task191Prompt(app).exists)
+        let labels = (title: app.staticTexts[task191Prefix + "-title"].label, description: description.label)
+        XCTAssertFalse(app.buttons["task-delete-undo"].exists)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        let probes = ["candidate-0", "input", "add", "complete-project", "skip"].map { suffix -> [String: Any] in
+            let id = task191Prefix + "-" + suffix
+            let matches = app.descendants(matching: .any).matching(identifier: id), element = matches.firstMatch
+            var record: [String: Any] = ["identifier": id, "matchingCount": matches.count, "exists": element.exists]
+            if element.exists {
+                record["frame"] = String(describing: element.frame)
+                record["isEnabled"] = element.isEnabled; record["isHittable"] = element.isHittable
+            }
+            return record
+        }
+        let observation: [String: Any] = ["sourceSuffix": suffix, "beforeInputWallEpoch": Date().timeIntervalSince1970, "controls": probes]
+        if let data = try? JSONSerialization.data(withJSONObject: observation, options: [.sortedKeys]), let value = String(data: data, encoding: .utf8) { print("Task191 before input control probe " + value) }
+        return labels
+    }
+
+    private func task191Viewport(_ app: XCUIApplication, scrollable: Bool) -> CGRect {
+        var frame = scrollable ? app.scrollViews[task191Prefix + "-scroll"].frame.intersection(app.frame) : app.frame
+        let keyboard = app.keyboards.firstMatch
+        if keyboard.exists && keyboard.frame.intersects(frame) { frame.size.height = max(0, keyboard.frame.minY - frame.minY) }
+        return frame
+    }
+
+    private func task191Inside(_ frame: CGRect, viewport: CGRect) -> Bool {
+        frame.width > 0 && frame.height > 0 && frame.minX >= viewport.minX - 0.01 && frame.maxX <= viewport.maxX + 0.01
+            && frame.minY >= viewport.minY - 0.01 && frame.maxY <= viewport.maxY + 0.01
+    }
+
+    @discardableResult
+    private func task191Reveal(_ app: XCUIApplication, _ element: XCUIElement, scrollable: Bool = true) -> CGRect {
+        if scrollable { XCTAssertTrue(app.scrollViews[task191Prefix + "-scroll"].waitForExistence(timeout: 20)) }
+        XCTAssertTrue(element.waitForExistence(timeout: 20))
+        // XCTest can report false hittability for these visible Task191 prompt
+        // controls even when a real tap and exact outcome succeed. Reveal by
+        // measured occlusion only; this does not establish broader AX acceptance.
+        for _ in 0..<(scrollable ? 32 : 0) {
+            let viewport = task191Viewport(app, scrollable: scrollable), frame = element.frame
+            if task191Inside(frame, viewport: viewport) { break }
+            guard viewport.width > 0 && viewport.height > 0 && frame.width > 0 && frame.height > 0
+                && frame.width <= viewport.width + 0.01 && frame.height <= viewport.height + 0.01 else { break }
+            let above = frame.minY < viewport.minY
+            let needed = above ? viewport.minY - frame.minY : frame.maxY - viewport.maxY
+            let distance = min(max(44, needed + 24), viewport.height * 0.6)
+            let startY = viewport.minY + viewport.height * (above ? 0.25 : 0.75)
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            origin.withOffset(CGVector(dx: viewport.midX, dy: startY)).press(forDuration: 0.05,
+                thenDragTo: origin.withOffset(CGVector(dx: viewport.midX, dy: startY + (above ? distance : -distance))),
+                withVelocity: .slow, thenHoldForDuration: 0.2)
+        }
+        let viewport = task191Viewport(app, scrollable: scrollable)
+        if !task191Inside(element.frame, viewport: viewport) {
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task191 control visibility failure"; shot.lifetime = .keepAlways; add(shot)
+            let tree = XCTAttachment(string: app.debugDescription); tree.name = "Task191 visibility AX tree"; tree.lifetime = .keepAlways; add(tree)
+            XCTFail("Task191 control must be fully inside its visible viewport: " + element.identifier)
+        }
+        return viewport
+    }
+
+    private func task191Tap(_ app: XCUIApplication, _ button: XCUIElement, edge: Bool = false, scrollable: Bool = true) {
+        boardEnabled(button, timeout: 15)
+        let viewport = task191Reveal(app, button, scrollable: scrollable)
+        let matches = app.buttons.matching(identifier: button.identifier)
+        XCTAssertEqual(matches.count, 1); XCTAssertTrue(button.isEnabled)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.01); XCTAssertGreaterThanOrEqual(button.frame.width, 44 - 0.01)
+        let record: [String: Any] = ["identifier": button.identifier, "matchingCount": matches.count,
+            "frame": String(describing: button.frame), "viewport": String(describing: viewport),
+            "isEnabled": button.isEnabled, "isHittable": button.isHittable, "beforeTapWallEpoch": Date().timeIntervalSince1970]
+        if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]), let value = String(data: data, encoding: .utf8) { print("Task191 control observation " + value) }
+        guard matches.count == 1 && button.isEnabled && task191Inside(button.frame, viewport: viewport) else { return }
+        button.coordinate(withNormalizedOffset: CGVector(dx: edge ? 0.95 : 0.5, dy: 0.5)).tap()
+    }
+
+    private func task191Input(_ app: XCUIApplication, _ text: String) {
+        let matches = app.textFields.matching(identifier: task191Prefix + "-input"), input = matches.firstMatch
+        boardEnabled(input)
+        let viewport = task191Reveal(app, input)
+        XCTAssertEqual(matches.count, 1); XCTAssertTrue(input.isEnabled)
+        let record: [String: Any] = ["matchingCount": matches.count, "frame": String(describing: input.frame), "viewport": String(describing: viewport),
+            "isHittable": input.isHittable, "isEnabled": input.isEnabled, "beforeInputWallEpoch": Date().timeIntervalSince1970]
+        if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]), let value = String(data: data, encoding: .utf8) { print("Task191 input observation " + value) }
+        guard matches.count == 1 && input.isEnabled && task191Inside(input.frame, viewport: viewport) else { return }
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        let value = input.value as? String ?? "", old = value == input.placeholderValue ? "" : value
+        input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count) + text)
+        XCTAssertTrue((input.value as? String ?? "").utf8.elementsEqual(text.utf8))
+    }
+
+    private func task191Observe(_ app: XCUIApplication, fixture: String, source: String, prompt: (title: String, description: String), action: String, candidate: String? = nil, openAfterSave: Bool = false) {
+        let input = app.textFields[task191Prefix + "-input"], raw = input.exists ? input.value as? String ?? "" : ""
+        let text = raw == input.placeholderValue ? "" : raw
+        var record: [String: Any] = ["fixture": fixture, "sourceID": "task191-source-" + source, "action": action,
+            "text": text, "openAfterSave": openAfterSave, "visibleTitle": prompt.title,
+            "visibleDescription": prompt.description, "labelSnapshot": "promptOpenBeforeScrolling", "beforeActionWallEpoch": Date().timeIntervalSince1970]
+        if let candidate { record["candidateID"] = candidate }
+        if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]), let value = String(data: data, encoding: .utf8) { print("Task191 next action observation " + value) }
+        else { XCTFail("Cannot encode pre-action Task191 observation") }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task191 before " + action + " " + source; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func task191Action(_ app: XCUIApplication, fixture: String, source: String, prompt: (title: String, description: String), action: String, edit: Bool = false, edge: Bool = false) {
+        let id = task191Prefix + (action == "choose" ? "-candidate-0" : action == "add" ? edit ? "-save-edit" : "-add" : "-complete-project")
+        let button = app.buttons.matching(identifier: id).firstMatch
+        task191Reveal(app, button); boardEnabled(button, timeout: 15)
+        if action == "choose" { XCTAssertTrue(button.label.contains("Task191 candidate " + source)) }
+        task191Observe(app, fixture: fixture, source: source, prompt: prompt, action: action, candidate: action == "choose" ? "task191-candidate-" + source : nil, openAfterSave: edit)
+        task191Tap(app, button, edge: edge)
+    }
+
+    private func task191AssertDismissed(_ app: XCUIApplication, edit: Bool = false) {
+        XCTAssertTrue(task191Prompt(app).waitForNonExistence(timeout: 30))
+        if edit {
+            boardEnabled(app.buttons["task-view-close"], timeout: 30)
+            XCTAssertTrue(app.textFields["task-editor-title"].exists); XCTAssertTrue(app.buttons["task-editor-save"].exists)
+            XCTAssertTrue((app.textFields["task-editor-title"].value as? String ?? "").contains("Task191 created edit"))
+            boardTap(app, "task-view-close"); XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+        } else { XCTAssertFalse(app.buttons["task-editor-save"].exists) }
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+
+    private func task191ActionsFlow(_ fixture: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task191LaunchArguments(fixture)
+        app.launch(); task186Open(app); referenceGroup(app, "none")
+        for action in ["choose", "add", "edit", "complete"] {
+            let prompt = task191OpenPrompt(app, suffix: action)
+            if ["add", "edit"].contains(action) { task191Input(app, "Task191 created " + action + " @home #review") }
+            task191Action(app, fixture: fixture, source: action, prompt: prompt, action: action == "complete" ? "completeProject" : action == "choose" ? "choose" : "add", edit: action == "edit", edge: action == "add")
+            task191AssertDismissed(app, edit: action == "edit")
+        }
+        app.terminate(); app.launch(); task186Open(app)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: task191Prefix + "-prompt").firstMatch.exists)
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists); app.terminate()
+    }
+
+    func testTask191ReferenceProjectNextActionNormal() { task191ActionsFlow("a7e6e530-a20e-4273-9e5a-67f0de10f215") }
+    func testTask191ReferenceProjectNextActionLargest() { task191ActionsFlow("1bbfa8fb-5762-4dbc-8e21-2ec52ea9262e") }
+
+    func testTask191ReferenceProjectNextActionArabicLayout() {
+        continueAfterFailure = false
+        let fixture = "3b8810b0-26cf-4b28-aaab-3a32c839af82", app = XCUIApplication()
+        app.launchArguments = task191LaunchArguments(fixture, rtl: true)
+        app.launch(); task186Open(app); referenceGroup(app, "none")
+        let prompt = task191OpenPrompt(app, suffix: "choose", rtl: true)
+        XCTAssertNotEqual(app.staticTexts[task191Prefix + "-title"].label, "What is the next action?")
+        task191Action(app, fixture: fixture, source: "choose", prompt: prompt, action: "choose", edge: true); task191AssertDismissed(app); app.terminate()
+    }
+
+    func testTask191ReferencePromptPagingKeepsDraftAndChoosesExactLaterCandidate() {
+        continueAfterFailure = false
+        let fixture = "c145b6fe-7cc6-4398-bc45-b46b70d571c6", app = XCUIApplication(); app.launchArguments = task191LaunchArguments(fixture)
+        app.launch(); task186Open(app); referenceGroup(app, "none"); let prompt = task191OpenPrompt(app, suffix: "paging")
+        task191Input(app, "Retained Task191 draft")
+        let more = app.buttons[task191Prefix + "-more"]; task191Tap(app, more)
+        let last = app.buttons[task191Prefix + "-candidate-120"]; task191Reveal(app, last); boardEnabled(last)
+        XCTAssertTrue(last.label.contains("Task191 Page 119")); XCTAssertFalse(app.buttons[task191Prefix + "-more"].exists)
+        XCTAssertEqual(app.textFields[task191Prefix + "-input"].value as? String, "Retained Task191 draft")
+        task191Observe(app, fixture: fixture, source: "paging", prompt: prompt, action: "choose", candidate: "task191-page-119"); task191Tap(app, last)
+        task191AssertDismissed(app); app.terminate()
+    }
+
+    func testTask191ReferencePromptSkipUndoBackdateAndSectionSuppression() {
+        continueAfterFailure = false
+        let fixture = "6029169e-c300-4f39-be09-a499f4273c42", app = XCUIApplication(); app.launchArguments = task191LaunchArguments(fixture)
+        app.launch(); task186Open(app); referenceGroup(app, "none")
+        task191OpenPrompt(app, suffix: "skip")
+        let undo = app.buttons.matching(identifier: "task-completion-undo").firstMatch; boardEnabled(undo, timeout: 5)
+        XCTAssertEqual(app.buttons.matching(identifier: "task-completion-undo").count, 1)
+        undo.tap(); XCTAssertTrue(task191Prompt(app).waitForNonExistence(timeout: 30))
+        let source = app.descendants(matching: .any).matching(identifier: "task-title-task191-source-skip").firstMatch; task190Reveal(app, source); XCTAssertTrue(source.exists)
+        let prompt = task191OpenPrompt(app, suffix: "add", backdate: true)
+        task191Input(app, "Cancelled Task191 draft"); task191Observe(app, fixture: fixture, source: "add", prompt: prompt, action: "skip")
+        task191Tap(app, app.buttons[task191Prefix + "-skip"], scrollable: false); task191AssertDismissed(app)
+        for suffix in ["section", "unsectioned"] {
+            let prompt = task191OpenPrompt(app, suffix: suffix); XCTAssertFalse(app.buttons[task191Prefix + "-complete-project"].exists)
+            task191Action(app, fixture: fixture, source: suffix, prompt: prompt, action: "choose"); task191AssertDismissed(app)
+        }
+        task190Filter(app, "Task191 action future"); task190StatusAction(app, "task191-source-future"); boardTap(app, "reference-status-done")
+        boardEnabled(app.buttons["task-completion-undo"], timeout: 5)
+        XCTAssertFalse(task191Prompt(app).exists)
+        boardTap(app, "task-completion-undo")
+        // The Reference recurrence child stays Reference. RN still offers the
+        // project prompt, with the same transient completion Undo above it.
+        task191OpenPrompt(app, suffix: "recurring")
+        let recurringUndo = app.buttons.matching(identifier: "task-completion-undo").firstMatch
+        boardEnabled(recurringUndo, timeout: 5); XCTAssertEqual(app.buttons.matching(identifier: "task-completion-undo").count, 1)
+        recurringUndo.tap(); XCTAssertTrue(task191Prompt(app).waitForNonExistence(timeout: 30))
+        let recurring = app.descendants(matching: .any).matching(identifier: "task-title-task191-source-recurring").firstMatch
+        task190Reveal(app, recurring); XCTAssertTrue(recurring.exists)
+        app.terminate()
+    }
+
+    private func task191FailedFollowUp(_ fixture: String, source: String, action: String, edit: Bool = false) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task191LaunchArguments(fixture)
+        app.launch(); task186Open(app); referenceGroup(app, "none"); let prompt = task191OpenPrompt(app, suffix: source)
+        let text = "Task191 failed retained edit @home #review"
+        if action == "add" { task191Input(app, text) }
+        task191Action(app, fixture: fixture, source: source, prompt: prompt, action: action, edit: edit)
+        for _ in 0..<2 {
+            let retry = app.buttons[task191Prefix + "-retry"]; boardEnabled(retry, timeout: 30)
+            XCTAssertTrue(app.staticTexts[task191Prefix + "-error"].exists)
+            XCTAssertFalse(app.buttons[task191Prefix + "-skip"].isEnabled)
+            if app.buttons["task-completion-undo"].exists { XCTAssertFalse(app.buttons["task-completion-undo"].isEnabled) }
+            XCTAssertFalse(app.buttons["task-editor-save"].exists)
+            let input = app.textFields[task191Prefix + "-input"]
+            XCTAssertFalse(input.isEnabled)
+            if action == "add" { XCTAssertTrue((input.value as? String ?? "").utf8.elementsEqual(text.utf8)) }
+            task191Tap(app, retry, scrollable: false)
+        }
+        boardEnabled(app.buttons[task191Prefix + "-retry"], timeout: 30); app.terminate()
+    }
+
+    func testTask191ReferencePromptChooseFailedSave() { task191FailedFollowUp("f9cdd481-e477-47ee-abcc-81c352106b78", source: "failed-choose", action: "choose") }
+    func testTask191ReferencePromptAddFailedSave() { task191FailedFollowUp("f5796651-6da6-4084-a8bf-b1dfe92b3c5e", source: "failed-add", action: "add") }
+    func testTask191ReferencePromptSaveEditFailedSave() { task191FailedFollowUp("294f1595-41d0-40db-b2a9-7ae68e9cc585", source: "failed-edit", action: "add", edit: true) }
+    func testTask191ReferencePromptCompleteProjectFailedSave() { task191FailedFollowUp("43f71302-9dab-400d-8321-6aecb52d9bae", source: "failed-complete", action: "completeProject") }
+
+    private func task191ColdFollowUp(_ fixture: String, edit: Bool = false) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task191LaunchArguments(fixture)
+        for launch in 0..<2 {
+            app.launch()
+            if launch == 0 && edit {
+                boardEnabled(app.buttons["task-view-close"], timeout: 30); XCTAssertTrue(app.textFields["task-editor-title"].exists)
+                XCTAssertTrue((app.textFields["task-editor-title"].value as? String ?? "").contains("Task191 failed retained edit"))
+                boardTap(app, "task-view-close")
+            } else if launch == 0 { XCTAssertTrue(app.buttons["reference-overflow-button"].waitForExistence(timeout: 30)) }
+            task186Open(app)
+            XCTAssertFalse(task191Prompt(app).exists); XCTAssertFalse(app.buttons[task191Prefix + "-retry"].exists)
+            XCTAssertFalse(app.buttons["task-completion-undo"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists)
+            app.terminate()
+        }
+    }
+
+    func testTask191ReferencePromptChooseColdRecovery() { task191ColdFollowUp("2d115d02-4a21-4660-b664-c9fe1bd43d2b") }
+    func testTask191ReferencePromptAddColdRecovery() { task191ColdFollowUp("2d5d9d37-324b-448a-b2be-0a2673b2d75f") }
+    func testTask191ReferencePromptSaveEditColdRecovery() { task191ColdFollowUp("d466dc20-3fd9-41a6-b9ff-20665f1e6bd7", edit: true) }
+    func testTask191ReferencePromptCompleteProjectColdRecovery() { task191ColdFollowUp("8836e789-8937-491a-a6a7-6642e3d6e3f8") }
+
 }

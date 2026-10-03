@@ -1,3 +1,4 @@
+import { createReferenceProjectNextActionMethods } from './native-host-contract-project-next-action';
 import { MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToFilters, areaFilterSelectionToValue, cycleAreaFilterSelection, isAreaFilterSelectionActive, isTaskVisibleInArea, isTaskVisibleInInbox, resolveAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
 import { DEFAULT_PROJECT_COLOR } from './color-constants';
@@ -1587,13 +1588,15 @@ export function createNativeHostContract(options: {
         revision: (now) => `${revision()}:${displayRevision(now)}`,
     });
 
+    const taskChecklistMethods = createTaskChecklistSaveMethods({ readiness, save, receipts, language: () => language,
+        validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value), isReadOnly: isInArchivedProject });
     return {
         version: NATIVE_HOST_CONTRACT_VERSION,
         ...createTaskDraftSaveMethods({ readiness, save, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value) }),
         ...createTaskEditorResumeMethods({ readiness, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value),
             isReadOnly: isInArchivedProject }),
-        ...createTaskChecklistSaveMethods({ readiness, save, receipts, language: () => language,
-            validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value), isReadOnly: isInArchivedProject }),
+        ...taskChecklistMethods,
+        ...createReferenceProjectNextActionMethods({ readiness, save, t: () => translate, originMethods: taskChecklistMethods }),
         ...createTaskPromotionMethods({ readiness, save, isReadOnly: isInArchivedProject }),
         ...inboxProcessingMethods,
         // Settings › AI and the AI actions: native-host-contract-ai.ts.

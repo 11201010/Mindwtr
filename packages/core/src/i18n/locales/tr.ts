@@ -3,6 +3,7 @@ export const trOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "Etiket değişikliği doğrulanamadı. Kaydedilen verileri yeniden yüklemek için Mindwtr uygulamasını yeniden başlatın.",
     'task.doneCompletedAtOutcomeUnknown': "Tamamlanma zamanı değişikliği doğrulanamadı. Kaydedilen verileri yeniden yüklemek için Mindwtr uygulamasını yeniden başlatın.",
     'task.destinationOutcomeUnknown': "Hedef değişikliği doğrulanamadı. Kaydedilen verileri yeniden yüklemek için Mindwtr uygulamasını yeniden başlatın.",
+    'task.projectNextActionOutcomeUnknown': "Sonraki eylem doğrulanamadı. Kaydedilen verileri yeniden yüklemek için Mindwtr uygulamasını yeniden başlatın.",
     'filters.searchTasks': "Görev başlıklarında ara",
     'filters.searchOptions': "Seçeneklerde ara",
     'filters.tokenCycleHint': "Dahil etmek için tıklayın, hariç tutmak için tekrar, seçimi temizlemek için bir kez daha tıklayın.",

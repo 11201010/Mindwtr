@@ -1,5 +1,6 @@
-import type { AppData, SavedFilter, Task } from './types';
+import type { AppData, SavedFilter, Task, Project } from './types';
 import { TASK_SQLITE_COLUMNS, taskToSqliteRow } from './task-sync-schema';
+import { PROJECT_SQLITE_COLUMNS, projectToSqliteRow } from './project-sync-schema';
 import { isRecord, toJson } from './entity-sync-schema';
 
 type TaskRowEntry = { row: unknown[]; fingerprint: string };
@@ -27,6 +28,20 @@ export const rawReadTaskSnapshot = (task: Task): Task | null => {
     try {
         for (const field of ['recurrence', 'tags', 'contexts', 'checklist', 'attachments', 'viewSectionIds'] as const) {
             const value = entry.row[TASK_SQLITE_COLUMNS.indexOf(field)];
+            if (value === null || value === undefined) delete snapshot[field];
+            else Object.assign(snapshot, { [field]: JSON.parse(String(value)) });
+        }
+        return snapshot;
+    } catch { return null; }
+};
+/** Task191 preserves Project JSON member presence for its raw BEFORE only. */
+export const rawReadProjectSnapshot = (project: Project): Project | null => {
+    const snapshot = JSON.parse(JSON.stringify(project)) as Project;
+    const entry = rawReadRowEntries.get(project);
+    if (!entry || entry.projection !== JSON.stringify(projectToSqliteRow(project))) return snapshot;
+    try {
+        for (const field of ['tagIds', 'attachments', 'viewSectionIds'] as const) {
+            const value = entry.row[PROJECT_SQLITE_COLUMNS.indexOf(field)];
             if (value === null || value === undefined) delete snapshot[field];
             else Object.assign(snapshot, { [field]: JSON.parse(String(value)) });
         }

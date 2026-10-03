@@ -333,6 +333,7 @@ export const en: Record<string, string> = {
         'task.doneTagOutcomeUnknown': "Could not confirm the tag change. Restart Mindwtr to reload saved data.",
         'task.doneCompletedAtOutcomeUnknown': "Could not confirm the completion time change. Restart Mindwtr to reload saved data.",
         'task.destinationOutcomeUnknown': "Could not confirm the destination change. Restart Mindwtr to reload saved data.",
+        'task.projectNextActionOutcomeUnknown': "Could not confirm the next action. Restart Mindwtr to reload saved data.",
         'task.trashOutcomeUnknown': "Could not confirm the Trash action. Restart Mindwtr to reload saved data.",
         'projects.archiveDeleteOutcomeUnknown': "Could not confirm whether the archived project was deleted. Restart Mindwtr to reload saved data.",
         'projects.archiveRestoreOutcomeUnknown': "Could not confirm whether the archived project was restored. Restart Mindwtr to reload saved data.",

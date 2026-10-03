@@ -798,7 +798,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2165,6 +2165,27 @@ globalThis.MindwtrHost = {
     },
     doneTaskStatusOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getDoneTaskStatusOptions(completionJson(json, 4_096) as Parameters<typeof contract.getDoneTaskStatusOptions>[0])); });
+    },
+    referenceProjectNextActionOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.getReferenceProjectNextActionOptions(completionJson(json, 2_100_000) as Parameters<typeof contract.getReferenceProjectNextActionOptions>[0])); });
+    },
+    referenceProjectNextActionInput(text: string): string {
+        return submit(async () => {
+            if (typeof text !== 'string' || text.length > 100_000) throw new Error('INVALID_INPUT: Next action text is too large');
+            return unwrap(contract.referenceProjectNextActionInput(text));
+        });
+    },
+    referenceProjectNextActionPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareReferenceProjectNextAction(completionJson(json, 2_100_000) as Parameters<typeof contract.prepareReferenceProjectNextAction>[0])); });
+    },
+    referenceProjectNextActionValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedReferenceProjectNextAction(completionJson(json, 2_100_000) as Parameters<typeof contract.validatePreparedReferenceProjectNextAction>[0])));
+    },
+    referenceProjectNextActionCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedReferenceProjectNextAction(completionJson(json, 2_100_000) as Parameters<typeof contract.commitPreparedReferenceProjectNextAction>[0])));
+    },
+    referenceProjectNextActionOutcome(json: string): string {
+        return submit(async () => unwrap(contract.referenceProjectNextActionOutcome(completionJson(json, 2_100_000) as Parameters<typeof contract.referenceProjectNextActionOutcome>[0])));
     },
     referenceTaskDestinationOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getReferenceTaskDestinationOptions(completionJson(json, 4_096) as Parameters<typeof contract.getReferenceTaskDestinationOptions>[0])); });

@@ -1142,7 +1142,43 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         return actionOk({ id: resultIds[0], ids: resultIds });
     },
 
-    commitPreparedCapture: async ({ task, project, deviceIdToInitialize }) => {
+    commitPreparedCapture: async ({ task, project, deviceIdToInitialize, deviceIdBefore }, raw) => {
+        if (raw) {
+            let result = actionFail('Prepared capture conflicts with current saved data');
+            set((memory) => {
+                const before = raw.authority.state; const durable = raw.authority.snapshot;
+                if (raw.requireBefore !== true || project !== null
+                    || memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                    || memory._allSections !== before._allSections || memory._allAreas !== before._allAreas
+                    || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                    || memory.lastDataChangeAt !== before.lastDataChangeAt
+                    || raw.rawBefore.tasks.length !== 1 || raw.rawBefore.tasks[0].id !== task.id
+                    || raw.rawBefore.tasks[0].before !== null || raw.rawBefore.projects.length || raw.rawBefore.sections.length
+                    || durable.tasks.some((row) => row.id === task.id)
+                    || (durable.settings.deviceId ?? null) !== deviceIdBefore
+                    || (deviceIdBefore === null ? !deviceIdToInitialize : deviceIdToInitialize !== null)) return memory;
+                const container = resolveTaskContainerAssignment({ projectId: task.projectId, sectionId: task.sectionId,
+                    areaId: task.areaId, allProjects: durable.projects, allSections: durable.sections ?? [], allAreas: durable.areas ?? [] });
+                if (!container.ok || container.projectId !== task.projectId || container.sectionId !== task.sectionId
+                    || container.areaId !== task.areaId || task.projectId && !durable.projects.some((row) => row.id === task.projectId
+                        && isSelectableProjectForTaskAssignment(row))) return memory;
+                const tasks = [...durable.tasks, task];
+                const settings = deviceIdToInitialize ? { ...durable.settings, deviceId: deviceIdToInitialize } : durable.settings;
+                const freshTasks = tasks.map((row) => normalizeTaskForLoad(row));
+                const projects = durable.projects.map(normalizeProjectLifecycleFields);
+                clearDerivedCache();
+                persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks, _allProjects: durable.projects,
+                    _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [],
+                    settings: durable.settings }, { ...durable, tasks, settings });
+                const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+                raw.authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
+                    generation: getSaveGeneration(), failure: memory.persistenceFailure };
+                result = actionOk({ id: task.id });
+                return { _allTasks: freshTasks, _allProjects: projects, _allSections: durable.sections ?? [],
+                    _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [], settings, lastDataChangeAt };
+            });
+            return result;
+        }
         let result = actionFail('Prepared capture conflicts with current data');
         set((state) => {
             const existingTask = state._allTasks.find((entry) => entry.id === task.id);

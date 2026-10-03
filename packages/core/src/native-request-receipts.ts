@@ -5,6 +5,7 @@ import type { StoreActionResult } from './store-types';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
 import type { AppData, Project, Task } from './types';
 import { deterministicHash128, generateDeterministicUUID } from './uuid';
+import { taskEditValuesEqual } from './json-value-equality';
 
 /**
  * Exact-retry bookkeeping for native host writes, shared by every contract write
@@ -354,6 +355,7 @@ export const resetNativeRequestReceipts = () => {
 export class NativeReceiptSqliteAdapter extends SqliteAdapter {
     private readonly receiptClient: SqliteClient;
     private readonly carried = new WeakMap<AppData, { ids: string[]; savedAt: string }>();
+    private prerequisite: { requestId: string; fingerprint: string; originId: string; originFingerprint: string; reply: unknown } | null = null;
 
     constructor(client: SqliteClient, options?: SqliteAdapterOptions) {
         super(client, options);
@@ -362,6 +364,44 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
         Object.defineProperty(this, 'saveTask', {
             get: () => (pendingReceipts.size === 0 && receiptedWritesRunning === 0 ? saveTask : undefined),
         });
+    }
+
+    /** Current durable proof for a prerequisite receipt; never updates the session cache. */
+    async readDurableReceipt(requestId: string, payload: string): Promise<NativeHostResult<unknown | null>> {
+        return this.readCurrentReceipt(requestId, fingerprintOf(payload));
+    }
+
+    private async readCurrentReceipt(requestId: string, fingerprint: string): Promise<NativeHostResult<unknown | null>> {
+        let rows: { request_id: string; method: string; reply: string; saved_at: string }[];
+        try {
+            rows = await this.receiptClient.all(
+                'SELECT request_id, method, reply, saved_at FROM native_request_receipts WHERE request_id = ?', [requestId],
+            );
+        } catch {
+            return { ok: false, error: { code: 'SAVE_FAILED', message: 'The saved prerequisite receipt could not be read' } };
+        }
+        if (rows.length === 0) return { ok: true, value: null };
+        const row = rows[0];
+        const changed = (): NativeHostResult<never> => ({ ok: false,
+            error: { code: 'STALE_REVISION', message: 'The saved prerequisite receipt changed' } });
+        if (rows.length !== 1 || row.request_id !== requestId || row.method !== fingerprint
+            || typeof row.saved_at !== 'string' || row.saved_at.length > 40
+            || !Number.isFinite(Date.parse(row.saved_at)) || new Date(row.saved_at).toISOString() !== row.saved_at
+            || typeof row.reply !== 'string') return changed();
+        try { return { ok: true, value: JSON.parse(row.reply) as unknown }; } catch { return changed(); }
+    }
+
+    /** Optional prerequisite for one owned command; absent for every existing caller. */
+    armReceiptPrerequisite(requestId: string, payload: string, originId: string, originPayload: string, reply: unknown): void {
+        const fingerprint = fingerprintOf(payload);
+        if (this.prerequisite && (this.prerequisite.requestId !== requestId || this.prerequisite.fingerprint !== fingerprint))
+            throw new Error('Another request owns the receipt prerequisite');
+        this.prerequisite = { requestId, fingerprint, originId, originFingerprint: fingerprintOf(originPayload),
+            reply: JSON.parse(JSON.stringify(reply)) as unknown };
+    }
+
+    clearReceiptPrerequisite(requestId: string, payload: string): void {
+        if (this.prerequisite?.requestId === requestId && this.prerequisite.fingerprint === fingerprintOf(payload)) this.prerequisite = null;
     }
 
     protected override async beforeCommit(write: { data: AppData } | { task: Task }): Promise<void> {
@@ -373,6 +413,13 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
         const ids: string[] = [];
         for (const [id, receipt] of pendingReceipts) {
             if (receipt.generation > generation) continue;
+            const prerequisite = this.prerequisite;
+            if (prerequisite?.requestId === id) {
+                if (prerequisite.fingerprint !== receipt.fingerprint) throw new Error('Receipt prerequisite ownership changed');
+                const original = await this.readCurrentReceipt(prerequisite.originId, prerequisite.originFingerprint);
+                if (!original.ok || original.value === null || !taskEditValuesEqual(original.value, prerequisite.reply))
+                    throw new Error('The current durable prerequisite receipt is not proven');
+            }
             await this.receiptClient.run(
                 'INSERT INTO native_request_receipts (request_id, method, reply, saved_at) VALUES (?, ?, ?, ?) ON CONFLICT(request_id) DO NOTHING',
                 [id, receipt.fingerprint, JSON.stringify(receipt.reply ?? null), savedAt],
@@ -392,6 +439,7 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             if (!receipt) continue;
             pendingReceipts.delete(id);
             durableReceipts?.set(id, { fingerprint: receipt.fingerprint, reply: receipt.reply, savedAt: carried!.savedAt });
+            if (this.prerequisite?.requestId === id && this.prerequisite.fingerprint === receipt.fingerprint) this.prerequisite = null;
         }
     }
 

@@ -7,13 +7,13 @@ import { normalizeCancellationTimestamp, normalizeTaskLifecycleFields } from './
 import { normalizeRecurrenceForLoad } from './recurrence';
 import { normalizeRepeatReminderMinutes } from './schedule-utils';
 import { resolveTaskFocusCreation } from './focus-star';
-import { isTaskFutureFocusCandidate, isTaskFutureFocusCandidateBeforeBoundary } from './task-utils';
+import { isTaskFutureFocusCandidate, isTaskFutureFocusCandidateBeforeBoundary, type FocusDateLookup } from './task-utils';
 
 const hasOwnField = (value: object, field: PropertyKey) => Object.prototype.hasOwnProperty.call(value, field);
 
 /** The task factory shared by ordinary creation and journaled native capture. */
 export function buildNewTask({
-    title, initialTaskProps, id, now, deviceId, state, tasks, focusedCount, focusTaskLimit, projectOrderReserver, endOfTodayIso,
+    title, initialTaskProps, id, now, deviceId, state, tasks, focusedCount, focusTaskLimit, projectOrderReserver, endOfTodayIso, frozenDates,
 }: {
     title: string;
     initialTaskProps: Partial<Task>;
@@ -27,6 +27,7 @@ export function buildNewTask({
     projectOrderReserver: ProjectOrderReserver;
     /** Native prepared creation only; ordinary RN callers use the current local day. */
     endOfTodayIso?: string;
+    frozenDates?: FocusDateLookup;
 }): { ok: true; task: Task; focusedCount: number } | { ok: false; error: string } {
     const hasExplicitAreaId = hasOwnField(initialTaskProps, 'areaId');
     const shouldApplyDefaultArea = !hasExplicitAreaId
@@ -109,11 +110,12 @@ export function buildNewTask({
             focusTaskLimit,
             now: creationTime,
             endOfTodayIso,
+            frozenDates,
         });
         newTask.status = focusDecision.status;
         newTask.isFocusedToday = focusDecision.isFocusedToday;
         if (focusDecision.outcome === 'focused' && !(endOfTodayIso
-            ? isTaskFutureFocusCandidateBeforeBoundary(newTask, endOfTodayIso)
+            ? isTaskFutureFocusCandidateBeforeBoundary(newTask, endOfTodayIso, frozenDates)
             : isTaskFutureFocusCandidate(newTask, creationTime))) {
             focusedCount += 1;
         }

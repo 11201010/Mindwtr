@@ -3,6 +3,7 @@ export const plOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "Nie udało się potwierdzić zmiany tagów. Uruchom ponownie Mindwtr, aby ponownie wczytać zapisane dane.",
     'task.doneCompletedAtOutcomeUnknown': "Nie udało się potwierdzić zmiany czasu ukończenia. Uruchom ponownie Mindwtr, aby wczytać zapisane dane.",
     'task.destinationOutcomeUnknown': "Nie udało się potwierdzić zmiany miejsca docelowego. Uruchom ponownie Mindwtr, aby wczytać zapisane dane.",
+    'task.projectNextActionOutcomeUnknown': "Nie udało się potwierdzić następnego działania. Uruchom ponownie Mindwtr, aby wczytać zapisane dane.",
     'filters.searchTasks': "Szukaj w tytułach zadań",
     'filters.searchOptions': "Szukaj opcji",
     'filters.tokenCycleHint': "Kliknij, aby uwzględnić, ponownie, aby wykluczyć, i jeszcze raz, aby wyczyścić wybór.",

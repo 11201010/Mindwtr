@@ -29,6 +29,9 @@
  * Timing is printed, never asserted.
  */
 import { performance } from 'node:perf_hooks';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mergeAppData, mergeAppDataWithStats, performSyncCycle } from './sync';
 import { parseSyncDocument, toRemoteSyncDocument } from './sync-document';
@@ -40,12 +43,13 @@ import { toStableSyncJson } from './sync-helpers';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createNativeHostContract } from './native-host-contract';
 import { readAreaDurableData } from './native-host-contract-area-durable';
-import { taskRevisionOf } from './native-request-receipts';
+import { loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts, taskRevisionOf } from './native-request-receipts';
+import { openScratchSqlite } from './screen-parity.replay';
 import { createTaskDraft } from './task-draft';
 import { prepareProjectToSection } from './project-to-section';
 import { DEFAULT_FOCUS_CONTROL_STATE } from './focus-controls';
 import { TASK_SQLITE_COLUMNS, TASK_SYNC_FIELD_SCHEMA, TASK_SYNC_SCHEMA_FIXTURE, taskToSqliteRow } from './task-sync-schema';
-import { mapSqliteTaskRow } from './sqlite-adapter';
+import { mapSqliteTaskRow, SqliteAdapter } from './sqlite-adapter';
 import { PROJECT_SQLITE_COLUMNS, projectFromSqliteRow, projectToSqliteRow } from './project-sync-schema';
 import { SECTION_SQLITE_COLUMNS, sectionFromSqliteRow, sectionToSqliteRow } from './section-sync-schema';
 import { AREA_SQLITE_COLUMNS, areaFromSqliteRow, areaToSqliteRow } from './area-sync-schema';
@@ -831,6 +835,7 @@ describe('canonical local reads contract', () => {
             label: string,
             mutate: (control: MutationControl) => Promise<unknown>,
             fixture: AppData = settled,
+            withDurableReceipts = false,
         ): Promise<{ storeFields: string[]; readFields: string[] }> => {
             let saved: AppData | null = null;
             let durable = structuredClone(fixture);
@@ -846,43 +851,68 @@ describe('canonical local reads contract', () => {
                 _areasById: new Map(), _peopleById: new Map(),
                 lastDataChangeAt: 0,
             } as never);
-            setStorageAdapter({
+            let sqlite: ReturnType<typeof openScratchSqlite> | null = null;
+            let sqliteDir: string | null = null;
+            if (withDurableReceipts) {
+                sqliteDir = mkdtempSync(join(tmpdir(), 'mindwtr-canonical-receipts-'));
+                sqlite = openScratchSqlite(join(sqliteDir, 'mindwtr.sqlite'));
+                await new SqliteAdapter(sqlite.client).saveData(durable);
+                resetNativeRequestReceipts();
+                class TrackedReceiptAdapter extends NativeReceiptSqliteAdapter {
+                    async saveData(data: AppData): Promise<void> {
+                        await super.saveData(data);
+                        saved = structuredClone(data);
+                    }
+                }
+                setStorageAdapter(new TrackedReceiptAdapter(sqlite.client));
+                await loadNativeRequestReceipts(sqlite.client);
+            } else setStorageAdapter({
                 getData: async () => structuredClone(durable),
                 saveData: async (data: AppData) => {
                     saved = structuredClone(data);
                     durable = structuredClone(data);
                 },
             });
-            await (useTaskStore.getState() as unknown as {
-                fetchData: (options?: { silent?: boolean }) => Promise<void>;
-            }).fetchData({ silent: true });
-            await mutate({
-                resetBaseline: () => { saved = null; },
-                expectPersisted: (verify) => { verifyPersisted = verify; },
-            });
-            await flushPendingSave();
-            if (!saved) throw new Error(`${label}: the store never persisted a snapshot`);
-            const written = saved as AppData;
-            verifyPersisted?.(written);
-            const passed = runNormalizePass(written);
-            const storeIdentical = remoteBytes(written) === remoteBytes(passed);
+            try {
+                await (useTaskStore.getState() as unknown as {
+                    fetchData: (options?: { silent?: boolean }) => Promise<void>;
+                }).fetchData({ silent: true });
+                await mutate({
+                    resetBaseline: () => { saved = null; },
+                    expectPersisted: (verify) => { verifyPersisted = verify; },
+                });
+                await flushPendingSave();
+                if (!saved) throw new Error(`${label}: the store never persisted a snapshot`);
+                const written = saved as AppData;
+                verifyPersisted?.(written);
+                const passed = runNormalizePass(written);
+                const storeIdentical = remoteBytes(written) === remoteBytes(passed);
 
-            const readBack = throughLocalStorage(written);
-            const readBackPassed = runNormalizePass(readBack);
-            const readIdentical = remoteBytes(readBack) === remoteBytes(readBackPassed);
+                const readBack = throughLocalStorage(written);
+                const readBackPassed = runNormalizePass(readBack);
+                const readIdentical = remoteBytes(readBack) === remoteBytes(readBackPassed);
 
-            report(
-                `| ${label} | ${storeIdentical ? 'no' : 'YES'} | ${readIdentical ? 'no' : 'YES'} | ${storeIdentical ? '-' : summarizeDiff(diffDocuments(written, passed, 5_000))} | ${readIdentical ? '-' : summarizeDiff(diffDocuments(readBack, readBackPassed, 5_000))} |`,
-            );
-            resetForTests();
-            return {
-                storeFields: [...new Set(
-                    diffDocuments(written, passed, 5_000).map((entry) => entry.path.split('.').pop() as string),
-                )].sort(),
-                readFields: [...new Set(
-                    diffDocuments(readBack, readBackPassed, 5_000).map((entry) => entry.path.split('.').pop() as string),
-                )].sort(),
-            };
+                report(
+                    `| ${label} | ${storeIdentical ? 'no' : 'YES'} | ${readIdentical ? 'no' : 'YES'} | ${storeIdentical ? '-' : summarizeDiff(diffDocuments(written, passed, 5_000))} | ${readIdentical ? '-' : summarizeDiff(diffDocuments(readBack, readBackPassed, 5_000))} |`,
+                );
+                resetForTests();
+                return {
+                    storeFields: [...new Set(
+                        diffDocuments(written, passed, 5_000).map((entry) => entry.path.split('.').pop() as string),
+                    )].sort(),
+                    readFields: [...new Set(
+                        diffDocuments(readBack, readBackPassed, 5_000).map((entry) => entry.path.split('.').pop() as string),
+                    )].sort(),
+                };
+            } finally {
+                if (sqlite) {
+                    await flushPendingSave();
+                    resetForTests();
+                    resetNativeRequestReceipts();
+                    sqlite.close();
+                    rmSync(sqliteDir!, { recursive: true, force: true });
+                }
+            }
         };
 
         const store = () => useTaskStore.getState() as unknown as Record<string, (...args: never[]) => Promise<unknown>>;
@@ -2148,6 +2178,50 @@ describe('canonical local reads contract', () => {
                 expect(useTaskStore.getState()._tasksById.get(source.id)).toEqual(affected.get(source.id));
             }, fixture);
             if (referenceMenu.storeFields.length > 0 || referenceMenu.readFields.length > 0) notCanonical.push({ action: name, ...referenceMenu });
+        }
+        for (const action of ['choose', 'add', 'completeProject'] as const) {
+            const name = `native prepared Reference project next action ${action}`;
+            const parentId = 'prompt191-parent'; const sourceId = 'prompt191-source'; const candidateId = 'prompt191-candidate';
+            const fixture = convergeThroughStorage({ ...settled,
+                projects: [...settled.projects, project(parentId)],
+                tasks: [...settled.tasks, task(sourceId, { status: 'reference', projectId: parentId, sectionId: undefined,
+                    isFocusedToday: false, recurrence: undefined, startTime: undefined, dueDate: undefined }),
+                    task(candidateId, { status: 'waiting', projectId: parentId, sectionId: undefined,
+                        isFocusedToday: false, recurrence: undefined, startTime: undefined, dueDate: undefined })] });
+            const result = await runMutation(name, async control => {
+                const host = await nativeHost(control); const source = useTaskStore.getState()._tasksById.get(sourceId)!;
+                const completionRequest = { id: sourceId, source: 'reference' as const,
+                    requestId: '2f0e9b35-afcd-4710-8847-9c4219ad0193', taskRevision: taskRevisionOf(source) };
+                const completion = { request: completionRequest, prepared: nativeValue(await host.prepareTaskCompletion(completionRequest)).prepared };
+                nativeValue(await host.commitPreparedTaskCompletion(completion)); await flushPendingSave();
+                const origin = { kind: 'completion' as const, envelope: completion };
+                const options = nativeValue(await host.getReferenceProjectNextActionOptions({ origin, params: { offset: 0, revision: null } }));
+                if (!options) throw new Error('Project next action fixture must have a real prompt');
+                const base = { requestId: '2f0e9b35-afcd-4710-8847-9c4219ad0194', origin: options.origin, promptRevision: options.promptRevision };
+                const request = action === 'choose' ? { ...base, action, candidateId,
+                    candidateRevision: taskRevisionOf(useTaskStore.getState()._tasksById.get(candidateId)!) }
+                    : action === 'add' ? { ...base, action, text: 'Canonical next action', openAfterSave: true }
+                        : { ...base, action };
+                const prepared = nativeValue(await host.prepareReferenceProjectNextAction({ request, origin })).prepared;
+                const envelope = { request, prepared }; expect(nativeValue(host.validatePreparedReferenceProjectNextAction(envelope))).toEqual(prepared.result);
+                const before = nativeValue(await readAreaDurableData(false, true)).authority.snapshot;
+                const op = prepared.operation;
+                const taskEffects = op.kind === 'choose' ? op.effect.tasks : op.kind === 'add' ? [{ before: null, after: op.task }] : op.lifecycle.effect.tasks;
+                const projectEffects = op.kind === 'completeProject' ? [op.lifecycle.effect.project] : [];
+                const sectionEffects = op.kind === 'completeProject' ? op.lifecycle.effect.sections : [];
+                control.resetBaseline(); control.expectPersisted(written => {
+                    const tasks = new Map(taskEffects.map(row => [row.after.id, row.after]));
+                    expect(written.tasks).toEqual([...before.tasks.map(row => tasks.get(row.id) ?? row), ...taskEffects.filter(row => row.before === null).map(row => row.after)]);
+                    expect(written.projects).toEqual(before.projects.map(row => projectEffects.find(effect => effect.after.id === row.id)?.after ?? row));
+                    expect(written.sections).toEqual(before.sections?.map(row => sectionEffects.find(effect => effect.after.id === row.id)?.after ?? row));
+                    expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people); expect(written.settings).toEqual(before.settings);
+                });
+                expect(nativeValue(await host.commitPreparedReferenceProjectNextAction(envelope))).toEqual(prepared.result);
+                if (op.kind === 'choose') expect(useTaskStore.getState()._tasksById.get(candidateId)?.rev).toBe(op.effect.tasks[0].after.rev);
+                if (op.kind === 'add') expect(useTaskStore.getState()._tasksById.get(op.task.id)).toEqual(op.task);
+                if (op.kind === 'completeProject') expect(useTaskStore.getState()._projectsById.get(parentId)?.status).toBe('archived');
+            }, fixture, true);
+            if (result.storeFields.length || result.readFields.length) notCanonical.push({ action: name, ...result });
         }
         const referenceDestinationFixture = convergeThroughStorage({ ...settled, tasks: settled.tasks.map(row => row.id === 'task-66'
             ? { ...row, status: 'reference', isFocusedToday: false, projectId: undefined, sectionId: undefined } : row) });

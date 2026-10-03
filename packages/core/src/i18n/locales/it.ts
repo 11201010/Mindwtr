@@ -3,6 +3,7 @@ export const itOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "Impossibile confermare la modifica dei tag. Riavvia Mindwtr per ricaricare i dati salvati.",
     'task.doneCompletedAtOutcomeUnknown': "Impossibile confermare la modifica della data di completamento. Riavvia Mindwtr per ricaricare i dati salvati.",
     'task.destinationOutcomeUnknown': "Impossibile confermare la modifica della destinazione. Riavvia Mindwtr per ricaricare i dati salvati.",
+    'task.projectNextActionOutcomeUnknown': "Impossibile confermare la prossima azione. Riavvia Mindwtr per ricaricare i dati salvati.",
     'filters.searchTasks': "Cerca nei titoli delle attività",
     'filters.searchOptions': "Cerca opzioni",
     'filters.tokenCycleHint': "Fai clic per includere, di nuovo per escludere e ancora una volta per annullare la selezione.",

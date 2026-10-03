@@ -2883,6 +2883,13 @@ final class CoreModel: ObservableObject {
             if ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(recovery.text("method")), recovery.text("source") == "reference" {
                 selectedSurface = .reference
             }
+            if recovery.text("method") == "referenceProjectNextActionCommit", recovery.text("source") == "reference" {
+                selectedSurface = .reference
+                let result = recovery.object("result")
+                if result.text("action") == "add", result.flag("openAfterSave") {
+                    referenceProjectNextActionEditID = result.text("id")
+                }
+            }
             if ["referenceTaskBackdateCommit", "referenceTaskDestinationCommit"].contains(recovery.text("method")), recovery.text("source") == "reference" {
                 selectedSurface = .reference
             }
@@ -3029,7 +3036,7 @@ final class CoreModel: ObservableObject {
     func refresh() async {
         guard !appLock.concealed, !savedSearchWritePresented else { return }
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
-        guard ready, !retryNeeded, !capturePresented, !taskPresented, !taskStatusMenuPresented, !calendarItemPresented,
+        guard ready, !retryNeeded, !capturePresented, !taskPresented, !taskStatusMenuPresented, !referenceProjectNextActionPresented, !calendarItemPresented,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
               !projectRenameEditing, somedaySectionRenameIndex == nil,
               somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil, managePendingInventoryDepths == nil,
@@ -3712,7 +3719,8 @@ final class CoreModel: ObservableObject {
                     "taskEdit.startModeRelative", "taskEdit.recurrenceLabel", "recurrence.showFutureInCalendar",
                     "task.completedAtPromptTitle", "task.editCompletedAt", "task.moveToProjectOrArea", "task.destination", "status.inbox", "status.next", "status.done", "status.reference",
                     "task.doneCompletedAtOutcomeUnknown", "task.doneStatusOutcomeUnknown", "task.doneTagOutcomeUnknown", "task.destinationOutcomeUnknown",
-                    "task.completionOutcomeUnknown", "task.completionUndoOutcomeUnknown",
+                    "task.completionOutcomeUnknown", "task.completionUndoOutcomeUnknown", "task.projectNextActionOutcomeUnknown",
+                     "projects.nextActionPromptChooseExisting", "projects.nextActionPromptAddNew",
                     "taskEdit.descriptionPlaceholder", "search.placeholder", "search.noResults", "search.searching",
                     "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators", "search.saveSearch", "search.saveSearchPrompt", "search.savedSearches",
                     "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone", "review.markReviewedDone",
@@ -13325,6 +13333,7 @@ final class CoreModel: ObservableObject {
     private func acknowledgeReferenceTaskBackdate(_ result: CoreObject) throws {
         guard let request = referenceTaskBackdateRequest, Set(result.keys) == Set(["id"]),
               result.text("id").utf8.elementsEqual((try decode(request)).text("id").utf8) else { throw CocoaError(.coderReadCorrupt) }
+        queueReferenceProjectNextAction(kind: "backdate", submitted: try decode(request))
         referenceTaskBackdateRequest = nil
         retryNeeded = false
         referenceError = nil
@@ -16712,6 +16721,192 @@ final class CoreModel: ObservableObject {
         catch { taskError = error.localizedDescription }
     }
 
+    @Published private(set) var referenceProjectNextActionPresented = false
+    @Published private(set) var referenceProjectNextActionOptions: CoreObject = [:]
+    @Published private(set) var referenceProjectNextActionCandidates: [CoreObject] = []
+    @Published private(set) var referenceProjectNextActionText = ""
+    @Published private(set) var referenceProjectNextActionCanSave = false
+    @Published private(set) var referenceProjectNextActionReading = false
+    @Published private(set) var referenceProjectNextActionError: String?
+    private var referenceProjectNextActionOrigin: CoreObject = [:]
+    private var referenceProjectNextActionRequest: String?
+    private var referenceProjectNextActionGeneration = 0
+    private var referenceProjectNextActionInputGeneration = 0
+    private var referenceProjectNextActionReadTask: Task<Void, Never>?
+    private var referenceProjectNextActionInputTask: Task<Void, Never>?
+    private var referenceProjectNextActionEditID: String?
+    var referenceProjectNextActionPending: Bool { referenceProjectNextActionRequest != nil }
+    var referenceProjectNextActionControlsEnabled: Bool {
+        ready && referenceProjectNextActionPresented && !busy && !retryNeeded
+            && !referenceProjectNextActionPending && !referenceProjectNextActionReading
+            && !referenceProjectNextActionOptions.isEmpty && referenceProjectNextActionError == nil
+    }
+
+    private func queueReferenceProjectNextAction(kind: String, submitted: CoreObject) {
+        guard selectedSurface == .reference else { return }
+        invalidateReferenceProjectNextAction()
+        referenceProjectNextActionOrigin = ["kind": kind, "id": submitted.text("id"), "requestId": submitted.text("requestId")]
+    }
+
+    func presentQueuedReferenceProjectNextAction() {
+        guard !referenceProjectNextActionOrigin.isEmpty, !referenceProjectNextActionPresented,
+              ready, selectedSurface == .reference, !busy, !retryNeeded, !taskPresented, !taskStatusMenuPresented else { return }
+        referenceProjectNextActionPresented = true
+        referenceProjectNextActionReadTask = Task { await readReferenceProjectNextAction() }
+    }
+
+    func dismissReferenceProjectNextAction() {
+        guard !busy, !referenceProjectNextActionPending else { return }
+        invalidateReferenceProjectNextAction()
+    }
+
+    func referenceProjectNextActionOwnerChanged() {
+        guard !referenceProjectNextActionPending else { return }
+        if selectedSurface != .reference || taskPresented || appLock.concealed { invalidateReferenceProjectNextAction() }
+    }
+
+    private func invalidateReferenceProjectNextAction() {
+        referenceProjectNextActionGeneration += 1
+        referenceProjectNextActionInputGeneration += 1
+        referenceProjectNextActionReadTask?.cancel()
+        referenceProjectNextActionReadTask = nil
+        referenceProjectNextActionInputTask?.cancel()
+        referenceProjectNextActionInputTask = nil
+        referenceProjectNextActionPresented = false
+        referenceProjectNextActionOptions = [:]
+        referenceProjectNextActionCandidates = []
+        referenceProjectNextActionOrigin = [:]
+        referenceProjectNextActionText = ""
+        referenceProjectNextActionCanSave = false
+        referenceProjectNextActionReading = false
+        referenceProjectNextActionError = nil
+    }
+
+    func readReferenceProjectNextAction(more: Bool = false) async {
+        guard referenceProjectNextActionPresented, selectedSurface == .reference,
+              !referenceProjectNextActionPending, !referenceProjectNextActionReading, let host else { return }
+        let generation = referenceProjectNextActionGeneration
+        let origin = referenceProjectNextActionOrigin
+        let revision = more ? referenceProjectNextActionOptions.text("promptRevision") : ""
+        let offset = more ? referenceProjectNextActionCandidates.count : 0
+        referenceProjectNextActionReading = true
+        referenceProjectNextActionError = nil
+        defer { if generation == referenceProjectNextActionGeneration { referenceProjectNextActionReading = false } }
+        do {
+            let request: CoreObject = ["origin": origin, "params": ["offset": offset, "revision": revision.isEmpty ? NSNull() : revision as Any]]
+            let value = try await host.call("referenceProjectNextActionOptions", argumentsJSON: json([try json(request)]))
+            guard !Task.isCancelled, generation == referenceProjectNextActionGeneration,
+                  referenceProjectNextActionPresented, selectedSurface == .reference, !referenceProjectNextActionPending else { return }
+            if value == "null" { invalidateReferenceProjectNextAction(); return }
+            let options = try decode(value)
+            guard Set(options.keys) == Set(["origin", "promptRevision", "title", "description", "project", "section", "scope", "candidates", "input", "completeProject", "skip"]),
+                  (try json(options.object("origin"))).utf8.elementsEqual((try json(origin)).utf8),
+                  !options.text("promptRevision").isEmpty,
+                  options.object("candidates").number("offset") == offset,
+                  !more || options.text("promptRevision").utf8.elementsEqual(revision.utf8) else { throw CocoaError(.coderReadCorrupt) }
+            referenceProjectNextActionOptions = options
+            if more { referenceProjectNextActionCandidates += options.object("candidates").objects("items") }
+            else { referenceProjectNextActionCandidates = options.object("candidates").objects("items") }
+            updateReferenceProjectNextActionText(referenceProjectNextActionText)
+        } catch {
+            guard generation == referenceProjectNextActionGeneration, !Task.isCancelled else { return }
+            referenceProjectNextActionError = error.localizedDescription
+        }
+    }
+
+    func updateReferenceProjectNextActionText(_ text: String) {
+        guard referenceProjectNextActionPresented, !referenceProjectNextActionPending else { return }
+        referenceProjectNextActionText = text
+        referenceProjectNextActionCanSave = false
+        referenceProjectNextActionInputGeneration += 1
+        let inputGeneration = referenceProjectNextActionInputGeneration
+        let generation = referenceProjectNextActionGeneration
+        referenceProjectNextActionInputTask?.cancel()
+        referenceProjectNextActionInputTask = Task {
+            do {
+                let result = try await query("referenceProjectNextActionInput", [text])
+                guard !Task.isCancelled, inputGeneration == referenceProjectNextActionInputGeneration,
+                      generation == referenceProjectNextActionGeneration, referenceProjectNextActionPresented,
+                      !referenceProjectNextActionPending, referenceProjectNextActionText.utf8.elementsEqual(text.utf8),
+                      Set(result.keys) == Set(["canSave"]), result["canSave"] is Bool else { return }
+                referenceProjectNextActionCanSave = result.flag("canSave")
+            } catch {
+                guard !Task.isCancelled, generation == referenceProjectNextActionGeneration,
+                      inputGeneration == referenceProjectNextActionInputGeneration else { return }
+                referenceProjectNextActionError = error.localizedDescription
+            }
+        }
+    }
+
+    func performReferenceProjectNextAction(_ action: String, candidate: CoreObject? = nil, openAfterSave: Bool = false) async {
+        guard referenceProjectNextActionControlsEnabled,
+              action != "add" || referenceProjectNextActionCanSave else { return }
+        var request: CoreObject = ["requestId": UUID().uuidString.lowercased(), "origin": referenceProjectNextActionOrigin,
+                                   "promptRevision": referenceProjectNextActionOptions.text("promptRevision"), "action": action]
+        if action == "choose" {
+            guard let candidate, referenceProjectNextActionCandidates.contains(where: {
+                $0.text("id").utf8.elementsEqual(candidate.text("id").utf8)
+                    && $0.text("taskRevision").utf8.elementsEqual(candidate.text("taskRevision").utf8)
+            }) else { return }
+            request["candidateId"] = candidate.text("id")
+            request["candidateRevision"] = candidate.text("taskRevision")
+        } else if action == "add" {
+            request["text"] = referenceProjectNextActionText
+            request["openAfterSave"] = openAfterSave
+        } else if action == "completeProject" {
+            guard !referenceProjectNextActionOptions.object("completeProject").isEmpty else { return }
+        } else { return }
+        busy = true
+        referenceProjectNextActionError = nil
+        defer { finishOperation() }
+        do {
+            let encoded = try json(request)
+            referenceProjectNextActionRequest = encoded
+            let result = try await query("referenceProjectNextAction", [encoded])
+            try acknowledgeReferenceProjectNextAction(result)
+            _ = await readReference()
+        } catch { await handleReferenceProjectNextActionError(error) }
+    }
+
+    private func acknowledgeReferenceProjectNextAction(_ result: CoreObject) throws {
+        guard let encoded = referenceProjectNextActionRequest else { throw CocoaError(.coderReadCorrupt) }
+        let request = try decode(encoded)
+        let action = request.text("action")
+        guard result.text("action") == action, !result.text("id").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        if action == "choose" {
+            guard Set(result.keys) == Set(["action", "id"]),
+                  result.text("id").utf8.elementsEqual(request.text("candidateId").utf8) else { throw CocoaError(.coderReadCorrupt) }
+        } else if action == "add" {
+            guard Set(result.keys) == Set(["action", "id", "openAfterSave"]), result["openAfterSave"] is Bool,
+                  result.flag("openAfterSave") == request.flag("openAfterSave") else { throw CocoaError(.coderReadCorrupt) }
+        } else {
+            guard Set(result.keys) == Set(["action", "id", "status"]), result.text("status") == "archived",
+                  result.text("id").utf8.elementsEqual(referenceProjectNextActionOptions.object("project").text("id").utf8) else { throw CocoaError(.coderReadCorrupt) }
+        }
+        let editID = action == "add" && result.flag("openAfterSave") ? result.text("id") : nil
+        referenceProjectNextActionRequest = nil
+        retryNeeded = false
+        error = nil
+        invalidateReferenceProjectNextAction()
+        referenceProjectNextActionEditID = editID
+    }
+
+    private func handleReferenceProjectNextActionError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            referenceProjectNextActionRequest = nil
+            retryNeeded = false
+            referenceProjectNextActionError = failure.localizedDescription
+            // A refusal may invalidate the accepted candidates. Only this readonly
+            // read can replace that snapshot; the entered draft remains intact.
+            await readReferenceProjectNextAction()
+            if referenceProjectNextActionPresented { referenceProjectNextActionError = failure.localizedDescription }
+        } else {
+            retryNeeded = referenceProjectNextActionPending
+            referenceProjectNextActionError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
     @Published private(set) var taskActionNotice: CoreObject = [:]
     private var taskActionRequestID: String?
     private var taskActionUndoRequest: String?
@@ -16753,7 +16948,11 @@ final class CoreModel: ObservableObject {
     func undoTaskAction() async {
         guard !busy, !retryNeeded, !taskPresented, !capturePresented,
               archiveBulkDeleteConfirmation.isEmpty,
-              taskActionNotice.flag("undoEnabled"), taskActionUndoRequest == nil else { return }
+              !referenceProjectNextActionPending, taskActionNotice.flag("undoEnabled"), taskActionUndoRequest == nil else { return }
+        if taskActionNotice.text("operation") == "completion", taskActionNotice.text("source") == "reference",
+           taskActionNotice.text("requestId") == referenceProjectNextActionOrigin.text("requestId") {
+            invalidateReferenceProjectNextAction()
+        }
         busy = true
         error = nil
         defer { finishOperation() }
@@ -19062,6 +19261,7 @@ final class CoreModel: ObservableObject {
         if submitted.text("source") == "reference" {
             guard Set(result.keys) == Set(["id", "completion"]) else { throw CocoaError(.coderReadCorrupt) }
             referenceError = nil
+            queueReferenceProjectNextAction(kind: "completion", submitted: submitted)
         }
         taskCompletionRequest = nil
         retryNeeded = false
@@ -19079,6 +19279,21 @@ final class CoreModel: ObservableObject {
         }
         do {
             let acknowledgment = try await host!.retryPending()
+            if let request = referenceProjectNextActionRequest {
+                let outcome = try await query("referenceProjectNextActionRetryOutcome", [request])
+                if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                    let unknown = label("task.projectNextActionOutcomeUnknown")
+                    referenceProjectNextActionError = unknown
+                    self.error = unknown
+                    return
+                }
+                guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else { throw CocoaError(.coderReadCorrupt) }
+                let result = outcome.object("result")
+                if let acknowledgment, !(try json(result)).utf8.elementsEqual((try json(decode(acknowledgment))).utf8) { throw CocoaError(.coderReadCorrupt) }
+                try acknowledgeReferenceProjectNextAction(result)
+                _ = await readReference()
+                return
+            }
             if let frozen = taskPersonCreatePending {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -20251,6 +20466,10 @@ final class CoreModel: ObservableObject {
             }
             if doneTaskStatusRequest != nil {
                 await handleDoneTaskStatusError(error)
+                return
+            }
+            if referenceProjectNextActionPending {
+                await handleReferenceProjectNextActionError(error)
                 return
             }
             if referenceCompletionPending {
@@ -21437,6 +21656,14 @@ final class CoreModel: ObservableObject {
     }
     private func finishOperation() {
         busy = false
+        presentQueuedReferenceProjectNextAction()
+        if let id = referenceProjectNextActionEditID, ready, !retryNeeded, !taskPresented, !appLock.concealed {
+            referenceProjectNextActionEditID = nil
+            // This ID is from an exact acknowledged Add. It need not be visible
+            // in Reference, and must never be reconstructed by parsing the input.
+            prepareTaskPresentation(id, initialTab: "task")
+            Task { await readTaskView() }
+        }
         if taskPresented && !retryNeeded {
             startTaskSchedulePump()
             for field in taskTokenFields where taskTokenNeedsRead.contains(field) { requestTaskTokenRead(field, delay: 0) }

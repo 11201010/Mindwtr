@@ -14,7 +14,11 @@ import {
     normalizeProjectLifecycleFields,
     normalizeProjectUpdate,
 } from '../project-status';
-import { normalizeCancellationTimestamp } from '../task-status';
+import { normalizeCancellationTimestamp, normalizeTaskForLoad } from '../task-status';
+import { getPersistenceStatus } from '../store';
+import { mapSqliteTaskRow, rawReadTaskSnapshot } from '../sqlite-adapter';
+import { rawReadProjectSnapshot } from '../sqlite-raw-snapshot';
+import { TASK_SQLITE_COLUMNS, taskToSqliteRow } from '../task-sync-schema';
 import { logInfo, logWarn } from '../logger';
 import { clearDerivedCache } from '../store-settings';
 import { generateUUID as uuidv4 } from '../uuid';
@@ -960,29 +964,71 @@ export const createProjectCoreActions = ({
         return actionOk({ id });
     },
 
-    commitPreparedProjectLifecycle: async (input): Promise<PreparedTaskEditResult> => {
+    commitPreparedProjectLifecycle: async (input, raw): Promise<PreparedTaskEditResult> => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
             error: 'Prepared Project lifecycle conflicts with current data' };
-        set((state) => {
+        set((memory) => {
+            let state = memory;
+            const durable = raw?.authority.snapshot;
+            if (raw && durable) {
+                const before = raw.authority.state;
+                if (raw.requireBefore !== true || input.request.action !== 'complete'
+                    || memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                    || memory._allSections !== before._allSections || memory._allAreas !== before._allAreas
+                    || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                    || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
+                const bound = <T extends { id: string }>(rows: T[], effects: { before: T; after: T }[], captures: { id: string; before: T | null }[]) =>
+                    captures.length === effects.length && new Set(captures.map((row) => row.id)).size === captures.length
+                    && effects.every((effect) => { const capture = captures.find((row) => row.id === effect.after.id);
+                        const current = rows.filter((row) => row.id === effect.after.id);
+                        return current.length === 1 && capture?.before !== null && taskEditValuesEqual(current[0], capture?.before); });
+                const rawTasks = durable.tasks.map(rawReadTaskSnapshot);
+                const rawProjects = durable.projects.map(rawReadProjectSnapshot);
+                if (rawProjects.some((row) => !row) || rawTasks.some((row) => !row) || !bound(rawTasks.filter((row): row is Task => row !== null), input.effect.tasks, raw.rawBefore.tasks)
+                    || !bound(rawProjects.filter((row): row is Project => row !== null), [input.effect.project], raw.rawBefore.projects)
+                    || !bound(durable.sections ?? [], input.effect.sections, raw.rawBefore.sections)) return memory;
+                const tasks = durable.tasks.map((task) => { const values = taskToSqliteRow(task);
+                    return normalizeTaskForLoad(mapSqliteTaskRow(Object.fromEntries(TASK_SQLITE_COLUMNS.map((column, i) => [column, values[i]]))), input.updateAt); });
+                const projects = durable.projects.map(normalizeProjectLifecycleFields); const sections = durable.sections ?? [];
+                state = { ...memory, _allTasks: tasks, _allProjects: projects, _allSections: sections,
+                    _tasksById: new Map(tasks.map((row) => [row.id, row])), _projectsById: new Map(projects.map((row) => [row.id, row])),
+                    _sectionsById: new Map(sections.map((row) => [row.id, row])), settings: durable.settings };
+            }
             const current = state._projectsById.get(input.request.projectId);
-            if (!current || current.deletedAt || current.purgedAt) return state;
+            if (!current || current.deletedAt || current.purgedAt) return memory;
             const { tasks, sections } = projectLifecycleScopeRows(state, current.id);
             const planned = projectLifecycleEffect(input.scope, input.request.action,
                 input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
-            if (!taskEditValuesEqual(planned, input.effect)) return state;
+            if (!taskEditValuesEqual(planned, input.effect)) return memory;
             const sourceStatusMatches = input.request.action !== 'reactivate'
                 ? current.status !== 'archived' : current.status === 'archived';
             if (!sourceStatusMatches || (state.settings.deviceId ?? null) !== input.deviceIdBefore
                 || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
                 || !sameProjectSqliteRow(current, input.scope.project)
                 || !sameOwnedRows(tasks, input.scope.tasks, sameTaskSqliteRow)
-                || !sameOwnedRows(sections, input.scope.sections, sameSectionSqliteRow)) return state;
+                || !sameOwnedRows(sections, input.scope.sections, sameSectionSqliteRow)) return memory;
             const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
             const nextTasks = replaceEntitiesInArray(state._allTasks, planned.tasks.map((row) => row.after));
             const nextSections = replaceEntitiesInArray(state._allSections, planned.sections.map((row) => row.after));
             const settings = input.deviceIdToInitialize
                 ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
             clearDerivedCache();
+            if (raw && durable) {
+                const tasks = replaceEntitiesInArray(durable.tasks, planned.tasks.map((row) => row.after));
+                const projects = replaceEntitiesInArray(durable.projects, [planned.project.after]);
+                const sections = replaceEntitiesInArray(durable.sections ?? [], planned.sections.map((row) => row.after));
+                const freshTasks = tasks.map((row) => normalizeTaskForLoad(row));
+                const freshProjects = projects.map(normalizeProjectLifecycleFields);
+                persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks, _allProjects: durable.projects,
+                    _allSections: durable.sections ?? [], _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [], settings: durable.settings },
+                    { ...durable, tasks, projects, sections, settings });
+                const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+                raw.authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
+                    generation: getPersistenceStatus().generation, failure: memory.persistenceFailure };
+                result = { success: true, id: current.id, outcome: 'applied' };
+                return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: sections,
+                    _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [], settings, lastDataChangeAt };
+            }
             persist(set, debouncedSave, state, { projects, tasks: nextTasks, sections: nextSections,
                 ...(settings !== state.settings ? { settings } : {}) });
             result = { success: true, id: current.id, outcome: 'applied' };

@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-reference-project-next-action`** — `packages/core/src/native-host-contract-project-next-action.ts`. `Native Reference project next action confirmed` with `outcome=choose`, `outcome=add` or `outcome=completeProject` confirms the follow-up reached durable storage with its exact request receipt. The preceding completion is a separate operation. Options, typing, Skip, rejected actions, failed saves and unproven retries do not claim a saved follow-up. No task/project identifiers, text, dates or URLs are logged.
+
 - **`v1.3.4/ios-reference-destination`** — `packages/core/src/native-host-contract-task-checklist.ts`. `Native Reference Task destination confirmed` with `outcome=moved` confirms an existing Project, Area or None destination reached durable storage with its exact request receipt. Options, search, Cancel, rejected destinations, failed saves and unproven retries do not claim success. No task identifiers/text, destination identifiers/names or URLs are logged.
 
 - **`v1.3.4/ios-reference-backdate`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Reference completion time saved` with `outcome=completed` confirms the chosen-time completion and any recurring child reached durable storage with the exact receipt and journal cleanup. Options, Cancel, rejected minutes-feature changes, failed saves and unproven retries do not claim success. No task text, identifiers, chosen dates, minutes, recurrence details or URLs are logged.

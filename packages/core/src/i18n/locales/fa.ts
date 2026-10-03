@@ -322,6 +322,7 @@ export const faOverrides: Record<string, string> = {
         'task.doneTagOutcomeUnknown': "تغییر برچسب تأیید نشد. برای بارگیری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را راه‌اندازی مجدد کنید.",
         'task.doneCompletedAtOutcomeUnknown': "تغییر زمان تکمیل تأیید نشد. برای بارگیری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را راه‌اندازی مجدد کنید.",
         'task.destinationOutcomeUnknown': "تغییر مقصد تأیید نشد. برای بارگیری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را دوباره راه‌اندازی کنید.",
+        'task.projectNextActionOutcomeUnknown': "اقدام بعدی تأیید نشد. برای بارگیری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را دوباره راه‌اندازی کنید.",
         'task.trashOutcomeUnknown': "تأیید عملیات سطل زباله ممکن نشد. برای بارگذاری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را دوباره راه‌اندازی کنید.",
         'projects.archiveDeleteOutcomeUnknown': "تأیید حذف پروژهٔ بایگانی‌شده ممکن نشد. برای بارگذاری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را دوباره راه‌اندازی کنید.",
         'projects.archiveRestoreOutcomeUnknown': "تأیید نشد که پروژهٔ بایگانی‌شده بازیابی شده است. برای بارگیری دوبارهٔ داده‌های ذخیره‌شده، Mindwtr را راه‌اندازی مجدد کنید.",

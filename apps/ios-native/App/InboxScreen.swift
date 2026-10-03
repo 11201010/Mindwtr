@@ -84,23 +84,7 @@ struct InboxScreen: View {
                                 Spacer()
                             }
                         }
-                        if !model.taskActionNotice.isEmpty && !model.taskPresented {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(model.taskActionNotice.text("message")).rnFont(14)
-                                    .accessibilityIdentifier("task-" + model.taskActionNotice.text("operation") + "-notice")
-                                if model.taskActionNotice.flag("undoEnabled") {
-                                    Button {
-                                        Task { await model.undoTaskAction() }
-                                    } label: {
-                                        Text(model.taskActionNotice.text("undoLabel"))
-                                            .frame(minWidth: 44, minHeight: 44)
-                                            .contentShape(Rectangle())
-                                    }.disabled(model.busy || model.retryNeeded)
-                                        .accessibilityIdentifier("task-" + model.taskActionNotice.text("operation") + "-undo")
-                                }
-                            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                                .foregroundStyle(palette.text).background(palette.filter)
-                        }
+                        if !model.referenceProjectNextActionPresented { taskActionNoticeView }
                         if !model.projectDeleteNotice.isEmpty && !model.taskPresented {
                             HStack(spacing: 12) {
                                 Text(model.projectDeleteNotice.text("message")).rnFont(14)
@@ -159,9 +143,9 @@ struct InboxScreen: View {
             // More's content, dismissal backdrop and visible tabs share one modal boundary.
             .accessibilityElement(children: .contain)
             .accessibilityAddTraits(model.morePresented ? .isModal : [])
-            .disabled(model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
+            .disabled(model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
                 && (model.reviewGuidePresented || model.reviewPickerPresented)))
-            .accessibilityHidden(model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
+            .accessibilityHidden(model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
                 || (model.selectedSurface == .review && (model.reviewGuidePresented || model.reviewPickerPresented)))
             if model.selectedSurface == .board && model.boardFiltersPresented {
                 BoardFiltersSheet(model: model, palette: palette)
@@ -211,6 +195,14 @@ struct InboxScreen: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
             }
+            if model.referenceProjectNextActionPresented {
+                VStack(spacing: 0) {
+                    ReferenceProjectNextActionPrompt(model: model, palette: palette)
+                    taskActionNoticeView
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityAddTraits(.isModal)
+            }
         }
         .foregroundStyle(palette.text)
         .tint(palette.tint)
@@ -218,6 +210,12 @@ struct InboxScreen: View {
         .sheet(isPresented: Binding(get: { model.taskPresented }, set: { if !$0 && !model.appLock.concealed { model.closeTask() } })) {
             TaskViewSheet(model: model, palette: palette)
                 .presentationDetents([.large])
+        }
+        .onChange(of: model.selectedSurface) { _ in model.referenceProjectNextActionOwnerChanged() }
+        .onChange(of: model.taskPresented) { _ in model.referenceProjectNextActionOwnerChanged() }
+        .onChange(of: model.appLock.concealed) { _ in model.referenceProjectNextActionOwnerChanged() }
+        .onChange(of: model.taskStatusMenuPresented) { active in
+            if !active { model.presentQueuedReferenceProjectNextAction() }
         }
         .task(id: (model.selectedSurface == .focus || model.selectedSurface == .review || model.selectedSurface == .calendar || model.selectedSurface == .board) && scenePhase == .active) {
             guard model.selectedSurface == .focus || model.selectedSurface == .review || model.selectedSurface == .calendar || model.selectedSurface == .board, scenePhase == .active else { return }
@@ -229,6 +227,26 @@ struct InboxScreen: View {
                 await model.refresh()
             }
         }
+    }
+
+    @ViewBuilder private var taskActionNoticeView: some View {
+        if !model.taskActionNotice.isEmpty && !model.taskPresented {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(model.taskActionNotice.text("message")).rnFont(14)
+                                    .accessibilityIdentifier("task-" + model.taskActionNotice.text("operation") + "-notice")
+                                if model.taskActionNotice.flag("undoEnabled") {
+                                    Button {
+                                        Task { await model.undoTaskAction() }
+                                    } label: {
+                                        Text(model.taskActionNotice.text("undoLabel"))
+                                            .frame(minWidth: 44, minHeight: 44)
+                                            .contentShape(Rectangle())
+                                    }.disabled(model.busy || model.retryNeeded || model.referenceProjectNextActionPending)
+                                        .accessibilityIdentifier("task-" + model.taskActionNotice.text("operation") + "-undo")
+                                }
+                            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                                .foregroundStyle(palette.text).background(palette.filter)
+                        }
     }
 
     private func areaSheet(maxHeight: CGFloat, bottomInset: CGFloat) -> some View {
@@ -1331,4 +1349,115 @@ struct FailureBanner: View {
 private struct FocusOrderItem: Identifiable {
     let row: CoreObject
     var id: String { row.text("id") }
+}
+
+// App-level ownership deliberately outlives the completed Reference row.
+private struct ReferenceProjectNextActionPrompt: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    private let prefix = "reference-project-next-action"
+    private var options: CoreObject { model.referenceProjectNextActionOptions }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                Color.black.opacity(0.35).ignoresSafeArea()
+                    .onTapGesture { model.dismissReferenceProjectNextAction() }
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 12) {
+                    if !options.isEmpty {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text(options.text("title")).rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+                                    .accessibilityIdentifier(prefix + "-title")
+                                Text(options.text("description")).rnFont(14).fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityIdentifier(prefix + "-description")
+                                if !model.referenceProjectNextActionCandidates.isEmpty {
+                                    Text(model.label("projects.nextActionPromptChooseExisting")).rnFont(14, .semibold)
+                                    ForEach(Array(model.referenceProjectNextActionCandidates.enumerated()), id: \.offset) { index, candidate in
+                                        Button {
+                                            Task { await model.performReferenceProjectNextAction("choose", candidate: candidate) }
+                                        } label: {
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(candidate.text("title")).fixedSize(horizontal: false, vertical: true)
+                                                Text(candidate.text("statusLabel")).rnFont(12).foregroundStyle(palette.secondary)
+                                            }
+                                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain).disabled(!model.referenceProjectNextActionControlsEnabled)
+                                        .accessibilityIdentifier(prefix + "-candidate-" + String(index))
+                                    }
+                                }
+                                if options.object("candidates").flag("hasMore") {
+                                    Button {
+                                        Task { await model.readReferenceProjectNextAction(more: true) }
+                                    } label: {
+                                        Text(model.label("common.more")).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                                    }
+                                    .disabled(!model.referenceProjectNextActionControlsEnabled).accessibilityIdentifier(prefix + "-more")
+                                }
+                                Text(model.label("projects.nextActionPromptAddNew")).rnFont(14, .semibold)
+                                TextField(options.object("input").text("placeholder"), text: Binding(
+                                    get: { model.referenceProjectNextActionText }, set: model.updateReferenceProjectNextActionText))
+                                    .textFieldStyle(.roundedBorder).frame(minHeight: 44)
+                                    .disabled(model.referenceProjectNextActionPending || model.busy)
+                                    .accessibilityIdentifier(prefix + "-input")
+                                actionButton(options.object("input").text("addLabel"), suffix: "add", enabled: model.referenceProjectNextActionCanSave) {
+                                    await model.performReferenceProjectNextAction("add")
+                                }
+                                actionButton(options.object("input").text("saveAndEditLabel"), suffix: "save-edit", enabled: model.referenceProjectNextActionCanSave) {
+                                    await model.performReferenceProjectNextAction("add", openAfterSave: true)
+                                }
+                                if !options.object("completeProject").isEmpty {
+                                    actionButton(options.object("completeProject").text("label"), suffix: "complete-project") {
+                                        await model.performReferenceProjectNextAction("completeProject")
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .scrollDismissesKeyboard(.interactively)
+                        .accessibilityIdentifier(prefix + "-scroll")
+                    }
+                    if model.referenceProjectNextActionReading { ProgressView().accessibilityLabel(model.label("common.loading")) }
+                    if let error = model.referenceProjectNextActionError {
+                        Text(error).rnFont(13).foregroundStyle(palette.danger).fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier(prefix + "-error")
+                        Button {
+                            Task {
+                                if model.referenceProjectNextActionPending { await model.retry() }
+                                else { await model.readReferenceProjectNextAction() }
+                            }
+                        } label: {
+                            Text(model.label("common.retry")).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .disabled(model.busy || model.referenceProjectNextActionReading)
+                        .accessibilityIdentifier(prefix + (model.referenceProjectNextActionPending ? "-retry" : "-read-retry"))
+                    }
+                    Button { model.dismissReferenceProjectNextAction() } label: {
+                        Text(options.object("skip").text("label").isEmpty ? model.label("common.cancel") : options.object("skip").text("label"))
+                            .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .disabled(model.busy || model.referenceProjectNextActionPending).accessibilityIdentifier(prefix + "-skip")
+                }
+                .rnFont(14).padding(16)
+                .frame(maxWidth: 860, maxHeight: geometry.size.height * 0.94, alignment: .topLeading)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(palette.border)
+                    .allowsHitTesting(false).accessibilityHidden(true))
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(prefix + "-prompt")
+        .accessibilityAction(.escape) { model.dismissReferenceProjectNextAction() }
+    }
+
+    private func actionButton(_ title: String, suffix: String, enabled: Bool = true, action: @escaping () async -> Void) -> some View {
+        Button { Task { await action() } } label: {
+            Text(title).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+        .disabled(!model.referenceProjectNextActionControlsEnabled || !enabled)
+        .accessibilityIdentifier(prefix + "-" + suffix)
+    }
 }
