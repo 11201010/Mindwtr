@@ -1971,6 +1971,11 @@ export const daOverrides: Record<string, string> = {
     'settings.densityCompact': 'Kompakt',
     'settings.densityCondensed': 'Kondenseret',
     'settings.globalQuickAddShortcut': 'Global hurtig tilføjelsesgenvej',
+    'settings.globalQuickAddShortcutDisabled': "Deaktiveret",
+    'settings.globalQuickAddShortcutDisabledDefault': "Deaktiveret (standard)",
+    'settings.globalQuickAddShortcutDisabledFlatpakDefault': "Deaktiveret (standard i Flatpak)",
+    'settings.globalQuickAddShortcutRecommended': "{shortcut} (anbefalet)",
+    'settings.globalQuickAddShortcutLegacy': "{shortcut} (ældre)",
     'settings.globalQuickAddShortcutDesc':
         'Kan bruges overalt i systemet til hurtig registrering, selv når Mindwtr ikke er aktivt.',
     'settings.windowDecorations': 'Vinduesdekorationer',

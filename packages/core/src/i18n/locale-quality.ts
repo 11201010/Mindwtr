@@ -5,6 +5,7 @@ export const allowedEnglishMirrorTerms = [
     'Apple',
     'WebDAV',
     'CalDAV',
+    'Flatpak',
     'Dropbox',
     'iCloud',
     'CloudKit',

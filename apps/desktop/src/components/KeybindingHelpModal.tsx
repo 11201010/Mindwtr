@@ -33,7 +33,7 @@ export function KeybindingHelpModal({
     const timelineEnabled = useTaskStore((state) => resolveFeatureFlags(state.settings).timeline);
     const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
     const primary = isMac ? 'Cmd' : 'Ctrl';
-    const quickAddShortcutDisplay = formatGlobalQuickAddShortcutForDisplay(quickAddShortcut, isMac);
+    const quickAddShortcutDisplay = formatGlobalQuickAddShortcutForDisplay(quickAddShortcut, isMac, t);
     const sharedGlobal: HelpItem[] = [
         { keys: quickAddShortcutDisplay, labelKey: 'keybindings.globalQuickAdd', fallbackLabel: 'Global quick add' },
         { keys: 'a', labelKey: 'keybindings.inAppQuickAdd', fallbackLabel: 'In-app quick add' },

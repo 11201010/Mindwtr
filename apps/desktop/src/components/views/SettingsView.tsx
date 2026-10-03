@@ -574,7 +574,7 @@ export function SettingsView({ initialPage, onboardingHintPage, onResumeOnboardi
 
   const renderPage = () => {
     if (page === "main") {
-      return <SettingsMainPage t={t} languages={LANGUAGES} {...mainPageProps} />;
+      return <SettingsMainPage t={t} translate={translate} languages={LANGUAGES} {...mainPageProps} />;
     }
 
     if (page === "gtd") {

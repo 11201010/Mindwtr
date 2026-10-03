@@ -34,7 +34,7 @@ import { coerceDesktopFontFamily } from '../../../lib/font-family';
 import { resolveCloseBehavior } from '../../../lib/window-behavior';
 import type { SettingsKeyboardWindowProps, SettingsMainPageProps } from './SettingsMainPage';
 
-type MainPageProps = Omit<SettingsMainPageProps, 'languages' | 't'> & SettingsKeyboardWindowProps;
+type MainPageProps = Omit<SettingsMainPageProps, 'languages' | 't' | 'translate'> & SettingsKeyboardWindowProps;
 
 type UseSettingsMainPageOptions = {
     globalQuickAddShortcut: GlobalQuickAddShortcutSetting;
