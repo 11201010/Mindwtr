@@ -39,6 +39,7 @@ import { createNextRecurringTask } from './recurrence';
 import { toStableSyncJson } from './sync-helpers';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createNativeHostContract } from './native-host-contract';
+import { readAreaDurableData } from './native-host-contract-area-durable';
 import { taskRevisionOf } from './native-request-receipts';
 import { createTaskDraft } from './task-draft';
 import { prepareProjectToSection } from './project-to-section';
@@ -1145,6 +1146,38 @@ describe('canonical local reads contract', () => {
                 });
                 expect(nativeValue(await host.commitPreparedArchivedTaskRestore({ request, prepared: planned.prepared })))
                     .toEqual(planned.prepared.result);
+            },
+            commitPreparedArchivedTasksRestore: async (control) => {
+                const host = await nativeHost(control);
+                const taskIds = ['task-29', 'task-58'];
+                const sources = taskIds.map((id) => {
+                    const source = useTaskStore.getState()._tasksById.get(id);
+                    expect(source?.status).toBe('archived');
+                    if (!source) throw new Error(`Bulk Restore fixture task missing: ${id}`);
+                    return source;
+                });
+                const request = { requestId: 'ba3a4597-afce-4606-895d-e74161f3e2f0', taskIds,
+                    taskRevisions: Object.fromEntries(sources.map((source) => [source.id, taskRevisionOf(source)])) };
+                const planned = nativeValue(await host.prepareArchivedTasksRestore(request));
+                const envelope = { request, prepared: planned.prepared };
+                expect(nativeValue(host.validatePreparedArchivedTasksRestore(envelope)))
+                    .toEqual({ count: 2, status: 'inbox' });
+                const restored = new Map(planned.prepared.effect.tasks.map((pair) => [pair.after.id, pair.after]));
+                expect([...restored.keys()].sort()).toEqual([...taskIds].sort());
+                for (const source of sources) {
+                    expect(restored.get(source.id)).toMatchObject({ status: 'inbox', rev: (source.rev ?? 0) + 1 });
+                }
+                const durable = nativeValue(await readAreaDurableData(false, true));
+                const before = durable.authority.snapshot;
+                control.expectPersisted((written) => {
+                    expect(written.tasks).toEqual(before.tasks.map((row) => restored.get(row.id) ?? row));
+                    expect(written.projects).toEqual(before.projects);
+                    expect(written.sections).toEqual(before.sections);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                control.resetBaseline();
+                expect(await useTaskStore.getState().commitPreparedArchivedTasksRestore(planned.prepared, durable.authority))
+                    .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
             },
             commitPreparedPersonCreate: async (control) => {
                 const host = await nativeHost(control);
