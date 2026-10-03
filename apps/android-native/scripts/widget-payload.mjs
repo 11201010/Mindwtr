@@ -23,6 +23,15 @@ export const widgetPrefs = (xml) => {
     };
 };
 
+/**
+ * The native app's write of RN's payload store, as the upgrade check allows it: before, no file or exactly RN's one `payload`
+ * key; after, exactly that key ([widgetPrefs] of each).
+ */
+export const isRnPayloadPrefsWrite = (before, after) => {
+    const rnFormat = (prefs) => prefs.entries.length === 1 && prefs.entries[0] === 'string:payload' && prefs.payload !== null;
+    return (before.entries.length === 0 || rnFormat(before)) && rnFormat(after);
+};
+
 /** Lines of [logText] that hold every one of [needles]. */
 export const count = (logText, ...needles) => logText.split('\n').filter((line) => needles.every((needle) => line.includes(needle))).length;
 

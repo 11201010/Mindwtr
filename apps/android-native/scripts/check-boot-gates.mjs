@@ -3197,6 +3197,16 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(hostWidgetsKt, /\.put\("stale", stale\)/);
     assert.match(hostWidgetsKt, /check\(WidgetPayloadStore\.write\(app, payload\)\) \{ "[^"]+" \}/, 'a payload that did not reach the disk keeps the publication stale');
     assert.match(hostWidgetsKt, /\}\.onSuccess \{ stale = false \}\.onFailure \{\s+stale = true/);
+    // The upgrade check allows the native app's one other file write only as RN's payload store: before, no file or exactly RN's
+    // one `payload` key; after, exactly that key. Any other key added, changed type or removed fails.
+    const { isRnPayloadPrefsWrite, widgetPrefs } = await import('./widget-payload.mjs');
+    const prefs = (...entries) => widgetPrefs(`<map>${entries.join('')}</map>`);
+    const payloadEntry = '<string name="payload">{}</string>';
+    assert.equal(isRnPayloadPrefsWrite(prefs(), prefs(payloadEntry)), true, 'no file before, RN\'s payload after');
+    assert.equal(isRnPayloadPrefsWrite(prefs(payloadEntry), prefs(payloadEntry)), true, 'RN\'s payload before and after');
+    assert.equal(isRnPayloadPrefsWrite(prefs('<string name="other">x</string>'), prefs(payloadEntry)), false, 'another key deleted and the payload added fails');
+    assert.equal(isRnPayloadPrefsWrite(prefs(payloadEntry), prefs(payloadEntry, '<int name="other" value="1" />')), false, 'another key added fails');
+    assert.equal(isRnPayloadPrefsWrite(prefs(payloadEntry), prefs()), false, 'the payload removed fails');
     console.log('Widgets: core\'s Android publication from the engine with the device\'s inputs and language, sent once per change, after the validated load, with the Focus screen\'s filter');
 }
 
