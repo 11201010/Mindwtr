@@ -13,7 +13,8 @@
 // RN's capture screen for each entry kind (a capture link with the keyboard up and down, a share, an assistant note, and a
 // widget's quick capture), the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
 // task, and Review), the Weekly Review's first step, the Calendar's week and month, the Board, and Settings'
-// General, GTD (their switches drawn as RN's for the props it sets), Sync (off) and AI (each card unfolded), in light
+// General, GTD (their switches drawn as RN's for the props it sets), Sync (off, then WebDAV chosen with the encryption card's
+// Enable flow open, never saved) and AI (each card unfolded), in light
 // and dark mode; and in light mode the attachments (a task's file and link in the editor, the Add link sheet, the project's).
 // Then it installs
 // the native upgradetest build (153) over it, on the same database, and shoots the same
@@ -389,6 +390,7 @@ const shootSettings = async (prefix, suffix, rn) => {
         const rows = await waitFor(`the ${screen.name} row`, (current) => Boolean(withDescription(current, screen.row)), 30_000);
         await tap(withDescription(rows, screen.row));
         await shoot(`${prefix}-settings-${screen.name}-${suffix}`, (current) => hasText(current, screen.text));
+        if (screen.name === 'sync') await shootEncryption(prefix, suffix);
         requireAppFront();
         sh('input keyevent KEYCODE_BACK');
         await sleep(1000);
@@ -397,6 +399,25 @@ const shootSettings = async (prefix, suffix, rn) => {
     requireAppFront();
     sh('input keyevent KEYCODE_BACK');
     await sleep(1000);
+};
+/**
+ * Pass S4b: the sync encryption card's Enable flow (RN's warnings, the passphrase fields, Generate, Enable, Cancel). WebDAV is
+ * chosen but never saved (no URL), so nothing is stored; the card shows under its form. Reported, never fatal to other shots.
+ */
+const shootEncryption = async (prefix, suffix) => {
+    const labelled = (nodes, label) => nodes.find((node) => node.text === label || node['content-desc'] === label);
+    try {
+        await tap(labelled(await screen(), en['settings.syncBackendWebdav']) ?? fail('no WebDAV chip'));
+        let nodes = await waitFor('the WebDAV form', (current) => Boolean(labelled(current, en['settings.syncEncryption']) || current.some((node) => /sync-url/.test(node['resource-id'] ?? ''))), 15_000);
+        for (let step = 0; step < 20 && !labelled(nodes, en['settings.syncEncryptionEnable']); step += 1) nodes = await device.swipe(nodes, 'down');
+        await tap(labelled(nodes, en['settings.syncEncryptionEnable']) ?? fail('no Enable encryption'));
+        nodes = await waitFor('the Enable flow', (current) => hasText(current, en['settings.syncEncryptionWarningLost']), 15_000);
+        // The flow's top (its warnings) a little below the top of the screen.
+        for (let step = 0; step < 3 && !hasText(nodes, en['settings.syncEncryptionDesc']); step += 1) nodes = await device.swipe(nodes, 'up');
+        await shoot(`${prefix}-settings-encryption-${suffix}`, (current) => hasText(current, en['settings.syncEncryptionWarningLost']));
+    } catch (error) {
+        console.log(`warn - ${prefix} encryption card: ${error.message}`);
+    }
 };
 /**
  * Settings › Advanced › AI (pass C1): the assistant card unfolded, then folded again and the speech card unfolded, each shot at

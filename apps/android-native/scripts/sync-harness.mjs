@@ -2,13 +2,16 @@
 // phone with a second device too). Nothing here reaches a real server.
 //
 // - serveWebdav: a WebDAV folder in memory with strong ETags and RN's conditional writes (If-Match, If-None-Match: *,
-//   412), Basic auth, and two faults a check can switch on: `failWrites` (a PUT of the sync document answers 500) and
-//   `down` (every request answers 503, as a server that went away behind a proxy).
+//   412), Basic auth, and three faults a check can switch on: `failWrites` (a PUT of the sync document answers 500),
+//   `down` (every request answers 503, as a server that went away behind a proxy) and `weakEtags` (every ETag is weak,
+//   W/"…", as a server that cannot promise byte-equal versions; sync encryption must refuse it).
 // - startCloud: the real self-hosted Mindwtr cloud (apps/cloud) under Bun, with one token and a scratch data folder.
 // - hostDevice: the real native bundle (core-host.js) in a Node VM, on node:sqlite, an in-memory RKStorage and secret
-//   store, and node:http for its fetch: core running as a second device, bound exactly as the Android host binds it.
+//   store, node:http for its fetch, and @noble/hashes and node:crypto for its sync crypto: core running as a second device,
+//   bound exactly as the Android host binds it.
 import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import { argon2id } from '@noble/hashes/argon2.js';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer, request as httpRequest } from 'node:http';
@@ -24,7 +27,7 @@ export const serveWebdav = ({ port, username, password }) => new Promise((ready)
     let version = 0;
     // `requests`: every request as it arrived; `authorized`: only those that carried the folder's user and password.
     // `delayMs`: every answer waits that long (a slow server).
-    const state = { files, requests: [], authorized: [], failWrites: 0, down: false, delayMs: 0 };
+    const state = { files, requests: [], authorized: [], failWrites: 0, down: false, delayMs: 0, weakEtags: false };
     const authorized = (req) => req.headers.authorization === `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
     const server = createServer((req, res) => {
         const chunks = [];
@@ -56,7 +59,7 @@ export const serveWebdav = ({ port, username, password }) => new Promise((ready)
                         state.failWrites -= 1;
                         return answer(500, { 'Content-Type': 'text/plain' }, 'write failed');
                     }
-                    const etag = `"${++version}-${createHash('sha1').update(body).digest('hex').slice(0, 12)}"`;
+                    const etag = `${state.weakEtags ? 'W/' : ''}"${++version}-${createHash('sha1').update(body).digest('hex').slice(0, 12)}"`;
                     files.set(path, { body, etag });
                     return answer(file ? 204 : 201, { ETag: etag });
                 }
@@ -146,7 +149,7 @@ export const hostDevice = async ({ bundle, name, log = () => {}, filesRoot }) =>
         sqlAll: guarded((sql, json) => JSON.stringify(database.prepare(sql).all(...params(json)))),
         sqlExec: guarded((sql) => { database.exec(sql); return null; }),
         nowMs: () => performance.now(),
-        randomBytes: (n) => JSON.stringify([...Array(n)].map(() => Math.floor(Math.random() * 256))),
+        randomBytes: (n) => JSON.stringify([...randomBytes(n)]),
         log: (line) => { lines.push(String(line)); log(`${name}: ${line}`); },
         collationKey: (text) => text,
         rnStateCommit: () => null,
@@ -197,6 +200,34 @@ export const hostDevice = async ({ bundle, name, log = () => {}, filesRoot }) =>
             return id;
         },
         netAbort(id) { controllers.get(id)?.abort(); return null; },
+        // HostCrypto.kt's Argon2id and AES-GCM with core's reference implementations (@noble/hashes, as core's own default, and
+        // OpenSSL's AES-GCM): what this device seals, the phone's BouncyCastle must open, and the other way round.
+        cryptoCall(json) {
+            const request = JSON.parse(json);
+            const id = String(++ids);
+            const b = (field) => Buffer.from(request[field], 'base64');
+            setTimeout(() => {
+                const auth = () => Object.assign(new Error('wrong passphrase or corrupted data'), { auth: true });
+                try {
+                    let out;
+                    if (request.op === 'argon2id') out = argon2id(b('pass'), b('salt'), { m: request.m, t: request.t, p: request.p, dkLen: request.dkLen });
+                    else if (request.op === 'aesGcmSeal') {
+                        const cipher = createCipheriv('aes-256-gcm', b('key'), b('nonce')).setAAD(b('aad'));
+                        out = Buffer.concat([cipher.update(b('data')), cipher.final(), cipher.getAuthTag()]);
+                    } else if (request.op === 'aesGcmOpen') {
+                        const data = b('data');
+                        if (data.length < 16) throw auth();
+                        const decipher = createDecipheriv('aes-256-gcm', b('key'), b('nonce')).setAAD(b('aad'));
+                        decipher.setAuthTag(data.subarray(data.length - 16));
+                        try { out = Buffer.concat([decipher.update(data.subarray(0, data.length - 16)), decipher.final()]); } catch { throw auth(); }
+                    } else throw new Error(`Unsupported crypto call ${request.op}`);
+                    answers.push({ json: JSON.stringify({ id, body: true }), body: Buffer.from(out).toString('base64') });
+                } catch (error) {
+                    answers.push({ json: JSON.stringify({ id, error: error.message, ...(error.auth ? { auth: true } : {}) }) });
+                }
+            }, 1);
+            return id;
+        },
         secretCall(json) {
             const { op, key, value } = JSON.parse(json);
             const id = String(++ids);
