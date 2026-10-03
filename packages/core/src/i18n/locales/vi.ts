@@ -154,6 +154,9 @@ export const viOverrides: Record<string, string> = {
         'settings.donateLinkValue': "Đóng góp",
         'settings.documentationLinkValue': "Tài liệu",
         'markdown.copyCode': 'Sao chép mã',
+        'markdown.copyLink': "Sao chép liên kết",
+        'markdown.openLinkFailed': "Không thể mở liên kết này. Hãy kiểm tra xem ứng dụng tương ứng đã được cài đặt chưa. Bạn có thể sao chép liên kết và mở trong ứng dụng đó.",
+        'markdown.copyLinkFailed': "Không thể sao chép liên kết này.",
 
         // Navigation
         'nav.main': 'Chính',

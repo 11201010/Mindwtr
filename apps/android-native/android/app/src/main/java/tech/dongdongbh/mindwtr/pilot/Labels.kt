@@ -44,6 +44,7 @@ val LABEL_KEYS = listOf(
     "projects.activeSection", "projects.deferredSection", "projects.closed", "projects.noArea", "projects.noNextAction",
     "common.tasks", "filters.starred", "projects.availableNextAction", "projects.laterInSequence",
     "markdown.expand", "markdown.collapse",
+    "common.error", "markdown.openLinkFailed", "markdown.copyLink", "markdown.copyLinkFailed",
     "inbox.empty", "inbox.emptyAddHint", "agenda.allClear", "agenda.noTasks", "projects.empty",
     "agenda.addToFocus", "agenda.removeFromFocus", "agenda.focusWhenAvailable", "projects.addToFocus", "projects.removeFromFocus",
     "taskStatus.changeStatus", "task.aria.changeStatus", "task.aria.changeStatusHint",
@@ -84,12 +85,12 @@ object Labels {
     private val logged: MutableSet<String> = Collections.synchronizedSet(HashSet())
 
     /** Replaces the map with a getStrings reply. Core already put English in for a key the language lacks. */
-    fun load(reply: JSONObject) {
+    fun load(reply: JSONObject, reportLoaded: (String) -> Unit = { Log.i(CoreHost.TAG, it) }) {
         val values = reply.getJSONObject("strings")
         strings = LABEL_KEYS.filter(values::has).associateWith(values::getString)
         val missing = reply.getJSONArray("missing")
         for (index in 0 until missing.length()) missing(missing.getString(index))
-        Log.i(CoreHost.TAG, "Native Android labels language=${reply.getString("language")} missing=${missing.length()}")
+        reportLoaded("Native Android labels language=${reply.getString("language")} missing=${missing.length()}")
     }
 
     operator fun get(name: String): String = strings[name] ?: name.also(::missing)

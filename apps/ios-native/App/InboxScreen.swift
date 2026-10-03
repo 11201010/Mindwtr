@@ -1257,6 +1257,15 @@ struct TaskCard: View {
             } else { return .discarded }
             return .handled
         }
+        if url.scheme?.lowercased() == "upnote",
+           let original = NativeMarkdownLinkURL.originalHref(url, runs: meta.object("description").objects("inline")) {
+            Task {
+                let opened = await NativeUpNoteLink.open(original, surface: "markdown")
+                await model.recordUpNoteHandoff(opened ? "opened" : "failed", surface: "markdown")
+                if !opened { NativeUpNoteLink.showFailure(original, labels: model.strings) }
+            }
+            return .handled
+        }
         return ["http", "https", "mailto", "tel"].contains(url.scheme?.lowercased() ?? "") ? .systemAction : .discarded
     }
 

@@ -43,8 +43,10 @@ vi.mock('@/lib/task-meta-navigation', () => ({
 }));
 
 vi.mock('expo-linking', () => ({
-  openURL: vi.fn(),
+  openURL: vi.fn(async () => undefined),
 }));
+
+vi.mock('@/lib/app-log', () => ({ logInfo: vi.fn(async () => null), logWarn: vi.fn(async () => null) }));
 
 vi.mock('expo-clipboard', () => ({
   setStringAsync: clipboardMocks.setStringAsync,
@@ -294,5 +296,22 @@ describe('MarkdownText', () => {
     });
 
     expect(Linking.openURL).toHaveBeenCalledWith('https://example.com/docs');
+  });
+
+  it('opens an explicit UpNote description link only after a tap, preserving its original URI', async () => {
+    const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+    const tree = renderMarkdown(`[My note](${uri})`);
+    expect(Linking.openURL).not.toHaveBeenCalled();
+    const link = tree.root.findAll((node) => typeof node.props.onPress === 'function'
+      && flattenText(node.children as renderer.ReactTestRendererNode[]) === 'My note')[0];
+    expect(link).toBeTruthy();
+    await renderer.act(async () => { link.props.onPress(); });
+    expect(Linking.openURL).toHaveBeenCalledWith(uri);
+  });
+
+  it('keeps blocked schemes and unrelated custom protocols noninteractive', () => {
+    const tree = renderMarkdown('[Script](javascript:evil) [Data](data:text/plain,test) [Other](obsidian://open)');
+    expect(tree.root.findAll((node) => typeof node.props.onPress === 'function')).toHaveLength(0);
+    expect(Linking.openURL).not.toHaveBeenCalled();
   });
 });

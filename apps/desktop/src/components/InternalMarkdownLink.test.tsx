@@ -8,6 +8,9 @@ import { MINDWTR_NAVIGATE_EVENT } from '../lib/navigation-events';
 import { useUiStore } from '../store/ui-store';
 import { createInternalMarkdownLinkContext, InternalMarkdownLink } from './InternalMarkdownLink';
 
+const openShellMock = vi.hoisted(() => vi.fn());
+vi.mock('@tauri-apps/plugin-shell', () => ({ open: openShellMock }));
+
 const sandboxState = vi.hoisted(() => ({ enabled: false }));
 vi.mock('@mindwtr/core', async (importOriginal) => ({
     ...await importOriginal<typeof import('@mindwtr/core')>(),
@@ -20,6 +23,9 @@ const initialUiState = useUiStore.getState();
 describe('InternalMarkdownLink', () => {
     beforeEach(() => {
         sandboxState.enabled = false;
+        openShellMock.mockReset();
+        delete (window as any).__TAURI_INTERNALS__;
+        vi.restoreAllMocks();
         act(() => {
             useTaskStore.setState(initialTaskState, true);
             useUiStore.setState(initialUiState, true);
@@ -38,6 +44,48 @@ describe('InternalMarkdownLink', () => {
             setProjectView: uiState.setProjectView,
         });
     };
+
+    it('opens UpNote only on click and offers exact-link copy after a native failure', async () => {
+        const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+        (window as any).__TAURI_INTERNALS__ = {};
+        openShellMock.mockRejectedValue(new Error(`No handler for ${uri}`));
+        const browserOpen = vi.spyOn(window, 'open');
+        const copy = vi.fn(async () => undefined);
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } });
+        const { getByRole, container } = render(
+            <LanguageProvider><InternalMarkdownLink href={uri} linkContext={currentLinkContext()}>Note</InternalMarkdownLink></LanguageProvider>
+        );
+        expect(openShellMock).not.toHaveBeenCalled();
+        expect(container.querySelector('[href]')).toBeNull();
+        fireEvent.click(getByRole('link', { name: 'Note' }));
+        await waitFor(() => expect(useUiStore.getState().toasts).toHaveLength(1));
+        expect(openShellMock).toHaveBeenCalledWith(uri);
+        expect(browserOpen).not.toHaveBeenCalled();
+        const toast = useUiStore.getState().toasts[0];
+        expect(toast.message).toContain('Make sure the app');
+        expect(toast.message).not.toContain(uri);
+        expect(toast.action?.label).toBe('Copy link');
+        toast.action?.onClick();
+        await waitFor(() => expect(copy).toHaveBeenCalledWith(uri));
+    });
+
+    it.each(['javascript:alert(1)', 'data:text/html,bad', 'file:///private/doc', 'obsidian://open?file=a', 'custom://open'])('keeps blocked Markdown href %s inert', (href) => {
+        const { queryByRole } = render(
+            <LanguageProvider><InternalMarkdownLink href={href} linkContext={currentLinkContext()}>Blocked</InternalMarkdownLink></LanguageProvider>
+        );
+        expect(queryByRole('link')).toBeNull();
+        expect(openShellMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps UpNote inert in sandbox', () => {
+        sandboxState.enabled = true;
+        const { getByRole } = render(
+            <LanguageProvider><InternalMarkdownLink href="upnote://x-callback-url/openNote?noteId=a" linkContext={currentLinkContext()}>Note</InternalMarkdownLink></LanguageProvider>
+        );
+        fireEvent.click(getByRole('link', { name: 'Note' }));
+        expect(getByRole('link', { name: 'Note' })).toBeDisabled();
+        expect(openShellMock).not.toHaveBeenCalled();
+    });
 
     it('renders RFC 2392 message-id links as safe external links', () => {
         const { getByRole } = render(

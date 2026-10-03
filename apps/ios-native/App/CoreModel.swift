@@ -1899,6 +1899,9 @@ final class CoreModel: ObservableObject {
             && capture.object("picker").text("query") == contextQuery
     }
     func label(_ key: String) -> String { strings.text(key) }
+    func recordUpNoteHandoff(_ outcome: String, surface: String) async {
+        _ = try? await query("logLinkHandoff", [outcome, surface])
+    }
     private let taskRecoveryScheduleFields = ["startTime", "dueDate", "relativeStartOffset", "reviewAt"]
     private let taskRecoveryAssociationFields = ["projectId", "areaId", "sectionId"]
     private let taskRecoveryLifecycleFields = ["status", "focusedToday", "completedAt"]
@@ -2458,6 +2461,14 @@ final class CoreModel: ObservableObject {
             }
             guard plan.text("kind") == "link", let uri = plan["uri"] as? String,
                   let failedMessage = plan["failedMessage"] as? String else { throw CocoaError(.coderReadCorrupt) }
+            if uri.lowercased().hasPrefix("upnote://") {
+                guard current() else { return }
+                let opened = await NativeUpNoteLink.open(uri, surface: "attachment")
+                await recordUpNoteHandoff(opened ? "opened" : "failed", surface: "attachment")
+                guard current() else { return }
+                if !opened { NativeUpNoteLink.showFailure(uri, labels: strings) }
+                return
+            }
             guard let url = URL(string: uri) else { taskAttachmentOpenError = failedMessage; return }
             guard current() else { return }
             let opened = await withCheckedContinuation { continuation in
@@ -3730,7 +3741,7 @@ final class CoreModel: ObservableObject {
                     "agenda.collapseOtherSections", "agenda.expandOtherSections", "markdown.expand", "markdown.collapse",
                     "projects.areaFilter", "filters.excluded", "taskEdit.tab.view", "common.notSet", "status.active", "status.waiting", "status.someday",
                     "common.save", "common.edit", "common.rename", "common.discard", "taskEdit.discardChanges", "taskEdit.discardChangesDesc",
-                    "markdown.edit", "markdown.preview", "taskEdit.titleLabel", "taskEdit.descriptionLabel",
+                    "markdown.edit", "markdown.preview", "common.error", "markdown.openLinkFailed", "markdown.copyLink", "markdown.copyLinkFailed", "taskEdit.titleLabel", "taskEdit.descriptionLabel",
                     "taskEdit.assignedTo", "taskEdit.priorityLabel", "taskEdit.timeEstimateLabel", "taskEdit.timeSpentLabel",
                     "taskEdit.contextsLabel", "taskEdit.statusLabel", "taskEdit.reviewDateLabel",
                     "taskEdit.startModeRelative", "taskEdit.recurrenceLabel", "recurrence.showFutureInCalendar",
@@ -15503,6 +15514,14 @@ final class CoreModel: ObservableObject {
             }
             guard plan.text("kind") == "link", let uri = plan["uri"] as? String,
                   let failedMessage = plan["failedMessage"] as? String else { throw CocoaError(.coderReadCorrupt) }
+            if uri.lowercased().hasPrefix("upnote://") {
+                guard current() else { return }
+                let opened = await NativeUpNoteLink.open(uri, surface: "attachment")
+                await recordUpNoteHandoff(opened ? "opened" : "failed", surface: "attachment")
+                guard current() else { return }
+                if !opened { NativeUpNoteLink.showFailure(uri, labels: strings) }
+                return
+            }
             guard let url = URL(string: uri) else { projectAttachmentOpenError = failedMessage; return }
             guard current() else { return }
             let opened = await withCheckedContinuation { continuation in

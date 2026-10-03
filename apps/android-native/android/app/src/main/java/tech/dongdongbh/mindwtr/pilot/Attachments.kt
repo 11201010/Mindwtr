@@ -449,8 +449,9 @@ internal fun attachmentLaunchLog(kind: String, uri: String?, failure: Throwable)
  * the FileProvider URI with core's view type), else the share sheet, else its URI, as RN's open-file-externally and its
  * fallbacks do. Answers core's failure message for a link that nothing opened, else null.
  */
-fun startAttachmentPlan(context: Context, plan: JSONObject): String? {
+fun startAttachmentPlan(context: Context, plan: JSONObject, t: (String) -> String, diagnostic: (String) -> Unit): String? {
     if (plan.getString("kind") == "link") {
+        if (openUpNoteLink(context, plan.getString("uri"), t, diagnostic) != null) return null
         return try {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(plan.getString("uri"))))
             null
@@ -611,7 +612,7 @@ fun ProjectAttachments(model: InboxViewModel, projectId: String) = with(model.at
 @Composable
 fun AttachmentOverlays(model: InboxViewModel) = with(model.attachments) {
     val context = LocalContext.current
-    LaunchedEffect(launch) { launch?.let { plan -> launched(); startAttachmentPlan(context, plan)?.let { failed -> model.attachments.showAlert(failed) } } }
+    LaunchedEffect(launch) { launch?.let { plan -> launched(); startAttachmentPlan(context, plan, ::t) { outcome -> model.anyTime({ it.logLinkHandoff(outcome, "attachment") }, {}) }?.let { failed -> model.attachments.showAlert(failed) } } }
     alert?.let { message ->
         AlertDialog(onDismissRequest = ::dismissAlert, title = { Text(t("attachments.title")) }, text = { Text(message) },
             confirmButton = { TextButton(onClick = ::dismissAlert) { Text(t("common.ok")) } })

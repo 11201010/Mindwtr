@@ -73,6 +73,7 @@ vi.mock('expo-document-picker', () => ({
   getDocumentAsync: vi.fn().mockResolvedValue({ canceled: true, assets: [] }),
 }));
 vi.mock('expo-linking', () => ({ openURL: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../../lib/app-log', () => ({ logInfo: vi.fn(async () => null), logWarn: vi.fn(async () => null), logError: vi.fn(async () => null) }));
 vi.mock('expo-sharing', () => ({
   isAvailableAsync: vi.fn().mockResolvedValue(false),
   shareAsync: vi.fn().mockResolvedValue(undefined),
@@ -243,6 +244,28 @@ describe('useTaskEditAttachments download settlement', () => {
     act(() => { expose.current!.confirmAddLink(); });
     expect(expose.current!.attachments).toHaveLength(3);
     expect(expose.current!.attachments[0]).toMatchObject({ id: initial.id, uri: 'https://edited.example' });
+    act(() => tree.unmount());
+  });
+
+  it('adds all UpNote input forms without opening, and retains/copies the original URI when opening fails', async () => {
+    const Linking = await import('expo-linking');
+    const Clipboard = await import('expo-clipboard');
+    const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+    const expose = React.createRef<HarnessApi | null>();
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<Harness expose={expose} initial={makeAttachment(1)} />); });
+    act(() => { expose.current!.setLinkInput(`${uri}\nNote | ${uri}\n[My note](${uri})`); });
+    act(() => { expose.current!.confirmAddLink(); });
+    const added = expose.current!.attachments.slice(1);
+    expect(added.map((attachment) => attachment.uri)).toEqual([uri, uri, uri]);
+    expect(Linking.openURL).not.toHaveBeenCalled();
+    vi.mocked(Linking.openURL).mockRejectedValueOnce(new Error('Missing app'));
+    await act(async () => { await expose.current!.openAttachment(added[0]); });
+    expect(Linking.openURL).toHaveBeenCalledWith(uri);
+    expect(expose.current!.attachments.slice(1)).toEqual(added);
+    const copy = vi.mocked(Alert.alert).mock.calls.at(-1)![2]!.find((button) => button.text === 'Copy link')!;
+    copy.onPress!();
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(uri);
     act(() => tree.unmount());
   });
 

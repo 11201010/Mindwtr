@@ -77,6 +77,9 @@ export const itOverrides: Record<string, string> = {
         'settings.donateLinkValue': "Dona",
         'settings.documentationLinkValue': "Documentazione",
         'markdown.copyCode': 'Copia codice',
+        'markdown.copyLink': "Copia link",
+        'markdown.openLinkFailed': "Impossibile aprire questo link. Verifica che l’app corrispondente sia installata. Puoi copiare il link e aprirlo lì.",
+        'markdown.copyLinkFailed': "Impossibile copiare questo link.",
 
         // Navigation
         'nav.main': 'Principale',

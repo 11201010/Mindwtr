@@ -4,6 +4,7 @@ import type { Attachment, Task } from '@mindwtr/core';
 import { LanguageProvider } from '../../contexts/language-context';
 import { TaskAttachmentOverlays } from './TaskAttachmentOverlays';
 import { useTaskItemAttachments } from './useTaskItemAttachments';
+import { useUiStore } from '../../store/ui-store';
 import { openAttachmentTarget } from '../../lib/open-attachment-target';
 
 const openMock = vi.fn();
@@ -702,6 +703,19 @@ function OverlaysHarness({ openTarget }: { openTarget?: Attachment }) {
 }
 
 describe('TaskAttachmentOverlays', () => {
+    it('adds an UpNote Markdown link through the real prompt without opening it', () => {
+        vi.mocked(openAttachmentTarget).mockClear();
+        const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+        render(<OverlaysHarness />);
+        fireEvent.click(screen.getByText('add-link'));
+        fireEvent.change(screen.getByRole('textbox'), { target: { value: `[Note](${uri})` } });
+        expect(screen.getByText('common.save')).not.toBeDisabled();
+        fireEvent.click(screen.getByText('common.save'));
+        expect(screen.queryByRole('dialog')).toBeNull();
+        expect(screen.getByText(uri)).toBeTruthy();
+        expect(openAttachmentTarget).not.toHaveBeenCalled();
+    });
+
     it('adds the typed link through the hook when the link prompt is confirmed', () => {
         render(<OverlaysHarness />);
 
@@ -752,5 +766,41 @@ describe('TaskAttachmentOverlays', () => {
         fireEvent.click(screen.getByText('open-attachment'));
 
         expect(screen.getByRole('dialog', { name: 'photo.png' })).toBeTruthy();
+    });
+});
+
+
+describe('UpNote Add Link compatibility', () => {
+    const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+    it.each([uri, `Note|${uri}`, `[Note](${uri})`])('stores and reloads %s without launching', async (input) => {
+        vi.mocked(openAttachmentTarget).mockReset().mockResolvedValue(undefined);
+        const { result, unmount } = renderHook(() => useTaskItemAttachments({ task, t }));
+        act(() => result.current.addLinkAttachment());
+        act(() => { expect(result.current.handleAddLinkAttachment(input)).toBe(true); });
+        expect(result.current.editAttachments).toHaveLength(1);
+        expect(result.current.editAttachments[0]).toMatchObject({ kind: 'link', uri });
+        expect(openAttachmentTarget).not.toHaveBeenCalled();
+        const saved = JSON.parse(JSON.stringify({ ...task, attachments: result.current.editAttachments })) as Task;
+        unmount();
+        const reloaded = renderHook(() => useTaskItemAttachments({ task: saved, t }));
+        expect(reloaded.result.current.editAttachments[0].uri).toBe(uri);
+        expect(openAttachmentTarget).not.toHaveBeenCalled();
+        await act(async () => reloaded.result.current.openAttachment(reloaded.result.current.editAttachments[0]));
+        expect(openAttachmentTarget).toHaveBeenCalledWith(uri, saved.attachments?.[0].id);
+    });
+    it('keeps the attachment after failed handoff and copies the original URI', async () => {
+        vi.mocked(openAttachmentTarget).mockReset().mockRejectedValue(new Error(`Missing handler ${uri}`));
+        useUiStore.setState({ toasts: [] });
+        const copy = vi.fn(async () => undefined);
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } });
+        const { result } = renderHook(() => useTaskItemAttachments({ task, t }));
+        act(() => result.current.addLinkAttachment());
+        act(() => result.current.handleAddLinkAttachment(`Note|${uri}`));
+        await act(async () => result.current.openAttachment(result.current.editAttachments[0]));
+        expect(result.current.attachmentError).toContain('Make sure the app');
+        expect(result.current.editAttachments[0].uri).toBe(uri);
+        await act(async () => useUiStore.getState().toasts[0].action?.onClick());
+        expect(copy).toHaveBeenCalledWith(uri);
+        vi.mocked(openAttachmentTarget).mockReset().mockResolvedValue(undefined);
     });
 });

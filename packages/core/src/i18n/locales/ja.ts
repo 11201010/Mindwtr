@@ -93,6 +93,9 @@ export const jaOverrides: Record<string, string> = {
         'settings.donateLinkValue': '寄付する',
         'settings.documentationLinkValue': 'ドキュメント',
         'markdown.copyCode': 'コードをコピー',
+        'markdown.copyLink': "リンクをコピー",
+        'markdown.openLinkFailed': "このリンクを開けませんでした。対応するアプリがインストールされているか確認してください。リンクをコピーして、そのアプリで開くこともできます。",
+        'markdown.copyLinkFailed': "このリンクをコピーできませんでした。",
 
         // Navigation
         'nav.main': 'メイン',

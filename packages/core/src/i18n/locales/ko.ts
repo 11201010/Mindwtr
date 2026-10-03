@@ -171,6 +171,9 @@ export const koOverrides: Record<string, string> = {
         'settings.donateLinkValue': "후원",
         'settings.documentationLinkValue': "문서",
         'markdown.copyCode': '코드 복사',
+        'markdown.copyLink': "링크 복사",
+        'markdown.openLinkFailed': "이 링크를 열 수 없습니다. 해당 앱이 설치되어 있는지 확인하세요. 링크를 복사하여 해당 앱에서 열 수 있습니다.",
+        'markdown.copyLinkFailed': "이 링크를 복사할 수 없습니다.",
 
         // Navigation
         'nav.main': '기본',

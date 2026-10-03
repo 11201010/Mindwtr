@@ -83,6 +83,9 @@ export const en: Record<string, string> = {
         'settings.donateLinkValue': "Donate",
         'settings.documentationLinkValue': "Docs",
         'markdown.copyCode': 'Copy code',
+        'markdown.copyLink': "Copy link",
+        'markdown.openLinkFailed': "Could not open this link. Make sure the app that handles it is installed. You can copy the link and open it there.",
+        'markdown.copyLinkFailed': "Could not copy this link.",
 
         // Navigation
         'nav.main': 'Main',

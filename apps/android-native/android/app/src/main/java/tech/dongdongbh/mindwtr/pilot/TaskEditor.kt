@@ -418,7 +418,13 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
         }
     }
     val follow = { target: JSONObject ->
-        if (target.getString("kind") == "external") runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, target.getString("href").toUri())) }
+        if (target.getString("kind") == "external") {
+            val original = target.getString("href")
+            val upnote = openUpNoteLink(context, original, ::t) { outcome ->
+                anyTime({ it.logLinkHandoff(outcome, "markdown") }, {})
+            }
+            if (upnote == null) runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, original.toUri())) }
+        }
         else if (editor.readOnly || (!editor.dirty && !editsPending)) go(target)
         else { linkAfterLeave = target.toString(); confirmLeave = true }
         Unit

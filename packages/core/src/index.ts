@@ -205,6 +205,7 @@ export * from './saved-filters';
 export * from './saved-filter-labels';
 export * from './hierarchy-utils';
 export * from './markdown';
+export * from './markdown-links';
 export * from './markdown-blocks';
 export * from './obsidian-parser';
 export * from './tasknotes-parser';

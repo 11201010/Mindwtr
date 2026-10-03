@@ -281,7 +281,8 @@ export const LOCALES = {
         // Includes subsequent shipped translations and the UI simplification labels.
         // Re-pin to the 2482 keys currently present after English grew to 2735 keys;
         // the old 2444 floor fell below the 90% brand-name check ceiling.
-        translatedKeyFloor: 2482,
+        // Three translated UpNote link recovery strings raise the commitment with English.
+        translatedKeyFloor: 2485,
     },
     it: {
         loadSync: () => require('./locales/it') as typeof import('./locales/it'),
