@@ -187,10 +187,20 @@ const snapshot = () => new Map(runAs(
 // process start: the same library's state, never user data.
 const PLATFORM_STATE = new Set(['files/profileInstalled', 'shared_prefs/android.app.ActivityThread.IDS.xml']);
 const isPlatformState = (path) => PLATFORM_STATE.has(path) || /^no_backup\/androidx\.work\.workdb(-wal|-shm|-journal)?$/.test(path);
+// The native app's reminder ledger (Reminders.kt ReminderLedger): its own new file, written once it holds an alarm; RN never has
+// it. Allowed only as a new file whose every entry is an alarm id armed or fired at a time (checkLedger reads it).
+const LEDGER = 'shared_prefs/mindwtr_reminder_ledger.xml';
+const checkLedger = (label, after) => {
+    if (!after.has(LEDGER)) return;
+    const entries = [...runAs(`cat ${LEDGER}`).matchAll(/<string name="([^"]*)">([^<]*)<\/string>/g)];
+    const other = runAs(`cat ${LEDGER}`).replace(/<\?xml[^>]*>|<\/?map\s*\/?>|<string name="[^"]*">[^<]*<\/string>/g, '').trim();
+    check(entries.length > 0 && entries.every(([, id, value]) => /^\d+$/.test(id) && /^(armed|fired):\d+$/.test(value)) && other === '',
+        `(${label}) the native reminder ledger holds only alarm ids and their times (${entries.length})`);
+};
 const differences = (before, after, { changedOk = () => false, newOk = () => false } = {}) => [
     ...[...before].filter(([path, hash]) => !isPlatformState(path) && !changedOk(path) && after.get(path) !== hash)
         .map(([path]) => `${after.has(path) ? 'changed' : 'removed'} ${path}`),
-    ...[...after.keys()].filter((path) => !before.has(path) && !isPlatformState(path) && !newOk(path)).map((path) => `new ${path}`),
+    ...[...after.keys()].filter((path) => !before.has(path) && !isPlatformState(path) && !newOk(path) && path !== LEDGER).map((path) => `new ${path}`),
 ];
 const isDatabase = (path) => /^files\/SQLite\/mindwtr\.db(-wal|-shm)?$/.test(path);
 const isAsyncStorage = (path) => /^databases\/RKStorage(-wal|-shm|-journal)?$/.test(path);
@@ -475,6 +485,7 @@ const scenarioUpgrade = async () => {
         changedOk: (path) => isDatabase(path) || path === queuedPath || isAsyncStorage(path),
         newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path),
     });
+    checkLedger('1', after);
     check(changed.length === 0, `(1) every other non-database file is unchanged (${[...before.keys()].filter((path) => !isDatabase(path)).length} files)${shortList(changed)}`);
     return { t, pre, queued };
 };
@@ -733,6 +744,7 @@ const scenarioMissingWithBackup = async () => {
         newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path),
     });
     check(changed.length === 0, `(5b) every other file is unchanged${shortList(changed)}`);
+    checkLedger('5b', after);
 };
 
 // ---- 6: an RN user's sync configuration ----
