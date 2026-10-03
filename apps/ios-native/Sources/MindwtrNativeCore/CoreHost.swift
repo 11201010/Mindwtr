@@ -156,6 +156,7 @@ private final class Engine: @unchecked Sendable {
     private var startupArchivedTasksDeleteResult: String?
     private var startupArchivedTasksDeleteUndoResult: String?
     private var startupTaskCompletionResult: String?
+    private var startupTaskCompletionSource: String?
     private var startupDoneTaskStatusResult: String?
     private var startupDoneTaskStatusSource: String?
     private var startupDoneTaskCompletedAtResult: String?
@@ -764,6 +765,8 @@ private final class Engine: @unchecked Sendable {
         }
         if let recoveringCompletionCommand, let terminal, case .success = terminal {
             rememberConfirmedTaskCompletion(recoveringCompletionCommand)
+            // Only the validated captured command and its exact proven receipt supply this route.
+            startupTaskCompletionSource = taskCompletionSource(recoveringCompletionCommand)
         }
         if let recoveringProjectDeleteCommand, let terminal, case .success = terminal {
             rememberConfirmedProjectDelete(recoveringProjectDeleteCommand)
@@ -960,6 +963,12 @@ private final class Engine: @unchecked Sendable {
             recovery["source"] = "reference"
             window["recovery"] = recovery
         }
+        if startupTaskCompletionSource == "reference",
+           var recovery = window["recovery"] as? [String: Any],
+           ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(recovery["method"] as? String ?? "") {
+            recovery["source"] = "reference"
+            window["recovery"] = recovery
+        }
         let encoded = String(decoding: try JSONSerialization.data(withJSONObject: window, options: [.sortedKeys]), as: UTF8.self)
         startupBoardResult = nil
         startupArchivedTaskRestoreResult = nil
@@ -968,6 +977,7 @@ private final class Engine: @unchecked Sendable {
         startupArchivedTasksDeleteUndoResult = nil
         startupTaskDeleteResult = nil
         startupTaskCompletionResult = nil
+        startupTaskCompletionSource = nil
         startupDoneTaskStatusResult = nil
         startupDoneTaskStatusSource = nil
         startupDoneTaskCompletedAtResult = nil
@@ -1132,6 +1142,19 @@ private final class Engine: @unchecked Sendable {
     private func call(_ method: String, argumentsJSON: String, editorAttempt: EditorDraftAttempt?) throws -> String {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, !recoveryActivationPending else { throw HostFailure("Core host is not ready; retry startup") }
+        if editorAttempt == nil, ["taskCompletion", "taskCompletionUndo"].contains(method) {
+            let completionRequest: [String: Any]?
+            if method == "taskCompletion" {
+                let transported = try? NativeJSON.jsonObject(with: Data(argumentsJSON.utf8)) as? [String]
+                completionRequest = transported?.first.flatMap { try? NativeJSON.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+            } else {
+                let completed = confirmedTaskCompletionEnvelope.flatMap { try? NativeJSON.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+                completionRequest = completed?["request"] as? [String: Any]
+            }
+            if let completionRequest, Self.isReferenceTaskCompletionRequest(completionRequest), try editorDrafts.read() != nil {
+                throw CoreHostRejection(message: "INVALID_INPUT: Reference completion cannot replace a saved editor draft")
+            }
+        }
         if editorAttempt == nil, ["saveDraft", "reviewTaskWrite", "checklistSave", "taskDelete", "taskPromote", "archivedTaskRestoreWrite", "archivedTasksRestoreWrite", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "doneTaskStatusWrite", "doneTaskCompletedAtWrite", "archiveTaskCompletedAtWrite"].contains(method), try editorDrafts.read() != nil {
             if ["doneTaskStatusWrite", "doneTaskCompletedAtWrite", "archiveTaskCompletedAtWrite"].contains(method) {
                 let action = method == "doneTaskStatusWrite" ? "Done status" : "Done completion time"
@@ -2875,7 +2898,9 @@ private final class Engine: @unchecked Sendable {
                     throw HostFailure("Malformed \(action) preparation")
                 }
                 if response["kind"] as? String == "noop" {
-                    guard prefix == "doneTaskStatus", submitted["status"] as? String == "done", Set(response.keys) == Set(["kind", "result"]),
+                    let currentReference = Self.isReferenceTaskStatusRequest(submitted) && submitted["status"] as? String == "reference"
+                    guard prefix == "doneTaskStatus", (submitted["status"] as? String == "done" && submitted["source"] == nil) || currentReference,
+                          Set(response.keys) == Set(["kind", "result"]),
                           let result = response["result"] as? [String: Any], Set(result.keys) == Set(["id"]),
                           Self.equalJSON(result["id"], submitted["id"]) else { throw HostFailure("Malformed Done status no-op") }
                     return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
@@ -3861,7 +3886,7 @@ private final class Engine: @unchecked Sendable {
 #endif
             NSLog("Native iOS Task deletion saved releaseCheck=v1.3.4/ios-task-delete operation=undo outcome=confirmed")
         }
-        if ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(command.method), case .success = terminal {
+        if ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(command.method), taskCompletionSource(command) != "reference", case .success = terminal {
             let operation = command.method == "taskCompletionCommit" ? "complete" : "undo"
 #if DEBUG
             faults?.commandDiagnostic?("taskCompletion:" + operation)
@@ -6252,13 +6277,22 @@ private final class Engine: @unchecked Sendable {
               Set(envelope.keys) == Set(["request", "prepared"]),
               let request = envelope["request"] as? [String: Any],
               let prepared = envelope["prepared"] as? [String: Any],
-              Set(prepared.keys) == (undo
-                  ? Set(["version", "kind", "request", "completion", "witness", "effect", "result"])
-                  : Set(["version", "kind", "request", "checklist", "notice", "result"])),
-              Self.isInteger(prepared["version"], equalTo: 1),
-              prepared["kind"] as? String == (undo ? "undo" : "complete"),
               Self.equalJSON(prepared["request"], request),
               let result = prepared["result"] as? [String: Any] else {
+            throw HostFailure("Malformed prepared completion journal")
+        }
+        let originalCompletion = prepared["completion"] as? [String: Any]
+        let originalRequest = undo ? originalCompletion?["request"] as? [String: Any] : request
+        let reference = originalRequest.map(Self.isReferenceTaskCompletionRequest) == true
+        let expectedFields: Set<String> = undo
+            ? Set(["version", "kind", "request", "completion", "witness", "effect", "result"])
+            : Set(["version", "kind", "request", "checklist", "notice", "result"])
+        let fields = reference ? expectedFields.union(["rawBefore"]) : expectedFields
+        let expectedKind = reference ? (undo ? "referenceCompleteUndo" : "referenceComplete") : (undo ? "undo" : "complete")
+        guard Set(prepared.keys) == fields,
+              Self.isInteger(prepared["version"], equalTo: reference ? 2 : 1),
+              prepared["kind"] as? String == expectedKind,
+              !reference || Self.validReferenceCompletionRawBefore(prepared["rawBefore"]) else {
             throw HostFailure("Malformed prepared completion journal")
         }
         let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
@@ -6270,13 +6304,18 @@ private final class Engine: @unchecked Sendable {
                   Set(completion.keys) == Set(["request", "prepared"]),
                   let original = completion["request"] as? [String: Any],
                   Self.equalJSON(original["requestId"], request["completionRequestId"]),
-                  result["id"] as? String == original["id"] as? String,
+                  (reference ? Self.equalJSON(result["id"], original["id"]) : result["id"] as? String == original["id"] as? String),
                   prepared["witness"] is [String: Any], prepared["effect"] is [String: Any] else {
                 throw HostFailure("Malformed prepared completion Undo journal")
             }
+            if reference {
+                let completed = String(decoding: try JSONSerialization.data(withJSONObject: completion, options: [.sortedKeys]), as: UTF8.self)
+                let transported = String(decoding: try JSONSerialization.data(withJSONObject: [completed]), as: UTF8.self)
+                _ = try taskCompletionJournalArguments(PendingCommand(version: 2, method: "taskCompletionCommit", argumentsJSON: transported))
+            }
         } else {
             guard Set(result.keys) == Set(["id", "completion"]),
-                  result["id"] as? String == request["id"] as? String,
+                  (reference ? Self.equalJSON(result["id"], request["id"]) : result["id"] as? String == request["id"] as? String),
                   prepared["checklist"] is [String: Any],
                   let notice = prepared["notice"] as? [String: Any],
                   Set(notice.keys) == Set(["message", "undoLabel"]),
@@ -6292,6 +6331,40 @@ private final class Engine: @unchecked Sendable {
             }
         }
         return args
+    }
+
+    private static func isReferenceTaskCompletionRequest(_ request: [String: Any]) -> Bool {
+        Set(request.keys) == Set(["id", "requestId", "taskRevision", "source"])
+            && request["source"] as? String == "reference"
+    }
+
+    private static func validReferenceCompletionRawBefore(_ value: Any?) -> Bool {
+        guard let authority = value as? [String: Any], Set(authority.keys) == Set(["tasks", "projects", "sections"]) else { return false }
+        for kind in ["tasks", "projects", "sections"] {
+            guard let rows = authority[kind] as? [[String: Any]], rows.count <= 10_000 else { return false }
+            var ids = Set<Data>()
+            for row in rows {
+                guard Set(row.keys) == Set(["id", "before"]), let id = row["id"] as? String,
+                      !id.isEmpty, id.utf16.count <= 500, ids.insert(Data(id.utf8)).inserted else { return false }
+                if row["before"] is NSNull { continue }
+                guard let before = row["before"] as? [String: Any], Self.equalJSON(before["id"], id) else { return false }
+            }
+        }
+        return true
+    }
+
+    // Source is only read after validation and exact terminal receipt proof.
+    private func taskCompletionSource(_ command: PendingCommand) -> String? {
+        guard ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(command.method),
+              let args = try? taskCompletionJournalArguments(command), let encoded = args.first as? String,
+              let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else { return nil }
+        let request: [String: Any]?
+        if command.method == "taskCompletionUndoCommit" {
+            let prepared = envelope["prepared"] as? [String: Any]
+            let completed = prepared?["completion"] as? [String: Any]
+            request = completed?["request"] as? [String: Any]
+        } else { request = envelope["request"] as? [String: Any] }
+        return request.map(Self.isReferenceTaskCompletionRequest) == true ? "reference" : nil
     }
 
     // Three History-row actions share the guarded journal/receipt path. Public
@@ -6310,12 +6383,18 @@ private final class Engine: @unchecked Sendable {
             && request["source"] as? String == "reference" && request["status"] as? String == "next"
     }
 
+    private static func isReferenceTaskStatusRequest(_ request: [String: Any]) -> Bool {
+        Set(request.keys) == Set(["id", "requestId", "taskRevision", "status", "source"])
+            && request["source"] as? String == "reference"
+            && ["inbox", "next", "waiting", "someday", "reference"].contains(request["status"] as? String ?? "")
+    }
+
     // Callers use this only for commands whose core validation has already succeeded.
     private func historyTaskStatusSource(_ command: PendingCommand) -> String? {
         guard command.method == "doneTaskStatusCommit", let args = try? journalArguments(command),
               let text = args.first as? String,
               let envelope = try? NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
-              let request = envelope["request"] as? [String: Any], Self.isReferenceTaskNextRequest(request) else { return nil }
+              let request = envelope["request"] as? [String: Any], Self.isReferenceTaskStatusRequest(request) else { return nil }
         return "reference"
     }
 
@@ -6499,7 +6578,7 @@ private final class Engine: @unchecked Sendable {
         }
         if let prefix = Self.historyTaskWritePrefix(command.method), command.method == prefix + "Commit" {
             guard let request = envelope["request"] as? [String: Any], Set(result.keys) == Set(["id"]),
-                  result["id"] as? String == request["id"] as? String else { throw HostFailure("Malformed Done status acknowledgment") }
+                  (Self.isReferenceTaskStatusRequest(request) ? Self.equalJSON(result["id"], request["id"]) : result["id"] as? String == request["id"] as? String) else { throw HostFailure("Malformed Done status acknowledgment") }
         }
         if command.method == "taskDeleteCommit" {
             guard let request = envelope["request"] as? [String: Any],
@@ -6544,7 +6623,7 @@ private final class Engine: @unchecked Sendable {
         if command.method == "taskCompletionCommit" {
             guard let request = envelope["request"] as? [String: Any],
                   Set(result.keys) == Set(["id", "completion"]),
-                  result["id"] as? String == request["id"] as? String,
+                  (Self.isReferenceTaskCompletionRequest(request) ? Self.equalJSON(result["id"], request["id"]) : result["id"] as? String == request["id"] as? String),
                   let notice = result["completion"] as? [String: Any],
                   Set(notice.keys) == Set(["completedAt", "undoEnabled", "message", "undoLabel"]),
                   (notice["completedAt"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 100 }) == true,
@@ -6558,7 +6637,7 @@ private final class Engine: @unchecked Sendable {
             guard let original = prepared["completion"] as? [String: Any],
                   let completedRequest = original["request"] as? [String: Any],
                   Set(result.keys) == Set(["id"]),
-                  result["id"] as? String == completedRequest["id"] as? String else {
+                  (Self.isReferenceTaskCompletionRequest(completedRequest) ? Self.equalJSON(result["id"], completedRequest["id"]) : result["id"] as? String == completedRequest["id"] as? String) else {
                 throw HostFailure("Malformed completion Undo acknowledgment")
             }
         }
@@ -6778,17 +6857,19 @@ private final class Engine: @unchecked Sendable {
                   let request = envelope["request"] as? [String: Any],
                   let prepared = envelope["prepared"] as? [String: Any] else { throw HostFailure("Malformed History row journal") }
             let referenceNext = prefix == "doneTaskStatus" && Self.isReferenceTaskNextRequest(request)
-            let kind = referenceNext ? "referenceNext" : prefix == "doneTaskStatus" ? "doneStatus"
+            let referenceStatus = prefix == "doneTaskStatus" && !referenceNext && Self.isReferenceTaskStatusRequest(request)
+            let kind = referenceNext ? "referenceNext" : referenceStatus ? "referenceStatus" : prefix == "doneTaskStatus" ? "doneStatus"
                 : prefix == "archiveTaskCompletedAt" ? "archiveCompletedAt" : "doneCompletedAt"
-            let legacy = prefix == "doneTaskStatus" && !referenceNext && Self.isInteger(prepared["version"], equalTo: 1)
+            let legacy = prefix == "doneTaskStatus" && !referenceNext && !referenceStatus && Self.isInteger(prepared["version"], equalTo: 1)
                 && Set(prepared.keys) == Set(["version", "kind", "request", "checklist", "result"])
+            let rawField = referenceStatus ? "rawBeforeTask" : "rawBefore"
             let rawBound = Self.isInteger(prepared["version"], equalTo: 2)
-                && Set(prepared.keys) == Set(["version", "kind", "request", "rawBefore", "checklist", "result"])
-                && prepared["rawBefore"] is [String: Any]
+                && Set(prepared.keys) == Set(["version", "kind", "request", rawField, "checklist", "result"])
+                && prepared[rawField] is [String: Any]
             guard legacy || rawBound, prepared["kind"] as? String == kind,
                   Self.equalJSON(prepared["request"], request), prepared["checklist"] is [String: Any],
                   let result = prepared["result"] as? [String: Any], Set(result.keys) == Set(["id"]),
-                  referenceNext ? Self.equalJSON(result["id"], request["id"]) : result["id"] as? String == request["id"] as? String else {
+                  (referenceNext || referenceStatus) ? Self.equalJSON(result["id"], request["id"]) : result["id"] as? String == request["id"] as? String else {
                 throw HostFailure("Malformed History row journal")
             }
             let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
@@ -9180,9 +9261,11 @@ private final class Engine: @unchecked Sendable {
                   let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
                 throw HostFailure("INVALID_INPUT: History row needs a bounded request")
             }
-            let referenceNext = !options && !completionTime && Self.isReferenceTaskNextRequest(request)
-            let fields = options ? Set(["id", "taskRevision"])
-                : referenceNext ? Set(["id", "taskRevision", "status", "requestId", "source"])
+            let referenceOptions = options && !completionTime && request["source"] as? String == "reference"
+                && Set(request.keys) == Set(["id", "taskRevision", "source"])
+            let referenceStatus = !options && !completionTime && Self.isReferenceTaskStatusRequest(request)
+            let fields = options ? (referenceOptions ? Set(["id", "taskRevision", "source"]) : Set(["id", "taskRevision"]))
+                : referenceStatus ? Set(["id", "taskRevision", "status", "requestId", "source"])
                 : Set(["id", "taskRevision", completionTime ? "completedAt" : "status", "requestId"])
             guard Set(request.keys) == fields,
                   let taskID = request["id"] as? String, !taskID.isEmpty, taskID.utf16.count <= 500,
@@ -9226,7 +9309,7 @@ private final class Engine: @unchecked Sendable {
         if method == "taskCompletion" || method == "taskCompletionRetryOutcome" {
             guard let text = args.first as? String, text.utf8.count <= 4_096,
                   let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
-                  Set(request.keys) == Set(["id", "requestId", "taskRevision"]),
+                  (Set(request.keys) == Set(["id", "requestId", "taskRevision"]) || Self.isReferenceTaskCompletionRequest(request)),
                   let requestID = request["requestId"] as? String,
                   UUID(uuidString: requestID)?.uuidString.lowercased() == requestID,
                   let taskID = request["id"] as? String, !taskID.isEmpty, taskID.utf16.count <= 500,
@@ -10001,6 +10084,7 @@ private final class Engine: @unchecked Sendable {
         startupBoardResult = nil
         startupDoneTaskStatusResult = nil
         startupDoneTaskStatusSource = nil
+        startupTaskCompletionSource = nil
         startupDoneTaskCompletedAtResult = nil
         startupArchiveTaskCompletedAtResult = nil
         startupTrashTaskRestoreResult = nil

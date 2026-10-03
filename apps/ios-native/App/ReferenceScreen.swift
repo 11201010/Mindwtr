@@ -16,7 +16,9 @@ struct ReferenceScreen: View {
                           onClear: { Task { await model.editReferenceFilter(model.reference.object("filters").object("clearEdit")) } },
                           onCollapse: { id in Task { await model.toggleReferenceSection(id) } },
                           onDeleteTask: { id, revision in Task { await model.deleteReferenceTask(expectedID: id, expectedRevision: revision) } },
-                          onNextTask: { id, revision in Task { await model.moveReferenceTaskToNext(expectedID: id, expectedRevision: revision) } })
+                          onNextTask: { id, revision in Task { await model.moveReferenceTaskToNext(expectedID: id, expectedRevision: revision) } },
+                          onStatusOptions: { row in await model.referenceTaskStatusOptions(row) },
+                          onStatusChange: { row, status in Task { await model.changeReferenceTaskStatus(row, status: status) } })
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
@@ -67,8 +69,16 @@ struct StatusListContent: View {
     var selectedTaskIDs: [String] = []
     var onSelection: ((CoreObject) -> Void)? = nil
     var onSelectionStart: ((CoreObject) -> Void)? = nil
+    // One stable list owner serves repeated tag-group occurrences of a task.
+    @State private var referenceStatusRow: CoreObject = [:]
+    @State private var referenceStatusOptions: CoreObject = [:]
+    @State private var referenceStatusMenuPresented = false
+    @State private var referenceStatusOptionsTask: Task<Void, Never>?
+    @State private var referenceStatusGeneration = 0
+    @State private var referenceStatusOpeningContext = ""
+    @State private var ownsReferenceStatusMenu = false
 
-    var body: some View {
+    private var listContent: some View {
         VStack(spacing: 0) {
             if current { activeFilters }
             if prefix == "done" || prefix == "reference" {
@@ -89,6 +99,105 @@ struct StatusListContent: View {
                 }
                 .accessibilityIdentifier(prefix + "-scroll")
                 .refreshable { await model.refresh() }
+            }
+        }
+    }
+
+    @ViewBuilder var body: some View {
+        if prefix == "reference" {
+            listContent
+            .confirmationDialog(referenceStatusOptions.text("title"), isPresented: $referenceStatusMenuPresented, titleVisibility: .visible) {
+                ForEach(referenceStatusOptions.objects("options").indices, id: \.self) { index in
+                    let option = referenceStatusOptions.objects("options")[index]
+                    Button((option.flag("selected") ? "✓ " : "") + option.text("label")) {
+                        guard referenceStatusIsCurrent, enabled, !model.busy, !model.retryNeeded else {
+                            closeReferenceStatusMenu()
+                            return
+                        }
+                        let displayed = referenceStatusRow
+                        closeReferenceStatusMenu()
+                        onStatusChange?(displayed, option.text("status"))
+                    }
+                    .disabled(!referenceStatusIsCurrent || !enabled || model.busy || model.retryNeeded)
+                    .accessibilityAddTraits(option.flag("selected") ? .isSelected : [])
+                    .accessibilityIdentifier("reference-status-" + option.text("status"))
+                }
+                Button(model.label("common.cancel"), role: .cancel) { closeReferenceStatusMenu() }
+                    .accessibilityIdentifier("reference-status-cancel")
+            }
+            .onChange(of: referenceStatusMenuPresented) { visible in
+                if !visible && ownsReferenceStatusMenu { closeReferenceStatusMenu() }
+            }
+            .onChange(of: referenceStatusCurrentContext) { context in
+                if ownsReferenceStatusMenu, !context.utf8.elementsEqual(referenceStatusOpeningContext.utf8) {
+                    closeReferenceStatusMenu()
+                }
+            }
+            .onChange(of: model.busy) { busy in
+                if busy && ownsReferenceStatusMenu { closeReferenceStatusMenu() }
+            }
+            .onDisappear { closeReferenceStatusMenu() }
+        } else { listContent }
+    }
+
+    private var referenceStatusCurrentContext: String {
+        guard ownsReferenceStatusMenu else { return "" }
+        return model.referenceTaskStatusContext(referenceStatusRow) ?? ""
+    }
+
+    private var referenceStatusIsCurrent: Bool {
+        ownsReferenceStatusMenu && !referenceStatusOpeningContext.isEmpty
+            && referenceStatusCurrentContext.utf8.elementsEqual(referenceStatusOpeningContext.utf8)
+    }
+
+    private func canOfferReferenceStatus(_ row: CoreObject) -> Bool {
+        prefix == "reference" && onStatusOptions != nil && onStatusChange != nil && !selectionActive
+            && !row.flag("readOnly") && row.text("status") == "reference"
+            && !row.text("id").isEmpty && !row.text("taskRevision").isEmpty
+    }
+
+    private func openReferenceStatusMenu(_ displayed: CoreObject) {
+        guard canOfferReferenceStatus(displayed), enabled, !model.busy, !model.retryNeeded,
+              !model.taskStatusMenuPresented, let onStatusOptions,
+              let context = model.referenceTaskStatusContext(displayed) else { return }
+        referenceStatusGeneration += 1
+        let generation = referenceStatusGeneration
+        referenceStatusRow = displayed
+        referenceStatusOptions = [:]
+        referenceStatusOpeningContext = context
+        ownsReferenceStatusMenu = true
+        model.taskStatusMenuPresented = true
+        referenceStatusOptionsTask = Task {
+            defer {
+                if referenceStatusGeneration == generation { referenceStatusOptionsTask = nil }
+            }
+            let options = await onStatusOptions(displayed)
+            guard !Task.isCancelled, referenceStatusGeneration == generation else { return }
+            guard referenceStatusIsCurrent, !model.busy else { closeReferenceStatusMenu(); return }
+            guard let options else { closeReferenceStatusMenu(); return }
+            referenceStatusOptions = options
+            referenceStatusMenuPresented = true
+        }
+    }
+
+    private func closeReferenceStatusMenu() {
+        let destination = ownsReferenceStatusMenu && model.selectedSurface != .reference
+            ? model.selectedSurface : nil
+        referenceStatusGeneration += 1
+        referenceStatusOptionsTask?.cancel()
+        referenceStatusOptionsTask = nil
+        referenceStatusMenuPresented = false
+        referenceStatusOptions = [:]
+        referenceStatusRow = [:]
+        referenceStatusOpeningContext = ""
+        if ownsReferenceStatusMenu { model.taskStatusMenuPresented = false }
+        ownsReferenceStatusMenu = false
+        if let destination {
+            // Navigation may have reached refresh before this owner's menu gate
+            // was released. Load that destination once after cancelling the read.
+            Task {
+                guard model.selectedSurface == destination else { return }
+                await model.refresh()
             }
         }
     }
@@ -115,7 +224,7 @@ struct StatusListContent: View {
                                     .font(.system(size: 22)).foregroundStyle(palette.tint)
                                     .frame(width: 44, height: 44).contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain).disabled(!enabled)
+                            .buttonStyle(.plain).disabled(!enabled || ownsReferenceStatusMenu)
                             .accessibilityLabel(row.text("title"))
                             .accessibilityAddTraits(selectedTaskIDs.contains(row.text("id")) ? .isSelected : [])
                             .accessibilityIdentifier("done-select-" + (item.text("groupId").isEmpty ? "none" : item.text("groupId")) + "-" + row.text("id"))
@@ -131,7 +240,7 @@ struct StatusListContent: View {
                         .id(entry.id)
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             let swipe = row.object("meta").object("swipe")
-                            if let onNextTask, enabled, !selectionActive, !row.flag("readOnly"),
+                            if let onNextTask, enabled, !ownsReferenceStatusMenu, !selectionActive, !row.flag("readOnly"),
                                swipe.text("target") == "next", !swipe.text("label").isEmpty,
                                !row.text("id").isEmpty, !row.text("taskRevision").isEmpty {
                                 Button {
@@ -142,9 +251,16 @@ struct StatusListContent: View {
                                 .tint(palette.tint)
                                 .accessibilityIdentifier(prefix + "-next-" + row.text("id"))
                             }
+                            if canOfferReferenceStatus(row), enabled, !ownsReferenceStatusMenu {
+                                Button { openReferenceStatusMenu(row) } label: {
+                                    Label(model.label("taskStatus.changeStatus"), systemImage: "ellipsis")
+                                }
+                                .tint(palette.secondary)
+                                .accessibilityIdentifier("reference-change-status-" + row.text("id"))
+                            }
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            if let onDeleteTask, enabled, !selectionActive, !row.flag("readOnly"),
+                            if let onDeleteTask, enabled, !ownsReferenceStatusMenu, !selectionActive, !row.flag("readOnly"),
                                !row.text("id").isEmpty, !row.text("taskRevision").isEmpty {
                                 Button {
                                     onDeleteTask(row.text("id"), row.text("taskRevision"))
@@ -155,6 +271,12 @@ struct StatusListContent: View {
                                 .accessibilityIdentifier(prefix + "-delete-" + row.text("id"))
                             }
                         }
+                        .accessibilityActions {
+                            if canOfferReferenceStatus(row) {
+                                Button(model.label("taskStatus.changeStatus")) { openReferenceStatusMenu(row) }
+                                    .disabled(!enabled || model.busy || model.retryNeeded)
+                            }
+                        }
                 } else if item.text("type") == "section" { section(item) }
             }
             if items.count < data.number("total") {
@@ -162,7 +284,7 @@ struct StatusListContent: View {
                     Text(model.label("common.more")).rnFont(12, .semibold).padding(.horizontal, 12).frame(minHeight: 44)
                         .background(palette.filter, in: Capsule()).contentShape(Capsule())
                 }
-                .buttonStyle(.plain).disabled(!enabled).accessibilityIdentifier(prefix + "-more")
+                .buttonStyle(.plain).disabled(!enabled || ownsReferenceStatusMenu).accessibilityIdentifier(prefix + "-more")
             }
             if items.isEmpty { emptyState }
         }
@@ -182,7 +304,7 @@ struct StatusListContent: View {
                     .foregroundStyle(palette.tint).padding(.horizontal, 12).frame(minHeight: 44)
                     .background(palette.filter, in: Capsule()).overlay(Capsule().stroke(palette.tint, lineWidth: 1)).contentShape(Capsule())
                 }
-                .buttonStyle(.plain).disabled(!enabled).accessibilityAddTraits(.isSelected)
+                .buttonStyle(.plain).disabled(!enabled || ownsReferenceStatusMenu).accessibilityAddTraits(.isSelected)
                 .accessibilityIdentifier(prefix + "-active-filters")
                 Spacer(minLength: 0)
             }
@@ -203,7 +325,7 @@ struct StatusListContent: View {
                             .foregroundStyle(tone).padding(.horizontal, 12).frame(minHeight: 44)
                             .background(palette.filter, in: Capsule()).overlay(Capsule().stroke(tone, lineWidth: 1)).contentShape(Capsule())
                         }
-                        .buttonStyle(.plain).disabled(!enabled)
+                        .buttonStyle(.plain).disabled(!enabled || ownsReferenceStatusMenu)
                         .accessibilityLabel(model.label("filters.remove") + ": " + chip.text("label"))
                         .accessibilityValue(chip.flag("excluded") ? model.label("filters.excluded") : "")
                         .accessibilityIdentifier(prefix + "-chip-" + chip.text("id"))
@@ -213,7 +335,7 @@ struct StatusListContent: View {
                             .padding(.horizontal, 12).frame(minHeight: 44).background(palette.filter, in: Capsule())
                             .overlay(Capsule().stroke(palette.border, lineWidth: 1)).contentShape(Capsule())
                     }
-                    .buttonStyle(.plain).disabled(!enabled).accessibilityIdentifier(prefix + "-clear-filters")
+                    .buttonStyle(.plain).disabled(!enabled || ownsReferenceStatusMenu).accessibilityIdentifier(prefix + "-clear-filters")
                 }
                 .padding(.horizontal, 16).padding(.vertical, 8)
             }
@@ -225,7 +347,7 @@ struct StatusListContent: View {
     @ViewBuilder private func section(_ item: CoreObject) -> some View {
         if item.flag("collapsible") {
             Button { onCollapse(item.text("id")) } label: { sectionLabel(item) }
-                .buttonStyle(.plain).disabled(!enabled)
+                .buttonStyle(.plain).disabled(!enabled || ownsReferenceStatusMenu)
                 .accessibilityValue(model.label(item.flag("collapsed") ? "markdown.expand" : "markdown.collapse"))
                 .accessibilityIdentifier(prefix + "-section-" + item.text("id"))
         } else { sectionLabel(item).accessibilityAddTraits(.isHeader) }
@@ -253,7 +375,7 @@ struct StatusListContent: View {
                 Button(empty.text("actionLabel")) {
                     onClear()
                 }
-                .rnFont(14, .semibold).frame(minHeight: 44).disabled(!enabled)
+                .rnFont(14, .semibold).frame(minHeight: 44).disabled(!enabled || ownsReferenceStatusMenu)
                 .accessibilityIdentifier(prefix + "-empty-clear")
             }
         }

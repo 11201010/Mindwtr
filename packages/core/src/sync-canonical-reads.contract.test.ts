@@ -830,9 +830,10 @@ describe('canonical local reads contract', () => {
         const runMutation = async (
             label: string,
             mutate: (control: MutationControl) => Promise<unknown>,
+            fixture: AppData = settled,
         ): Promise<{ storeFields: string[]; readFields: string[] }> => {
             let saved: AppData | null = null;
-            let durable = structuredClone(settled);
+            let durable = structuredClone(fixture);
             let verifyPersisted: ((written: AppData) => void) | null = null;
             resetForTests();
             // resetForTests only clears module timers (store.ts); the zustand
@@ -2103,6 +2104,50 @@ describe('canonical local reads contract', () => {
         });
         if (referenceNext.storeFields.length > 0 || referenceNext.readFields.length > 0) {
             notCanonical.push({ action: 'native prepared Reference leading Next', ...referenceNext });
+        }
+        for (const operation of ['status', 'completion', 'undo'] as const) {
+            const name = `native prepared Reference menu ${operation}`;
+            // Reference status edits clear scheduling/recurrence. Normal load
+            // still accepts a saved legacy Reference row that carries them.
+            const fixture = convergeThroughStorage({ ...settled, tasks: settled.tasks.map((row) => row.id === 'task-66'
+                ? { ...row, status: 'reference', isFocusedToday: false, projectId: undefined, sectionId: undefined,
+                    ...(operation === 'status' ? {} : { recurrence: { rule: 'daily', strategy: 'strict', seriesId: row.id },
+                        dueDate: '2026-09-01', showFutureRecurrence: true }) } : row) });
+            const referenceMenu = await runMutation(name, async (control) => {
+                const host = await nativeHost(control);
+                const source = useTaskStore.getState()._tasksById.get('task-66');
+                if (!source || source.status !== 'reference') throw new Error('Reference menu fixture must be writable');
+                const request = { requestId: '2f0e9b35-afcd-4710-8847-9c4219ad0188', source: 'reference' as const,
+                    id: source.id, taskRevision: taskRevisionOf(source) };
+                const completion = operation !== 'status' ? { request,
+                    prepared: nativeValue(await host.prepareTaskCompletion(request)).prepared } : null;
+                const statusRequest = { ...request, status: 'waiting' as const };
+                const status = operation === 'status' ? nativeValue(await host.prepareDoneTaskStatus(statusRequest)) : null;
+                if (status && status.kind !== 'prepared') throw new Error('Reference menu move must prepare');
+                if (operation === 'undo') {
+                    nativeValue(await host.commitPreparedTaskCompletion(completion!)); await flushPendingSave();
+                }
+                const undoRequest = { requestId: '2f0e9b35-afcd-4710-8847-9c4219ad0189', completionRequestId: request.requestId };
+                const undo = operation === 'undo' ? nativeValue(await host.prepareTaskCompletionUndo({ request: undoRequest, completion: completion! })).prepared : null;
+                const effect = undo ? undo.effect : completion ? completion.prepared.checklist.effect : status!.prepared.checklist.effect;
+                expect(effect.tasks.length).toBe(operation === 'status' ? 1 : 2);
+                expect(effect.projects).toEqual([]); expect(effect.sections).toEqual([]);
+                const before = nativeValue(await readAreaDurableData(false, true)).authority.snapshot;
+                const affected = new Map(effect.tasks.map((row) => [row.after.id, row.after]));
+                control.resetBaseline();
+                control.expectPersisted((written) => {
+                    expect(written.tasks).toEqual([...before.tasks.map((row) => affected.get(row.id) ?? row),
+                        ...effect.tasks.filter((row) => row.before === null).map((row) => row.after)]);
+                    expect(written.projects).toEqual(before.projects); expect(written.sections).toEqual(before.sections);
+                    expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                if (undo) expect(nativeValue(await host.commitPreparedTaskCompletionUndo({ request: undoRequest, prepared: undo }))).toEqual(undo.result);
+                else if (completion) expect(nativeValue(await host.commitPreparedTaskCompletion(completion))).toEqual(completion.prepared.result);
+                else expect(nativeValue(await host.commitPreparedDoneTaskStatus({ request: statusRequest, prepared: status!.prepared }))).toEqual({ id: source.id });
+                expect(useTaskStore.getState()._tasksById.get(source.id)).toEqual(affected.get(source.id));
+            }, fixture);
+            if (referenceMenu.storeFields.length > 0 || referenceMenu.readFields.length > 0) notCanonical.push({ action: name, ...referenceMenu });
         }
         const doneBulkMove = await runMutation('native prepared Done bulk Move status', async (control) => {
             // Normal load archives the fixture's historical completions. Make

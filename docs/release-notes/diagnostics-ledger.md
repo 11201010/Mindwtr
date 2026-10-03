@@ -21,6 +21,10 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-reference-status`** — `packages/core/src/native-host-contract-task-checklist.ts`. `outcome=moved` confirms a Reference status change reached durable storage with its exact receipt. Selecting the current status, failed saves and unproven retries do not claim a write. No task text, identifiers, status choices, dates, container details or URLs are logged.
+
+- **`v1.3.4/ios-reference-completion`** — `packages/core/src/native-host-contract-task-checklist.ts`. `outcome=completed` or `outcome=undone` confirms a Reference completion or its Undo reached durable storage with its exact receipt, including any recurring child change in the same save. Failed saves and unproven retries do not claim success. No task text, identifiers, dates, recurrence details or URLs are logged.
+
 - **`v1.3.4/ios-reference-next`** — `packages/core/src/native-host-contract-task-checklist.ts`. `outcome=moved` confirms a Reference row’s Next action reached durable storage with its exact receipt. A rejected Focus limit, failed save or unproven retry does not claim success. No task text, identifiers, dates, container details or URLs are logged.
 
 - **`v1.3.4/ios-reference-task-trash`** — `packages/core/src/native-host-contract-board.ts`. `outcome=deleted` or `outcome=restored` confirms a Reference row Delete or Undo reached durable storage with its exact receipt. Failed saves and unproven retries do not claim success. No task text, identifiers, dates, attachment details or URLs are logged.
