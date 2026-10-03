@@ -280,7 +280,14 @@ describe('guarded Archive bulk Restore', () => {
                     });
                 }
             }
-            expect(differences).toEqual([{ table: 'tasks', row: 'unrelated', field: 'pushCount', rn: 0, native: null }]);
+            expect(differences).toEqual([
+                { table: 'tasks', row: 'unrelated', field: 'pushCount', rn: 0, native: null },
+                {
+                    table: 'tasks', row: 'unrelated', field: 'attachments',
+                    rn: JSON.stringify([{ id: 'legacy-link', kind: 'link', title: 'Fixture', uri: 'https://example.com', createdAt: NOW, updatedAt: '' }]),
+                    native: JSON.stringify([{ id: 'legacy-link', kind: 'link', title: 'Fixture', uri: 'https://example.com', createdAt: NOW }]),
+                },
+            ]);
             await native.restart();
             expect(rows()).toEqual(expected!);
             expect(await native.receiptIds()).toEqual([UUID]);
@@ -368,10 +375,7 @@ describe('guarded Archive bulk Restore', () => {
             expect(value(await host.commitPreparedArchivedTasksRestore(command))).toEqual({ count: 2, status: 'inbox' });
             const after = await raw(sqlite);
             expect((after.tasks as Array<{ id: string }>).find((row) => row.id === 'unrelated'))
-                .toEqual({ ...(before.tasks as Array<{ id: string }>).find((row) => row.id === 'unrelated'),
-                    // The established rawTask codec inserts this optional empty
-                    // attachment timestamp; every other SQL cell remains exact.
-                    attachments: JSON.stringify([{ ...legacyAttachment, updatedAt: '' }]) });
+                .toEqual((before.tasks as Array<{ id: string }>).find((row) => row.id === 'unrelated'));
             expect(await sqlite.receiptIds()).toEqual([UUID]);
             await sqlite.restart(undefined, { recoveryLoad: true });
             expect(value(methods().archivedTasksRestoreOutcome(command))).toEqual({ count: 2, status: 'inbox' });
