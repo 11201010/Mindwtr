@@ -683,6 +683,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringArchivedTasksRestore = pending?.method == "archivedTasksRestoreCommit"
         let recoveringArchivedTasksDelete = pending?.method == "archivedTasksDeleteCommit"
         let recoveringArchivedTasksDeleteUndo = pending?.method == "archivedTasksDeleteUndoCommit"
+        let recoveringArchivedTasksDeleteCommand = recoveringArchivedTasksDelete || recoveringArchivedTasksDeleteUndo ? pending : nil
         let recoveringArchivedTaskRestoreCommand = recoveringArchivedTaskRestore ? pending : nil
         let recoveringTaskCompletion = pending?.method == "taskCompletionCommit"
         let recoveringDoneTaskStatus = pending?.method == "doneTaskStatusCommit"
@@ -937,6 +938,11 @@ private final class Engine: @unchecked Sendable {
                 : startupSomedaySectionMoveResult != nil ? "somedaySectionMoveCommit"
                 : startupSomedaySectionUndoResult != nil ? "somedaySectionMoveUndoCommit" : "focusGroupWrite")),
                               "result": try NativeJSON.jsonObject(with: Data(recovered.utf8))]
+        if let command = recoveringArchivedTasksDeleteCommand, archiveMutationRecoveryMethod != nil,
+           archivedTasksDeleteSource(command) == "done", var recovery = window["recovery"] as? [String: Any] {
+            recovery["source"] = "done"
+            window["recovery"] = recovery
+        }
         let encoded = String(decoding: try JSONSerialization.data(withJSONObject: window, options: [.sortedKeys]), as: UTF8.self)
         startupBoardResult = nil
         startupArchivedTaskRestoreResult = nil
@@ -3797,11 +3803,13 @@ private final class Engine: @unchecked Sendable {
             NSLog("Native iOS archived Task restored releaseCheck=v1.3.4/ios-archive-task-restore outcome=confirmed")
         }
         if let prefix = Self.archivedTasksDeletePrefix(command.method), case .success = terminal {
+            let done = archivedTasksDeleteSource(command) == "done"
             #if DEBUG
-            faults?.commandDiagnostic?(prefix)
+            faults?.commandDiagnostic?(done ? (prefix == "archivedTasksDelete" ? "doneTasksDelete" : "doneTasksDeleteUndo") : prefix)
             #endif
             let outcome = prefix == "archivedTasksDelete" ? "deleted" : "restored"
-            NSLog("Native iOS Archive bulk Trash confirmed releaseCheck=v1.3.4/ios-archive-bulk-trash outcome=\(outcome)")
+            if done { NSLog("Native iOS Done bulk Trash confirmed releaseCheck=v1.3.4/ios-done-bulk-trash outcome=\(outcome)") }
+            else { NSLog("Native iOS Archive bulk Trash confirmed releaseCheck=v1.3.4/ios-archive-bulk-trash outcome=\(outcome)") }
         }
         if command.method == "archivedTasksRestoreCommit", case .success = terminal {
 #if DEBUG
@@ -5850,6 +5858,14 @@ private final class Engine: @unchecked Sendable {
         }
     }
 
+    private func archivedTasksDeleteSource(_ command: PendingCommand) -> String {
+        guard let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+              let encoded = args.first, let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else { return "archive" }
+        let deletion = command.method == "archivedTasksDeleteUndoCommit"
+            ? (envelope["prepared"] as? [String: Any])?["delete"] as? [String: Any] : envelope
+        return (deletion?["request"] as? [String: Any])?["source"] as? String == "done" ? "done" : "archive"
+    }
+
     private func archivedTasksDeleteJournalArguments(_ command: PendingCommand) throws -> [Any] {
         guard let prefix = Self.archivedTasksDeletePrefix(command.method), command.method == prefix + "Commit", command.editorDraft == nil,
               command.argumentsJSON.utf8.count <= 12_000_000,
@@ -5867,7 +5883,9 @@ private final class Engine: @unchecked Sendable {
         let keys: Set<String> = ["version", "request", "before", "after", "deviceIdBefore", "deviceIdToInitialize", "updateAt", "result"]
         let ids: [String]
         if prefix == "archivedTasksDelete" {
-            guard Set(prepared.keys) == keys, let selected = request["taskIds"] as? [String] else {
+            let done = request["source"] as? String == "done"
+            guard Set(prepared.keys) == (done ? keys.union(["projects"]) : keys),
+                  !done || prepared["projects"] is [[String: Any]], let selected = request["taskIds"] as? [String] else {
                 throw HostFailure("Malformed Archive bulk Delete structure")
             }
             ids = selected
@@ -9058,7 +9076,9 @@ private final class Engine: @unchecked Sendable {
         if ["archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
-                  Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions"]),
+                  (Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions"])
+                    || (method.hasPrefix("archivedTasksDelete") && request["source"] as? String == "done"
+                        && Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "source"]))),
                   let requestID = request["requestId"] as? String, UUID(uuidString: requestID)?.uuidString.lowercased() == requestID,
                   let ids = request["taskIds"] as? [String], !ids.isEmpty, ids.count <= 10_000,
                   Set(ids.map { Data($0.utf8) }).count == ids.count, ids.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 500 }),
@@ -9332,10 +9352,40 @@ private final class Engine: @unchecked Sendable {
 
     private func validateMenuAndDraftArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
         if method == "menuRead" {
-            guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
+            guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "bulk", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
                   let json = args[1] as? String,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
+            }
+            if name == "bulk" {
+                guard json.utf8.count <= 2_000_000, input["list"] as? String == "done",
+                      Set(input.keys).isSubset(of: ["list", "params", "taskIds", "anchorId", "selectionEdit", "rangeSelectMode", "busy"]),
+                      input["rangeSelectMode"] == nil || Self.isBoolean(input["rangeSelectMode"]),
+                      input["busy"] == nil || Self.isBoolean(input["busy"]),
+                      input["anchorId"] == nil || input["anchorId"] is NSNull
+                        || (input["anchorId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true else {
+                    throw HostFailure("INVALID_INPUT: Unsupported native Done selection read")
+                }
+                if let params = input["params"] {
+                    guard let value = params as? [String: Any],
+                          Set(value.keys).isSubset(of: ["groupBy", "sortBy", "collapsedGroupIds", "filters"]) else {
+                        throw HostFailure("INVALID_INPUT: Done selection requires the list's own view params")
+                    }
+                }
+                if let selected = input["taskIds"] {
+                    guard let ids = selected as? [String], ids.count <= 10_000,
+                          Set(ids.map { Data($0.utf8) }).count == ids.count,
+                          ids.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 500 }) else {
+                        throw HostFailure("INVALID_INPUT: Done selection requires bounded unique task IDs")
+                    }
+                }
+                if let selection = input["selectionEdit"] {
+                    guard let edit = selection as? [String: Any], Set(edit.keys).isSubset(of: ["taskId", "range"]),
+                          let id = edit["taskId"] as? String, !id.isEmpty, id.utf16.count <= 200,
+                          edit["range"] == nil || Self.isBoolean(edit["range"]) else {
+                        throw HostFailure("INVALID_INPUT: Done selection requires a bounded row and range flag")
+                    }
+                }
             }
             if name == "savedSearch" {
                 guard json.utf8.count <= 2_000_000,

@@ -1049,6 +1049,8 @@ struct TaskCard: View {
     var onStatusOptions: ((CoreObject) async -> CoreObject?)? = nil
     var onStatusChange: ((CoreObject, String) -> Void)? = nil
     var onCompletedAt: ((CoreObject) -> Void)? = nil
+    var onSelection: ((CoreObject) -> Void)? = nil
+    var onSelectionStart: ((CoreObject) -> Void)? = nil
     @State private var statusMenu = false
     @State private var statusRow: CoreObject = [:]
     @State private var statusOptions: CoreObject = [:]
@@ -1177,6 +1179,9 @@ struct TaskCard: View {
         .environment(\.layoutDirection, meta.text("textDirection") == "rtl" ? .rightToLeft : .leftToRight)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(meta.text("accessibilityLabel"))
+        .highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+            onSelectionStart?(row)
+        }, including: onSelectionStart == nil ? .none : .all)
         .confirmationDialog(onStatusOptions == nil ? meta.text("statusLabel") : statusOptions.text("title"),
                             isPresented: $statusMenu, titleVisibility: .visible) {
             if let onStatusChange {
@@ -1212,6 +1217,7 @@ struct TaskCard: View {
     }
 
     private func openTask() {
+        if let onSelection { onSelection(row); return }
         beforeAction?()
         Task { await model.openTask(row.text("id")) }
     }

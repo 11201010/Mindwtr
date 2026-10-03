@@ -6,7 +6,9 @@ import type { NativeBulkAction } from './native-host-contract-bulk-actions';
 import { createBulkOrganizeArea, createBulkOrganizeProject } from './bulk-organize-create';
 import { paramsKey } from './native-host-contract-menu-views';
 import { revisionOf, taskRevisionOf, taskRevisionsOf, setNativeReplayTokens } from './native-request-receipts';
-import { replayAfterRestart } from './screen-parity.replay';
+import { openSqliteHost, replayAfterRestart } from './screen-parity.replay';
+import { updateRangeSelection } from './range-selection';
+import type { Task } from './types';
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
 import {
     BULK_ORGANIZE_KEEP,
@@ -38,6 +40,57 @@ const fixture = loadBulkActionsFixture();
 const ORGANIZE: Partial<BulkOrganizeDraft> = {
     status: 'waiting', delegateWho: 'Alice', projectChoice: 'p-launch', startDate: '2026-09-27', contexts: '@desk', tags: 'q4',
 };
+
+describe('Task182 readonly Done selection', () => {
+    afterEach(async () => { await flushPendingSave(); resetForTests(); vi.useRealTimers(); });
+    it('uses shared range selection across pages, skips read-only parents and prunes filters/folds without adding incoming rows', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-02T13:00:00.000Z'));
+        const at = '2026-10-02T12:00:00.000Z';
+        const tasks: Task[] = Array.from({ length: 140 }, (_, index) => ({ id: `done-${String(index).padStart(3, '0')}`,
+            title: `Done ${String(index).padStart(3, '0')}`, status: 'done', completedAt: at, createdAt: at, updatedAt: at,
+            tags: [index < 70 ? 'first' : 'second'], contexts: [], rev: 1,
+            ...(index === 20 ? { projectId: 'archived-parent' } : index === 30 ? { projectId: 'deleted-parent' } : {}) }));
+        const projects = ['archived-parent', 'deleted-parent'].map((id) => ({ id, title: 'Parent', status: id === 'archived-parent' ? 'archived' as const : 'active' as const,
+            color: '#94a3b8', order: 0, tagIds: [], createdAt: at, updatedAt: at, rev: 1 }));
+        const sqlite = await openSqliteHost({ tasks, projects, settings: { deviceId: 'selection-device', autoArchiveDays: 0 } });
+        try {
+            await sqlite.client().run('UPDATE projects SET deletedAt = ? WHERE id = ?', [at, 'deleted-parent']);
+            await sqlite.restart(undefined, { recoveryLoad: true }); const host = sqlite.host;
+            const baseline = await sqlite.sql('SELECT rowid, * FROM tasks ORDER BY rowid');
+            const params = { sortBy: 'title' };
+            const firstPage = value(host.getDoneView({ ...params, sortBy: 'title', offset: 0, limit: 100 }));
+            const secondPage = value(host.getDoneView({ ...params, sortBy: 'title', offset: 100, limit: 100, revision: firstPage.revision }));
+            expect(secondPage.items.some((item) => item.type === 'task' && item.row.id === 'done-130')).toBe(true);
+            const visibleIds = [...firstPage.items, ...secondPage.items].flatMap((item) => item.type === 'task' && !item.row.readOnly ? [item.row.id] : []);
+            const first = value(host.getBulkActions({ list: 'done', params, selectionEdit: { taskId: 'done-005' } }));
+            const range = value(host.getBulkActions({ list: 'done', params, taskIds: first.selectedIds, anchorId: first.anchorId,
+                selectionEdit: { taskId: 'done-130', range: true } }));
+            const expected = updateRangeSelection({ anchorId: first.anchorId, range: true, selectedIds: new Set(first.selectedIds), targetId: 'done-130', visibleIds });
+            expect(range.selectedIds).toEqual([...expected.selectedIds]); expect(range.anchorId).toBe(expected.anchorId);
+            expect(range.selectedIds).not.toContain('done-020'); expect(range.selectedIds).not.toContain('done-030');
+            expect(range.taskRevisions).toEqual(Object.fromEntries(range.selectedIds.map((id) => [id, taskRevisionOf(useTaskStore.getState()._tasksById.get(id)!)])));
+            expect([...firstPage.items, ...secondPage.items].some((item) => item.type === 'task' && item.row.id === 'done-020')).toBe(false);
+            expect(host.getBulkActions({ list: 'done', params, selectionEdit: { taskId: 'done-020' } })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect([...firstPage.items, ...secondPage.items].find((item) => item.type === 'task' && item.row.id === 'done-030'))
+                .toMatchObject({ type: 'task', row: { readOnly: true } });
+            expect(value(host.getBulkActions({ list: 'done', params, selectionEdit: { taskId: 'done-030' } })))
+                .toMatchObject({ selectedIds: [], anchorId: null });
+            expect(value(host.getBulkActions({ list: 'done', params, taskIds: ['done-020', 'done-030'] })).selectedIds).toEqual([]);
+            const filtered = value(host.getBulkActions({ list: 'done', params: { ...params, filters: { searchQuery: 'Done 13' } }, taskIds: range.selectedIds }));
+            expect(filtered.selectedIds).toEqual(['done-130']);
+            const folded = value(host.getBulkActions({ list: 'done', params: { ...params, groupBy: 'tag', collapsedGroupIds: ['tag:first'] }, taskIds: range.selectedIds }));
+            expect(folded.selectedIds).toEqual(range.selectedIds.filter((id) => Number(id.slice(-3)) >= 70));
+            const incoming = { ...tasks[0], id: 'done-new', title: 'Done new' };
+            await useTaskStore.getState().addTask(incoming.title, 'done'); await flushPendingSave();
+            const unchanged = value(host.getBulkActions({ list: 'done', params, taskIds: folded.selectedIds }));
+            expect(unchanged.selectedIds).toEqual(folded.selectedIds); expect(unchanged.selectedCount).toBe(folded.selectedIds.length);
+            expect(await sqlite.receiptIds()).toEqual([]);
+            // Selection reads never wrote the initial rows. The explicit incoming
+            // task creation above is checked separately by the store action.
+            expect((await sqlite.sql<{ id: string }>('SELECT rowid, * FROM tasks ORDER BY rowid')).filter((row) => tasks.some((task) => task.id === row.id))).toEqual(baseline);
+        } finally { await sqlite.close(); }
+    });
+});
 
 describe('native host contract: selection mode', () => {
     const originalTz = process.env.TZ;

@@ -46,6 +46,7 @@ struct HistoryScreen: View {
                 .overlay(alignment: .bottom) { palette.border.frame(height: 0.5) }
                 if model.historyArchived { archiveContent }
                 else {
+                    if model.historyDoneSelectionMode { doneBulkDeleteBar }
                     StatusListContent(model: model, palette: palette, data: model.history, prefix: "done",
                                       current: model.historyCurrent, enabled: model.historyActionsEnabled,
                                       error: model.historyError, disableStatus: false,
@@ -64,7 +65,10 @@ struct HistoryScreen: View {
                                           completedAtError = false
                                           Task { await model.changeDoneTaskStatus(row, status: status) }
                                       }, onCompletedAt: { openCompletedAt($0) },
-                                      errorIdentifier: completedAtError ? "done-completed-at-error" : nil)
+                                      errorIdentifier: completedAtError ? "done-completed-at-error" : nil,
+                                      selectionActive: model.historyDoneSelectionMode, selectedTaskIDs: model.historyDoneSelectedIDs,
+                                      onSelection: { row in Task { await model.selectDoneTask(row) } },
+                                      onSelectionStart: { row in Task { await model.selectDoneTask(row) } })
                 }
             }
             .accessibilityHidden(!completedAtOptions.isEmpty)
@@ -107,11 +111,11 @@ struct HistoryScreen: View {
             Button(model.archiveBulkDeleteConfirmation.text("cancelLabel"), role: .cancel) {
                 model.cancelArchiveBulkDeleteConfirmation()
             }
-            .accessibilityIdentifier("archive-bulk-delete-cancel")
+            .accessibilityIdentifier(model.historyArchived ? "archive-bulk-delete-cancel" : "done-bulk-delete-cancel")
             Button(model.archiveBulkDeleteConfirmation.text("confirmLabel"), role: .destructive) {
                 Task { await model.confirmDeleteSelectedArchiveTasks() }
             }
-            .accessibilityIdentifier("archive-bulk-delete-confirm")
+            .accessibilityIdentifier(model.historyArchived ? "archive-bulk-delete-confirm" : "done-bulk-delete-confirm")
         } message: {
             Text(model.archiveBulkDeleteConfirmation.text("message"))
         }
@@ -120,15 +124,18 @@ struct HistoryScreen: View {
             archiveBulkDeletePresented = false
             model.cancelArchiveBulkDeleteConfirmation()
             model.leaveArchiveTaskSelection()
+            model.leaveDoneTaskSelection()
         }
         .onChange(of: model.archiveBulkDeleteConfirmation.isEmpty) { if $0 { archiveBulkDeletePresented = false } }
         .onChange(of: model.historyArchived) { _ in closeCompletedAt() }
         .onChange(of: model.history.text("segment")) { _ in closeCompletedAt() }
         .onChange(of: model.historyArchiveSelectionMode) { if $0 { closeCompletedAt() } }
+        .onChange(of: model.historyDoneSelectionMode) { if $0 { closeCompletedAt() } }
     }
 
     private func openCompletedAt(_ displayed: CoreObject, archived: Bool = false, group: String = "none") {
-        guard model.historyActionsEnabled, model.historyArchived == archived, !archiveSelectionActive, !model.taskStatusMenuPresented,
+        guard model.historyActionsEnabled, model.historyArchived == archived, !archiveSelectionActive,
+              !model.historyDoneSelectionMode, !model.taskStatusMenuPresented,
               completedAtOptionsTask == nil else { return }
         searchFocused = false
         completedAtError = false
@@ -301,6 +308,42 @@ struct HistoryScreen: View {
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await model.refresh() }
         }
+    }
+
+    private var doneBulkDeleteBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(model.historyDoneBulk.object("bar").text("countLabel")).rnFont(13).foregroundStyle(palette.secondary)
+                .accessibilityIdentifier("done-bulk-count")
+            if dynamicTypeSize.isAccessibilitySize { VStack(spacing: 8) { doneBulkControls } }
+            else { HStack(spacing: 8) { doneBulkControls } }
+        }
+        .padding(12).background(palette.card, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+        .padding(.horizontal, 16).padding(.vertical, 8)
+    }
+
+    @ViewBuilder private var doneBulkControls: some View {
+        Button { model.leaveDoneTaskSelection() } label: {
+            Text(model.historyDoneBulk.object("bar").object("exit").text("accessibilityLabel"))
+                .rnFont(13, .semibold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!model.historyActionsEnabled).accessibilityIdentifier("done-bulk-exit")
+        Button { Task { await model.toggleDoneTaskRange() } } label: {
+            Text(model.historyDoneBulk.object("bar").object("range").text("label"))
+                .rnFont(13, .semibold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!model.historyDoneBulkDeleteEnabled)
+        .accessibilityAddTraits(model.historyDoneBulk.object("bar").object("range").flag("active") ? .isSelected : [])
+        .accessibilityIdentifier("done-bulk-range")
+        Button {
+            model.requestDeleteSelectedArchiveTasks(done: true)
+            archiveBulkDeletePresented = !model.archiveBulkDeleteConfirmation.isEmpty
+        } label: {
+            Text(model.historyDoneBulk.object("bar").object("delete").text("label"))
+                .rnFont(13, .semibold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(palette.danger).disabled(!model.historyDoneBulkDeleteEnabled)
+        .accessibilityIdentifier("done-bulk-delete")
     }
 
     private var archiveSelectionSummary: some View {

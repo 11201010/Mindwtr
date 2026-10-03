@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-done-bulk-trash`** — `packages/core/src/native-host-contract-archive-bulk-delete.ts` and `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `outcome=deleted` or `outcome=restored` confirms the complete selected Done batch reached durable storage with its exact Delete or Undo receipt. Failed saves and unproven retries do not claim success. No task content, identifiers, selection details, dates or URLs are logged.
+
 - **`v1.3.4/ios-archive-bulk-trash`** — `packages/core/src/native-host-contract-archive-bulk-delete.ts` and `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `outcome=deleted` or `outcome=restored` confirms the complete selected Archive batch reached durable storage with its exact Delete or Undo receipt. Failed saves and unproven retries do not claim success. No task content, identifiers, selection details, dates or URLs are logged.
 
 - **`v1.3.4/calendar-timed-deadlines`** — `apps/desktop/src/components/views/CalendarView.tsx` and `apps/mobile/components/views/calendar-view.tsx`. Desktop `Calendar timed deadline markers rendered` and mobile `Calendar timed deadlines rendered`, with `outcome=rendered`, `mode=day|week` and an aggregate `count`, confirms the deadline marker layer rendered. Check a task due at a time with no start, then one with both start and due times; date-only deadlines remain all-day. No task text, identifiers or dates are logged.

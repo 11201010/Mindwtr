@@ -19256,4 +19256,125 @@ final class FoundationUITests: XCTestCase {
         boardTap(app, "archive-select-toggle"); app.terminate()
     }
 
+
+    private func task182Filter(_ app: XCUIApplication, _ query: String = "Task182 batch") {
+        boardTap(app, "done-overflow-button"); boardTap(app, "done-filter-action")
+        let input = app.textFields["done-filter-search"]; boardEnabled(input, timeout: 15)
+        // XCTest27 reports this padded field as non-hittable although its
+        // visible center accepts an ordinary touch (captured UI1221).
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        if let old = input.value as? String, !old.isEmpty, old != input.placeholderValue {
+            input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count))
+        }
+        input.typeText(query); boardTap(app, "done-filters-close")
+    }
+    private func task182Reveal(_ app: XCUIApplication, _ element: XCUIElement) {
+        let list = app.descendants(matching: .any).matching(identifier: "done-scroll").firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 15))
+        for _ in 0..<12 {
+            if element.exists && element.isHittable {
+                let area = list.frame.intersection(app.frame)
+                if area.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) { return }
+                if element.frame.minY < area.minY { list.swipeDown() } else { list.swipeUp() }
+            } else { list.swipeUp() }
+        }
+        XCTFail("Done selection control not reachable: " + element.identifier)
+    }
+    private func task182SelectRange(_ app: XCUIApplication) {
+        historyViewChoice(app, "done", "group", "none")
+        historyViewChoice(app, "done", "sort", "title")
+        task182Filter(app)
+        let first = app.descendants(matching: .any).matching(identifier: "task-title-task182-batch-01").firstMatch
+        task182Reveal(app, first); first.press(forDuration: 0.8)
+        let count = app.staticTexts["done-bulk-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 10)); XCTAssertTrue(count.label.contains("1"), count.label)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        boardTap(app, "done-bulk-range")
+        let last = app.buttons["done-select-none-task182-batch-05"]
+        task182Reveal(app, last); last.tap()
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "4"), evaluatedWith: count)
+        waitForExpectations(timeout: 15)
+        XCTAssertFalse(app.buttons["done-bulk-range"].isSelected)
+        XCTAssertFalse(app.buttons["done-select-none-task182-readonly"].exists)
+        boardEnabled(app.buttons["done-bulk-delete"], timeout: 10)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task182 Done range selection"; shot.lifetime = .keepAlways; add(shot)
+    }
+    private func task182Confirm(_ app: XCUIApplication) {
+        boardTap(app, "done-bulk-delete")
+        let confirm = app.alerts.buttons.matching(identifier: "done-bulk-delete-confirm").firstMatch
+        boardEnabled(confirm, timeout: 10)
+        XCTAssertTrue(app.alerts.buttons.matching(identifier: "done-bulk-delete-cancel").firstMatch.exists)
+        confirm.tap()
+    }
+    private func task182CheckRows(_ app: XCUIApplication, restored: Bool) {
+        task182Filter(app)
+        let first = app.descendants(matching: .any).matching(identifier: "task-title-task182-batch-01").firstMatch
+        if restored { XCTAssertTrue(first.waitForExistence(timeout: 15)) }
+        else { XCTAssertTrue(first.waitForNonExistence(timeout: 15)) }
+        // RN hides Done rows under archived parents; they remain in SQLite.
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-title-task182-readonly").firstMatch.exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+    private func task182Flow(_ library: String, undo: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task176OpenDone(app); task182SelectRange(app); task182Confirm(app)
+        boardEnabled(app.buttons["task-doneBulkDelete-undo"], timeout: 30)
+        if undo { boardTap(app, "task-doneBulkDelete-undo") }
+        XCTAssertTrue(app.staticTexts["done-bulk-count"].waitForNonExistence(timeout: 15))
+        task182CheckRows(app, restored: undo)
+        app.terminate(); app.launch(); task176OpenDone(app); task182CheckRows(app, restored: undo); app.terminate()
+    }
+    func testTask182DoneBulkDeleteNormal() { task182Flow("d3806c73-4989-4558-a2a1-f257584e8211", undo: false) }
+    func testTask182DoneBulkUndoLargest() { task182Flow("58d2fd43-b7f6-4f71-bb2f-dfa870bd51d9", undo: true) }
+    func testTask182DoneBulkDeleteCancel() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "109765d8-c251-44d3-811d-be1dfe70536a"]
+        app.launch(); task176OpenDone(app); task182SelectRange(app); boardTap(app, "done-bulk-delete")
+        let cancel = app.alerts.buttons.matching(identifier: "done-bulk-delete-cancel").firstMatch
+        boardEnabled(cancel, timeout: 10); cancel.tap()
+        XCTAssertTrue(app.staticTexts["done-bulk-count"].label.contains("4"))
+        boardTap(app, "done-bulk-exit"); task182CheckRows(app, restored: true); app.terminate()
+    }
+    func testTask182DoneSelectionPrunesFilter() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "68ac043c-bb3e-4ad3-8aa7-8268c43a8740"]
+        app.launch(); task176OpenDone(app); task182SelectRange(app)
+        task182Filter(app, "Task182 batch 01")
+        let count = app.staticTexts["done-bulk-count"]
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "1"), evaluatedWith: count)
+        waitForExpectations(timeout: 15)
+        task182Filter(app)
+        XCTAssertTrue(count.label.contains("1"), "Revealing hidden rows must not select them again")
+        boardTap(app, "done-bulk-exit"); app.terminate()
+    }
+    private func task182Failure(_ library: String, undo: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task176OpenDone(app); task182SelectRange(app); task182Confirm(app)
+        if undo { boardEnabled(app.buttons["task-doneBulkDelete-undo"], timeout: 30); boardTap(app, "task-doneBulkDelete-undo") }
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+            XCTAssertFalse(app.buttons["history-tab-archived"].isEnabled)
+            boardTap(app, "persistence-retry")
+        }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); app.terminate()
+    }
+    func testTask182DoneBulkDeleteFailedSave() { task182Failure("b3b7a8f6-eaef-4282-b274-58eb7145f0b3", undo: false) }
+    func testTask182DoneBulkUndoFailedSave() { task182Failure("628b0fbd-ebf1-48e5-86eb-67cdce0a9a8d", undo: true) }
+    private func task182Cold(_ library: String, undo: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        for launch in 0..<2 {
+            app.launch()
+            if launch == 0 {
+                boardEnabled(app.buttons["history-tab-done"], timeout: 30)
+                XCTAssertTrue(app.buttons["history-tab-done"].isSelected)
+            } else { task176OpenDone(app) }
+            task182CheckRows(app, restored: undo); app.terminate()
+        }
+    }
+    func testTask182DoneBulkDeleteColdRecovery() { task182Cold("cd3c1bc6-eb16-4b7a-95b1-20bb8068f39c", undo: false) }
+    func testTask182DoneBulkUndoColdRecovery() { task182Cold("c893efa9-6bd6-4a59-b0c9-b0bddf42c561", undo: true) }
+
 }

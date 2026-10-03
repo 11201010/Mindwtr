@@ -16,13 +16,14 @@ import { isProjectedRecurringTaskId } from './recurrence';
 import { formatListItemCount } from './list-count';
 import { getTrashUndoLabel } from './trash-view-model';
 import { logInfo } from './logger';
+import { isStatusListTaskReadOnly } from './menu-views-model';
 
-export type NativeArchivedTasksDeleteRequest = { requestId: string; taskIds: string[]; taskRevisions: Record<string, string> };
+export type NativeArchivedTasksDeleteRequest = { requestId: string; taskIds: string[]; taskRevisions: Record<string, string>; source?: 'done' };
 export type NativeArchivedTasksDeleteResult = { count: number; deletion: { message: string; undoLabel: string; undoEnabled: true } };
 export type NativePreparedArchivedTasksDelete = {
     version: 1; request: NativeArchivedTasksDeleteRequest; before: Task[]; after: Task[];
     deviceIdBefore: string | null; deviceIdToInitialize: string | null; updateAt: string;
-    result: NativeArchivedTasksDeleteResult;
+    result: NativeArchivedTasksDeleteResult; projects?: Project[];
 };
 export type NativeArchivedTasksDeleteEnvelope = { request: NativeArchivedTasksDeleteRequest; prepared: NativePreparedArchivedTasksDelete };
 export type NativeArchivedTasksDeletePreparation = { kind: 'prepared'; prepared: NativePreparedArchivedTasksDelete };
@@ -70,7 +71,8 @@ const detach = <T>(value: unknown): T | null => {
 const jsonSafe = <T>(value: unknown): T | null => { try { return detach<T>(JSON.parse(JSON.stringify(value))); } catch { return null; } };
 const readDeleteRequest = (input: unknown): NativeArchivedTasksDeleteRequest | null => {
     const request = detach<Record<string, unknown>>(input);
-    if (!request || !exact(request, ['requestId', 'taskIds', 'taskRevisions']) || typeof request.requestId !== 'string' || !UUID.test(request.requestId)
+    if (!request || !exact(request, request.source === 'done' ? ['requestId', 'taskIds', 'taskRevisions', 'source'] : ['requestId', 'taskIds', 'taskRevisions'])
+        || typeof request.requestId !== 'string' || !UUID.test(request.requestId)
         || !Array.isArray(request.taskIds) || !request.taskIds.length || request.taskIds.length > 10_000
         || !request.taskIds.every((id) => text(id, 500)) || new Set(request.taskIds).size !== request.taskIds.length
         || !record(request.taskRevisions) || !exact(request.taskRevisions, request.taskIds)
@@ -90,11 +92,16 @@ const validDevice = (raw: Record<string, unknown>) => (raw.deviceIdBefore === nu
 const selectedRows = (ids: readonly string[], tasks: readonly Task[]): Task[] => {
     const selected = new Set(ids); return tasks.filter((row) => selected.has(row.id));
 };
-const selectedSourcesMatch = (request: NativeArchivedTasksDeleteRequest, tasks: Task[]): boolean => {
+const deleteProjects = (tasks: readonly Task[], projects: readonly Project[]): Project[] => {
+    const ids = new Set(tasks.flatMap((row) => row.projectId ? [row.projectId] : []));
+    return projects.filter((row) => ids.has(row.id));
+};
+const selectedSourcesMatch = (request: NativeArchivedTasksDeleteRequest, tasks: Task[], projects: readonly Project[] = []): boolean => {
     if (tasks.length !== request.taskIds.length || !unique(tasks)) return false;
     const byId = buildEntityMap(tasks);
-    return request.taskIds.every((id) => { const row = byId.get(id); return row && row.status === 'archived'
-        && !row.deletedAt && !row.purgedAt && !isProjectedRecurringTaskId(id) && taskRevisionOf(row) === request.taskRevisions[id]; });
+    return request.taskIds.every((id) => { const row = byId.get(id); return row && row.status === (request.source === 'done' ? 'done' : 'archived')
+        && !row.deletedAt && !row.purgedAt && !isProjectedRecurringTaskId(id) && taskRevisionOf(row) === request.taskRevisions[id]
+        && (request.source !== 'done' || !isStatusListTaskReadOnly(row, projects)); });
 };
 const deleteAfter = (prepared: Pick<NativePreparedArchivedTasksDelete, 'before' | 'updateAt' | 'deviceIdBefore' | 'deviceIdToInitialize'>): Task[] =>
     planTaskMutations({ tasks: prepared.before.map((row) => historyRowLoadProjection(row, prepared.updateAt)), state: {},
@@ -129,9 +136,14 @@ const readDelete = (input: unknown): NativeArchivedTasksDeleteEnvelope | null =>
     const envelope = detach<Record<string, unknown>>(input);
     if (!envelope || !exact(envelope, ['request', 'prepared']) || !record(envelope.prepared)) return null;
     const request = readDeleteRequest(envelope.request); const raw = envelope.prepared;
-    if (!request || !exact(raw, ['version', 'request', 'before', 'after', 'deviceIdBefore', 'deviceIdToInitialize', 'updateAt', 'result'])
+    const keys = ['version', 'request', 'before', 'after', 'deviceIdBefore', 'deviceIdToInitialize', 'updateAt', 'result'];
+    if (request?.source === 'done') keys.push('projects');
+    if (!request || !exact(raw, keys)
         || raw.version !== 1 || !same(raw.request, request) || !validDevice(raw)
-        || !Array.isArray(raw.before) || !raw.before.every(validTask) || !selectedSourcesMatch(request, raw.before)
+        || !Array.isArray(raw.before) || !raw.before.every(validTask)
+        || (request.source === 'done' && (!Array.isArray(raw.projects) || !unique(raw.projects) || !raw.projects.every(validContextProject)
+            || !same(deleteProjects(raw.before, raw.projects), raw.projects)))
+        || !selectedSourcesMatch(request, raw.before, request.source === 'done' ? raw.projects as Project[] : [])
         || !Array.isArray(raw.after) || !raw.after.every(validTask) || !record(raw.result) || !exact(raw.result, ['count', 'deletion'])
         || raw.result.count !== request.taskIds.length || !record(raw.result.deletion) || !exact(raw.result.deletion, ['message', 'undoLabel', 'undoEnabled'])
         || !notice(raw.result.deletion.message, 512) || !notice(raw.result.deletion.undoLabel, 80) || raw.result.deletion.undoEnabled !== true) return null;
@@ -156,6 +168,8 @@ const readUndo = (input: unknown): NativeArchivedTasksDeleteUndoEnvelope | null 
     } catch { return null; }
 };
 const isUndo = (envelope: MutationEnvelope): envelope is NativeArchivedTasksDeleteUndoEnvelope => 'delete' in envelope.prepared;
+const isDone = (envelope: MutationEnvelope): boolean => (isUndo(envelope) ? envelope.prepared.delete.request : envelope.request).source === 'done';
+const sourceName = (envelope: MutationEnvelope): string => isDone(envelope) ? 'Done' : 'Archive';
 const buildUndo = (request: NativeArchivedTasksDeleteUndoRequest, deletion: NativeArchivedTasksDeleteEnvelope,
     data: Pick<AppData, 'projects' | 'sections' | 'areas' | 'settings'>, updateAt: string): NativeArchivedTasksDeleteUndoEnvelope | null => {
     const device = ensureDeviceId(data.settings);
@@ -178,26 +192,30 @@ export function createArchivedTasksDeleteMethods(deps: {
 }) {
     const saves = createAreaSaveGuard(deps.save);
     let pending: { envelope: MutationEnvelope; adapter: ReturnType<typeof getStorageAdapter>; boundary: PreparedNativeSaveBoundary | undefined } | null = null;
-    const payload = (envelope: MutationEnvelope) => canonicalPayload([isUndo(envelope) ? 'archivedTasksDeleteUndo' : 'archivedTasksDelete', envelope]);
+    const payload = (envelope: MutationEnvelope) => canonicalPayload([
+        isDone(envelope) ? (isUndo(envelope) ? 'doneTasksDeleteUndo' : 'doneTasksDelete')
+            : (isUndo(envelope) ? 'archivedTasksDeleteUndo' : 'archivedTasksDelete'), envelope]);
     const savedResult = <T extends MutationResult>(envelope: MutationEnvelope): NativeHostResult<T> | null => {
         const saved = receipts.saved<T>(envelope.request.requestId, payload(envelope));
-        return saved?.ok && !same(saved.value, envelope.prepared.result) ? fail('INVALID_INPUT', 'Saved Archive Trash result does not match its journal') : saved;
+        return saved?.ok && !same(saved.value, envelope.prepared.result) ? fail('INVALID_INPUT', `Saved ${sourceName(envelope)} Trash result does not match its journal`) : saved;
     };
     const requireDeleteReceipt = (deletion: NativeArchivedTasksDeleteEnvelope): NativeHostResult<null> => {
         const saved = savedResult<NativeArchivedTasksDeleteResult>(deletion);
         if (saved && !saved.ok) return saved;
-        return saved ? { ok: true, value: null } : fail('STALE_REVISION', 'Archive Delete is not confirmed; retry its exact request before Undo');
+        return saved ? { ok: true, value: null } : fail('STALE_REVISION', `${sourceName(deletion)} Delete is not confirmed; retry its exact request before Undo`);
     };
     const checkAuthority = (envelope: MutationEnvelope, authority: PreparedAreaAuthority): NativeHostResult<null> => {
         const prepared = envelope.prepared; const data = authority.snapshot;
         const current = selectedRows(prepared.before.map((row) => row.id), data.tasks);
         if (!same(current, prepared.before) || (data.settings.deviceId ?? null) !== prepared.deviceIdBefore)
-            return fail('STALE_REVISION', 'Archive tasks changed since preparation');
+            return fail('STALE_REVISION', `${sourceName(envelope)} tasks changed since preparation`);
         if (isUndo(envelope)) {
             const proven = requireDeleteReceipt(envelope.prepared.delete); if (!proven.ok) return proven;
             if (!same(archivedTasksDeleteUndoScope(current, data), envelope.prepared.scope))
                 return fail('STALE_REVISION', 'Archive Undo containers changed since preparation');
-        } else if (!selectedSourcesMatch(envelope.request, current)) return fail('STALE_REVISION', 'Archive selection changed since it was shown');
+        } else if (isDone(envelope) && !same(deleteProjects(current, data.projects), envelope.prepared.projects))
+            return fail('STALE_REVISION', 'Done parent projects changed since preparation');
+        else if (!selectedSourcesMatch(envelope.request, current, data.projects)) return fail('STALE_REVISION', `${sourceName(envelope)} selection changed since it was shown`);
         else if (!prospectiveUndoFits(envelope, data)) return fail('INVALID_INPUT', 'Archive Undo journal would be too large; select fewer tasks');
         return { ok: true, value: null };
     };
@@ -238,9 +256,9 @@ export function createArchivedTasksDeleteMethods(deps: {
             return { ok: true, value: envelope.prepared.result as T };
         });
         if (prewriteFailure) return prewriteFailure;
-        if (confirmed.ok && !same(confirmed.value, envelope.prepared.result)) return fail('INVALID_INPUT', 'Saved Archive Trash result does not match its journal');
-        if (confirmed.ok) { try { logInfo('Native Archive bulk Trash confirmed', { scope: 'native-host', category: 'storage',
-            context: { releaseCheck: 'v1.3.4/ios-archive-bulk-trash', outcome: isUndo(envelope) ? 'restored' : 'deleted' } }); }
+        if (confirmed.ok && !same(confirmed.value, envelope.prepared.result)) return fail('INVALID_INPUT', `Saved ${sourceName(envelope)} Trash result does not match its journal`);
+        if (confirmed.ok) { try { logInfo(`Native ${sourceName(envelope)} bulk Trash confirmed`, { scope: 'native-host', category: 'storage',
+            context: { releaseCheck: isDone(envelope) ? 'v1.3.4/ios-done-bulk-trash' : 'v1.3.4/ios-archive-bulk-trash', outcome: isUndo(envelope) ? 'restored' : 'deleted' } }); }
         catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ } }
         return confirmed;
     };
@@ -249,13 +267,15 @@ export function createArchivedTasksDeleteMethods(deps: {
             const ready = deps.readiness(); if (!ready.ok) return ready;
             const request = readDeleteRequest(input);
             if (!request) return fail('INVALID_INPUT', 'Select saved Archive tasks with exact revisions; select fewer tasks if the request is too large');
-            if (!selectedSourcesMatch(request, selectedRows(request.taskIds, useTaskStore.getState()._allTasks)))
-                return fail('STALE_REVISION', 'Archive selection changed since it was shown');
+            const state = useTaskStore.getState();
+            if (!selectedSourcesMatch(request, selectedRows(request.taskIds, state._allTasks), state._allProjects))
+                return fail('STALE_REVISION', `${request.source === 'done' ? 'Done' : 'Archive'} selection changed since it was shown`);
             const read = await readAreaDurableData(false, true); if (!read.ok) return read;
             const data = read.value.authority.snapshot; const before = selectedRows(request.taskIds, data.tasks);
-            if (!selectedSourcesMatch(request, before)) return fail('STALE_REVISION', 'Saved Archive selection changed');
+            if (!selectedSourcesMatch(request, before, data.projects)) return fail('STALE_REVISION', `Saved ${request.source === 'done' ? 'Done' : 'Archive'} selection changed`);
             const device = ensureDeviceId(data.settings); const t = deps.t();
-            const base = { version: 1 as const, request, before, deviceIdBefore: data.settings.deviceId ?? null,
+            const base = { version: 1 as const, request, before, ...(request.source === 'done' ? { projects: deleteProjects(before, data.projects) } : {}),
+                deviceIdBefore: data.settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null, updateAt: new Date().toISOString(),
                 result: { count: request.taskIds.length, deletion: { message: formatListItemCount(request.taskIds.length, 'task', t),
                     undoLabel: getTrashUndoLabel(t), undoEnabled: true as const } } };

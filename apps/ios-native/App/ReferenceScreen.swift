@@ -61,6 +61,10 @@ struct StatusListContent: View {
     var onStatusChange: ((CoreObject, String) -> Void)? = nil
     var onCompletedAt: ((CoreObject) -> Void)? = nil
     var errorIdentifier: String? = nil
+    var selectionActive = false
+    var selectedTaskIDs: [String] = []
+    var onSelection: ((CoreObject) -> Void)? = nil
+    var onSelectionStart: ((CoreObject) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -102,13 +106,29 @@ struct StatusListContent: View {
                 let item = entry.item
                 if item.text("type") == "task" {
                     let row = item.object("row")
-                    TaskCard(row: row, model: model, palette: palette, readOnly: disableStatus || row.flag("readOnly"),
-                             onProject: { project in Task { await model.openProject(project) } },
-                             onStatusOptions: onStatusOptions, onStatusChange: onStatusChange,
-                             onCompletedAt: onCompletedAt)
+                    HStack(spacing: 8) {
+                        if selectionActive, !row.flag("readOnly") {
+                            Button { onSelection?(row) } label: {
+                                Image(systemName: selectedTaskIDs.contains(row.text("id")) ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 22)).foregroundStyle(palette.tint)
+                                    .frame(width: 44, height: 44).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).disabled(!enabled)
+                            .accessibilityLabel(row.text("title"))
+                            .accessibilityAddTraits(selectedTaskIDs.contains(row.text("id")) ? .isSelected : [])
+                            .accessibilityIdentifier("done-select-" + (item.text("groupId").isEmpty ? "none" : item.text("groupId")) + "-" + row.text("id"))
+                        }
+                        TaskCard(row: row, model: model, palette: palette, readOnly: disableStatus || selectionActive || row.flag("readOnly"),
+                                 hideStatusBadge: selectionActive,
+                                 onProject: selectionActive ? nil : { project in Task { await model.openProject(project) } },
+                                 onStatusOptions: selectionActive ? nil : onStatusOptions, onStatusChange: selectionActive ? nil : onStatusChange,
+                                 onCompletedAt: selectionActive ? nil : onCompletedAt,
+                                 onSelection: selectionActive ? onSelection : nil,
+                                 onSelectionStart: enabled && !row.flag("readOnly") ? onSelectionStart : nil)
+                    }
                         .id(entry.id)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            if let onDeleteTask, enabled, !row.flag("readOnly"),
+                            if let onDeleteTask, enabled, !selectionActive, !row.flag("readOnly"),
                                !row.text("id").isEmpty, !row.text("taskRevision").isEmpty {
                                 Button {
                                     onDeleteTask(row.text("id"), row.text("taskRevision"))
