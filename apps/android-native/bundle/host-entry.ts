@@ -796,7 +796,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2239,6 +2239,18 @@ globalThis.MindwtrHost = {
     trashTaskRestoreCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedTrashTaskRestore(editorJson(json) as Parameters<typeof contract.commitPreparedTrashTaskRestore>[0])));
     },
+    archivedTasksRestorePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchivedTasksRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareArchivedTasksRestore>[0])); });
+    },
+    archivedTasksRestoreValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedArchivedTasksRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedArchivedTasksRestore>[0])));
+    },
+    archivedTasksRestoreCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedArchivedTasksRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedArchivedTasksRestore>[0])));
+    },
+    archivedTasksRestoreOutcome(json: string): string {
+        return submit(async () => unwrap(contract.archivedTasksRestoreOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.archivedTasksRestoreOutcome>[0])));
+    },
     archivedTaskRestorePrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchivedTaskRestore(editorJson(json) as Parameters<typeof contract.prepareArchivedTaskRestore>[0])); });
     },
@@ -2524,6 +2536,9 @@ globalThis.MindwtrHost = {
         });
     },
     /** `name` is one of MENU_READS; `json` is that method's input. A read waits for an owed save, as every read does. */
+    archiveTaskSelection(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.getArchiveTaskSelection(completionJson(json, 2_000_000) as Parameters<typeof contract.getArchiveTaskSelection>[0])); });
+    },
     menuRead(name: string, json: string): string {
         return submit(async () => {
             // The More sheet is navigation: it opens while a retry is owed (an empty sheet looked broken on the phone,

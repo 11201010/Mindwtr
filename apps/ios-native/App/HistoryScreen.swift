@@ -102,9 +102,10 @@ struct HistoryScreen: View {
         } message: {
             Text(archiveProjectDeleteConfirmation.text("message"))
         }
-        .onDisappear { closeCompletedAt() }
+        .onDisappear { closeCompletedAt(); model.leaveArchiveTaskSelection() }
         .onChange(of: model.historyArchived) { _ in closeCompletedAt() }
         .onChange(of: model.history.text("segment")) { _ in closeCompletedAt() }
+        .onChange(of: model.historyArchiveSelectionMode) { if $0 { closeCompletedAt() } }
     }
 
     private func openCompletedAt(_ displayed: CoreObject, archived: Bool = false, group: String = "none") {
@@ -177,6 +178,10 @@ struct HistoryScreen: View {
                 }
                 .padding(.horizontal, 16).padding(.bottom, 8)
             }
+            if model.historyCurrent && model.history.text("segment") == "tasks" {
+                archiveSelectionSummary
+                if model.historyArchiveSelectionMode { archiveBulkRestoreBar }
+            }
             List {
                 Group {
                     if let error = model.historyError {
@@ -188,7 +193,7 @@ struct HistoryScreen: View {
                             .accessibilityIdentifier("archive-retry")
                     }
                     if model.historyCurrent {
-                        if !model.history.text("summary").isEmpty {
+                        if model.history.text("segment") != "tasks", !model.history.text("summary").isEmpty {
                             Text(model.history.text("summary")).rnFont(13, .medium).foregroundStyle(palette.secondary)
                                 .padding(.top, 4).accessibilityIdentifier("archive-summary")
                         }
@@ -198,7 +203,7 @@ struct HistoryScreen: View {
                             else if item.text("type") == "task" {
                                 archiveCard(item)
                                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                        if model.historyActionsEnabled {
+                                        if model.historyArchiveRowActionsEnabled {
                                             Button {
                                                 searchFocused = false
                                                 Task { await model.restoreArchivedTask(item.object("row").text("id")) }
@@ -210,7 +215,7 @@ struct HistoryScreen: View {
                                         }
                                     }
                                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                        if model.historyActionsEnabled {
+                                        if model.historyArchiveRowActionsEnabled {
                                             Button {
                                                 searchFocused = false
                                                 archiveDeleteID = item.object("row").text("id")
@@ -279,6 +284,112 @@ struct HistoryScreen: View {
         }
     }
 
+    private var archiveSelectionSummary: some View {
+        Group {
+            if !model.history.text("summary").isEmpty || model.historyArchiveSelectionMode {
+                HStack(spacing: 12) {
+                    Text(model.history.text("summary")).rnFont(13, .medium).foregroundStyle(palette.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("archive-summary")
+                    Button {
+                        searchFocused = false
+                        completedAtError = false
+                        Task { await model.toggleArchiveTaskSelectionMode() }
+                    } label: {
+                        Text(model.history.object("labels").text(model.historyArchiveSelectionMode ? "done" : "select"))
+                            .rnFont(13, .semibold).multilineTextAlignment(.center)
+                            .padding(.horizontal, 12).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.text)
+                    .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                    .disabled(!model.historyActionsEnabled).accessibilityIdentifier("archive-select-toggle")
+                }
+                .padding(.horizontal, 16).padding(.bottom, 8)
+            }
+        }
+    }
+
+    private var archiveBulkRestoreBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(model.history.object("labels").text("selected")).rnFont(13).foregroundStyle(palette.secondary)
+                .accessibilityIdentifier("archive-bulk-count")
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 8) { archiveSelectAllButton; archiveBulkRestoreButton }
+            } else { HStack(spacing: 8) { archiveSelectAllButton; archiveBulkRestoreButton } }
+        }
+        .padding(12).background(palette.card, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+        .padding(.horizontal, 16).padding(.bottom, 8)
+    }
+
+    private var archiveSelectAllButton: some View {
+        Button {
+            searchFocused = false
+            completedAtError = false
+            Task { await model.selectAllArchiveTasks() }
+        } label: {
+            Text(model.history.object("labels").text("selectAll")).rnFont(13, .semibold).multilineTextAlignment(.center)
+                .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(palette.text)
+        .background(palette.row, in: RoundedRectangle(cornerRadius: 8))
+        .disabled(!model.historyActionsEnabled || model.history.number("visibleTaskCount") == 0
+            || model.historyArchiveSelectedIDs.count == model.history.number("visibleTaskCount"))
+        .accessibilityIdentifier("archive-bulk-select-all")
+    }
+
+    private var archiveBulkRestoreButton: some View {
+        Button {
+            searchFocused = false
+            completedAtError = false
+            Task { await model.restoreSelectedArchiveTasks() }
+        } label: {
+            Text(model.history.object("labels").text("restoreSelected")).rnFont(13, .semibold).multilineTextAlignment(.center)
+                .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(palette.onTint)
+        .background(palette.tint, in: RoundedRectangle(cornerRadius: 8))
+        .disabled(!model.historyArchiveBulkRestoreEnabled).accessibilityIdentifier("archive-bulk-restore")
+    }
+
+    private func archiveSelectionCard(_ item: CoreObject) -> some View {
+        let row = item.object("row")
+        let group = item.text("groupId").isEmpty ? "none" : item.text("groupId")
+        let selected = item.flag("selected")
+        return Button {
+            searchFocused = false
+            completedAtError = false
+            Task { await model.toggleArchiveTaskSelection(row) }
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 5).fill(selected ? palette.tint : Color.clear)
+                    RoundedRectangle(cornerRadius: 5).stroke(palette.tint, lineWidth: 1)
+                    if selected { Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)).foregroundStyle(palette.onTint) }
+                }
+                .frame(width: 24, height: 24).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.text("title")).rnFont(16, .semibold).strikethrough(item.flag("struck"))
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if !item.text("descriptionMarkdown").isEmpty {
+                        Text(inlineMarkdown(item.text("descriptionMarkdown"))).rnFont(14).lineLimit(1)
+                    }
+                    Text(item.text("dateLabel")).rnFont(12).italic()
+                }
+                .foregroundStyle(palette.secondary)
+            }
+            .fixedSize(horizontal: false, vertical: true).padding(16).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .background(palette.row, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? palette.tint : palette.border, lineWidth: selected ? 2 : 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!model.historyActionsEnabled)
+        .accessibilityLabel(model.history.object("labels").text("select") + " " + row.text("title"))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("archive-select-" + group + "-" + row.text("id"))
+    }
+
     private var archiveSearchField: some View {
         TextField(model.history.object("search").text("placeholder"),
                   text: Binding(get: { model.historySearchText }, set: { model.setHistoryText($0) }))
@@ -312,11 +423,13 @@ struct HistoryScreen: View {
     }
 
     private var archiveSelectionActive: Bool {
-        model.historyArchived && (model.history.number("selectedCount") > 0 || !model.history.object("selectAll").isEmpty)
+        model.historyArchived && model.historyArchiveSelectionMode
     }
 
     @ViewBuilder private func archiveCard(_ item: CoreObject) -> some View {
-        if item.text("type") == "project" || item.flag("cancelled") {
+        if item.text("type") == "task" && model.historyArchiveSelectionMode {
+            archiveSelectionCard(item)
+        } else if item.text("type") == "project" || item.flag("cancelled") {
             archiveReadOnlyCard(item)
         } else {
             archiveCompletedTaskCard(item)

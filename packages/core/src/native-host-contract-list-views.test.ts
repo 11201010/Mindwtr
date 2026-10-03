@@ -143,6 +143,50 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         }
     });
 
+    it('freezes all visible Archive selection across pages, filters and folds without writes', async () => {
+        const save = vi.fn().mockResolvedValue(undefined);
+        const { host } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'), save);
+        save.mockClear();
+        for (const params of [
+            {},
+            { groupBy: 'project' as const, collapsedGroupIds: ['project:p-launch'] },
+            { filters: { searchQuery: 'milk' } },
+            { filters: { searchQuery: 'no matching archived task' } },
+        ]) {
+            const first = value(host.getArchiveView({ ...params, offset: 0, limit: 1 }));
+            const all = value(host.getArchiveView({ ...params, offset: 0, limit: 100 }));
+            const selection = value(host.getArchiveTaskSelection({ params, revision: first.revision }));
+            const ids = [...new Set(all.items.flatMap((item) => item.type === 'task' ? [item.row.id] : []))];
+            expect(selection.taskIds).toEqual(ids);
+            expect(Object.keys(selection.taskRevisions)).toEqual(ids);
+            for (const item of all.items) if (item.type === 'task') {
+                expect(selection.taskRevisions[item.row.id]).toBe(item.row.taskRevision);
+            }
+        }
+        expect(save).not.toHaveBeenCalled();
+    });
+
+    it('refuses stale Archive Select all and keeps explicit selection pruned after a filter change', async () => {
+        const { host } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        const first = value(host.getArchiveView({ offset: 0, limit: 1 }));
+        const selection = value(host.getArchiveTaskSelection({ params: {}, revision: first.revision }));
+        expect(selection.taskIds.length).toBeGreaterThan(1);
+        expect((await useTaskStore.getState().updateTask('ar-milk', { title: 'Buy oat milk' })).success).toBe(true);
+        expect(host.getArchiveTaskSelection({ params: {}, revision: first.revision }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        const narrowed = value(host.getArchiveView({ selectedIds: selection.taskIds,
+            filters: { searchQuery: 'milk' }, offset: 0, limit: 1 }));
+        expect(narrowed.selectedIds).toEqual(['ar-milk']);
+        expect(narrowed.selectedCount).toBe(1);
+        expect(selection.taskIds.length).toBeGreaterThan(1);
+        for (const params of [{ segment: 'projects' }, { filterEdit: { type: 'clear' } }, { unknown: true }]) {
+            expect(host.getArchiveTaskSelection({ params: params as never, revision: narrowed.revision }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        expect(host.getArchiveTaskSelection({ params: {}, revision: 'x'.repeat(2_000_001) }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
     it('keeps large and long saved Archive folds readable', async () => {
         const prefix = '🌱'.repeat(260);
         const longA = `tag:${prefix}á`;

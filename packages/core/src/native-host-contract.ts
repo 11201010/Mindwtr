@@ -284,6 +284,7 @@ import { createProjectDeleteMethods } from './native-host-contract-project-delet
 import { createProjectDuplicateMethods } from './native-host-contract-project-duplicate';
 import { createProjectLifecycleMethods } from './native-host-contract-project-lifecycle';
 import { createArchivedTaskRestoreMethods } from './native-host-contract-archive-task-restore';
+import { createArchivedTasksRestoreMethods } from './native-host-contract-archive-bulk-restore';
 import { createProjectDateMethods } from './native-host-contract-project-date';
 import { createProjectAreaMethods } from './native-host-contract-project-area';
 import { createProjectSectionMethods } from './native-host-contract-project-section';
@@ -1825,6 +1826,7 @@ export function createNativeHostContract(options: {
         ...createProjectDuplicateMethods({ readiness, save, t: () => translate }),
         ...createProjectLifecycleMethods({ readiness, save }),
         ...createArchivedTaskRestoreMethods({ readiness, save }),
+        ...createArchivedTasksRestoreMethods({ readiness, save }),
         ...createProjectDateMethods({ readiness, save,
             revision: projectMutationRevision }),
         ...createProjectAreaMethods({ readiness, save,
@@ -4597,6 +4599,33 @@ function createListViewMethods(deps: ListViewDeps) {
                 },
                 confirmations: { trashTask: getArchiveConfirmation({ kind: 'task' }, t), trashTasks: getBulkTrashConfirmation(t) },
             } };
+        },
+
+        /** RN Select all freezes visible IDs; later reads prune rather than expand this set. */
+        getArchiveTaskSelection(input: {
+            params: Omit<NativeArchiveParams, 'filterEdit'>; revision: string;
+        }): NativeHostResult<{ taskIds: string[]; taskRevisions: NativeRevisions }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const params = isObjectRecord(input) && isNativeJsonWithinBytes(input)
+                && Object.keys(input).length === 2 && isObjectRecord(input.params)
+                && Object.keys(input.params).every((key) => ['segment', 'sortBy', 'groupBy', 'filters', 'filterSheetOpen', 'collapsedGroupIds'].includes(key))
+                ? readArchiveParams(input.params) : null;
+            if (!params || params.segment !== 'tasks' || typeof input.revision !== 'string') {
+                return fail('INVALID_INPUT', 'The displayed Archive Tasks options and revision are required');
+            }
+            const revision = deps.revision(new Date());
+            if (input.revision !== revision) return fail('STALE_REVISION', 'Archive changed; refresh before selecting all');
+            const taskIds = buildArchive(params, revision).visibleIds;
+            if (!isIdList(taskIds, true) || taskIds.some((id) => id.length > 500)) {
+                return fail('INVALID_INPUT', 'Archive selection exceeds the supported task limit');
+            }
+            const result = { taskIds: [...taskIds], taskRevisions: taskRevisionsOf(taskIds) };
+            if (Object.values(result.taskRevisions).some((revision) => !revision || revision.length > 200)
+                || !isNativeJsonWithinBytes(result)) {
+                return fail('INVALID_INPUT', 'Too many tasks to select together; narrow the filters and try again');
+            }
+            return { ok: true, value: result };
         },
 
         /**

@@ -620,6 +620,10 @@ export interface TaskStore {
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     commitPreparedArchivedTaskRestore: (input: import('./native-host-contract-archive-task-restore').NativePreparedArchivedTaskRestore,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** One guarded raw batch overlay; the contract validates complete scope and RN effect first. */
+    commitPreparedArchivedTasksRestore: (input: Pick<import('./native-host-contract-archive-bulk-restore').NativePreparedArchivedTasksRestore,
+        'request' | 'effect' | 'deviceIdBefore' | 'deviceIdToInitialize'>,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     commitPreparedTaskFocus: (input: PreparedTaskFocus & { request: { taskId: string; focused: boolean } }) => Promise<PreparedTaskEditResult>;
     commitPreparedFocusOrder: (input: PreparedFocusOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedFocusSavedFilter: (input: PreparedFocusSavedFilter) => Promise<PreparedTaskEditResult>;

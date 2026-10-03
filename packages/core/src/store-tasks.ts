@@ -83,6 +83,7 @@ type TaskActions = Pick<
     | 'commitPreparedTaskEdit'
     | 'commitPreparedTaskDraftV2'
     | 'commitPreparedArchivedTaskRestore'
+    | 'commitPreparedArchivedTasksRestore'
     | 'commitPreparedTaskFocus'
     | 'commitPreparedFocusOrder'
     | 'commitPreparedBoardTask'
@@ -135,7 +136,7 @@ const taskPatchIsUnchanged = (task: Task, updates: Partial<Task>): boolean => (
 
 const collectOptimisticReactivationRetryProjectIds = (
     requests: readonly { task: Task; updates: Partial<Task> }[],
-    state: TaskStore,
+    state: Pick<TaskStore, 'persistenceFailure' | '_projectsById'>,
 ): string[] => {
     if (!state.persistenceFailure || requests.length === 0) return [];
     if (!requests.every(({ task, updates }) => taskPatchIsUnchanged(task, updates))) return [];
@@ -372,6 +373,163 @@ export const prepareTaskUpdatesForStore = ({
             ...containerPatch.updates,
         },
     };
+};
+
+/** Shared batch preflight; save-only optimistic retries precede normalization. */
+export const prepareTaskBatchUpdatesForStore = ({
+    updatesList,
+    state,
+    futureBoundary,
+    futureDates,
+    nowMs,
+}: {
+    updatesList: readonly { id: string; updates: Partial<Task> }[];
+    state: Pick<TaskStore, '_tasksById' | '_projectsById' | '_allProjects' | '_allSections' | '_allAreas' | 'settings' | 'persistenceFailure'>;
+    futureBoundary?: string;
+    futureDates?: FocusDateLookup;
+    nowMs?: number;
+}): { ok: false; error: string } | {
+    ok: true;
+    preparedUpdatesById: Map<string, Partial<Task>>;
+    optimisticRetryProjectIds: string[];
+} => {
+    const hasInvalidCancellationTimestamp = updatesList.some(({ updates }) => (
+        hasOwnField(updates, 'cancelledAt')
+        && updates.cancelledAt != null
+        && normalizeCancellationTimestamp(updates.cancelledAt) === undefined
+    ));
+    if (hasInvalidCancellationTimestamp) {
+        return { ok: false, error: 'Cancellation timestamp must be an ISO datetime with timezone' };
+    }
+    const seenIds = new Set<string>();
+    const duplicateIds = new Set<string>();
+    for (const { id } of updatesList) {
+        if (seenIds.has(id)) {
+            duplicateIds.add(id);
+            continue;
+        }
+        seenIds.add(id);
+    }
+    const duplicateTaskIds = Array.from(duplicateIds);
+    if (duplicateTaskIds.length > 0) {
+        return { ok: false, error: `Duplicate task ids in batch update: ${duplicateTaskIds.join(', ')}` };
+    }
+    const existingTaskIds = new Set(state._tasksById.keys());
+    const missingIds = Array.from(new Set(
+        updatesList.map((update) => update.id).filter((id) => !existingTaskIds.has(id))
+    ));
+    if (missingIds.length > 0) {
+        return { ok: false, error: `Tasks not found: ${missingIds.join(', ')}` };
+    }
+    const optimisticRetryProjectIds = collectOptimisticReactivationRetryProjectIds(
+        updatesList.flatMap(({ id, updates }) => {
+            const task = state._tasksById.get(id);
+            return task ? [{ task, updates }] : [];
+        }),
+        state,
+    );
+    const preparedUpdatesById = new Map<string, Partial<Task>>();
+    if (optimisticRetryProjectIds.length > 0) {
+        return { ok: true, preparedUpdatesById, optimisticRetryProjectIds };
+    }
+    for (const { id, updates } of updatesList) {
+        const task = state._tasksById.get(id);
+        if (!task) continue;
+        const preparedUpdates = prepareTaskUpdatesForStore({
+            task,
+            updates,
+            allProjects: state._allProjects,
+            allSections: state._allSections,
+            allAreas: state._allAreas,
+            settings: state.settings,
+            futureBoundary,
+            futureDates,
+            nowMs,
+            reserveProjectOrder: false,
+        });
+        if (!preparedUpdates.ok) return preparedUpdates;
+        preparedUpdatesById.set(id, preparedUpdates.updates);
+    }
+    return { ok: true, preparedUpdatesById, optimisticRetryProjectIds };
+};
+
+/** Applies a shared batch in source-array order, with one parent transition. */
+export const planTaskBatchUpdateEffects = ({
+    preparedUpdatesById,
+    allTasks,
+    allProjects,
+    allSections,
+    now,
+    deviceId,
+    createId,
+    recurrenceProjections,
+}: {
+    preparedUpdatesById: ReadonlyMap<string, Partial<Task>>;
+    allTasks: Task[];
+    allProjects: AppData['projects'];
+    allSections: Section[];
+    now: string;
+    deviceId: string;
+    createId?: () => string;
+    recurrenceProjections?: ReadonlyMap<string, RecurrenceProjection | null>;
+}): {
+    tasks: Task[];
+    projects: AppData['projects'];
+    sections: Section[];
+    reactivatedProjectIds: string[];
+    createdTasks: Task[];
+} => {
+    const createdTasks: Task[] = [];
+    const reactivationRequests: Array<{ task: Task; updates: Partial<Task> }> = [];
+    const newAllTasksBase = [...allTasks];
+    const projectOrderReserver = createProjectOrderReserver(newAllTasksBase);
+    for (let index = 0; index < allTasks.length; index += 1) {
+        const task = newAllTasksBase[index];
+        const preparedUpdates = preparedUpdatesById.get(task.id);
+        if (!preparedUpdates) continue;
+        const adjustedUpdates = reserveTaskContainerProjectOrder({
+            task,
+            updates: preparedUpdates,
+            projectOrderReserver,
+        }) as Partial<Task>;
+        reactivationRequests.push({ task, updates: adjustedUpdates });
+        const { updatedTask, nextRecurringTask } = applyTaskUpdates(
+            task,
+            { ...adjustedUpdates, rev: nextRevision(task.rev), revBy: deviceId },
+            now,
+            createId,
+            recurrenceProjections?.get(task.id),
+        );
+        const stampedNextRecurringTask = stampNewRecurringFollowUp(
+            nextRecurringTask,
+            deviceId,
+            getTaskOrder(task),
+            projectOrderReserver,
+        );
+        // Keep argument construction lazy: copying the collection once per
+        // non-recurring selection makes ordinary bulk moves quadratic.
+        if (stampedNextRecurringTask) {
+            const duplicateFollowUp = findExistingRecurringFollowUp(
+                [...newAllTasksBase, ...createdTasks],
+                stampedNextRecurringTask,
+                task.id,
+            );
+            if (!duplicateFollowUp) createdTasks.push(stampedNextRecurringTask);
+        }
+        newAllTasksBase[index] = updatedTask;
+    }
+    const newAllTasks = createdTasks.length > 0
+        ? [...newAllTasksBase, ...createdTasks]
+        : newAllTasksBase;
+    const projectReactivation = applyTaskProjectReactivationTransition(
+        reactivationRequests,
+        newAllTasks,
+        allProjects,
+        allSections,
+        now,
+        deviceId,
+    );
+    return { ...projectReactivation, createdTasks };
 };
 
 /** Calculates the exact rows affected by one already-prepared task update. */
@@ -1438,6 +1596,60 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         return result;
     },
 
+    commitPreparedArchivedTasksRestore: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Archive Restore conflicts with saved data' };
+        set((memory) => {
+            const before = authority.state;
+            if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                || memory._allAreas !== before._allAreas || memory._allSections !== before._allSections
+                || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
+            const durable = authority.snapshot;
+            if ((durable.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)) return memory;
+            const bindRows = <T extends { id: string }>(rows: T[], pairs: { before: T; after: T }[],
+                sameRow: (left: T, right: T) => boolean): Map<string, T> | null => {
+                const current = new Map(rows.map((row) => [row.id, row]));
+                const after = new Map<string, T>();
+                for (const pair of pairs) {
+                    const saved = current.get(pair.before.id);
+                    if (!saved || pair.after.id !== pair.before.id || after.has(pair.before.id)
+                        || !sameRow(saved, pair.before)) return null;
+                    after.set(pair.before.id, pair.after);
+                }
+                return after;
+            };
+            const taskAfter = bindRows(durable.tasks, input.effect.tasks, (left, right) =>
+                sameTaskSqliteRow(left, right) && sameSectionDeleteJson(left, right));
+            const projectAfter = bindRows(durable.projects, input.effect.projects, (left, right) =>
+                sameProjectSqliteRow(left, right) && sameSectionDeleteJson(left, right));
+            const sectionAfter = bindRows(durable.sections, input.effect.sections, (left, right) =>
+                sameSectionSqliteRow(left, right) && sameSectionDeleteJson(left, right));
+            if (!taskAfter || !projectAfter || !sectionAfter
+                || !input.request.taskIds.every((id) => taskAfter.get(id)?.status === 'inbox')) return memory;
+            // Only exact BEFORE can apply. Equal AFTER without this request's
+            // durable receipt is never evidence that the batch already ran.
+            const tasks = durable.tasks.map((row) => taskAfter.get(row.id) ?? row);
+            const projects = durable.projects.map((row) => projectAfter.get(row.id) ?? row);
+            const sections = durable.sections.map((row) => sectionAfter.get(row.id) ?? row);
+            const settings = input.deviceIdToInitialize
+                ? { ...durable.settings, deviceId: input.deviceIdToInitialize } : durable.settings;
+            const freshTasks = tasks.map((row) => normalizeTaskForLoad(row));
+            const freshProjects = projects.map(normalizeProjectLifecycleFields);
+            clearDerivedCache();
+            persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks, _allProjects: durable.projects,
+                _allSections: durable.sections, _allAreas: durable.areas, _allPeople: durable.people ?? [], settings: durable.settings },
+            { ...durable, tasks, projects, sections, settings });
+            const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+            authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
+                generation: getSaveGeneration(), failure: memory.persistenceFailure };
+            result = { success: true, ids: [...input.request.taskIds], outcome: 'applied' };
+            return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: sections,
+                _allAreas: durable.areas, _allPeople: durable.people ?? [], settings, lastDataChangeAt };
+        });
+        return result;
+    },
+
     commitPreparedTaskDraftV2: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Task edit conflicts with saved data' };
         set((memory) => {
@@ -2318,49 +2530,12 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
      */
     batchUpdateTasks: async (updatesList: Array<{ id: string; updates: Partial<Task> }>) => {
         if (updatesList.length === 0) return actionOk();
-        const hasInvalidCancellationTimestamp = updatesList.some(({ updates }) => (
-            hasOwnField(updates, 'cancelledAt')
-            && updates.cancelledAt != null
-            && normalizeCancellationTimestamp(updates.cancelledAt) === undefined
-        ));
-        if (hasInvalidCancellationTimestamp) {
-            const message = 'Cancellation timestamp must be an ISO datetime with timezone';
-            set({ error: message });
-            return actionFail(message);
+        const prepared = prepareTaskBatchUpdatesForStore({ updatesList, state: get() });
+        if (!prepared.ok) {
+            set({ error: prepared.error });
+            return actionFail(prepared.error);
         }
-        const state = get();
-        const seenIds = new Set<string>();
-        const duplicateIds = new Set<string>();
-        for (const { id } of updatesList) {
-            if (seenIds.has(id)) {
-                duplicateIds.add(id);
-                continue;
-            }
-            seenIds.add(id);
-        }
-        const duplicateTaskIds = Array.from(duplicateIds);
-        if (duplicateTaskIds.length > 0) {
-            const message = `Duplicate task ids in batch update: ${duplicateTaskIds.join(', ')}`;
-            set({ error: message });
-            return actionFail(message);
-        }
-        const existingTaskIds = new Set(state._tasksById.keys());
-        const missingIds = Array.from(new Set(
-            updatesList.map((update) => update.id).filter((id) => !existingTaskIds.has(id))
-        ));
-        if (missingIds.length > 0) {
-            const message = `Tasks not found: ${missingIds.join(', ')}`;
-            set({ error: message });
-            return actionFail(message);
-        }
-        const optimisticRetryProjectIds = collectOptimisticReactivationRetryProjectIds(
-            updatesList.flatMap(({ id, updates }) => {
-                const task = state._tasksById.get(id);
-                return task ? [{ task, updates }] : [];
-            }),
-            state,
-        );
-        if (optimisticRetryProjectIds.length > 0) {
+        if (prepared.optimisticRetryProjectIds.length > 0) {
             try {
                 await get().persistSnapshot();
                 await flushPendingSave();
@@ -2372,87 +2547,20 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             }
             return actionOk();
         }
-        const preparedUpdatesById = new Map<string, Partial<Task>>();
-        for (const { id, updates } of updatesList) {
-            const task = state._tasksById.get(id);
-            if (!task) continue;
-            const preparedUpdates = prepareTaskUpdatesForStore({
-                task,
-                updates,
-                allProjects: state._allProjects,
-                allSections: state._allSections,
-                allAreas: state._allAreas,
-                settings: state.settings,
-                reserveProjectOrder: false,
-            });
-            if (!preparedUpdates.ok) {
-                set({ error: preparedUpdates.error });
-                return actionFail(preparedUpdates.error);
-            }
-            preparedUpdatesById.set(id, preparedUpdates.updates);
-        }
         const changeAt = Date.now();
         const now = new Date().toISOString();
         let reactivatedProjectCount = 0;
 
         set((state) => {
             const deviceState = ensureDeviceId(state.settings);
-            const nextRecurringTasks: Task[] = [];
-            const reactivationRequests: Array<{ task: Task; updates: Partial<Task> }> = [];
-            const newAllTasksBase = [...state._allTasks];
-            const projectOrderReserver = createProjectOrderReserver(newAllTasksBase);
-            for (let index = 0; index < state._allTasks.length; index += 1) {
-                const task = newAllTasksBase[index];
-                const preparedUpdates = preparedUpdatesById.get(task.id);
-                if (!preparedUpdates) continue;
-                const adjustedUpdates = reserveTaskContainerProjectOrder({
-                    task,
-                    updates: preparedUpdates,
-                    projectOrderReserver,
-                }) as Partial<Task>;
-                reactivationRequests.push({ task, updates: adjustedUpdates });
-                const { updatedTask, nextRecurringTask } = applyTaskUpdates(
-                    task,
-                    {
-                        ...adjustedUpdates,
-                        rev: nextRevision(task.rev),
-                        revBy: deviceState.deviceId,
-                    },
-                    now
-                );
-                const stampedNextRecurringTask = stampNewRecurringFollowUp(
-                    nextRecurringTask,
-                    deviceState.deviceId,
-                    getTaskOrder(task),
-                    projectOrderReserver,
-                );
-                // Guard before the call: its arguments copy the whole collection,
-                // and evaluating them once per updated task made "select all ->
-                // move" quadratic even though almost nothing recurs.
-                if (stampedNextRecurringTask) {
-                    const duplicateFollowUp = findExistingRecurringFollowUp(
-                        [...newAllTasksBase, ...nextRecurringTasks],
-                        stampedNextRecurringTask,
-                        task.id
-                    );
-                    if (!duplicateFollowUp) {
-                        nextRecurringTasks.push(stampedNextRecurringTask);
-                    }
-                }
-                newAllTasksBase[index] = updatedTask;
-            }
-
-            const newAllTasks = nextRecurringTasks.length > 0
-                ? [...newAllTasksBase, ...nextRecurringTasks]
-                : newAllTasksBase;
-            const projectReactivation = applyTaskProjectReactivationTransition(
-                reactivationRequests,
-                newAllTasks,
-                state._allProjects,
-                state._allSections,
+            const projectReactivation = planTaskBatchUpdateEffects({
+                preparedUpdatesById: prepared.preparedUpdatesById,
+                allTasks: state._allTasks,
+                allProjects: state._allProjects,
+                allSections: state._allSections,
                 now,
-                deviceState.deviceId,
-            );
+                deviceId: deviceState.deviceId,
+            });
             reactivatedProjectCount = projectReactivation.reactivatedProjectIds.length;
 
             persist(set, debouncedSave, state, {

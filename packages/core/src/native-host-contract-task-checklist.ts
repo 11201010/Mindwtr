@@ -600,7 +600,7 @@ const readPrepared = (
 };
 
 /** The actual SQLite display codec followed by the normal load projection. */
-const historyRowLoadProjection = (task: Task, preparedAt: string): Task => {
+export const historyRowLoadProjection = (task: Task, preparedAt: string): Task => {
     const values = taskToSqliteRow(task);
     const row = Object.fromEntries(TASK_SQLITE_COLUMNS.map((column, index) => [column, values[index]]));
     return normalizeTaskForLoad(mapSqliteTaskRow(row), preparedAt);
