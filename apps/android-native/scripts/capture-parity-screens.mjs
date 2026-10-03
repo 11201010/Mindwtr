@@ -408,8 +408,11 @@ const shootEncryption = async (prefix, suffix) => {
     const labelled = (nodes, label) => nodes.find((node) => node.text === label || node['content-desc'] === label);
     try {
         await tap(labelled(await screen(), en['settings.syncBackendWebdav']) ?? fail('no WebDAV chip'));
-        let nodes = await waitFor('the WebDAV form', (current) => Boolean(labelled(current, en['settings.syncEncryption']) || current.some((node) => /sync-url/.test(node['resource-id'] ?? ''))), 15_000);
+        // The form and the card come in below the chips; their first words differ between the apps, so scroll for Enable.
+        await sleep(1500);
+        let nodes = await screen();
         for (let step = 0; step < 20 && !labelled(nodes, en['settings.syncEncryptionEnable']); step += 1) nodes = await device.swipe(nodes, 'down');
+        if (!labelled(nodes, en['settings.syncEncryptionEnable'])) writeFileSync(resolve(out, `${prefix}-encryption-failed.xml`), adbRaw('exec-out', 'uiautomator', 'dump', '/dev/tty'));
         await tap(labelled(nodes, en['settings.syncEncryptionEnable']) ?? fail('no Enable encryption'));
         nodes = await waitFor('the Enable flow', (current) => hasText(current, en['settings.syncEncryptionWarningLost']), 15_000);
         // The flow's top (its warnings) a little below the top of the screen.

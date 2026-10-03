@@ -15,7 +15,7 @@
 //   (5) the app restarted: it syncs encrypted by itself, with no passphrase typed;
 //   (6) Disable: the folder is plaintext again;
 //   (7) a weak-ETag server: Enable is refused in RN's words and nothing there is encrypted or fenced;
-//   (8) no passphrase in any app file, the journal, the log or logcat; the derived key only in RN's sealed SecureStore.
+//   (8) no passphrase in any app file, the journal, the log or logcat; the SecureStore entries are printed (no key after Disable).
 // The Argon2id time on the phone is printed. It installs with `install -r`, touches only the development package, and on exit
 // removes the port mappings and the debug property and stops both servers. Exit 0 = pass, 1 = fail, 2 = refused, 3 = stopped.
 import { execFileSync } from 'node:child_process';
@@ -133,6 +133,8 @@ const openSync = async () => {
     return tapExpecting(await reveal((next) => withPrefix(next, `${en['settings.sync']}. `), 'Sync row'), onSync, 'Settings › Sync', 30_000);
 };
 const fill = async (find, text, description) => {
+    // The keyboard of the field before covers the lower screen: a field behind it is never "in view".
+    await hideKeyboard();
     const node = await reveal(find, description);
     await tap(node);
     await sleep(300);
@@ -381,6 +383,17 @@ try {
         const open = () => { const text = logs(); return (text.match(/transition \{[^\n]*"phase":"start"/g) ?? []).length - (text.match(/transition \{[^\n]*"phase":"end"/g) ?? []).length; };
         for (const deadline = Date.now() + 180_000; open() > 0 && Date.now() < deadline;) await sleep(2_000);
     } catch { /* the app is gone */ }
+    // A failed run leaves its backend on a server that is about to stop: set Sync Off, as a passing run does, so the next
+    // check's app does not keep failing syncs (and their toasts) against it.
+    if (process.exitCode) {
+        try {
+            await openSync();
+            await tapNode((current) => tagged(current, 'sync-backend-off'), (current) => current.some((node) => node.text === en['settings.syncOff']), 'Sync off after a failure');
+            console.log('info - Sync set Off after the failure');
+        } catch (error) {
+            console.log(`warn - Sync could not be set Off after the failure: ${error.message}`);
+        }
+    }
     cleanup();
     await sleep(500);
     process.exit(process.exitCode ?? 0);
