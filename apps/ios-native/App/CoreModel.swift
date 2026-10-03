@@ -568,6 +568,16 @@ final class CoreModel: ObservableObject {
     @Published private(set) var historyDoneSelectionMode = false
     @Published private(set) var historyDoneSelectedIDs: [String] = []
     @Published private(set) var historyDoneBulk: CoreObject = [:]
+    @Published private(set) var doneBulkTagPresented = false
+    @Published private(set) var doneBulkTagText = ""
+    @Published private(set) var doneBulkTagOptions: CoreObject = [:]
+    @Published private(set) var doneBulkTagCanSave = false
+    @Published private(set) var doneBulkTagReadError: String?
+    @Published private(set) var doneBulkTagWriteError = false
+    private var doneBulkTagReadTask: Task<Void, Never>?
+    private var doneBulkTagReadGeneration = 0
+    private var doneBulkTagIDs: [String] = []
+    private var doneBulkTagRevisions: CoreObject = [:]
     private var historyDoneSelectedRevisions: CoreObject = [:]
     private var historyDoneAnchorID: String?
     private var historyDoneRangeSelectMode = false
@@ -1802,6 +1812,19 @@ final class CoreModel: ObservableObject {
             && (historyPickerName.isEmpty || historyPickerCurrent)
             && !historyDoneSelectedIDs.isEmpty && historyDoneSelectedRevisions.count == historyDoneSelectedIDs.count
             && historyDoneBulk.object("bar").objects("statuses").contains { $0.text("status") == status && $0.flag("enabled") }
+    }
+    var historyDoneBulkTagEnabled: Bool {
+        historyActionsEnabled && !historyArchived && historyDoneSelectionMode && !taskStatusMenuPresented
+            && historyTextEdits.isEmpty && historyPendingEdit == nil
+            && (historyPickerName.isEmpty || historyPickerCurrent)
+            && !historyDoneSelectedIDs.isEmpty && historyDoneSelectedRevisions.count == historyDoneSelectedIDs.count
+            && historyDoneBulk.object("bar").object("addTag").flag("enabled")
+    }
+    var doneBulkTagSaveEnabled: Bool {
+        doneBulkTagPresented && doneBulkTagCanSave && doneBulkTagReadError == nil && !busy && !retryNeeded
+            && selectedSurface == .history && !historyArchived && historyCurrent && historyDoneSelectionMode
+            && historyDoneSelectedIDs == doneBulkTagIDs
+            && (try? json(historyDoneSelectedRevisions)) == (try? json(doneBulkTagRevisions))
     }
     var historyArchiveRowActionsEnabled: Bool { historyActionsEnabled && !historyArchiveSelectionMode }
     var historyArchiveBulkRestoreEnabled: Bool {
@@ -3643,7 +3666,7 @@ final class CoreModel: ObservableObject {
                     "taskEdit.contextsLabel", "taskEdit.statusLabel", "taskEdit.reviewDateLabel",
                     "taskEdit.startModeRelative", "taskEdit.recurrenceLabel", "recurrence.showFutureInCalendar",
                     "task.completedAtPromptTitle", "task.editCompletedAt", "status.inbox", "status.next", "status.done", "status.reference",
-                    "task.doneCompletedAtOutcomeUnknown", "task.doneStatusOutcomeUnknown",
+                    "task.doneCompletedAtOutcomeUnknown", "task.doneStatusOutcomeUnknown", "task.doneTagOutcomeUnknown",
                     "taskEdit.descriptionPlaceholder", "search.placeholder", "search.noResults", "search.searching",
                     "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators", "search.saveSearch", "search.saveSearchPrompt", "search.savedSearches",
                     "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone", "review.markReviewedDone",
@@ -12259,6 +12282,7 @@ final class CoreModel: ObservableObject {
     }
 
     private func clearDoneTaskSelection() {
+        closeDoneBulkTag()
         cancelArchiveBulkDeleteConfirmation()
         historyDoneSelectionMode = false
         historyDoneSelectedIDs = []
@@ -12271,6 +12295,86 @@ final class CoreModel: ObservableObject {
     func leaveDoneTaskSelection() {
         guard !busy, !retryNeeded else { return }
         clearDoneTaskSelection()
+    }
+
+    func openDoneBulkTag() {
+        guard historyDoneBulkTagEnabled else { return }
+        doneBulkTagOptions = historyDoneBulk.object("addTag")
+        doneBulkTagIDs = historyDoneSelectedIDs
+        doneBulkTagRevisions = historyDoneSelectedRevisions
+        doneBulkTagPresented = true
+        doneBulkTagWriteError = false
+        taskStatusMenuPresented = true
+        setDoneBulkTagText(doneBulkTagText)
+    }
+
+    func closeDoneBulkTag(clearInput: Bool = true) {
+        if doneBulkTagPresented { taskStatusMenuPresented = false }
+        doneBulkTagPresented = false
+        doneBulkTagReadGeneration += 1
+        doneBulkTagReadTask?.cancel()
+        doneBulkTagReadTask = nil
+        doneBulkTagCanSave = false
+        doneBulkTagReadError = nil
+        if clearInput {
+            doneBulkTagText = ""
+            doneBulkTagIDs = []
+            doneBulkTagRevisions = [:]
+        }
+    }
+
+    func setDoneBulkTagText(_ text: String) {
+        guard doneBulkTagPresented, !busy, !retryNeeded else { return }
+        doneBulkTagText = text
+        doneBulkTagCanSave = false
+        doneBulkTagReadError = nil
+        doneBulkTagReadGeneration += 1
+        let generation = doneBulkTagReadGeneration
+        doneBulkTagReadTask?.cancel()
+        doneBulkTagReadTask = Task {
+            do {
+                let input = try await query("doneBulkTagInput", [text, 0])
+                guard !Task.isCancelled, doneBulkTagPresented, generation == doneBulkTagReadGeneration,
+                      doneBulkTagText == text, selectedSurface == .history, !historyArchived, !retryNeeded else { return }
+                guard Set(input.keys) == Set(["canSave", "notice"]), input["notice"] is NSNull,
+                      let canSave = input["canSave"] as? NSNumber, CFGetTypeID(canSave) == CFBooleanGetTypeID() else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                doneBulkTagCanSave = canSave.boolValue
+            } catch {
+                guard !Task.isCancelled, doneBulkTagPresented, generation == doneBulkTagReadGeneration, doneBulkTagText == text else { return }
+                doneBulkTagReadError = error.localizedDescription
+            }
+        }
+    }
+
+    func saveDoneBulkTag() async {
+        guard doneBulkTagSaveEnabled else { return }
+        let tag = doneBulkTagText, ids = doneBulkTagIDs, revisions = doneBulkTagRevisions
+        closeDoneBulkTag(clearInput: false)
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "taskIds": ids, "taskRevisions": revisions,
+                                    "source": "done", "action": "addTag", "tag": tag])
+            archivedTasksRestoreRequest = request
+            let result = try await query("archivedTasksRestoreWrite", [request])
+            try acknowledgeArchivedTasksRestore(result, allowNoop: true)
+            _ = await readHistory()
+            await showDoneBulkTagNotice(result)
+        } catch { doneBulkTagWriteError = true; await handleArchivedTasksRestoreError(error) }
+    }
+
+    private func showDoneBulkTagNotice(_ result: CoreObject) async {
+        let generation = doneBulkTagReadGeneration
+        guard result.flag("changed"), result.number("count") > 0,
+              let input = try? await query("doneBulkTagInput", ["", result.number("count")]),
+              generation == doneBulkTagReadGeneration, selectedSurface == .history, !historyArchived,
+              let notice = input["notice"] as? CoreObject, Set(notice.keys) == Set(["title", "message"]),
+              !notice.text("title").isEmpty, !notice.text("message").isEmpty else { return }
+        showTaskActionNotice(["operation": "doneBulkTag", "source": "done", "undoEnabled": false,
+                              "message": notice.text("title") + ": " + notice.text("message")])
     }
 
     private func doneTaskBulkInput(params: CoreObject) -> CoreObject {
@@ -12543,19 +12647,31 @@ final class CoreModel: ObservableObject {
         historyError = failure.localizedDescription
     }
 
-    private func acknowledgeArchivedTasksRestore(_ result: CoreObject) throws {
+    private func acknowledgeArchivedTasksRestore(_ result: CoreObject, allowNoop: Bool = false) throws {
         guard let request = archivedTasksRestoreRequest else { throw CocoaError(.coderReadCorrupt) }
         let frozen = try decode(request)
         let done = frozen.text("source") == "done"
+        let addTag = done && frozen.text("action") == "addTag"
         guard let ids = frozen["taskIds"] as? [String],
-              Set(result.keys) == Set(["count", "status"]), result.text("status") == (done ? frozen.text("status") : "inbox"),
               let count = result["count"] as? NSNumber, CFGetTypeID(count) != CFBooleanGetTypeID(),
-              count.doubleValue == Double(ids.count) else { throw CocoaError(.coderReadCorrupt) }
+              count.doubleValue.rounded(.towardZero) == count.doubleValue else { throw CocoaError(.coderReadCorrupt) }
+        if addTag {
+            guard Set(result.keys) == Set(["count", "changed"]),
+                  let changed = result["changed"] as? NSNumber, CFGetTypeID(changed) == CFBooleanGetTypeID(),
+                  changed.boolValue ? count.doubleValue > 0 && count.doubleValue <= Double(ids.count) : allowNoop && count.doubleValue == 0 else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+        } else {
+            guard Set(result.keys) == Set(["count", "status"]), result.text("status") == (done ? frozen.text("status") : "inbox"),
+                  count.doubleValue == Double(ids.count) else { throw CocoaError(.coderReadCorrupt) }
+        }
         archivedTasksRestoreRequest = nil
+        if addTag { doneBulkTagWriteError = false }
         retryNeeded = false
         historyError = nil
         error = nil
-        if done { clearDoneTaskSelection() } else { clearArchiveTaskSelection() }
+        if addTag && !result.flag("changed") { closeDoneBulkTag() }
+        else if done { clearDoneTaskSelection() } else { clearArchiveTaskSelection() }
     }
 
     private func handleArchivedTasksRestoreError(_ failure: Error) async {
@@ -18870,7 +18986,8 @@ final class CoreModel: ObservableObject {
                 let outcome = try await query("archivedTasksRestoreRetryOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
                     let done = try decode(request).text("source") == "done"
-                    let unknown = label(done ? "task.doneStatusOutcomeUnknown" : "task.archiveRestoreOutcomeUnknown")
+                    let addTag = try decode(request).text("action") == "addTag"
+                    let unknown = label(addTag ? "task.doneTagOutcomeUnknown" : done ? "task.doneStatusOutcomeUnknown" : "task.archiveRestoreOutcomeUnknown")
                     historyError = unknown
                     self.error = unknown
                     return
@@ -18882,6 +18999,7 @@ final class CoreModel: ObservableObject {
                 if let acknowledgment, try json(result) != json(decode(acknowledgment)) { throw CocoaError(.coderReadCorrupt) }
                 try acknowledgeArchivedTasksRestore(result)
                 _ = await readHistory()
+                await showDoneBulkTagNotice(result)
                 return
             }
             if let request = archivedTaskRestoreRequest {

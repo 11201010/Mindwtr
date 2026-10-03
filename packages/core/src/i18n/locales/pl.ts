@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const plOverrides: Record<string, string> = {
+    'task.doneTagOutcomeUnknown': "Nie udało się potwierdzić zmiany tagów. Uruchom ponownie Mindwtr, aby ponownie wczytać zapisane dane.",
     'task.doneCompletedAtOutcomeUnknown': "Nie udało się potwierdzić zmiany czasu ukończenia. Uruchom ponownie Mindwtr, aby wczytać zapisane dane.",
     'filters.searchTasks': "Szukaj w tytułach zadań",
     'filters.searchOptions': "Szukaj opcji",

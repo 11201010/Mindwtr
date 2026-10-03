@@ -319,6 +319,7 @@ export const svOverrides: Record<string, string> = {
         'task.archiveRestoreOutcomeUnknown': 'Det gick inte att bekräfta om den arkiverade uppgiften återställdes. Starta om Mindwtr för att läsa in sparade data igen.',
         'task.archiveDeleteOutcomeUnknown': "Det gick inte att bekräfta om den arkiverade uppgiften raderades. Starta om Mindwtr för att läsa in sparade data igen.",
         'task.doneStatusOutcomeUnknown': "Det gick inte att bekräfta statusändringen. Starta om Mindwtr för att läsa in sparade data igen.",
+        'task.doneTagOutcomeUnknown': "Det gick inte att bekräfta taggändringen. Starta om Mindwtr för att läsa in sparade data igen.",
         'task.doneCompletedAtOutcomeUnknown': "Det gick inte att bekräfta ändringen av slutförandetiden. Starta om Mindwtr för att läsa in sparade data igen.",
         'task.trashOutcomeUnknown': "Det gick inte att bekräfta åtgärden i papperskorgen. Starta om Mindwtr för att läsa in sparade data igen.",
         'projects.archiveDeleteOutcomeUnknown': "Det gick inte att bekräfta om det arkiverade projektet raderades. Starta om Mindwtr för att läsa in sparade data igen.",

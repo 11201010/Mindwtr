@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const hiOverrides: Record<string, string> = {
+    'task.doneTagOutcomeUnknown': "टैग में बदलाव की पुष्टि नहीं हो सकी। सहेजे गए डेटा को फिर से लोड करने के लिए Mindwtr को पुनः प्रारंभ करें।",
     'task.doneCompletedAtOutcomeUnknown': "पूरा होने के समय में बदलाव की पुष्टि नहीं हो सकी। सहेजे गए डेटा को फिर से लोड करने के लिए Mindwtr को पुनः शुरू करें।",
     'filters.searchTasks': "कार्य शीर्षक खोजें",
     'filters.searchOptions': "विकल्प खोजें",

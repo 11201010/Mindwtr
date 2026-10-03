@@ -19493,4 +19493,95 @@ final class FoundationUITests: XCTestCase {
             task183CheckMoved(app); app.terminate()
         }
     }
+    private func task184SelectRange(_ app: XCUIApplication) {
+        historyViewChoice(app, "done", "group", "none")
+        historyViewChoice(app, "done", "sort", "title")
+        task182Filter(app, "Task184 batch")
+        let first = app.descendants(matching: .any).matching(identifier: "task-title-task184-batch-01").firstMatch
+        task182Reveal(app, first); first.press(forDuration: 0.8)
+        let count = app.staticTexts["done-bulk-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 15)); XCTAssertTrue(count.label.contains("1"))
+        boardTap(app, "done-bulk-range")
+        let last = app.buttons["done-select-none-task184-batch-05"]
+        task182Reveal(app, last); last.tap()
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "4"), evaluatedWith: count)
+        waitForExpectations(timeout: 15)
+        XCTAssertFalse(app.buttons["done-select-none-task184-readonly"].exists)
+    }
+
+    private func task184OpenTag(_ app: XCUIApplication, _ value: String) {
+        boardTap(app, "done-bulk-add-tag")
+        let input = app.textFields["done-bulk-tag-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["done-bulk-tag-save"].isEnabled)
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        input.typeText(value)
+        XCTAssertEqual(input.value as? String, value)
+        boardEnabled(app.buttons["done-bulk-tag-save"], timeout: 15)
+    }
+    private func task184SaveTag(_ app: XCUIApplication) {
+        let save = app.buttons["done-bulk-tag-save"]
+        boardEnabled(save, timeout: 15)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task184 Add tag"; shot.lifetime = .keepAlways; add(shot)
+        save.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.85)).tap()
+        XCTAssertTrue(app.textFields["done-bulk-tag-input"].waitForNonExistence(timeout: 15))
+    }
+    private func task184CheckRows(_ app: XCUIApplication) {
+        task182Filter(app, "Task184 batch")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task184-batch-01").firstMatch.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.buttons["task-doneBulkTag-undo"].exists)
+    }
+    private func task184Noops(_ app: XCUIApplication) {
+        task184OpenTag(app, "cancel184")
+        app.buttons["done-bulk-tag-cancel"].coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.85)).tap()
+        XCTAssertTrue(app.textFields["done-bulk-tag-input"].waitForNonExistence(timeout: 15))
+        for tag in ["#retain184", "###"] {
+            task184OpenTag(app, tag); task184SaveTag(app)
+            XCTAssertTrue(app.staticTexts["done-bulk-count"].label.contains("4"))
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-doneBulkTag-notice").firstMatch.exists)
+        }
+    }
+    private func task184Flow(_ library: String, noop: Bool = false) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task176OpenDone(app); task184SelectRange(app)
+        task184Noops(app)
+        if !noop {
+            task184OpenTag(app, "@@ blue sky,review"); task184SaveTag(app)
+            XCTAssertTrue(app.staticTexts["done-bulk-count"].waitForNonExistence(timeout: 30))
+            let notice = app.descendants(matching: .any).matching(identifier: "task-doneBulkTag-notice").firstMatch
+            XCTAssertTrue(notice.waitForExistence(timeout: 5)); XCTAssertTrue(notice.label.contains("2"))
+        } else { boardTap(app, "done-bulk-exit") }
+        task184CheckRows(app); app.terminate()
+        app.launch(); task176OpenDone(app); task184CheckRows(app); app.terminate()
+    }
+    func testTask184DoneBulkAddTag() { task184Flow("04075255-f303-46a1-809c-89e250babd63") }
+    func testTask184DoneBulkAddTagNoops() { task184Flow("6b014afe-a7c3-4072-9abc-a0c3c9d4f224", noop: true) }
+    func testTask184DoneBulkAddTagLargest() { task184Flow("067c7258-3a4a-4865-b8a9-962464373b72") }
+    func testTask184DoneBulkAddTagFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "a1b13140-d075-496f-a8cc-39082d632a6c"]
+        app.launch(); task176OpenDone(app); task184SelectRange(app)
+        task184OpenTag(app, "@@ blue sky,review"); task184SaveTag(app)
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+            XCTAssertFalse(app.buttons["history-tab-archived"].isEnabled)
+            XCTAssertTrue(app.staticTexts["done-bulk-count"].label.contains("4"))
+            boardTap(app, "persistence-retry")
+        }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); app.terminate()
+    }
+    func testTask184DoneBulkAddTagColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "104afb99-a9f6-48eb-b880-f68de828c3a9"]
+        for launch in 0..<2 {
+            app.launch()
+            if app.buttons["persistence-retry"].waitForExistence(timeout: 5) { boardTap(app, "persistence-retry") }
+            if launch > 0 { task176OpenDone(app) }
+            boardEnabled(app.buttons["history-tab-done"], timeout: 30)
+            XCTAssertFalse(app.staticTexts["done-bulk-count"].exists)
+            task184CheckRows(app); app.terminate()
+        }
+    }
 }

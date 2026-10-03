@@ -2105,6 +2105,35 @@ describe('canonical local reads contract', () => {
         if (doneBulkMove.storeFields.length > 0 || doneBulkMove.readFields.length > 0) {
             notCanonical.push({ action: 'native prepared Done bulk Move status', ...doneBulkMove });
         }
+        const doneBulkTag = await runMutation('native prepared Done bulk Add tag', async (control) => {
+            await call('batchMoveTasks', ['task-66', 'task-132'], 'done');
+            await call('batchUpdateTasks', [{ id: 'task-66', updates: { tags: ['#task184'] } }]);
+            const host = await nativeHost(control);
+            const sources = ['task-66', 'task-132'].map((id) => useTaskStore.getState()._tasksById.get(id)!);
+            expect(sources.every((row) => row.status === 'done' && !row.deletedAt)).toBe(true);
+            const taskIds = sources.map((row) => row.id);
+            const request = { requestId: '2f0e9b35-afcd-4710-8847-9c4219ad0184', source: 'done' as const, action: 'addTag' as const,
+                tag: '#task184', taskIds, taskRevisions: Object.fromEntries(sources.map((row) => [row.id, taskRevisionOf(row)])) };
+            const planned = nativeValue(await host.prepareArchivedTasksRestore(request));
+            expect(planned.kind).toBe('prepared');
+            if (planned.kind !== 'prepared') throw new Error('The mixed changed Add tag case must write');
+            expect(nativeValue(host.validatePreparedArchivedTasksRestore({ request, prepared: planned.prepared }))).toEqual({ count: 1, changed: true });
+            const changed = new Map(planned.prepared.effect.tasks.map((pair) => [pair.after.id, pair.after]));
+            expect([...changed.keys()]).toEqual(['task-132']);
+            expect(changed.get('task-132')).toMatchObject({ status: 'done', tags: expect.arrayContaining(['#task184']), rev: (sources[1].rev ?? 0) + 1 });
+            const durable = nativeValue(await readAreaDurableData(false, true)); const before = durable.authority.snapshot;
+            control.expectPersisted((written) => {
+                expect(written.tasks).toEqual(before.tasks.map((row) => changed.get(row.id) ?? row));
+                expect(written.tasks.find((row) => row.id === 'task-66')?.rev).toBe(sources[0].rev);
+                expect(written.projects).toEqual(before.projects); expect(written.sections).toEqual(before.sections); expect(written.settings).toEqual(before.settings);
+            });
+            control.resetBaseline();
+            expect(await useTaskStore.getState().commitPreparedArchivedTasksRestore(planned.prepared, durable.authority))
+                .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+        });
+        if (doneBulkTag.storeFields.length > 0 || doneBulkTag.readFields.length > 0) {
+            notCanonical.push({ action: 'native prepared Done bulk Add tag', ...doneBulkTag });
+        }
         const preparedTheme = await runMutation('native prepared General Theme', async (control) => {
             const host = await nativeHost(control);
             const options = nativeValue(await host.getGeneralPreferenceOptions({}));

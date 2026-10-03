@@ -69,6 +69,7 @@ import {
 import { findSelectableProjectByTitleAndArea, isSelectableProjectForTaskAssignment } from './project-utils';
 import { isStatusListTaskReadOnly } from './menu-views-model';
 import { getBulkMoveStatusOptions } from './task-list-bulk-actions';
+import { buildBulkTaskTokenUpdates } from './bulk-task-tokens';
 import { buildNewProject, projectAreaOrderMax } from './store-projects/project-actions';
 import {
     compactPurgedTaskForLocalStorage,
@@ -1621,7 +1622,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
 
     commitPreparedArchivedTasksRestore: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
-            error: input.request.source === 'done' ? 'Done Move conflicts with saved data' : 'Archive Restore conflicts with saved data' };
+            error: input.request.source === 'done' ? input.request.action === 'addTag' ? 'Done Add tag conflicts with saved data' : 'Done Move conflicts with saved data' : 'Archive Restore conflicts with saved data' };
         set((memory) => {
             const before = authority.state;
             if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
@@ -1649,10 +1650,27 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 sameProjectSqliteRow(left, right) && sameSectionDeleteJson(left, right));
             const sectionAfter = bindRows(durable.sections, input.effect.sections, (left, right) =>
                 sameSectionSqliteRow(left, right) && sameSectionDeleteJson(left, right));
-            const target = input.request.source === undefined && input.request.status === undefined ? 'inbox'
-                : input.request.source === 'done' && getBulkMoveStatusOptions('done').includes(input.request.status) ? input.request.status : null;
-            if (!taskAfter || !projectAfter || !sectionAfter || !target
-                || !input.request.taskIds.every((id) => taskAfter.get(id)?.status === target)) return memory;
+            if (!taskAfter || !projectAfter || !sectionAfter) return memory;
+            if (input.request.source === 'done' && input.request.action === 'addTag' && input.request.status === undefined
+                && typeof input.request.tag === 'string' && input.request.tag.trim() && input.request.tag.length <= 2000
+                && Object.keys(input.request).length === 6) {
+                const sources = new Map(durable.tasks.map((row) => [row.id, row]));
+                if (!input.request.taskIds.every((id) => {
+                    const row = sources.get(id);
+                    return row?.status === 'done' && !row.deletedAt && !row.purgedAt && !isStatusListTaskReadOnly(row, durable.projects);
+                })) return memory;
+                const updates = buildBulkTaskTokenUpdates(input.request.taskIds, sources, 'tags', input.request.tag, 'add');
+                const selected = new Set(input.request.taskIds);
+                if (!updates.length || [...taskAfter.keys()].filter((id) => selected.has(id)).length !== updates.length
+                    || updates.some(({ id, updates: patch }) => taskAfter.get(id)?.status !== 'done'
+                        || !taskEditValuesEqual(taskAfter.get(id)?.tags, patch.tags))) return memory;
+            } else {
+                const target = input.request.source === undefined && input.request.status === undefined
+                    && input.request.action === undefined && input.request.tag === undefined ? 'inbox'
+                    : input.request.source === 'done' && input.request.action === undefined && input.request.tag === undefined
+                        && getBulkMoveStatusOptions('done').includes(input.request.status) ? input.request.status : null;
+                if (!target || !input.request.taskIds.every((id) => taskAfter.get(id)?.status === target)) return memory;
+            }
             // Only exact BEFORE can apply. Equal AFTER without this request's
             // durable receipt is never evidence that the batch already ran.
             const tasks = durable.tasks.map((row) => taskAfter.get(row.id) ?? row);

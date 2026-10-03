@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const csOverrides: Record<string, string> = {
+    'task.doneTagOutcomeUnknown': "Změnu štítků se nepodařilo potvrdit. Restartujte Mindwtr a znovu načtěte uložená data.",
     'task.doneCompletedAtOutcomeUnknown': "Změnu času dokončení se nepodařilo potvrdit. Restartujte Mindwtr a znovu načtěte uložená data.",
     'filters.searchTasks': "Hledat v názvech úkolů",
     'filters.searchOptions': "Hledat možnosti",

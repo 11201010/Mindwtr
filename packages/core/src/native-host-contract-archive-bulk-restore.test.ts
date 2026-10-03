@@ -89,6 +89,30 @@ describe('guarded Archive bulk Restore', () => {
             ]);
         } finally { await sqlite.close(); }
     });
+    it('preserves the old exact five-field Done Move intent/result and independent full receipt fingerprint bytes', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(NOW));
+        const sqlite = await openSqliteHost({ tasks: [task('move', { status: 'done', completedAt: NOW, archivedAt: undefined,
+            createdAt: NOW, updatedAt: NOW })], projects: [], sections: [], settings: { deviceId: 'device-a', analyticsProfileId: UUID } });
+        try {
+            const host = methods(); const input = { ...request(['move']), source: 'done' as const, status: 'waiting' as const };
+            const plan = value(await host.prepareArchivedTasksRestore(input)); expect(plan.kind).toBe('prepared');
+            if (plan.kind !== 'prepared') throw new Error('Existing Done Move always prepares');
+            const command = { request: input, prepared: plan.prepared };
+            expect(Object.keys(command.request).sort()).toEqual(['requestId', 'taskIds', 'taskRevisions', 'source', 'status'].sort());
+            expect(Object.keys(command.prepared).sort()).toEqual(['version', 'request', 'scope', 'effect', 'deviceIdBefore', 'deviceIdToInitialize',
+                'updateAt', 'preparedLocalDay', 'preparedOffsetMinutes', 'boundaryOffsetMinutes', 'futureBoundary', 'dates', 'result'].sort());
+            expect(command.prepared.result).toEqual({ count: 1, status: 'waiting' });
+            const payload = JSON.stringify(['doneTasksMove', command], (_name, item) => item && typeof item === 'object' && !Array.isArray(item)
+                ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item);
+            const fingerprint = `doneTasksMove:${deterministicHash128(payload).map((part) => part.toString(16).padStart(8, '0')).join('')}`;
+            expect(value(await host.commitPreparedArchivedTasksRestore(command))).toEqual({ count: 1, status: 'waiting' });
+            const expected = [{ request_id: UUID, method: fingerprint, reply: JSON.stringify({ count: 1, status: 'waiting' }), saved_at: NOW }];
+            expect(await sqlite.sql('SELECT * FROM native_request_receipts ORDER BY request_id')).toEqual(expected);
+            await sqlite.restart(undefined, { recoveryLoad: true });
+            expect(value(await methods().commitPreparedArchivedTasksRestore(command))).toEqual({ count: 1, status: 'waiting' });
+            expect(await sqlite.sql('SELECT * FROM native_request_receipts ORDER BY request_id')).toEqual(expected);
+        } finally { await sqlite.close(); }
+    });
     it.each([['a', 'b'], ['a', 'sibling', 'b']])('matches actual RN batchMoveTasks whole content/all nine tables for selection %j', async (...selected) => {
         vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(NOW));
         const rn = await openSqliteHost(seed());

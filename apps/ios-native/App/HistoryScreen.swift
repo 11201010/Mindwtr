@@ -65,17 +65,18 @@ struct HistoryScreen: View {
                                           completedAtError = false
                                           Task { await model.changeDoneTaskStatus(row, status: status) }
                                       }, onCompletedAt: { openCompletedAt($0) },
-                                      errorIdentifier: completedAtError ? "done-completed-at-error" : nil,
+                                      errorIdentifier: model.doneBulkTagWriteError ? "done-bulk-tag-error" : completedAtError ? "done-completed-at-error" : nil,
                                       selectionActive: model.historyDoneSelectionMode, selectedTaskIDs: model.historyDoneSelectedIDs,
                                       onSelection: { row in Task { await model.selectDoneTask(row) } },
                                       onSelectionStart: { row in Task { await model.selectDoneTask(row) } })
                 }
             }
-            .accessibilityHidden(!completedAtOptions.isEmpty)
+            .accessibilityHidden(!completedAtOptions.isEmpty || model.doneBulkTagPresented)
             if !completedAtOptions.isEmpty {
                 HistoryTaskCompletedAtDialog(model: model, palette: palette, options: completedAtOptions,
                                             prefix: completedAtArchived ? "archive" : "done", close: closeCompletedAt, save: saveCompletedAt)
             }
+            if model.doneBulkTagPresented { HistoryDoneBulkTagDialog(model: model, palette: palette) }
         }
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
@@ -121,6 +122,7 @@ struct HistoryScreen: View {
         }
         .onDisappear {
             closeCompletedAt()
+            model.closeDoneBulkTag()
             archiveBulkDeletePresented = false
             model.cancelArchiveBulkDeleteConfirmation()
             model.leaveArchiveTaskSelection()
@@ -354,6 +356,11 @@ struct HistoryScreen: View {
         .buttonStyle(.plain).disabled(!model.historyDoneBulkDeleteEnabled)
         .accessibilityAddTraits(model.historyDoneBulk.object("bar").object("range").flag("active") ? .isSelected : [])
         .accessibilityIdentifier("done-bulk-range")
+        Button { model.openDoneBulkTag() } label: {
+            Text(model.historyDoneBulk.object("bar").object("addTag").text("label"))
+                .rnFont(13, .semibold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!model.historyDoneBulkTagEnabled).accessibilityIdentifier("done-bulk-add-tag")
         Button {
             model.requestDeleteSelectedArchiveTasks(done: true)
             archiveBulkDeletePresented = !model.archiveBulkDeleteConfirmation.isEmpty
@@ -669,6 +676,65 @@ struct HistoryScreen: View {
     private func clearFilters() {
         searchFocused = false
         Task { await model.editHistoryFilter(model.history.object("filters").object("clearEdit")) }
+    }
+}
+
+private struct HistoryDoneBulkTagDialog: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+
+    private var fields: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.doneBulkTagOptions.text("title")).rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+            TextField(model.doneBulkTagOptions.text("placeholder"), text: Binding(get: { model.doneBulkTagText }, set: { model.setDoneBulkTagText($0) }))
+                .rnFont(16).textInputAutocapitalization(.never).autocorrectionDisabled()
+                .padding(12).frame(minHeight: 44).background(palette.input, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                .accessibilityLabel(model.doneBulkTagOptions.text("placeholder"))
+                .accessibilityIdentifier("done-bulk-tag-input")
+            if let error = model.doneBulkTagReadError {
+                Text(error).rnFont(13).foregroundStyle(palette.danger).accessibilityIdentifier("done-bulk-tag-error")
+                Button { model.setDoneBulkTagText(model.doneBulkTagText) } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint).accessibilityIdentifier("done-bulk-tag-read-retry")
+            }
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { model.closeDoneBulkTag() }.accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 12) {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        ScrollView { fields }
+                            .frame(maxHeight: min(420, max(120, geometry.size.height - 132)))
+                            .accessibilityIdentifier("done-bulk-tag-scroll")
+                    } else {
+                        fields
+                    }
+                    HStack {
+                        Spacer()
+                        Button { model.closeDoneBulkTag() } label: {
+                            Text(model.doneBulkTagOptions.text("cancelLabel")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.secondary).accessibilityIdentifier("done-bulk-tag-cancel")
+                        Button { Task { await model.saveDoneBulkTag() } } label: {
+                            Text(model.doneBulkTagOptions.text("saveLabel")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.doneBulkTagSaveEnabled)
+                        .accessibilityIdentifier("done-bulk-tag-save")
+                    }
+                }
+                .padding(16).frame(maxWidth: 420)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(16)
+            }
+            .foregroundStyle(palette.text).accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("done-bulk-tag-dialog").accessibilityAction(.escape) { model.closeDoneBulkTag() }
+        }
     }
 }
 

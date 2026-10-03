@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const trOverrides: Record<string, string> = {
+    'task.doneTagOutcomeUnknown': "Etiket değişikliği doğrulanamadı. Kaydedilen verileri yeniden yüklemek için Mindwtr uygulamasını yeniden başlatın.",
     'task.doneCompletedAtOutcomeUnknown': "Tamamlanma zamanı değişikliği doğrulanamadı. Kaydedilen verileri yeniden yüklemek için Mindwtr uygulamasını yeniden başlatın.",
     'filters.searchTasks': "Görev başlıklarında ara",
     'filters.searchOptions': "Seçeneklerde ara",
