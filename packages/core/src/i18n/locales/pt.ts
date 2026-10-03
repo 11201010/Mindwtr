@@ -77,6 +77,9 @@ export const ptOverrides: Record<string, string> = {
         'settings.donateLinkValue': "Doar",
         'settings.documentationLinkValue': "Documentação",
         'markdown.copyCode': 'Copiar código',
+        'markdown.copyLink': "Copiar link",
+        'markdown.openLinkFailed': "Não foi possível abrir este link. Verifique se o aplicativo correspondente está instalado. Você pode copiar o link e abri-lo nele.",
+        'markdown.copyLinkFailed': "Não foi possível copiar este link.",
 
         // Navigation
         'nav.main': 'Principal',

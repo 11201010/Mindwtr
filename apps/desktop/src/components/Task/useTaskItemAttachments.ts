@@ -1,3 +1,4 @@
+import { isUpNoteHref, showExternalLinkFailure } from '../../lib/external-link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Attachment, DEFAULT_PROJECT_COLOR, areDraftAttachmentsDirty, buildTaskUpdatesFromSpeechResult, findSelectableProjectByTitleAndArea, generateUUID, isSandboxMode, normalizeLinkAttachmentInput, parseAttachmentLinkBatch, planAttachmentDraftSettlement, translateWithFallback, useTaskStore, type Task } from '@mindwtr/core';
 import { dataDir } from '@tauri-apps/api/path';
@@ -204,6 +205,10 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
             // folder link's device-local bookmark on the App Store build.
             await openAttachmentTarget(attachment.uri, attachment.id);
         } catch (error) {
+            if (isUpNoteHref(attachment.uri)) {
+                setAttachmentError(showExternalLinkFailure(attachment.uri, t));
+                return;
+            }
             void logWarn('Failed to open attachment', {
                 scope: 'attachment',
                 extra: { error: error instanceof Error ? error.message : String(error) },

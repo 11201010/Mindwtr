@@ -2836,6 +2836,15 @@ globalThis.MindwtrHost = {
         });
     },
     /** A line of Kotlin's runner (CoreWork, the queue drain) through core's logger, its fields in `context`. */
+    logLinkHandoff(outcome: string, surface: string): string {
+        return submit(async () => {
+            if (!['opened', 'failed'].includes(outcome) || !['markdown', 'attachment'].includes(surface)) return {};
+            const meta = { scope: 'links', force: true, context: { releaseCheck: 'v1.3.4/upnote-links', outcome, surface, scheme: 'upnote' } };
+            if (outcome === 'failed') logWarn('Native UpNote handoff failed', meta);
+            else logInfo('Native UpNote handoff accepted', meta);
+            return {};
+        });
+    },
     logLine(message: string, contextJson: string): string {
         return submit(async () => {
             try {

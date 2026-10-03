@@ -514,6 +514,10 @@ class CoreHost(
      * A line of the runner's (CoreWork, the queue drain) through core's logger: logcat, and RN's diagnostics log file while Debug
      * logging is on, its fields in [context]. It never fails its caller: a line that cannot go through core goes to logcat.
      */
+    fun logLinkHandoff(outcome: String, surface: String) {
+        runCatching { callAsync("logLinkHandoff", outcome, surface) }
+    }
+
     fun logLine(message: String, context: JSONObject) {
         runCatching { callAsync("logLine", message, context.toString()) }.onFailure { Log.i(TAG, "$message $context") }
     }

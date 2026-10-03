@@ -82,6 +82,9 @@ export const svOverrides: Record<string, string> = {
         'settings.donateLinkValue': 'Donera',
         'settings.documentationLinkValue': 'Dokumentation',
         'markdown.copyCode': 'Kopiera kod',
+        'markdown.copyLink': "Kopiera länk",
+        'markdown.openLinkFailed': "Det gick inte att öppna länken. Kontrollera att appen som hanterar den är installerad. Du kan kopiera länken och öppna den där.",
+        'markdown.copyLinkFailed': "Det gick inte att kopiera länken.",
 
         'nav.main': 'Huvud',
         'nav.inbox': 'Inkorg',

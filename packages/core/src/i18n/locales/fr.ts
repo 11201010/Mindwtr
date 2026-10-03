@@ -75,6 +75,9 @@ export const frOverrides: Record<string, string> = {
         'settings.donateLinkValue': "Faire un don",
         'settings.documentationLinkValue': "Documentation",
         'markdown.copyCode': 'Copier le code',
+        'markdown.copyLink': "Copier le lien",
+        'markdown.openLinkFailed': "Impossible d’ouvrir ce lien. Vérifiez que l’application correspondante est installée. Vous pouvez copier le lien et l’y ouvrir.",
+        'markdown.copyLinkFailed': "Impossible de copier ce lien.",
 
         // Navigation
         'nav.main': 'Principal',

@@ -82,6 +82,9 @@ export const faOverrides: Record<string, string> = {
         'settings.donateLinkValue': 'کمک مالی',
         'settings.documentationLinkValue': 'مستندات',
         'markdown.copyCode': 'کپی کد',
+        'markdown.copyLink': "کپی پیوند",
+        'markdown.openLinkFailed': "این پیوند باز نشد. مطمئن شوید برنامهٔ مربوط به آن نصب است. می‌توانید پیوند را کپی کنید و در آن برنامه باز کنید.",
+        'markdown.copyLinkFailed': "این پیوند کپی نشد.",
 
         'nav.main': 'اصلی',
         'nav.inbox': 'صندوق ورودی',

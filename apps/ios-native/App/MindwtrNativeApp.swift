@@ -9,6 +9,10 @@ struct MindwtrNativeApp: App {
     var body: some Scene {
         WindowGroup {
             AppLockRoot(model: model, lock: model.appLock)
+                .environment(\.nativeExternalLinkLabels, model.strings)
+                .environment(\.nativeExternalLinkDiagnostic, { outcome, surface in
+                    Task { await model.recordUpNoteHandoff(outcome, surface: surface) }
+                })
                 .task { await model.start() }
         }
     }

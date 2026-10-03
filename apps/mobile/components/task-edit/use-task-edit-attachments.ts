@@ -7,8 +7,8 @@ import {
     findSelectableProjectByTitleAndArea,
     findTaskDraftAttachmentForIdentity,
     generateUUID,
-    getAttachmentLinkEditText,
     getAttachmentOpenLinkFailedMessage,
+    getAttachmentLinkEditText,
     getAttachmentResolutionMessage,
     isAttachmentFileInUse,
     isImageAttachment,
@@ -44,6 +44,7 @@ import { hasAttachmentDownloadIdentity } from '../../lib/attachment-sync-availab
 import { attachmentAvailabilityPort } from '../../lib/attachment-availability-port';
 import { loadAIKey } from '../../lib/ai-config';
 import { tryOpenWithAndroidViewer } from '../../lib/open-file-externally';
+import { openExternalLink } from '../../lib/open-external-link';
 import { ensureWhisperModelPathForConfigAsync, processAudioCapture, resolveSpeechToTextRuntimeSettings } from '../../lib/speech-to-text';
 import { normalizeAudioUri } from '../../lib/speech-to-text.helpers';
 import {
@@ -584,10 +585,14 @@ export function useTaskEditAttachments({
             return;
         }
         if (plan.kind === 'link') {
-            Linking.openURL(plan.uri).catch((error) => {
-                logTaskError('Failed to open attachment URL', error);
-                Alert.alert(t('attachments.title'), getAttachmentOpenLinkFailedMessage(t));
-            });
+            if (/^upnote:\/\//i.test(plan.uri)) {
+                await openExternalLink(plan.uri, t, 'attachment');
+            } else {
+                Linking.openURL(plan.uri).catch((error) => {
+                    logTaskError('Failed to open attachment URL', error);
+                    Alert.alert(t('attachments.title'), getAttachmentOpenLinkFailedMessage(t));
+                });
+            }
             return;
         }
         if (plan.kind === 'audio') {

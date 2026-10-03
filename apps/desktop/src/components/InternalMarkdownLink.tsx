@@ -1,10 +1,9 @@
 import React from 'react';
-import { isSandboxMode, parseMarkdownReferenceHref, tFallback, useTaskStore, shallow, type Project, type Task } from '@mindwtr/core';
+import { isSandboxMode, isSafeMarkdownExternalHref, parseMarkdownReferenceHref, tFallback, useTaskStore, shallow, type Project, type Task } from '@mindwtr/core';
 
 import { useLanguage } from '../contexts/language-context';
 import { dispatchNavigateEvent } from '../lib/navigation-events';
-import { reportError } from '../lib/report-error';
-import { isTauriRuntime } from '../lib/runtime';
+import { openExternalLink, showExternalLinkFailure } from '../lib/external-link';
 import { cn } from '../lib/utils';
 import { resolveTaskNavigationView } from '../lib/task-navigation';
 import { useUiStore } from '../store/ui-store';
@@ -105,33 +104,8 @@ export function useInternalMarkdownLinkContext(): InternalMarkdownLinkContext {
 }
 
 function isSafeExternalHref(href: string): boolean {
-    try {
-        const url = new URL(href);
-        return ['http:', 'https:', 'mailto:', 'tel:', 'mid:'].includes(url.protocol);
-    } catch {
-        return false;
-    }
-}
-
-async function openExternalHref(href: string): Promise<void> {
-    if (isSandboxMode()) return;
-    const nextHref = href.trim();
-    let openError: unknown = null;
-
-    if (isTauriRuntime()) {
-        try {
-            const { open } = await import('@tauri-apps/plugin-shell');
-            await open(nextHref);
-            return;
-        } catch (error) {
-            openError = error;
-        }
-    }
-
-    const opened = window.open(nextHref, '_blank', 'noopener,noreferrer');
-    if (!opened) {
-        reportError('Failed to open markdown link', openError ?? new Error('Popup blocked'));
-    }
+    // Desktop retains its existing email message-id support.
+    return isSafeMarkdownExternalHref(href) || /^mid:[^\s]+$/i.test(href);
 }
 
 export function InternalMarkdownLink({ href, className, children, linkContext }: InternalMarkdownLinkProps) {
@@ -170,7 +144,7 @@ export function InternalMarkdownLink({ href, className, children, linkContext }:
                 className={cn('bg-transparent p-0 text-left [font:inherit] text-primary underline underline-offset-2 hover:opacity-90', className)}
                 onClick={(event) => {
                     event.stopPropagation();
-                    void openExternalHref(href);
+                    void openExternalLink(href, 'markdown').catch(() => showExternalLinkFailure(href, t));
                 }}
             >
                 {children}

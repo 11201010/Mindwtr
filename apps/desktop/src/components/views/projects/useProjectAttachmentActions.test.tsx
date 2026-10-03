@@ -4,9 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Attachment, Project } from '@mindwtr/core';
 
 import { useProjectAttachmentActions } from './useProjectAttachmentActions';
+import { useUiStore } from '../../../store/ui-store';
 import { isTauriRuntime } from '../../../lib/runtime';
 
 const dialogOpenMock = vi.hoisted(() => vi.fn());
+const shellOpenMock = vi.hoisted(() => vi.fn());
+vi.mock('@tauri-apps/plugin-shell', () => ({ open: shellOpenMock }));
+
 const invokeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../lib/runtime', () => ({
@@ -48,6 +52,24 @@ describe('useProjectAttachmentActions', () => {
         const hook = renderHook(() => useProjectAttachmentActions(params));
         return { hook, params };
     };
+
+    it('recovers a failed project UpNote link by copying its original URI', async () => {
+        vi.mocked(isTauriRuntime).mockReturnValue(true);
+        shellOpenMock.mockRejectedValue(new Error('No installed handler'));
+        useUiStore.setState({ toasts: [] });
+        const copy = vi.fn(async () => undefined);
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } });
+        const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+        const attachment: Attachment = { id: 'note-1', kind: 'link', title: 'Note', uri, createdAt: baseProject.createdAt, updatedAt: baseProject.updatedAt };
+        const { hook, params } = setup({ ...baseProject, attachments: [attachment] });
+        await act(async () => hook.result.current.openAttachment(attachment));
+        expect(shellOpenMock).toHaveBeenCalledWith(uri);
+        expect(hook.result.current.attachmentError).toContain('Make sure the app');
+        expect(params.updateProject).not.toHaveBeenCalled();
+        await act(async () => useUiStore.getState().toasts[0].action?.onClick());
+        expect(copy).toHaveBeenCalledWith(uri);
+        vi.mocked(isTauriRuntime).mockReturnValue(false);
+    });
 
     it('reports file attachments as unsupported on web runtime', async () => {
         const { hook } = setup();

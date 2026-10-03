@@ -1,4 +1,5 @@
 import { parseInlineMarkdown, parseMarkdownReferenceHref } from './markdown';
+import { isSafeMarkdownExternalHref } from './markdown-links';
 import type { Project, Task } from './types';
 
 /**
@@ -128,7 +129,7 @@ export function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
 export type MarkdownLinkTarget =
     | { kind: 'project'; id: string }
     | { kind: 'task'; id: string; projectId: string | null }
-    /** http(s), mailto: or tel: only. */
+    /** http(s), mailto:, tel: or upnote:// only. */
     | { kind: 'external'; href: string };
 
 export type MarkdownInline =
@@ -156,8 +157,6 @@ export function createMarkdownLinkLookup(tasks: readonly Task[], projects: reado
     };
 }
 
-const isSafeLink = (href: string): boolean => /^https?:\/\//i.test(href) || /^mailto:/i.test(href) || /^tel:/i.test(href);
-
 /** One block's text as inline runs. A link the preview cannot open is plain text. */
 export function resolveMarkdownInline(text: string, lookup: MarkdownLinkLookup): MarkdownInline[] {
     return parseInlineMarkdown(text).map((token): MarkdownInline => {
@@ -174,7 +173,7 @@ export function resolveMarkdownInline(text: string, lookup: MarkdownLinkLookup):
                 ? { type: 'link', text: token.text, target: { kind: 'task', id: reference.id, projectId: task.projectId ?? null } }
                 : { type: 'deletedReference', text: token.text, entityType: 'task' };
         }
-        if (isSafeLink(token.href)) return { type: 'link', text: token.text, target: { kind: 'external', href: token.href } };
+        if (isSafeMarkdownExternalHref(token.href)) return { type: 'link', text: token.text, target: { kind: 'external', href: token.href } };
         return { type: 'text', text: token.text };
     });
 }

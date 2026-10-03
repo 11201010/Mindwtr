@@ -70,6 +70,9 @@ export const deOverrides: Record<string, string> = {
         'settings.donateLinkValue': "Spenden",
         'settings.documentationLinkValue': "Dokumentation",
         'markdown.copyCode': 'Code kopieren',
+        'markdown.copyLink': "Link kopieren",
+        'markdown.openLinkFailed': "Dieser Link konnte nicht geöffnet werden. Prüfe, ob die zugehörige App installiert ist. Du kannst den Link kopieren und dort öffnen.",
+        'markdown.copyLinkFailed': "Dieser Link konnte nicht kopiert werden.",
         
         //Navigation
         'nav.main': 'Start',

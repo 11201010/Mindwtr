@@ -28,6 +28,7 @@ import { hasAttachmentDownloadIdentity } from '../../lib/attachment-sync-availab
 import { attachmentAvailabilityPort } from '../../lib/attachment-availability-port';
 import { logWarn } from '../../lib/app-log';
 import { tryOpenWithAndroidViewer } from '../../lib/open-file-externally';
+import { openExternalLink } from '../../lib/open-external-link';
 
 type UseProjectAttachmentsParams = {
   selectedProject: Project | null;
@@ -129,10 +130,14 @@ export function useProjectAttachments({
       return;
     }
     if (plan.kind === 'link') {
-      Linking.openURL(plan.uri).catch((error) => {
-        logProjectError('Failed to open attachment URL', error);
-        Alert.alert(t('attachments.title'), getAttachmentOpenLinkFailedMessage(t));
-      });
+      if (/^upnote:\/\//i.test(plan.uri)) {
+        await openExternalLink(plan.uri, t, 'attachment');
+      } else {
+        Linking.openURL(plan.uri).catch((error) => {
+          logProjectError('Failed to open attachment URL', error);
+          Alert.alert(t('attachments.title'), getAttachmentOpenLinkFailedMessage(t));
+        });
+      }
       return;
     }
     // `audio: false`: the project screen has no player, so audio opens as a file.

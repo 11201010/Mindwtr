@@ -83,6 +83,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'route', 'elapsedMs', 'moduleElapsedMs',
     'releaseCheck', 'backend', 'statusPublished', 'lastSyncAt', 'lastSyncStatus',
     'artifact', 'cloudProvider', 'scheme', 'host', 'delivery', 'deduped',
+    // UpNote handoff diagnostics contain only the surface, scheme and outcome.
+    'surface',
     'platform', 'total', 'multiDay', 'allDay', 'spanning',
     'presenceDue', 'hasScope', 'check', 'skipped', 'publication',
     // webdav-presence-proof (desktop/mobile WebDAV attachment adapters)

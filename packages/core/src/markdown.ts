@@ -6,6 +6,7 @@
  */
 
 import type { Project, Task } from './types';
+import { isSafeMarkdownExternalHref } from './markdown-links';
 
 const CODE_BLOCK_RE = /```[\s\S]*?```/g;
 const INLINE_CODE_RE = /`([^`]+)`/g;
@@ -127,7 +128,7 @@ const sanitizeLinkHref = (href: string): string | null => {
     }
     try {
         const url = new URL(trimmed);
-        if (['http:', 'https:', 'mailto:', 'tel:', 'mid:', 'mindwtr:'].includes(url.protocol)) {
+        if (isSafeMarkdownExternalHref(trimmed) || ['mid:', 'mindwtr:'].includes(url.protocol)) {
             return trimmed;
         }
     } catch {

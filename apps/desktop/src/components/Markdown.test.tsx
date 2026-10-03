@@ -1,11 +1,29 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
-import { render } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { Markdown } from './Markdown';
 import { LanguageProvider } from '../contexts/language-context';
 
+const openShell = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('@tauri-apps/plugin-shell', () => ({ open: openShell }));
+
 describe('Markdown', () => {
+    it('renders explicit UpNote descriptions and preserves their URI through the opener', async () => {
+        const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+        (window as any).__TAURI_INTERNALS__ = {};
+        try {
+            const { getByRole } = render(<LanguageProvider><Markdown markdown={`[Note](${uri})`} /></LanguageProvider>);
+            expect(openShell).not.toHaveBeenCalled();
+            expect(getByRole('link', { name: 'Note' })).toHaveAttribute('title', uri);
+            fireEvent.click(getByRole('link', { name: 'Note' }));
+            await waitFor(() => expect(openShell).toHaveBeenCalledWith(uri));
+        } finally {
+            delete (window as any).__TAURI_INTERNALS__;
+            openShell.mockClear();
+        }
+    });
+
     it('renders list blocks after plain text without requiring a blank line', () => {
         const { container, getByText } = render(
             <LanguageProvider>

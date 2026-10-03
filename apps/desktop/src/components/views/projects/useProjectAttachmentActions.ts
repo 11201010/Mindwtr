@@ -1,3 +1,4 @@
+import { isUpNoteHref, showExternalLinkFailure } from '../../../lib/external-link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isSandboxMode, useTaskStore, type Attachment, type Project } from '@mindwtr/core';
 import { importPickedFileAttachment, pickFolderLinkAttachment } from '../../../lib/attachment-import';
@@ -54,6 +55,10 @@ export function useProjectAttachmentActions({
             // folder link's device-local bookmark on the App Store build.
             await openAttachmentTarget(attachment.uri, attachment.id);
         } catch (error) {
+            if (isUpNoteHref(attachment.uri)) {
+                setAttachmentError(showExternalLinkFailure(attachment.uri, t));
+                return;
+            }
             void logWarn('Failed to open attachment', {
                 scope: 'attachment',
                 extra: { error: error instanceof Error ? error.message : String(error) },

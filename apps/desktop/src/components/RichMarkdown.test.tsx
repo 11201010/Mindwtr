@@ -5,6 +5,12 @@ import { LanguageProvider } from '../contexts/language-context';
 import { RichMarkdown } from './RichMarkdown';
 
 describe('RichMarkdown', () => {
+    it('keeps explicit UpNote links clickable with the original encoded URI', () => {
+        const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+        render(<LanguageProvider><RichMarkdown markdown={`[Note](${uri})`} /></LanguageProvider>);
+        expect(screen.getByRole('link', { name: 'Note' })).toHaveAttribute('title', uri);
+    });
+
     it('renders markdown headings with desktop heading styles', () => {
         render(<RichMarkdown markdown={'# Heading\n\n## Section\n\nBody'} />);
 
