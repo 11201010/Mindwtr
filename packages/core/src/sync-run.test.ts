@@ -3194,6 +3194,41 @@ describe('activation proof with metadata-only attachments (no blob anywhere)', (
         expect(io.writeRemote).not.toHaveBeenCalled();
     });
 
+    it('keeps the refused file and its owner out of the logs and the stored sync status, by ID only', async () => {
+        const unproven = () => {
+            const task = createTask('t-private', 'Private task title');
+            task.attachments = [{
+                id: 'attachment-private',
+                kind: 'file',
+                title: 'private-file-name.pdf',
+                uri: '',
+                cloudKey: 'cloudkit:private',
+                localStatus: 'missing',
+                createdAt: STAMP,
+                updatedAt: STAMP,
+            }];
+            return task;
+        };
+        const leaks = (text: string) => ['Private task title', 'private-file-name'].filter((name) => text.includes(name));
+        const logged = (warnings: { message: string; error?: unknown }[]) => warnings
+            .map(({ message, error }) => `${message} ${error instanceof Error ? error.message : String(error ?? '')}`).join('\n');
+
+        // The activation probe: the toast still names them (#1151); the log does not.
+        const probe = createHarness({ local: createData([unproven()]), activationProbe: true, io: { syncAttachments: vi.fn(async (data: AppData) => data) } });
+        const probeResult = await probe.run();
+        expect(probeResult.error).toContain('"private-file-name.pdf" on task "Private task title"');
+        expect(logged(probe.harness.warnings)).toContain('attachment-private');
+        expect(leaks(logged(probe.harness.warnings))).toEqual([]);
+
+        // A regular cycle stores the refusal in the sync status and history, and writes the error log: IDs only.
+        const cycle = createHarness({ local: createData([unproven()]), activationProbe: false, io: { syncAttachments: vi.fn(async (data: AppData) => data) } });
+        const cycleResult = await cycle.run();
+        const stored = JSON.stringify([cycleResult, vi.mocked(cycle.hooks.finalizeErrorStatus).mock.calls,
+            vi.mocked(cycle.notifier.logSyncError).mock.calls.map(([error]) => (error instanceof Error ? error.message : String(error))), cycle.harness.uiErrors]);
+        expect(leaks(stored)).toEqual([]);
+        expect(leaks(logged(cycle.harness.warnings))).toEqual([]);
+    });
+
     it('still refuses when this device claims the bytes but the transfer pass cannot read them', async () => {
         const localTask = createTask('t-unreadable', 'Unreadable local attachment');
         localTask.attachments = [{

@@ -399,15 +399,25 @@ const clipTitle = (value: string | undefined, max = 60): string => {
     return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 };
 
-/** The refusal names the file and its owner, and says why (#1151): a UUID alone
- *  sent a reporter to curl and jq against /v1/data to find the task. */
+/**
+ * An attachment the activation could not prove. Its message (what logs, the sync status and its history keep) names the
+ * attachment and its owner by ID only; `displayMessage`, which only the activation's answer to the screen carries, names the
+ * file and its owner as well and says why (#1151: a UUID alone sent a reporter to curl and jq against /v1/data).
+ */
+export class ActivationAttachmentProofError extends Error {
+    constructor(message: string, readonly displayMessage: string) {
+        super(message);
+        this.name = 'ActivationAttachmentProofError';
+    }
+}
+
 const describeUnprovenAttachment = (
     ownerType: 'task' | 'project',
-    owner: { title?: string },
+    owner: { id?: string; title?: string },
     attachment: Attachment,
     backend: SyncBackend,
     originalCloudKey: string | undefined,
-): string => {
+): ActivationAttachmentProofError => {
     const name = clipTitle(attachment.title) || attachment.id;
     const ownerTitle = clipTitle(owner.title);
     const where = ownerTitle ? ` on ${ownerType} "${ownerTitle}"` : '';
@@ -422,7 +432,10 @@ const describeUnprovenAttachment = (
     } else {
         reason = 'the file could not be fetched from the new sync location';
     }
-    return `Candidate attachment proof failed for ${attachment.id} ("${name}"${where}): ${reason}`;
+    return new ActivationAttachmentProofError(
+        `Candidate attachment proof failed for ${attachment.id}${owner.id ? ` on ${ownerType} ${owner.id}` : ''}: ${reason}`,
+        `Candidate attachment proof failed for ${attachment.id} ("${name}"${where}): ${reason}`,
+    );
 };
 
 type ActivationAttachmentProof = 'proven' | 'deferred' | 'unproven';
@@ -507,7 +520,7 @@ const assertActivationAttachmentsProven = (
 ): string[] => {
     const resolved = new Set<string>();
     const deferred: string[] = [];
-    const owners: Array<['task' | 'project', { title?: string; deletedAt?: string; attachments?: Attachment[] }]> = [
+    const owners: Array<['task' | 'project', { id?: string; title?: string; deletedAt?: string; attachments?: Attachment[] }]> = [
         ...data.tasks.map((task) => ['task', task] as ['task', typeof task]),
         ...data.projects.map((project) => ['project', project] as ['project', typeof project]),
     ];
@@ -541,7 +554,7 @@ const assertActivationAttachmentsProven = (
                 if (expectedIds.has(attachment.id)) resolved.add(attachment.id);
                 continue;
             }
-            throw new Error(describeUnprovenAttachment(ownerType, owner, attachment, backend, originalCloudKeys.get(attachment.id)));
+            throw describeUnprovenAttachment(ownerType, owner, attachment, backend, originalCloudKeys.get(attachment.id));
         }
     }
     // An expected attachment that vanished without a tombstone is a silent drop
@@ -2026,7 +2039,8 @@ class SharedSyncRunMachine {
         if (this.options.activationProbe) {
             return {
                 success: false,
-                error: this.hooks.formatErrorMessage(error, this.backend),
+                // Only this answer to the screen names a refused attachment's file and owner (#1151); logs and status keep IDs.
+                error: this.hooks.formatErrorMessage(error instanceof ActivationAttachmentProofError ? new Error(error.displayMessage) : error, this.backend),
                 ...(fileSyncLockUnavailable ? { fileSyncLockUnavailable: true } : {}),
                 ...(fileGenerationCorrupt ? { fileGenerationCorrupt: true } : {}),
             };
