@@ -249,7 +249,7 @@ class AttachmentsModel(private val shell: InboxViewModel) {
         // A project's: built first (the picked document's metadata), then sent as an exact request.
         Thread({
             val input = runCatching { build(context).put("owner", ownerJson(owner)) }.getOrElse { failure ->
-                Log.w(CoreHost.TAG, "Attachment command not sent kind=$kind", failure)
+                Log.w(CoreHost.TAG, "${attachmentLaunchLog("command", null, failure)} kind=$kind")
                 shell.ui { alert = failure.message }
                 return@Thread
             }
@@ -320,7 +320,7 @@ class AttachmentsModel(private val shell: InboxViewModel) {
             shell.ui {
                 downloading = downloading - attachmentId
                 result.onFailure { failure ->
-                    Log.w(CoreHost.TAG, "Attachment ${if (open) "open" else "download"} failed code=${failure.message?.substringBefore(':')}")
+                    Log.w(CoreHost.TAG, "Attachment ${if (open) "open" else "download"} failed code=${attachmentCodeForLog(failure.message)}")
                     alert = failure.message.orEmpty().substringAfter(": ")
                 }
                 result.onSuccess { reply ->
@@ -373,13 +373,13 @@ class AttachmentsModel(private val shell: InboxViewModel) {
         runCatching {
             val saved = runtime.taskView(JSONObject().put("id", taskId).put("limit", 1).toString())
             settleOn(runtime, savedSettlement(taskId, half, saved))
-        }.onFailure { Log.w(CoreHost.TAG, "Attachment settlement not read code=${it.message?.substringBefore(':')}") }
+        }.onFailure { Log.w(CoreHost.TAG, "Attachment settlement not read code=${attachmentCodeForLog(it.message)}") }
     }
 
     private fun settleOn(runtime: CoreHost, input: JSONObject) {
         runCatching { runtime.attachmentRequest("settleTaskDraftAttachments", input.toString()) }
             .onSuccess { Log.i(CoreHost.TAG, "Native Android attachment settlement deleted=${it.optInt("deleted")}") }
-            .onFailure { Log.w(CoreHost.TAG, "Native Android attachment settlement failed code=${it.message?.substringBefore(':')}") }
+            .onFailure { Log.w(CoreHost.TAG, "Native Android attachment settlement failed code=${attachmentCodeForLog(it.message)}") }
     }
 
     /** The editor closed: its rows, sheet and player go. */
@@ -408,6 +408,37 @@ class AttachmentsModel(private val shell: InboxViewModel) {
 }
 
 /**
+ * A URI as a log line names it, as core's describeAttachmentUriForLog does: its scheme, managed (under files/attachments/) or
+ * external, and its extension. Never the URI itself: a link can carry a user name, a password or a token.
+ */
+internal fun attachmentUriForLog(uri: String?): String {
+    if (uri.isNullOrEmpty()) return "none"
+    val scheme = Regex("^[A-Za-z][A-Za-z0-9+.-]*:").find(uri)?.value.orEmpty()
+    val path = uri.substringBefore('?').substringBefore('#')
+    val managed = scheme == "file:" && "/files/attachments/" in path
+    val extension = Regex("\\.[A-Za-z0-9]{1,8}$").find(path.substringAfterLast('/'))?.value.orEmpty().lowercase()
+    return "$scheme${if (managed) "managed" else "external"}${if (managed) extension else ""}"
+}
+
+/** Core's error code at the head of a failure's text ("STALE_REVISION: …"), or "other": never the rest of the text. */
+internal fun attachmentCodeForLog(message: String?): String =
+    message?.substringBefore(':')?.trim()?.takeIf { Regex("[A-Z][A-Z0-9_]{1,40}").matches(it) } ?: "other"
+
+/** A failed launch's log line: the event, the URI as [attachmentUriForLog] names it, and the failure's class. Never its message, which
+ * Android 7 fills with the Intent's URI. */
+internal fun attachmentLaunchLog(kind: String, uri: String?, failure: Throwable): String {
+    val event = when (kind) {
+        "link" -> "Attachment link not opened"
+        "viewer" -> "Attachment viewer not started"
+        "share" -> "Attachment share sheet not started"
+        "audio" -> "Audio attachment not loaded"
+        "command" -> "Attachment command not sent"
+        else -> "Attachment URI not opened"
+    }
+    return "$event uri=${attachmentUriForLog(uri)} error=${failure.javaClass.simpleName}"
+}
+
+/**
  * Core's open plan for a link or a file, started with [context] (an Activity). A file goes to Android's viewer (ACTION_VIEW on
  * the FileProvider URI with core's view type), else the share sheet, else its URI, as RN's open-file-externally and its
  * fallbacks do. Answers core's failure message for a link that nothing opened, else null.
@@ -418,7 +449,7 @@ fun startAttachmentPlan(context: Context, plan: JSONObject): String? {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(plan.getString("uri"))))
             null
         } catch (failure: Exception) {
-            Log.w(CoreHost.TAG, "Attachment link not opened", failure)
+            Log.w(CoreHost.TAG, attachmentLaunchLog("link", plan.optString("uri"), failure))
             plan.menuText("failedMessage")
         }
     }
@@ -431,16 +462,16 @@ fun startAttachmentPlan(context: Context, plan: JSONObject): String? {
         } catch (_: ActivityNotFoundException) {
             // No viewer for the type: the share sheet is still a way out.
         } catch (failure: Exception) {
-            Log.w(CoreHost.TAG, "Attachment viewer not started", failure)
+            Log.w(CoreHost.TAG, attachmentLaunchLog("viewer", raw, failure))
         }
         try {
             context.startActivity(shareIntent(shared, plan.menuText("mimeType")))
             return null
         } catch (failure: Exception) {
-            Log.w(CoreHost.TAG, "Attachment share sheet not started", failure)
+            Log.w(CoreHost.TAG, attachmentLaunchLog("share", raw, failure))
         }
     }
-    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(raw))) }.onFailure { Log.w(CoreHost.TAG, "Attachment URI not opened", it) }
+    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(raw))) }.onFailure { Log.w(CoreHost.TAG, attachmentLaunchLog("uri", raw, it)) }
     return null
 }
 
@@ -648,7 +679,7 @@ private fun ImagePreview(model: InboxViewModel, shown: AttachmentView) = with(mo
                 TextButton(onClick = {
                     // RN's shareFileWithFeedback: a share that cannot start says so under the Attachments title.
                     runCatching { context.startActivity(shareIntent(contentUri(context, shown.uri), null)) }
-                        .onFailure { Log.w(CoreHost.TAG, "Attachment share sheet not started", it); showAlert(t("share.unavailable")) }
+                        .onFailure { Log.w(CoreHost.TAG, attachmentLaunchLog("share", shown.uri, it)); showAlert(t("share.unavailable")) }
                 }) { Text(t("common.share"), style = rnText(14, 700), color = c.tint) }
                 TextButton(onClick = ::closeView) { Text(t("common.close"), style = rnText(14, 700), color = c.secondaryText) }
             }
@@ -681,7 +712,7 @@ private fun AudioPlayer(model: InboxViewModel, shown: AttachmentView) = with(mod
     var duration by remember { mutableStateOf<Int?>(null) }
     val player = remember(shown.uri) {
         runCatching { MediaPlayer().apply { setDataSource(requireNotNull(Uri.parse(shown.uri).path)); prepare() } }
-            .onFailure { Log.w(CoreHost.TAG, "Audio attachment not loaded", it) }.getOrNull()
+            .onFailure { Log.w(CoreHost.TAG, attachmentLaunchLog("audio", shown.uri, it)) }.getOrNull()
     }
     DisposableEffect(player) { onDispose { runCatching { player?.release() } } }
     LaunchedEffect(player) {
