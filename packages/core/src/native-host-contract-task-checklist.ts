@@ -1049,13 +1049,18 @@ export function createTaskChecklistSaveMethods(deps: {
         if (confirmed.ok && !same(confirmed.value, envelope.prepared.result))
             return fail('INVALID_INPUT', `Saved ${action} result does not match its journal`);
         if (confirmed.ok) {
-            try { logInfo(envelope.prepared.kind === 'referenceNext' ? 'Native Reference Task Next confirmed'
-                : envelope.prepared.kind === 'doneStatus' ? 'Native Done Task status confirmed'
-                : envelope.prepared.kind === 'doneCompletedAt' ? 'Native Done completion time confirmed' : 'Native Archive completion time confirmed', { scope: 'native-host', category: 'storage',
-                context: { releaseCheck: envelope.prepared.kind === 'referenceNext' ? 'v1.3.4/ios-reference-next' : envelope.prepared.kind === 'doneStatus'
-                    ? 'v1.3.4/ios-done-task-status' : envelope.prepared.kind === 'doneCompletedAt'
-                         ? 'v1.3.4/ios-done-completion-time' : 'v1.3.4/ios-archive-completion-time',
-                    outcome: envelope.prepared.kind === 'referenceNext' ? 'moved' : 'confirmed' } }); }
+            try {
+                if (envelope.prepared.kind === 'referenceNext') {
+                    logInfo('Native Reference Task Next confirmed', { scope: 'native-host', category: 'storage',
+                        context: { releaseCheck: 'v1.3.4/ios-reference-next', outcome: 'moved' } });
+                } else {
+                    logInfo(envelope.prepared.kind === 'doneStatus' ? 'Native Done Task status confirmed'
+                        : envelope.prepared.kind === 'doneCompletedAt' ? 'Native Done completion time confirmed' : 'Native Archive completion time confirmed', { scope: 'native-host', category: 'storage',
+                        context: { releaseCheck: envelope.prepared.kind === 'doneStatus'
+                            ? 'v1.3.4/ios-done-task-status' : envelope.prepared.kind === 'doneCompletedAt'
+                                ? 'v1.3.4/ios-done-completion-time' : 'v1.3.4/ios-archive-completion-time', outcome: 'confirmed' } });
+                }
+            }
             catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
         }
         return confirmed;
