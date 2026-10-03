@@ -12,6 +12,8 @@ import {
     type SyncCryptoPrimitives,
 } from './sync-crypto';
 import vectors from './__fixtures__/sync-crypto/vectors.json';
+import primitiveVectors from './__fixtures__/sync-crypto/primitive-vectors.json';
+import { computeSha256Hex } from './attachment-hash';
 
 // Cheap params for tests that don't care about the real KDF cost — the pinned production default
 // (SYNC_CRYPTO_DEFAULT_KDF_PARAMS) is exercised by the 'small-json-default-params' fixture vector.
@@ -254,5 +256,36 @@ describe('sync-crypto MWENC1 format', () => {
             const key = new Uint8Array(32);
             await expect(decryptSyncArtifact(hostile, key)).rejects.toThrow(SyncCryptoUnsupportedError);
         });
+    });
+});
+
+// The raw primitive outputs every SyncCryptoPrimitives must reproduce (RN's OpenSSL adapter and the Android host's HostCrypto.kt
+// test the same file): Argon2id keys checked against OpenSSL when generated, AES-GCM and SHA-256 from OpenSSL.
+describe('sync-crypto primitive vectors', () => {
+    const fromHex = (hex: string): Uint8Array => new Uint8Array(Buffer.from(hex, 'hex'));
+    const toHex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
+
+    it('derives every Argon2id key, the NFC passphrase included', async () => {
+        expect(primitiveVectors.argon2id).toHaveLength(8);
+        for (const vector of primitiveVectors.argon2id) {
+            expect(toHex(new TextEncoder().encode(vector.passphrase.normalize('NFC')))).toBe(vector.passHex);
+            const key = await defaultSyncCryptoPrimitives.argon2id(fromHex(vector.passHex), fromHex(vector.saltHex),
+                { mKib: vector.mKib, t: vector.t, p: vector.p }, vector.dkLen);
+            expect(toHex(key), vector.passphrase).toBe(vector.keyHex);
+        }
+    });
+
+    it('seals and opens every AES-256-GCM case with its AAD', async () => {
+        for (const vector of primitiveVectors.aesGcm) {
+            const [key, nonce, plaintext, aad] = [vector.keyHex, vector.nonceHex, vector.plaintextHex, vector.aadHex].map(fromHex);
+            expect(toHex(await defaultSyncCryptoPrimitives.aesGcmSeal(key, nonce, plaintext, aad))).toBe(vector.sealedHex);
+            expect(toHex(await defaultSyncCryptoPrimitives.aesGcmOpen(key, nonce, fromHex(vector.sealedHex), aad))).toBe(vector.plaintextHex);
+        }
+    });
+
+    it('hashes every SHA-256 case', async () => {
+        for (const vector of primitiveVectors.sha256) {
+            expect(await computeSha256Hex(fromHex(vector.inputHex))).toBe(vector.digestHex);
+        }
     });
 });
