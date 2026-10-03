@@ -19911,4 +19911,112 @@ final class FoundationUITests: XCTestCase {
         XCTAssertFalse(coldMatches.allElementsBoundByIndex.contains { $0.identifier.utf8.elementsEqual("task-title-task186-e\u{0301}".utf8) })
         app.terminate()
     }
+    private func task187NextAction(_ app: XCUIApplication, _ id: String) -> XCUIElement {
+        let identifier = "task-title-" + id
+        let rows = app.descendants(matching: .any).matching(identifier: identifier)
+        let row = rows.allElementsBoundByIndex.first { $0.identifier.utf8.elementsEqual(identifier.utf8) } ?? rows.firstMatch
+        task186Reveal(app, row)
+        XCTAssertFalse(app.buttons["task-status-" + id].exists)
+        row.swipeRight()
+        let action = app.buttons.matching(identifier: "reference-next-" + id).firstMatch
+        boardEnabled(action, timeout: 15); XCTAssertTrue(action.isHittable)
+        XCTAssertGreaterThanOrEqual(action.frame.height, 44 - 0.001)
+        return action
+    }
+    private func task187ReadOnly(_ app: XCUIApplication) {
+        let row = app.descendants(matching: .any).matching(identifier: "task-title-task187-readonly").firstMatch
+        task186Reveal(app, row); row.swipeRight()
+        XCTAssertFalse(app.buttons["reference-next-task187-readonly"].exists)
+        row.swipeLeft(); XCTAssertFalse(app.buttons["reference-delete-task187-readonly"].exists)
+        row.tap(); boardEnabled(app.buttons["task-view-close"], timeout: 15)
+        let edit = app.buttons["task-mode-edit"]; XCTAssertFalse(edit.exists && edit.isEnabled)
+        boardTap(app, "task-view-close")
+    }
+    private func task187Check(_ app: XCUIApplication, all: Bool) {
+        task186Filter(app, "Task187 action"); referenceGroup(app, "none")
+        for suffix in ["plain", "parented", "recurring"] {
+            XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "task-title-task187-" + suffix).firstMatch.exists, !all && suffix != "plain")
+        }
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task187-readonly").firstMatch.exists)
+        XCTAssertFalse(app.buttons["task-delete-undo"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+    private func task187Flow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task186Open(app); task186Filter(app, "Task187 action")
+        referenceGroup(app, "tag")
+        referenceFold(app, "tag:#Task187 B", open: true, toggle: true)
+        task187ReadOnly(app)
+        for suffix in ["plain", "parented", "recurring"] {
+            task187NextAction(app, "task187-" + suffix).tap()
+            XCTAssertFalse(app.alerts.firstMatch.exists)
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task187-" + suffix).firstMatch.waitForNonExistence(timeout: 30))
+            XCTAssertFalse(app.buttons["task-delete-undo"].exists)
+            boardEnabled(app.buttons["reference-overflow-button"], timeout: 30)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task187 Reference Next"; shot.lifetime = .keepAlways; add(shot)
+        task187Check(app, all: true); app.terminate(); app.launch(); task186Open(app); task187Check(app, all: true); app.terminate()
+    }
+    func testTask187ReferenceNextNormal() { task187Flow("3631435e-b1c3-4479-bc6b-57c354b26b90") }
+    func testTask187ReferenceNextLargest() { task187Flow("355f7cb9-33bc-48be-a8f3-64857c691da2") }
+    func testTask187ReferenceNextSwipeOnly() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "12c5026c-4d3f-4973-9c58-d476029ff1da"]
+        app.launch(); task186Open(app); referenceGroup(app, "none")
+        let list = app.descendants(matching: .any).matching(identifier: "reference-scroll").firstMatch
+        let last = app.descendants(matching: .any).matching(identifier: "task-title-task187-page-129").firstMatch
+        let more = app.buttons["reference-more"]
+        for _ in 0..<60 {
+            if last.exists { break }
+            if more.exists && more.isHittable { more.tap() }
+            else { list.swipeUp(velocity: .fast) }
+        }
+        XCTAssertTrue(last.exists)
+        task186Filter(app, "Task187 action"); task187ReadOnly(app)
+        _ = task187NextAction(app, "task187-plain")
+        XCTAssertFalse(app.alerts.firstMatch.exists); XCTAssertFalse(app.buttons["task-delete-undo"].exists)
+        app.terminate(); app.launch(); task186Open(app); task186Filter(app, "Task187 action")
+        _ = task186DeleteAction(app, "task187-plain")
+        XCTAssertFalse(app.alerts.firstMatch.exists); XCTAssertFalse(app.buttons["task-delete-undo"].exists)
+        app.terminate()
+    }
+    func testTask187ReferenceNextFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "665864e6-74e8-4c0c-a1ca-b943d801ae70"]
+        app.launch(); task186Open(app); task186Filter(app, "Task187 action"); referenceGroup(app, "none")
+        task187NextAction(app, "task187-plain").tap()
+        for attempt in 0..<2 {
+            boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+            XCTAssertFalse(app.buttons["reference-overflow-button"].isEnabled)
+            let local = app.buttons["reference-retry"]; boardEnabled(local)
+            if attempt == 0 { task186Reveal(app, local); local.tap() }
+            else { boardTap(app, "persistence-retry") }
+        }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); app.terminate()
+    }
+    func testTask187ReferenceNextColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e6de1786-d5f5-4ef3-aef4-041f05886282"]
+        for launch in 0..<2 {
+            app.launch()
+            if launch == 0 { XCTAssertTrue(app.buttons["reference-overflow-button"].waitForExistence(timeout: 30)) }
+            task186Open(app); task187Check(app, all: false); app.terminate()
+        }
+    }
+    func testTask187ReferenceNextExactUnicodeIdentity() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "c4cfa6ae-cf6b-4c11-8e84-ab0be00ee691"]
+        app.launch(); task186Open(app); task186Filter(app, "Task187 Unicode"); referenceGroup(app, "none")
+        task187NextAction(app, "task187-e\u{0301}").tap()
+        boardEnabled(app.buttons["reference-overflow-button"], timeout: 30)
+        for launch in 0..<2 {
+            if launch > 0 { app.launch(); task186Open(app); task186Filter(app, "Task187 Unicode") }
+            let rows = app.descendants(matching: .any).matching(identifier: "task-title-task187-é")
+            XCTAssertTrue(rows.allElementsBoundByIndex.contains { $0.identifier.utf8.elementsEqual("task-title-task187-é".utf8) })
+            XCTAssertFalse(rows.allElementsBoundByIndex.contains { $0.identifier.utf8.elementsEqual("task-title-task187-e\u{0301}".utf8) })
+            XCTAssertFalse(app.buttons["persistence-retry"].exists); app.terminate()
+        }
+    }
+
 }
