@@ -166,6 +166,11 @@ class ReminderPlanTest {
         assertEquals(false, RnAlarmCleanup.isMissingTable(RuntimeException("no such column: gson_data")))
     }
 
+    @Test fun theCleanupForgetsOnlyReactNativesAlarmMapNeverItsPomodoroRecord() {
+        // The upgrade allows exactly one RKStorage key to change; RN's Pomodoro record belongs to the Pomodoro pass (R2).
+        assertEquals(listOf("mindwtr:local:alarms:v1"), RnAlarmCleanup.FORGOTTEN_KEYS)
+    }
+
     @Test fun noReactNativeTableMeansNothingToDo() {
         assertEquals(0, RnAlarmCleanup.run(rows = { null }, cancel = { events += "cancel $it" }, stripButtons = { events += "strip" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" }))
         assertEquals(emptyList<String>(), events)

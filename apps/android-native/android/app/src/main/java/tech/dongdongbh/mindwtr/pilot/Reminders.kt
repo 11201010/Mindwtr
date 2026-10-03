@@ -143,11 +143,17 @@ internal class ReminderDeliveries {
  * React Native's alarms, cancelled once at the first native start, before the first plan (JVM-tested: ReminderPlanTest). RN's
  * library keeps them in `databases/rnandb`, table `alarmtbl`; each is a broadcast to its AlarmReceiver under the request code in
  * the row's `alarmId`. Their order makes a process death safe anywhere: every alarm is cancelled, then RN's delivered reminders lose
- * their buttons (Done, Snooze and Dismiss target RN's receiver, which is gone; a tap still opens the app), then RN's maps go (core
- * plans every alarm afresh, and RN's Pomodoro record no longer names a cancelled alarm), then the table. Until the table is gone each
+ * their buttons (Done, Snooze and Dismiss target RN's receiver, which is gone; a tap still opens the app), then RN's alarm map goes (core
+ * plans every alarm afresh; RN's Pomodoro record stays for the Pomodoro pass), then the table. Until the table is gone each
  * start runs it again, and cancelling twice is harmless; no plan runs before it finished.
  */
 internal object RnAlarmCleanup {
+    /**
+     * RN's RKStorage keys the cleanup removes: its alarm map only (core plans every alarm afresh). RN's Pomodoro record stays as RN
+     * left it (the Pomodoro pass, R2, owns it); its alarm is cancelled with the others.
+     */
+    val FORGOTTEN_KEYS = listOf(ReminderPlan.MAP_KEY)
+
     /** [rows]: each RN alarm's request code, null when RN left no table. The number cancelled. */
     fun run(rows: () -> List<Int>?, cancel: (Int) -> Unit, stripButtons: () -> Unit, forgetMaps: () -> Unit, deleteTable: () -> Unit): Int {
         val ids = rows() ?: return 0
@@ -209,8 +215,6 @@ internal class ReminderAlarms(
     private val checkpointRnState: () -> Unit,
 ) : CoreHost.Reminders, ReminderPlan.Port {
     companion object {
-        /** Core's POMODORO_ALARM_STORAGE_KEY: RN's record of its Pomodoro alarm. */
-        private const val POMODORO_KEY = "mindwtr:local:pomodoro-alarm:v1"
         /** RN's library, which no longer exists here: its alarms are cancelled through its component name. */
         private const val RN_RECEIVER = "com.emekalites.react.alarm.notification.AlarmReceiver"
         private const val RN_DATABASE = "rnandb"
@@ -285,7 +289,7 @@ internal class ReminderAlarms(
 
     override fun cleanupRn(): Int = RnAlarmCleanup.run(rows = ::rnAlarmIds, cancel = ::cancelRn, stripButtons = ::stripRnButtons,
         // Only maps that exist: an RN user who never had reminders keeps RKStorage untouched.
-        forgetMaps = { keyValue.multiGet(listOf(ReminderPlan.MAP_KEY, POMODORO_KEY)).filterValues { it != null }.keys.toList()
+        forgetMaps = { keyValue.multiGet(RnAlarmCleanup.FORGOTTEN_KEYS).filterValues { it != null }.keys.toList()
             .takeIf { it.isNotEmpty() }?.let { keys -> beforeWrite(); keyValue.multiRemove(keys) }; Unit },
         deleteTable = { check(context.deleteDatabase(RN_DATABASE) || !context.getDatabasePath(RN_DATABASE).exists()) { "Cannot delete $RN_DATABASE" } })
 
