@@ -17,6 +17,8 @@ struct HistoryScreen: View {
     @State private var completedAtOptions: CoreObject = [:]
     @State private var completedAtOptionsTask: Task<Void, Never>?
     @State private var completedAtError = false
+    @State private var completedAtArchived = false
+    @State private var completedAtGroup = "none"
 
     var body: some View {
         ZStack {
@@ -60,14 +62,14 @@ struct HistoryScreen: View {
                                       onStatusChange: { row, status in
                                           completedAtError = false
                                           Task { await model.changeDoneTaskStatus(row, status: status) }
-                                      }, onCompletedAt: openCompletedAt,
+                                      }, onCompletedAt: { openCompletedAt($0) },
                                       errorIdentifier: completedAtError ? "done-completed-at-error" : nil)
                 }
             }
             .accessibilityHidden(!completedAtOptions.isEmpty)
             if !completedAtOptions.isEmpty {
-                DoneTaskCompletedAtDialog(model: model, palette: palette, options: completedAtOptions,
-                                         close: closeCompletedAt, save: saveCompletedAt)
+                HistoryTaskCompletedAtDialog(model: model, palette: palette, options: completedAtOptions,
+                                            prefix: completedAtArchived ? "archive" : "done", close: closeCompletedAt, save: saveCompletedAt)
             }
         }
         .task(id: scenePhase == .active) {
@@ -101,19 +103,23 @@ struct HistoryScreen: View {
             Text(archiveProjectDeleteConfirmation.text("message"))
         }
         .onDisappear { closeCompletedAt() }
-        .onChange(of: model.historyArchived) { if $0 { closeCompletedAt() } }
+        .onChange(of: model.historyArchived) { _ in closeCompletedAt() }
+        .onChange(of: model.history.text("segment")) { _ in closeCompletedAt() }
     }
 
-    private func openCompletedAt(_ displayed: CoreObject) {
-        guard model.historyActionsEnabled, !model.historyArchived, !model.taskStatusMenuPresented,
+    private func openCompletedAt(_ displayed: CoreObject, archived: Bool = false, group: String = "none") {
+        guard model.historyActionsEnabled, model.historyArchived == archived, !archiveSelectionActive, !model.taskStatusMenuPresented,
               completedAtOptionsTask == nil else { return }
         searchFocused = false
         completedAtError = false
         completedAtRow = displayed
+        completedAtArchived = archived
+        completedAtGroup = group
         model.taskStatusMenuPresented = true
         completedAtOptionsTask = Task {
             defer { completedAtOptionsTask = nil }
-            let options = await model.doneTaskCompletedAtOptions(displayed)
+            let options = archived ? await model.archiveTaskCompletedAtOptions(displayed)
+                : await model.doneTaskCompletedAtOptions(displayed)
             guard !Task.isCancelled else { return }
             if let options { completedAtOptions = options }
             else {
@@ -132,8 +138,12 @@ struct HistoryScreen: View {
 
     private func saveCompletedAt(_ instant: String) {
         let displayed = completedAtRow
+        let archived = completedAtArchived
         closeCompletedAt()
-        Task { completedAtError = !(await model.changeDoneTaskCompletedAt(displayed, completedAt: instant)) }
+        Task {
+            completedAtError = archived ? !(await model.changeArchiveTaskCompletedAt(displayed, completedAt: instant))
+                : !(await model.changeDoneTaskCompletedAt(displayed, completedAt: instant))
+        }
     }
 
     private var archiveContent: some View {
@@ -171,7 +181,7 @@ struct HistoryScreen: View {
                 Group {
                     if let error = model.historyError {
                         Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
-                            .accessibilityIdentifier("archive-error")
+                            .accessibilityIdentifier(completedAtError ? "archive-completed-at-error" : "archive-error")
                         Button(model.label("common.retry")) { Task { await model.retryHistory() } }
                             .rnFont(14, .semibold).frame(minHeight: 44)
                             .disabled(model.busy || (model.retryNeeded && !model.historyArchiveActionPending))
@@ -301,7 +311,19 @@ struct HistoryScreen: View {
         .accessibilityLabel(model.label("taskEdit.moreOptions")).accessibilityIdentifier("archived-overflow-button")
     }
 
-    private func archiveCard(_ item: CoreObject) -> some View {
+    private var archiveSelectionActive: Bool {
+        model.historyArchived && (model.history.number("selectedCount") > 0 || !model.history.object("selectAll").isEmpty)
+    }
+
+    @ViewBuilder private func archiveCard(_ item: CoreObject) -> some View {
+        if item.text("type") == "project" || item.flag("cancelled") {
+            archiveReadOnlyCard(item)
+        } else {
+            archiveCompletedTaskCard(item)
+        }
+    }
+
+    private func archiveReadOnlyCard(_ item: CoreObject) -> some View {
         let project = item.text("type") == "project"
         let row = project ? item : item.object("row")
         let group = item.text("groupId").isEmpty ? "none" : item.text("groupId")
@@ -336,6 +358,61 @@ struct HistoryScreen: View {
         }
         .buttonStyle(.plain).disabled(!model.historyActionsEnabled)
         .accessibilityIdentifier(project ? "archive-project-" + row.text("id") : "archive-task-" + group + "-" + row.text("id"))
+    }
+
+    private func archiveCompletedTaskCard(_ item: CoreObject) -> some View {
+        let project = item.text("type") == "project"
+        let row = project ? item : item.object("row")
+        let group = item.text("groupId").isEmpty ? "none" : item.text("groupId")
+        let editableCompletion = !project && !item.flag("cancelled")
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    searchFocused = false
+                    Task {
+                        if project { await model.openProject(item) }
+                        else { await model.openTask(row.text("id")) }
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(row.text("title")).rnFont(16, .semibold).strikethrough(item.flag("struck"))
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if !item.text("descriptionMarkdown").isEmpty {
+                            Text(inlineMarkdown(item.text("descriptionMarkdown"))).rnFont(14).lineLimit(1)
+                        }
+                        if !editableCompletion { Text(item.text("dateLabel")).rnFont(12).italic() }
+                        if !item.text("areaName").isEmpty { Text(item.text("areaName")).rnFont(12).italic() }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.historyActionsEnabled)
+                .accessibilityIdentifier(project ? "archive-project-" + row.text("id") : "archive-task-" + group + "-" + row.text("id"))
+                if editableCompletion {
+                    Button { openCompletedAt(row, archived: true, group: group) } label: {
+                        Text(item.text("dateLabel")).rnFont(12).italic()
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.historyActionsEnabled || archiveSelectionActive)
+                    .accessibilityLabel(model.label("task.editCompletedAt"))
+                    .accessibilityIdentifier("archive-task-completed-at-" + group + "-" + row.text("id"))
+                    .onDisappear {
+                        if completedAtArchived && completedAtRow.text("id") == row.text("id") && completedAtGroup == group {
+                            closeCompletedAt()
+                        }
+                    }
+                }
+            }
+            .foregroundStyle(palette.secondary)
+            if !project || !item.text("indicatorColor").isEmpty {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color(hex: project ? item.text("indicatorColor") : "6B7280"))
+                    .frame(width: 4).accessibilityHidden(true)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true).padding(16).frame(minHeight: 44)
+        .background(palette.row, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1))
     }
 
     private func inlineMarkdown(_ source: String) -> AttributedString {
@@ -386,11 +463,12 @@ struct HistoryScreen: View {
     }
 }
 
-private struct DoneTaskCompletedAtDialog: View {
+private struct HistoryTaskCompletedAtDialog: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     let options: CoreObject
+    let prefix: String
     let close: () -> Void
     let save: (String) -> Void
     @State private var initialInstant: String
@@ -398,11 +476,12 @@ private struct DoneTaskCompletedAtDialog: View {
     @State private var dateChanged = false
     private var frozen: Bool { model.busy || model.retryNeeded }
 
-    init(model: CoreModel, palette: AppPalette, options: CoreObject,
+    init(model: CoreModel, palette: AppPalette, options: CoreObject, prefix: String,
          close: @escaping () -> Void, save: @escaping (String) -> Void) {
         self.model = model
         self.palette = palette
         self.options = options
+        self.prefix = prefix
         self.close = close
         self.save = save
         let initial = options["initialValue"] as? String
@@ -428,18 +507,18 @@ private struct DoneTaskCompletedAtDialog: View {
                             }), displayedComponents: [.date, .hourAndMinute])
                                 .datePickerStyle(.wheel).labelsHidden().tint(palette.tint)
                                 .accessibilityLabel(options.text("title"))
-                                .accessibilityIdentifier("done-completed-at-picker").disabled(frozen)
+                                .accessibilityIdentifier(prefix + "-completed-at-picker").disabled(frozen)
                         }
                     }
                     .frame(maxHeight: max(120, min(dynamicTypeSize.isAccessibilitySize ? .infinity : 360, geometry.size.height - 132)))
-                    .accessibilityElement(children: .contain).accessibilityIdentifier("done-completed-at-dialogscroll")
+                    .accessibilityElement(children: .contain).accessibilityIdentifier(prefix + "-completed-at-dialogscroll")
                     HStack {
                         Spacer()
                         Button(action: cancel) {
                             Text(options.text("cancelLabel")).frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain).foregroundStyle(palette.secondary)
-                        .disabled(frozen).accessibilityIdentifier("done-completed-at-cancel")
+                        .disabled(frozen).accessibilityIdentifier(prefix + "-completed-at-cancel")
                         Button {
                             guard !frozen else { return }
                             save(dateChanged ? TaskDatePickerComponents.instantString(date) : initialInstant)
@@ -447,7 +526,7 @@ private struct DoneTaskCompletedAtDialog: View {
                             Text(options.text("saveLabel")).frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain).foregroundStyle(palette.tint)
-                        .disabled(frozen).accessibilityIdentifier("done-completed-at-save")
+                        .disabled(frozen).accessibilityIdentifier(prefix + "-completed-at-save")
                     }
                 }
                 .padding(16).frame(maxWidth: 420)

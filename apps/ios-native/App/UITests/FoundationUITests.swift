@@ -18968,4 +18968,112 @@ final class FoundationUITests: XCTestCase {
         }
     }
 
+    private func task179DateMetadata(_ app: XCUIApplication, _ suffix: String) -> XCUIElement {
+        let button = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "archive-task-completed-at-", "task179-" + suffix)).firstMatch
+        let list = app.descendants(matching: .any).matching(identifier: "archive-scroll").firstMatch
+        for direction in [true, false] {
+            for _ in 0..<12 {
+                if button.isHittable { break }
+                if direction { list.swipeUp() } else { list.swipeDown() }
+            }
+            if button.isHittable { break }
+        }
+        boardEnabled(button, timeout: 15)
+        XCTAssertEqual(button.label, "Edit completion time")
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        return button
+    }
+
+    private func task179OpenDate(_ app: XCUIApplication, _ suffix: String) {
+        task179DateMetadata(app, suffix).tap()
+        XCTAssertTrue(app.datePickers["archive-completed-at-picker"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.textFields["task-backdate-minutes"].exists)
+        XCTAssertGreaterThanOrEqual(app.pickerWheels.count, 3)
+    }
+
+    private func task179DateButton(_ app: XCUIApplication, _ action: String) {
+        let button = app.buttons["archive-completed-at-" + action]
+        let scroll = app.scrollViews["archive-completed-at-dialogscroll"]
+        for _ in 0..<5 {
+            if button.isHittable { break }
+            scroll.swipeUp()
+        }
+        boardEnabled(button, timeout: 10)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        button.tap()
+        XCTAssertTrue(app.datePickers["archive-completed-at-picker"].waitForNonExistence(timeout: 15))
+    }
+
+    private func task179ChangeMinute(_ app: XCUIApplication) {
+        let minute = app.pickerWheels.element(boundBy: 2)
+        guard let original = minute.value as? String,
+              let digits = original.range(of: "[0-9]+", options: .regularExpression),
+              let number = Int(original[digits]) else { XCTFail("Missing native minute wheel value"); return }
+        let next = (number + 7) % 60
+        let value = String(format: "%02d", next)
+        minute.adjust(toPickerWheelValue: value)
+        XCTAssertNotEqual(minute.value as? String, original)
+    }
+
+    private func task179DateFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task172OpenArchive(app)
+        task179OpenDate(app, "same"); task179DateButton(app, "save")
+        for suffix in ["change", "recurring"] {
+            task179OpenDate(app, suffix); task179ChangeMinute(app)
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task179 native completion date picker"; shot.lifetime = .keepAlways; add(shot)
+            task179DateButton(app, "save")
+            XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        }
+        app.terminate(); app.launch(); task172OpenArchive(app)
+        for suffix in ["same", "change", "recurring", "cancel"] {
+            _ = task179DateMetadata(app, suffix)
+        }
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        app.terminate()
+    }
+
+    func testTask179ArchiveCompletedAtNormal() { task179DateFlow("9e760d03-9cf9-410d-b2df-da0fdcc4044c") }
+    func testTask179ArchiveCompletedAtLargest() { task179DateFlow("e3e6e16b-6b10-42fd-b186-d44f9cdd49f1") }
+
+    func testTask179ArchiveCompletedAtCancel() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e0aa3e1a-5911-47d1-a533-28d0322aee87"]
+        app.launch(); task172OpenArchive(app)
+        task179OpenDate(app, "cancel"); task179ChangeMinute(app); task179DateButton(app, "cancel")
+        task179OpenDate(app, "cancel")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.45)).tap()
+        XCTAssertTrue(app.datePickers["archive-completed-at-picker"].waitForNonExistence(timeout: 10))
+        app.terminate()
+    }
+
+    func testTask179ArchiveCompletedAtFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "0185b43d-069a-44c5-a986-ef03e93bf34c"]
+        app.launch(); task172OpenArchive(app); task179OpenDate(app, "same"); task179DateButton(app, "save")
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+            XCTAssertFalse(app.buttons["history-tab-done"].isEnabled)
+            boardTap(app, "persistence-retry")
+        }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); app.terminate()
+    }
+
+    func testTask179ArchiveCompletedAtColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "85f4681c-9e89-4985-aa67-3d7e84ccfd4f"]
+        for launch in 0..<2 {
+            app.launch()
+            if launch == 0 {
+                boardEnabled(app.buttons["history-tab-archived"], timeout: 30)
+                XCTAssertTrue(app.buttons["history-tab-archived"].isSelected)
+            } else { task172OpenArchive(app) }
+            _ = task179DateMetadata(app, "same")
+            XCTAssertTrue(app.buttons["history-tab-archived"].isSelected)
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            app.terminate()
+        }
+    }
+
 }

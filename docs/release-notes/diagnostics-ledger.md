@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-archive-completion-time`** — `packages/core/src/native-host-contract-task-checklist.ts` and `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. Archive completion-time confirmation with `outcome=confirmed` follows durable persistence of an archived Task timestamp edit. Cancelled edits, failed saves and unproven retries do not claim success. No Task content, identifiers, dates or URLs are logged.
+
 - **`v1.3.4/ios-done-completion-time`** — `packages/core/src/native-host-contract-task-checklist.ts` and `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native Done completion time confirmed` and native `Done completion time saved`, with `outcome=confirmed`, follow durable confirmation of a Done-row completion-time edit, including shared automatic archiving when applicable. Cancelled edits, failed persistence and unproven retries do not claim a saved change. No Task content, identifiers, dates, or URLs are logged.
 
 - **`v1.3.4/ios-done-task-status`** — `packages/core/src/native-host-contract-task-checklist.ts` and `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native Done Task status confirmed` and native `Done status saved`, with `outcome=confirmed`, follow durable confirmation of a Done-row status change. No-op, failed persistence and unproven retries do not claim a saved change. No Task content, identifiers, dates, or URLs are logged.

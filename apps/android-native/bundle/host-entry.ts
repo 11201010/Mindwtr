@@ -796,7 +796,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'doneTaskCompletedAt'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2190,6 +2190,21 @@ globalThis.MindwtrHost = {
     },
     doneTaskCompletedAtOutcome(json: string): string {
         return submit(async () => unwrap(contract.doneTaskCompletedAtOutcome(completionJson(json, 2_100_000) as Parameters<typeof contract.doneTaskCompletedAtOutcome>[0])));
+    },
+    archiveTaskCompletedAtOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.getArchiveTaskCompletedAtOptions(completionJson(json, 4_096) as Parameters<typeof contract.getArchiveTaskCompletedAtOptions>[0])); });
+    },
+    archiveTaskCompletedAtPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchiveTaskCompletedAt(completionJson(json, 4_096) as Parameters<typeof contract.prepareArchiveTaskCompletedAt>[0])); });
+    },
+    archiveTaskCompletedAtValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedArchiveTaskCompletedAt(completionJson(json, 2_100_000) as Parameters<typeof contract.validatePreparedArchiveTaskCompletedAt>[0])));
+    },
+    archiveTaskCompletedAtCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedArchiveTaskCompletedAt(completionJson(json, 2_100_000) as Parameters<typeof contract.commitPreparedArchiveTaskCompletedAt>[0])));
+    },
+    archiveTaskCompletedAtOutcome(json: string): string {
+        return submit(async () => unwrap(contract.archiveTaskCompletedAtOutcome(completionJson(json, 2_100_000) as Parameters<typeof contract.archiveTaskCompletedAtOutcome>[0])));
     },
     taskCompletionPrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.prepareTaskCompletion(completionJson(json, 4_096) as Parameters<typeof contract.prepareTaskCompletion>[0])); });

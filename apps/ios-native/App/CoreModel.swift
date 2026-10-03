@@ -1764,7 +1764,7 @@ final class CoreModel: ObservableObject {
     }
     var historyArchiveActionPending: Bool {
         selectedSurface == .history && historyArchived &&
-            (archivedTaskRestoreRequest != nil || archivedTaskDeleteRequest != nil ||
+            (archiveTaskCompletedAtRequest != nil || archivedTaskRestoreRequest != nil || archivedTaskDeleteRequest != nil ||
                 projectLifecycleFromHistory && projectLifecycleRequest != nil ||
                 projectDeleteFromHistory && projectDeleteRequest != nil) && retryNeeded
     }
@@ -2779,7 +2779,7 @@ final class CoreModel: ObservableObject {
                 historyTabs = ["tab": "archived"]
             }
             if ["taskDeleteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit"].contains(recovery.text("method")) { selectedSurface = .trash }
-            if recovery.text("method") == "archivedTaskRestoreCommit" {
+            if ["archivedTaskRestoreCommit", "archiveTaskCompletedAtCommit"].contains(recovery.text("method")) {
                 selectedSurface = .history
                 historyTabs = ["tab": "archived"]
                 historyParamsByTab["archive", default: [:]]["segment"] = "tasks"
@@ -12204,6 +12204,7 @@ final class CoreModel: ObservableObject {
     private var doneTaskDeleteRequest: String?
     private var doneTaskStatusRequest: String?
     private var doneTaskCompletedAtRequest: String?
+    private var archiveTaskCompletedAtRequest: String?
 
     func doneTaskCompletedAtOptions(_ displayed: CoreObject) async -> CoreObject? {
         guard historyActionsEnabled, !historyArchived else { return nil }
@@ -12274,6 +12275,82 @@ final class CoreModel: ObservableObject {
             _ = await readHistory()
         } else {
             retryNeeded = doneTaskCompletedAtRequest != nil
+            error = failure.localizedDescription
+        }
+        historyError = failure.localizedDescription
+    }
+
+    // RN permits Archive completion metadata under an archived parent. Core
+    // still checks the live source, cancellation and the exact displayed token.
+    func archiveTaskCompletedAtOptions(_ displayed: CoreObject) async -> CoreObject? {
+        guard historyActionsEnabled, historyArchived else { return nil }
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let id = displayed.text("id"), revision = displayed.text("taskRevision")
+            guard displayed.text("status") == "archived" else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let options = try await query("archiveTaskCompletedAtOptions", [try json(["id": id, "taskRevision": revision])])
+            let initialMissing = options["initialValue"] is NSNull
+            let epoch = options["initialEpochMilliseconds"] as? NSNumber
+            guard Set(options.keys) == Set(["title", "saveLabel", "cancelLabel", "taskId", "taskRevision", "initialValue", "initialEpochMilliseconds"]),
+                  options.text("taskId") == id, options.text("taskRevision") == revision,
+                  !options.text("title").isEmpty, !options.text("saveLabel").isEmpty, !options.text("cancelLabel").isEmpty,
+                  (initialMissing && options["initialEpochMilliseconds"] is NSNull)
+                    || (!initialMissing && (options["initialValue"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true
+                        && epoch.map({ CFGetTypeID($0) != CFBooleanGetTypeID() && $0.doubleValue.isFinite }) == true) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            return options
+        } catch {
+            historyError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func changeArchiveTaskCompletedAt(_ displayed: CoreObject, completedAt: String) async -> Bool {
+        guard historyActionsEnabled, historyArchived else { return false }
+        let id = displayed.text("id"), revision = displayed.text("taskRevision")
+        guard displayed.text("status") == "archived" else {
+            historyError = label("task.updateFailed")
+            return false
+        }
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "id": id,
+                                    "taskRevision": revision, "completedAt": completedAt])
+            archiveTaskCompletedAtRequest = request
+            let result = try await query("archiveTaskCompletedAtWrite", [request])
+            try acknowledgeArchiveTaskCompletedAt(result)
+            _ = await readHistory()
+            return true
+        } catch {
+            await handleArchiveTaskCompletedAtError(error)
+            return false
+        }
+    }
+
+    private func acknowledgeArchiveTaskCompletedAt(_ result: CoreObject) throws {
+        guard let request = archiveTaskCompletedAtRequest, Set(result.keys) == Set(["id"]),
+              result.text("id") == (try decode(request)).text("id") else { throw CocoaError(.coderReadCorrupt) }
+        archiveTaskCompletedAtRequest = nil
+        retryNeeded = false
+        historyError = nil
+        error = nil
+    }
+
+    private func handleArchiveTaskCompletedAtError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            archiveTaskCompletedAtRequest = nil
+            retryNeeded = false
+            error = nil
+            _ = await readHistory()
+        } else {
+            retryNeeded = archiveTaskCompletedAtRequest != nil
             error = failure.localizedDescription
         }
         historyError = failure.localizedDescription
@@ -18388,6 +18465,25 @@ final class CoreModel: ObservableObject {
                 _ = await readHistory()
                 return
             }
+            if let request = archiveTaskCompletedAtRequest {
+                let outcome = try await query("archiveTaskCompletedAtRetryOutcome", [request])
+                if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                    let unknown = label("task.doneCompletedAtOutcomeUnknown")
+                    historyError = unknown
+                    self.error = unknown
+                    return
+                }
+                guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let result = outcome.object("result")
+                if let acknowledgment, try json(result) != json(decode(acknowledgment)) {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try acknowledgeArchiveTaskCompletedAt(result)
+                _ = await readHistory()
+                return
+            }
             if let request = doneTaskCompletedAtRequest {
                 let outcome = try await query("doneTaskCompletedAtRetryOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
@@ -18783,6 +18879,10 @@ final class CoreModel: ObservableObject {
             }
             if archivedTaskDeleteRequest != nil {
                 await handleArchivedTaskDeleteError(error)
+                return
+            }
+            if archiveTaskCompletedAtRequest != nil {
+                await handleArchiveTaskCompletedAtError(error)
                 return
             }
             if doneTaskCompletedAtRequest != nil {
