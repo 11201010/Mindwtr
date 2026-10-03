@@ -342,6 +342,7 @@ export const jaOverrides: Record<string, string> = {
         'task.doneStatusOutcomeUnknown': "ステータスの変更を確認できませんでした。Mindwtrを再起動して保存済みデータを読み込み直してください。",
         'task.doneTagOutcomeUnknown': "タグの変更を確認できませんでした。Mindwtrを再起動して保存済みデータを読み込み直してください。",
         'task.doneCompletedAtOutcomeUnknown': "完了日時の変更を確認できませんでした。Mindwtrを再起動して保存済みデータを読み込み直してください。",
+        'task.destinationOutcomeUnknown': "移動先の変更を確認できませんでした。保存済みデータを再読み込みするには、Mindwtr を再起動してください。",
         'task.trashOutcomeUnknown': "ゴミ箱の操作が完了したか確認できませんでした。Mindwtrを再起動して保存済みデータを再読み込みしてください。",
         'projects.archiveDeleteOutcomeUnknown': "アーカイブ済みプロジェクトが削除されたか確認できませんでした。Mindwtrを再起動して保存済みデータを再読み込みしてください。",
         'projects.archiveRestoreOutcomeUnknown': "アーカイブしたプロジェクトが復元されたか確認できませんでした。Mindwtrを再起動して保存済みデータを読み込み直してください。",

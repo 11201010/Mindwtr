@@ -2,6 +2,7 @@
 export const frOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "Impossible de confirmer la modification des étiquettes. Redémarrez Mindwtr pour recharger les données enregistrées.",
     'task.doneCompletedAtOutcomeUnknown': "Impossible de confirmer la modification de la date de fin. Redémarrez Mindwtr pour recharger les données enregistrées.",
+    'task.destinationOutcomeUnknown': "Impossible de confirmer le changement de destination. Redémarrez Mindwtr pour recharger les données enregistrées.",
     'filters.searchTasks': "Rechercher dans les titres des tâches",
     'filters.searchOptions': "Rechercher des options",
     'filters.tokenCycleHint': "Cliquez pour inclure, à nouveau pour exclure, puis une dernière fois pour effacer la sélection.",

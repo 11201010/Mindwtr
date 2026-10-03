@@ -20465,3 +20465,230 @@ extension FoundationUITests {
         }
     }
 }
+
+
+extension FoundationUITests {
+    private func task190Reveal(_ app: XCUIApplication, _ row: XCUIElement) {
+        let list = app.descendants(matching: .any).matching(identifier: "reference-scroll").firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 10))
+        // List virtualizes offscreen rows. Scan both directions with measured,
+        // slow drags so a tall card is not skipped by a flick or retained index.
+        for upward in [false, true] {
+            for _ in 0..<12 {
+                let viewport = list.frame.intersection(app.frame)
+                if row.exists {
+                    let frame = row.frame
+                    if viewport.contains(CGPoint(x: frame.midX, y: frame.midY)) && row.isHittable { return }
+                }
+                let start = CGPoint(x: viewport.midX, y: viewport.minY + viewport.height * (upward ? 0.8 : 0.2))
+                let end = CGPoint(x: start.x, y: viewport.minY + viewport.height * (upward ? 0.2 : 0.8))
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                origin.withOffset(CGVector(dx: start.x, dy: start.y)).press(forDuration: 0.05,
+                    thenDragTo: origin.withOffset(CGVector(dx: end.x, dy: end.y)),
+                    withVelocity: .slow, thenHoldForDuration: 0.2)
+            }
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task190 unreachable row"; shot.lifetime = .keepAlways; add(shot)
+        print("Task190 unreachable row tree " + app.debugDescription)
+        XCTFail("Task190 row was not reachable with measured bidirectional scrolling")
+    }
+
+    private func task190StatusAction(_ app: XCUIApplication, _ id: String, rtl: Bool = false) {
+        let identifier = "task-title-" + id
+        let rows = app.descendants(matching: .any).matching(identifier: identifier)
+        // Keep a live query while List cells are recycled during large-text scrolling.
+        let row = rows.firstMatch
+        task190Reveal(app, row)
+        XCTAssertFalse(app.buttons["task-status-" + id].exists)
+        if rtl { row.swipeLeft() } else { row.swipeRight() }
+        let action = app.buttons.matching(identifier: "reference-change-status-" + id).firstMatch
+        boardEnabled(action, timeout: 15)
+        XCTAssertTrue(action.isHittable)
+        XCTAssertGreaterThanOrEqual(action.frame.height, 44 - 0.001)
+        if rtl { XCTAssertNotEqual(action.label, "Change status") }
+        action.tap()
+        for status in ["inbox", "next", "waiting", "someday", "done", "reference"] {
+            boardEnabled(app.buttons.matching(identifier: "reference-status-" + status).firstMatch, timeout: 15)
+        }
+        XCTAssertTrue(app.buttons.matching(identifier: "reference-status-reference").firstMatch.label.hasPrefix("✓ "))
+    }
+
+    // XCUI frames can report 43.99999999999997 for a 44-point target.
+    private func task190Open(_ app: XCUIApplication, _ suffix: String, rtl: Bool = false) {
+        task190StatusAction(app, "task190-" + suffix, rtl: rtl)
+        let action = app.buttons.matching(identifier: "reference-status-destination").firstMatch
+        boardEnabled(action); XCTAssertFalse(action.label.isEmpty); action.tap()
+        let search = app.textFields["reference-destination-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 20)); boardEnabled(app.buttons["reference-destination-choice-0"], timeout: 20)
+        XCTAssertFalse(search.label.isEmpty); XCTAssertGreaterThanOrEqual(search.frame.height, 44 - 0.01)
+        XCTAssertTrue(app.scrollViews["reference-destination-scroll"].exists)
+        let cancel = app.buttons["reference-destination-cancel"]; boardEnabled(cancel)
+        XCTAssertGreaterThanOrEqual(cancel.frame.width, 44 - 0.01); XCTAssertGreaterThanOrEqual(cancel.frame.height, 44 - 0.01)
+        XCTAssertFalse(app.buttons["reference-destination-save"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists)
+    }
+
+    private func task190Query(_ app: XCUIApplication, _ text: String) {
+        let input = app.textFields["reference-destination-search"]
+        XCTAssertTrue(input.exists); XCTAssertTrue(app.frame.contains(input.frame)); XCTAssertTrue(input.isEnabled)
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        let current = input.value as? String ?? "", old = current == input.placeholderValue ? "" : current
+        if !old.utf8.elementsEqual(text.utf8) { input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count) + text) }
+        XCTAssertTrue((input.value as? String ?? "").utf8.elementsEqual(text.utf8))
+        boardEnabled(app.buttons["reference-destination-choice-0"], timeout: 20)
+        XCTAssertFalse(app.staticTexts["reference-destination-error"].exists)
+    }
+
+    private func task190Choice(_ app: XCUIApplication, label: String?, index: Int? = nil) -> XCUIElement {
+        let scroll = app.scrollViews["reference-destination-scroll"]
+        let choice: XCUIElement
+        if let index { choice = scroll.buttons.matching(identifier: "reference-destination-choice-" + String(index)).firstMatch }
+        else {
+            let matches = scroll.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "reference-destination-choice-", label ?? ""))
+            choice = matches.allElementsBoundByIndex.first { $0.label.utf8.elementsEqual((label ?? "").utf8) } ?? matches.firstMatch
+        }
+        revealPagedElement(app, choice, in: scroll, outerEdge: true); XCTAssertTrue(choice.exists)
+        boardEnabled(choice); XCTAssertGreaterThanOrEqual(choice.frame.height, 44 - 0.01); XCTAssertGreaterThanOrEqual(choice.frame.width, 44 - 0.01)
+        return choice
+    }
+
+    private func task190Observe(_ app: XCUIApplication, fixture: String, suffix: String, destination: [String: String], choice: XCUIElement) {
+        let input = app.textFields["reference-destination-search"]
+        let value = input.value as? String ?? "", query = value == input.placeholderValue ? "" : value
+        let record: [String: Any] = ["fixture": fixture, "taskID": "task190-" + suffix, "requested": destination,
+                                   "observedQuery": query, "choiceLabel": choice.label, "choiceID": choice.identifier,
+                                   "beforeChoiceWallEpoch": Date().timeIntervalSince1970]
+        if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]), let text = String(data: data, encoding: .utf8) {
+            print("Task190 destination observation " + text)
+        } else { XCTFail("Task190 destination observation could not be encoded") }
+        let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "Task190 before choice " + suffix; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
+    private func task190Choose(_ app: XCUIApplication, fixture: String, suffix: String, destination: [String: String], label: String?, index: Int? = nil, edge: Bool = false) {
+        let choice = task190Choice(app, label: label, index: index)
+        task190Observe(app, fixture: fixture, suffix: suffix, destination: destination, choice: choice)
+        if edge { choice.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() } else { choice.tap() }
+        XCTAssertTrue(app.textFields["reference-destination-search"].waitForNonExistence(timeout: 30))
+        let row = app.descendants(matching: .any).matching(identifier: "task-title-task190-" + suffix).firstMatch
+        task190Reveal(app, row); XCTAssertTrue(row.exists)
+        XCTAssertFalse(app.buttons["task-status-task190-" + suffix].exists)
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists); XCTAssertFalse(app.buttons["task-delete-undo"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists)
+    }
+
+    private func task190Filter(_ app: XCUIApplication, _ query: String) {
+        // Clear through the real search chip: tapping a large-text field can
+        // place its insertion point mid-string, so backspaces cannot replace it.
+        let searchChip = app.buttons["reference-chip-search"]
+        if searchChip.exists {
+            boardEnabled(searchChip); searchChip.tap()
+            XCTAssertTrue(searchChip.waitForNonExistence(timeout: 10))
+        }
+        task186Filter(app, query)
+    }
+
+    private func task190Flow(_ fixture: String, isolateRows: Bool = false) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", fixture]
+        app.launch(); task186Open(app); task186Filter(app, isolateRows ? "Task190 action none" : "Task190 action"); referenceGroup(app, "tag")
+        referenceFold(app, "tag:#Task190 B", open: true, toggle: true)
+        for (suffix, query, destination, label) in [
+            ("none", "", ["kind": "none"], nil as String?),
+            ("area", "Task190 Area B", ["kind": "area", "id": "task190-area-b"], "Task190 Area B"),
+            ("project", "Task190 Destination Project", ["kind": "project", "id": "task190-target"], "Task190 Destination Project"),
+            ("same", "Task190 Active Project", ["kind": "project", "id": "task190-active"], "Task190 Active Project"),
+            ("unicode", "Cafe", ["kind": "project", "id": "task190-cafe\u{0301}"], "Task190 Cafe\u{0301} NFD")
+        ] {
+            // Search targets the row at maximum text size; the normal flow
+            // separately covers the multi-row grouped list and retained folds.
+            if isolateRows { task190Filter(app, "Task190 action " + suffix) }
+            task190Open(app, suffix)
+            if !query.isEmpty { task190Query(app, query) }
+            let current = suffix == "same" ? task190Choice(app, label: label) : nil
+            if let current { XCTAssertTrue(current.isSelected, "Current project must be visually/accessibly selected") }
+            task190Choose(app, fixture: fixture, suffix: suffix, destination: destination, label: label, index: suffix == "none" ? 0 : nil, edge: suffix == "area")
+            referenceFold(app, "tag:#Task190 B", open: false)
+        }
+        app.terminate(); app.launch(); task186Open(app); task186Filter(app, "Task190 action")
+        for suffix in ["none", "area", "project", "same", "unicode"] {
+            if isolateRows { task190Filter(app, "Task190 action " + suffix) }
+            let row = app.descendants(matching: .any).matching(identifier: "task-title-task190-" + suffix).firstMatch
+            task190Reveal(app, row); XCTAssertTrue(row.exists)
+        }
+        XCTAssertFalse(app.buttons["persistence-retry"].exists); app.terminate()
+    }
+
+    func testTask190ReferenceDestinationNormal() { task190Flow("e424a018-dec1-45d1-b953-bfd28d09e2d0") }
+    func testTask190ReferenceDestinationLargest() { task190Flow("87a20a24-4ff5-4f96-b2a1-7026790b0fc2", isolateRows: true) }
+
+    func testTask190ReferenceDestinationArabicLayout() {
+        continueAfterFailure = false
+        let fixture = "69f3c3dd-7676-42f4-9606-e512e9b8dfbf", app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", fixture, "-AppleLanguages", "(ar)", "-AppleLocale", "ar_SA"]
+        app.launch(); task186Open(app); task186Filter(app, "Task190 action area", rtl: true); referenceGroup(app, "none")
+        task190Open(app, "area", rtl: true)
+        XCTAssertNotEqual(app.textFields["reference-destination-search"].label, "Search")
+        task190Query(app, "Task190 Area B")
+        task190Choose(app, fixture: fixture, suffix: "area", destination: ["kind": "area", "id": "task190-area-b"], label: "Task190 Area B", edge: true)
+        app.terminate()
+    }
+
+    func testTask190ReferenceDestinationCancelReadOnlyAndMoreThan100Choices() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "de85126e-45e2-492e-8d2d-8ce68df38427"]
+        app.launch(); task186Open(app); task186Filter(app, "Task190 action"); referenceGroup(app, "none")
+        let readonly = app.descendants(matching: .any).matching(identifier: "task-title-task190-readonly").firstMatch
+        task186Reveal(app, readonly); readonly.swipeRight()
+        XCTAssertFalse(app.buttons["reference-change-status-task190-readonly"].exists); XCTAssertFalse(app.buttons["reference-next-task190-readonly"].exists)
+        readonly.swipeLeft(); XCTAssertFalse(app.buttons["reference-delete-task190-readonly"].exists)
+        readonly.tap(); boardEnabled(app.buttons["task-view-close"]); boardTap(app, "task-view-close")
+        task190Open(app, "cancel")
+        let scroll = app.scrollViews["reference-destination-scroll"], more = scroll.buttons["reference-destination-more"]
+        revealPagedElement(app, more, in: scroll, outerEdge: true); XCTAssertTrue(more.exists); boardEnabled(more); more.tap()
+        _ = task190Choice(app, label: "Task190 Choice 119")
+        task190Query(app, "does-not-match190")
+        XCTAssertEqual(scroll.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reference-destination-choice-")).count, 1)
+        let cancel = app.buttons["reference-destination-cancel"]; boardEnabled(cancel)
+        cancel.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertTrue(app.textFields["reference-destination-search"].waitForNonExistence(timeout: 15))
+        task190Open(app, "cancel")
+        let search = app.textFields["reference-destination-search"]
+        XCTAssertTrue((search.value as? String ?? "") == search.placeholderValue || (search.value as? String ?? "").isEmpty)
+        boardTap(app, "reference-destination-cancel")
+        app.terminate()
+    }
+
+    func testTask190ReferenceDestinationFailedSaveKeepsExactChoiceAndQuery() {
+        continueAfterFailure = false
+        let fixture = "aa78dfe8-1073-421e-9fd0-238216488658", app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", fixture]
+        app.launch(); task186Open(app); task186Filter(app, "Task190 action failed"); referenceGroup(app, "none")
+        task190Open(app, "failed"); task190Query(app, "Task190 Destination Project")
+        let choice = task190Choice(app, label: "Task190 Destination Project")
+        task190Observe(app, fixture: fixture, suffix: "failed", destination: ["kind": "project", "id": "task190-target"], choice: choice); choice.tap()
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+            XCTAssertTrue(app.textFields["reference-destination-search"].exists)
+            XCTAssertEqual(app.textFields["reference-destination-search"].value as? String, "Task190 Destination Project")
+            XCTAssertFalse(app.textFields["reference-destination-search"].isEnabled); XCTAssertFalse(app.buttons["reference-destination-cancel"].isEnabled)
+            XCTAssertFalse(choice.isEnabled); XCTAssertTrue(app.staticTexts["reference-destination-error"].exists)
+            XCTAssertFalse(app.buttons["task-completion-undo"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists)
+            let scroll = app.scrollViews["reference-destination-scroll"], retry = scroll.buttons["reference-retry"]
+            revealPagedElement(app, retry, in: scroll, outerEdge: true); boardEnabled(retry); retry.tap()
+        }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); app.terminate()
+    }
+
+    func testTask190ReferenceDestinationColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "bc1dbbf3-6fcc-4bb2-9f6d-86247e8d5826"]
+        for launch in 0..<2 {
+            app.launch()
+            if launch == 0 { XCTAssertTrue(app.buttons["reference-overflow-button"].waitForExistence(timeout: 30)) }
+            task186Open(app); task186Filter(app, "Task190 action failed")
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task190-failed").firstMatch.exists)
+            XCTAssertFalse(app.textFields["reference-destination-search"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists)
+            XCTAssertFalse(app.buttons["task-completion-undo"].exists); XCTAssertFalse(app.buttons["task-delete-undo"].exists); XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            app.terminate()
+        }
+    }
+}

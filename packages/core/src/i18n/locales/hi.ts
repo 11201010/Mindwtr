@@ -2,6 +2,7 @@
 export const hiOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "टैग में बदलाव की पुष्टि नहीं हो सकी। सहेजे गए डेटा को फिर से लोड करने के लिए Mindwtr को पुनः प्रारंभ करें।",
     'task.doneCompletedAtOutcomeUnknown': "पूरा होने के समय में बदलाव की पुष्टि नहीं हो सकी। सहेजे गए डेटा को फिर से लोड करने के लिए Mindwtr को पुनः शुरू करें।",
+    'task.destinationOutcomeUnknown': "गंतव्य में बदलाव की पुष्टि नहीं हो सकी। सहेजा गया डेटा फिर से लोड करने के लिए Mindwtr को पुनः शुरू करें।",
     'filters.searchTasks': "कार्य शीर्षक खोजें",
     'filters.searchOptions': "विकल्प खोजें",
     'filters.tokenCycleHint': "शामिल करने के लिए क्लिक करें, बाहर रखने के लिए दोबारा और चयन हटाने के लिए फिर क्लिक करें।",

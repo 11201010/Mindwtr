@@ -2149,6 +2149,31 @@ describe('canonical local reads contract', () => {
             }, fixture);
             if (referenceMenu.storeFields.length > 0 || referenceMenu.readFields.length > 0) notCanonical.push({ action: name, ...referenceMenu });
         }
+        const referenceDestinationFixture = convergeThroughStorage({ ...settled, tasks: settled.tasks.map(row => row.id === 'task-66'
+            ? { ...row, status: 'reference', isFocusedToday: false, projectId: undefined, sectionId: undefined } : row) });
+        const referenceDestination = await runMutation('native prepared Reference destination', async control => {
+            const host = await nativeHost(control); const source = useTaskStore.getState()._tasksById.get('task-66');
+            const target = useTaskStore.getState().projects.find(row => !row.deletedAt && row.status !== 'archived');
+            if (!source || source.status !== 'reference' || !target) throw new Error('Reference destination fixture must be writable');
+            const request = { requestId: '2f0e9b35-afcd-4710-8847-9c4219ad0191', source: 'reference' as const,
+                id: source.id, taskRevision: taskRevisionOf(source), destination: { kind: 'project' as const, id: target.id } };
+            const planned = nativeValue(await host.prepareReferenceTaskDestination(request));
+            const envelope = { request, prepared: planned.prepared }; const effect = planned.prepared.checklist.effect;
+            expect(nativeValue(host.validatePreparedReferenceTaskDestination(envelope))).toEqual({ id: source.id });
+            expect(effect.tasks).toHaveLength(1); expect(effect.projects).toEqual([]); expect(effect.sections).toEqual([]);
+            expect(effect.tasks[0].after).toMatchObject({ status: 'reference', projectId: target.id, rev: (source.rev ?? 0) + 1 });
+            expect(effect.tasks[0].after.order).toBe(source.order); expect(effect.tasks[0].after.orderNum).toBe(source.orderNum);
+            const before = nativeValue(await readAreaDurableData(false, true)).authority.snapshot;
+            control.resetBaseline(); control.expectPersisted(written => {
+                expect(written.tasks).toEqual(before.tasks.map(row => row.id === source.id ? effect.tasks[0].after : row));
+                expect(written.projects).toEqual(before.projects); expect(written.sections).toEqual(before.sections);
+                expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people); expect(written.settings).toEqual(before.settings);
+            });
+            expect(nativeValue(await host.commitPreparedReferenceTaskDestination(envelope))).toEqual({ id: source.id });
+            expect(useTaskStore.getState()._tasksById.get(source.id)).toEqual(effect.tasks[0].after);
+        }, referenceDestinationFixture);
+        if (referenceDestination.storeFields.length > 0 || referenceDestination.readFields.length > 0)
+            notCanonical.push({ action: 'native prepared Reference destination', ...referenceDestination });
         const referenceBackdateFixture = convergeThroughStorage({ ...settled, tasks: settled.tasks.map((row) => row.id === 'task-66'
             ? { ...row, status: 'reference', isFocusedToday: false, projectId: undefined, sectionId: undefined,
                 recurrence: { rule: 'daily', strategy: 'after-completion', seriesId: row.id }, dueDate: '2026-09-01', showFutureRecurrence: true } : row) });

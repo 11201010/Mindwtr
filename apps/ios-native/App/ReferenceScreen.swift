@@ -21,7 +21,9 @@ struct ReferenceScreen: View {
                           onStatusOptions: { row in await model.referenceTaskStatusOptions(row) },
                           onStatusChange: { row, status in Task { await model.changeReferenceTaskStatus(row, status: status) } },
                           onBackdateOptions: { row in await model.referenceTaskBackdateOptions(row) },
-                          onBackdateSave: { row, instant, minutes in await model.backdateReferenceTask(row, completedAt: instant, timeSpentText: minutes) })
+                          onBackdateSave: { row, instant, minutes in await model.backdateReferenceTask(row, completedAt: instant, timeSpentText: minutes) },
+                          onDestinationOptions: { row, query, offset in await model.referenceTaskDestinationOptions(row, query: query, offset: offset) },
+                          onDestinationChoose: { row, destination in await model.moveReferenceTaskDestination(row, destination: destination) })
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
@@ -68,6 +70,8 @@ struct StatusListContent: View {
     var onStatusChange: ((CoreObject, String) -> Void)? = nil
     var onBackdateOptions: ((CoreObject) async -> CoreObject?)? = nil
     var onBackdateSave: ((CoreObject, String, String?) async -> Bool)? = nil
+    var onDestinationOptions: ((CoreObject, String, Int) async -> CoreObject?)? = nil
+    var onDestinationChoose: ((CoreObject, CoreObject) async -> Bool)? = nil
     var onCompletedAt: ((CoreObject) -> Void)? = nil
     var errorIdentifier: String? = nil
     var selectionActive = false
@@ -82,6 +86,7 @@ struct StatusListContent: View {
     @State private var referenceStatusGeneration = 0
     @State private var referenceStatusOpeningContext = ""
     @State private var ownsReferenceStatusMenu = false
+    @State private var referenceDestinationActive = false
     @State private var referenceBackdateActive = false
     @State private var referenceBackdateOptions: CoreObject = [:]
     @State private var referenceBackdateInitialDate = Date()
@@ -114,7 +119,19 @@ struct StatusListContent: View {
     @ViewBuilder var body: some View {
         if prefix == "reference" {
             ZStack {
-                listContent.accessibilityHidden(referenceBackdateActive)
+                listContent.accessibilityHidden(referenceBackdateActive || referenceDestinationActive)
+                if referenceDestinationActive {
+                    ReferenceTaskDestinationDialog(model: model, palette: palette, close: closeReferenceStatusMenu,
+                                                   read: { query, offset in
+                        guard referenceStatusIsCurrent, let onDestinationOptions else { return nil }
+                        return await onDestinationOptions(referenceStatusRow, query, offset)
+                    }, choose: { destination in
+                        guard referenceStatusIsCurrent, let onDestinationChoose else { return false }
+                        let saved = await onDestinationChoose(referenceStatusRow, destination)
+                        if saved { closeReferenceStatusMenu() }
+                        return saved
+                    })
+                }
                 if referenceBackdateActive {
                     if !referenceBackdateOptions.isEmpty {
                         ReferenceTaskBackdateDialog(model: model, palette: palette, options: referenceBackdateOptions,
@@ -159,11 +176,16 @@ struct StatusListContent: View {
                         .disabled(!referenceStatusIsCurrent || !enabled || model.busy || model.retryNeeded)
                         .accessibilityIdentifier("reference-status-completion-time")
                 }
+                if onDestinationOptions != nil && onDestinationChoose != nil {
+                    Button(model.label("task.moveToProjectOrArea")) { openReferenceDestinationPicker() }
+                        .disabled(!referenceStatusIsCurrent || !enabled || model.busy || model.retryNeeded)
+                        .accessibilityIdentifier("reference-status-destination")
+                }
                 Button(model.label("common.cancel"), role: .cancel) { closeReferenceStatusMenu() }
                     .accessibilityIdentifier("reference-status-cancel")
             }
             .onChange(of: referenceStatusMenuPresented) { visible in
-                if !visible && ownsReferenceStatusMenu && !referenceBackdateActive { closeReferenceStatusMenu() }
+                if !visible && ownsReferenceStatusMenu && !referenceBackdateActive && !referenceDestinationActive { closeReferenceStatusMenu() }
             }
             .onChange(of: referenceStatusCurrentContext) { context in
                 if ownsReferenceStatusMenu, !context.utf8.elementsEqual(referenceStatusOpeningContext.utf8) {
@@ -171,7 +193,7 @@ struct StatusListContent: View {
                 }
             }
             .onChange(of: model.busy) { busy in
-                if busy && ownsReferenceStatusMenu && !referenceBackdateActive { closeReferenceStatusMenu() }
+                if busy && ownsReferenceStatusMenu && !referenceBackdateActive && !referenceDestinationActive { closeReferenceStatusMenu() }
             }
             .onDisappear { closeReferenceStatusMenu() }
         } else { listContent }
@@ -179,7 +201,8 @@ struct StatusListContent: View {
 
     private var referenceStatusCurrentContext: String {
         guard ownsReferenceStatusMenu else { return "" }
-        return (referenceBackdateActive ? model.referenceTaskBackdateContext(referenceStatusRow)
+        return (referenceDestinationActive ? model.referenceTaskDestinationContext(referenceStatusRow)
+            : referenceBackdateActive ? model.referenceTaskBackdateContext(referenceStatusRow)
             : model.referenceTaskStatusContext(referenceStatusRow)) ?? ""
     }
 
@@ -236,6 +259,15 @@ struct StatusListContent: View {
         }
     }
 
+    private func openReferenceDestinationPicker() {
+        guard referenceStatusIsCurrent, enabled, !model.busy, !model.retryNeeded, onDestinationOptions != nil else { return }
+        referenceDestinationActive = true
+        referenceStatusMenuPresented = false
+        referenceStatusGeneration += 1
+        referenceStatusOptionsTask?.cancel()
+        referenceStatusOptionsTask = nil
+    }
+
     private func closeReferenceStatusMenu() {
         let destination = ownsReferenceStatusMenu && model.selectedSurface != .reference
             ? model.selectedSurface : nil
@@ -244,6 +276,7 @@ struct StatusListContent: View {
         referenceStatusOptionsTask = nil
         referenceStatusMenuPresented = false
         referenceBackdateActive = false
+        referenceDestinationActive = false
         referenceBackdateOptions = [:]
         referenceStatusOptions = [:]
         referenceStatusRow = [:]
@@ -576,6 +609,154 @@ private struct ReferenceTaskBackdateDialog: View {
             guard minutesFocused, !frozen else { return }
             reader.scrollTo("reference-backdate-minutes-field", anchor: .bottom)
         }
+    }
+}
+
+private struct ReferenceTaskDestinationDialog: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let close: () -> Void
+    let read: (String, Int) async -> CoreObject?
+    let choose: (CoreObject) async -> Bool
+    @State private var query = ""
+    @State private var options: CoreObject = [:]
+    @State private var choices: [CoreObject] = []
+    @State private var loading = true
+    @State private var readError: String?
+    @State private var readTask: Task<Void, Never>?
+    @State private var generation = 0
+    @State private var retryOffset = 0
+    @State private var retryAppend = false
+    @State private var confirming = false
+    @FocusState private var searchFocused: Bool
+    private var frozen: Bool { confirming || model.busy || model.retryNeeded || model.referenceTaskDestinationPending }
+    private var labels: CoreObject { options.object("labels") }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { cancel() }.accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(labels.text("title").isEmpty ? model.label("task.destination") : labels.text("title"))
+                        .rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+                    if !labels.isEmpty {
+                        TextField(labels.text("search"), text: Binding(get: { query }, set: { text in
+                            guard !frozen, !query.utf8.elementsEqual(text.utf8) else { return }
+                            query = text
+                            load(offset: 0, append: false)
+                        }))
+                        .rnFont(16).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .padding(12).frame(minHeight: 44).background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+                        .focused($searchFocused).submitLabel(.search).disabled(frozen)
+                        .accessibilityLabel(labels.text("search")).accessibilityIdentifier("reference-destination-search")
+                    }
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(choices.indices, id: \.self) { index in
+                                let choice = choices[index], kind = choice.text("kind")
+                                if kind != "none", index == 0 || choices[index - 1].text("kind") != kind {
+                                    Text(labels.text(kind == "project" ? "projects" : "areas")).rnFont(13, .semibold)
+                                        .foregroundStyle(palette.secondary).padding(.top, 8).accessibilityAddTraits(.isHeader)
+                                }
+                                Button {
+                                    guard !frozen, !loading, readError == nil else { return }
+                                    confirming = true
+                                    searchFocused = false
+                                    let destination: CoreObject = kind == "none" ? ["kind": "none"] : ["kind": kind, "id": choice.text("id")]
+                                    Task { _ = await choose(destination); confirming = false }
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        Text(choice.text("label")).rnFont(16).frame(maxWidth: .infinity, alignment: .leading)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        if choice.flag("selected") { Image(systemName: "checkmark").foregroundStyle(palette.tint) }
+                                    }
+                                    .padding(10).frame(minHeight: 44).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).disabled(frozen || loading || readError != nil)
+                                .accessibilityLabel(choice.text("label"))
+                                .accessibilityAddTraits(choice.flag("selected") ? .isSelected : [])
+                                .accessibilityIdentifier("reference-destination-choice-" + String(index))
+                            }
+                            if !loading, readError == nil, choices.allSatisfy({ $0.text("kind") == "none" }) {
+                                Text(labels.text("noMatches")).rnFont(14).foregroundStyle(palette.secondary)
+                            }
+                            if loading { ProgressView().frame(maxWidth: .infinity).padding(12) }
+                            if let readError {
+                                Text(readError).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                                    .accessibilityIdentifier("reference-destination-error")
+                                Button { load(offset: retryOffset, append: retryAppend) } label: {
+                                    Text(labels.text("retry").isEmpty ? model.label("common.retry") : labels.text("retry"))
+                                        .frame(minHeight: 44).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(frozen || loading)
+                                .accessibilityIdentifier("reference-destination-read-retry")
+                            } else if options.flag("hasMore") {
+                                Button { load(offset: (options["nextOffset"] as? NSNumber)?.intValue ?? 0, append: true) } label: {
+                                    Text(labels.text("more")).frame(minHeight: 44).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(frozen || loading)
+                                .accessibilityIdentifier("reference-destination-more")
+                            }
+                            if model.referenceTaskDestinationPending, let error = model.referenceError {
+                                Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                                    .accessibilityIdentifier("reference-destination-error")
+                                Button { Task { await model.retryReference() } } label: {
+                                    Text(model.label("common.retry")).frame(minHeight: 44).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.busy)
+                                .accessibilityIdentifier("reference-retry")
+                            }
+                        }
+                    }
+                    .frame(maxHeight: max(120, geometry.size.height - 210))
+                    .accessibilityIdentifier("reference-destination-scroll")
+                    HStack {
+                        Spacer()
+                        Button(action: cancel) {
+                            Text(labels.text("cancel").isEmpty ? model.label("common.cancel") : labels.text("cancel"))
+                                .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.secondary).disabled(frozen)
+                        .accessibilityIdentifier("reference-destination-cancel")
+                    }
+                }
+                .padding(16).frame(maxWidth: 420)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(16)
+            }
+            .foregroundStyle(palette.text).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) { cancel() }
+        }
+        .onAppear { load(offset: 0, append: false) }
+        .onDisappear { generation += 1; readTask?.cancel(); readTask = nil }
+    }
+
+    private func load(offset: Int, append: Bool) {
+        guard !frozen else { return }
+        generation += 1
+        let currentGeneration = generation, text = query
+        readTask?.cancel()
+        loading = true
+        readError = nil
+        retryOffset = offset
+        retryAppend = append
+        readTask = Task {
+            let page = await read(text, offset)
+            guard !Task.isCancelled, generation == currentGeneration, query.utf8.elementsEqual(text.utf8) else { return }
+            loading = false
+            readTask = nil
+            guard let page else { readError = model.referenceError ?? model.label("common.retry"); return }
+            choices = append ? choices + page.objects("choices") : page.objects("choices")
+            options = page
+        }
+    }
+
+    private func cancel() {
+        guard !frozen else { return }
+        searchFocused = false
+        close()
     }
 }
 

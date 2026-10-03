@@ -34037,3 +34037,268 @@ extension CoreHostTests {
         try FileManager.default.removeItem(at: journal); try store.thaw(attempt); try store.discard(sessionID: session)
     }
 }
+
+
+extension CoreHostTests {
+    private func referenceDestination190Request(_ core: CoreHost, id: String, destination: [String: Any]) async throws -> [String: Any] {
+        var request = try await referenceStatus188Request(core, id: id)
+        request["destination"] = destination
+        return request
+    }
+
+    private func referenceDestination190Control(_ copy: URL, request: [String: Any], commitAt: String? = nil) async throws -> ([String], String) {
+        let clock = commitAt.map { instant in
+            """
+            (() => {
+                const commit = MindwtrHost.referenceTaskDestinationCommit;
+                MindwtrHost.referenceTaskDestinationCommit = function (...args) {
+                    const CurrentDate = Date, instant = CurrentDate.parse('\(instant)');
+                    globalThis.Date = class extends CurrentDate {
+                        constructor(...args) { super(...(args.length ? args : [instant])); }
+                        static now() { return instant; }
+                    };
+                    return commit.apply(this, args);
+                };
+            })();
+            """
+        } ?? ""
+        let normal = CoreHost(databaseURL: copy, bundleURL: try dateBundle(at: "2026-10-02T13:00:00.000Z", suffix: clock))
+        addTeardownBlock { await normal.close() }
+        _ = try await normal.start()
+        _ = try await normal.call("referenceTaskDestination", argumentsJSON: json([json(request)]))
+        await normal.close()
+        let sql = try SQLiteBridge(url: copy); defer { sql.close() }
+        return (try nineTableSnapshot(sql), try doneTask176Receipts(sql))
+    }
+
+    private func referenceDestination190Project(_ sql: SQLiteBridge, id: String, title: String) throws {
+        _ = try sql.execute("INSERT INTO projects (id,title,status,color,isSequential,isFocused,createdAt,updatedAt,rev) VALUES (?,?,'active','#94a3b8',0,0,'2026-01-01T12:00:00.000Z','2026-01-01T12:00:00.000Z',1)", parametersJSON: json([id, title]))
+    }
+
+    func testReferenceDestination190OptionsSearchPaginationStaleAndReadOnlyNeverWrite() async throws {
+        let id = try await seedReferenceTask186()
+        let seed = try SQLiteBridge(url: database)
+        for index in 0..<120 { try referenceDestination190Project(seed, id: "choice190-\(index)", title: String(format: "Choice190 %03d", index)) }
+        for (id, title) in [("caf\u{00e9}190", "Café190 NFC"), ("cafe\u{0301}190", "Café190 NFD")] { try referenceDestination190Project(seed, id: id, title: title) }
+        seed.close()
+        let faults = HostIOFaults(), core = host(faults, bundleURL: try dateBundle(at: "2026-10-02T13:00:00.000Z")); _ = try await core.start()
+        let request = try await referenceDestination190Request(core, id: id, destination: ["kind": "none"])
+        let sql = try SQLiteBridge(url: database), before = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql); sql.close()
+        var writes = 0, journals = 0; faults.beforeSQL = { if self.referenceBackdate189DomainWrite($0) { writes += 1 } }; faults.journalWrite = { journals += 1 }
+        func input(_ query: String, _ offset: Int = 0) throws -> String { try json([json(["id": id, "taskRevision": XCTUnwrap(request["taskRevision"]), "query": query, "offset": offset, "limit": 100])]) }
+        let first = try object(await core.call("referenceTaskDestinationOptions", argumentsJSON: input("")))
+        XCTAssertEqual(Set(first.keys), Set(["version", "id", "taskRevision", "query", "offset", "limit", "total", "hasMore", "nextOffset", "choices", "labels"]))
+        XCTAssertEqual(Set(try XCTUnwrap(first["labels"] as? [String: Any]).keys), Set(["title", "search", "projects", "areas", "cancel", "more", "retry", "noMatches"]))
+        let initial = try XCTUnwrap(first["choices"] as? [[String: Any]])
+        XCTAssertEqual(initial.count, 100); XCTAssertEqual(initial.first?["kind"] as? String, "none"); XCTAssertEqual(initial.first?["id"] as? String, "")
+        XCTAssertEqual(first["hasMore"] as? Bool, true); XCTAssertEqual(first["nextOffset"] as? Int, 100)
+        let second = try object(await core.call("referenceTaskDestinationOptions", argumentsJSON: input("", 100)))
+        let remaining = try XCTUnwrap(second["choices"] as? [[String: Any]])
+        XCTAssertEqual(initial.count + remaining.count, first["total"] as? Int); XCTAssertFalse(remaining.contains { $0["kind"] as? String == "none" })
+        XCTAssertEqual(second["hasMore"] as? Bool, false); XCTAssertTrue(second["nextOffset"] is NSNull)
+        let searched = try object(await core.call("referenceTaskDestinationOptions", argumentsJSON: input("  Choice190 119  ")))
+        let choices = try XCTUnwrap(searched["choices"] as? [[String: Any]])
+        XCTAssertEqual(searched["query"] as? String, "  Choice190 119  "); XCTAssertEqual(choices.count, 2); XCTAssertEqual(choices.last?["id"] as? String, "choice190-119")
+        let noMatch = try object(await core.call("referenceTaskDestinationOptions", argumentsJSON: input("not-found190")))
+        XCTAssertEqual(noMatch["total"] as? Int, 1); XCTAssertEqual((noMatch["choices"] as? [Any])?.count, 1)
+        let stale = ["id": id, "taskRevision": "stale190", "query": "", "offset": 0, "limit": 100] as [String: Any]
+        await expectFailure("STALE_REVISION") { _ = try await core.call("referenceTaskDestinationOptions", argumentsJSON: json([json(stale)])) }
+        let protected = try object(await core.call("editorModel", argumentsJSON: json([id + "-protected"])))
+        await expectFailure { _ = try await core.call("referenceTaskDestinationOptions", argumentsJSON: json([json(["id": id + "-protected", "taskRevision": XCTUnwrap(protected["taskRevision"]), "query": "", "offset": 0, "limit": 100])])) }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), before); XCTAssertEqual(try doneTask176Receipts(check), receipts); check.close(); await core.close()
+    }
+
+    func testReferenceDestination190AllSixChoicesWriteOneRevisionAndFullNormalControl() async throws {
+        for mode in ["none", "area", "project", "sameProject", "sameArea", "sameNone"] {
+            let id = try await seedReferenceStatus188(recurring: true, starred: true)
+            if mode == "sameArea" || mode == "sameNone" {
+                let seed = try SQLiteBridge(url: database)
+                _ = try seed.execute("UPDATE tasks SET projectId=NULL,sectionId=NULL,areaId=? WHERE id=?", parametersJSON: json([mode == "sameArea" ? "destination-area-b" as Any : NSNull(), id])); seed.close()
+            }
+            let destination: [String: Any] = mode == "none" || mode == "sameNone" ? ["kind": "none"]
+                : mode == "area" || mode == "sameArea" ? ["kind": "area", "id": "destination-area-b"]
+                : ["kind": "project", "id": mode == "sameProject" ? "destination-project-a" : "destination-project-b"]
+            let faults = HostIOFaults(), core = host(faults, bundleURL: try dateBundle(at: "2026-10-02T13:00:00.000Z")); _ = try await core.start()
+            let request = try await referenceDestination190Request(core, id: id, destination: destination), before = try storedTask(id), count = try taskCount()
+            let expected = try await referenceDestination190Control(referenceStatus188Copy(), request: request)
+            faults.journalRemove = { throw HostFailure("Injected190 lost reply") }
+            await expectFailure("lost reply") { _ = try await core.call("referenceTaskDestination", argumentsJSON: json([json(request)])) }
+            let envelope = try referenceTask186Journal("referenceTaskDestination"), prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+            XCTAssertEqual(Set(prepared.keys), Set(["version", "kind", "request", "rawBefore", "checklist", "result"])); XCTAssertEqual(prepared["version"] as? Int, 2); XCTAssertEqual(prepared["kind"] as? String, "referenceDestination")
+            faults.journalRemove = nil
+            let retried = try await core.retryPending(), result = try object(XCTUnwrap(retried))
+            XCTAssertEqual(Set(result.keys), Set(["id"])); XCTAssertEqual(try taskCount(), count)
+            let after = try storedTask(id)
+            XCTAssertEqual(after["status"] as? String, "reference"); XCTAssertEqual(after["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
+            XCTAssertEqual(after["updatedAt"] as? String, "2026-10-02T13:00:00.000Z")
+            if mode == "sameProject" { XCTAssertEqual(after["sectionId"] as? String, "destination-section-a") } else { XCTAssertTrue(after["sectionId"] is NSNull) }
+            let outcome = try object(await core.call("referenceTaskDestinationRetryOutcome", argumentsJSON: json([json(request)])))
+            XCTAssertEqual(try json(outcome), try json(["kind": "confirmed", "result": result])); try assertReferenceStatus188Receipt(envelope, prefix: "referenceTaskDestination", result: result)
+            let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), expected.0, mode); XCTAssertEqual(try doneTask176Receipts(check), expected.1, mode); check.close(); await core.close()
+        }
+    }
+
+    func testReferenceDestination190TwoFailedCommitsKeepAtomicExactPlanAndPublicProof() async throws {
+        let id = try await seedReferenceTask186(), faults = HostIOFaults(), core = host(faults, bundleURL: try dateBundle(at: "2026-10-02T13:00:00.000Z")); _ = try await core.start()
+        let request = try await referenceDestination190Request(core, id: id, destination: ["kind": "project", "id": "destination-project-b"])
+        let expected = try await referenceDestination190Control(referenceStatus188Copy(), request: request)
+        let sql = try SQLiteBridge(url: database), baseline = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql); sql.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected190 COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("referenceTaskDestination", argumentsJSON: json([json(request)])) }
+        let pending = try Data(contentsOf: journal), envelope = try referenceTask186Journal("referenceTaskDestination")
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }; try assertJournalContentUnchanged(pending)
+        let rolledBack = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(rolledBack), baseline); XCTAssertEqual(try doneTask176Receipts(rolledBack), receipts); rolledBack.close()
+        await expectFailure("exact retry") { _ = try await core.call("captureOpen") }
+        faults.beforeSQL = nil
+        let retried = try await core.retryPending(), result = try object(XCTUnwrap(retried))
+        try assertReferenceStatus188Receipt(envelope, prefix: "referenceTaskDestination", result: result)
+        let proof = try object(await core.call("referenceTaskDestinationRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(proof), try json(["kind": "confirmed", "result": result]))
+        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), expected.0); XCTAssertEqual(try doneTask176Receipts(check), expected.1); check.close(); await core.close()
+    }
+
+    func testReferenceDestination190TrueColdRetainsChosenProjectAndReferenceRoute() async throws {
+        let id = try await seedReferenceTask186(), faults = HostIOFaults(), writer = host(faults, bundleURL: try dateBundle(at: "2026-10-02T13:00:00.000Z")); _ = try await writer.start()
+        let request = try await referenceDestination190Request(writer, id: id, destination: ["kind": "project", "id": "destination-project-b"])
+        let expected = try await referenceDestination190Control(referenceStatus188Copy(), request: request, commitAt: "2026-10-02T15:00:00.000Z")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected190 cold failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("referenceTaskDestination", argumentsJSON: json([json(request)])) }
+        let envelope = try referenceTask186Journal("referenceTaskDestination"); await writer.close()
+        let cold = host(bundleURL: try dateBundle(at: "2026-10-02T15:00:00.000Z", suffix: "MindwtrHost.referenceTaskDestinationPrepare=function(){throw new Error('Cold190 must not reprepare');};"))
+        let window = try object(await cold.start()), recovery = try XCTUnwrap(window["recovery"] as? [String: Any]), result = try XCTUnwrap(recovery["result"] as? [String: Any])
+        XCTAssertEqual(Set(recovery.keys), Set(["method", "source", "result"])); XCTAssertEqual(recovery["source"] as? String, "reference"); XCTAssertEqual(recovery["method"] as? String, "referenceTaskDestinationCommit"); XCTAssertEqual(Set(result.keys), Set(["id"]))
+        XCTAssertEqual(try storedTask(id)["status"] as? String, "reference"); XCTAssertEqual(try storedTask(id)["updatedAt"] as? String, "2026-10-02T13:00:00.000Z")
+        let outcome = try object(await cold.call("referenceTaskDestinationRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(outcome), try json(["kind": "confirmed", "result": result])); try assertReferenceStatus188Receipt(envelope, prefix: "referenceTaskDestination", result: result, savedAt: "2026-10-02T15:00:00.000Z")
+        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), expected.0); XCTAssertEqual(try doneTask176Receipts(check), expected.1); check.close(); XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path)); await cold.close()
+    }
+
+    func testReferenceDestination190RawDestinationSectionAndAreaOrderDriftRefuseOverwrite() async throws {
+        for mode in ["raw", "destination", "section", "areaOrder"] {
+            let reset = try SQLiteBridge(url: database); if FileManager.default.fileExists(atPath: database.path) { _ = try? reset.execute("UPDATE projects SET status='active',deletedAt=NULL,purgedAt=NULL WHERE id='destination-project-b'"); _ = try? reset.execute("UPDATE sections SET deletedAt=NULL,purgedAt=NULL WHERE id='destination-section-a'") }; reset.close()
+            let id = try await seedReferenceTask186(), faults = HostIOFaults(), writer = host(faults, bundleURL: try dateBundle(at: "2026-10-02T13:00:00.000Z")); _ = try await writer.start()
+            let destination: [String: Any] = mode == "section" ? ["kind": "project", "id": "destination-project-a"] : mode == "areaOrder" ? ["kind": "area", "id": "destination-area-b"] : ["kind": "project", "id": "destination-project-b"]
+            let request = try await referenceDestination190Request(writer, id: id, destination: destination)
+            faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected190 drift setup") } }
+            await expectFailure("SAVE_FAILED") { _ = try await writer.call("referenceTaskDestination", argumentsJSON: json([json(request)])) }; let pending = try Data(contentsOf: journal); await writer.close()
+            let edit = try SQLiteBridge(url: database)
+            if mode == "raw" { _ = try edit.execute("UPDATE tasks SET focusOrder=3 WHERE id=?", parametersJSON: json([id])) }
+            if mode == "destination" { _ = try edit.execute("UPDATE projects SET deletedAt='2026-10-02T14:00:00.000Z',rev=COALESCE(rev,0)+1 WHERE id='destination-project-b'") }
+            if mode == "section" { _ = try edit.execute("UPDATE sections SET deletedAt='2026-10-02T14:00:00.000Z',rev=COALESCE(rev,0)+1 WHERE id='destination-section-a'") }
+            if mode == "areaOrder" { _ = try edit.execute("UPDATE areas SET orderNum=99 WHERE id='destination-area-b'") }
+            let baseline = try nineTableSnapshot(edit), receipts = try doneTask176Receipts(edit); edit.close()
+            let replay = HostIOFaults(); var writes = 0; replay.beforeSQL = { if self.referenceBackdate189DomainWrite($0) { writes += 1 } }
+            let cold = host(replay)
+            await expectFailure { _ = try await cold.start() }; XCTAssertEqual(writes, 0, mode); try assertJournalContentUnchanged(pending)
+            let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), baseline, mode); XCTAssertEqual(try doneTask176Receipts(check), receipts, mode); check.close(); await cold.close(); try FileManager.default.removeItem(at: journal)
+        }
+    }
+
+    func testReferenceDestination190MalformedTransportAndUnusedUUIDNeverWrite() async throws {
+        let id = try await seedReferenceTask186(), faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let request = try await referenceDestination190Request(core, id: id, destination: ["kind": "none"])
+        let sql = try SQLiteBridge(url: database), baseline = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql); sql.close()
+        var statements = 0, journals = 0; faults.beforeSQL = { _ in statements += 1 }; faults.journalWrite = { journals += 1 }
+        let bad: [(String, [String: Any])] = [("source", ["source": "done"]), ("extra", ["extra": true]), ("section", ["destination": ["kind": "section", "id": "destination-section-a"]]), ("none id", ["destination": ["kind": "none", "id": ""]]), ("empty project", ["destination": ["kind": "project", "id": " "]]), ("numeric id", ["destination": ["kind": "area", "id": 1]]), ("destination extra", ["destination": ["kind": "area", "id": "destination-area-b", "extra": true]]), ("oversize", ["destination": ["kind": "project", "id": String(repeating: "a", count: 501)]]), ("UUID", ["requestId": UUID().uuidString.uppercased()])]
+        for (label, patch) in bad {
+            for method in ["referenceTaskDestination", "referenceTaskDestinationRetryOutcome"] {
+                do { _ = try await core.call(method, argumentsJSON: json([json(request.merging(patch) { _, new in new })])); XCTFail("\(label) accepted by \(method)") }
+                catch { XCTAssertTrue(error.localizedDescription.contains("INVALID_INPUT"), "\(label) / \(method): \(error)") }
+            }
+        }
+        let unused = try object(await core.call("referenceTaskDestinationRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(unused), try json(["kind": "unproven"])); XCTAssertEqual(statements, 0); XCTAssertEqual(journals, 0)
+        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), baseline); XCTAssertEqual(try doneTask176Receipts(check), receipts); check.close(); await core.close()
+    }
+
+    func testReferenceDestination190ExactUnicodeSourceAndDestinationTransportBounds() async throws {
+        let old = try await seedReferenceTask186(), source = String(repeating: "é", count: 500), target = String(repeating: "P", count: 500)
+        let seed = try SQLiteBridge(url: database); _ = try seed.execute("UPDATE tasks SET id=? WHERE id=?", parametersJSON: json([source, old])); try referenceDestination190Project(seed, id: target, title: "Bounded190 target"); seed.close()
+        let faults = HostIOFaults(), core = host(faults); _ = try await core.start()
+        let request = try await referenceDestination190Request(core, id: source, destination: ["kind": "project", "id": target])
+        let encoded = try json(request).replacingOccurrences(of: source, with: String(repeating: #"\u00e9"#, count: 500)), outer = try json([encoded])
+        XCTAssertLessThanOrEqual(encoded.utf8.count, 4_096); XCTAssertGreaterThan(outer.utf8.count, 4_096); XCTAssertLessThanOrEqual(outer.utf8.count, 24_586)
+        let result = try object(await core.call("referenceTaskDestination", argumentsJSON: outer))
+        XCTAssertTrue(try XCTUnwrap(result["id"] as? String).utf8.elementsEqual(source.utf8)); XCTAssertTrue(try XCTUnwrap(storedTask(source)["projectId"] as? String).utf8.elementsEqual(target.utf8))
+        var tooLarge = request; tooLarge["requestId"] = UUID().uuidString.lowercased()
+        let oversized = try json(tooLarge).replacingOccurrences(of: source, with: String(repeating: #"\u00e9"#, count: 500)).replacingOccurrences(of: target, with: String(repeating: #"\u0050"#, count: 500))
+        XCTAssertGreaterThan(oversized.utf8.count, 4_096); XCTAssertLessThanOrEqual(try json([oversized]).utf8.count, 24_586)
+        var statements = 0; faults.beforeSQL = { _ in statements += 1 }
+        let sql = try SQLiteBridge(url: database), baseline = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql); sql.close()
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("referenceTaskDestination", argumentsJSON: json([oversized])) }; XCTAssertEqual(statements, 0)
+        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), baseline); XCTAssertEqual(try doneTask176Receipts(check), receipts); check.close(); await core.close()
+        let nfc = "target-caf\u{00e9}190", nfd = "target-cafe\u{0301}190", identitySeed = try SQLiteBridge(url: database)
+        try referenceDestination190Project(identitySeed, id: nfc, title: "Café190 NFC")
+        try referenceDestination190Project(identitySeed, id: nfd, title: "Café190 NFD"); identitySeed.close()
+        let exact = host(); _ = try await exact.start()
+        let exactRequest = try await referenceDestination190Request(exact, id: source, destination: ["kind": "project", "id": nfd])
+        let page = try object(await exact.call("referenceTaskDestinationOptions", argumentsJSON: json([json(["id": source, "taskRevision": XCTUnwrap(exactRequest["taskRevision"]), "query": "Caf", "offset": 0, "limit": 100])])))
+        let offered = try XCTUnwrap(page["choices"] as? [[String: Any]])
+        let projectIDs = offered.filter { $0["kind"] as? String == "project" }.compactMap { $0["id"] as? String }
+        XCTAssertEqual(Set(projectIDs.map { Data($0.utf8) }), Set([Data(nfc.utf8), Data(nfd.utf8)]))
+        _ = try await exact.call("referenceTaskDestination", argumentsJSON: json([json(exactRequest)]))
+        XCTAssertTrue(try XCTUnwrap(storedTask(source)["projectId"] as? String).utf8.elementsEqual(nfd.utf8)); await exact.close()
+    }
+
+    func testReferenceDestination190LandedReceiptWinsBeforeLaterParentAndNormalActivation() async throws {
+        let id = try await seedReferenceTask186(), faults = HostIOFaults(), writer = host(faults, bundleURL: try dateBundle(at: "2026-10-02T13:00:00.000Z")); _ = try await writer.start()
+        let request = try await referenceDestination190Request(writer, id: id, destination: ["kind": "project", "id": "destination-project-b"])
+        faults.journalRemove = { throw HostFailure("Injected190 landed cleanup") }
+        await expectFailure("landed cleanup") { _ = try await writer.call("referenceTaskDestination", argumentsJSON: json([json(request)])) }; let envelope = try referenceTask186Journal("referenceTaskDestination"); await writer.close()
+        let edit = try SQLiteBridge(url: database); _ = try edit.execute("UPDATE tasks SET description='Later190',rev=COALESCE(rev,0)+1,updatedAt='2026-10-02T14:00:00.000Z' WHERE id=?", parametersJSON: json([id])); _ = try edit.execute("UPDATE projects SET status='archived',rev=COALESCE(rev,0)+1 WHERE id='destination-project-b'")
+        let baseline = try nineTableSnapshot(edit), receipts = try doneTask176Receipts(edit); edit.close()
+        let ready = try await referenceStatus188NormalLoad(referenceStatus188Copy(), at: "2026-10-02T15:00:00.000Z")
+        let replay = HostIOFaults(); var writes: [String] = [], checkpointWrites: [String]?, checkpoint: [String]?, checkpointReceipts: String?
+        replay.beforeSQL = { if self.referenceBackdate189DomainWrite($0) { writes.append($0) } }
+        replay.journalRemove = {
+            checkpointWrites = writes
+            do { let sql = try SQLiteBridge(url: self.database); defer { sql.close() }; checkpoint = try self.nineTableSnapshot(sql); checkpointReceipts = try self.doneTask176Receipts(sql) }
+            catch { XCTFail("Cannot inspect190 landed checkpoint: \(error)") }
+        }
+        let cold = host(replay, bundleURL: try dateBundle(at: "2026-10-02T15:00:00.000Z"))
+        let window = try object(await cold.start()), recovery = try XCTUnwrap(window["recovery"] as? [String: Any]), result = try XCTUnwrap(recovery["result"] as? [String: Any])
+        XCTAssertEqual(recovery["source"] as? String, "reference"); XCTAssertEqual(recovery["method"] as? String, "referenceTaskDestinationCommit")
+        let outcome = try object(await cold.call("referenceTaskDestinationRetryOutcome", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(try json(outcome), try json(["kind": "confirmed", "result": result])); try assertReferenceStatus188Receipt(envelope, prefix: "referenceTaskDestination", result: result)
+        XCTAssertEqual(try XCTUnwrap(checkpointWrites), []); XCTAssertEqual(try XCTUnwrap(checkpoint), baseline); XCTAssertEqual(try XCTUnwrap(checkpointReceipts), receipts)
+        let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), ready.0); XCTAssertEqual(try doneTask176Receipts(check), ready.1); XCTAssertEqual(writes, ready.2); check.close(); await cold.close()
+    }
+
+    func testReferenceDestination190ForgedTerminalAndEditorAssociationsNeverWrite() async throws {
+        let id = try await seedReferenceTask186(), faults = HostIOFaults(), writer = host(faults); _ = try await writer.start()
+        let request = try await referenceDestination190Request(writer, id: id, destination: ["kind": "project", "id": "destination-project-b"]), args = try json([json(request)]), session = UUID().uuidString.lowercased()
+        let draft = EditorDraftSnapshot(sessionID: session, taskID: id, generation: 1, payloadJSON: try json(["version": 2, "taskID": id, "title": "Unsaved190 draft"]))
+        try await writer.checkpointEditorDraft(draft)
+        var statements = 0; faults.beforeSQL = { _ in statements += 1 }
+        await expectFailure("cannot carry an editor draft") { _ = try await writer.call("referenceTaskDestination", argumentsJSON: args) }; XCTAssertEqual(statements, 0)
+        let retainedDraft = try await writer.readEditorDraft(); XCTAssertEqual(retainedDraft, draft); try await writer.discardEditorDraft(expectedSession: session)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected190 forged setup") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("referenceTaskDestination", argumentsJSON: args) }; let original = try object(String(contentsOf: journal)); await writer.close()
+        let sql = try SQLiteBridge(url: database), baseline = try nineTableSnapshot(sql), receipts = try doneTask176Receipts(sql); sql.close()
+        for mode in ["kind", "raw", "result", "editor", "terminal"] {
+            var saved = original
+            var envelope = try object(XCTUnwrap((try JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])?.first))
+            var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+            if mode == "kind" { prepared["kind"] = "referenceBackdate" }
+            if mode == "raw" { prepared["rawBefore"] = ["tasks": [], "projects": [], "sections": []] }
+            if mode == "result" { prepared["result"] = ["id": "forged190"] }
+            envelope["prepared"] = prepared; saved["argumentsJSON"] = try json([json(envelope)])
+            var store: EditorDraftStore?, attempt: EditorDraftAttempt?
+            if mode == "editor" {
+                let editor = EditorDraftStore(databaseURL: database); try editor.checkpoint(draft)
+                let frozen = try editor.freeze(sessionID: session, generation: 1, method: "saveDraft", argumentsJSON: args)
+                saved["editorDraft"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(frozen)); store = editor; attempt = frozen
+            }
+            if mode == "terminal" { saved["terminal"] = ["success": ["_0": try json(["id": id])]] }
+            let bytes = Data(try json(saved).utf8); try bytes.write(to: journal)
+            let replay = HostIOFaults(); var sqlCount = 0, writes = 0; replay.beforeSQL = { text in sqlCount += 1; if self.referenceBackdate189DomainWrite(text) { writes += 1 } }
+            let cold = host(replay); await expectFailure { _ = try await cold.start() }
+            XCTAssertEqual(writes, 0, mode); if mode != "terminal" { XCTAssertEqual(sqlCount, 0, mode) }
+            try assertJournalContentUnchanged(bytes)
+            let check = try SQLiteBridge(url: database); XCTAssertEqual(try nineTableSnapshot(check), baseline, mode); XCTAssertEqual(try doneTask176Receipts(check), receipts, mode); check.close(); await cold.close()
+            if let store, let attempt { try store.thaw(attempt); try store.discard(sessionID: session) }
+        }
+        try FileManager.default.removeItem(at: journal)
+    }
+}

@@ -1,6 +1,7 @@
 export const viOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "Không thể xác nhận thay đổi thẻ. Hãy khởi động lại Mindwtr để tải lại dữ liệu đã lưu.",
     'task.doneCompletedAtOutcomeUnknown': "Không thể xác nhận thay đổi thời gian hoàn thành. Hãy khởi động lại Mindwtr để tải lại dữ liệu đã lưu.",
+    'task.destinationOutcomeUnknown': "Không thể xác nhận thay đổi đích đến. Khởi động lại Mindwtr để tải lại dữ liệu đã lưu.",
     'filters.searchTasks': "Tìm tiêu đề công việc",
     'filters.searchOptions': "Tìm tùy chọn",
     'filters.tokenCycleHint': "Nhấp để bao gồm, nhấp lại để loại trừ và nhấp thêm lần nữa để bỏ chọn.",

@@ -2,6 +2,7 @@
 export const ptOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "Não foi possível confirmar a alteração das etiquetas. Reinicie o Mindwtr para recarregar os dados salvos.",
     'task.doneCompletedAtOutcomeUnknown': "Não foi possível confirmar a alteração da data de conclusão. Reinicie o Mindwtr para recarregar os dados salvos.",
+    'task.destinationOutcomeUnknown': "Não foi possível confirmar a alteração do destino. Reinicie o Mindwtr para recarregar os dados salvos.",
     'filters.searchTasks': "Pesquisar títulos de tarefas",
     'filters.searchOptions': "Pesquisar opções",
     'filters.tokenCycleHint': "Clique para incluir, novamente para excluir e mais uma vez para limpar a seleção.",

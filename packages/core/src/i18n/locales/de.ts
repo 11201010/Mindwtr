@@ -2,6 +2,7 @@
 export const deOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "Die Tag-Änderung konnte nicht bestätigt werden. Starte Mindwtr neu, um die gespeicherten Daten erneut zu laden.",
     'task.doneCompletedAtOutcomeUnknown': "Die Änderung des Abschlusszeitpunkts konnte nicht bestätigt werden. Starte Mindwtr neu, um die gespeicherten Daten erneut zu laden.",
+    'task.destinationOutcomeUnknown': "Die Änderung des Ziels konnte nicht bestätigt werden. Starte Mindwtr neu, um die gespeicherten Daten erneut zu laden.",
     'filters.searchTasks': "Aufgabentitel durchsuchen",
     'filters.searchOptions': "Optionen durchsuchen",
     'filters.tokenCycleHint': "Klicken zum Einschließen, erneut zum Ausschließen und nochmals zum Zurücksetzen.",

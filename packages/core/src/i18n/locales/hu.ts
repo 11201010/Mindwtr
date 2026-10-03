@@ -313,6 +313,7 @@ export const huOverrides: Record<string, string> = {
     'task.doneStatusOutcomeUnknown': "Az állapotváltozást nem sikerült megerősíteni. A mentett adatok újratöltéséhez indítsd újra a Mindwtr alkalmazást.",
     'task.doneTagOutcomeUnknown': "A címkemódosítást nem sikerült megerősíteni. A mentett adatok újratöltéséhez indítsd újra a Mindwtr alkalmazást.",
     'task.doneCompletedAtOutcomeUnknown': "A befejezési idő módosítását nem sikerült megerősíteni. A mentett adatok újratöltéséhez indítsd újra a Mindwtr alkalmazást.",
+    'task.destinationOutcomeUnknown': "A cél módosítását nem sikerült megerősíteni. A mentett adatok újratöltéséhez indítsd újra a Mindwtr alkalmazást.",
     'task.trashOutcomeUnknown': "Nem sikerült megerősíteni a Kuka műveletét. Indítsd újra a Mindwtr alkalmazást a mentett adatok újratöltéséhez.",
     'projects.archiveDeleteOutcomeUnknown': "Nem sikerült megerősíteni, hogy az archivált projekt törölve lett-e. Indítsd újra a Mindwtr alkalmazást a mentett adatok újratöltéséhez.",
     'projects.archiveRestoreOutcomeUnknown': "Nem sikerült megerősíteni, hogy az archivált projekt visszaállítása megtörtént-e. Indítsd újra a Mindwtr alkalmazást a mentett adatok újratöltéséhez.",

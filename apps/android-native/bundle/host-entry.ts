@@ -798,7 +798,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2165,6 +2165,21 @@ globalThis.MindwtrHost = {
     },
     doneTaskStatusOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getDoneTaskStatusOptions(completionJson(json, 4_096) as Parameters<typeof contract.getDoneTaskStatusOptions>[0])); });
+    },
+    referenceTaskDestinationOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.getReferenceTaskDestinationOptions(completionJson(json, 4_096) as Parameters<typeof contract.getReferenceTaskDestinationOptions>[0])); });
+    },
+    referenceTaskDestinationPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareReferenceTaskDestination(completionJson(json, 4_096) as Parameters<typeof contract.prepareReferenceTaskDestination>[0])); });
+    },
+    referenceTaskDestinationValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedReferenceTaskDestination(completionJson(json, 2_100_000) as Parameters<typeof contract.validatePreparedReferenceTaskDestination>[0])));
+    },
+    referenceTaskDestinationCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedReferenceTaskDestination(completionJson(json, 2_100_000) as Parameters<typeof contract.commitPreparedReferenceTaskDestination>[0])));
+    },
+    referenceTaskDestinationOutcome(json: string): string {
+        return submit(async () => unwrap(contract.referenceTaskDestinationOutcome(completionJson(json, 2_100_000) as Parameters<typeof contract.referenceTaskDestinationOutcome>[0])));
     },
     referenceTaskBackdateOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getReferenceTaskBackdateOptions(completionJson(json, 4_096) as Parameters<typeof contract.getReferenceTaskBackdateOptions>[0])); });

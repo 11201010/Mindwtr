@@ -316,6 +316,7 @@ export const daOverrides: Record<string, string> = {
     'task.doneStatusOutcomeUnknown': "Statusændringen kunne ikke bekræftes. Genstart Mindwtr for at genindlæse gemte data.",
     'task.doneTagOutcomeUnknown': "Tagændringen kunne ikke bekræftes. Genstart Mindwtr for at genindlæse gemte data.",
     'task.doneCompletedAtOutcomeUnknown': "Ændringen af afslutningstidspunktet kunne ikke bekræftes. Genstart Mindwtr for at genindlæse gemte data.",
+    'task.destinationOutcomeUnknown': "Ændringen af destinationen kunne ikke bekræftes. Genstart Mindwtr for at genindlæse gemte data.",
     'task.trashOutcomeUnknown': "Handlingen i papirkurven kunne ikke bekræftes. Genstart Mindwtr for at genindlæse gemte data.",
     'projects.archiveDeleteOutcomeUnknown': "Det kunne ikke bekræftes, om det arkiverede projekt blev slettet. Genstart Mindwtr for at genindlæse gemte data.",
     'projects.archiveRestoreOutcomeUnknown': "Det kunne ikke bekræftes, om det arkiverede projekt blev gendannet. Genstart Mindwtr for at genindlæse gemte data.",

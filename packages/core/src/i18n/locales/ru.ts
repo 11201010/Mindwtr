@@ -2,6 +2,7 @@
 export const ruOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "Не удалось подтвердить изменение тегов. Перезапустите Mindwtr, чтобы повторно загрузить сохранённые данные.",
     'task.doneCompletedAtOutcomeUnknown': "Не удалось подтвердить изменение времени завершения. Перезапустите Mindwtr, чтобы заново загрузить сохранённые данные.",
+    'task.destinationOutcomeUnknown': "Не удалось подтвердить изменение места назначения. Перезапустите Mindwtr, чтобы заново загрузить сохранённые данные.",
     'filters.searchTasks': "Поиск по названиям задач",
     'filters.searchOptions': "Поиск вариантов",
     'filters.tokenCycleHint': "Нажмите, чтобы включить, ещё раз — исключить, и третий раз — сбросить выбор.",
