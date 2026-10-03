@@ -3153,7 +3153,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /onVariants \{ variant ->\s+variant\.sources\.manifests\?\.addStaticManifestFile\(layout\.buildDirectory\.file\("generated\/widgets\/\$\{variant\.buildType\}\/AndroidManifest\.xml"\)/);
     const merged = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + overlay;
     const exportedNames = (text) => [...text.matchAll(/<(?:activity-alias|activity|receiver|service|provider)\s[^>]*?android:name="([^"]+)"[^>]*?android:exported="true"/g)].map((m) => m[1]).sort();
-    assert.deepEqual(exportedNames(merged), ['${applicationId}.MainActivity', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
+    assert.deepEqual(exportedNames(merged), ['${applicationId}.MainActivity', '.ReminderRescheduleReceiver', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
         'tech.dongdongbh.mindwtr.androidwidget.CompactWidgetProvider', 'tech.dongdongbh.mindwtr.androidwidget.QuickCaptureWidgetProvider',
         'tech.dongdongbh.mindwtr.androidwidget.TasksWidgetProvider', 'tech.dongdongbh.mindwtr.androidwidget.WidgetConfigureActivity',
         'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver', 'tech.dongdongbh.mindwtr.nativeclient.dev.widget.TasksWidget',
