@@ -15,7 +15,7 @@ struct ReferenceScreen: View {
                           onChipAction: { action in Task { await model.applyReferenceChipAction(action) } },
                           onClear: { Task { await model.editReferenceFilter(model.reference.object("filters").object("clearEdit")) } },
                           onCollapse: { id in Task { await model.toggleReferenceSection(id) } },
-                          onDeleteTask: nil)
+                          onDeleteTask: { id, revision in Task { await model.deleteReferenceTask(expectedID: id, expectedRevision: revision) } })
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
@@ -69,7 +69,7 @@ struct StatusListContent: View {
     var body: some View {
         VStack(spacing: 0) {
             if current { activeFilters }
-            if prefix == "done" {
+            if prefix == "done" || prefix == "reference" {
                 List {
                     Group { contentRows }
                         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
@@ -97,7 +97,7 @@ struct StatusListContent: View {
                 .accessibilityIdentifier(errorIdentifier ?? prefix + "-error")
             Button(model.label("common.retry")) { onRetry() }
                 .rnFont(14, .semibold).frame(minHeight: 44)
-                .disabled(model.busy || (model.retryNeeded && !model.historyDoneActionPending))
+                .disabled(model.busy || (model.retryNeeded && !(prefix == "reference" ? model.referenceActionPending : model.historyDoneActionPending)))
                 .accessibilityIdentifier(prefix + "-retry")
         }
         if current {
@@ -136,7 +136,7 @@ struct StatusListContent: View {
                                     Label(model.label("common.delete"), systemImage: "trash")
                                 }
                                 .tint(palette.danger)
-                                .accessibilityIdentifier("done-delete-" + row.text("id"))
+                                .accessibilityIdentifier(prefix + "-delete-" + row.text("id"))
                             }
                         }
                 } else if item.text("type") == "section" { section(item) }

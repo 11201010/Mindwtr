@@ -182,7 +182,7 @@ export type NativePreparedCalendarDelete = {
 };
 export type NativeCalendarDeletePreparation = { kind: 'prepared'; prepared: NativePreparedCalendarDelete };
 
-export type NativeTaskDeleteRequest = { requestId: string; taskId: string; taskRevision: string; source?: 'archive' | 'done' };
+export type NativeTaskDeleteRequest = { requestId: string; taskId: string; taskRevision: string; source?: 'archive' | 'done' | 'reference' };
 export type NativeTaskDeleteResult = {
     id: string; deletion: { message: string; undoLabel: string; undoEnabled: true };
 };
@@ -604,7 +604,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
     const readTaskDeleteRequest = (input: unknown, allowSource = false): NativeTaskDeleteRequest | null => isObjectRecord(input)
         && (exactKeys(input, ['requestId', 'taskId', 'taskRevision'])
             || allowSource && exactKeys(input, ['requestId', 'taskId', 'taskRevision', 'source'])
-                && (input.source === 'archive' || input.source === 'done'))
+                && (input.source === 'archive' || input.source === 'done' || input.source === 'reference'))
         && typeof input.requestId === 'string' && deps.requestIdPattern.test(input.requestId)
         && typeof input.taskId === 'string' && input.taskId.length > 0 && input.taskId.length <= 200
         && typeof input.taskRevision === 'string' && input.taskRevision.length > 0 && input.taskRevision.length <= 200
@@ -626,6 +626,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             || taskRevisionOf(board.before) !== request.taskRevision || board.before.deletedAt || board.before.purgedAt
             || (request.source === 'archive' && board.before.status !== 'archived')
             || (request.source === 'done' && board.before.status !== 'done')
+            || (request.source === 'reference' && board.before.status !== 'reference')
             || isProjectedRecurringTaskId(request.taskId)
             || !taskEditValuesEqual(board.result, { changed: true, open: null })
             || !isObjectRecord(result) || !exactKeys(result, ['id', 'deletion']) || result.id !== request.taskId
@@ -926,7 +927,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             const task = state._tasksById.get(request.taskId);
             if (!task || task.deletedAt || task.purgedAt || isProjectedRecurringTaskId(request.taskId)
                 || (request.source === 'archive' ? task.status !== 'archived'
-                    : request.source === 'done' ? task.status !== 'done'
+                    : request.source === 'done' || request.source === 'reference' ? task.status !== request.source
                         || isStatusListTaskReadOnly(task, state._allProjects)
                         : isStatusListTaskReadOnly(task, state._allProjects))) return fail('TASK_NOT_FOUND', 'Task is not deletable');
             if (taskRevisionOf(task) !== request.taskRevision) return fail('STALE_REVISION', 'Task changed since the editor opened');
@@ -977,7 +978,8 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                     kind: 'trashTask', before: board.before, after: board.after,
                     deviceIdToInitialize: board.deviceIdToInitialize,
                     ...(envelope.request.source === 'archive' ? { strictBefore: true as const }
-                        : envelope.request.source === 'done' ? { strictBefore: true as const, respectReadOnly: true as const }
+                        : envelope.request.source === 'done' || envelope.request.source === 'reference'
+                            ? { strictBefore: true as const, respectReadOnly: true as const }
                             : { respectReadOnly: true as const }),
                 });
                 if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Task Delete conflicts with saved data');
@@ -991,6 +993,11 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             if (confirmed.ok && envelope.request.source === 'done' && !alreadySaved?.ok) {
                 try { logInfo('Native Done Task delete confirmed', { scope: 'native-host', category: 'storage',
                     context: { releaseCheck: 'v1.3.4/ios-done-task-trash', outcome: 'confirmed' } }); }
+                catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            }
+            if (confirmed.ok && envelope.request.source === 'reference' && !alreadySaved?.ok) {
+                try { logInfo('Native Reference Task delete confirmed', { scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: 'v1.3.4/ios-reference-task-trash', outcome: 'deleted' } }); }
                 catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
             }
             return confirmed;
@@ -1043,15 +1050,24 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             if (!envelope) return fail('INVALID_INPUT', 'Prepared Task Delete Undo is malformed');
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            return receipts.run(envelope.request.requestId, canonicalJSON(['preparedTaskDeleteUndo', envelope]), async () => {
+            const payload = canonicalJSON(['preparedTaskDeleteUndo', envelope]);
+            const alreadySaved = receipts.saved<{ id: string }>(envelope.request.requestId, payload);
+            const confirmed = await receipts.run(envelope.request.requestId, payload, async () => {
                 const { before, after, deviceIdBefore, deviceIdToInitialize, result } = envelope.prepared;
                 const applied = await useTaskStore.getState().commitPreparedBoardTask({
                     kind: 'restoreTask', before, after, deviceIdBefore, deviceIdToInitialize,
-                    ...(envelope.prepared.delete.request.source === 'done' ? { strictBefore: true as const } : {}),
+                    ...(envelope.prepared.delete.request.source === 'done' || envelope.prepared.delete.request.source === 'reference'
+                        ? { strictBefore: true as const } : {}),
                 });
                 if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Task Delete Undo conflicts with saved data');
                 return { ok: true, value: result };
             });
+            if (confirmed.ok && envelope.prepared.delete.request.source === 'reference' && !alreadySaved?.ok) {
+                try { logInfo('Native Reference Task restore confirmed', { scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: 'v1.3.4/ios-reference-task-trash', outcome: 'restored' } }); }
+                catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            }
+            return confirmed;
         },
 
         /** Trash Restore uses the same sanitizer and guarded one-row writer as Delete Undo, without a Delete prerequisite. */

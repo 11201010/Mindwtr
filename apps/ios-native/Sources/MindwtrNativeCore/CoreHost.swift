@@ -1091,6 +1091,9 @@ private final class Engine: @unchecked Sendable {
               let current = try editorDrafts.read(), current.snapshot.taskID == id else {
             throw HostFailure("Editor Save request does not match its draft")
         }
+        guard method != "taskDelete" || request["source"] as? String != "reference" else {
+            throw CoreHostRejection(message: "INVALID_INPUT: Reference row Delete cannot carry an editor draft")
+        }
         let attempt = try editorDrafts.freeze(sessionID: expectedSession, generation: expectedGeneration,
                                               method: method, argumentsJSON: argumentsJSON)
         let value: String
@@ -2884,6 +2887,9 @@ private final class Engine: @unchecked Sendable {
                 guard let original = args.first as? String,
                       let submitted = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
                     throw HostFailure("INVALID_INPUT: Task Delete needs a bounded request")
+                }
+                guard submitted["source"] as? String != "reference" || editorAttempt == nil else {
+                    throw HostFailure("INVALID_INPUT: Reference row Delete cannot carry an editor draft")
                 }
                 let value = try invoke("taskDeletePrepare", arguments: args)
                 guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
@@ -6322,7 +6328,7 @@ private final class Engine: @unchecked Sendable {
             let prepared = envelope["prepared"] as? [String: Any]
             let deletion = prepared?["delete"] as? [String: Any]
             let deletedRequest = deletion?["request"] as? [String: Any]
-            if deletedRequest?["source"] as? String == "done" { confirmedTaskDeleteUndoEnvelope = encoded }
+            if ["done", "reference"].contains(deletedRequest?["source"] as? String ?? "") { confirmedTaskDeleteUndoEnvelope = encoded }
             return
         }
         confirmedTaskDeleteUndoEnvelope = nil
@@ -6332,7 +6338,7 @@ private final class Engine: @unchecked Sendable {
     private func taskDeleteReceiptOutcome(arguments args: [Any]) throws -> String {
         guard let encodedRequest = args.first as? String,
               let request = try NativeJSON.jsonObject(with: Data(encodedRequest.utf8)) as? [String: Any],
-              ["archive", "done"].contains(request["source"] as? String ?? ""),
+              ["archive", "done", "reference"].contains(request["source"] as? String ?? ""),
               let confirmed = confirmedTaskDeleteEnvelope,
               let envelope = try NativeJSON.jsonObject(with: Data(confirmed.utf8)) as? [String: Any],
               Self.equalJSON(envelope["request"], request) else {
@@ -6357,7 +6363,7 @@ private final class Engine: @unchecked Sendable {
               let prepared = envelope["prepared"] as? [String: Any],
               let deletion = prepared["delete"] as? [String: Any],
               let deletedRequest = deletion["request"] as? [String: Any],
-              deletedRequest["source"] as? String == "done",
+              ["done", "reference"].contains(deletedRequest["source"] as? String ?? ""),
               Self.equalJSON(request["deleteRequestId"], deletedRequest["requestId"]) else {
             return #"{"kind":"unproven"}"#
         }
@@ -7384,7 +7390,7 @@ private final class Engine: @unchecked Sendable {
                   let envelope = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
                   Set(envelope.keys) == Set(["request", "prepared"]),
                   let request = envelope["request"] as? [String: Any],
-                  (command.method != "taskDeleteCommit" || !["archive", "done"].contains(request["source"] as? String ?? "") || command.editorDraft == nil),
+                  (command.method != "taskDeleteCommit" || !["archive", "done", "reference"].contains(request["source"] as? String ?? "") || command.editorDraft == nil),
                   let prepared = envelope["prepared"] as? [String: Any],
                   Self.isInteger(prepared["version"], equalTo: 1),
                   Self.equalJSON(prepared["request"], request),
@@ -9219,8 +9225,8 @@ private final class Engine: @unchecked Sendable {
                   let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
                   (Set(request.keys) == Set(["requestId", "taskId", "taskRevision"])
                     || Set(request.keys) == Set(["requestId", "taskId", "taskRevision", "source"])
-                       && ["archive", "done"].contains(request["source"] as? String ?? "")),
-                  method != "taskDeleteReceiptOutcome" || ["archive", "done"].contains(request["source"] as? String ?? ""),
+                       && ["archive", "done", "reference"].contains(request["source"] as? String ?? "")),
+                  method != "taskDeleteReceiptOutcome" || ["archive", "done", "reference"].contains(request["source"] as? String ?? ""),
                   let id = request["requestId"] as? String,
                   UUID(uuidString: id)?.uuidString.lowercased() == id,
                   let taskID = request["taskId"] as? String, !taskID.isEmpty, taskID.utf16.count <= 200,

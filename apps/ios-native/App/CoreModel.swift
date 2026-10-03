@@ -1794,6 +1794,10 @@ final class CoreModel: ObservableObject {
     var referenceActionsEnabled: Bool {
         ready && selectedSurface == .reference && referenceCurrent && !busy && !retryNeeded && !taskPresented
     }
+    var referenceActionPending: Bool {
+        selectedSurface == .reference && retryNeeded &&
+            (referenceTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "reference")
+    }
     var referencePickerActionsEnabled: Bool { referenceActionsEnabled && referencePickerCurrent }
     var historyArchived: Bool { historyTabs.text("tab") == "archived" }
     var historyPrefix: String { historyArchived ? "archive" : "done" }
@@ -11613,7 +11617,9 @@ final class CoreModel: ObservableObject {
     }
 
     func retryReference() async {
-        guard selectedSurface == .reference, !busy, !retryNeeded, !taskPresented else { return }
+        guard selectedSurface == .reference, !busy, !taskPresented else { return }
+        if referenceActionPending { await retry(); return }
+        guard !retryNeeded else { return }
         if !referenceTextEdits.isEmpty {
             referenceTextNeedsRead = true
             scheduleReferenceRead(delay: 0)
@@ -12891,6 +12897,7 @@ final class CoreModel: ObservableObject {
     }
 
     private var doneTaskDeleteRequest: String?
+    private var referenceTaskDeleteRequest: String?
     private var doneTaskStatusRequest: String?
     private var doneTaskCompletedAtRequest: String?
     private var archiveTaskCompletedAtRequest: String?
@@ -13112,6 +13119,67 @@ final class CoreModel: ObservableObject {
             error = failure.localizedDescription
         }
         historyError = failure.localizedDescription
+    }
+
+    func deleteReferenceTask(expectedID: String, expectedRevision: String) async {
+        guard referenceActionsEnabled else { return }
+        guard let item = reference.objects("items").first(where: {
+                  $0.text("type") == "task" && $0.object("row").text("id").utf8.elementsEqual(expectedID.utf8)
+              }), !item.object("row").flag("readOnly"),
+              item.object("row").text("status") == "reference",
+              item.object("row").text("taskRevision") == expectedRevision,
+              !expectedID.isEmpty, expectedID.utf16.count <= 200,
+              !expectedRevision.isEmpty, expectedRevision.utf16.count <= 200 else {
+            referenceError = label("task.updateFailed")
+            return
+        }
+        busy = true
+        referenceError = nil
+        defer { finishOperation() }
+        do {
+            let requestID = UUID().uuidString.lowercased()
+            let request = try json(["requestId": requestID, "taskId": expectedID,
+                                    "taskRevision": expectedRevision, "source": "reference"])
+            referenceTaskDeleteRequest = request
+            taskActionRequestID = requestID
+            let result = try await query("taskDelete", [request])
+            try acknowledgeReferenceTaskDelete(result)
+            _ = await readReference()
+            showTaskAction(result, operation: "delete", source: "reference")
+        } catch { await handleReferenceTaskDeleteError(error) }
+    }
+
+    private func acknowledgeReferenceTaskDelete(_ result: CoreObject) throws {
+        guard let request = referenceTaskDeleteRequest,
+              (try decode(request)).text("source") == "reference",
+              Set(result.keys) == Set(["id", "deletion"]),
+              result.text("id").utf8.elementsEqual((try decode(request)).text("taskId").utf8),
+              Set(result.object("deletion").keys) == Set(["message", "undoLabel", "undoEnabled"]),
+              !result.object("deletion").text("message").isEmpty,
+              !result.object("deletion").text("undoLabel").isEmpty,
+              let enabled = result.object("deletion")["undoEnabled"] as? NSNumber,
+              CFGetTypeID(enabled) == CFBooleanGetTypeID(), enabled.boolValue else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        referenceTaskDeleteRequest = nil
+        retryNeeded = false
+        referenceError = nil
+        error = nil
+        referenceCurrent = false
+    }
+
+    private func handleReferenceTaskDeleteError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            referenceTaskDeleteRequest = nil
+            taskActionRequestID = nil
+            retryNeeded = false
+            error = nil
+            _ = await readReference()
+        } else {
+            retryNeeded = referenceTaskDeleteRequest != nil
+            error = failure.localizedDescription
+        }
+        referenceError = failure.localizedDescription
     }
 
     func deleteDoneTask(expectedID: String, expectedRevision: String) async {
@@ -16383,6 +16451,7 @@ final class CoreModel: ObservableObject {
             do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
         } catch {
             let historyUndo = ["done", "archive"].contains(taskActionNotice.text("source"))
+            let referenceUndo = taskActionNotice.text("source") == "reference"
             if isDefiniteRejection(error) {
                 taskActionUndoRequest = nil
                 taskActionNotice = [:]
@@ -16390,6 +16459,7 @@ final class CoreModel: ObservableObject {
             retryNeeded = taskActionUndoRequest != nil
             self.error = error.localizedDescription
             if historyUndo { historyError = error.localizedDescription }
+            if referenceUndo { referenceError = error.localizedDescription }
         }
     }
 
@@ -16400,9 +16470,13 @@ final class CoreModel: ObservableObject {
                   CFGetTypeID(count) != CFBooleanGetTypeID(),
                   count.doubleValue == Double(taskActionNotice.number("count")) else { throw CocoaError(.coderReadCorrupt) }
         } else {
-            guard result.text("id") == taskActionNotice.text("id") else { throw CocoaError(.coderReadCorrupt) }
+            let idMatches = taskActionNotice.text("source") == "reference"
+                ? result.text("id").utf8.elementsEqual(taskActionNotice.text("id").utf8)
+                : result.text("id") == taskActionNotice.text("id")
+            guard idMatches else { throw CocoaError(.coderReadCorrupt) }
         }
         if ["done", "archive"].contains(taskActionNotice.text("source")) { historyError = nil }
+        if taskActionNotice.text("source") == "reference" { referenceError = nil }
         taskActionUndoRequest = nil
         taskActionNotice = [:]
         retryNeeded = false
@@ -18649,13 +18723,18 @@ final class CoreModel: ObservableObject {
             }
             if let request = taskActionUndoRequest {
                 let result: CoreObject
-                if ["archiveBulkDelete", "doneBulkDelete"].contains(taskActionNotice.text("operation")) || taskActionNotice.text("source") == "done" {
+                if ["archiveBulkDelete", "doneBulkDelete"].contains(taskActionNotice.text("operation")) || ["done", "reference"].contains(taskActionNotice.text("source")) {
                     let bulk = ["archiveBulkDelete", "doneBulkDelete"].contains(taskActionNotice.text("operation"))
                     let outcome = try await query(bulk ? "archivedTasksDeleteUndoRetryOutcome" : "taskDeleteUndoReceiptOutcome", [request])
                     if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
                         let unknown = label("task.trashOutcomeUnknown")
-                        _ = await readHistory()
-                        historyError = unknown
+                        if taskActionNotice.text("source") == "reference" {
+                            _ = await readReference()
+                            referenceError = unknown
+                        } else {
+                            _ = await readHistory()
+                            historyError = unknown
+                        }
                         self.error = unknown
                         return
                     }
@@ -19300,6 +19379,27 @@ final class CoreModel: ObservableObject {
                 _ = await readHistory()
                 return
             }
+            if let request = referenceTaskDeleteRequest {
+                let outcome = try await query("taskDeleteReceiptOutcome", [request])
+                if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                    let unknown = label("task.trashOutcomeUnknown")
+                    _ = await readReference()
+                    referenceError = unknown
+                    self.error = unknown
+                    return
+                }
+                guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let result = outcome.object("result")
+                if let acknowledgment, try json(result) != json(decode(acknowledgment)) {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try acknowledgeReferenceTaskDelete(result)
+                _ = await readReference()
+                showTaskAction(result, operation: "delete", source: "reference")
+                return
+            }
             if let request = doneTaskDeleteRequest {
                 let outcome = try await query("taskDeleteReceiptOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
@@ -19658,6 +19758,13 @@ final class CoreModel: ObservableObject {
                 historyError = error.localizedDescription
                 return
             }
+            if taskActionUndoRequest != nil, taskActionNotice.text("source") == "reference" {
+                if isDefiniteRejection(error) { taskActionUndoRequest = nil; taskActionNotice = [:] }
+                retryNeeded = taskActionUndoRequest != nil
+                self.error = error.localizedDescription
+                referenceError = error.localizedDescription
+                return
+            }
             if archivedTasksDeleteRequest != nil {
                 await handleArchivedTasksDeleteError(error)
                 return
@@ -19684,6 +19791,10 @@ final class CoreModel: ObservableObject {
             }
             if doneTaskStatusRequest != nil {
                 await handleDoneTaskStatusError(error)
+                return
+            }
+            if referenceTaskDeleteRequest != nil {
+                await handleReferenceTaskDeleteError(error)
                 return
             }
             if doneTaskDeleteRequest != nil {
