@@ -12289,23 +12289,53 @@ final class CoreModel: ObservableObject {
               history.objects("items").contains(where: { $0.text("type") == "task"
                   && $0.object("row").text("id") == displayed.text("id")
                   && $0.object("row").text("taskRevision") == displayed.text("taskRevision") }) else { return }
-        let params = historyParamsByTab["done"] ?? [:], revision = history.text("revision")
+        let params = historyParamsByTab["done"] ?? [:]
+        let panel = historyPanel, pickerName = historyPickerName, pickerQuery = historyPickerQuery
+        let searchText = historySearchText, locationText = historyLocationText
+        let selectionMode = historyDoneSelectionMode, selectedIDs = historyDoneSelectedIDs
+        let anchorID = historyDoneAnchorID, range = historyDoneRangeSelectMode
+        func selectionContextIsCurrent() throws -> Bool {
+            guard selectedSurface == .history, !historyArchived, historyCurrent, !taskPresented, !retryNeeded,
+                  !taskStatusMenuPresented, historyTextEdits.isEmpty, historyPendingEdit == nil,
+                  historyPanel == panel, historyPickerName == pickerName, historyPickerQuery == pickerQuery,
+                  historySearchText == searchText, historyLocationText == locationText,
+                  historyDoneSelectionMode == selectionMode, historyDoneSelectedIDs == selectedIDs,
+                  historyDoneAnchorID == anchorID, historyDoneRangeSelectMode == range else { return false }
+            return try json(historyParamsByTab["done"] ?? [:]) == json(params)
+        }
         busy = true
         historyError = nil
         defer { finishOperation() }
         do {
             var input = doneTaskBulkInput(params: params)
-            input["selectionEdit"] = ["taskId": displayed.text("id"), "range": historyDoneRangeSelectMode]
+            input["selectionEdit"] = ["taskId": displayed.text("id"), "range": range]
             input["rangeSelectMode"] = false
-            let bulk = try await query("menuRead", ["bulk", try json(input)])
-            guard selectedSurface == .history, !historyArchived, historyCurrent, !taskStatusMenuPresented,
-                  historyTextEdits.isEmpty, historyPendingEdit == nil,
-                  history.text("revision") == revision,
-                  try json(historyParamsByTab["done"] ?? [:]) == json(params) else { return }
-            guard bulk.text("revision") == revision else { _ = await readHistory(); return }
-            try acceptDoneTaskBulk(bulk)
-            historyDoneSelectionMode = true
-            historyDoneRangeSelectMode = false
+            for attempt in 0..<2 {
+                guard try selectionContextIsCurrent() else { return }
+                guard history.objects("items").contains(where: { item in
+                    let row = item.object("row")
+                    return item.text("type") == "task" && !row.flag("readOnly")
+                        && row.text("id") == displayed.text("id")
+                        && row.text("taskRevision") == displayed.text("taskRevision")
+                }) else { historyError = label("task.updateFailed"); return }
+                let revision = history.text("revision")
+                let bulk = try await query("menuRead", ["bulk", try json(input)])
+                guard try selectionContextIsCurrent(), history.text("revision") == revision else { return }
+                if bulk.text("revision") != revision {
+                    guard attempt == 0 else {
+                        historyError = label("task.updateFailed")
+                        return
+                    }
+                    // The display revision includes the minute. Refresh once and
+                    // retry the frozen selection intent only if its row still matches.
+                    guard await readHistory() else { return }
+                    continue
+                }
+                try acceptDoneTaskBulk(bulk)
+                historyDoneSelectionMode = true
+                historyDoneRangeSelectMode = false
+                return
+            }
         } catch { historyError = error.localizedDescription }
     }
 
