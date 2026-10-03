@@ -4041,7 +4041,9 @@ console.log('Entry points: RN\'s alias, links on the build\'s scheme, text share
     // lock each plan's apply holds, that no plan cancelled or moved its alarm meanwhile.
     assert.doesNotMatch(code(remindersKt), /Calendar|TimeZone|nextRepeat/);
     assert.match(remindersKt, /CoreJob\.REMINDERS, mapOf\("mode" to "fired", "key" to alarm\.getString\("key"\)\)/);
-    assert.match(remindersKt, /synchronized\(ReminderAlarms\.LOCK\) \{\s+ReminderAlarms\.deliveries\.accepts\(/);
+    assert.match(remindersKt, /synchronized\(ReminderAlarms\.LOCK\) \{\s+ReminderLedger\.of\(context\)\.deliver\(/);
+    // The ledger is on disk and written before any alarm changes, so a cancel holds across a process death.
+    assert.match(remindersKt, /port\.record\(cancelled = [\s\S]{0,260}\)\s+for \(index in 0 until cancel\.length\(\)\)/);
     assert.match(remindersKt, /synchronized\(LOCK\) \{ applyLocked\(parsed\) \}/);
     assert.match(hostEntry, /reminderDone\(requestId: string, taskId: string\): string \{\s+return submit\(async \(\) => taskResult\('reminderDone', await contract\.completeReminderTask\(\{ requestId, taskId \}\)\)\);/);
     // Snooze's alarm is made in the engine against the native state (core's planReminderSnooze), before the journaled reply.

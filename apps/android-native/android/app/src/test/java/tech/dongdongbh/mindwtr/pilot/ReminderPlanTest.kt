@@ -107,29 +107,47 @@ class ReminderPlanTest {
         assertEquals(listOf("store {ahead}", "checkpoint write-ahead", "schedule 11 task:a", "checkpoint scheduled", "store {after}"), events)
     }
 
-    @Test fun aDeliveryAlreadyOnItsWayShowsNothingOnceAPlanCancelledOrMovedItsAlarm() {
-        val deliveries = ReminderDeliveries()
+    /** A ledger on [store], as a new process would open it (SharedPreferences in the app). */
+    private fun ledger(store: MutableMap<Int, String>) = ReminderLedger(read = { store.toMap() },
+        write = { changes -> changes.forEach { (id, value) -> if (value == null) store.remove(id) else store[id] = value } })
+
+    @Test fun aDeliveryShowsOnlyWhileTheLedgerOnDiskHoldsItsAlarmAtItsTimeAcrossProcesses() {
+        val disk = mutableMapOf<Int, String>()
         val hour = 3_600_000L
-        // An alarm armed by an earlier process: shown.
-        assertEquals(true, deliveries.accepts(5, 10 * hour, "once", 10 * hour + 1))
-        deliveries.armed(5, 10 * hour)
-        assertEquals(true, deliveries.accepts(5, 10 * hour, "once", 10 * hour + 1))
+        // Unknown to the ledger (cancelled, or never this app's): nothing shows.
+        assertEquals(false, ledger(disk).deliver(5, 10 * hour, "once", 10 * hour + 1))
+        ledger(disk).record(cancelled = emptyList(), armed = listOf(5 to 10 * hour, 6 to 8 * hour, 7 to 9 * hour))
         // Made again for 11:00 (the task moved) while the 10:00 delivery was queued: that one shows nothing.
-        deliveries.armed(5, 11 * hour)
-        assertEquals(false, deliveries.accepts(5, 10 * hour, "once", 10 * hour + 1))
-        deliveries.cancelled(5)
-        assertEquals(false, deliveries.accepts(5, 11 * hour, "once", 11 * hour + 1))
-        // A daily digest that fired is made again by core's plan; until then, its delivery shows.
-        deliveries.armed(6, 8 * hour)
-        assertEquals(true, deliveries.accepts(6, 8 * hour, "daily", 8 * hour + 1))
+        ledger(disk).record(cancelled = emptyList(), armed = listOf(5 to 11 * hour))
+        assertEquals(false, ledger(disk).deliver(5, 10 * hour, "once", 10 * hour + 1))
+        // Cancelled, then the process died: the queued delivery in the next process shows nothing (a disabled digest too).
+        ledger(disk).record(cancelled = listOf(6), armed = emptyList())
+        assertEquals(false, ledger(disk).deliver(6, 8 * hour, "daily", 8 * hour + 1))
+        // A one-shot shows once and is recorded as fired, on disk; a repeating one stays armed until core makes it again.
+        assertEquals(true, ledger(disk).deliver(5, 11 * hour, "once", 11 * hour + 1))
+        assertEquals(false, ledger(disk).deliver(5, 11 * hour, "once", 11 * hour + 2))
+        assertEquals(listOf(5), ledger(disk).fired())
+        ledger(disk).record(cancelled = emptyList(), armed = listOf(8 to 8 * hour))
+        assertEquals(true, ledger(disk).deliver(8, 8 * hour, "daily", 8 * hour + 1))
+        assertEquals(true, ledger(disk).deliver(8, 8 * hour, "daily", 8 * hour + 2))
+        assertEquals(setOf(5, 7, 8), ledger(disk).ids())
     }
 
     @Test fun aOneShotMoreThanADayLateShowsNothingAsReactNativesLibraryDiscardsIt() {
-        val deliveries = ReminderDeliveries()
+        val disk = mutableMapOf<Int, String>()
         val day = 24 * 3_600_000L
-        assertEquals(true, deliveries.accepts(5, 0, "once", day))
-        assertEquals(false, deliveries.accepts(5, 0, "once", day + 1))
-        assertEquals(true, deliveries.accepts(6, 0, "weekly", 3 * day))
+        ledger(disk).record(cancelled = emptyList(), armed = listOf(5 to 0L, 6 to 0L, 7 to 0L))
+        assertEquals(true, ledger(disk).deliver(5, 0, "once", day))
+        assertEquals(false, ledger(disk).deliver(6, 0, "once", day + 1))
+        assertEquals(true, ledger(disk).deliver(7, 0, "weekly", 3 * day))
+    }
+
+    @Test fun thePlansLedgerIsWrittenAfterTheWriteAheadAndBeforeAnyAlarmChanges() {
+        val recording = object : ReminderPlan.Port by port {
+            override fun record(cancelled: List<Int>, armed: List<Pair<Int, Long>>) { events += "ledger -$cancelled +${armed.map { it.first }}" }
+        }
+        ReminderPlan.apply(plan("{ahead}", listOf(7 to "expired"), listOf(alarm("task:a", 11, null))), recording)
+        assertEquals(listOf("store {ahead}", "ledger -[7] +[11]", "cancel 7", "schedule 11 task:a", "store {after}"), events)
     }
 
     @Test fun reactNativesAlarmsAreCancelledBeforeItsMapGoesAndTheTableLast() {

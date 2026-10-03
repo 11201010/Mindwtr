@@ -45,6 +45,8 @@ internal object ReminderPlan {
         fun schedule(alarm: JSONObject)
         /** Every delivered reminder notification: no notification permission. */
         fun clearDelivered()
+        /** The ledger on disk (ReminderLedger): [cancelled] ids gone, [armed] ids at their times; before any alarm changes. */
+        fun record(cancelled: List<Int>, armed: List<Pair<Int, Long>>) {}
     }
 
     /**
@@ -66,13 +68,16 @@ internal object ReminderPlan {
             checkpoint("write-ahead")
         }
         val cancel = plan.getJSONArray("cancel")
+        val schedule = plan.getJSONArray("schedule")
+        // The ledger first: a delivery checks it, so a cancelled alarm never shows even if the process dies before cancelling it.
+        port.record(cancelled = List(cancel.length()) { cancel.getJSONObject(it).getInt("id") },
+            armed = List(schedule.length()) { schedule.getJSONObject(it).let { alarm -> alarm.getInt("id") to alarm.getLong("fireAtMs") } })
         for (index in 0 until cancel.length()) {
             val item = cancel.getJSONObject(index)
             val id = item.getInt("id")
             if (item.getString("reason") == "withdrawn") runCatching { port.removeDelivered(id) }
             port.cancel(id)
         }
-        val schedule = plan.getJSONArray("schedule")
         for (index in 0 until schedule.length()) {
             val alarm = schedule.getJSONObject(index)
             if (alarm.optString("replacing") == "withdrawn") runCatching { port.removeDelivered(alarm.getInt("id")) }
@@ -115,28 +120,47 @@ internal class ReminderReceiverCounts(private val read: (String) -> Int, private
 }
 
 /**
- * What this process armed and cancelled, so a delivery already on its way when a plan cancelled its alarm or made it again for
- * another time shows nothing (JVM-tested: ReminderPlanTest). Guarded by [ReminderAlarms.LOCK], which a plan's apply holds too.
- * A process that did not arm or cancel an alarm knows nothing of it and shows its delivery.
+ * Each alarm this app holds in AlarmManager, on disk (SharedPreferences `mindwtr_reminder_ledger`; JVM-tested: ReminderPlanTest):
+ * `armed:<time>`, or `fired:<time>` once a one-shot showed. A delivery shows only while its alarm is armed at its time, so one a
+ * plan cancelled or made again for another time shows nothing, in this process or the next. Each plan records its cancels and
+ * alarms before it changes any; the receiver records a one-shot that showed (core reads the fired ones: a Snooze that showed is
+ * never made again). Guarded by [ReminderAlarms.LOCK], which each apply and each delivery hold.
  */
-internal class ReminderDeliveries {
+internal class ReminderLedger(private val read: () -> Map<Int, String>, private val write: (Map<Int, String?>) -> Unit) {
     companion object {
         /** RN's patched library discards a one-shot delivered more than a day late (patch-alarm-notification-gradle.js). */
         const val ONE_SHOT_LATE_LIMIT_MS = 24 * 60 * 60 * 1000L
+        private const val PREFS = "mindwtr_reminder_ledger"
+
+        fun of(context: Context): ReminderLedger {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            return ReminderLedger(read = { prefs.all.mapNotNull { (id, value) -> id.toIntOrNull()?.let { it to value.toString() } }.toMap() },
+                write = { changes -> prefs.edit().apply { changes.forEach { (id, value) -> if (value == null) remove("$id") else putString("$id", value) } }.commit() })
+        }
     }
 
-    /** Each alarm id's armed time; null once cancelled. */
-    private val armed = HashMap<Int, Long?>()
-
-    fun armed(id: Int, fireAtMs: Long) { armed[id] = fireAtMs }
-
-    fun cancelled(id: Int) { armed[id] = null }
-
-    /** Whether a delivery of alarm [id], armed for [fireAtMs], shows at [nowMs]. */
-    fun accepts(id: Int, fireAtMs: Long, repeat: String, nowMs: Long): Boolean {
-        if (armed.containsKey(id) && armed[id] != fireAtMs) return false
-        return repeat != "once" || nowMs - fireAtMs <= ONE_SHOT_LATE_LIMIT_MS
+    /** Only what changes is written (nothing at all when nothing does: the upgrade keeps every other file as RN left it). */
+    fun record(cancelled: List<Int>, armed: List<Pair<Int, Long>>) {
+        val held = read()
+        val changes = cancelled.filter { it in held }.associateWith { null as String? } +
+            armed.filter { (id, at) -> held[id] != "armed:$at" }.associate { (id, at) -> id to "armed:$at" }
+        if (changes.isNotEmpty()) write(changes)
     }
+
+    /** Whether a delivery of alarm [id], armed for [fireAtMs], shows at [nowMs]; a one-shot that shows is recorded as fired. */
+    fun deliver(id: Int, fireAtMs: Long, repeat: String, nowMs: Long): Boolean {
+        if (read()[id] != "armed:$fireAtMs") return false
+        if (repeat != "once") return true
+        if (nowMs - fireAtMs > ONE_SHOT_LATE_LIMIT_MS) return false
+        write(mapOf(id to "fired:$fireAtMs"))
+        return true
+    }
+
+    fun fired(): List<Int> = read().filterValues { it.startsWith("fired:") }.keys.sorted()
+
+    fun ids(): Set<Int> = read().keys
+
+    fun clear() { read().keys.takeIf { it.isNotEmpty() }?.let { ids -> write(ids.associateWith { null }) } }
 }
 
 /**
@@ -224,8 +248,6 @@ internal class ReminderAlarms(
 
         /** Held by each plan's apply and each delivery, so a delivery sees the plan before it or after it whole. */
         val LOCK = Any()
-        /** Guarded by [LOCK]. */
-        val deliveries = ReminderDeliveries()
 
         private fun fireIntent(context: Context) = Intent(context, ReminderAlarmReceiver::class.java).setAction(FIRE)
 
@@ -238,7 +260,6 @@ internal class ReminderAlarms(
             val intent = PendingIntent.getBroadcast(context, alarm.getInt("id"), fireIntent(context).putExtra(EXTRA_ALARM, alarm.toString()),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val at = alarm.getLong("fireAtMs")
-            deliveries.armed(alarm.getInt("id"), at)
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || manager.canScheduleExactAlarms()) {
                 manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, intent)
             } else {
@@ -308,8 +329,9 @@ internal class ReminderAlarms(
 
     override fun removeDelivered(id: Int) = notifications.cancel(id)
 
+    override fun record(cancelled: List<Int>, armed: List<Pair<Int, Long>>) = ReminderLedger.of(context).record(cancelled, armed)
+
     override fun cancel(id: Int) {
-        deliveries.cancelled(id)
         PendingIntent.getBroadcast(context, id, fireIntent(context), PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)?.let {
             alarms.cancel(it)
             it.cancel()
@@ -374,7 +396,7 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
         val repeat = alarm.optString("repeat", "once")
         val shown = runCatching {
             synchronized(ReminderAlarms.LOCK) {
-                ReminderAlarms.deliveries.accepts(alarm.getInt("id"), alarm.getLong("fireAtMs"), repeat, System.currentTimeMillis())
+                ReminderLedger.of(context).deliver(alarm.getInt("id"), alarm.getLong("fireAtMs"), repeat, System.currentTimeMillis())
                     .also { if (it) CoreNotifications.postReminder(context, alarm) }
             }
         }.onFailure { Log.w(CoreHost.TAG, "Native Android reminder not posted", it) }.getOrDefault(false)
