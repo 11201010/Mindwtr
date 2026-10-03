@@ -152,9 +152,16 @@ struct StatusListContent: View {
     @State private var referenceBackdateOptions: CoreObject = [:]
     @State private var referenceBackdateInitialDate = Date()
 
+    // Keep Reference's existing row identities during a background reread.
+    // Removing the snapshot here resets List's scroll position every minute.
+    // `current` still gates interaction until the new snapshot is accepted.
+    private var displaysSnapshot: Bool {
+        current || (prefix == "reference" && data.text("kind") == "reference" && error == nil)
+    }
+
     private var listContent: some View {
         VStack(spacing: 0) {
-            if current { activeFilters }
+            if displaysSnapshot { activeFilters }
             if prefix == "done" || prefix == "reference" {
                 List {
                     Group { contentRows }
@@ -364,7 +371,7 @@ struct StatusListContent: View {
                 .disabled(model.busy || (model.retryNeeded && !(prefix == "reference" ? model.referenceActionPending : model.historyDoneActionPending)))
                 .accessibilityIdentifier(prefix + "-retry")
         }
-        if current {
+        if displaysSnapshot {
             let items = data.objects("items")
             ForEach(items.map(ListRowEntry.init)) { entry in
                 let item = entry.item
@@ -394,6 +401,7 @@ struct StatusListContent: View {
                                  onSelectionStart: enabled && !row.flag("readOnly") ? onSelectionStart : nil)
                     }
                         .id(entry.id)
+                        .disabled(prefix == "reference" && !current)
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             let swipe = row.object("meta").object("swipe")
                             if let onNextTask, enabled, !ownsReferenceStatusMenu, !selectionActive, !row.flag("readOnly"),
