@@ -13,6 +13,7 @@ struct HistoryScreen: View {
     @State private var archiveProjectDeleteRevision = ""
     @State private var archiveProjectDeleteConfirmation: CoreObject = [:]
     @State private var archiveProjectDeletePresented = false
+    @State private var archiveBulkDeletePresented = false
     @State private var completedAtRow: CoreObject = [:]
     @State private var completedAtOptions: CoreObject = [:]
     @State private var completedAtOptionsTask: Task<Void, Never>?
@@ -36,7 +37,7 @@ struct HistoryScreen: View {
                                 .overlay(alignment: .bottom) { (tab.flag("selected") ? palette.tint : .clear).frame(height: 2) }
                                 .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || !model.historyCurrent)
+                        .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || !model.historyCurrent || !model.archiveBulkDeleteConfirmation.isEmpty)
                         .accessibilityAddTraits(tab.flag("selected") ? .isSelected : [])
                         .accessibilityIdentifier("history-tab-" + tab.text("id"))
                     }
@@ -102,7 +103,25 @@ struct HistoryScreen: View {
         } message: {
             Text(archiveProjectDeleteConfirmation.text("message"))
         }
-        .onDisappear { closeCompletedAt(); model.leaveArchiveTaskSelection() }
+        .alert(model.archiveBulkDeleteConfirmation.text("title"), isPresented: $archiveBulkDeletePresented) {
+            Button(model.archiveBulkDeleteConfirmation.text("cancelLabel"), role: .cancel) {
+                model.cancelArchiveBulkDeleteConfirmation()
+            }
+            .accessibilityIdentifier("archive-bulk-delete-cancel")
+            Button(model.archiveBulkDeleteConfirmation.text("confirmLabel"), role: .destructive) {
+                Task { await model.confirmDeleteSelectedArchiveTasks() }
+            }
+            .accessibilityIdentifier("archive-bulk-delete-confirm")
+        } message: {
+            Text(model.archiveBulkDeleteConfirmation.text("message"))
+        }
+        .onDisappear {
+            closeCompletedAt()
+            archiveBulkDeletePresented = false
+            model.cancelArchiveBulkDeleteConfirmation()
+            model.leaveArchiveTaskSelection()
+        }
+        .onChange(of: model.archiveBulkDeleteConfirmation.isEmpty) { if $0 { archiveBulkDeletePresented = false } }
         .onChange(of: model.historyArchived) { _ in closeCompletedAt() }
         .onChange(of: model.history.text("segment")) { _ in closeCompletedAt() }
         .onChange(of: model.historyArchiveSelectionMode) { if $0 { closeCompletedAt() } }
@@ -314,8 +333,8 @@ struct HistoryScreen: View {
             Text(model.history.object("labels").text("selected")).rnFont(13).foregroundStyle(palette.secondary)
                 .accessibilityIdentifier("archive-bulk-count")
             if dynamicTypeSize.isAccessibilitySize {
-                VStack(spacing: 8) { archiveSelectAllButton; archiveBulkRestoreButton }
-            } else { HStack(spacing: 8) { archiveSelectAllButton; archiveBulkRestoreButton } }
+                VStack(spacing: 8) { archiveSelectAllButton; archiveBulkRestoreButton; archiveBulkDeleteButton }
+            } else { HStack(spacing: 8) { archiveSelectAllButton; archiveBulkRestoreButton; archiveBulkDeleteButton } }
         }
         .padding(12).background(palette.card, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
@@ -350,6 +369,21 @@ struct HistoryScreen: View {
         .buttonStyle(.plain).foregroundStyle(palette.onTint)
         .background(palette.tint, in: RoundedRectangle(cornerRadius: 8))
         .disabled(!model.historyArchiveBulkRestoreEnabled).accessibilityIdentifier("archive-bulk-restore")
+    }
+
+    private var archiveBulkDeleteButton: some View {
+        Button {
+            searchFocused = false
+            completedAtError = false
+            model.requestDeleteSelectedArchiveTasks()
+            archiveBulkDeletePresented = !model.archiveBulkDeleteConfirmation.isEmpty
+        } label: {
+            Text(model.history.object("labels").text("delete")).rnFont(13, .semibold).multilineTextAlignment(.center)
+                .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(.red)
+        .background(palette.row, in: RoundedRectangle(cornerRadius: 8))
+        .disabled(!model.historyArchiveBulkRestoreEnabled).accessibilityIdentifier("archive-bulk-delete")
     }
 
     private func archiveSelectionCard(_ item: CoreObject) -> some View {

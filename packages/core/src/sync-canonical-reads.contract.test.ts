@@ -1147,6 +1147,36 @@ describe('canonical local reads contract', () => {
                 expect(nativeValue(await host.commitPreparedArchivedTaskRestore({ request, prepared: planned.prepared })))
                     .toEqual(planned.prepared.result);
             },
+            commitPreparedArchivedTasksMutation: async (control) => {
+                const host = await nativeHost(control);
+                const taskIds = ['task-29', 'task-58'];
+                const sources = taskIds.map((id) => {
+                    const source = useTaskStore.getState()._tasksById.get(id);
+                    expect(source?.status).toBe('archived');
+                    if (!source) throw new Error(`Bulk Delete fixture task missing: ${id}`);
+                    return source;
+                });
+                const request = { requestId: '07172a39-547c-4a31-9105-419f8ee756a0', taskIds,
+                    taskRevisions: Object.fromEntries(sources.map((row) => [row.id, taskRevisionOf(row)])) };
+                const planned = nativeValue(await host.prepareArchivedTasksDelete(request));
+                const after = new Map(planned.prepared.after.map((row) => [row.id, row]));
+                expect([...after.keys()].sort()).toEqual([...taskIds].sort());
+                for (const source of sources) expect(after.get(source.id)).toMatchObject({
+                    status: 'archived', deletedAt: planned.prepared.updateAt, rev: (source.rev ?? 0) + 1 });
+                const durable = nativeValue(await readAreaDurableData(false, true));
+                const before = durable.authority.snapshot;
+                control.expectPersisted((written) => {
+                    expect(written.tasks).toEqual(before.tasks.map((row) => after.get(row.id) ?? row));
+                    expect(written.projects).toEqual(before.projects);
+                    expect(written.sections).toEqual(before.sections);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                control.resetBaseline();
+                expect(await useTaskStore.getState().commitPreparedArchivedTasksMutation({
+                    operation: 'delete', before: planned.prepared.before, after: planned.prepared.after,
+                    deviceIdBefore: planned.prepared.deviceIdBefore, deviceIdToInitialize: planned.prepared.deviceIdToInitialize,
+                }, durable.authority)).toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+            },
             commitPreparedArchivedTasksRestore: async (control) => {
                 const host = await nativeHost(control);
                 const taskIds = ['task-29', 'task-58'];
@@ -2009,6 +2039,40 @@ describe('canonical local reads contract', () => {
             if (outcome.storeFields.length > 0 || outcome.readFields.length > 0) {
                 notCanonical.push({ action, ...outcome });
             }
+        }
+        const archivedBulkUndo = await runMutation('native prepared Archive bulk Delete Undo', async (control) => {
+            const host = await nativeHost(control);
+            const taskIds = ['task-29', 'task-58'];
+            const request = { requestId: 'ee03cb67-dd20-4a88-a302-47bd9910b903', taskIds,
+                taskRevisions: Object.fromEntries(taskIds.map((id) => {
+                    const source = useTaskStore.getState()._tasksById.get(id);
+                    if (!source || source.status !== 'archived') throw new Error(`Bulk Undo fixture missing: ${id}`);
+                    return [id, taskRevisionOf(source)];
+                })) };
+            const deletion = { request, prepared: nativeValue(await host.prepareArchivedTasksDelete(request)).prepared };
+            expect(nativeValue(await host.commitPreparedArchivedTasksDelete(deletion))).toEqual(deletion.prepared.result);
+            await flushPendingSave();
+            const undoRequest = { requestId: 'ff03cb67-dd20-4a88-a302-47bd9910b904', deleteRequestId: request.requestId };
+            const undo = { request: undoRequest,
+                prepared: nativeValue(await host.prepareArchivedTasksDeleteUndo({ request: undoRequest, delete: deletion })).prepared };
+            const durable = nativeValue(await readAreaDurableData(false, true));
+            const before = durable.authority.snapshot;
+            const after = new Map(undo.prepared.after.map((row) => [row.id, row]));
+            for (const row of undo.prepared.after) {
+                expect(row.status).toBe('archived'); expect(row.deletedAt).toBeUndefined();
+                expect(row.rev).toBe((undo.prepared.before.find((old) => old.id === row.id)?.rev ?? 0) + 1);
+            }
+            control.resetBaseline();
+            control.expectPersisted((written) => {
+                expect(written.tasks).toEqual(before.tasks.map((row) => after.get(row.id) ?? row));
+                expect(written.projects).toEqual(before.projects);
+                expect(written.sections).toEqual(before.sections);
+                expect(written.settings).toEqual(before.settings);
+            });
+            expect(nativeValue(await host.commitPreparedArchivedTasksDeleteUndo(undo))).toEqual({ count: 2 });
+        });
+        if (archivedBulkUndo.storeFields.length > 0 || archivedBulkUndo.readFields.length > 0) {
+            notCanonical.push({ action: 'native prepared Archive bulk Delete Undo', ...archivedBulkUndo });
         }
         const preparedTheme = await runMutation('native prepared General Theme', async (control) => {
             const host = await nativeHost(control);

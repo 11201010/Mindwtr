@@ -84,6 +84,7 @@ type TaskActions = Pick<
     | 'commitPreparedTaskDraftV2'
     | 'commitPreparedArchivedTaskRestore'
     | 'commitPreparedArchivedTasksRestore'
+    | 'commitPreparedArchivedTasksMutation'
     | 'commitPreparedTaskFocus'
     | 'commitPreparedFocusOrder'
     | 'commitPreparedBoardTask'
@@ -193,6 +194,30 @@ export type MutateTasksOptions = {
     ensureDeviceIdWhenEmpty?: boolean;
 };
 
+/** The existing mutation row formula, with caller-owned selection and context. */
+export const planTaskMutations = <TState,>({
+    tasks,
+    state,
+    buildUpdates,
+    now,
+    deviceId,
+}: {
+    tasks: readonly Task[];
+    state: TState;
+    buildUpdates: (task: Task, context: { now: string; state: TState }) => Partial<Task>;
+    now: string;
+    deviceId: string;
+}): Task[] => tasks.map((task) => {
+    const updatedTask: Task = {
+        ...task,
+        ...buildUpdates(task, { now, state }),
+        updatedAt: now,
+        rev: nextRevision(task.rev),
+        revBy: deviceId,
+    };
+    return compactPurgedTaskForLocalStorage(updatedTask);
+});
+
 export const mutateTasks = async (
     { set, debouncedSave }: Pick<TaskActionContext, 'set' | 'debouncedSave'>,
     options: MutateTasksOptions
@@ -210,15 +235,12 @@ export const mutateTasks = async (
         if (selectedTasks.length === 0 && !deviceState.updated) {
             return state;
         }
-        const changedTasks = selectedTasks.map((task) => {
-            const updatedTask: Task = {
-                ...task,
-                ...options.buildUpdates(task, { now, state }),
-                updatedAt: now,
-                rev: nextRevision(task.rev),
-                revBy: deviceState.deviceId,
-            };
-            return compactPurgedTaskForLocalStorage(updatedTask);
+        const changedTasks = planTaskMutations({
+            tasks: selectedTasks,
+            state,
+            buildUpdates: options.buildUpdates,
+            now,
+            deviceId: deviceState.deviceId,
         });
         const nextAllTasks = changedTasks.length > 0
             ? replaceEntitiesInArray(state._allTasks, changedTasks)
@@ -1645,6 +1667,45 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 generation: getSaveGeneration(), failure: memory.persistenceFailure };
             result = { success: true, ids: [...input.request.taskIds], outcome: 'applied' };
             return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: sections,
+                _allAreas: durable.areas, _allPeople: durable.people ?? [], settings, lastDataChangeAt };
+        });
+        return result;
+    },
+
+    commitPreparedArchivedTasksMutation: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Archive Trash conflicts with saved data' };
+        set((memory) => {
+            const before = authority.state;
+            if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                || memory._allAreas !== before._allAreas || memory._allSections !== before._allSections
+                || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
+            const durable = authority.snapshot;
+            if ((durable.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || !input.before.length || input.before.length !== input.after.length) return memory;
+            const current = new Map(durable.tasks.map((row) => [row.id, row]));
+            const after = new Map<string, Task>();
+            for (let index = 0; index < input.before.length; index += 1) {
+                const old = input.before[index]; const next = input.after[index]; const saved = current.get(old.id);
+                if (!saved || next.id !== old.id || after.has(old.id) || saved.purgedAt || next.purgedAt
+                    || !sameTaskSqliteRow(saved, old) || !sameSectionDeleteJson(saved, old)
+                    || (input.operation === 'delete' ? Boolean(old.deletedAt) || !next.deletedAt : !old.deletedAt || Boolean(next.deletedAt))) return memory;
+                after.set(old.id, next);
+            }
+            // Exact BEFORE is required; equal AFTER alone never acknowledges a UUID.
+            const tasks = durable.tasks.map((row) => after.get(row.id) ?? row);
+            const settings = input.deviceIdToInitialize ? { ...durable.settings, deviceId: input.deviceIdToInitialize } : durable.settings;
+            const freshTasks = tasks.map((row) => normalizeTaskForLoad(row));
+            const freshProjects = durable.projects.map(normalizeProjectLifecycleFields);
+            clearDerivedCache();
+            persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks, _allProjects: durable.projects,
+                _allSections: durable.sections, _allAreas: durable.areas, _allPeople: durable.people ?? [], settings: durable.settings },
+            { ...durable, tasks, settings });
+            const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+            authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt, generation: getSaveGeneration(), failure: memory.persistenceFailure };
+            result = { success: true, ids: input.before.map((row) => row.id), outcome: 'applied' };
+            return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: durable.sections,
                 _allAreas: durable.areas, _allPeople: durable.people ?? [], settings, lastDataChangeAt };
         });
         return result;

@@ -624,6 +624,11 @@ export interface TaskStore {
     commitPreparedArchivedTasksRestore: (input: Pick<import('./native-host-contract-archive-bulk-restore').NativePreparedArchivedTasksRestore,
         'request' | 'effect' | 'deviceIdBefore' | 'deviceIdToInitialize'>,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Selected-row raw Delete/Undo overlay; native validates the full effect and receipt guards. */
+    commitPreparedArchivedTasksMutation: (input: {
+        operation: 'delete' | 'undo'; before: Task[]; after: Task[];
+        deviceIdBefore: string | null; deviceIdToInitialize: string | null;
+    }, authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     commitPreparedTaskFocus: (input: PreparedTaskFocus & { request: { taskId: string; focused: boolean } }) => Promise<PreparedTaskEditResult>;
     commitPreparedFocusOrder: (input: PreparedFocusOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedFocusSavedFilter: (input: PreparedFocusSavedFilter) => Promise<PreparedTaskEditResult>;

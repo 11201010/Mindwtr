@@ -796,7 +796,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2238,6 +2238,30 @@ globalThis.MindwtrHost = {
     },
     trashTaskRestoreCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedTrashTaskRestore(editorJson(json) as Parameters<typeof contract.commitPreparedTrashTaskRestore>[0])));
+    },
+    archivedTasksDeletePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchivedTasksDelete(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareArchivedTasksDelete>[0])); });
+    },
+    archivedTasksDeleteValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedArchivedTasksDelete(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedArchivedTasksDelete>[0])));
+    },
+    archivedTasksDeleteCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedArchivedTasksDelete(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedArchivedTasksDelete>[0])));
+    },
+    archivedTasksDeleteOutcome(json: string): string {
+        return submit(async () => unwrap(contract.archivedTasksDeleteOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.archivedTasksDeleteOutcome>[0])));
+    },
+    archivedTasksDeleteUndoPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchivedTasksDeleteUndo(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareArchivedTasksDeleteUndo>[0])); });
+    },
+    archivedTasksDeleteUndoValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedArchivedTasksDeleteUndo(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedArchivedTasksDeleteUndo>[0])));
+    },
+    archivedTasksDeleteUndoCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedArchivedTasksDeleteUndo(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedArchivedTasksDeleteUndo>[0])));
+    },
+    archivedTasksDeleteUndoOutcome(json: string): string {
+        return submit(async () => unwrap(contract.archivedTasksDeleteUndoOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.archivedTasksDeleteUndoOutcome>[0])));
     },
     archivedTasksRestorePrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchivedTasksRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareArchivedTasksRestore>[0])); });

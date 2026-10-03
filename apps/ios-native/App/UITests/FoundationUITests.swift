@@ -19083,6 +19083,8 @@ final class FoundationUITests: XCTestCase {
         boardTap(app, "archive-bulk-select-all")
         let count = app.staticTexts["archive-bulk-count"]
         XCTAssertTrue(count.waitForExistence(timeout: 10))
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "138"), evaluatedWith: count)
+        waitForExpectations(timeout: 15)
         XCTAssertTrue(count.label.contains("138"), count.label)
         XCTAssertFalse(app.buttons["archive-bulk-select-all"].isEnabled)
         boardEnabled(app.buttons["archive-bulk-restore"], timeout: 10)
@@ -19149,6 +19151,109 @@ final class FoundationUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["archive-empty"].waitForExistence(timeout: 30))
             XCTAssertFalse(app.buttons["persistence-retry"].exists); app.terminate()
         }
+    }
+
+    private func task181ConfirmBulkDelete(_ app: XCUIApplication) {
+        boardTap(app, "archive-bulk-delete")
+        let confirm = app.alerts.buttons.matching(identifier: "archive-bulk-delete-confirm").firstMatch
+        boardEnabled(confirm, timeout: 10)
+        XCTAssertTrue(app.alerts.buttons.matching(identifier: "archive-bulk-delete-cancel").firstMatch.exists)
+        confirm.tap()
+    }
+
+    private func task181ArchiveBulkDelete(_ library: String, undo: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task172OpenArchive(app); task180SelectAll(app)
+        let button = app.buttons["archive-bulk-delete"]
+        boardEnabled(button, timeout: 10)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        let selected = XCTAttachment(screenshot: app.screenshot()); selected.name = "Task181 Archive bulk actions"; selected.lifetime = .keepAlways; add(selected)
+        task181ConfirmBulkDelete(app)
+        if undo {
+            boardEnabled(app.buttons["task-archiveBulkDelete-undo"], timeout: 30)
+            boardTap(app, "task-archiveBulkDelete-undo")
+            boardEnabled(app.buttons["archive-select-toggle"], timeout: 30)
+            task180SelectAll(app)
+            boardTap(app, "archive-select-toggle")
+        } else {
+            XCTAssertTrue(app.staticTexts["archive-empty"].waitForExistence(timeout: 30))
+        }
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        app.terminate(); app.launch(); task172OpenArchive(app)
+        if undo { task180SelectAll(app); boardTap(app, "archive-select-toggle") }
+        else { XCTAssertTrue(app.staticTexts["archive-empty"].waitForExistence(timeout: 30)) }
+        XCTAssertFalse(app.buttons["persistence-retry"].exists); app.terminate()
+    }
+
+    func testTask181ArchiveBulkDeleteNormal() { task181ArchiveBulkDelete("400575dc-529c-4afe-9bf7-291bc554cd14", undo: false) }
+    func testTask181ArchiveBulkDeleteUndoLargest() { task181ArchiveBulkDelete("60d0da51-f66b-4dc6-b798-54109ae25bd0", undo: true) }
+
+    func testTask181ArchiveBulkDeleteCancel() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "c7c50d45-39bb-40e6-aca6-f86cf0d7d15b"]
+        app.launch(); task172OpenArchive(app); task180SelectAll(app)
+        boardTap(app, "archive-bulk-delete")
+        let cancel = app.alerts.buttons.matching(identifier: "archive-bulk-delete-cancel").firstMatch
+        boardEnabled(cancel, timeout: 10)
+        cancel.tap()
+        boardEnabled(app.buttons["archive-bulk-delete"], timeout: 10)
+        XCTAssertTrue(app.staticTexts["archive-bulk-count"].label.contains("138"))
+        XCTAssertFalse(app.buttons["task-archiveBulkDelete-undo"].exists)
+        boardTap(app, "archive-select-toggle"); app.terminate()
+    }
+
+    private func task181ArchiveBulkFailure(_ library: String, undo: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task172OpenArchive(app); task180SelectAll(app); task181ConfirmBulkDelete(app)
+        if undo {
+            boardEnabled(app.buttons["task-archiveBulkDelete-undo"], timeout: 30)
+            boardTap(app, "task-archiveBulkDelete-undo")
+        }
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+            XCTAssertFalse(app.buttons["history-tab-done"].isEnabled)
+            boardTap(app, "persistence-retry")
+        }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); app.terminate()
+    }
+    func testTask181ArchiveBulkDeleteFailedSave() { task181ArchiveBulkFailure("50c6d77e-bf7d-4c32-b83f-1e5258950056", undo: false) }
+    func testTask181ArchiveBulkUndoFailedSave() { task181ArchiveBulkFailure("c1a712d4-ecd4-4026-86d6-fa2724e299bb", undo: true) }
+
+    private func task181ArchiveBulkColdRecovery(_ library: String, undo: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        for launch in 0..<2 {
+            app.launch()
+            if launch == 0 {
+                boardEnabled(app.buttons["history-tab-archived"], timeout: 30)
+                XCTAssertTrue(app.buttons["history-tab-archived"].isSelected)
+            } else { task172OpenArchive(app) }
+            if undo { task180SelectAll(app); boardTap(app, "archive-select-toggle") }
+            else { XCTAssertTrue(app.staticTexts["archive-empty"].waitForExistence(timeout: 30)) }
+            XCTAssertFalse(app.buttons["persistence-retry"].exists); app.terminate()
+        }
+    }
+    func testTask181ArchiveBulkDeleteColdRecovery() { task181ArchiveBulkColdRecovery("55e43af2-f05a-4e20-bf18-bd54737d0fe6", undo: false) }
+    func testTask181ArchiveBulkUndoColdRecovery() { task181ArchiveBulkColdRecovery("6397bc5a-40e7-468f-b774-c43aa674c4f6", undo: true) }
+
+    func testTask181ArchiveSelectAllAcrossMinute() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "5d8711a5-4be1-45c9-a3c2-5bb650d32bf4"]
+        app.launch(); task172OpenArchive(app); boardTap(app, "archive-select-toggle")
+        boardEnabled(app.buttons["archive-bulk-select-all"], timeout: 15)
+        // The displayed revision includes its clock minute. Cross that boundary
+        // deliberately; selecting rows must refresh once without writing data.
+        let nextMinute = (floor(Date().timeIntervalSince1970 / 60) + 1) * 60 + 0.5
+        while Date().timeIntervalSince1970 < nextMinute { Thread.sleep(forTimeInterval: 0.2) }
+        boardTap(app, "archive-bulk-select-all")
+        let count = app.staticTexts["archive-bulk-count"]
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "138"), evaluatedWith: count)
+        waitForExpectations(timeout: 20)
+        boardEnabled(app.buttons["archive-bulk-delete"], timeout: 10)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "STALE_REVISION")).firstMatch.exists)
+        boardTap(app, "archive-select-toggle"); app.terminate()
     }
 
 }
