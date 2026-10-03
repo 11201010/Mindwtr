@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ReferenceScreen: View {
     @ObservedObject var model: CoreModel
@@ -18,7 +19,9 @@ struct ReferenceScreen: View {
                           onDeleteTask: { id, revision in Task { await model.deleteReferenceTask(expectedID: id, expectedRevision: revision) } },
                           onNextTask: { id, revision in Task { await model.moveReferenceTaskToNext(expectedID: id, expectedRevision: revision) } },
                           onStatusOptions: { row in await model.referenceTaskStatusOptions(row) },
-                          onStatusChange: { row, status in Task { await model.changeReferenceTaskStatus(row, status: status) } })
+                          onStatusChange: { row, status in Task { await model.changeReferenceTaskStatus(row, status: status) } },
+                          onBackdateOptions: { row in await model.referenceTaskBackdateOptions(row) },
+                          onBackdateSave: { row, instant, minutes in await model.backdateReferenceTask(row, completedAt: instant, timeSpentText: minutes) })
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
@@ -63,6 +66,8 @@ struct StatusListContent: View {
     var onNextTask: ((String, String) -> Void)? = nil
     var onStatusOptions: ((CoreObject) async -> CoreObject?)? = nil
     var onStatusChange: ((CoreObject, String) -> Void)? = nil
+    var onBackdateOptions: ((CoreObject) async -> CoreObject?)? = nil
+    var onBackdateSave: ((CoreObject, String, String?) async -> Bool)? = nil
     var onCompletedAt: ((CoreObject) -> Void)? = nil
     var errorIdentifier: String? = nil
     var selectionActive = false
@@ -77,6 +82,9 @@ struct StatusListContent: View {
     @State private var referenceStatusGeneration = 0
     @State private var referenceStatusOpeningContext = ""
     @State private var ownsReferenceStatusMenu = false
+    @State private var referenceBackdateActive = false
+    @State private var referenceBackdateOptions: CoreObject = [:]
+    @State private var referenceBackdateInitialDate = Date()
 
     private var listContent: some View {
         VStack(spacing: 0) {
@@ -105,7 +113,31 @@ struct StatusListContent: View {
 
     @ViewBuilder var body: some View {
         if prefix == "reference" {
-            listContent
+            ZStack {
+                listContent.accessibilityHidden(referenceBackdateActive)
+                if referenceBackdateActive {
+                    if !referenceBackdateOptions.isEmpty {
+                        ReferenceTaskBackdateDialog(model: model, palette: palette, options: referenceBackdateOptions,
+                                                   initialDate: referenceBackdateInitialDate, close: closeReferenceStatusMenu,
+                                                   save: { instant, minutes in
+                            guard referenceStatusIsCurrent, let onBackdateSave else { return false }
+                            let displayed = referenceStatusRow
+                            let saved = await onBackdateSave(displayed, instant, minutes)
+                            if saved { closeReferenceStatusMenu() }
+                            return saved
+                        })
+                    } else {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                            Button(model.label("common.cancel")) { closeReferenceStatusMenu() }
+                                .frame(minHeight: 44).contentShape(Rectangle())
+                                .accessibilityIdentifier("reference-backdate-cancel")
+                        }
+                        .padding(24).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+                    }
+                }
+            }
             .confirmationDialog(referenceStatusOptions.text("title"), isPresented: $referenceStatusMenuPresented, titleVisibility: .visible) {
                 ForEach(referenceStatusOptions.objects("options").indices, id: \.self) { index in
                     let option = referenceStatusOptions.objects("options")[index]
@@ -122,11 +154,16 @@ struct StatusListContent: View {
                     .accessibilityAddTraits(option.flag("selected") ? .isSelected : [])
                     .accessibilityIdentifier("reference-status-" + option.text("status"))
                 }
+                if onBackdateOptions != nil && onBackdateSave != nil {
+                    Button(model.label("task.completedAtPromptTitle")) { openReferenceBackdatePicker() }
+                        .disabled(!referenceStatusIsCurrent || !enabled || model.busy || model.retryNeeded)
+                        .accessibilityIdentifier("reference-status-completion-time")
+                }
                 Button(model.label("common.cancel"), role: .cancel) { closeReferenceStatusMenu() }
                     .accessibilityIdentifier("reference-status-cancel")
             }
             .onChange(of: referenceStatusMenuPresented) { visible in
-                if !visible && ownsReferenceStatusMenu { closeReferenceStatusMenu() }
+                if !visible && ownsReferenceStatusMenu && !referenceBackdateActive { closeReferenceStatusMenu() }
             }
             .onChange(of: referenceStatusCurrentContext) { context in
                 if ownsReferenceStatusMenu, !context.utf8.elementsEqual(referenceStatusOpeningContext.utf8) {
@@ -134,7 +171,7 @@ struct StatusListContent: View {
                 }
             }
             .onChange(of: model.busy) { busy in
-                if busy && ownsReferenceStatusMenu { closeReferenceStatusMenu() }
+                if busy && ownsReferenceStatusMenu && !referenceBackdateActive { closeReferenceStatusMenu() }
             }
             .onDisappear { closeReferenceStatusMenu() }
         } else { listContent }
@@ -142,7 +179,8 @@ struct StatusListContent: View {
 
     private var referenceStatusCurrentContext: String {
         guard ownsReferenceStatusMenu else { return "" }
-        return model.referenceTaskStatusContext(referenceStatusRow) ?? ""
+        return (referenceBackdateActive ? model.referenceTaskBackdateContext(referenceStatusRow)
+            : model.referenceTaskStatusContext(referenceStatusRow)) ?? ""
     }
 
     private var referenceStatusIsCurrent: Bool {
@@ -180,6 +218,24 @@ struct StatusListContent: View {
         }
     }
 
+    private func openReferenceBackdatePicker() {
+        guard referenceStatusIsCurrent, enabled, !model.busy, !model.retryNeeded, let onBackdateOptions else { return }
+        // Keep the same owned gate and captured row through the system-dialog handoff.
+        referenceBackdateActive = true
+        referenceStatusMenuPresented = false
+        referenceStatusGeneration += 1
+        let generation = referenceStatusGeneration
+        let displayed = referenceStatusRow
+        referenceStatusOptionsTask = Task {
+            defer { if referenceStatusGeneration == generation { referenceStatusOptionsTask = nil } }
+            let options = await onBackdateOptions(displayed)
+            guard !Task.isCancelled, referenceStatusGeneration == generation else { return }
+            guard referenceStatusIsCurrent, !model.busy, let options else { closeReferenceStatusMenu(); return }
+            referenceBackdateInitialDate = Date()
+            referenceBackdateOptions = options
+        }
+    }
+
     private func closeReferenceStatusMenu() {
         let destination = ownsReferenceStatusMenu && model.selectedSurface != .reference
             ? model.selectedSurface : nil
@@ -187,6 +243,8 @@ struct StatusListContent: View {
         referenceStatusOptionsTask?.cancel()
         referenceStatusOptionsTask = nil
         referenceStatusMenuPresented = false
+        referenceBackdateActive = false
+        referenceBackdateOptions = [:]
         referenceStatusOptions = [:]
         referenceStatusRow = [:]
         referenceStatusOpeningContext = ""
@@ -380,6 +438,144 @@ struct StatusListContent: View {
             }
         }
         .multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.vertical, 48)
+    }
+}
+
+private struct ReferenceTaskBackdateDialog: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let options: CoreObject
+    let close: () -> Void
+    let save: (String, String?) async -> Bool
+    @State private var date: Date
+    @State private var initialInstant: String
+    @State private var dateChanged = false
+    @State private var minutesText: String
+    @State private var confirming = false
+    @FocusState private var minutesFocused: Bool
+    private var frozen: Bool { confirming || model.busy || model.retryNeeded || model.referenceTaskBackdatePending }
+
+    init(model: CoreModel, palette: AppPalette, options: CoreObject, initialDate: Date,
+         close: @escaping () -> Void, save: @escaping (String, String?) async -> Bool) {
+        self.model = model
+        self.palette = palette
+        self.options = options
+        self.close = close
+        self.save = save
+        _date = State(initialValue: initialDate)
+        _initialInstant = State(initialValue: TaskDatePickerComponents.instantString(initialDate))
+        _minutesText = State(initialValue: (options["initialTimeSpentMinutes"] as? NSNumber).map { String($0.intValue) } ?? "")
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { cancel() }.accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 12) {
+                    ScrollViewReader { reader in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text(options.text("title")).rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+                                DatePicker(options.text("title"), selection: Binding(get: { date }, set: { next in
+                                    guard !frozen,
+                                          TaskDatePickerComponents.string(next, time: false) != TaskDatePickerComponents.string(date, time: false)
+                                            || TaskDatePickerComponents.string(next, time: true) != TaskDatePickerComponents.string(date, time: true) else { return }
+                                    date = next
+                                    dateChanged = true
+                                }), displayedComponents: [.date, .hourAndMinute])
+                                    .datePickerStyle(.wheel).labelsHidden().tint(palette.tint)
+                                    .accessibilityLabel(options.text("title"))
+                                    .accessibilityIdentifier("reference-backdate-picker").disabled(frozen)
+                                if options.flag("showTimeSpent") {
+                                    Text(options.text("timeSpentLabel").uppercased()).rnFont(14)
+                                        .foregroundStyle(palette.secondary).accessibilityAddTraits(.isHeader)
+                                    TextField(options.text("timeSpentPlaceholder"), text: Binding(get: { minutesText }, set: { text in
+                                        guard !frozen else { return }
+                                        minutesText = text
+                                    }))
+                                        .onChange(of: minutesText) { text in
+                                            guard !frozen else { return }
+                                            let digits = String(decoding: text.utf8.filter { (48...57).contains($0) }, as: UTF8.self)
+                                            if text != digits { minutesText = digits }
+                                        }
+                                        .rnFont(16).keyboardType(.numberPad).submitLabel(.done)
+                                        .focused($minutesFocused)
+                                        .padding(12).frame(minHeight: 44)
+                                        .background(palette.input, in: RoundedRectangle(cornerRadius: 10))
+                                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+                                        .accessibilityLabel(options.text("timeSpentLabel"))
+                                        .accessibilityIdentifier("reference-backdate-time-spent").disabled(frozen)
+                                        .id("reference-backdate-minutes-field")
+                                }
+                                if let error = model.referenceError {
+                                    Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                                        .accessibilityIdentifier("reference-backdate-error")
+                                }
+                                if model.referenceTaskBackdatePending, model.retryNeeded {
+                                    Button { Task { await model.retryReference() } } label: {
+                                        Text(model.label("common.retry")).frame(minHeight: 44).contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.busy)
+                                    .accessibilityIdentifier("reference-retry")
+                                }
+                            }
+                        }
+                        .frame(maxHeight: max(120, min(dynamicTypeSize.isAccessibilitySize ? .infinity : 420, geometry.size.height - 132)))
+                        .accessibilityElement(children: .contain).accessibilityIdentifier("reference-backdate-scroll")
+                        .onChange(of: minutesFocused) { _ in scrollMinutesIntoView(reader) }
+                        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                            scrollMinutesIntoView(reader)
+                        }
+                    }
+                    HStack {
+                        Spacer()
+                        Button(action: cancel) {
+                            Text(options.text("cancelLabel")).frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.secondary)
+                        .disabled(frozen).accessibilityIdentifier("reference-backdate-cancel")
+                        Button {
+                            guard !frozen else { return }
+                            minutesFocused = false
+                            confirming = true
+                            let instant = dateChanged ? TaskDatePickerComponents.instantString(date) : initialInstant
+                            let minutes = options.flag("showTimeSpent") ? minutesText : nil
+                            Task {
+                                _ = await save(instant, minutes)
+                                confirming = false
+                            }
+                        } label: {
+                            Text(options.text("saveLabel")).frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint)
+                        .disabled(frozen).accessibilityIdentifier("reference-backdate-save")
+                    }
+                }
+                .padding(16).frame(maxWidth: 420)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(16)
+            }
+            .foregroundStyle(palette.text).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) { cancel() }
+        }
+    }
+
+    private func cancel() {
+        guard !frozen else { return }
+        minutesFocused = false
+        close()
+    }
+
+    private func scrollMinutesIntoView(_ reader: ScrollViewProxy) {
+        guard minutesFocused, !frozen else { return }
+        // Match the editor: iOS 17 applies its keyboard inset after the
+        // notification, so scrolling immediately uses the old viewport.
+        DispatchQueue.main.async {
+            guard minutesFocused, !frozen else { return }
+            reader.scrollTo("reference-backdate-minutes-field", anchor: .bottom)
+        }
     }
 }
 

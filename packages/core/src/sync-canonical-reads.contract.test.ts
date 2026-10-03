@@ -2149,6 +2149,32 @@ describe('canonical local reads contract', () => {
             }, fixture);
             if (referenceMenu.storeFields.length > 0 || referenceMenu.readFields.length > 0) notCanonical.push({ action: name, ...referenceMenu });
         }
+        const referenceBackdateFixture = convergeThroughStorage({ ...settled, tasks: settled.tasks.map((row) => row.id === 'task-66'
+            ? { ...row, status: 'reference', isFocusedToday: false, projectId: undefined, sectionId: undefined,
+                recurrence: { rule: 'daily', strategy: 'after-completion', seriesId: row.id }, dueDate: '2026-09-01', showFutureRecurrence: true } : row) });
+        const referenceBackdate = await runMutation('native prepared Reference backdated completion', async (control) => {
+            const host = await nativeHost(control); const source = useTaskStore.getState()._tasksById.get('task-66');
+            if (!source || source.status !== 'reference') throw new Error('Reference backdate fixture must be writable');
+            const request = { requestId: '2f0e9b35-afcd-4710-8847-9c4219ad0190', source: 'reference' as const,
+                id: source.id, taskRevision: taskRevisionOf(source), completedAt: '2026-10-01T09:12:34.789Z', timeSpentText: null };
+            const planned = nativeValue(await host.prepareReferenceTaskBackdate(request));
+            const envelope = { request, prepared: planned.prepared }; const effect = planned.prepared.checklist.effect;
+            expect(nativeValue(host.validatePreparedReferenceTaskBackdate(envelope))).toEqual({ id: source.id });
+            expect(effect.tasks).toHaveLength(2); expect(effect.projects).toEqual([]); expect(effect.sections).toEqual([]);
+            const affected = new Map(effect.tasks.map(row => [row.after.id, row.after]));
+            expect(affected.get(source.id)).toMatchObject({ status: 'done', completedAt: request.completedAt, rev: (source.rev ?? 0) + 1 });
+            const before = nativeValue(await readAreaDurableData(false, true)).authority.snapshot;
+            control.resetBaseline(); control.expectPersisted(written => {
+                expect(written.tasks).toEqual([...before.tasks.map(row => affected.get(row.id) ?? row),
+                    ...effect.tasks.filter(row => row.before === null).map(row => row.after)]);
+                expect(written.projects).toEqual(before.projects); expect(written.sections).toEqual(before.sections);
+                expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people); expect(written.settings).toEqual(before.settings);
+            });
+            expect(nativeValue(await host.commitPreparedReferenceTaskBackdate(envelope))).toEqual({ id: source.id });
+            expect(useTaskStore.getState()._tasksById.get(source.id)).toEqual(affected.get(source.id));
+        }, referenceBackdateFixture);
+        if (referenceBackdate.storeFields.length > 0 || referenceBackdate.readFields.length > 0)
+            notCanonical.push({ action: 'native prepared Reference backdated completion', ...referenceBackdate });
         const doneBulkMove = await runMutation('native prepared Done bulk Move status', async (control) => {
             // Normal load archives the fixture's historical completions. Make
             // two real recent Done rows through RN before resetting baseline.

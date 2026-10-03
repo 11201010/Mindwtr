@@ -34,11 +34,13 @@ import { isProjectedRecurringTaskId } from './recurrence';
 import { taskCancellationRestoreFields } from './undo-task-cancellation';
 import { formatTaskMarkedDoneMessage } from './undo-task-completion';
 import { logInfo } from './logger';
+import { isTaskEditorTimeSpentEnabled } from './task-editor-schedule';
+import { normalizeTimeSpentMinutes } from './time-spent';
 
 export type NativeChecklistSaveRequest = NativeTaskDraftSaveRequest & {
     requestId: string;
     checklist: { base: ChecklistItem[]; value: ChecklistItem[] };
-    intent?: 'cancel' | 'skip' | 'doneStatus' | 'referenceNext' | 'referenceStatus' | 'referenceComplete' | 'doneCompletedAt' | 'archiveCompletedAt';
+    intent?: 'cancel' | 'skip' | 'doneStatus' | 'referenceNext' | 'referenceStatus' | 'referenceComplete' | 'referenceBackdate' | 'doneCompletedAt' | 'archiveCompletedAt';
 };
 export type NativeChecklistResetRequest = { id: string; requestId: string; checklistBase: ChecklistItem[] };
 export type NativeChecklistWriteRequest = NativeChecklistSaveRequest | NativeChecklistResetRequest;
@@ -126,6 +128,16 @@ export type NativePreparedTaskCompletionUndo = NativePreparedOrdinaryTaskComplet
 export type NativeTaskCompletionUndoEnvelope = {
     request: NativeTaskCompletionUndoRequest; prepared: NativePreparedTaskCompletionUndo;
 };
+export type NativeReferenceTaskBackdateRequest = NativeReferenceTaskCompletionRequest & {
+    completedAt: string; timeSpentText: string | null;
+};
+export type NativePreparedReferenceTaskBackdate = {
+    version: 2; kind: 'referenceBackdate'; request: NativeReferenceTaskBackdateRequest;
+    rawBefore: PreparedChecklistRawBefore; checklist: NativePreparedChecklistWrite; result: { id: string };
+};
+export type NativeReferenceTaskBackdateEnvelope = {
+    request: NativeReferenceTaskBackdateRequest; prepared: NativePreparedReferenceTaskBackdate;
+};
 export type NativeDoneTaskStatus = 'inbox' | 'next' | 'waiting' | 'someday' | 'done' | 'reference';
 type NativeUntaggedDoneTaskStatusRequest = NativeTaskCompletionRequest & { status: NativeDoneTaskStatus; source?: never };
 type NativeReferenceTaskNextRequest = NativeTaskCompletionRequest & { status: 'next'; source: 'reference' };
@@ -165,7 +177,8 @@ type NativeBoundHistoryRowEnvelope = (NativeDoneTaskStatusEnvelope & {
     prepared: NativePreparedDoneTaskStatus & { version: 2 } }) | NativeDoneTaskCompletedAtEnvelope | NativeArchiveTaskCompletedAtEnvelope;
 
 type NativeRawReferenceEnvelope = (NativeTaskCompletionEnvelope & { prepared: NativePreparedTaskCompletion & { version: 2 } })
-    | (NativeTaskCompletionUndoEnvelope & { prepared: NativePreparedTaskCompletionUndo & { version: 2 } });
+    | (NativeTaskCompletionUndoEnvelope & { prepared: NativePreparedTaskCompletionUndo & { version: 2 } })
+    | NativeReferenceTaskBackdateEnvelope;
 type NativeRawWriteEnvelope = NativeBoundHistoryRowEnvelope | NativeRawReferenceEnvelope;
 
 const LIMIT_BYTES = 2_000_000;
@@ -240,6 +253,16 @@ const readReferenceCompletionRequest = (value: unknown): NativeReferenceTaskComp
     const base = readCompletionRequest({ id: input.id, requestId: input.requestId, taskRevision: input.taskRevision });
     return base ? { ...base, source: 'reference' } : null;
 };
+const readReferenceBackdateRequest = (value: unknown): NativeReferenceTaskBackdateRequest | null => {
+    const input = detach(value, 4096);
+    if (!isRecord(input) || !exact(input, ['id', 'requestId', 'taskRevision', 'source', 'completedAt', 'timeSpentText'])
+        || input.source !== 'reference' || typeof input.completedAt !== 'string' || input.completedAt.length > 200
+        || !(input.timeSpentText === null || typeof input.timeSpentText === 'string' && input.timeSpentText.length <= 200)
+        || !resolveTaskEditorBackdatedCompletion({ completedAt: input.completedAt,
+            ...(input.timeSpentText !== null ? { timeSpentText: input.timeSpentText as string } : {}) })) return null;
+    const base = readCompletionRequest({ id: input.id, requestId: input.requestId, taskRevision: input.taskRevision });
+    return base ? { ...base, source: 'reference', completedAt: input.completedAt, timeSpentText: input.timeSpentText as string | null } : null;
+};
 const readDoneCompletedAtRequest = (value: unknown): NativeDoneTaskCompletedAtRequest | null => {
     const input = detach(value);
     if (!isRecord(input) || !exact(input, ['id', 'requestId', 'taskRevision', 'completedAt'])
@@ -272,8 +295,17 @@ const completedAtSaveRequest = (source: Task, request: NativeDoneTaskCompletedAt
 const referenceCompletionSaveRequest = (source: Task, requestId: string): NativeChecklistSaveRequest => ({
     ...completionSaveRequest(source, requestId), intent: 'referenceComplete',
 });
+const referenceBackdateSaveRequest = (source: Task, request: NativeReferenceTaskBackdateRequest): NativeChecklistSaveRequest => {
+    const resolved = resolveTaskEditorBackdatedCompletion({ completedAt: request.completedAt,
+        ...(request.timeSpentText !== null ? { timeSpentText: request.timeSpentText } : {}) })!;
+    return { ...completionSaveRequest(source, request.requestId), intent: 'referenceBackdate',
+        base: { status: source.status, completedAt: source.completedAt || '',
+            ...(request.timeSpentText !== null ? { timeSpentMinutes: source.timeSpentMinutes ?? null } : {}) },
+        patch: { status: 'done', completedAt: resolved.completedAt,
+            ...(request.timeSpentText !== null ? { timeSpentMinutes: resolved.timeSpentMinutes ?? null } : {}) } };
+};
 const isReferenceMenuRequest = (request: NativeChecklistWriteRequest): boolean =>
-    isSave(request) && (request.intent === 'referenceStatus' || request.intent === 'referenceComplete');
+    isSave(request) && (request.intent === 'referenceStatus' || request.intent === 'referenceComplete' || request.intent === 'referenceBackdate');
 const isReferenceOperation = (request: NativeChecklistWriteRequest): boolean => isReferenceNextRequest(request) || isReferenceMenuRequest(request);
 const referenceContainerReadOnly = (task: Task, lists: Pick<Lists, 'projects' | 'sections'>): boolean => {
     const section = task.sectionId ? lists.sections.find((row) => row.id === task.sectionId) : null;
@@ -282,7 +314,7 @@ const referenceContainerReadOnly = (task: Task, lists: Pick<Lists, 'projects' | 
     return lists.projects.some((row) => ids.includes(row.id) && (row.status === 'archived' || row.deletedAt || row.purgedAt));
 };
 const isHistoryRowRequest = (request: NativeChecklistWriteRequest | null | undefined): boolean =>
-    request != null && isSave(request) && (request.intent === 'doneStatus' || request.intent === 'referenceNext' || request.intent === 'referenceStatus' || request.intent === 'referenceComplete' || request.intent === 'doneCompletedAt' || request.intent === 'archiveCompletedAt');
+    request != null && isSave(request) && (request.intent === 'doneStatus' || request.intent === 'referenceNext' || request.intent === 'referenceStatus' || request.intent === 'referenceComplete' || request.intent === 'referenceBackdate' || request.intent === 'doneCompletedAt' || request.intent === 'archiveCompletedAt');
 const isReferenceNextRequest = (request: NativeChecklistWriteRequest): boolean =>
     isSave(request) && request.intent === 'referenceNext';
 const hasPurgedReferenceParent = (task: Task, projects: readonly Project[]): boolean =>
@@ -326,7 +358,7 @@ const readRequest = (value: unknown, validateField: (field: TaskDraftField, valu
     // This row action uses shared canonical instant validation, independently
     // of the general editor date format. Only its prior string baseline may be
     // invalid; the outer wrapper binds the complete source and new instant.
-    const fields = (input.intent === 'doneCompletedAt' || input.intent === 'archiveCompletedAt')
+    const fields = (input.intent === 'doneCompletedAt' || input.intent === 'archiveCompletedAt' || input.intent === 'referenceBackdate')
         ? (field: TaskDraftField, value: unknown) => field === 'completedAt'
             ? typeof value === 'string' && value.length <= 200
                 && ((isRecord(input.base) && value === input.base.completedAt)
@@ -334,10 +366,10 @@ const readRequest = (value: unknown, validateField: (field: TaskDraftField, valu
             : validateField(field, value)
         : validateField;
     const parsed = readNativeTaskDraftSaveRequest(bare, fields, true, false, true);
-    if (!base || !selected || !parsed || (own(input, 'intent') && input.intent !== 'cancel' && input.intent !== 'skip' && input.intent !== 'doneStatus' && input.intent !== 'referenceNext' && input.intent !== 'referenceStatus' && input.intent !== 'referenceComplete' && input.intent !== 'doneCompletedAt' && input.intent !== 'archiveCompletedAt')
+    if (!base || !selected || !parsed || (own(input, 'intent') && input.intent !== 'cancel' && input.intent !== 'skip' && input.intent !== 'doneStatus' && input.intent !== 'referenceNext' && input.intent !== 'referenceStatus' && input.intent !== 'referenceComplete' && input.intent !== 'referenceBackdate' && input.intent !== 'doneCompletedAt' && input.intent !== 'archiveCompletedAt')
         || !exact(input, ['id', 'requestId', 'base', 'patch', 'scheduleBase', 'checklist',
             ...(parsed.recurrenceBase ? ['recurrenceBase'] : []), ...(parsed.attachments ? ['attachments'] : []),
-            ...(input.intent === 'cancel' || input.intent === 'skip' || input.intent === 'doneStatus' || input.intent === 'referenceNext' || input.intent === 'referenceStatus' || input.intent === 'referenceComplete' || input.intent === 'doneCompletedAt' || input.intent === 'archiveCompletedAt' ? ['intent'] : [])])) return null;
+            ...(input.intent === 'cancel' || input.intent === 'skip' || input.intent === 'doneStatus' || input.intent === 'referenceNext' || input.intent === 'referenceStatus' || input.intent === 'referenceComplete' || input.intent === 'referenceBackdate' || input.intent === 'doneCompletedAt' || input.intent === 'archiveCompletedAt' ? ['intent'] : [])])) return null;
     if (input.intent === 'doneStatus' && (!exact(parsed.base, ['status']) || parsed.base.status !== 'done'
         || !exact(parsed.patch, ['status']) || parsed.patch.status === 'done'
         || !DONE_STATUS_OPTIONS.includes(parsed.patch.status as NativeDoneTaskStatus)
@@ -353,8 +385,13 @@ const readRequest = (value: unknown, validateField: (field: TaskDraftField, valu
         || !exact(parsed.patch, ['completedAt']) || typeof parsed.patch.completedAt !== 'string'
         || !resolveTaskEditorBackdatedCompletion({ completedAt: parsed.patch.completedAt })
         || parsed.recurrenceBase || parsed.attachments || !same(base, selected))) return null;
+    if (input.intent === 'referenceBackdate' && (!exact(parsed.base, ['status', 'completedAt', ...(own(parsed.patch, 'timeSpentMinutes') ? ['timeSpentMinutes'] : [])])
+        || !exact(parsed.patch, ['status', 'completedAt', ...(own(parsed.patch, 'timeSpentMinutes') ? ['timeSpentMinutes'] : [])])
+        || parsed.base.status !== 'reference' || parsed.patch.status !== 'done' || typeof parsed.patch.completedAt !== 'string'
+        || !resolveTaskEditorBackdatedCompletion({ completedAt: parsed.patch.completedAt })
+        || parsed.recurrenceBase || parsed.attachments || !same(base, selected))) return null;
     return { ...parsed, requestId: input.requestId, checklist: { base, value: selected },
-        ...(input.intent === 'cancel' || input.intent === 'skip' || input.intent === 'doneStatus' || input.intent === 'referenceNext' || input.intent === 'referenceStatus' || input.intent === 'referenceComplete' || input.intent === 'doneCompletedAt' || input.intent === 'archiveCompletedAt' ? { intent: input.intent } : {}) };
+        ...(input.intent === 'cancel' || input.intent === 'skip' || input.intent === 'doneStatus' || input.intent === 'referenceNext' || input.intent === 'referenceStatus' || input.intent === 'referenceComplete' || input.intent === 'referenceBackdate' || input.intent === 'doneCompletedAt' || input.intent === 'archiveCompletedAt' ? { intent: input.intent } : {}) };
 };
 
 const futureBoundary = (preparedAt: string) => {
@@ -377,6 +414,8 @@ const validClears = (value: Partial<Task>, fields: string[]) => fields.every((fi
     typeof field === 'string' && field.length <= 100 && !own(value, field))
     && new Set(fields).size === fields.length;
 const directSaveUpdates = (source: Task, request: NativeChecklistSaveRequest, preparedAt?: string): Partial<Task> | null => {
+    if (request.intent === 'referenceBackdate') return { status: 'done', completedAt: request.patch.completedAt,
+        ...(own(request.patch, 'timeSpentMinutes') ? { timeSpentMinutes: request.patch.timeSpentMinutes ?? undefined } : {}) };
     // Done metadata actions use the exact RN row patch, without editor cleanup.
     if (request.intent === 'doneStatus' || request.intent === 'referenceNext' || isReferenceMenuRequest(request)) return { status: request.patch.status };
     if (request.intent === 'doneCompletedAt' || request.intent === 'archiveCompletedAt') return { completedAt: request.patch.completedAt };
@@ -452,6 +491,9 @@ const plan = (kind: 'save' | 'reset', request: NativeChecklistWriteRequest, witn
     let direct: Partial<Task> = {};
     let referenceFillsFocusSlot = false;
     if (kind === 'save' && isSave(request)) {
+        if (request.intent === 'referenceBackdate'
+            && isTaskEditorTimeSpentEnabled(witness.settings) !== own(request.patch, 'timeSpentMinutes'))
+            throw new Error('Reference completion minutes feature changed');
         direct = restoreClears(witness.direct, witness.directClears);
         const prepared = prepareTaskUpdatesForStore({ task: source, updates: direct,
             allProjects: lists.projects, allSections: lists.sections, allAreas: lists.areas,
@@ -795,6 +837,25 @@ const validReferenceRawBefore = (raw: unknown, effect: PreparedChecklistEffect, 
         try { return same(historyRowLoadProjection(row.before, at), affected.before); } catch { return false; }
     });
 };
+const readReferenceBackdate = (value: unknown,
+    validateField: (field: TaskDraftField, value: unknown) => boolean): NativeReferenceTaskBackdateEnvelope | null => {
+    const envelope = detach(value, COMPLETION_BYTES);
+    if (!isRecord(envelope) || !exact(envelope, ['request', 'prepared']) || !isRecord(envelope.prepared)) return null;
+    const request = readReferenceBackdateRequest(envelope.request); const raw = envelope.prepared;
+    if (!request || !exact(raw, ['version', 'kind', 'request', 'rawBefore', 'checklist', 'result'])
+        || raw.version !== 2 || raw.kind !== 'referenceBackdate' || !same(raw.request, request)
+        || !isRecord(raw.checklist) || !isRecord(raw.result) || !exact(raw.result, ['id']) || raw.result.id !== request.id) return null;
+    const prepared = raw as unknown as NativePreparedReferenceTaskBackdate;
+    const checklist = readPrepared({ request: prepared.checklist.request, prepared: prepared.checklist }, validateField);
+    if (!checklist || checklist.kind !== 'save' || !isSave(checklist.request)
+        || checklist.witness.source.status !== 'reference'
+        || taskRevisionOf(checklist.witness.source) !== request.taskRevision
+        || isTaskEditorTimeSpentEnabled(checklist.witness.settings) !== (request.timeSpentText !== null)
+        || !same(checklist.request, referenceBackdateSaveRequest(checklist.witness.source, request))
+        || !same(checklist.result, prepared.result)
+        || !validReferenceRawBefore(prepared.rawBefore, checklist.effect, checklist.witness.preparedAt)) return null;
+    return envelope as NativeReferenceTaskBackdateEnvelope;
+};
 const readCompletion = (value: unknown,
     validateField: (field: TaskDraftField, value: unknown) => boolean): NativeTaskCompletionEnvelope | null => {
     const envelope = detach(value, COMPLETION_BYTES);
@@ -1016,6 +1077,7 @@ const rawWritePrefix = (envelope: NativeHistoryRowEnvelope | NativeRawReferenceE
         case 'referenceStatus': return 'referenceTaskStatus';
         case 'referenceComplete': return 'referenceTaskCompletion';
         case 'referenceCompleteUndo': return 'referenceTaskCompletionUndo';
+        case 'referenceBackdate': return 'referenceTaskBackdate';
         case 'doneStatus': return 'doneTaskStatus';
         case 'doneCompletedAt': return 'doneTaskCompletedAt';
         case 'archiveCompletedAt': return 'archiveTaskCompletedAt';
@@ -1061,7 +1123,7 @@ export function createTaskChecklistSaveMethods(deps: {
     };
     const checkHistoryRowAuthority = (envelope: NativeRawWriteEnvelope,
     authority: PreparedAreaAuthority): NativeHostResult<null> => {
-        if (envelope.prepared.kind === 'referenceComplete' || envelope.prepared.kind === 'referenceCompleteUndo')
+        if (envelope.prepared.kind === 'referenceComplete' || envelope.prepared.kind === 'referenceCompleteUndo' || envelope.prepared.kind === 'referenceBackdate')
             return checkReferenceAtomicAuthority(envelope as NativeRawReferenceEnvelope, authority);
         const history = envelope as NativeBoundHistoryRowEnvelope;
         const prepared = history.prepared;
@@ -1105,7 +1167,7 @@ export function createTaskChecklistSaveMethods(deps: {
         } catch { return fail('STALE_REVISION', `${reference ? 'Reference Next' : 'Done status'} destination changed since preparation`); }
     };
     const applyHistoryRowOverlay = async (envelope: NativeRawWriteEnvelope, authority: PreparedAreaAuthority) => {
-        if (envelope.prepared.kind === 'referenceComplete' || envelope.prepared.kind === 'referenceCompleteUndo')
+        if (envelope.prepared.kind === 'referenceComplete' || envelope.prepared.kind === 'referenceCompleteUndo' || envelope.prepared.kind === 'referenceBackdate')
             return useTaskStore.getState().commitPreparedChecklistEffect(rawWriteEffect(envelope),
                 { requireBefore: true, authority, rawBefore: envelope.prepared.rawBefore });
         const history = envelope as NativeBoundHistoryRowEnvelope; const effect = history.prepared.checklist.effect;
@@ -1212,6 +1274,9 @@ export function createTaskChecklistSaveMethods(deps: {
                 } else if (envelope.prepared.kind === 'referenceComplete' || envelope.prepared.kind === 'referenceCompleteUndo') {
                     logInfo('Native Reference Task completion confirmed', { scope: 'native-host', category: 'storage',
                         context: { releaseCheck: 'v1.3.4/ios-reference-completion', outcome: envelope.prepared.kind === 'referenceComplete' ? 'completed' : 'undone' } });
+                } else if (envelope.prepared.kind === 'referenceBackdate') {
+                    logInfo('Native Reference Task backdated completion confirmed', { scope: 'native-host', category: 'storage',
+                        context: { releaseCheck: 'v1.3.4/ios-reference-backdate', outcome: 'completed' } });
                 } else {
                     logInfo(envelope.prepared.kind === 'doneStatus' ? 'Native Done Task status confirmed'
                         : envelope.prepared.kind === 'doneCompletedAt' ? 'Native Done completion time confirmed' : 'Native Archive completion time confirmed', { scope: 'native-host', category: 'storage',
@@ -1278,7 +1343,11 @@ export function createTaskChecklistSaveMethods(deps: {
             const source = JSON.parse(JSON.stringify(task)) as Task;
             const settings = JSON.parse(JSON.stringify({ deviceId: state.settings.deviceId,
                 gtd: { autoArchiveDays: state.settings.gtd?.autoArchiveDays,
-                    focusTaskLimit: state.settings.gtd?.focusTaskLimit },
+                    focusTaskLimit: state.settings.gtd?.focusTaskLimit,
+                    ...(isSave(request) && request.intent === 'referenceBackdate'
+                        ? { pomodoro: { linkTask: state.settings.gtd?.pomodoro?.linkTask } } : {}) },
+                ...(isSave(request) && request.intent === 'referenceBackdate'
+                    ? { features: { pomodoro: state.settings.features?.pomodoro } } : {}),
                 ...(isSave(request) && request.intent === 'cancel'
                     ? { undoNotificationsEnabled: state.settings.undoNotificationsEnabled } : {}) })) as AppData['settings'];
             const cancelTranslator = isSave(request) && request.intent === 'cancel' ? getTranslator(deps.language()) : null;
@@ -1292,8 +1361,9 @@ export function createTaskChecklistSaveMethods(deps: {
                     .toISOString().slice(0, 10),
                 deviceIdBefore: state.settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null,
-                recurrenceProjection: isSave(request) && (!request.intent || request.intent === 'referenceComplete') && request.patch.status === 'done' && task.status !== 'done'
-                    && task.status !== 'archived' ? projectNextRecurringTask(task, preparedAt) : null,
+                recurrenceProjection: isSave(request) && (!request.intent || request.intent === 'referenceComplete' || request.intent === 'referenceBackdate') && request.patch.status === 'done' && task.status !== 'done'
+                    && task.status !== 'archived' ? projectNextRecurringTask(task,
+                        request.intent === 'referenceBackdate' ? request.patch.completedAt! : preparedAt) : null,
                 ...(isSave(request) && request.intent === 'skip'
                     ? { calendarTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } : {}),
                 ids: [], directClears: cleared(direct), direct: JSON.parse(JSON.stringify(direct)),
@@ -1492,6 +1562,68 @@ export function createTaskChecklistSaveMethods(deps: {
 
     }
     return {
+        getReferenceTaskBackdateOptions(input: { id: string; taskRevision: string }): NativeHostResult<{
+            title: string; saveLabel: string; cancelLabel: string; taskId: string; taskRevision: string;
+            initialValue: null; initialEpochMilliseconds: null; showTimeSpent: boolean;
+            initialTimeSpentMinutes: number | null; timeSpentLabel: string; timeSpentPlaceholder: string;
+        }> {
+            const source = readHistoryRowSource(input, false, true); if (!source.ok) return source;
+            const state = useTaskStore.getState();
+            if (referenceContainerReadOnly(source.value, { projects: state._allProjects, sections: state._allSections }))
+                return fail('INVALID_INPUT', 'Reference task is read-only');
+            const t = getTranslator(deps.language());
+            return { ok: true, value: { title: resolveI18nText(t, 'task.completedAtPromptTitle'),
+                saveLabel: resolveI18nText(t, 'common.save'), cancelLabel: resolveI18nText(t, 'common.cancel'),
+                taskId: source.value.id, taskRevision: input.taskRevision,
+                // RN's row complete picker has no initialValue, including when
+                // a Reference task carries an unrelated old completion stamp.
+                initialValue: null, initialEpochMilliseconds: null,
+                showTimeSpent: isTaskEditorTimeSpentEnabled(state.settings),
+                initialTimeSpentMinutes: normalizeTimeSpentMinutes(source.value.timeSpentMinutes) ?? null,
+                timeSpentLabel: resolveI18nText(t, 'taskEdit.timeSpentLabel'),
+                timeSpentPlaceholder: resolveI18nText(t, 'taskEdit.timeSpentPlaceholder') } };
+        },
+        async prepareReferenceTaskBackdate(input: NativeReferenceTaskBackdateRequest): Promise<NativeHostResult<{
+            kind: 'prepared'; prepared: NativePreparedReferenceTaskBackdate;
+        }>> {
+            const request = readReferenceBackdateRequest(input);
+            if (!request) return fail('INVALID_INPUT', 'A displayed Reference revision, canonical completion time and bounded minutes input are required');
+            const source = readHistoryRowSource({ id: request.id, taskRevision: request.taskRevision }, false, true);
+            if (!source.ok) return source;
+            const state = useTaskStore.getState();
+            if (referenceContainerReadOnly(source.value, { projects: state._allProjects, sections: state._allSections }))
+                return fail('INVALID_INPUT', 'Reference task is read-only');
+            if (isTaskEditorTimeSpentEnabled(state.settings) !== (request.timeSpentText !== null))
+                return fail('INVALID_INPUT', 'Time-spent setting changed; reopen Completion time');
+            const read = await readAreaDurableData(false, true); if (!read.ok) return read;
+            if (isTaskEditorTimeSpentEnabled(read.value.authority.snapshot.settings) !== (request.timeSpentText !== null))
+                return fail('STALE_REVISION', 'Saved time-spent setting changed; reopen Completion time');
+            const planned = prepare('save', referenceBackdateSaveRequest(source.value, request)); if (!planned.ok) return planned;
+            if (planned.value.kind !== 'prepared') return fail('INVALID_INPUT', 'Reference completion made no change');
+            const checklist = planned.value.prepared;
+            const prepared = detach({ version: 2 as const, kind: 'referenceBackdate' as const, request,
+                rawBefore: JSON.parse(JSON.stringify(bindRawChecklistRows(checklist.effect, read.value.authority.snapshot))),
+                checklist, result: { id: request.id } }, COMPLETION_BYTES);
+            const envelope = prepared && readReferenceBackdate({ request, prepared }, deps.validateField);
+            return envelope ? { ok: true, value: { kind: 'prepared', prepared: envelope.prepared } }
+                : fail('INVALID_INPUT', 'Reference completion cannot produce a valid bounded journal');
+        },
+        validatePreparedReferenceTaskBackdate(input: NativeReferenceTaskBackdateEnvelope): NativeHostResult<{ id: string }> {
+            const envelope = readReferenceBackdate(input, deps.validateField);
+            return envelope ? { ok: true, value: envelope.prepared.result } : fail('INVALID_INPUT', 'Prepared Reference completion is malformed');
+        },
+        async commitPreparedReferenceTaskBackdate(input: NativeReferenceTaskBackdateEnvelope): Promise<NativeHostResult<{ id: string }>> {
+            const envelope = readReferenceBackdate(input, deps.validateField);
+            return envelope ? commitHistoryRowWrite(envelope) : fail('INVALID_INPUT', 'Prepared Reference completion is malformed');
+        },
+        referenceTaskBackdateOutcome(input: NativeReferenceTaskBackdateEnvelope): NativeHostResult<{ id: string } | null> {
+            const envelope = readReferenceBackdate(input, deps.validateField);
+            if (!envelope) return fail('INVALID_INPUT', 'Prepared Reference completion is malformed');
+            const saved = historyRowReceipts.saved<{ id: string }>(envelope.request.requestId,
+                canonicalJSON(['referenceTaskBackdate', envelope]));
+            return saved?.ok && !same(saved.value, envelope.prepared.result)
+                ? fail('INVALID_INPUT', 'Saved Reference completion result does not match its journal') : saved ?? { ok: true, value: null };
+        },
         getDoneTaskCompletedAtOptions(input: { id: string; taskRevision: string }): NativeHostResult<{
             title: string; saveLabel: string; cancelLabel: string; taskId: string; taskRevision: string;
             initialValue: string | null; initialEpochMilliseconds: number | null;

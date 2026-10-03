@@ -20274,3 +20274,194 @@ final class FoundationUITests: XCTestCase {
     }
 
 }
+
+
+extension FoundationUITests {
+    private func task189Open(_ app: XCUIApplication, _ suffix: String, showMinutes: Bool, rtl: Bool = false) {
+        task188StatusAction(app, "task189-" + suffix, rtl: rtl)
+        let action = app.buttons.matching(identifier: "reference-status-completion-time").firstMatch
+        boardEnabled(action); XCTAssertFalse(action.label.isEmpty); action.tap()
+        let picker = app.datePickers["reference-backdate-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 20)); XCTAssertFalse(picker.label.isEmpty)
+        XCTAssertGreaterThanOrEqual(picker.frame.height, 44)
+        XCTAssertTrue(app.scrollViews["reference-backdate-scroll"].exists)
+        let input = app.textFields["reference-backdate-time-spent"]
+        XCTAssertEqual(input.exists, showMinutes)
+        if showMinutes {
+            XCTAssertEqual(input.value as? String, "17"); XCTAssertFalse(input.label.isEmpty)
+            XCTAssertGreaterThanOrEqual(input.frame.height, 44)
+        }
+        for id in ["reference-backdate-save", "reference-backdate-cancel"] {
+            boardEnabled(app.buttons[id]); XCTAssertGreaterThanOrEqual(app.buttons[id].frame.width, 44)
+            XCTAssertGreaterThanOrEqual(app.buttons[id].frame.height, 44); XCTAssertFalse(app.buttons[id].label.isEmpty)
+        }
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        task189RecordPicker(app, suffix, phase: "opened")
+    }
+
+    private func task189RecordPicker(_ app: XCUIApplication, _ suffix: String, phase: String) {
+        let values = app.pickerWheels.allElementsBoundByIndex.map { ["label": $0.label, "value": $0.value as? String ?? ""] }
+        let evidence: [String: Any] = ["phase": phase, "task": "task189-" + suffix,
+                                     "wallEpochMilliseconds": Date().timeIntervalSince1970 * 1_000,
+                                     "testTimeZone": TimeZone.current.identifier, "wheels": values]
+        if let data = try? JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]),
+           let value = String(data: data, encoding: .utf8) { print("Task189 picker observation " + value) }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task189 picker " + suffix + " " + phase
+        shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func task189ChangeMinute(_ app: XCUIApplication, _ suffix: String) {
+        let picker = app.datePickers["reference-backdate-picker"]
+        revealPagedElement(app, picker, in: app.scrollViews["reference-backdate-scroll"])
+        // Native wheel order is combined date, hour, minute, then optional AM/PM.
+        // Read the actual value rather than assuming a fixture's completion time.
+        let minute = app.pickerWheels.element(boundBy: 2)
+        guard let original = minute.value as? String,
+              let match = original.range(of: "[0-9]+", options: .regularExpression),
+              let value = Int(original[match]) else { XCTFail("Missing observed minute wheel"); return }
+        minute.adjust(toPickerWheelValue: String(format: "%02d", (value + 7) % 60))
+        XCTAssertNotEqual(minute.value as? String, original)
+        task189RecordPicker(app, suffix, phase: "changed-minute")
+    }
+
+    private func task189Minutes(_ app: XCUIApplication, _ text: String, expected: String? = nil) {
+        let input = app.textFields["reference-backdate-time-spent"], scroll = app.scrollViews["reference-backdate-scroll"]
+        boardEnabled(input)
+        revealPagedElement(app, input, in: scroll, outerEdge: true)
+        // The visible field may report false isHittable while already focused;
+        // retain the measured viewport guard before tapping its trailing edge.
+        XCTAssertGreaterThanOrEqual(input.frame.minY, scroll.frame.minY - 1)
+        XCTAssertLessThanOrEqual(input.frame.maxY, scroll.frame.maxY + 1)
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            input.frame.minY >= scroll.frame.minY - 1 && input.frame.maxY <= scroll.frame.maxY + 1
+        }, object: nil)], timeout: 10) == .completed, "Focused minutes must remain inside the keyboard-adjusted viewport")
+        if let old = input.value as? String, old != input.placeholderValue, !old.isEmpty {
+            input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count))
+        }
+        if !text.isEmpty { input.typeText(text) }
+        let wanted = expected ?? text
+        expectation(for: NSPredicate { _, _ in
+            guard let value = input.value as? String else { return false }
+            return value == wanted || (wanted.isEmpty && value == input.placeholderValue)
+        }, evaluatedWith: input)
+        waitForExpectations(timeout: 10)
+    }
+
+    private func task189Finish(_ app: XCUIApplication, _ suffix: String, save: Bool, edge: Bool = false) {
+        task189RecordPicker(app, suffix, phase: save ? "before-save" : "before-cancel")
+        let button = app.buttons[save ? "reference-backdate-save" : "reference-backdate-cancel"]
+        boardEnabled(button)
+        if edge { button.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap() } else { button.tap() }
+        XCTAssertTrue(app.datePickers["reference-backdate-picker"].waitForNonExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists, "Chosen-time completion has no Undo notice")
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        let row = app.descendants(matching: .any).matching(identifier: "task-title-task189-" + suffix).firstMatch
+        if save { XCTAssertFalse(row.exists, "All grouped occurrences must leave Reference") } else { XCTAssertTrue(row.exists) }
+    }
+
+    private func task189VisibleFlow(_ library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task186Open(app); task186Filter(app, "Task189 action"); referenceGroup(app, "none")
+        for (suffix, minutes) in [("clear", ""), ("minutes", "100001"), ("recurring", "45 minutes")] {
+            task189Open(app, suffix, showMinutes: true); task189ChangeMinute(app, suffix)
+            task189Minutes(app, minutes, expected: suffix == "recurring" ? "45" : minutes)
+            task189Finish(app, suffix, save: true, edge: suffix == "clear")
+        }
+        app.terminate(); app.launch(); task186Open(app); task186Filter(app, "Task189 action")
+        for suffix in ["clear", "minutes", "recurring"] {
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-title-task189-" + suffix).firstMatch.exists)
+        }
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists); app.terminate()
+    }
+
+    func testTask189ReferenceBackdateHidden() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "53a5a9d9-c484-43be-bf86-58eaed9ee049"]
+        app.launch(); task186Open(app); task186Filter(app, "Task189 action"); referenceGroup(app, "tag")
+        referenceFold(app, "tag:#Task189 A", open: true)
+        referenceFold(app, "tag:#Task189 B", open: true, toggle: true)
+        for suffix in ["plain", "strict"] {
+            task189Open(app, suffix, showMinutes: false); task189ChangeMinute(app, suffix); task189Finish(app, suffix, save: true)
+        }
+        app.terminate(); app.launch(); task186Open(app); task186Filter(app, "Task189 action")
+        for suffix in ["plain", "strict"] { XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-title-task189-" + suffix).firstMatch.exists) }
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists); app.terminate()
+    }
+
+    func testTask189ReferenceBackdateVisible() { task189VisibleFlow("0c74b7d0-f864-47f4-a540-1c3f1fcabadc") }
+    func testTask189ReferenceBackdateLargest() { task189VisibleFlow("dbacd37a-6628-405a-8f74-159af6c8cbe5") }
+
+    func testTask189ReferenceBackdateArabicLayout() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "d4efd3ab-c5c4-4efb-9cf0-ea417aec98d4", "-AppleLanguages", "(ar)", "-AppleLocale", "ar_SA"]
+        app.launch(); task186Open(app); task186Filter(app, "Task189 action", rtl: true); referenceGroup(app, "none")
+        task189Open(app, "focused", showMinutes: true, rtl: true)
+        XCTAssertNotEqual(app.datePickers["reference-backdate-picker"].label, "Completion time")
+        // Untouched local wheel: root binds the independently recorded minute
+        // and opening/tap wall-clock window; exact milliseconds are host-tested.
+        task189Minutes(app, "45"); task189Finish(app, "focused", save: true)
+        app.terminate(); app.launch(); task186Open(app); task186Filter(app, "Task189 action", rtl: true)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-title-task189-focused").firstMatch.exists)
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists); app.terminate()
+    }
+
+    func testTask189ReferenceBackdateCancelReadOnlyAndPaging() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "428b5725-26e4-42fc-8c7c-3276a07485da"]
+        app.launch(); task186Open(app); task186Filter(app, "Task189 Page"); referenceGroup(app, "none")
+        let more = app.buttons["reference-more"]
+        if more.exists { task186Reveal(app, more); boardEnabled(more); more.tap() }
+        task186Filter(app, "Task189 action")
+        let readonly = app.descendants(matching: .any).matching(identifier: "task-title-task189-readonly").firstMatch
+        task186Reveal(app, readonly); readonly.swipeRight()
+        XCTAssertFalse(app.buttons["reference-change-status-task189-readonly"].exists)
+        XCTAssertFalse(app.buttons["reference-next-task189-readonly"].exists)
+        readonly.swipeLeft(); XCTAssertFalse(app.buttons["reference-delete-task189-readonly"].exists)
+        readonly.tap(); boardEnabled(app.buttons["task-view-close"]); boardTap(app, "task-view-close")
+        task189Open(app, "cancel", showMinutes: true); task189ChangeMinute(app, "cancel"); task189Minutes(app, "45")
+        task189Finish(app, "cancel", save: false, edge: true)
+        task189Open(app, "cancel", showMinutes: true)
+        XCTAssertEqual(app.textFields["reference-backdate-time-spent"].value as? String, "17")
+        task189Finish(app, "cancel", save: false)
+        app.terminate()
+    }
+
+    func testTask189ReferenceBackdateFailedSaveRetainsPickerAndExactInput() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "af6a8e7e-5e15-4474-ac31-428f817910c8"]
+        app.launch(); task186Open(app); task186Filter(app, "Task189 action failed"); referenceGroup(app, "none")
+        task189Open(app, "failed", showMinutes: true); task189ChangeMinute(app, "failed"); task189Minutes(app, "45")
+        task189RecordPicker(app, "failed", phase: "before-save")
+        let selected = app.pickerWheels.allElementsBoundByIndex.map { $0.value as? String ?? "" }
+        boardTap(app, "reference-backdate-save")
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+            XCTAssertTrue(app.datePickers["reference-backdate-picker"].exists)
+            XCTAssertEqual(app.pickerWheels.allElementsBoundByIndex.map { $0.value as? String ?? "" }, selected)
+            XCTAssertEqual(app.textFields["reference-backdate-time-spent"].value as? String, "45")
+            XCTAssertFalse(app.textFields["reference-backdate-time-spent"].isEnabled)
+            XCTAssertFalse(app.buttons["reference-backdate-save"].isEnabled); XCTAssertFalse(app.buttons["reference-backdate-cancel"].isEnabled)
+            XCTAssertTrue(app.staticTexts["reference-backdate-error"].exists); XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+            let retry = app.scrollViews["reference-backdate-scroll"].buttons["reference-retry"]; boardEnabled(retry)
+            revealPagedElement(app, retry, in: app.scrollViews["reference-backdate-scroll"]); retry.tap()
+        }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); app.terminate()
+    }
+
+    func testTask189ReferenceBackdateColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "fe61915b-de50-4e12-ab44-f81989020121"]
+        for launch in 0..<2 {
+            app.launch()
+            if launch == 0 { XCTAssertTrue(app.buttons["reference-overflow-button"].waitForExistence(timeout: 30)) }
+            task186Open(app); task186Filter(app, "Task189 action failed")
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-title-task189-failed").firstMatch.exists)
+            XCTAssertFalse(app.datePickers["reference-backdate-picker"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists)
+            XCTAssertFalse(app.buttons["task-completion-undo"].exists); XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            app.terminate()
+        }
+    }
+}

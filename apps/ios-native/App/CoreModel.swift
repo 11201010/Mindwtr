@@ -1796,7 +1796,7 @@ final class CoreModel: ObservableObject {
     }
     var referenceActionPending: Bool {
         selectedSurface == .reference && retryNeeded &&
-            (referenceTaskNextRequest != nil || referenceTaskStatusRequest != nil || referenceCompletionPending
+            (referenceTaskNextRequest != nil || referenceTaskStatusRequest != nil || referenceTaskBackdateRequest != nil || referenceCompletionPending
                 || referenceTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "reference")
     }
     var referencePickerActionsEnabled: Bool { referenceActionsEnabled && referencePickerCurrent }
@@ -2881,6 +2881,9 @@ final class CoreModel: ObservableObject {
                 historyParamsByTab["archive", default: [:]]["segment"] = "tasks"
             }
             if ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(recovery.text("method")), recovery.text("source") == "reference" {
+                selectedSurface = .reference
+            }
+            if recovery.text("method") == "referenceTaskBackdateCommit", recovery.text("source") == "reference" {
                 selectedSurface = .reference
             }
             if recovery.text("method") == "doneTaskStatusCommit", recovery.text("source") == "reference" {
@@ -12908,6 +12911,8 @@ final class CoreModel: ObservableObject {
     private var doneTaskStatusRequest: String?
     private var referenceTaskNextRequest: String?
     private var referenceTaskStatusRequest: String?
+    private var referenceTaskBackdateRequest: String?
+    var referenceTaskBackdatePending: Bool { referenceTaskBackdateRequest != nil }
     private var doneTaskCompletedAtRequest: String?
     private var archiveTaskCompletedAtRequest: String?
 
@@ -13133,7 +13138,15 @@ final class CoreModel: ObservableObject {
     // Busy is checked by each opening/write caller; context remains stable during a read.
     // Every accepted context still binds the exact displayed row and pending view edits.
     func referenceTaskStatusContext(_ displayed: CoreObject) -> String? {
-        guard ready, selectedSurface == .reference, referenceCurrent, !retryNeeded,
+        referenceTaskRowContext(displayed, retainingBackdate: false)
+    }
+
+    func referenceTaskBackdateContext(_ displayed: CoreObject) -> String? {
+        referenceTaskRowContext(displayed, retainingBackdate: referenceTaskBackdatePending)
+    }
+
+    private func referenceTaskRowContext(_ displayed: CoreObject, retainingBackdate: Bool) -> String? {
+        guard ready, selectedSurface == .reference, referenceCurrent, (!retryNeeded || retainingBackdate),
               !taskPresented, !capturePresented, referencePanel.isEmpty,
               referenceTextEdits.isEmpty, referencePendingEdit == nil,
               displayed.text("status") == "reference", !displayed.flag("readOnly"),
@@ -13171,6 +13184,74 @@ final class CoreModel: ObservableObject {
             }
             return nil
         }
+    }
+
+    func referenceTaskBackdateOptions(_ displayed: CoreObject) async -> CoreObject? {
+        guard referenceActionsEnabled, let context = referenceTaskStatusContext(displayed) else { return nil }
+        referenceError = nil
+        do {
+            let id = displayed.text("id"), revision = displayed.text("taskRevision")
+            let options = try await query("referenceTaskBackdateOptions", [try json(["id": id, "taskRevision": revision])])
+            guard !Task.isCancelled, referenceTaskStatusContext(displayed)?.utf8.elementsEqual(context.utf8) == true else { return nil }
+            let labels = ["title", "saveLabel", "cancelLabel", "timeSpentLabel", "timeSpentPlaceholder"]
+            let minutes = options["initialTimeSpentMinutes"] as? NSNumber
+            guard Set(options.keys) == Set(labels + ["taskId", "taskRevision", "initialValue", "initialEpochMilliseconds", "showTimeSpent", "initialTimeSpentMinutes"]),
+                  options.text("taskId").utf8.elementsEqual(id.utf8), options.text("taskRevision").utf8.elementsEqual(revision.utf8),
+                  options["initialValue"] is NSNull, options["initialEpochMilliseconds"] is NSNull,
+                  labels.allSatisfy({ !options.text($0).isEmpty }),
+                  (options["showTimeSpent"] as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() }) == true,
+                  options["initialTimeSpentMinutes"] is NSNull || minutes.map({
+                      CFGetTypeID($0) != CFBooleanGetTypeID() && $0.doubleValue.rounded() == $0.doubleValue
+                          && $0.doubleValue >= 0 && $0.doubleValue <= 100_000
+                  }) == true else { throw CocoaError(.coderReadCorrupt) }
+            return options
+        } catch {
+            if !Task.isCancelled, referenceTaskStatusContext(displayed)?.utf8.elementsEqual(context.utf8) == true {
+                referenceError = error.localizedDescription
+            }
+            return nil
+        }
+    }
+
+    func backdateReferenceTask(_ displayed: CoreObject, completedAt: String, timeSpentText: String?) async -> Bool {
+        guard referenceActionsEnabled, !referenceTaskBackdatePending, referenceTaskStatusContext(displayed) != nil else { return false }
+        busy = true
+        referenceError = nil
+        error = nil
+        invalidatePreview()
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "id": displayed.text("id"),
+                                    "taskRevision": displayed.text("taskRevision"), "source": "reference",
+                                    "completedAt": completedAt, "timeSpentText": timeSpentText.map { $0 as Any } ?? NSNull()])
+            referenceTaskBackdateRequest = request
+            let result = try await query("referenceTaskBackdate", [request])
+            try acknowledgeReferenceTaskBackdate(result)
+            _ = await readReference()
+            return true
+        } catch { await handleReferenceTaskBackdateError(error); return false }
+    }
+
+    private func acknowledgeReferenceTaskBackdate(_ result: CoreObject) throws {
+        guard let request = referenceTaskBackdateRequest, Set(result.keys) == Set(["id"]),
+              result.text("id").utf8.elementsEqual((try decode(request)).text("id").utf8) else { throw CocoaError(.coderReadCorrupt) }
+        referenceTaskBackdateRequest = nil
+        retryNeeded = false
+        referenceError = nil
+        error = nil
+    }
+
+    private func handleReferenceTaskBackdateError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            referenceTaskBackdateRequest = nil
+            retryNeeded = false
+            error = nil
+            _ = await readReference()
+        } else {
+            retryNeeded = referenceTaskBackdatePending
+            error = failure.localizedDescription
+        }
+        referenceError = failure.localizedDescription
     }
 
     func changeReferenceTaskStatus(_ displayed: CoreObject, status: String) async {
@@ -19592,6 +19673,25 @@ final class CoreModel: ObservableObject {
                 _ = await readHistory()
                 return
             }
+            if let request = referenceTaskBackdateRequest {
+                let outcome = try await query("referenceTaskBackdateRetryOutcome", [request])
+                if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                    let unknown = label("task.doneCompletedAtOutcomeUnknown")
+                    referenceError = unknown
+                    self.error = unknown
+                    return
+                }
+                guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let result = outcome.object("result")
+                if let acknowledgment, !(try json(result)).utf8.elementsEqual((try json(decode(acknowledgment))).utf8) {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try acknowledgeReferenceTaskBackdate(result)
+                _ = await readReference()
+                return
+            }
             if let request = referenceTaskStatusRequest {
                 let outcome = try await query("doneTaskStatusRetryOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
@@ -20046,6 +20146,10 @@ final class CoreModel: ObservableObject {
             }
             if referenceCompletionPending {
                 await handleReferenceTaskCompletionError(error)
+                return
+            }
+            if referenceTaskBackdatePending {
+                await handleReferenceTaskBackdateError(error)
                 return
             }
             if referenceTaskStatusRequest != nil {
