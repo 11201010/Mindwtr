@@ -73,6 +73,9 @@ class HostFiles(
         val op = request.getString("op")
         // Core's SHA-256 (setSha256HexProvider): QuickJS has no WebCrypto, so a file's bytes are hashed here, as RN's native module does.
         if (op == "sha256") return Reply(MessageDigest.getInstance("SHA-256").digest(bytes ?: ByteArray(0)).joinToString("") { "%02x".format(it.toInt() and 0xff) })
+        // Answers once every call before it is done (HostIo runs them in order): a managed delete waits on it, then deletes at once
+        // with [deleteNow] in the engine turn that asked core who owns the file.
+        if (op == "barrier") return Reply(null)
         val uri = request.getString("uri")
         return when (op) {
             "getInfo" -> Reply(info(uri))
@@ -95,6 +98,11 @@ class HostFiles(
             "delete" -> Reply(null.also { remove(entry(uri)) })
             else -> throw IllegalArgumentException("Unsupported file call $op")
         }
+    }
+
+    /** A delete on the caller's thread (the engine's), with the same rules as [call]'s `delete`. */
+    fun deleteNow(uri: String) {
+        remove(entry(uri))
     }
 
     private fun info(uri: String): JSONObject {

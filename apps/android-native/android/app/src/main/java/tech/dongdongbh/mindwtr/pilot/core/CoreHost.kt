@@ -329,6 +329,8 @@ class CoreHost(
         bridge.setProperty("fileCall", guarded { args -> io.file(args[0] as String, files::call) })
         // RN's attachment installer (HostInstaller): install and hash, on the same thread, after the file calls before them.
         bridge.setProperty("installerCall", guarded { args -> io.file(args[0] as String, installer::call) })
+        // A managed attachment's delete, at once on this thread: core asked who owns the file in this same turn (host-attachments.ts).
+        bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })
         bridge.setProperty("fileDirectories", guarded { _ ->
             JSONObject().put("document", files.documentDirectory).put("cache", files.cacheDirectory).toString()
         })

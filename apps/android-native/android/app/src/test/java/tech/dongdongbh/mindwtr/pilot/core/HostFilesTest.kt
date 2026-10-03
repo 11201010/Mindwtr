@@ -219,6 +219,21 @@ class HostFilesTest {
         assertFalse(linked.exists())
     }
 
+    /** The managed delete's two halves (review finding 1): a barrier that answers in order, and a delete at once with call's rules. */
+    @Test fun aBarrierAnswersAndADeleteNowKeepsTheDeleteRules() {
+        val files = open()
+        assertEquals(null, files.call(JSONObject().put("op", "barrier").toString()).value)
+        val file = File(attachments().apply { mkdirs() }, "a.pdf").apply { writeText("x") }
+        files.deleteNow(uri(file))
+        assertFalse(file.exists())
+        files.deleteNow(uri(file))
+        File(filesDir, "journal").mkdirs()
+        val journal = File(filesDir, "journal/1.json").apply { writeText("{}") }
+        assertThrows(IllegalArgumentException::class.java) { files.deleteNow(uri(journal)) }
+        assertThrows(IllegalArgumentException::class.java) { files.deleteNow(uri(attachments())) }
+        assertTrue(journal.exists() && attachments().isDirectory)
+    }
+
     @Test fun noAttachmentUriLeavesTheAppFolders() {
         val outside = File(folder.root, "outside.txt").apply { writeText("secret") }
         attachments().mkdirs()

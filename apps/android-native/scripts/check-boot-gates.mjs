@@ -731,7 +731,8 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 29, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls and the attachment file and installer calls: each guarded');
+assert.equal(bridgeCallbacks.length, 30, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls and the attachment file, delete and installer calls: each guarded');
+assert(bridgeCallbacks.includes('bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })'));
 // The attachment file port and the installer only start their call on the engine thread; HostIo's files thread runs it.
 assert(bridgeCallbacks.includes('bridge.setProperty("fileCall", guarded { args -> io.file(args[0] as String, files::call) })'));
 assert(bridgeCallbacks.includes('bridge.setProperty("installerCall", guarded { args -> io.file(args[0] as String, installer::call) })'));
@@ -3983,4 +3984,49 @@ for (const file of ['device.mjs', 'check-net-device.mjs']) {
 }
 console.log('Entry points: RN\'s alias, links on the build\'s scheme, text shares and Assistant notes read as strings into core\'s resolveNativeEntryPoint, RN\'s shortcuts from RN\'s builder, Import .txt through core');
 console.log('Runner: CoreWork on the one host after the app\'s boot order, the queue drain after the journal replay, the queue\'s file and RKStorage ports, RN\'s capture intent and context receivers under RN\'s names, RN\'s capture intent Kotlin compiled in, the token only in Kotlin');
+// Review finding 1 (A2): a managed attachment's delete asks core's keep() in the same engine turn as the delete itself, after every
+// file call queued before it. Here a delete waits behind a held file call while the attachment is restored: the bytes stay.
+{
+    const bundled = await build({
+        stdin: { contents: "export { createNativeAttachments } from './host-attachments';", resolveDir: resolve(app, 'bundle'), loader: 'ts' },
+        bundle: true, write: false, format: 'esm', platform: 'node', logLevel: 'silent',
+    });
+    const scratch = mkdtempSync(resolve(tmpdir(), 'host-attachments-'));
+    try {
+        writeFileSync(resolve(scratch, 'host-attachments.mjs'), bundled.outputFiles[0].text);
+        const { createNativeAttachments } = await import(resolve(scratch, 'host-attachments.mjs'));
+        const deleteRace = async (restoreWhileWaiting) => {
+            const document = 'file:///data/user/0/app/files/';
+            let release;
+            const held = new Promise((done) => { release = done; });
+            let waiting = false;
+            const deleted = [];
+            const files = async (request) => {
+                if (request.op === 'getInfo') return { exists: true, isDirectory: true, uri: request.uri };
+                if (request.op === 'barrier') { waiting = true; await held; return null; }
+                if (request.op === 'delete') { deleted.push(request.uri); return null; }
+                return null;
+            };
+            const { contractHost } = createNativeAttachments({
+                storage: { getItem: async () => null, setItem: async () => {}, removeItem: async () => {} },
+                getSecureConfigValue: async () => null,
+                log: { info: () => {}, warn: () => {}, sanitize: (text) => text },
+                crypto: {}, encryption: { logSyncEncryptionEvent: () => {}, getSyncEncryptionMaterial: async () => null },
+            }, { files, installer: async () => null, directories: { document, cache: 'file:///data/user/0/app/cache/' },
+                deleteNow: (uri) => { deleted.push(uri); } });
+            let restored = false;
+            const attachment = { id: 'a1', kind: 'file', title: 'a1.pdf', uri: `${document}attachments/a1.pdf`, createdAt: 't', updatedAt: 't' };
+            const outcome = contractHost.deleteManagedAttachmentFile(attachment, { keep: () => restored });
+            for (let step = 0; step < 200 && !waiting; step += 1) await new Promise((done) => setTimeout(done, 1));
+            assert(waiting, 'the delete waits behind the file calls queued before it');
+            if (restoreWhileWaiting) restored = true;
+            release();
+            return { result: await outcome, deleted };
+        };
+        assert.deepEqual(await deleteRace(true), { result: false, deleted: [] }, 'an attachment restored while its delete waited keeps its bytes');
+        assert.deepEqual(await deleteRace(false), { result: true, deleted: ['file:///data/user/0/app/files/attachments/a1.pdf'] }, 'an unowned copy is deleted once');
+    } finally {
+        rmSync(scratch, { recursive: true, force: true });
+    }
+}
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

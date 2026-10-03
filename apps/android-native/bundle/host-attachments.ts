@@ -51,17 +51,31 @@ const unavailable = (what: string) => async (): Promise<never> => {
 };
 
 /** The host's file channels (host-polyfills.js), or null on a host without app files (iOS, the gates' stand-in bridge). */
-export const nativeFileChannels = (): { files: FileCall; installer: FileCall; directories: { document: string; cache: string } } | null => {
-    const files = globalThis.__mindwtrFileCall as FileCall | undefined;
-    const installer = globalThis.__mindwtrInstallerCall as FileCall | undefined;
-    const bridge = globalThis.__mindwtrNative as { fileDirectories?: () => string } | undefined;
-    if (!files || !installer || typeof bridge?.fileDirectories !== 'function') return null;
-    const text = bridge.fileDirectories();
-    if (text.startsWith('!MindwtrNativeError:')) throw new Error(text.slice('!MindwtrNativeError:'.length));
-    return { files, installer, directories: JSON.parse(text) as { document: string; cache: string } };
+export type NativeFileChannels = {
+    files: FileCall;
+    installer: FileCall;
+    directories: { document: string; cache: string };
+    /** A delete on the engine thread, at once (CoreHost's fileDeleteNow): the turn that asked keep() is the turn that deletes. */
+    deleteNow: (uri: string) => void;
 };
 
-export const createNativeAttachments = (bindings: NativeAttachmentBindings, channels: NonNullable<ReturnType<typeof nativeFileChannels>>) => {
+const NATIVE_ERROR = '!MindwtrNativeError:';
+
+export const nativeFileChannels = (): NativeFileChannels | null => {
+    const files = globalThis.__mindwtrFileCall as FileCall | undefined;
+    const installer = globalThis.__mindwtrInstallerCall as FileCall | undefined;
+    const bridge = globalThis.__mindwtrNative as { fileDirectories?: () => string; fileDeleteNow?: (uri: string) => unknown } | undefined;
+    if (!files || !installer || typeof bridge?.fileDirectories !== 'function' || typeof bridge.fileDeleteNow !== 'function') return null;
+    const text = bridge.fileDirectories();
+    if (text.startsWith(NATIVE_ERROR)) throw new Error(text.slice(NATIVE_ERROR.length));
+    const deleteNow = (uri: string) => {
+        const answer = bridge.fileDeleteNow!(uri);
+        if (typeof answer === 'string' && answer.startsWith(NATIVE_ERROR)) throw new Error(answer.slice(NATIVE_ERROR.length));
+    };
+    return { files, installer, directories: JSON.parse(text) as { document: string; cache: string }, deleteNow };
+};
+
+export const createNativeAttachments = (bindings: NativeAttachmentBindings, channels: NativeFileChannels) => {
     const call = channels.files;
     const { directories } = channels;
     // QuickJS has no WebCrypto: core's attachment hashes (upload snapshots, download checks) go to the host, off the engine
@@ -81,6 +95,15 @@ export const createNativeAttachments = (bindings: NativeAttachmentBindings, chan
         copy: async (from, to) => { await call({ op: 'copy', uri: from, to }); },
         move: async (from, to) => { await call({ op: 'move', uri: from, to }); },
         delete: async (uri) => { await call({ op: 'delete', uri }); },
+        // A managed copy's delete (core's deleteManagedAttachmentFile): the files thread first finishes every call made before it
+        // (`barrier`), then this engine turn asks keep() over the store as it is now and deletes at once, so a sync or command
+        // that restored the attachment meanwhile (they run on this thread too) keeps its bytes (review finding 1).
+        deleteUnlessKept: async (uri, keep) => {
+            await call({ op: 'barrier' });
+            if (keep()) return false;
+            channels.deleteNow(uri);
+            return true;
+        },
         // Storage Access Framework folders come with File Sync (S5).
         saf: () => null,
         // A file's SHA-256 streamed by the host, so an upload snapshot or a content check never reads the file into the engine.

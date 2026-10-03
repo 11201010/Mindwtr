@@ -210,6 +210,7 @@ export const hostDevice = async ({ bundle, name, log = () => {}, filesRoot }) =>
         fileDirectories: () => JSON.stringify({ document: `file://${files.dir}/`, cache: `file://${files.cache}/` }),
         fileCall: (json) => files.answer(json, files.call),
         installerCall: (json) => files.answer(json, files.install),
+        fileDeleteNow: (uri) => { rmSync(files.path(uri), { recursive: true, force: true }); return null; },
         ioNext: () => {
             const next = answers.shift();
             taken = next?.body ?? '';
@@ -230,6 +231,7 @@ export const hostDevice = async ({ bundle, name, log = () => {}, filesRoot }) =>
         missing: () => Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }),
         call: (request, bytes) => {
             if (request.op === 'sha256') return { value: createHash('sha256').update(bytes ?? Buffer.alloc(0)).digest('hex') };
+            if (request.op === 'barrier') return { value: null };
             const path = files.path(request.uri);
             switch (request.op) {
                 case 'sha256File': if (!existsSync(path)) throw files.missing(); return { value: createHash('sha256').update(readFileSync(path)).digest('hex') };
