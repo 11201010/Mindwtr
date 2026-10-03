@@ -111,6 +111,15 @@ const enqueue = (name, text) => {
     if (runAs(`cat ${QUEUE}/${name}.tmp 2>/dev/null || true`) !== text) fail(`the queue file ${name}.tmp was not written`);
     runAs(`mv ${QUEUE}/${name}.tmp ${QUEUE}/${name}.json`);
 };
+/**
+ * One queue item written in place, not renamed in: the running app watches the queue folder for renamed items only (pass W1),
+ * so this one waits for a drain the check starts itself.
+ */
+const enqueueUnseen = (name, text) => {
+    const bytes = Buffer.from(text, 'utf8').toString('base64');
+    runAs(`mkdir -p ${QUEUE} && echo ${bytes} | base64 -d > ${QUEUE}/${name}.json`);
+    if (runAs(`cat ${QUEUE}/${name}.json 2>/dev/null || true`) !== text) fail(`the queue file ${name}.json was not written`);
+};
 const journal = () => runAs('ls files/journal 2>/dev/null || true').split(/\s+/).filter((name) => /^\d{16}\.json$/.test(name))
     .map((name) => JSON.parse(runAs(`cat files/journal/${name}`)));
 const storedToken = () => {
@@ -522,7 +531,8 @@ try {
         const id = randomUUID();
         beginStep();
         const [jobsBefore, postedBefore, replaysBefore, retriesBefore] = [0, 0, 0, 0];
-        enqueue(id, JSON.stringify({ kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
+        // Unseen: a drain of its own would remove the file before the folder is made read-only.
+        enqueueUnseen(id, JSON.stringify({ kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
         lockQueue();
         try {
             contextTrigger('ACTIVATE_CONTEXT', context);
