@@ -893,6 +893,10 @@ const scenarioAlarms = async () => {
     `], { env: { ...process.env, CHECK_DB: db } });
     pushPrivate(db, DB);
     runAs(`rm -f ${DB}-wal ${DB}-shm`);
+    // RN's start may apply its AsyncStorage JSON backup over SQLite (its startup snapshot): the backup gets the same switch.
+    if (asyncStorage('7-backup').has(JSON_BACKUP)) {
+        rewriteAsyncStorage('7-backup-on', `UPDATE catalystLocalStorage SET value = json_set(value, '$.settings.notificationsEnabled', json('true')) WHERE key = '${JSON_BACKUP}';`);
+    }
     queue([item]);
     device.launch(RN_ACTIVITY);
     await drained([item], 'the timed capture');
@@ -902,10 +906,12 @@ const scenarioAlarms = async () => {
         console.log(`evidence - due ${dueAt} (${item.title}); this package's alarm lines:\n${sh('dumpsys alarm').split('\n').filter((line) => line.includes(PKG) || /origWhen/.test(line)).slice(0, 30).join('\n')}`);
         console.log(`evidence - RN's map: ${asyncStorage('7-evidence').get('mindwtr:local:alarms:v1')}`);
         console.log(`evidence - RN's task: ${JSON.stringify(rows(pullDatabase('7-evidence'), `SELECT title, dueDate, status FROM tasks WHERE id = '${item.id}'`))}`);
+        console.log(`evidence - RN's reminders switch: ${JSON.stringify(rows(pullDatabase('7-evidence-settings'), "SELECT json_extract(data, '$.notificationsEnabled') AS on_ FROM settings WHERE id = 1"))}`);
         throw error;
     }
     await killWithoutStop();
     const before = packageAlarms();
+    console.log(`info - this package's alarms before the upgrade: ${JSON.stringify(before.map(({ rn, native, at }) => ({ rn, native, at })))}; due ${dueAt}`);
     const rnMap = JSON.parse(asyncStorage('7-rn').get('mindwtr:local:alarms:v1') ?? '{}');
     check(before.filter((alarm) => alarm.rn && rnMinute(alarm) === dueAt).length === 1 && !before.some((alarm) => alarm.native),
         `(7) before: RN holds one alarm for ${title} at its due time, to its library's AlarmReceiver; the native app none`);
