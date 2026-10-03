@@ -55,8 +55,8 @@ final class CoreHostTests: XCTestCase {
         return try XCTUnwrap(rows?.first)
     }
 
-    private func seedDestinationTask() async throws -> String {
-        let writer = host()
+    private func seedDestinationTask(bundleURL: URL? = nil) async throws -> String {
+        let writer = host(bundleURL: bundleURL)
         _ = try await writer.start()
         let id = UUID().uuidString.lowercased()
         _ = try await writer.call("captureSubmit", argumentsJSON: capture(writer, title: "Destination task", id: id))
@@ -3817,7 +3817,9 @@ final class CoreHostTests: XCTestCase {
     }
 
     func testHistoryAndDoneGroupedPagesAreaAndTokenReadsWithoutWrites() async throws {
-        let initializer = host()
+        // Keep this paging fixture before its seven-day auto-archive cutoff.
+        let fixtureBundle = try dateBundle(at: "2026-09-27T12:00:00.000Z")
+        let initializer = host(bundleURL: fixtureBundle)
         _ = try await initializer.start()
         await initializer.close()
         let sqlite = try SQLiteBridge(url: database)
@@ -3838,7 +3840,7 @@ final class CoreHostTests: XCTestCase {
         _ = try sqlite.execute("UPDATE settings SET data = ? WHERE id = 1", parametersJSON: json([json(settings)]))
         sqlite.close()
         let faults = HostIOFaults()
-        let core = host(faults)
+        let core = host(faults, bundleURL: fixtureBundle)
         _ = try await core.start()
         var statements = 0
         var journalWrites = 0
@@ -25465,8 +25467,8 @@ final class CoreHostTests: XCTestCase {
         await recovered.close()
     }
 
-    private func seedProjectDuplicateSource() async throws -> String {
-        let taskID = try await seedDestinationTask()
+    private func seedProjectDuplicateSource(bundleURL: URL? = nil) async throws -> String {
+        let taskID = try await seedDestinationTask(bundleURL: bundleURL)
         let sqlite = try SQLiteBridge(url: database)
         // The older destination fixture predates these Project defaults; a
         // full-store save writes their canonical values on unrelated rows.
@@ -26820,8 +26822,10 @@ final class CoreHostTests: XCTestCase {
     }
 
     private func seedArchivedTask172(parent: Bool = false) async throws -> String {
-        let id = try await seedProjectDuplicateSource()
         let at = "2026-10-03T12:00:00.000Z"
+        // Capture and the direct fixture update must share a clock, otherwise
+        // normal load repairs updatedAt < createdAt and invalidates raw CAS.
+        let id = try await seedProjectDuplicateSource(bundleURL: try dateBundle(at: at))
         let sqlite = try SQLiteBridge(url: database)
         defer { sqlite.close() }
         if parent {
@@ -26834,6 +26838,17 @@ final class CoreHostTests: XCTestCase {
         }
         _ = try sqlite.execute("UPDATE tasks SET status = 'archived', archivedAt = ?, completedAt = ?, updatedAt = ?, projectArchivedAt = ?, statusBeforeProjectArchive = ? WHERE id = ?",
                                parametersJSON: json([at, at, at, parent ? at as Any : NSNull(), parent ? "next" as Any : NSNull(), id]))
+        // The writer is Oct4 noon and receipt replay is one hour later; keep
+        // unrelated daily tombstone cleanup outside this strict no-write oracle.
+        let settingsRows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sqlite.execute("SELECT data FROM settings WHERE id = 1").utf8)) as? [[String: Any]])
+        var settings = try object(XCTUnwrap(settingsRows.first?["data"] as? String))
+        var migrations = settings["migrations"] as? [String: Any] ?? [:]
+        migrations["lastTombstoneCleanupAt"] = "2026-10-04T12:00:00.000Z"
+        settings["migrations"] = migrations
+        _ = try sqlite.execute("UPDATE settings SET data = ? WHERE id = 1", parametersJSON: json([json(settings)]))
+        let source = try storedTask(id)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(source["createdAt"] as? String),
+                                 try XCTUnwrap(source["updatedAt"] as? String))
         return id
     }
 
@@ -29225,10 +29240,10 @@ final class CoreHostTests: XCTestCase {
     private let archive180Clock = "2026-10-04T12:00:00.000Z"
 
     private func seedArchiveTasks180() async throws -> [String] {
-        let id = try await seedProjectDuplicateSource()
+        let at = "2026-10-03T12:00:00.000Z"
+        let id = try await seedProjectDuplicateSource(bundleURL: try dateBundle(at: at))
         let sqlite = try SQLiteBridge(url: database)
         defer { sqlite.close() }
-        let at = "2026-10-03T12:00:00.000Z"
         for parent in ["destination-project-a", "destination-project-b"] {
             _ = try sqlite.execute("UPDATE projects SET status = 'archived', archivedAt = ?, updatedAt = ? WHERE id = ?",
                                    parametersJSON: json([at, at, parent]))
@@ -29263,7 +29278,15 @@ final class CoreHostTests: XCTestCase {
         var gtd = settings["gtd"] as? [String: Any] ?? [:]
         gtd["autoArchiveDays"] = 0
         settings["gtd"] = gtd
+        // Receipt/replay tests advance only one hour beyond archive180Clock;
+        // unrelated daily tombstone cleanup must not alter their boot oracle.
+        var migrations = settings["migrations"] as? [String: Any] ?? [:]
+        migrations["lastTombstoneCleanupAt"] = archive180Clock
+        settings["migrations"] = migrations
         _ = try sqlite.execute("UPDATE settings SET data = ? WHERE id = 1", parametersJSON: json([json(settings)]))
+        let source = try storedTask(id)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(source["createdAt"] as? String),
+                                 try XCTUnwrap(source["updatedAt"] as? String))
         return [id, id + "-cancelled", id + "-other-parent"]
     }
 
