@@ -698,7 +698,7 @@ class CoreHost(
         pumpAt = Long.MAX_VALUE
         val engine = context ?: return
         if (stopped != null) return
-        runCatching { global(engine, "__pumpTimers").call() }.onFailure { Log.w(TAG, "Native Android idle pump failed", it) }
+        runCatching { global(engine, "__pumpTimers").call() }.onFailure { Log.w(TAG, "Native Android idle pump failed error=${it.javaClass.simpleName}") }
         settleWatched()
         schedulePump()
     }

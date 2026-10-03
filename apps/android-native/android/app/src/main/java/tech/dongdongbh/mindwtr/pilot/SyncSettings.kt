@@ -200,7 +200,7 @@ class SyncSettingsModel(private val menu: MenuModel) {
         preferencesOpen = false
         snapshotsOpen = false
         val runtime = shell.coreHost() ?: return
-        visits.execute { runCatching { runtime.syncCommand("closeSyncSettings", "{}") }.onFailure { Log.w(CoreHost.TAG, "Sync screen close failed", it) } }
+        visits.execute { runCatching { runtime.syncCommand("closeSyncSettings", "{}") }.onFailure { Log.w(CoreHost.TAG, "Sync screen close failed ${failureForLog(it)}") } }
     }
 
     // ---- Commands: each tap sends core's command with a new request UUID ----

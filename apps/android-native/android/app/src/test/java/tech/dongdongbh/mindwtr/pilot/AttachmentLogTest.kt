@@ -27,4 +27,12 @@ class AttachmentLogTest {
         assertEquals("other", attachmentCodeForLog("could not open https://alice:secret@example.test/a"))
         assertEquals("other", attachmentCodeForLog(null))
     }
+
+    @Test fun aFailureLogsItsClassAndCoresCodeNeverItsText() {
+        val failure = IllegalStateException("SAVE_FAILED: could not read content://alice:secret@provider.test/document?token=secret")
+        val line = failureForLog(failure)
+        assertEquals("error=IllegalStateException code=SAVE_FAILED", line)
+        val plain = failureForLog(java.io.IOException("Network request failed: https://alice:secret@dav.test/data.json"))
+        for (secret in listOf("alice", "secret", "dav.test", "https", "token")) assertFalse(plain, plain.contains(secret))
+    }
 }

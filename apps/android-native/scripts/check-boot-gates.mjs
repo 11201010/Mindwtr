@@ -3986,6 +3986,23 @@ for (const file of ['device.mjs', 'check-net-device.mjs']) {
 }
 console.log('Entry points: RN\'s alias, links on the build\'s scheme, text shares and Assistant notes read as strings into core\'s resolveNativeEntryPoint, RN\'s shortcuts from RN\'s builder, Import .txt through core');
 console.log('Runner: CoreWork on the one host after the app\'s boot order, the queue drain after the journal replay, the queue\'s file and RKStorage ports, RN\'s capture intent and context receivers under RN\'s names, RN\'s capture intent Kotlin compiled in, the token only in Kotlin');
+// Review finding 3 (A2): a failure on a path that can carry a URI (attachments, links, sync, the shared log, core actions) is logged
+// by its class and core's code (failureForLog, attachmentLaunchLog), never with its message or stack, which can hold a credential URI.
+{
+    const pilot = resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot');
+    // A Log call whose last argument, after its message string, is the throwable itself.
+    const rawThrowable = /Log\.[weid]\([^\n]*"\s*,\s*(it|failure|error|e|t)\)/;
+    for (const file of ['Attachments.kt', 'SyncSettings.kt', 'SettingsModel.kt', 'AISettings.kt']) {
+        assert.doesNotMatch(readFileSync(resolve(pilot, file), 'utf8'), rawThrowable, `${file} logs no raw throwable`);
+    }
+    const lines = (file) => readFileSync(resolve(pilot, file), 'utf8').split('\n');
+    for (const [file, events] of [['InboxViewModel.kt', ['Core action failed', 'Editor draft not restored']],
+        ['ProcessCoreHost.kt', ['install recovery failed', 'sync start failed', 'sync app state failed']]]) {
+        for (const line of lines(file).filter((text) => events.some((event) => text.includes(event)))) {
+            assert.doesNotMatch(line, rawThrowable, `${file}: ${line.trim()}`);
+        }
+    }
+}
 // Review finding 2 (A2): a project file command whose copy hangs (a stalled document provider) ends at its deadline. The host's
 // cancel rejects every open file call and asks the host to abort it (HostIo.fileAbort), so the operation drains and the host never
 // stops; the call's late answer settles nothing.

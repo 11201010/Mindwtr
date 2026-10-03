@@ -325,7 +325,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 // The editor open at process death: core's model read again, the saved draft on top.
                 val restored = savedDraft?.let { draft ->
                     runCatching { withView(runtime, TaskEditor.restore(readEditor(runtime, draft.getString("id")), draft)) }
-                        .onFailure { Log.w(CoreHost.TAG, "Editor draft not restored", it) }.getOrNull()
+                        .onFailure { Log.w(CoreHost.TAG, "Editor draft not restored ${failureForLog(it)}") }.getOrNull()
                 }
                 ui {
                     host = runtime; showLists(lists, ++issued); writable = true; loading = false
@@ -1794,7 +1794,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val runtime = host ?: return
         Thread({
             runCatching { work(runtime) }.onFailure { failure ->
-                Log.e(CoreHost.TAG, "Core action failed action=anyTime", failure)
+                Log.e(CoreHost.TAG, "Core action failed action=anyTime ${failureForLog(failure)}")
                 ui { failed(failure) }
             }
         }, "mindwtr-any-time").start()
@@ -1812,7 +1812,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val mine = ++issued
         Thread({
             val result = runCatching { read(runtime) }
-            result.exceptionOrNull()?.let { Log.e(CoreHost.TAG, "Core action failed action=background", it) }
+            result.exceptionOrNull()?.let { Log.e(CoreHost.TAG, "Core action failed action=background ${failureForLog(it)}") }
             ui {
                 // A failure is shown only if it is still the newest read of one of its lists.
                 if (result.isFailure && parts.map { fresh(mine, it) }.none { it }) return@ui
@@ -1870,7 +1870,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 val failed = if ((action != null && !refused) || message.startsWith("SAVE_FAILED")) {
                     action ?: FailedAction("storage", "")
                 } else null
-                Log.e(CoreHost.TAG, "Core action failed action=${action?.kind ?: "read"} lock=${failed?.kind ?: "none"}", failure)
+                Log.e(CoreHost.TAG, "Core action failed action=${action?.kind ?: "read"} lock=${failed?.kind ?: "none"} ${failureForLog(failure)}")
                 // Recorded before the UI update so a screen opening now still finds it.
                 if (failed != null) {
                     ProcessCoreHost.recordFailure(ProcessCoreHost.PendingFailure(failed, message, menu.page, editor, screen, focus, projects, project, areaFilter))

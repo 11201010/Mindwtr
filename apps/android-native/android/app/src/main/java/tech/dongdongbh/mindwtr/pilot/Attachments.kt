@@ -424,6 +424,12 @@ internal fun attachmentUriForLog(uri: String?): String {
 internal fun attachmentCodeForLog(message: String?): String =
     message?.substringBefore(':')?.trim()?.takeIf { Regex("[A-Z][A-Z0-9_]{1,40}").matches(it) } ?: "other"
 
+/**
+ * A failure as a log line holds it on a path that can carry a URI (attachments, links, sync, the shared log): its class and core's
+ * code, never its message or stack, which can hold a URI with a user name, a password or a token.
+ */
+internal fun failureForLog(failure: Throwable): String = "error=${failure.javaClass.simpleName} code=${attachmentCodeForLog(failure.message)}"
+
 /** A failed launch's log line: the event, the URI as [attachmentUriForLog] names it, and the failure's class. Never its message, which
  * Android 7 fills with the Intent's URI. */
 internal fun attachmentLaunchLog(kind: String, uri: String?, failure: Throwable): String {

@@ -184,7 +184,7 @@ internal object ProcessCoreHost {
                 if (found.isNotEmpty()) Log.i(CoreHost.TAG, "Native Android install recovery " +
                     found.groupingBy { it.outcome }.eachCount().entries.joinToString(" ") { "${it.key}=${it.value}" })
             }
-            .onFailure { Log.w(CoreHost.TAG, "Native Android install recovery failed", it) }
+            .onFailure { Log.w(CoreHost.TAG, "Native Android install recovery failed ${failureForLog(it)}") }
     }
 
     // ---- Sync (bundle/host-sync.ts: core's service and triggers decide every cycle) ----
@@ -230,7 +230,7 @@ internal object ProcessCoreHost {
             // Resumed or paused while the triggers started.
             appState.takeIf { it != startedWith }?.let { now -> syncThread.execute { runCatching { runtime.syncAppState(now) } } }
             Log.i(CoreHost.TAG, "Native Android sync started appState=$appState")
-        }.onFailure { Log.w(CoreHost.TAG, "Native Android sync start failed", it) }
+        }.onFailure { Log.w(CoreHost.TAG, "Native Android sync start failed ${failureForLog(it)}") }
     }
 
     /**
@@ -251,7 +251,7 @@ internal object ProcessCoreHost {
         if (state == appState) return
         appState = state
         val runtime = syncHost ?: return
-        syncThread.execute { runCatching { runtime.syncAppState(state) }.onFailure { Log.w(CoreHost.TAG, "Native Android sync app state failed", it) } }
+        syncThread.execute { runCatching { runtime.syncAppState(state) }.onFailure { Log.w(CoreHost.TAG, "Native Android sync app state failed ${failureForLog(it)}") } }
     }
 
     /**
