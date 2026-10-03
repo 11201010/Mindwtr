@@ -750,6 +750,7 @@ export const useTaskStore = createWithEqualityFn<TaskStore>()(subscribeWithSelec
             get,
             debouncedSave,
             flushPendingSave,
+            getSaveGeneration: () => pendingVersion,
         }),
     });
 }));
