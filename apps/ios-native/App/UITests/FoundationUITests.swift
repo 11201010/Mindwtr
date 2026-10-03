@@ -20878,7 +20878,7 @@ extension FoundationUITests {
         XCTAssertFalse(app.buttons["task-completion-undo"].exists); XCTAssertFalse(app.buttons["task-editor-save"].exists); app.terminate()
     }
 
-    func testTask191ReferenceProjectNextActionNormal() { task191ActionsFlow("a7e6e530-a20e-4273-9e5a-67f0de10f215") }
+    func testTask191ReferenceProjectNextActionNormal() { task191ActionsFlow("ea0d0484-3f08-41cf-ba3b-aa20dc04276b") }
     func testTask191ReferenceProjectNextActionLargest() { task191ActionsFlow("1bbfa8fb-5762-4dbc-8e21-2ec52ea9262e") }
 
     func testTask191ReferenceProjectNextActionArabicLayout() {
