@@ -27,6 +27,8 @@ import {
 } from './sync-crypto';
 import {
     SyncEncryptionRemoteConflictError,
+    SyncEncryptionBackendIncompatibleError,
+    SyncEncryptionRemoteVersionUnavailableError,
     SyncEncryptionTerminalError,
     decryptRemoteArtifactOrThrow,
     reaffirmRemoteEncryptionNoKey,
@@ -76,6 +78,7 @@ import {
 import type { AppData } from './types';
 import { parseWebdavAttachmentInventory, type WebdavXmlParser } from './webdav-attachment-inventory';
 import {
+    assertWebdavStrongEtagSupport,
     webdavDeleteFileVersioned,
     webdavGetFileVersioned,
     webdavMakeDirectory,
@@ -787,10 +790,20 @@ export const createSyncEncryptionService = <Lease>(deps: SyncEncryptionServiceDe
         const listAttachmentKeys = () => listWebdavAttachmentKeys(baseSyncUrl, requestOptions);
         let referencedAttachmentKeys: string[] = [];
         return {
-            acquireRemoteMutationFence: () => acquireSyncRemoteMutationFence(
-                createWebdavSyncRemoteMutationFencePort(urlFor(SYNC_FILE_NAME), requestOptions),
-                TRANSITION_FENCE_OPTIONS,
-            ),
+            acquireRemoteMutationFence: async () => {
+                // The fence is a versioned write like every transition write: a server without strong ETags is refused
+                // here, before the fence file is written (it could never be read back or removed there).
+                try {
+                    await assertWebdavStrongEtagSupport(urlFor(SYNC_FILE_NAME), requestOptions);
+                } catch (error) {
+                    if (error instanceof SyncEncryptionRemoteVersionUnavailableError) throw new SyncEncryptionBackendIncompatibleError(error);
+                    throw error;
+                }
+                return acquireSyncRemoteMutationFence(
+                    createWebdavSyncRemoteMutationFencePort(urlFor(SYNC_FILE_NAME), requestOptions),
+                    TRANSITION_FENCE_OPTIONS,
+                );
+            },
             list: () => listTransitionEntries(listAttachmentKeys, referencedAttachmentKeys),
             captureInventory: async (recoveryPassphrase) => {
                 const inventory = await captureTransitionInventory(read, listAttachmentKeys, recoveryPassphrase);

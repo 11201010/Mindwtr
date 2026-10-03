@@ -50,7 +50,7 @@ import {
   syncEncryptionKeyCache,
   syncEncryptionLocalState,
 } from './sync-encryption-state';
-import { __syncEncryptionServiceTestUtils } from './sync-encryption-service';
+import { __syncEncryptionServiceTestUtils, enableSyncEncryption } from './sync-encryption-service';
 import { __resetSecureSecretStoreForTests } from './secure-secret-store';
 import { classifySyncFailure } from './sync-service-utils';
 import { SyncEncryptionNoKeyError, SyncEncryptionStateUnavailableError } from './sync-encryption-state';
@@ -494,6 +494,33 @@ describe('WebDAV remote port error boundaries', () => {
     expect(syncEncryptionLocalState.read()).toBeNull();
     await expect(syncEncryptionKeyCache.getKey()).resolves.toBeNull();
     expect(fetcher.mock.calls.every(([, init]) => ['GET', 'PROPFIND'].includes(init?.method ?? 'GET'))).toBe(true);
+  });
+
+  // A server without strong ETags must be refused as the transition's own check refuses it, before the remote mutation fence
+  // is written: the fence's read-back has no version there, so it failed as "fence lost" (the card's "safe to try again"),
+  // and the fence file it wrote stayed on the server.
+  it.each([
+    ['missing', undefined],
+    ['weak', 'W/"v1"'],
+  ] as const)('refuses Enable for a %s ETag before the mutation fence or any write', async (_case, etag) => {
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (method === 'PROPFIND') {
+        return new Response(davMultistatusXml(davResponseXml(url, { collection: true })), { status: 207 });
+      }
+      if (method !== 'GET') throw new Error('transition attempted an unsafe write');
+      if (!url.endsWith('/data.json')) return new Response(null, { status: 404, headers: { date: 'Tue, 27 Aug 2026 12:00:00 GMT' } });
+      return new Response(new TextEncoder().encode('{"tasks":[]}'), { status: 200, headers: etag ? { etag } : undefined });
+    });
+    vi.stubGlobal('fetch', fetcher);
+    asyncStorage.set('@mindwtr_sync_backend', 'webdav');
+    asyncStorage.set('@mindwtr_webdav_url', 'https://dav.example.com/mindwtr');
+
+    const refused = await enableSyncEncryption(PASSPHRASE).then(() => null, (error: unknown) => error);
+    expect(refused).toBeInstanceOf(SyncEncryptionRemoteVersionUnavailableError);
+    expect(String((refused as Error).message)).toMatch(/^SYNC_ENCRYPTION_BACKEND_INCOMPATIBLE: /);
+    expect(fetcher.mock.calls.every(([, init]) => ['GET', 'PROPFIND'].includes(init?.method ?? 'GET'))).toBe(true);
+    expect(fetcher.mock.calls.some(([url]) => String(url).includes(SYNC_REMOTE_MUTATION_FENCE_NAME))).toBe(false);
   });
 });
 

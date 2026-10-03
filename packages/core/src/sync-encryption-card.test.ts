@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createSyncEncryptionCard, type SyncEncryptionCardHost } from './sync-encryption-card';
+import { createSyncEncryptionCard, getSyncEncryptionCardMessages, type SyncEncryptionCardHost } from './sync-encryption-card';
+import { SyncEncryptionBackendIncompatibleError, SyncEncryptionRemoteVersionUnavailableError } from './sync-encryption';
 import { SyncEncryptionCleanupDeferredError, isSyncEncryptionCleanupDeferredError } from './sync-encryption-service';
 
 function setup(overrides: Partial<SyncEncryptionCardHost> = {}) {
@@ -74,5 +75,26 @@ describe('sync encryption card', () => {
         const failing = setup({ getStatus: async () => { throw new Error('unreadable'); } });
         await failing.card.refresh().done;
         expect(failing.card.getState()).toMatchObject({ state: null, stateUnavailable: true });
+    });
+
+    it('names a server without strong ETags as incompatible when it is refused before anything changed', async () => {
+        const { card } = setup({
+            enable: async () => { throw new SyncEncryptionBackendIncompatibleError(new SyncEncryptionRemoteVersionUnavailableError('WebDAV data.json')); },
+        });
+        await card.refresh().done;
+        card.openFlow('enable');
+        card.setField('next', 'p');
+        card.setField('confirm', 'p');
+        await card.submitEnable();
+        expect(card.getState()).toMatchObject({ state: 'off', flow: 'enable', error: 'backend-incompatible', busy: false });
+        expect(getSyncEncryptionCardMessages(card.getState(), (key) => key).errorMessage).toBe('settings.syncEncryptionErrorBackendIncompatible');
+        // A version lost mid-transition still reads as an incomplete change, as before.
+        const midway = setup({ enable: async () => { throw new SyncEncryptionRemoteVersionUnavailableError('data.json.enc'); } });
+        await midway.card.refresh().done;
+        midway.card.openFlow('enable');
+        midway.card.setField('next', 'p');
+        midway.card.setField('confirm', 'p');
+        await midway.card.submitEnable();
+        expect(midway.card.getState().error).toBe('transition-incomplete');
     });
 });

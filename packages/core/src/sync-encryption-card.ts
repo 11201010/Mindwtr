@@ -13,6 +13,7 @@
 import { generateDicewarePassphrase } from './diceware';
 import type { AppData } from './types';
 import {
+    SYNC_ENCRYPTION_BACKEND_INCOMPATIBLE,
     isSyncEncryptionRemoteVersionUnavailableError,
     type SyncEncryptionState,
     type SyncEncryptionStatus,
@@ -29,6 +30,7 @@ export type SyncEncryptionCardError =
     | 'wrong-passphrase'
     | 'rotation-first'
     | 'backend-required'
+    | 'backend-incompatible'
     | 'transition-incomplete'
     | 'generic';
 
@@ -92,27 +94,26 @@ export const classifySyncEncryptionCardFailure = (error: unknown, terminal: Sync
     const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
     if (message.includes('SYNC_ENCRYPTION_BACKEND_REQUIRED')) return 'backend-required';
     if (message.includes('SYNC_ENCRYPTION_TRANSITION_INCOMPLETE')) return 'transition-incomplete';
+    if (message.includes(SYNC_ENCRYPTION_BACKEND_INCOMPATIBLE)) return 'backend-incompatible';
     if (isSyncEncryptionRemoteVersionUnavailableError(error)) return 'transition-incomplete';
     if (/MWENC1|SYNC_ENCRYPTION|passphrase/i.test(message)) return terminal;
     return 'generic';
 };
 
+const SYNC_ENCRYPTION_CARD_ERROR_KEYS: Record<SyncEncryptionCardError, string> = {
+    mismatch: 'settings.syncEncryptionErrorMismatch',
+    'wrong-passphrase': 'settings.syncEncryptionErrorWrongPassphrase',
+    'rotation-first': 'settings.syncEncryptionErrorRotationFirst',
+    'backend-required': 'settings.syncEncryptionErrorBackendRequired',
+    'backend-incompatible': 'settings.syncEncryptionErrorBackendIncompatible',
+    'transition-incomplete': 'settings.syncEncryptionErrorTransitionIncomplete',
+    generic: 'settings.syncEncryptionErrorGeneric',
+};
+
 /** The card's error, progress and warning lines for its state. */
 export const getSyncEncryptionCardMessages = (card: Pick<SyncEncryptionCardState, 'error' | 'progress' | 'warning'>, t: Translate) => {
     const { error, progress, warning } = card;
-    const errorMessage = error === 'mismatch'
-        ? t('settings.syncEncryptionErrorMismatch')
-        : error === 'wrong-passphrase'
-            ? t('settings.syncEncryptionErrorWrongPassphrase')
-            : error === 'rotation-first'
-                ? t('settings.syncEncryptionErrorRotationFirst')
-                : error === 'backend-required'
-                    ? t('settings.syncEncryptionErrorBackendRequired')
-                    : error === 'transition-incomplete'
-                        ? t('settings.syncEncryptionErrorTransitionIncomplete')
-                        : error === 'generic'
-                            ? t('settings.syncEncryptionErrorGeneric')
-                            : null;
+    const errorMessage = error ? t(SYNC_ENCRYPTION_CARD_ERROR_KEYS[error]) : null;
     const progressLabel = progress
         ? `${progress.phase === 'attachments'
             ? t('settings.syncEncryptionProgressAttachments')

@@ -237,6 +237,18 @@ export class SyncEncryptionRemoteVersionUnavailableError extends Error {
     }
 }
 
+export const SYNC_ENCRYPTION_BACKEND_INCOMPATIBLE = 'SYNC_ENCRYPTION_BACKEND_INCOMPATIBLE';
+
+/** The sync location's server cannot keep safe versions (no strong ETags or no enforced conditional writes), found before a
+ * transition changed anything: the backend is incompatible, not a change left half done. */
+export class SyncEncryptionBackendIncompatibleError extends SyncEncryptionRemoteVersionUnavailableError {
+    constructor(cause: SyncEncryptionRemoteVersionUnavailableError) {
+        super('');
+        this.message = `${SYNC_ENCRYPTION_BACKEND_INCOMPATIBLE}: ${cause.message}`;
+        this.name = 'SyncEncryptionBackendIncompatibleError';
+    }
+}
+
 export const isSyncEncryptionRemoteVersionUnavailableError = (error: unknown): boolean => (
     error instanceof SyncEncryptionRemoteVersionUnavailableError
     || (error instanceof Error ? error.message : String(error ?? ''))
