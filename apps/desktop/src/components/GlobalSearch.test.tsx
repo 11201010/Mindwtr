@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AREA_FILTER_ALL, buildEntityMap, safeFormatDate, useTaskStore, type Area, type Project, type Task } from '@mindwtr/core';
+import { AREA_FILTER_ALL, buildEntityMap, getStorageAdapter, setStorageAdapter, safeFormatDate, useTaskStore, type Area, type Project, type Task } from '@mindwtr/core';
 import { LanguageProvider } from '../contexts/language-context';
 import { useUiStore } from '../store/ui-store';
 import { GlobalSearch } from './GlobalSearch';
@@ -11,6 +11,7 @@ import { beginNotifyProfile, endNotifyProfile } from '../../../../packages/core/
 
 const initialTaskState = useTaskStore.getState();
 const initialUiState = useUiStore.getState();
+const initialStorageAdapter = getStorageAdapter();
 const originalScrollIntoView = Element.prototype.scrollIntoView;
 const now = '2026-05-03T00:00:00.000Z';
 
@@ -95,6 +96,7 @@ describe('GlobalSearch', () => {
     });
 
     afterEach(() => {
+        setStorageAdapter(initialStorageAdapter);
         if (originalScrollIntoView) {
             Element.prototype.scrollIntoView = originalScrollIntoView;
         } else {
@@ -102,6 +104,35 @@ describe('GlobalSearch', () => {
         }
         vi.useRealTimers();
         useUiStore.setState(initialUiState, true);
+    });
+
+    it.each([
+        { query: '@computer', expected: ['Context match'], usesFts: false },
+        { query: '@upload', expected: [], usesFts: false },
+        { query: 'computer', expected: ['Computer title only', 'Context match'], usesFts: true },
+    ])('routes $query correctly after the search debounce', async ({ query, expected, usesFts }) => {
+        const contextTask: Task = { ...tasks[0], id: 'context-match', title: 'Context match', contexts: ['@computer'] };
+        const computerTask: Task = { ...tasks[0], id: 'computer-title', title: 'Computer title only' };
+        const uploadTask: Task = { ...tasks[0], id: 'upload-title', title: 'Upload title only' };
+        useTaskStore.setState({ _allTasks: [contextTask, computerTask, uploadTask] });
+        const searchAll = vi.fn(async (value: string) => ({
+            tasks: value.includes('upload') ? [uploadTask] : [computerTask, contextTask], projects: [],
+        }));
+        setStorageAdapter({ ...initialStorageAdapter, searchAll });
+        render(<LanguageProvider><GlobalSearch onNavigate={vi.fn()} /></LanguageProvider>);
+        await act(async () => {
+            window.dispatchEvent(new Event('mindwtr:open-search'));
+            await vi.advanceTimersByTimeAsync(50);
+        });
+        fireEvent.change(screen.getByRole('textbox', { name: 'Search' }), { target: { value: query } });
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(200);
+        });
+        const titles = Array.from(screen.getByRole('dialog').querySelectorAll('[data-search-index] .font-medium'))
+            .map((element) => element.textContent);
+        expect(titles).toEqual(expected);
+        if (usesFts) expect(searchAll).toHaveBeenCalledExactlyOnceWith(query);
+        else expect(searchAll).not.toHaveBeenCalled();
     });
 
     // Tripwire for #957: the panel ran past the bottom of a short window with the

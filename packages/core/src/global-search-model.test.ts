@@ -89,6 +89,29 @@ it('reuses an exact saved query and trims a new search', () => {
         .toEqual({ search: { id: 'new', name: 'My home', query: 'Home' }, existing: false });
 });
 
+it.each([
+    '@computer', '#upload', '%Alice',
+    '-@computer', '-#upload', '-%Alice',
+    'report @computer', 'report #upload', 'report %Alice',
+    '@"home office"', '#"client work"', '%"Alice Smith"',
+    '"@home office"', '"#client work"', '"%Alice Smith"',
+])('keeps parsed field query %s out of full-text search', async (query) => {
+    const searchAll = vi.fn().mockResolvedValue({ tasks: [], projects: [] });
+    expect(shouldRequestGlobalSearchFts(query)).toBe(false);
+    expect(await fetchGlobalSearchAdapterResults(query, searchAll)).toBeNull();
+    expect(searchAll).not.toHaveBeenCalled();
+});
+
+it.each(['computer', 'upload report', '"home office"', '@', '#', '%', '-@', '-#', '-%'])(
+    'keeps plain text and bare-prefix query %s eligible for full-text search', async (query) => {
+        const adapterResults = { tasks: [], projects: [] };
+        const searchAll = vi.fn().mockResolvedValue(adapterResults);
+        expect(shouldRequestGlobalSearchFts(query)).toBe(true);
+        expect(await fetchGlobalSearchAdapterResults(query, searchAll)).toBe(adapterResults);
+        expect(searchAll).toHaveBeenCalledExactlyOnceWith(query);
+    },
+);
+
 it('matches the extended HEAD RN fixture for adapter order, presets, scopes, chips, dates, highlights, and the 50-row window', () => {
     const summary = (query: string, patch: Partial<GlobalSearchFilterState> = {}, extra = {}) => {
         const result = computeGlobalSearchResults({ query, tasks: fixture.tasks, projects: fixture.projects,

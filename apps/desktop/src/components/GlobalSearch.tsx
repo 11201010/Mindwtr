@@ -25,6 +25,7 @@ import { shallow,
     taskMatchesAreaFilterSelection,
     projectMatchesAreaFilterSelection, tFallback,
     createSearchHighlighter,
+    shouldRequestGlobalSearchFts,
     } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
 import { cn } from '../lib/utils';
@@ -197,7 +198,7 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
         return () => window.clearTimeout(timer);
     }, [trimmedQuery]);
 
-    const shouldUseFts = debouncedQuery.length > 0 && !/\b\w+:/i.test(debouncedQuery);
+    const shouldUseFts = shouldRequestGlobalSearchFts(debouncedQuery);
 
     useEffect(() => {
         let cancelled = false;

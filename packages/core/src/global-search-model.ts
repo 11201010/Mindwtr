@@ -11,6 +11,7 @@ import { formatI18nTemplate, tFallback, translateWithFallback } from './i18n';
 import { hasTimeComponent } from './date';
 import { isTaskCancelled, isTaskCompleted } from './task-status';
 import { getTaskUrgency } from './task-utils';
+import { parseSearchQuery } from './search';
 
 export type GlobalSearchFilterState = Pick<ComputeGlobalSearchResultsInput,
     'includeCompleted' | 'includeReference' | 'hideFutureTasks' | 'selectedStatuses' | 'selectedArea'
@@ -118,7 +119,9 @@ export const clearGlobalSearchActiveChip = (filters: GlobalSearchFilterState, ke
     return filters;
 };
 
-export const shouldRequestGlobalSearchFts = (query: string): boolean => query.length > 0 && !/\b\w+:/i.test(query);
+export const shouldRequestGlobalSearchFts = (query: string): boolean => query.length > 0
+    && !/\b\w+:/i.test(query)
+    && !parseSearchQuery(query).clauses.some((clause) => clause.terms.some((term) => term.field !== null));
 
 export const fetchGlobalSearchAdapterResults = async (
     query: string,
