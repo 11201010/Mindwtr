@@ -178,6 +178,10 @@ class HostIo(context: Context) {
         val id = (++nextId).toString()
         fileThread.execute {
             answers.add(runCatching {
+                synchronized(fileLock) {
+                    if (abortedFiles.remove(id)) throw IOException("Request cancelled")
+                    runningFile = id
+                }
                 val request = JSONObject(json)
                 val bytes = if (request.has("base64")) Base64.decode(request.getString("base64"), Base64.NO_WRAP) else null
                 request.remove("base64")
@@ -186,10 +190,26 @@ class HostIo(context: Context) {
                 if (reply.bytes == null) Answer(answer.toString())
                 else Answer(answer.put("body", true).toString(), Base64.encodeToString(reply.bytes, Base64.NO_WRAP))
             }.getOrElse { Answer(JSONObject().put("id", id).put("error", it.message ?: it.javaClass.simpleName).toString()) })
+            synchronized(fileLock) { if (runningFile == id) runningFile = null }
             wake()
         }
         open += 1
         return id
+    }
+
+    private val fileLock = Any()
+    /** The file call the files thread runs now, and calls aborted before they started. */
+    private var runningFile: String? = null
+    private val abortedFiles = HashSet<String>()
+    /** Ends the running call's read of a picked document (HostFiles.abortRead); CoreHost sets it. */
+    @Volatile var abortRunningFile: () -> Unit = {}
+
+    /**
+     * A file call whose operation passed its deadline (host-polyfills.js cancel): one not started never runs; the running one has
+     * its document read closed, so a copy stalled on a provider ends and the files thread goes on. Its late answer settles nothing.
+     */
+    fun fileAbort(id: String) = synchronized(fileLock) {
+        if (runningFile == id) abortRunningFile() else abortedFiles.add(id)
     }
 
     fun busy() = open > 0

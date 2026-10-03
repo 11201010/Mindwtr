@@ -121,8 +121,19 @@ class HostFiles(
         if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) throw IOException("Cannot make directory ${dir.name}")
     }
 
-    private fun open(uri: String): InputStream = if (uri.startsWith("content://")) checkNotNull(content) { "No content resolver" }.open(uri)
+    private fun open(uri: String): InputStream = if (uri.startsWith("content://")) checkNotNull(content) { "No content resolver" }.open(uri).also { source = it }
         else local(uri).let { file -> if (file.isFile) file.inputStream() else missing() }
+
+    /** The picked document the running call reads, for [abortRead]. */
+    @Volatile private var source: InputStream? = null
+
+    /**
+     * Closes the picked document the running call reads (HostIo.fileAbort, once the call's operation passed its deadline): a read
+     * stalled on its document provider then ends with an IOException, and the files thread is free for the next call.
+     */
+    fun abortRead() {
+        runCatching { source?.close() }
+    }
 
     /** [length] bytes from [position] (to the end with Long.MAX_VALUE). A read past [maxReadBytes] throws, never answers short. */
     private fun read(uri: String, position: Long, length: Long): ByteArray {

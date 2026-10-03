@@ -211,6 +211,7 @@ export const hostDevice = async ({ bundle, name, log = () => {}, filesRoot }) =>
         fileCall: (json) => files.answer(json, files.call),
         installerCall: (json) => files.answer(json, files.install),
         fileDeleteNow: (uri) => { rmSync(files.path(uri), { recursive: true, force: true }); return null; },
+        fileAbort: () => null,
         ioNext: () => {
             const next = answers.shift();
             taken = next?.body ?? '';

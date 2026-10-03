@@ -234,6 +234,32 @@ class HostFilesTest {
         assertTrue(journal.exists() && attachments().isDirectory)
     }
 
+    /** Review finding 2: a copy stalled on its document provider ends once the call is aborted (core copies into a temporary name). */
+    @Test fun anAbortedReadEndsACopyStalledOnItsProvider() {
+        val stalled = object : java.io.InputStream() {
+            private val gate = java.util.concurrent.CountDownLatch(1)
+            @Volatile private var closed = false
+            override fun read(): Int { gate.await(); if (closed) throw IOException("Stream closed"); return -1 }
+            override fun close() { closed = true; gate.countDown() }
+        }
+        val files = HostFiles(filesDir, cacheDir, syncDirectory = { }, content = object : HostFiles.ContentSource {
+            override fun open(uri: String) = stalled
+            override fun size(uri: String): Long? = null
+        })
+        attachments().mkdirs()
+        val failure = java.util.concurrent.atomic.AtomicReference<Throwable?>()
+        val copy = Thread {
+            runCatching { files.call(JSONObject().put("op", "copy").put("uri", "content://p/d/1").put("to", uri(File(attachments(), "a.pdf"))).toString()) }
+                .onFailure { failure.set(it) }
+        }.apply { start() }
+        Thread.sleep(200)
+        assertTrue("the copy is stalled", copy.isAlive)
+        files.abortRead()
+        copy.join(5_000)
+        assertFalse("the copy ended", copy.isAlive)
+        assertTrue(failure.get() is IOException)
+    }
+
     @Test fun noAttachmentUriLeavesTheAppFolders() {
         val outside = File(folder.root, "outside.txt").apply { writeText("secret") }
         attachments().mkdirs()

@@ -731,7 +731,8 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 30, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls and the attachment file, delete and installer calls: each guarded');
+assert.equal(bridgeCallbacks.length, 31, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls and the attachment file, delete, abort and installer calls: each guarded');
+assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })'));
 // The attachment file port and the installer only start their call on the engine thread; HostIo's files thread runs it.
 assert(bridgeCallbacks.includes('bridge.setProperty("fileCall", guarded { args -> io.file(args[0] as String, files::call) })'));
@@ -785,7 +786,8 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.match(hostIo, /fun close\(\) \{\s*calls\.values\.forEach \{ it\.cancel\(\) \}/);
     assert.match(hostIo, /secretThread\.execute \{\s*answers\.add\(runCatching \{/, 'a secret call runs on the secrets thread');
     // A file call (the attachment file port, the installer) runs on the files thread, its request read there too.
-    assert.match(hostIo, /fileThread\.execute \{\s*answers\.add\(runCatching \{\s*val request = JSONObject\(json\)/, 'a file call runs on the files thread');
+    // An aborted call that has not started never runs (review finding 2).
+    assert.match(hostIo, /fileThread\.execute \{\s*answers\.add\(runCatching \{\s*synchronized\(fileLock\) \{\s*if \(abortedFiles\.remove\(id\)\) throw IOException\("Request cancelled"\)\s*runningFile = id\s*\}\s*val request = JSONObject\(json\)/, 'a file call runs on the files thread');
     assert.equal(hostIo.match(/answers\.add\(/g).length, 4, 'the answer queue is the only way back');
     // A body leaves apart from its answer's JSON (ioBody), and only for the answer just taken.
     assert.match(hostIo, /taken = answer\.body\s+return answer\.json/);
@@ -3984,6 +3986,34 @@ for (const file of ['device.mjs', 'check-net-device.mjs']) {
 }
 console.log('Entry points: RN\'s alias, links on the build\'s scheme, text shares and Assistant notes read as strings into core\'s resolveNativeEntryPoint, RN\'s shortcuts from RN\'s builder, Import .txt through core');
 console.log('Runner: CoreWork on the one host after the app\'s boot order, the queue drain after the journal replay, the queue\'s file and RKStorage ports, RN\'s capture intent and context receivers under RN\'s names, RN\'s capture intent Kotlin compiled in, the token only in Kotlin');
+// Review finding 2 (A2): a project file command whose copy hangs (a stalled document provider) ends at its deadline. The host's
+// cancel rejects every open file call and asks the host to abort it (HostIo.fileAbort), so the operation drains and the host never
+// stops; the call's late answer settles nothing.
+{
+    const aborted = [];
+    const answers = [];
+    let ids = 0;
+    const bridge = {
+        log() {}, nowMs: () => 0,
+        fileCall: () => String(++ids),
+        installerCall: () => String(++ids),
+        fileAbort(id) { aborted.push(id); return null; },
+        ioNext: () => answers.shift() ?? '',
+        ioBody: () => '',
+    };
+    const files = vm.createContext({ console: { info() {} }, Intl: undefined, __mindwtrNative: bridge });
+    vm.runInContext(readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8'), files);
+    const held = vm.runInContext("__mindwtrFileCall({ op: 'copy', uri: 'content://provider/document/1', to: 'file:///data/user/0/app/files/attachments/a.pdf' })", files);
+    const outcome = held.then(() => 'resolved', (error) => `${error.name}: ${error.message}`);
+    files.__cancelHostCalls('The host operation timed out');
+    assert.equal(await outcome, 'AbortError: The host operation timed out', 'a held file call rejects when its operation is cancelled');
+    assert.deepEqual(aborted, ['1'], 'the host is asked to abort the held call');
+    answers.push(JSON.stringify({ id: '1', value: null }));
+    files.__pumpTimers();
+    const refused = await vm.runInContext("__mindwtrFileCall({ op: 'getInfo', uri: 'file:///x' })", files).then(() => 'resolved', (error) => error.name);
+    assert.equal(refused, 'AbortError', 'no new file call starts while the operation drains');
+    files.__resumeHostCalls();
+}
 // Review finding 1 (A2): a managed attachment's delete asks core's keep() in the same engine turn as the delete itself, after every
 // file call queued before it. Here a delete waits behind a held file call while the attachment is restored: the bytes stay.
 {

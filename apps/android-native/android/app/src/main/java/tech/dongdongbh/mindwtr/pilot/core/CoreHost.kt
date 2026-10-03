@@ -168,6 +168,8 @@ class CoreHost(
                 install(engine, database)
                 // A fetch or secret answer queued while no call runs wakes the idle pump, which settles it at once.
                 io.wake = { runCatching { executor.execute { idlePump() } } }
+                // An aborted file call's stalled document read ends (fileAbort).
+                io.abortRunningFile = { files.abortRead() }
                 load(engine, database, bundle)
             })
         }
@@ -331,6 +333,9 @@ class CoreHost(
         bridge.setProperty("installerCall", guarded { args -> io.file(args[0] as String, installer::call) })
         // A managed attachment's delete, at once on this thread: core asked who owns the file in this same turn (host-attachments.ts).
         bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })
+        // A file call whose operation passed its deadline: HostIo ends it (a copy stalled on a document provider), so the operation
+        // drains and the host never stops (host-polyfills.js fileChannel's cancel).
+        bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })
         bridge.setProperty("fileDirectories", guarded { _ ->
             JSONObject().put("document", files.documentDirectory).put("cache", files.cacheDirectory).toString()
         })
