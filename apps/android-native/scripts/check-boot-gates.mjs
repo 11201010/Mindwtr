@@ -884,7 +884,9 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     }
     assert.doesNotMatch(hostIo + secretStore, /quickjs|JSFunction|JSObject|JSCallFunction/i, 'no host call touches the engine');
     assert.match(hostIo, /calls\[id\] = call\s+call\.enqueue\(object : Callback \{/, 'a request runs on OkHttp\'s dispatcher');
-    assert.doesNotMatch(hostIo, /\.execute\(\)|runBlocking|Thread\.sleep/);
+    // The one wait: a debug build's Argon2id delay on the crypto thread (check-encryption-device.mjs taps during it).
+    assert.doesNotMatch(hostIo.replace('if (argon2DelayMs > 0) Thread.sleep(argon2DelayMs).also { started = System.nanoTime() }', ''), /\.execute\(\)|runBlocking|Thread\.sleep/);
+    assert.match(hostIo, /private val argon2DelayMs = debugProperty\("crypto_delay_ms"\)/);
     // Nothing throws on OkHttp's thread, and (review 3) a call stays cancellable until its body is read: it leaves [calls]
     // only after the read, on a failure, or on an abort, so an abort or close after the headers still cancels it.
     assert.match(hostIo, /override fun onResponse\(call: Call, response: Response\) \{[^{}]*?try \{\s*answers\.add\(runCatching \{ response\.use \{ read\(id, it, redirect\) \} \}\.getOrElse \{ failure\(id, call, it\) \}\)\s*\} finally \{\s*calls\.remove\(id\)\s*\}/);
@@ -1186,6 +1188,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // Review S3 4: each backend choice goes, in tap order; only the same choice still pending is dropped.
         assert.match(source('SyncSettings.kt'), /run\("selectSyncBackend", [^\n]*key = "selectSyncBackend:\$option", ordered = choices\)/);
         assert.match(source('SyncSettings.kt'), /if \(!light && !inFlight\.add\(key\)\) return/);
+        // S4b: an encryption submit or decline runs with the passphrase fields core holds, so it starts only after every keystroke
+        // sent before it (the light queue); light actions (Show passphrase) keep answering while it runs.
+        assert.match(source('SyncSettings.kt'), /run\("runSyncEncryptionAction", input, light = !heavy, after = if \(heavy\) SyncSettingsModel\.light else null\)/);
+        assert.match(source('SyncSettings.kt'), /val result = runCatching \{\s+after\?\.submit \{\}\?\.get\(\)\s+runtime\.syncCommand\(name, input\.toString\(\)\)/);
     }
     // Sync's engine work between host calls: a host-call answer wakes the idle pump, and the next timer schedules it; neither
     // runs after the host stopped or closed.

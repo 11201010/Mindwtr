@@ -71,6 +71,8 @@ class HostIo(context: Context) {
      */
     // ponytail: a heap fraction estimates the peak; stream large bodies to a file and hand JS a handle if documents outgrow it.
     private val ceiling = minOf(MAX_SYNC_DOCUMENT_BYTES, Runtime.getRuntime().maxMemory() / 5)
+    /** Debug builds only (check-encryption-device.mjs): each Argon2id waits this long first, so the check can tap during one. */
+    private val argon2DelayMs = debugProperty("crypto_delay_ms").toLongOrNull()?.coerceIn(0, 30_000) ?: 0L
     private val maxResponseBytes = debugProperty("net_max_bytes").toLongOrNull()?.takeIf { it > 0 }?.let { minOf(it, ceiling) } ?: ceiling
     private val secrets = SecretStore(context.applicationContext)
     private val secretThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-secrets") }
@@ -223,8 +225,10 @@ class HostIo(context: Context) {
         val out = when (val op = request.getString("op")) {
             "argon2id" -> {
                 val pass = bytes("pass")
-                val started = System.nanoTime()
+                Log.i(CoreHost.TAG, "Native Android sync crypto argon2id start")
+                var started = System.nanoTime()
                 try {
+                    if (argon2DelayMs > 0) Thread.sleep(argon2DelayMs).also { started = System.nanoTime() }
                     HostCrypto.argon2id(pass, bytes("salt"), request.getInt("m"), request.getInt("t"), request.getInt("p"), request.getInt("dkLen"))
                 } finally {
                     HostCrypto.wipe(pass)

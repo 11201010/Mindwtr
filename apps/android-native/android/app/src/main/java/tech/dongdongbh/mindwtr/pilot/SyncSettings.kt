@@ -50,6 +50,8 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -235,7 +237,9 @@ class SyncSettingsModel(private val menu: MenuModel) {
     fun encryption(action: JSONObject) {
         val type = action.getString("type")
         val input = JSONObject().put("action", action).apply { if (type == "submit" || type == "decline") put("requestId", uuid()) }
-        run("runSyncEncryptionAction", input, light = type != "submit" && type != "decline") { reply ->
+        val heavy = type == "submit" || type == "decline"
+        // A submit runs with the fields core holds: it waits for every keystroke sent before it (the light queue), never overtakes one.
+        run("runSyncEncryptionAction", input, light = !heavy, after = if (heavy) SyncSettingsModel.light else null) { reply ->
             reply.menuText("passphrase")?.let { phrase -> fields = fields + mapOf("next" to phrase, "confirm" to phrase) }
             if (type == "cancel" || type == "submit" || type == "decline") fields = emptyMap()
         }
@@ -260,16 +264,20 @@ class SyncSettingsModel(private val menu: MenuModel) {
 
     /**
      * Sends a screen command off the main thread, in order. A [light] one (a field's text, opening a flow) is not the command
-     * running; the screen reads core's view again after each. [key] names a pending command a repeat tap drops, and an
-     * [ordered] one waits behind the earlier ones sent there.
+     * running; the screen reads core's view again after each. [key] names a pending command a repeat tap drops, an [ordered] one
+     * waits behind the earlier ones sent there, and one sent [after] a queue starts once that queue's earlier work is done (and
+     * leaves the queue free while it runs).
      */
     private fun run(name: String, input: JSONObject, light: Boolean = false, key: String = name, ordered: ExecutorService? = null,
-                    done: (JSONObject) -> Unit = {}) {
+                    after: ExecutorService? = null, done: (JSONObject) -> Unit = {}) {
         val runtime = shell.coreHost() ?: return
         if (!light && !inFlight.add(key)) return
         if (!light) running += 1
         val work = Runnable {
-            val result = runCatching { runtime.syncCommand(name, input.toString()) }
+            val result = runCatching {
+                after?.submit {}?.get()
+                runtime.syncCommand(name, input.toString())
+            }
             shell.ui {
                 if (!light) { inFlight.remove(key); running -= 1 }
                 result.onSuccess { reply -> toasts(name, reply); done(reply) }
@@ -618,7 +626,9 @@ private fun EncryptionCard(sync: SyncSettingsModel, card: JSONObject) {
                 "reveal" -> {
                     val label = row.getString("label")
                     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (divider) Modifier.hairline(c.border, top = true) else Modifier)
-                        .clearAndSetSemantics { contentDescription = label; role = Role.Switch; onClick { sync.encryption(row.getJSONObject("action")); true } }
+                        // RN's switch states whether the passphrase shows (accessibilityState checked).
+                        .clearAndSetSemantics { contentDescription = label; role = Role.Switch; toggleableState = ToggleableState(row.getBoolean("revealed"))
+                            onClick { sync.encryption(row.getJSONObject("action")); true } }
                         .clickable { sync.encryption(row.getJSONObject("action")) }.padding(16.dp)) {
                         Text(label, style = rnText(16, 500, 21), color = c.tint)
                     }
