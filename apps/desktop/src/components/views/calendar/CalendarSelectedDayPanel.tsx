@@ -225,17 +225,20 @@ export function CalendarSelectedDayPanel({ controller }: CalendarSelectedDayPane
                                     : start && end
                                     ? `${safeFormatDate(start, 'p')}-${safeFormatDate(end, 'p')}`
                                     : kind === 'deadline'
-                                        ? t('calendar.deadline')
+                                        ? hasTimeComponent(task.dueDate) && start
+                                            ? `${t('calendar.due')} ${safeFormatDate(start, 'p')}`
+                                            : t('calendar.deadline')
                                         : '';
                                 const isEditing = editingTimeTaskId === task.id;
+                                const draggable = !projected && !(hasTimeComponent(task.dueDate) && (kind === 'deadline' || !hasTimeComponent(task.startTime)));
 
                                 return (
                                     <div
                                         key={id}
                                         data-task-id={task.id}
-                                        draggable={!projected}
+                                        draggable={draggable}
                                         onDragStart={(event) => {
-                                            if (!projected) handleTaskDragStart(event, task.id, kind);
+                                            if (draggable) handleTaskDragStart(event, task.id, kind);
                                         }}
                                         className={cn(
                                             "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted/50",

@@ -381,7 +381,9 @@ export async function replayCalendarScenario(options: {
                 if (details.empty) text(details.empty);
             }
         } else if (content.mode === 'week') {
-            const compact = weekColumnsCompact(content.visibleDays);
+            // Deadline weeks use scrollable, readable columns (at least 260pt).
+            const hasDeadlineMarkers = entries.some((entry) => entry.type === 'item' && entry.lane === 'deadlineMarker');
+            const compact = !hasDeadlineMarkers && weekColumnsCompact(content.visibleDays);
             for (const day of days) {
                 press({ press: async () => { state = day.opens!; await setViewMode('day'); } }, [day.weekday, day.dayNumber]);
             }
@@ -395,6 +397,7 @@ export async function replayCalendarScenario(options: {
                 const texts = timed.flatMap((item) => (compact ? [item.title] : [item.title, item.detail ?? '']));
                 drawn.presses.push({ press: async () => { openComposer({ day: day.key, mode: 'new' }); }, texts });
                 for (const item of timed) press({ disabled: !item.pressable, press: itemPress(item) }, compact ? [item.title] : [item.title, item.detail ?? '']);
+                for (const item of byDay(day.key, 'deadlineMarker')) press({ disabled: !item.pressable, press: itemPress(item) }, ['◆', item.title, item.detail ?? '']);
             }
             for (const choice of content.density.choices) {
                 press({ label: choice.label, press: async () => { await run({ type: 'setWeekVisibleDays', days: choice.days }); } }, [String(choice.days)]);
@@ -418,6 +421,7 @@ export async function replayCalendarScenario(options: {
                 text(item.title);
                 if (height >= 44) text(item.detail ?? '');
             }
+            for (const item of byDay(content.dayKey, 'deadlineMarker')) press({ disabled: !item.pressable, press: itemPress(item) }, ['◆', item.title, item.detail ?? '']);
             searchInput();
             if (content.searchTitle) {
                 text(content.searchTitle);

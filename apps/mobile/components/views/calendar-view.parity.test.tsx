@@ -255,6 +255,8 @@ type Scenario = {
   /** How the external calendar answers each fetch, in order (default: always ready). */
   calendar?: ('ready' | 'loading' | 'error' | 'none')[];
   actions: [string, ...unknown[]][];
+  extraTasks?: Task[];
+  settingsOverride?: AppSettings;
 };
 
 const scenarios: Scenario[] = [
@@ -648,11 +650,11 @@ async function runScenario(scenario: Scenario, inspect?: (root: ReactTestInstanc
   harness.fetches.length = 0;
   harness.opened.length = 0;
   harness.fetchPlan = [...(scenario.calendar ?? ['ready'])];
-  const settings = settingsVariants[scenario.settings];
+  const settings = scenario.settingsOverride ?? settingsVariants[scenario.settings];
   configureDateFormatting({
     language: 'en', dateFormat: settings.dateFormat, timeFormat: settings.timeFormat, calendarSystem: settings.calendarSystem, systemLocale: DEVICE_LOCALE,
   });
-  await seedStore(settings, scenarioTasks(scenario));
+  await seedStore(settings, [...scenarioTasks(scenario), ...(scenario.extraTasks ?? [])]);
   let renderer!: ReactTestRenderer;
   await act(async () => { renderer = create(<CalendarView />); });
   await settle();
@@ -732,6 +734,53 @@ describe('React Native Calendar screen parity fixture', () => {
       const row = findPressable(root, 'Filed taxes');
       expect(row?.props.disabled).toBe(true);
       expect(row?.props.accessibilityRole).not.toBe('button');
+    });
+  });
+
+  it('renders same-day timed deadlines separately and keeps midnight markers', async () => {
+    const sameDay = task('timed-same', 'Timed same day', 'next', { startTime: at('2026-10-28T13:00:00'), dueDate: at('2026-10-28T19:00:00') });
+    const midnight = task('timed-midnight', 'Midnight deadline', 'next', { dueDate: at('2026-10-28T04:00:00') });
+    const nearby = task('timed-nearby', 'Nearby deadline', 'next', { dueDate: at('2026-10-28T19:05:00') });
+    const end = task('timed-end', 'End of day', 'next', { dueDate: at('2026-10-29T03:59:00') });
+    const extraTasks = [sameDay, midnight, nearby, end];
+    for (const mode of ['day', 'week'] as const) {
+      await runScenario({ name: 'timed markers', settings: mode, taskIds: [], extraTasks, actions: [] }, (root) => {
+        const marker = root.findAll((node) => node.props.testID === 'calendar-deadline-timed-same')[0];
+        expect(marker).toBeDefined();
+        expect(deepText(marker)).toContain('3:00 PM · Due');
+        expect(root.findAll((node) => String(node.type) === 'Text' && deepText(node) === 'Timed same day').length).toBeGreaterThanOrEqual(2);
+        expect(root.findAll((node) => node.props.testID === 'calendar-deadline-timed-midnight').length).toBeGreaterThan(0);
+        expect(root.findAll((node) => node.props.testID === 'calendar-deadline-timed-nearby').length).toBeGreaterThan(0);
+        expect(root.findAll((node) => node.props.testID === 'calendar-deadline-timed-end').length).toBeGreaterThan(0);
+        expect(writeLog).toEqual([]);
+      });
+    }
+  });
+
+  it('keeps timed projections read-only and excludes finished deadline markers', async () => {
+    const recurring = task('timed-recurring', 'Recurring deadline', 'next', { dueDate: at('2026-10-21T19:00:00'), recurrence: 'weekly', showFutureRecurrence: true });
+    const done = task('timed-done', 'Finished deadline', 'done', { dueDate: at('2026-10-28T19:00:00'), completedAt: NOW });
+    const cancelled = task('timed-cancelled', 'Cancelled deadline', 'done', { dueDate: at('2026-10-28T19:00:00'), cancelledAt: NOW });
+    await runScenario({ name: 'readonly timed recurrence', settings: 'day', taskIds: [], extraTasks: [recurring, done, cancelled], actions: [] }, (root) => {
+      const projected = root.findAll((node) => String(node.props.testID ?? '').startsWith('calendar-deadline-timed-recurring'));
+      expect(projected.length).toBeGreaterThan(0);
+      expect(projected.every((node) => node.props.disabled)).toBe(true);
+      expect(deepText(projected[0])).toContain('Projected');
+      expect(root.findAll((node) => node.props.testID === 'calendar-deadline-timed-done')).toHaveLength(0);
+      expect(root.findAll((node) => node.props.testID === 'calendar-deadline-timed-cancelled')).toHaveLength(0);
+      expect(writeLog).toEqual([]);
+    });
+  });
+
+  it('opens the task actions from a deadline marker without scheduling it', async () => {
+    const due = task('marker-tap', 'Tap deadline', 'next', { dueDate: at('2026-10-28T19:00:00') });
+    let press: ((event: { stopPropagation: () => void }) => void) | undefined;
+    await runScenario({ name: 'tap marker', settings: 'day', taskIds: [], extraTasks: [due], actions: [] }, (root) => {
+      press = root.findAll((node) => node.props.testID === 'calendar-deadline-marker-tap')[0]?.props.onPress;
+      expect(press).toBeDefined();
+      press!({ stopPropagation() {} });
+      expect(harness.alerts.at(-1)?.title).toBe('Tap deadline');
+      expect(writeLog).toEqual([]);
     });
   });
 

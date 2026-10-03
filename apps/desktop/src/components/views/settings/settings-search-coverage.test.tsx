@@ -9,6 +9,7 @@ import {
     type SettingsSearchPageId,
 } from '@mindwtr/core';
 
+import { en } from '@mindwtr/core/i18n/locales/en';
 import { getEnglishSettingsLabels } from './labels';
 import { SettingsAboutPage } from './SettingsAboutPage';
 import { SettingsAdvancedPage } from './SettingsAdvancedPage';
@@ -71,6 +72,7 @@ function collectRenderedKeys(ui: ReactElement): Set<string> {
 
 const mainProps: Parameters<typeof SettingsMainPage>[0] = {
     t,
+    translate: (key) => en[key] ?? key,
     languages: [{ id: 'en', native: 'English' }],
     themeMode: 'system',
     onThemeChange: noop,

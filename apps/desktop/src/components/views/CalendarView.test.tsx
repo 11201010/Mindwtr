@@ -1197,6 +1197,100 @@ describe('CalendarView', () => {
         expect(screen.queryByText('Deleted project history')).not.toBeInTheDocument();
     });
 
+    it('renders explicit midnight and close due times separately from scheduled duration blocks', async () => {
+        window.history.replaceState(null, '', '/?calendarView=day&calendarDate=2026-04-03');
+        const original = [
+            makeTask({ id: 'midnight-due', title: 'Midnight deadline', dueDate: '2026-04-03T00:00:00' }),
+            makeTask({ id: 'same-day', title: 'Start and due', startTime: '2026-04-03T09:00:00', dueDate: '2026-04-03T09:05:00' }),
+            makeTask({ id: 'near-due', title: 'Close deadline', dueDate: '2026-04-03T09:06:00' }),
+            makeTask({ id: 'date-only', title: 'All-day deadline', dueDate: '2026-04-03' }),
+        ];
+        const snapshot = structuredClone(original);
+        storeMocks.taskStoreState.tasks = original;
+        renderCalendar();
+        await flushCalendarEffects();
+        expect(document.querySelectorAll('[data-calendar-deadline-marker]')).toHaveLength(3);
+        const marker = document.querySelector('[data-calendar-deadline-marker][data-task-id="same-day"]') as HTMLElement;
+        expect(marker).toHaveAttribute('data-deadline-time', new Date(2026, 3, 3, 9, 5).toISOString());
+        expect(marker).not.toHaveAttribute('data-calendar-block');
+        expect(marker).toHaveAttribute('draggable', 'false');
+        expect(document.querySelectorAll('[data-calendar-block][data-task-id="same-day"]')).toHaveLength(1);
+        expect(marker.closest('[data-calendar-deadline-group]')?.querySelectorAll('[data-calendar-deadline-marker]')).toHaveLength(2);
+        expect(document.querySelector('[data-calendar-deadline-marker][data-task-id="date-only"]')).toBeNull();
+        expect(storeMocks.taskStoreState.updateTask).not.toHaveBeenCalled();
+        expect(storeMocks.taskStoreState.tasks).toEqual(snapshot);
+
+        await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Starts' })); });
+        expect(document.querySelectorAll('[data-calendar-block][data-task-id="same-day"]')).toHaveLength(0);
+        expect(document.querySelectorAll('[data-calendar-deadline-marker]')).toHaveLength(3);
+    });
+
+    it('keeps the time gutter visible during horizontal deadline-week scrolling', async () => {
+        window.history.replaceState(null, '', '/?calendarView=week&calendarDate=2026-04-03');
+        storeMocks.taskStoreState.tasks = [makeTask({ dueDate: '2026-04-03T10:00:00' })];
+        renderCalendar();
+        await flushCalendarEffects();
+        const gutter = document.querySelector('[data-calendar-hour-gutter]') as HTMLElement;
+        const scroller = gutter.closest('.overflow-x-auto') as HTMLElement;
+        Object.defineProperty(scroller, 'scrollLeft', { value: 240, configurable: true });
+        fireEvent.scroll(scroller);
+        expect(gutter.style.transform).toBe('translateX(240px)');
+    });
+
+    it.each(['deadline', 'scheduled'] as const)('rejects stale timed-deadline transfers from %s rows to date and timeline drop targets', async (kind) => {
+        window.history.replaceState(null, '', '/?calendarView=week&calendarDate=2026-04-03');
+        storeMocks.taskStoreState.tasks = [makeTask({ id: 'timed-due-drop', startTime: kind === 'scheduled' ? '2026-04-03' : undefined, dueDate: '2026-04-03T10:00:00' })];
+        let controller: ReturnType<typeof useDesktopCalendarController> | undefined;
+        render(<LanguageProvider><DesktopControllerHost onResult={(value) => { controller = value; }} /></LanguageProvider>);
+        await flushCalendarEffects();
+        await act(async () => {
+            await controller!.updateTaskDateFromDrop('timed-due-drop', new Date(2026, 3, 4), kind);
+            await controller!.updateTaskStartTimeFromDrop('timed-due-drop', new Date(2026, 3, 4, 9), kind);
+        });
+        expect(storeMocks.taskStoreState.updateTask).not.toHaveBeenCalled();
+    });
+
+    it('keeps completion, cancellation and projected read-only rules on the marker layer', async () => {
+        window.history.replaceState(null, '', '/?calendarView=week&calendarDate=2026-04-09');
+        storeMocks.taskStoreState.tasks = [
+            makeTask({ id: 'completed-due', status: 'done', dueDate: '2026-04-09T10:00:00', completedAt: '2026-04-09T09:00:00' }),
+            makeTask({ id: 'cancelled-due', status: 'archived', cancelledAt: '2026-04-08T00:00:00', dueDate: '2026-04-09T10:00:00' }),
+            makeTask({ id: 'recurring-due', title: 'Recurring deadline', dueDate: '2026-04-08T14:00:00', recurrence: 'daily', showFutureRecurrence: true }),
+        ];
+        renderCalendar();
+        await flushCalendarEffects();
+        expect(document.querySelector('[data-calendar-deadline-marker][data-task-id="completed-due"]')).toBeNull();
+        expect(document.querySelector('[data-calendar-deadline-marker][data-task-id="cancelled-due"]')).toBeNull();
+        const projected = document.querySelector('[data-calendar-deadline-marker][data-task-id^="recurring-due:projected-recurrence:"]');
+        expect(projected).not.toBeNull();
+        expect(projected).toBeDisabled();
+        expect(projected).not.toHaveAttribute('data-task-edit-trigger');
+        expect(projected).toHaveAttribute('draggable', 'false');
+        expect(storeMocks.taskStoreState.updateTask).not.toHaveBeenCalled();
+    });
+
+    it('keeps month timed deadline rows compact, shows the due time, and prevents date-only dragging', async () => {
+        storeMocks.taskStoreState.tasks = [
+            makeTask({ id: 'month-timed', title: 'Timed month deadline', dueDate: '2026-04-03T12:00:00' }),
+            makeTask({ id: 'month-date-start', title: 'Date start timed due', startTime: '2026-04-03', dueDate: '2026-04-03T17:00:00' }),
+            makeTask({ id: 'month-mixed', title: 'Mixed month deadline', startTime: '2026-04-03T09:00:00', dueDate: '2026-04-03T12:30:00' }),
+        ];
+        renderCalendar();
+        await flushCalendarEffects();
+        const due = screen.getByRole('button', { name: /Timed month deadline/i });
+        expect(due).toHaveAttribute('draggable', 'false');
+        // The lightweight date parser mock places the date-only start on the prior local day.
+        // Both its start row and deadline row must be safe to drag neither way.
+        for (const row of screen.getAllByRole('button', { name: /Date start timed due/i })) {
+            expect(row).toHaveAttribute('draggable', 'false');
+        }
+        expect(due.textContent).toContain(new Date(2026, 3, 3, 12).toISOString());
+        const mixed = screen.getAllByRole('button', { name: /Mixed month deadline/i });
+        expect(mixed).toHaveLength(1);
+        expect(mixed[0].textContent).toContain(new Date(2026, 3, 3, 12, 30).toISOString());
+        expect(mixed[0]).toHaveAttribute('draggable', 'true');
+    });
+
     it('sets a task due date when dropped on a month day', async () => {
         storeMocks.taskStoreState.tasks = [
             makeTask({
@@ -1299,7 +1393,7 @@ describe('CalendarView', () => {
             makeTask({
                 id: 'calendar-drag-task',
                 title: 'Move me',
-                dueDate: '2026-04-03T12:00:00',
+                dueDate: '2026-04-03',
             }),
         ];
 

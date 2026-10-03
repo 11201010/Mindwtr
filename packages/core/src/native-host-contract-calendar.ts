@@ -51,7 +51,7 @@ import {
     type CalendarComposerMode,
     type CalendarComposerSaveContext,
 } from './calendar-composer';
-import type { CalendarDayItem, CalendarTimedLayout } from './calendar-day-items';
+import { getCalendarTimedDeadlines, getCalendarDeadlineMarkerGroups, type CalendarDayItem, type CalendarTimedLayout } from './calendar-day-items';
 import { CALENDAR_TIME_ESTIMATE_OPTIONS, timeEstimateToMinutes } from './calendar-scheduling';
 import {
     CALENDAR_DONE_UPDATES,
@@ -87,6 +87,7 @@ import {
     getCalendarEventSheet,
     getCalendarHourLabels,
     getCalendarItemTitle,
+    getCalendarMonthItemTitle,
     createCalendarPatternDates,
     getCalendarModeOptions,
     getCalendarMonthCell,
@@ -153,7 +154,7 @@ import {
 } from './native-host-contract';
 import { createNativeRequestReceipts, isRevision, refuseStale, requestRowId, runStoreWrite, settleWrite, taskRevisionOf, withRequestProject, type NativeUnsavedWrite } from './native-request-receipts';
 import { buildQuickAddParseOptions } from './quick-add';
-import { isProjectedRecurringTaskId } from './recurrence';
+import { isProjectedRecurringTask, isProjectedRecurringTaskId } from './recurrence';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { useTaskStore } from './store';
 import { TASK_SQLITE_COLUMNS, taskFromSqliteRow, taskToSqliteRow } from './task-sync-schema';
@@ -225,6 +226,8 @@ export type NativeCalendarItem = {
      * overlapping blocks, and a task's own duration (what a drag moves).
      */
     timed: { startMinutes: number; endMinutes: number; durationMinutes: number; column: CalendarTimedLayout | null } | null;
+    /** Point geometry only; never a duration or a movable scheduled block. */
+    deadline?: { startMinutes: number; labelMinutes: number; groupId: string; groupIndex: number; groupSize: number };
     /** The row offers Done (month details). */
     showDone: boolean;
     row: NativeTaskRow | null;
@@ -248,7 +251,7 @@ export type NativeCalendarEntry =
         opens: NativeCalendarState | null;
     }
     /** An item in a lane of a day: the week's all-day lane or timeline, the day view's, a schedule day, or the month details' lists. */
-    | { type: 'item'; dayKey: string; lane: 'allDay' | 'timed' | 'list' | 'events' | 'deadlines' | 'scheduled'; item: NativeCalendarItem }
+    | { type: 'item'; dayKey: string; lane: 'allDay' | 'timed' | 'deadlineMarker' | 'list' | 'events' | 'deadlines' | 'scheduled'; item: NativeCalendarItem }
     /** A task to schedule: a search result under the selected day, or a planning suggestion. Press it with openCalendarComposer({ scheduleTaskId }). */
     | { type: 'task'; list: 'search' | 'planning'; taskId: string; title: string; detail: string; row: NativeTaskRow };
 
@@ -1206,6 +1209,25 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         };
         const searchResults = selected ? getCalendarSearchResults(ctx.schedulableTasks, query) : [];
 
+        const addDeadlineMarkers = (date: Date) => {
+            const { dayStart } = getCalendarDayBounds(date);
+            const groups = getCalendarDeadlineMarkerGroups(getCalendarTimedDeadlines(lists(date).deadlines), { dayStart, minGapMinutes: 32, maxVisibleRows: 3 });
+            for (const group of groups) {
+                for (const [index, marker] of group.markers.entries()) {
+                    const projected = isProjectedRecurringTask(marker.task);
+                    const detail = `${formatDate(marker.start, 'p')} · ${t('calendar.due')}`;
+                    const title = getCalendarItemTitle(marker, projectedLabel, formatDate);
+                    entries.push({ type: 'item', dayKey: dayKey(date), lane: 'deadlineMarker', item: item(null, {
+                        id: marker.id, kind: 'deadline', title, detail, projected, pressable: !projected,
+                        accessibilityLabel: `${title}, ${detail}`,
+                        tones: { fill: null, accent: 'tint', text: 'text', dashed: projected, struck: false, faded: false },
+                        deadline: { startMinutes: getCalendarWallMinutes(dayStart, marker.start), labelMinutes: group.startMinutes,
+                            groupId: group.markers[0].id, groupIndex: index, groupSize: group.markers.length },
+                    }, marker.task, null) });
+                }
+            }
+        };
+
         let content: NativeCalendarView['content'];
         let title: string;
         if (period.viewMode === 'month') {
@@ -1228,7 +1250,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                         const tones = getCalendarMonthPreviewTones(entry);
                         const event = sourceEvent(entry);
                         return item(entry, {
-                            title: getCalendarItemTitle(entry, projectedLabel, formatDate),
+                            title: getCalendarMonthItemTitle(entry, date, { projectedLabel, formatDate, t }),
                             projected: tones.dashed,
                             pressable: false,
                             tones: { fill: tones.fill, accent: tones.accent, text: tones.text, dashed: tones.dashed, struck: tones.struck, faded: false },
@@ -1306,6 +1328,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             }
             for (const date of weekDays) {
                 const { dayStart, dayEnd } = getCalendarDayBounds(date);
+                addDeadlineMarkers(date);
                 for (const entry of getCalendarWeekTimedEntries({
                     items: getCalendarDayItems(lists(date)), dayStart, dayEnd, timeEstimateToMinutes: ctx.estimateMinutes, formatDate, projectedLabel,
                 })) {
@@ -1349,6 +1372,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                 }, sourceTask(entry), event) });
             }
             const { dayStart, dayEnd } = getCalendarDayBounds(day);
+            addDeadlineMarkers(day);
             const timeline = getCalendarDayTimeline({
                 events: dayLists.events, tasks: dayLists.scheduled, dayStart, dayEnd, timeEstimateToMinutes: ctx.estimateMinutes, formatDate, projectedLabel,
             });

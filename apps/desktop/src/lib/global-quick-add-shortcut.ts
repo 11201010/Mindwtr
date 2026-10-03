@@ -1,3 +1,4 @@
+import { formatI18nTemplate, type TranslateFn } from '@mindwtr/core';
 import { invokeNative } from './tauri-invoke';
 
 export const GLOBAL_QUICK_ADD_SHORTCUT_DISABLED = 'disabled';
@@ -53,7 +54,10 @@ export function normalizeGlobalQuickAddShortcut(
     return defaultShortcut;
 }
 
-export function getGlobalQuickAddShortcutOptions(platform: GlobalQuickAddShortcutPlatform = {}): ShortcutOption[] {
+export function getGlobalQuickAddShortcutOptions(
+    t: TranslateFn,
+    platform: GlobalQuickAddShortcutPlatform = {}
+): ShortcutOption[] {
     const isFlatpak = platform.isFlatpak === true;
     const isMac = platform.isMac === true;
     const isWindows = platform.isWindows === true;
@@ -61,16 +65,16 @@ export function getGlobalQuickAddShortcutOptions(platform: GlobalQuickAddShortcu
     const legacyLabel = isMac ? 'Cmd+Shift+A' : 'Ctrl+Shift+A';
     // Never recommend the legacy combo: Chrome (tab search), Word, and Excel
     // all use Ctrl/Cmd+Shift+A, and a global hotkey steals it from them.
-    const legacySuffix = defaultShortcut === GLOBAL_QUICK_ADD_SHORTCUT_LEGACY
-        ? ' (recommended)'
-        : ' (legacy)';
+    const legacyLabelTemplate = defaultShortcut === GLOBAL_QUICK_ADD_SHORTCUT_LEGACY
+        ? t('settings.globalQuickAddShortcutRecommended')
+        : t('settings.globalQuickAddShortcutLegacy');
     const disabledLabel = isWindows
-        ? 'Disabled (default)'
+        ? t('settings.globalQuickAddShortcutDisabledDefault')
         : isFlatpak
-            ? 'Disabled (Flatpak default)'
+            ? t('settings.globalQuickAddShortcutDisabledFlatpakDefault')
         : defaultShortcut === GLOBAL_QUICK_ADD_SHORTCUT_DISABLED
-            ? 'Disabled (recommended)'
-            : 'Disabled';
+            ? formatI18nTemplate(t('settings.globalQuickAddShortcutRecommended'), { shortcut: t('settings.globalQuickAddShortcutDisabled') })
+            : t('settings.globalQuickAddShortcutDisabled');
 
     return [
         {
@@ -78,10 +82,9 @@ export function getGlobalQuickAddShortcutOptions(platform: GlobalQuickAddShortcu
             // On Windows the default is disabled, but Ctrl+Alt+M is still the
             // pick to recommend when enabling one (least layout/app conflicts).
             label:
-                (isMac ? 'Ctrl+Option+M' : 'Ctrl+Alt+M')
-                + (defaultShortcut === GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT || isWindows
-                    ? ' (recommended)'
-                    : ''),
+                defaultShortcut === GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT || isWindows
+                    ? formatI18nTemplate(t('settings.globalQuickAddShortcutRecommended'), { shortcut: isMac ? 'Ctrl+Option+M' : 'Ctrl+Alt+M' })
+                    : isMac ? 'Ctrl+Option+M' : 'Ctrl+Alt+M',
         },
         {
             value: GLOBAL_QUICK_ADD_SHORTCUT_ALTERNATE_N,
@@ -93,7 +96,7 @@ export function getGlobalQuickAddShortcutOptions(platform: GlobalQuickAddShortcu
         },
         {
             value: GLOBAL_QUICK_ADD_SHORTCUT_LEGACY,
-            label: legacyLabel + legacySuffix,
+            label: formatI18nTemplate(legacyLabelTemplate, { shortcut: legacyLabel }),
         },
         {
             value: GLOBAL_QUICK_ADD_SHORTCUT_DISABLED,
@@ -104,10 +107,11 @@ export function getGlobalQuickAddShortcutOptions(platform: GlobalQuickAddShortcu
 
 export function formatGlobalQuickAddShortcutForDisplay(
     shortcut: GlobalQuickAddShortcutSetting,
-    isMac: boolean
+    isMac: boolean,
+    t: TranslateFn
 ): string {
     if (shortcut === GLOBAL_QUICK_ADD_SHORTCUT_DISABLED) {
-        return 'Disabled';
+        return t('settings.globalQuickAddShortcutDisabled');
     }
     if (shortcut === GLOBAL_QUICK_ADD_SHORTCUT_LEGACY) {
         return isMac ? 'Cmd+Shift+A' : 'Ctrl+Shift+A';

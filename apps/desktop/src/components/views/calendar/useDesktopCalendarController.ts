@@ -23,6 +23,7 @@ import {
     buildQuickAddParseOptions,
     getRetainedTaskContexts,
     hasTimeComponent,
+    isCalendarAllDayItem,
     resolveAreaFilterSelection,
     resolveCalendarSystemSetting,
     resolveFeatureFlags,
@@ -40,6 +41,7 @@ import { getWorkspaceCache } from '../../../lib/workspace-cache';
 import {
     buildCalendarDayItems,
     buildTimedCalendarLayouts,
+    getCalendarTimedDeadlines,
     getTaskCompletionInstant,
     isCompletedCalendarTask,
     isSchedulableCalendarTask,
@@ -524,6 +526,9 @@ export function useDesktopCalendarController() {
         if (!task) return;
 
         try {
+            // An all-day start row can also carry a timed due date; the date-only
+            // drop fallback must never erase that clock.
+            if (hasTimeComponent(task.dueDate) && (itemKind === 'deadline' || !hasTimeComponent(task.startTime))) return;
             if (itemKind === 'deadline') {
                 await updateTask(task.id, { dueDate: formatDateInputValue(date) });
             } else if (hasTimeComponent(task.startTime)) {
@@ -548,9 +553,10 @@ export function useDesktopCalendarController() {
         }
     }, [feedback.showScheduleError, nav.revealDate, tasks, updateTask]);
 
-    const updateTaskStartTimeFromDrop = useCallback(async (taskId: string, start: Date) => {
+    const updateTaskStartTimeFromDrop = useCallback(async (taskId: string, start: Date, itemKind?: 'scheduled' | 'deadline' | null) => {
         const task = tasks.find((candidate) => candidate.id === taskId);
-        if (!task) return;
+        if (!task || (hasTimeComponent(task.dueDate) && (itemKind === 'deadline'
+            || (itemKind === 'scheduled' && !hasTimeComponent(task.startTime))))) return;
 
         try {
             await updateTask(task.id, { startTime: start.toISOString() });
@@ -567,23 +573,8 @@ export function useDesktopCalendarController() {
         events: getExternalEventsForDay(date),
         scheduled: getScheduledForDay(date),
     });
-    const getAllDayItemsForDay = (date: Date) => {
-        const scheduled = getScheduledForDay(date);
-        const scheduledIds = new Set(scheduled.map((task) => task.id));
-        return [
-            ...getCompletedForDay(date)
-                .map((task) => ({ id: `completed-${task.id}`, kind: 'completed' as const, task, title: task.title })),
-            ...scheduled
-                .filter((task) => !hasTimeComponent(task.startTime))
-                .map((task) => ({ id: `scheduled-${task.id}`, kind: 'scheduled' as const, task, title: task.title })),
-            ...getDeadlinesForDay(date)
-                .filter((task) => !scheduledIds.has(task.id))
-                .map((task) => ({ id: `deadline-${task.id}`, kind: 'deadline' as const, task, title: task.title })),
-            ...getExternalEventsForDay(date)
-                .filter((event) => event.allDay)
-                .map((event) => ({ id: `event-${event.id}`, kind: 'event' as const, event, title: event.title })),
-        ];
-    };
+    const getTimedDeadlinesForDay = (date: Date) => getCalendarTimedDeadlines(getDeadlinesForDay(date));
+    const getAllDayItemsForDay = (date: Date) => getCalendarItemsForDate(date).filter(isCalendarAllDayItem);
     const getTimedItemsForDay = (date: Date): CalendarTimedItem[] => {
         const dayStart = new Date(date);
         dayStart.setHours(DESKTOP_DAY_START_HOUR, 0, 0, 0);
@@ -734,6 +725,7 @@ export function useDesktopCalendarController() {
         getCalendarItemsForDate,
         getExternalCalendarColor: external.getExternalCalendarColor,
         getTaskAccentColor,
+        getTimedDeadlinesForDay,
         handleMonthChange: nav.handleMonthChange,
         handleNextMonth: nav.handleNextMonth,
         handlePrevMonth: nav.handlePrevMonth,

@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import {
     safeParseDate,
+    hasTimeComponent,
     safeParseDueDate,
     type ExternalCalendarEvent,
     type Task,
@@ -145,7 +146,7 @@ export function useCalendarSelectedDay({
             start: task.startTime ? safeParseDate(task.startTime) : null,
         })),
         ...selectedDeadlines
-            .filter((task) => !selectedScheduledIds.has(task.id))
+            .filter((task) => !selectedScheduledIds.has(task.id) || hasTimeComponent(task.dueDate))
             .map((task) => ({
                 id: `deadline-${task.id}`,
                 kind: 'deadline' as const,

@@ -9,11 +9,14 @@ const fontMocks = vi.hoisted(() => ({
 vi.mock('../../../lib/font-family', () => fontMocks);
 
 import { useUiStore } from '../../../store/ui-store';
-import { getEnglishSettingsLabels } from './labels';
+import { en } from '@mindwtr/core/i18n/locales/en';
+import { zhHans } from '@mindwtr/core/i18n/locales/zh-Hans';
+import { buildSettingsLabels, getEnglishSettingsLabels } from './labels';
 import { SettingsMainPage, type SettingsMainPageProps } from './SettingsMainPage';
 
 const baseProps: SettingsMainPageProps = {
     t: getEnglishSettingsLabels(),
+    translate: (key) => en[key] ?? key,
     themeMode: 'system',
     onThemeChange: vi.fn(),
     densityMode: 'comfortable',
@@ -43,6 +46,25 @@ const baseProps: SettingsMainPageProps = {
 };
 
 describe('SettingsMainPage', () => {
+    it('updates shortcut option labels when the active translation changes', () => {
+        const translateChinese = (key: string) => zhHans[key] ?? key;
+        const { getByRole, queryByRole, rerender } = render(<SettingsMainPage {...baseProps} isFlatpak />);
+        expect(getByRole('option', { name: 'Disabled (Flatpak default)' })).toHaveValue('disabled');
+
+        rerender(
+            <SettingsMainPage
+                {...baseProps}
+                isFlatpak
+                language="zh"
+                t={buildSettingsLabels(translateChinese)}
+                translate={translateChinese}
+            />,
+        );
+        expect(getByRole('option', { name: '禁用（Flatpak 默认）' })).toHaveValue('disabled');
+        expect(getByRole('option', { name: 'Ctrl+Shift+A（旧版）' })).toHaveValue('CommandOrControl+Shift+A');
+        expect(queryByRole('option', { name: 'Disabled (Flatpak default)' })).not.toBeInTheDocument();
+    });
+
     it('shows native language names without translation-coverage labels', () => {
         const { getByRole } = render(
             <SettingsMainPage

@@ -30,6 +30,11 @@ import {
   getCalendarDetailsEventRow,
   getCalendarDetailsTaskRow,
   getCalendarItemTitle,
+  getCalendarMonthItemTitle,
+  getCalendarTimedDeadlines,
+  getCalendarDeadlineMarkerGroups,
+  isProjectedRecurringTask,
+  type CalendarDeadlineMarker,
   getCalendarModeOptions,
   getCalendarMonthCell,
   getCalendarMonthPreviewTones,
@@ -59,6 +64,7 @@ import { CompactText } from '@/components/compact-text';
 import { TaskEditModal } from '@/components/task-edit-modal';
 import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import { openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigation';
+import { logInfo } from '@/lib/app-log';
 import { useAndroidKeyboardInset } from '@/lib/use-android-keyboard-inset';
 import { styles } from './calendar/calendar-view.styles';
 import { CalendarPeriodNavigation } from './calendar/calendar-period-navigation';
@@ -314,6 +320,42 @@ function ScheduledTaskBlock({
   );
 }
 
+// Marker labels have a separate rail: they never obscure or reserve task time.
+const DEADLINE_ROW_MINUTES = 32;
+function DeadlineMarkerRail({ markers, dayStart, pixelsPerMinute, openTaskActions, tc, dueLabel, projectedLabel }: {
+  markers: CalendarDeadlineMarker[];
+  dayStart: Date;
+  pixelsPerMinute: number;
+  openTaskActions: (id: string) => void;
+  tc: ReturnType<typeof useCalendarViewController>['tc'];
+  dueLabel: string;
+  projectedLabel: string;
+}) {
+  const groups = getCalendarDeadlineMarkerGroups(markers, { dayStart, minGapMinutes: DEADLINE_ROW_MINUTES, maxVisibleRows: 3 });
+  return <View pointerEvents="box-none" style={styles.deadlineRail}>
+    {markers.map((marker) => <Text key={`anchor-${marker.id}`} accessible={false} pointerEvents="none"
+      style={[styles.deadlineAnchor, { top: Math.max(0, getCalendarWallMinutes(dayStart, marker.start) * pixelsPerMinute - 6), color: tc.tint }]}>◆</Text>)}
+    {groups.map((group) => <ScrollView key={group.markers[0].id} nestedScrollEnabled
+      style={[styles.deadlineGroup, { top: group.startMinutes * pixelsPerMinute, height: Math.min(3, group.markers.length) * DEADLINE_ROW_MINUTES * pixelsPerMinute, backgroundColor: tc.cardBg }]}
+      contentContainerStyle={{ paddingLeft: 10 }}>
+        <View>
+          {group.markers.map((marker) => {
+            const label = `${safeFormatDate(marker.start, 'p')} · ${dueLabel}`;
+            const projected = isProjectedRecurringTask(marker.task);
+            const title = getCalendarItemTitle(marker, projectedLabel, safeFormatDate);
+            return <Pressable key={marker.id} testID={`calendar-deadline-${marker.task.id}`} accessibilityRole={projected ? undefined : 'button'}
+              accessibilityLabel={`${title}, ${label}`} disabled={projected}
+              onPress={(event) => { event.stopPropagation(); openTaskActions(marker.task.id); }}
+              style={{ height: DEADLINE_ROW_MINUTES * pixelsPerMinute, justifyContent: 'center' }}>
+              <Text numberOfLines={1} style={{ color: tc.text, fontSize: 11 }}>{title}</Text>
+              <Text numberOfLines={1} style={{ color: tc.tint, fontSize: 11, fontWeight: '600' }}>{label}</Text>
+            </Pressable>;
+          })}
+        </View>
+    </ScrollView>)}
+  </View>;
+}
+
 export function CalendarView() {
   const {
     DAY_END_HOUR,
@@ -428,7 +470,8 @@ export function CalendarView() {
   // overflow by exactly the gutter, so the last day was clipped and the hour labels could be
   // scrolled off the left edge even at full-week zoom.
   const weekAvailableColumnWidth = Math.max(1, screenWidth - WEEK_TIME_GUTTER_WIDTH);
-  const weekColumnWidth = getCalendarWeekColumnWidth(weekAvailableColumnWidth, calendarWeekVisibleDays);
+  const weekHasDeadlines = weekDays.some((day) => getCalendarTimedDeadlines(getDayLists(day).deadlines).length > 0);
+  const weekColumnWidth = Math.max(weekHasDeadlines ? 260 : 0, getCalendarWeekColumnWidth(weekAvailableColumnWidth, calendarWeekVisibleDays));
   const compactWeekColumns = weekColumnWidth < 86;
   const ultraCompactWeekColumns = weekColumnWidth < 58;
   const weekDensityProgress = (calendarWeekVisibleDays - CALENDAR_WEEK_VISIBLE_DAYS_MIN)
@@ -447,6 +490,18 @@ export function CalendarView() {
       projectedLabel,
     });
   }, [projectedLabel, selectedDateTimedEvents, selectedDayEnd, selectedDayScheduledTasks, selectedDayStart, timeEstimateToMinutes]);
+
+  const selectedDayDeadlines = useMemo(() => getCalendarTimedDeadlines(selectedDateDeadlines), [selectedDateDeadlines]);
+  const markerCount = viewMode === 'day' ? selectedDayDeadlines.length : viewMode === 'week'
+    ? weekDays.reduce((count, day) => count + getCalendarTimedDeadlines(getDayLists(day).deadlines).length, 0) : 0;
+  const loggedDeadlineModes = useRef(new Set<string>());
+  useEffect(() => {
+    if (markerCount === 0 || (viewMode !== 'day' && viewMode !== 'week') || loggedDeadlineModes.current.has(viewMode)) return;
+    loggedDeadlineModes.current.add(viewMode);
+    void logInfo('Calendar timed deadlines rendered', { scope: 'calendar', extra: {
+      releaseCheck: 'v1.3.4/calendar-timed-deadlines', outcome: 'rendered', mode: viewMode, count: markerCount,
+    } });
+  }, [markerCount, viewMode]);
 
   const closeMonthDetailsPane = () => {
     setSelectedDate(null);
@@ -862,7 +917,7 @@ export function CalendarView() {
                   </View>
                 )}
 
-                <View pointerEvents="box-none" style={styles.timelineItemsLayer}>
+                <View pointerEvents="box-none" style={[styles.timelineItemsLayer, selectedDayDeadlines.length > 0 && { right: '42%' }]}>
                   {selectedDayTimeline.events.map(({ event, start: clampedStart, end: clampedEnd, layout, timeLabel }) => {
                     const startMinutes = getCalendarWallMinutes(selectedDayStart, clampedStart);
                     const endMinutes = getCalendarWallMinutes(selectedDayStart, clampedEnd);
@@ -934,6 +989,10 @@ export function CalendarView() {
                     );
                   })}
                 </View>
+                {selectedDayDeadlines.length > 0 && <View pointerEvents="box-none" style={styles.timelineItemsLayer}>
+                  <DeadlineMarkerRail markers={selectedDayDeadlines} dayStart={selectedDayStart} pixelsPerMinute={PIXELS_PER_MINUTE}
+                    openTaskActions={openTaskActions} tc={tc} dueLabel={t('calendar.due')} projectedLabel={projectedLabel} />
+                </View>}
               </View>
             </View>
 
@@ -1113,6 +1172,7 @@ export function CalendarView() {
                   const nowMinutes = getCalendarNowMinutes(new Date());
                   const showNow = isToday(day) && nowMinutes !== null;
                   const { dayStart, dayEnd } = getCalendarDayBounds(day);
+                  const deadlineMarkers = getCalendarTimedDeadlines(getDayLists(day).deadlines);
                   const timedEntries = getCalendarWeekTimedEntries({
                     items: getCalendarItemsForDate(day),
                     dayStart,
@@ -1142,6 +1202,7 @@ export function CalendarView() {
                           styles.weekTimedItemsLayer,
                           compactWeekColumns && styles.weekTimedItemsLayerCompact,
                           ultraCompactWeekColumns && styles.weekTimedItemsLayerUltraCompact,
+                          deadlineMarkers.length > 0 && { right: '42%' },
                         ]}
                       >
                         {timedEntries.map((entry) => {
@@ -1223,6 +1284,8 @@ export function CalendarView() {
                           );
                         })}
                       </View>
+                      {deadlineMarkers.length > 0 && <DeadlineMarkerRail markers={deadlineMarkers} dayStart={dayStart} pixelsPerMinute={PIXELS_PER_MINUTE}
+                        openTaskActions={openTaskActions} tc={tc} dueLabel={t('calendar.due')} projectedLabel={projectedLabel} />}
                     </Pressable>
                   );
                 })}
@@ -1565,7 +1628,7 @@ export function CalendarView() {
                               ]}
                               numberOfLines={1}
                             >
-                              {getCalendarItemTitle(item, projectedLabel, safeFormatDate)}
+                              {getCalendarMonthItemTitle(item, date, { projectedLabel, formatDate: safeFormatDate, t })}
                             </Text>
                           </View>
                         );

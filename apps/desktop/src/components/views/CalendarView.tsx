@@ -7,6 +7,7 @@ import {
     getCalendarMonthIndex,
     getShortWeekdayLabels,
     getTaskCalendarOccurrenceDate,
+    getCalendarMonthItemTitle,
     hasTimeComponent,
     isProjectedRecurringTask,
     orderCalendarDayItemsForLimitedSlots,
@@ -20,6 +21,7 @@ import { ErrorBoundary } from '../ErrorBoundary';
 import { cn } from '../../lib/utils';
 import { getAccentTint } from '../../lib/task-accent-color';
 import { reportError } from '../../lib/report-error';
+import { logInfo } from '../../lib/app-log';
 import { showUndoToast } from '../../lib/undo-registry';
 import {
     getCalendarTaskDragItemKind,
@@ -32,6 +34,7 @@ import { LIST_END_GAP, VIEW_FILTER_INPUT } from './list/list-toolbar';
 import { collectCalendarKeyboardTasks } from './calendar/calendar-keyboard-tasks';
 import { CalendarOpenTaskModal, CalendarTaskComposerModal } from './calendar/CalendarModals';
 import { CalendarPlanningPanel } from './calendar/CalendarPlanningPanel';
+import { CalendarDeadlineLane } from './calendar/CalendarDeadlineLane';
 import { CalendarSelectedDayPanel } from './calendar/CalendarSelectedDayPanel';
 import { TaskQuickActionMenuHost } from '../Task/useTaskQuickActionMenuProps';
 import {
@@ -72,6 +75,7 @@ function getProjectedRecurrenceDisplayLabel(task: Task, projectedLabel: string):
 
 export function CalendarView() {
     const timelineScrollRef = useRef<HTMLDivElement | null>(null);
+    const timelineHourGutterRef = useRef<HTMLDivElement | null>(null);
     const [timelineScrollbarWidth, setTimelineScrollbarWidth] = useState(0);
     const [timelineHeight, setTimelineHeight] = useState<number | null>(null);
     // The all-day strip shows a few rows and says how many it is holding back; one
@@ -91,6 +95,7 @@ export function CalendarView() {
         externalError,
         getExternalCalendarColor,
         getTaskAccentColor,
+        getTimedDeadlinesForDay,
         getAllDayItemsForDay,
         getCalendarItemsForDate,
         handleMonthChange,
@@ -146,6 +151,7 @@ export function CalendarView() {
         // A completed task is a record of what happened, not a plan that can be
         // moved to another day (#955).
         if (itemKind === 'completed') return;
+        if (hasTimeComponent(task.dueDate) && (itemKind === 'deadline' || !hasTimeComponent(task.startTime))) return;
         if (isProjectedRecurringTask(task)) return;
         event.stopPropagation();
         setCalendarTaskDragData(event.dataTransfer, task.id, {
@@ -185,7 +191,7 @@ export function CalendarView() {
 
         event.preventDefault();
         event.stopPropagation();
-        void updateTaskStartTimeFromDrop(taskId, start);
+        void updateTaskStartTimeFromDrop(taskId, start, getCalendarTaskDragItemKind(event.dataTransfer));
     }, [updateTaskStartTimeFromDrop]);
     // Right-clicking a scheduled block or a due-date chip opens the same
     // TaskQuickActionMenu the row list uses (via the shared hook), plus a
@@ -242,6 +248,18 @@ export function CalendarView() {
     const timelineScrollKey = viewMode === 'day' || viewMode === 'week'
         ? `${viewMode}:${timelineDays.map(dayKey).join('|')}`
         : '';
+    const deadlineRenderLogged = useRef(new Set<string>());
+    const visibleTimedDeadlineCount = (viewMode === 'day' || viewMode === 'week')
+        ? timelineDays.reduce((count, day) => count + getTimedDeadlinesForDay(day).length, 0)
+        : 0;
+    useEffect(() => {
+        if ((viewMode !== 'day' && viewMode !== 'week') || !visibleTimedDeadlineCount || deadlineRenderLogged.current.has(viewMode)) return;
+        deadlineRenderLogged.current.add(viewMode);
+        void logInfo('Calendar timed deadline markers rendered', {
+            scope: 'calendar',
+            extra: { releaseCheck: 'v1.3.4/calendar-timed-deadlines', outcome: 'rendered', mode: viewMode, count: visibleTimedDeadlineCount },
+        });
+    }, [viewMode, visibleTimedDeadlineCount]);
     const handlePlanningPanelCollapsedChange = useCallback((collapsed: boolean) => {
         setIsPlanningPanelCollapsed(collapsed);
         try {
@@ -648,7 +666,7 @@ export function CalendarView() {
                                         const content = (
                                             <>
                                                 {timeLabel && <span className="mr-1 text-[10px] opacity-75">{timeLabel}</span>}
-                                                <span className={cn(completed && 'line-through')}>{item.title}</span>
+                                                <span className={cn(completed && 'line-through')}>{getCalendarMonthItemTitle(item, day, { formatDate: safeFormatDate, t })}</span>
                                                 {projected && <span className="ml-1 text-[10px] opacity-75">{projectedLabel}</span>}
                                             </>
                                         );
@@ -658,7 +676,7 @@ export function CalendarView() {
                                                 type="button"
                                                 data-task-id={task.id}
                                                 {...(!projected ? { 'data-task-edit-trigger': true } : {})}
-                                                draggable={!projected && !completed}
+                                                draggable={!projected && !completed && !(hasTimeComponent(item.task.dueDate) && (item.kind === 'deadline' || !hasTimeComponent(item.task.startTime)))}
                                                 disabled={projected}
                                                 className={cn(
                                                     "block w-full truncate rounded px-1.5 py-1 text-left text-xs focus:outline-none focus:ring-2 focus:ring-primary/40",
@@ -711,7 +729,15 @@ export function CalendarView() {
                 )}
 
                 {(viewMode === 'day' || viewMode === 'week') && (
-                    <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+                    <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-sm"
+                        onScroll={(event) => {
+                            // The hours live inside their own vertical scrollport, so CSS
+                            // sticky cannot follow the outer horizontal scroll by itself.
+                            if (timelineHourGutterRef.current) {
+                                timelineHourGutterRef.current.style.transform = `translateX(${event.currentTarget.scrollLeft}px)`;
+                            }
+                        }}>
+                        <div style={{ minWidth: timelineDays.length > 1 && visibleTimedDeadlineCount ? 64 + timelineDays.length * 220 : undefined }}>
                         <div
                             className="grid border-b border-border bg-muted/40"
                             style={{
@@ -719,7 +745,7 @@ export function CalendarView() {
                                 paddingRight: timelineScrollbarWidth,
                             }}
                         >
-                            <div className="border-r border-border p-2 text-xs font-medium text-muted-foreground">
+                            <div className="sticky left-0 z-30 border-r border-border bg-card p-2 text-xs font-medium text-muted-foreground">
                                 {resolveText('calendar.time', 'Time')}
                             </div>
                             {timelineDays.map((day) => (
@@ -752,7 +778,7 @@ export function CalendarView() {
                                 paddingRight: timelineScrollbarWidth,
                             }}
                         >
-                            <div className="border-r border-border p-2 text-xs font-medium text-muted-foreground">
+                            <div className="sticky left-0 z-30 border-r border-border bg-card p-2 text-xs font-medium text-muted-foreground">
                                 {t('calendar.allDay')}
                             </div>
                             {timelineDays.map((day) => {
@@ -791,7 +817,7 @@ export function CalendarView() {
                                                     type="button"
                                                     data-task-id={item.task.id}
                                                     {...(!projected ? { 'data-task-edit-trigger': true } : {})}
-                                                    draggable={!projected && !completed}
+                                                    draggable={!projected && !completed && !(hasTimeComponent(item.task.dueDate) && (item.kind === 'deadline' || !hasTimeComponent(item.task.startTime)))}
                                                     disabled={projected}
                                                     onDragStart={(event) => handleCalendarTaskDragStart(event, item.task, item.kind)}
                                                     onClick={() => {
@@ -845,7 +871,7 @@ export function CalendarView() {
                             style={{ height: timelineHeight ?? 'max(28rem, calc(100vh - 20rem))' }}
                         >
                             <div className="grid" style={{ gridTemplateColumns: `4rem repeat(${timelineDays.length}, minmax(0, 1fr))` }}>
-                                <div className="relative border-r border-border bg-muted/20" style={{ height: (DESKTOP_DAY_END_HOUR - DESKTOP_DAY_START_HOUR) * DESKTOP_HOUR_HEIGHT }}>
+                                <div ref={timelineHourGutterRef} data-calendar-hour-gutter className="sticky left-0 z-30 border-r border-border bg-card" style={{ height: (DESKTOP_DAY_END_HOUR - DESKTOP_DAY_START_HOUR) * DESKTOP_HOUR_HEIGHT }}>
                                     {Array.from({ length: DESKTOP_DAY_END_HOUR - DESKTOP_DAY_START_HOUR + 1 }, (_, index) => {
                                         const hour = DESKTOP_DAY_START_HOUR + index;
                                         return (
@@ -856,6 +882,8 @@ export function CalendarView() {
                                     })}
                                 </div>
                                 {timelineDays.map((day) => {
+                                    const deadlines = getTimedDeadlinesForDay(day);
+                                    const durationWidth = deadlines.length ? 58 : 100;
                                     const now = new Date();
                                     const nowMinutes = (now.getHours() - DESKTOP_DAY_START_HOUR) * 60 + now.getMinutes();
                                     const nowTop = nowMinutes / 60 * DESKTOP_HOUR_HEIGHT;
@@ -892,15 +920,27 @@ export function CalendarView() {
                                                     <span className="h-0.5 flex-1 bg-destructive" />
                                                 </div>
                                             )}
+                                            {deadlines.length > 0 && (
+                                                <CalendarDeadlineLane
+                                                    day={day}
+                                                    markers={deadlines}
+                                                    t={t}
+                                                    resolveText={resolveText}
+                                                    getTaskAccentColor={getTaskAccentColor}
+                                                    taskMenuRingClass={taskMenuRingClass}
+                                                    openTaskFromCalendar={openTaskFromCalendar}
+                                                    onContextMenu={handleCalendarTaskContextMenu}
+                                                />
+                                            )}
                                             {layoutTimedItems(day).map((item) => {
                                                 const timeLabel = `${safeFormatDate(item.start, 'p')}-${safeFormatDate(item.end, 'p')}`;
                                                 const commonStyle = {
                                                     // 2px seam so back-to-back blocks read as separate
                                                     // items instead of one slab (layout floors at 24px).
                                                     height: item.height - 2,
-                                                    left: `calc(${item.leftPercent}% + 3px)`,
+                                                    left: `calc(${item.leftPercent * durationWidth / 100}% + 3px)`,
                                                     top: item.top,
-                                                    width: `calc(${item.widthPercent}% - 6px)`,
+                                                    width: `calc(${item.widthPercent * durationWidth / 100}% - 6px)`,
                                                 };
                                                 if (item.kind === 'event') {
                                                     return (
@@ -969,6 +1009,7 @@ export function CalendarView() {
                                     );
                                 })}
                             </div>
+                        </div>
                         </div>
                     </div>
                 )}
@@ -1040,7 +1081,7 @@ export function CalendarView() {
                                                         type="button"
                                                         data-task-id={item.task.id}
                                                         {...(!projected ? { 'data-task-edit-trigger': true } : {})}
-                                                        draggable={!projected && !completed}
+                                                        draggable={!projected && !completed && !(hasTimeComponent(item.task.dueDate) && (item.kind === 'deadline' || !hasTimeComponent(item.task.startTime)))}
                                                         disabled={projected}
                                                         onDragStart={(event) => handleCalendarTaskDragStart(event, item.task, item.kind)}
                                                         onClick={() => {
@@ -1064,7 +1105,7 @@ export function CalendarView() {
                                                             : undefined}
                                                     >
                                                         <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">{timeLabel}</span>
-                                                        <span className={cn('min-w-0 flex-1 truncate text-foreground', completed && 'text-muted-foreground line-through')}>{item.title}</span>
+                                                        <span className={cn('min-w-0 flex-1 truncate text-foreground', completed && 'text-muted-foreground line-through')}>{getCalendarMonthItemTitle(item, day, { formatDate: safeFormatDate, t })}</span>
                                                         {projected && (
                                                             <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
                                                                 {projectedLabel}

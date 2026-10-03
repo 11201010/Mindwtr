@@ -4,7 +4,7 @@ import {
     GLOBAL_QUICK_ADD_SHORTCUT_DISABLED,
     getGlobalQuickAddShortcutOptions,
 } from '../../../lib/global-quick-add-shortcut';
-import { normalizeWeekStartSetting, resolveFeatureFlags, useTaskStore } from '@mindwtr/core';
+import { normalizeWeekStartSetting, resolveFeatureFlags, useTaskStore, type TranslateFn } from '@mindwtr/core';
 import type { DesktopThemeMode } from '../../../lib/theme';
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
@@ -121,6 +121,7 @@ type LanguageOption = { id: Language; native: string };
 
 export type SettingsMainPageProps = {
     t: Labels;
+    translate: TranslateFn;
     themeMode: ThemeMode;
     onThemeChange: (mode: ThemeMode) => void;
     densityMode: DensityMode;
@@ -175,6 +176,7 @@ const selectCls =
 
 export function SettingsMainPage({
     t,
+    translate,
     themeMode,
     onThemeChange,
     densityMode,
@@ -206,7 +208,7 @@ export function SettingsMainPage({
     const languageLabel = (code: string) => languages.find((l) => l.id === code)?.native ?? code;
     const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
     const isWindows = typeof navigator !== 'undefined' && /win/i.test(navigator.userAgent);
-    const globalQuickAddOptions = getGlobalQuickAddShortcutOptions({
+    const globalQuickAddOptions = getGlobalQuickAddShortcutOptions(translate, {
         isFlatpak,
         isMac,
         isWindows,
