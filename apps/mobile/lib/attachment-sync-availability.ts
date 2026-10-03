@@ -13,7 +13,7 @@ import {
   hasAttachmentDownloadIdentity,
   type MobileAttachmentAvailability,
 } from '@mindwtr/core/mobile-attachment-availability';
-import { downloadDropboxFile } from './dropbox-sync';
+import { DropboxFileNotFoundError, downloadDropboxFile } from './dropbox-sync';
 import { getDropboxClientId, mobileAttachmentFiles } from './attachment-sync-utils';
 import { mobileAttachmentCommon } from './attachment-sync-backends/common';
 import {
@@ -56,6 +56,7 @@ const mobileAttachmentAvailability = (): MobileAttachmentAvailability => {
       cloudGetFile: (url, options) => cloudGetFile(url, options),
       webdavGetFile: (url, options) => webdavGetFile(url, options),
       downloadDropboxFile: (accessToken, path) => downloadDropboxFile(accessToken, path),
+      isDropboxFileNotFoundError: (error) => error instanceof DropboxFileNotFoundError,
     },
   });
   return availability;

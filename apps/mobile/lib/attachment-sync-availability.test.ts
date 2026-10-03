@@ -839,6 +839,45 @@ describe('ensureAttachmentAvailable', () => {
     vi.mocked(getSyncEncryptionMaterial).mockResolvedValue(null);
   });
 
+  it('treats a self-hosted cloud 404 as terminal, as WebDAV: the row loses its Download button and a retry asks the server nothing', async () => {
+    asyncStorageMock.store.set('@mindwtr_sync_backend', 'cloud');
+    asyncStorageMock.store.set('@mindwtr_cloud_url', 'https://cloud.example/v1/data');
+    asyncStorageMock.store.set('@mindwtr_cloud_token', 'cloud-token');
+    const core = await import('@mindwtr/core');
+    vi.mocked(core.cloudGetFile).mockRejectedValue(Object.assign(new Error('Cloud File GET failed (404)'), { status: 404 }));
+    const attachment = makeAttachment('cloud-gone', { fileHash: sha256Hex(REMOTE_BYTES) });
+
+    const result = await ensureAttachmentAvailableDetailed(attachment);
+
+    if (result.status !== 'unrecoverable') throw new Error(`Expected a terminal outcome, got ${result.status}`);
+    const patched = { ...attachment, ...getAttachmentUnrecoverablePatch(result.attachment) };
+    expect(core.getAttachmentRowState(patched)).toMatchObject({ canDownload: false });
+    await expect(ensureAttachmentAvailableDetailed(patched)).resolves.toEqual({ status: 'unavailable' });
+    expect(core.cloudGetFile).toHaveBeenCalledTimes(1);
+    expect(fileSystemMock.deleteAsync).not.toHaveBeenCalledWith('file://document/attachments/cloud-gone.txt', expect.anything());
+    const appLog = await import('./app-log');
+    expect(appLog.logWarn).toHaveBeenCalledWith(
+      'Cloud attachment cloud-gone is no longer available',
+      expect.objectContaining({ extra: expect.objectContaining({ releaseCheck: 'v1.3.4/cloud-download-not-found' }) }),
+    );
+  });
+
+  it('treats a Dropbox not-found as terminal, as WebDAV', async () => {
+    asyncStorageMock.store.set('@mindwtr_sync_backend', 'cloud');
+    asyncStorageMock.store.set('@mindwtr_cloud_provider', 'dropbox');
+    const dropbox = await import('./dropbox-sync');
+    vi.mocked(dropbox.downloadDropboxFile).mockRejectedValue(new dropbox.DropboxFileNotFoundError('Dropbox file not found'));
+    const attachment = makeAttachment('dropbox-gone', { fileHash: sha256Hex(REMOTE_BYTES) });
+
+    const result = await ensureAttachmentAvailableDetailed(attachment);
+
+    if (result.status !== 'unrecoverable') throw new Error(`Expected a terminal outcome, got ${result.status}`);
+    const patched = { ...attachment, ...getAttachmentUnrecoverablePatch(result.attachment) };
+    await expect(ensureAttachmentAvailableDetailed(patched)).resolves.toEqual({ status: 'unavailable' });
+    expect(dropbox.downloadDropboxFile).toHaveBeenCalledTimes(1);
+    expect(fileSystemMock.deleteAsync).not.toHaveBeenCalledWith('file://document/attachments/dropbox-gone.txt', expect.anything());
+  });
+
   it('treats a WebDAV 404 as terminal: the row loses its Download button and a retry asks the server nothing', async () => {
     asyncStorageMock.store.set('@mindwtr_sync_backend', 'webdav');
     asyncStorageMock.store.set('@mindwtr_webdav_url', 'https://dav.example/data.json');
