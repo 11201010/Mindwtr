@@ -1,0 +1,68 @@
+import type { AppData, SavedFilter, Task } from './types';
+import { TASK_SQLITE_COLUMNS, taskToSqliteRow } from './task-sync-schema';
+import { isRecord, toJson } from './entity-sync-schema';
+
+type TaskRowEntry = { row: unknown[]; fingerprint: string };
+// A raw read is a persistence snapshot, not the display codec's normalized
+// serialization. Retain exact cells only while the public object still encodes
+// to its captured projection; raw callers may mutate objects in place.
+const rawReadRowEntries = new WeakMap<object, TaskRowEntry & { projection: string }>();
+const rawReadSettings = new WeakMap<AppData['settings'], { projection: string; json: string | null }>();
+export const rememberRawReadRow = (entity: object, row: Record<string, unknown>, columns: readonly string[], projection: unknown[]) => {
+    const values = columns.map((column) => row[column]);
+    rawReadRowEntries.set(entity, { row: values, fingerprint: JSON.stringify(values), projection: JSON.stringify(projection) });
+};
+export const rawReadRow = (entity: object, projection: unknown[]): TaskRowEntry => {
+    const cached = rawReadRowEntries.get(entity); const fingerprint = JSON.stringify(projection);
+    if (cached?.projection === fingerprint) return cached;
+    const entry = { row: projection, fingerprint, projection: fingerprint };
+    if (cached) rawReadRowEntries.set(entity, entry);
+    return entry;
+};
+/** Task188 binds the actual raw JSON members without changing older raw DTOs. */
+export const rawReadTaskSnapshot = (task: Task): Task | null => {
+    const snapshot = JSON.parse(JSON.stringify(task)) as Task;
+    const entry = rawReadRowEntries.get(task);
+    if (!entry || entry.projection !== JSON.stringify(taskToSqliteRow(task))) return snapshot;
+    try {
+        for (const field of ['recurrence', 'tags', 'contexts', 'checklist', 'attachments', 'viewSectionIds'] as const) {
+            const value = entry.row[TASK_SQLITE_COLUMNS.indexOf(field)];
+            if (value === null || value === undefined) delete snapshot[field];
+            else Object.assign(snapshot, { [field]: JSON.parse(String(value)) });
+        }
+        return snapshot;
+    } catch { return null; }
+};
+export const savedFilterSqliteRow = (filter: SavedFilter): unknown[] => {
+    const textOr = <T>(value: unknown, fallback: T) => typeof value === 'string' ? value : fallback;
+    return [filter.id, textOr(filter.name, ''), textOr(filter.icon, null), textOr(filter.view, ''),
+        toJson(filter.criteria ?? {}), textOr(filter.sortBy, null), textOr(filter.sortOrder, null),
+        textOr(filter.groupBy, null), textOr(filter.createdAt, ''), textOr(filter.updatedAt, ''), textOr(filter.deletedAt, null)];
+};
+/** Retain raw-read provenance through the save queue's sanitized settings clone. */
+export const retainRawReadSettingsSnapshot = (source: AppData['settings'], sanitized: AppData['settings']): void => {
+    const settings = rawReadSettings.get(source);
+    if (settings && JSON.stringify(source) === settings.projection && JSON.stringify(sanitized) === settings.projection)
+        rawReadSettings.set(sanitized, settings);
+    // Settings may intentionally change (device initialization or secret stripping)
+    // while their unchanged filter rows still belong to the original raw read.
+    const sourceFilters = Array.isArray(source?.savedFilters) ? source.savedFilters : [];
+    if (!sourceFilters.some((filter) => isRecord(filter) && rawReadRowEntries.has(filter))) return;
+    const clones = Array.isArray(sanitized?.savedFilters) ? sanitized.savedFilters : [];
+    const filters = new Map(clones.filter((filter) => isRecord(filter) && typeof filter.id === 'string').map((filter) => [filter.id, filter]));
+    for (const filter of sourceFilters) {
+        if (!isRecord(filter)) continue;
+        const captured = rawReadRowEntries.get(filter); const clone = filters.get(filter.id);
+        if (captured && clone && captured.projection === JSON.stringify(savedFilterSqliteRow(filter))
+            && captured.projection === JSON.stringify(savedFilterSqliteRow(clone))) rawReadRowEntries.set(clone, captured);
+    }
+};
+
+export const hasRawReadRow = (entity: object): boolean => rawReadRowEntries.has(entity);
+export const rememberRawReadSettings = (settings: AppData['settings'], json: string | null): void => {
+    rawReadSettings.set(settings, { projection: JSON.stringify(settings), json });
+};
+export const rawReadSettingsJson = (settings: AppData['settings'], projection: string | null): string | null | undefined => {
+    const captured = rawReadSettings.get(settings);
+    return captured?.projection === projection ? captured.json : undefined;
+};

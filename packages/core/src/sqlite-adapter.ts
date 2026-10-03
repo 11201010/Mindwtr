@@ -16,6 +16,8 @@ import { normalizeRelativeStartOffset } from './task-relative-start';
 import { logInfo, logWarn } from './logger';
 import { keepSavedFilters } from './saved-filters';
 import { sleep } from './async-utils';
+import { hasRawReadRow, rawReadRow, rememberRawReadRow, rememberRawReadSettings, rawReadSettingsJson, savedFilterSqliteRow } from './sqlite-raw-snapshot';
+export { rawReadTaskSnapshot } from './sqlite-raw-snapshot';
 import { TASK_SQLITE_COLUMNS, TASK_SQLITE_MIGRATION_COLUMNS, taskFromSqliteRow, taskToSqliteRow } from './task-sync-schema';
 import {
     normalizeProjectStatus,
@@ -247,8 +249,10 @@ export { taskToSqliteRow };
 // task into a lookup for unchanged rows, which dominated saveData time on
 // large mobile libraries (#766).
 type TaskRowEntry = { row: unknown[]; fingerprint: string };
+const SAVED_FILTER_UPSERT_COLUMNS = ['id', 'name', 'icon', 'view', 'criteria', 'sortBy', 'sortOrder', 'groupBy', 'createdAt', 'updatedAt', 'deletedAt'];
 const taskRowEntryCache = new WeakMap<Task, TaskRowEntry>();
 const getTaskRowEntry = (task: Task): TaskRowEntry => {
+    if (hasRawReadRow(task)) return rawReadRow(task, taskToSqliteRow(task));
     const cached = taskRowEntryCache.get(task);
     if (cached) return cached;
     const row = taskToSqliteRow(task);
@@ -1119,6 +1123,18 @@ export class SqliteAdapter {
             ['saved_filters', this.knownRowVersionsFromRows(savedFilterRows)],
         ]);
 
+        if (options?.rawTasks) {
+            tasks.forEach((task, index) => rememberRawReadRow(task, tasksRows[index], TASK_UPSERT_COLUMNS, taskToSqliteRow(task)));
+            projects.forEach((project, index) => rememberRawReadRow(project, projectsRows[index], PROJECT_UPSERT_COLUMNS, projectToSqliteRow(project)));
+            sections.forEach((section, index) => rememberRawReadRow(section, sectionsRows[index], SECTION_UPSERT_COLUMNS, sectionToSqliteRow(section)));
+            areas.forEach((area, index) => rememberRawReadRow(area, areasRows[index], AREA_UPSERT_COLUMNS, areaToSqliteRow(area, nowIso)));
+            people.forEach((person, index) => rememberRawReadRow(person, peopleRows[index], PERSON_UPSERT_COLUMNS, personToSqliteRow(person, nowIso)));
+            for (const filter of settings.savedFilters ?? []) {
+                const row = savedFilterRows.find((entry) => entry.id === filter.id);
+                if (row) rememberRawReadRow(filter, row, SAVED_FILTER_UPSERT_COLUMNS, savedFilterSqliteRow(filter));
+            }
+            if (settingsRow) rememberRawReadSettings(settings, typeof settingsRow.data === 'string' ? settingsRow.data : null);
+        }
         return { tasks, projects, sections, areas, people, settings };
     }
 
@@ -1518,7 +1534,7 @@ export class SqliteAdapter {
             await upsertBatch(
                 'areas',
                 [...AREA_UPSERT_COLUMNS],
-                data.areas.map((area) => areaToSqliteRow(area, nowIso)),
+                data.areas.map((area) => rawReadRow(area, areaToSqliteRow(area, nowIso)).row),
                 AREA_UPSERT_UPDATE_CLAUSE,
                 200,
                 undefined,
@@ -1532,7 +1548,7 @@ export class SqliteAdapter {
             await upsertBatch(
                 'projects',
                 [...PROJECT_UPSERT_COLUMNS],
-                data.projects.map((project) => projectToSqliteRow(project)),
+                data.projects.map((project) => rawReadRow(project, projectToSqliteRow(project)).row),
                 PROJECT_UPSERT_UPDATE_CLAUSE,
                 200,
                 undefined,
@@ -1547,7 +1563,7 @@ export class SqliteAdapter {
             await upsertBatch(
                 'people',
                 [...PERSON_UPSERT_COLUMNS],
-                people.map((person) => personToSqliteRow(person, nowIso)),
+                people.map((person) => rawReadRow(person, personToSqliteRow(person, nowIso)).row),
                 PERSON_UPSERT_UPDATE_CLAUSE,
                 200,
                 undefined,
@@ -1561,7 +1577,7 @@ export class SqliteAdapter {
             await upsertBatch(
                 'sections',
                 [...SECTION_UPSERT_COLUMNS],
-                data.sections.map((section) => sectionToSqliteRow(section)),
+                data.sections.map((section) => rawReadRow(section, sectionToSqliteRow(section)).row),
                 SECTION_UPSERT_UPDATE_CLAUSE,
                 200,
                 undefined,
@@ -1612,38 +1628,14 @@ export class SqliteAdapter {
             // A snapshot without a list says nothing about saved filters: the stored list stays.
             const filterList = Array.isArray(rawSavedFilters) ? rawSavedFilters : await readStoredFilterList();
             const savedFilters = keepSavedFilters(filterList);
-            // The settings list keeps each filter as written; this table copy
-            // holds only its own columns, and a NOT NULL one it lacks is empty.
-            const textOr = <T>(value: unknown, fallback: T) => (typeof value === 'string' ? value : fallback);
+            // Normalized filters can be fresh objects. Bind the read metadata to
+            // the supplied filter, then compare its current normalized projection.
+            const suppliedFilters = new Map((Array.isArray(filterList) ? filterList : []).map((filter) => [filter.id, filter]));
             saveStep = 'saved-filters';
             await upsertBatch(
                 'saved_filters',
-                [
-                    'id',
-                    'name',
-                    'icon',
-                    'view',
-                    'criteria',
-                    'sortBy',
-                    'sortOrder',
-                    'groupBy',
-                    'createdAt',
-                    'updatedAt',
-                    'deletedAt',
-                ],
-                savedFilters.map((filter) => [
-                    filter.id,
-                    textOr(filter.name, ''),
-                    textOr(filter.icon, null),
-                    textOr(filter.view, ''),
-                    toJson(filter.criteria ?? {}),
-                    textOr(filter.sortBy, null),
-                    textOr(filter.sortOrder, null),
-                    textOr(filter.groupBy, null),
-                    textOr(filter.createdAt, ''),
-                    textOr(filter.updatedAt, ''),
-                    textOr(filter.deletedAt, null),
-                ]),
+                SAVED_FILTER_UPSERT_COLUMNS,
+                savedFilters.map((filter) => rawReadRow(suppliedFilters.get(filter.id) ?? filter, savedFilterSqliteRow(filter)).row),
                 `name=excluded.name,
                  icon=excluded.icon,
                  view=excluded.view,
@@ -1687,7 +1679,9 @@ export class SqliteAdapter {
             }
 
             saveStep = 'settings';
-            const settingsJson = toJson(settingsForSave);
+            const projectedSettingsJson = toJson(settingsForSave);
+            const rawSettingsJson = rawReadSettingsJson(data.settings, projectedSettingsJson);
+            const settingsJson = rawSettingsJson === undefined ? projectedSettingsJson : rawSettingsJson;
             nextSave.settingsJson = settingsJson;
             if (previousSave?.settingsJson !== settingsJson) {
                 stats.settingsWritten = true;

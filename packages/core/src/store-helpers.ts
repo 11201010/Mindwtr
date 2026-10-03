@@ -25,6 +25,7 @@ import { nextRevision, normalizeRevision } from './sync-revision';
 import type { AiSettings, AppData, Area, Attachment, Person, Project, Section, Task, TaskStatus } from './types';
 import { generateUUID as uuidv4 } from './uuid';
 import type { DerivedState, SaveBaseState, TaskStore } from './store-types';
+import { retainRawReadSettingsSnapshot } from './sqlite-raw-snapshot';
 
 const hasOwnField = (value: object, field: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value, field);
 
@@ -1373,10 +1374,11 @@ export const cloneSettings = (settings: AppData['settings']): AppData['settings'
     return JSON.parse(JSON.stringify(settings)) as AppData['settings'];
 };
 
-export const sanitizeAppDataForStorage = (data: AppData): AppData => ({
-    ...data,
-    settings: stripSensitiveSettings(cloneSettings(data.settings)),
-});
+export const sanitizeAppDataForStorage = (data: AppData): AppData => {
+    const settings = stripSensitiveSettings(cloneSettings(data.settings));
+    retainRawReadSettingsSnapshot(data.settings, settings);
+    return { ...data, settings };
+};
 
 export const getTaskOrder = (task: Pick<Task, 'order' | 'orderNum'>): number | undefined => {
     if (Number.isFinite(task.order)) return task.order as number;

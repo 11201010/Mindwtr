@@ -1796,7 +1796,8 @@ final class CoreModel: ObservableObject {
     }
     var referenceActionPending: Bool {
         selectedSurface == .reference && retryNeeded &&
-            (referenceTaskNextRequest != nil || referenceTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "reference")
+            (referenceTaskNextRequest != nil || referenceTaskStatusRequest != nil || referenceCompletionPending
+                || referenceTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "reference")
     }
     var referencePickerActionsEnabled: Bool { referenceActionsEnabled && referencePickerCurrent }
     var historyArchived: Bool { historyTabs.text("tab") == "archived" }
@@ -2879,6 +2880,9 @@ final class CoreModel: ObservableObject {
                 historyTabs = ["tab": recovery.text("source") == "done" ? "done" : "archived"]
                 historyParamsByTab["archive", default: [:]]["segment"] = "tasks"
             }
+            if ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(recovery.text("method")), recovery.text("source") == "reference" {
+                selectedSurface = .reference
+            }
             if recovery.text("method") == "doneTaskStatusCommit", recovery.text("source") == "reference" {
                 selectedSurface = .reference
             } else if ["doneTaskStatusCommit", "doneTaskCompletedAtCommit"].contains(recovery.text("method")) {
@@ -3693,7 +3697,7 @@ final class CoreModel: ObservableObject {
                     "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading", "common.ok", "common.noMatches",
                     "attachments.title", "attachments.missing", "attachments.download", "attachments.addLink",
                     "attachments.remove", "attachments.linkPlaceholder", "attachments.linkBatchHint",
-                    "task.aria.changeStatus", "task.aria.changeStatusHint", "quickAdd.audioRecord",
+                    "task.aria.changeStatus", "task.aria.changeStatusHint", "taskStatus.changeStatus", "quickAdd.audioRecord",
                     "common.more", "agenda.reviewDueProjects", "agenda.laterToday",
                     "agenda.addToFocus", "agenda.removeFromFocus",
                     "agenda.collapseOtherSections", "agenda.expandOtherSections", "markdown.expand", "markdown.collapse",
@@ -3705,6 +3709,7 @@ final class CoreModel: ObservableObject {
                     "taskEdit.startModeRelative", "taskEdit.recurrenceLabel", "recurrence.showFutureInCalendar",
                     "task.completedAtPromptTitle", "task.editCompletedAt", "status.inbox", "status.next", "status.done", "status.reference",
                     "task.doneCompletedAtOutcomeUnknown", "task.doneStatusOutcomeUnknown", "task.doneTagOutcomeUnknown",
+                    "task.completionOutcomeUnknown", "task.completionUndoOutcomeUnknown",
                     "taskEdit.descriptionPlaceholder", "search.placeholder", "search.noResults", "search.searching",
                     "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators", "search.saveSearch", "search.saveSearchPrompt", "search.savedSearches",
                     "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone", "review.markReviewedDone",
@@ -12902,6 +12907,7 @@ final class CoreModel: ObservableObject {
     private var referenceTaskDeleteRequest: String?
     private var doneTaskStatusRequest: String?
     private var referenceTaskNextRequest: String?
+    private var referenceTaskStatusRequest: String?
     private var doneTaskCompletedAtRequest: String?
     private var archiveTaskCompletedAtRequest: String?
 
@@ -13122,6 +13128,92 @@ final class CoreModel: ObservableObject {
             error = failure.localizedDescription
         }
         historyError = failure.localizedDescription
+    }
+
+    // Busy is checked by each opening/write caller; context remains stable during a read.
+    // Every accepted context still binds the exact displayed row and pending view edits.
+    func referenceTaskStatusContext(_ displayed: CoreObject) -> String? {
+        guard ready, selectedSurface == .reference, referenceCurrent, !retryNeeded,
+              !taskPresented, !capturePresented, referencePanel.isEmpty,
+              referenceTextEdits.isEmpty, referencePendingEdit == nil,
+              displayed.text("status") == "reference", !displayed.flag("readOnly"),
+              !displayed.text("id").isEmpty, displayed.text("id").utf16.count <= 500,
+              !displayed.text("taskRevision").isEmpty, displayed.text("taskRevision").utf16.count <= 200,
+              reference.objects("items").contains(where: {
+                  let row = $0.object("row")
+                  return $0.text("type") == "task" && !row.flag("readOnly") && row.text("status") == "reference"
+                      && row.text("id").utf8.elementsEqual(displayed.text("id").utf8)
+                      && row.text("taskRevision").utf8.elementsEqual(displayed.text("taskRevision").utf8)
+              }) else { return nil }
+        return try? json(["params": referenceParams, "revision": reference.text("revision")])
+    }
+
+    func referenceTaskStatusOptions(_ displayed: CoreObject) async -> CoreObject? {
+        guard referenceActionsEnabled, let context = referenceTaskStatusContext(displayed) else { return nil }
+        referenceError = nil
+        do {
+            let id = displayed.text("id"), revision = displayed.text("taskRevision")
+            let options = try await query("doneTaskStatusOptions", [try json(["id": id, "taskRevision": revision, "source": "reference"])])
+            guard !Task.isCancelled, referenceTaskStatusContext(displayed)?.utf8.elementsEqual(context.utf8) == true else { return nil }
+            guard Set(options.keys) == Set(["title", "taskId", "taskRevision", "status", "options"]),
+                  options.text("taskId").utf8.elementsEqual(id.utf8), options.text("taskRevision").utf8.elementsEqual(revision.utf8),
+                  options.text("status") == "reference", !options.text("title").isEmpty,
+                  options.objects("options").map({ $0.text("status") }) == ["inbox", "next", "waiting", "someday", "done", "reference"],
+                  options.objects("options").allSatisfy({ option in
+                      Set(option.keys) == Set(["status", "label", "selected"]) && !option.text("label").isEmpty
+                          && option.flag("selected") == (option.text("status") == "reference")
+                          && (option["selected"] as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() }) == true
+                  }) else { throw CocoaError(.coderReadCorrupt) }
+            return options
+        } catch {
+            if !Task.isCancelled, referenceTaskStatusContext(displayed)?.utf8.elementsEqual(context.utf8) == true {
+                referenceError = error.localizedDescription
+            }
+            return nil
+        }
+    }
+
+    func changeReferenceTaskStatus(_ displayed: CoreObject, status: String) async {
+        guard referenceActionsEnabled, referenceTaskStatusContext(displayed) != nil else { return }
+        if status == "next" {
+            await moveReferenceTaskToNext(expectedID: displayed.text("id"), expectedRevision: displayed.text("taskRevision"))
+            return
+        }
+        if status == "done" { await completeReferenceTask(displayed); return }
+        guard ["inbox", "waiting", "someday", "reference"].contains(status) else { return }
+        busy = true
+        referenceError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "id": displayed.text("id"),
+                                    "taskRevision": displayed.text("taskRevision"), "source": "reference", "status": status])
+            referenceTaskStatusRequest = request
+            let result = try await query("doneTaskStatusWrite", [request])
+            try acknowledgeReferenceTaskStatus(result)
+            if status != "reference" { _ = await readReference() }
+        } catch { await handleReferenceTaskStatusError(error) }
+    }
+
+    private func acknowledgeReferenceTaskStatus(_ result: CoreObject) throws {
+        guard let request = referenceTaskStatusRequest, Set(result.keys) == Set(["id"]),
+              result.text("id").utf8.elementsEqual((try decode(request)).text("id").utf8) else { throw CocoaError(.coderReadCorrupt) }
+        referenceTaskStatusRequest = nil
+        retryNeeded = false
+        referenceError = nil
+        error = nil
+    }
+
+    private func handleReferenceTaskStatusError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            referenceTaskStatusRequest = nil
+            retryNeeded = false
+            error = nil
+            _ = await readReference()
+        } else {
+            retryNeeded = referenceTaskStatusRequest != nil
+            error = failure.localizedDescription
+        }
+        referenceError = failure.localizedDescription
     }
 
     func moveReferenceTaskToNext(expectedID: String, expectedRevision: String) async {
@@ -18672,6 +18764,49 @@ final class CoreModel: ObservableObject {
         }
     }
 
+    private var referenceCompletionPending: Bool {
+        guard let request = taskCompletionRequest, let submitted = try? decode(request) else { return false }
+        return submitted.text("source") == "reference"
+    }
+
+    private func completeReferenceTask(_ displayed: CoreObject) async {
+        guard referenceActionsEnabled, referenceTaskStatusContext(displayed) != nil else { return }
+        busy = true
+        referenceError = nil
+        error = nil
+        invalidatePreview()
+        defer { finishOperation() }
+        let acknowledgment: CoreObject
+        do {
+            let requestID = UUID().uuidString.lowercased()
+            let request = try json(["id": displayed.text("id"), "requestId": requestID,
+                                    "taskRevision": displayed.text("taskRevision"), "source": "reference"])
+            taskActionRequestID = requestID
+            taskCompletionRequest = request
+            acknowledgment = try await query("taskCompletion", [request])
+            try acknowledgeTaskCompletion(acknowledgment)
+        } catch {
+            await handleReferenceTaskCompletionError(error)
+            return
+        }
+        _ = await readReference()
+        showTaskAction(acknowledgment, operation: "completion", source: "reference")
+    }
+
+    private func handleReferenceTaskCompletionError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            taskCompletionRequest = nil
+            taskActionRequestID = nil
+            retryNeeded = false
+            error = nil
+            _ = await readReference()
+        } else {
+            retryNeeded = taskCompletionRequest != nil
+            error = failure.localizedDescription
+        }
+        referenceError = failure.localizedDescription
+    }
+
     func complete(_ id: String, taskRevision: String) async {
         if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
         guard ready, !busy, !retryNeeded, !taskPresented, !projectRenameEditing,
@@ -18748,9 +18883,15 @@ final class CoreModel: ObservableObject {
     private func acknowledgeTaskCompletion(_ result: CoreObject) throws {
         guard let request = taskCompletionRequest,
               let submitted = try? decode(request),
-              result.text("id") == submitted.text("id"),
+              (submitted.text("source") == "reference"
+                  ? result.text("id").utf8.elementsEqual(submitted.text("id").utf8)
+                  : result.text("id") == submitted.text("id")),
               taskActionRequestID == submitted.text("requestId"),
               !result.object("completion").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        if submitted.text("source") == "reference" {
+            guard Set(result.keys) == Set(["id", "completion"]) else { throw CocoaError(.coderReadCorrupt) }
+            referenceError = nil
+        }
         taskCompletionRequest = nil
         retryNeeded = false
         error = nil
@@ -18777,7 +18918,8 @@ final class CoreModel: ObservableObject {
             }
             if let request = taskActionUndoRequest {
                 let result: CoreObject
-                if ["archiveBulkDelete", "doneBulkDelete"].contains(taskActionNotice.text("operation")) || ["done", "reference"].contains(taskActionNotice.text("source")) {
+                if ["archiveBulkDelete", "doneBulkDelete"].contains(taskActionNotice.text("operation"))
+                    || (taskActionNotice.text("operation") == "delete" && ["done", "reference"].contains(taskActionNotice.text("source"))) {
                     let bulk = ["archiveBulkDelete", "doneBulkDelete"].contains(taskActionNotice.text("operation"))
                     let outcome = try await query(bulk ? "archivedTasksDeleteUndoRetryOutcome" : "taskDeleteUndoReceiptOutcome", [request])
                     if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
@@ -18799,36 +18941,53 @@ final class CoreModel: ObservableObject {
                     if let acknowledgment, try json(result) != json(decode(acknowledgment)) {
                         throw CocoaError(.coderReadCorrupt)
                     }
-                } else if let acknowledgment { result = try decode(acknowledgment) }
-                else if taskActionUndoMethod == "taskCompletionUndo" {
+                } else if taskActionUndoMethod == "taskCompletionUndo", acknowledgment == nil || taskActionNotice.text("source") == "reference" {
                     let outcome = try await query("taskCompletionUndoRetryOutcome", [request])
                     guard outcome.text("kind") == "confirmed" else {
-                        self.error = label("task.completionUndoOutcomeUnknown")
+                        let unknown = label("task.completionUndoOutcomeUnknown")
                         try? await readSelectedSurface()
+                        if taskActionNotice.text("source") == "reference" { referenceError = unknown }
+                        self.error = unknown
                         return
                     }
                     result = outcome.object("result")
-                } else { result = try await query(taskActionUndoMethod, [request]) }
+                    if taskActionNotice.text("source") == "reference" {
+                        guard Set(outcome.keys) == Set(["kind", "result"]) else { throw CocoaError(.coderReadCorrupt) }
+                        if let acknowledgment, !(try json(result)).utf8.elementsEqual((try json(decode(acknowledgment))).utf8) {
+                            throw CocoaError(.coderReadCorrupt)
+                        }
+                    }
+                } else if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query(taskActionUndoMethod, [request]) }
                 try acknowledgeTaskActionUndo(result)
                 do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
                 return
             }
             if let request = taskCompletionRequest {
                 let result: CoreObject
-                if let acknowledgment { result = try decode(acknowledgment) }
+                let referenceCompletion = (try decode(request)).text("source") == "reference"
+                if let acknowledgment, !referenceCompletion { result = try decode(acknowledgment) }
                 else {
                     let outcome = try await query("taskCompletionRetryOutcome", [request])
                     guard outcome.text("kind") == "confirmed" else {
                         // No matching durable receipt: preserve the UUID and block a new write.
-                        self.error = label("task.completionOutcomeUnknown")
+                        let unknown = label("task.completionOutcomeUnknown")
                         try? await readSelectedSurface()
+                        if referenceCompletion { referenceError = unknown }
+                        self.error = unknown
                         return
                     }
                     result = outcome.object("result")
+                    if referenceCompletion {
+                        guard Set(outcome.keys) == Set(["kind", "result"]) else { throw CocoaError(.coderReadCorrupt) }
+                        if let acknowledgment, !(try json(result)).utf8.elementsEqual((try json(decode(acknowledgment))).utf8) {
+                            throw CocoaError(.coderReadCorrupt)
+                        }
+                    }
                 }
                 try acknowledgeTaskCompletion(result)
                 do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
-                showTaskAction(result, operation: "completion")
+                showTaskAction(result, operation: "completion", source: referenceCompletion ? "reference" : nil)
                 return
             }
             if let request = projectDeleteUndoRequest {
@@ -19433,6 +19592,25 @@ final class CoreModel: ObservableObject {
                 _ = await readHistory()
                 return
             }
+            if let request = referenceTaskStatusRequest {
+                let outcome = try await query("doneTaskStatusRetryOutcome", [request])
+                if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                    let unknown = label("task.doneStatusOutcomeUnknown")
+                    referenceError = unknown
+                    self.error = unknown
+                    return
+                }
+                guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let result = outcome.object("result")
+                if let acknowledgment, !(try json(result)).utf8.elementsEqual((try json(decode(acknowledgment))).utf8) {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try acknowledgeReferenceTaskStatus(result)
+                _ = await readReference()
+                return
+            }
             if let request = referenceTaskNextRequest {
                 let outcome = try await query("doneTaskStatusRetryOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
@@ -19864,6 +20042,14 @@ final class CoreModel: ObservableObject {
             }
             if doneTaskStatusRequest != nil {
                 await handleDoneTaskStatusError(error)
+                return
+            }
+            if referenceCompletionPending {
+                await handleReferenceTaskCompletionError(error)
+                return
+            }
+            if referenceTaskStatusRequest != nil {
+                await handleReferenceTaskStatusError(error)
                 return
             }
             if referenceTaskNextRequest != nil {

@@ -530,6 +530,16 @@ export type PreparedChecklistEffect = {
     };
 };
 
+/** Exact command-bound durable rows, including generated identifier absence. */
+export type PreparedChecklistRawBefore = {
+    tasks: Array<{ id: string; before: Task | null }>;
+    projects: Array<{ id: string; before: Project | null }>;
+    sections: Array<{ id: string; before: Section | null }>;
+};
+export type PreparedChecklistWriteOptions = { requireBefore?: boolean } | {
+    requireBefore: true; authority: PreparedAreaAuthority; rawBefore: PreparedChecklistRawBefore;
+};
+
 /** Device-local recovery state for a snapshot that exhausted durable-save retries. */
 export type PersistenceFailure = {
     message: string;
@@ -638,7 +648,7 @@ export interface TaskStore {
     commitPreparedCalendarTask: (input: PreparedCalendarTask) => Promise<PreparedTaskEditResult>;
     commitPreparedCalendarCreate: (input: PreparedCalendarCreate) => Promise<PreparedTaskEditResult>;
     commitPreparedInboxEffect: (input: PreparedInboxEffect) => Promise<PreparedTaskEditResult>;
-    commitPreparedChecklistEffect: (input: PreparedChecklistEffect, options?: { requireBefore?: boolean }) => Promise<PreparedTaskEditResult>;
+    commitPreparedChecklistEffect: (input: PreparedChecklistEffect, options?: PreparedChecklistWriteOptions) => Promise<PreparedTaskEditResult>;
     /** Update an existing task */
     updateTask: (id: string, updates: Partial<Task>) => Promise<StoreActionResult>;
     /** Archive a task as cancelled without completing it */
