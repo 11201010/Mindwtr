@@ -166,7 +166,8 @@ internal class ReminderLedger(private val read: () -> Map<Int, String>, private 
 /**
  * React Native's alarms, cancelled once at the first native start, before the first plan (JVM-tested: ReminderPlanTest). RN's
  * library keeps them in `databases/rnandb`, table `alarmtbl`; each is a broadcast to its AlarmReceiver under the request code in
- * the row's `alarmId`. Their order makes a process death safe anywhere: every alarm is cancelled, then RN's delivered reminders lose
+ * the row's `alarmId`. Their order makes a process death safe anywhere: every alarm is cancelled (RN's, and this app's own from
+ * before an RN build ran), then RN's delivered reminders lose
  * their buttons (Done, Snooze and Dismiss target RN's receiver, which is gone; a tap still opens the app), then RN's alarm map goes (core
  * plans every alarm afresh; RN's Pomodoro record stays for the Pomodoro pass), then the table. Until the table is gone each
  * start runs it again, and cancelling twice is harmless; no plan runs before it finished.
@@ -179,9 +180,11 @@ internal object RnAlarmCleanup {
     val FORGOTTEN_KEYS = listOf(ReminderPlan.MAP_KEY)
 
     /** [rows]: each RN alarm's request code, null when RN left no table. The number cancelled. */
-    fun run(rows: () -> List<Int>?, cancel: (Int) -> Unit, stripButtons: () -> Unit, forgetMaps: () -> Unit, deleteTable: () -> Unit): Int {
+    fun run(rows: () -> List<Int>?, cancel: (Int) -> Unit, cancelNative: () -> Unit, stripButtons: () -> Unit, forgetMaps: () -> Unit,
+            deleteTable: () -> Unit): Int {
         val ids = rows() ?: return 0
         ids.forEach(cancel)
+        cancelNative()
         stripButtons()
         forgetMaps()
         deleteTable()
@@ -308,7 +311,8 @@ internal class ReminderAlarms(
 
     override fun receiverCounts(): String = ReminderReceiverCounts.of(context).take().toString()
 
-    override fun cleanupRn(): Int = RnAlarmCleanup.run(rows = ::rnAlarmIds, cancel = ::cancelRn, stripButtons = ::stripRnButtons,
+    override fun cleanupRn(): Int = RnAlarmCleanup.run(rows = ::rnAlarmIds, cancel = ::cancelRn, cancelNative = ::cancelEveryNative,
+        stripButtons = ::stripRnButtons,
         // Only maps that exist: an RN user who never had reminders keeps RKStorage untouched.
         forgetMaps = { keyValue.multiGet(RnAlarmCleanup.FORGOTTEN_KEYS).filterValues { it != null }.keys.toList()
             .takeIf { it.isNotEmpty() }?.let { keys -> beforeWrite(); keyValue.multiRemove(keys) }; Unit },
@@ -359,6 +363,16 @@ internal class ReminderAlarms(
             }
             RnAlarmCleanup.requestCodes(cursor.use { rows -> buildList { while (rows.moveToNext()) add(rows.getString(0)) } })
         }
+    }
+
+    /**
+     * Every alarm this app made before an RN build ran (native → RN → native): RN's map no longer names them, so a plan would not
+     * cancel one whose task was completed in RN, and Android keeps alarms across a package replace. The ledger goes with them.
+     */
+    private fun cancelEveryNative() = synchronized(LOCK) {
+        val ledger = ReminderLedger.of(context)
+        ledger.ids().forEach(::cancel)
+        ledger.clear()
     }
 
     /**
