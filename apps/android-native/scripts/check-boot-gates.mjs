@@ -3195,6 +3195,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // Kotlin says when a publication did not reach the widgets (its store or redraw failed), so the publisher sends it again.
     const hostWidgetsKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/HostWidgets.kt'), 'utf8');
     assert.match(hostWidgetsKt, /\.put\("stale", stale\)/);
+    assert.match(hostWidgetsKt, /check\(WidgetPayloadStore\.write\(app, payload\)\) \{ "[^"]+" \}/, 'a payload that did not reach the disk keeps the publication stale');
     assert.match(hostWidgetsKt, /\}\.onSuccess \{ stale = false \}\.onFailure \{\s+stale = true/);
     console.log('Widgets: core\'s Android publication from the engine with the device\'s inputs and language, sent once per change, after the validated load, with the Focus screen\'s filter');
 }

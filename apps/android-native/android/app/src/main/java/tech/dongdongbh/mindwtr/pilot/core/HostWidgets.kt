@@ -43,7 +43,7 @@ class HostWidgets(private val app: Context, val appState: () -> String) {
     fun publish(payload: String) {
         worker.execute {
             runCatching {
-                WidgetPayloadStore.write(app, payload)
+                check(WidgetPayloadStore.write(app, payload)) { "payload not stored" }
                 val drawn = WidgetRenderer.refreshAll(app)
                 Log.i(CoreHost.TAG, "Native Android widgets refreshed bytes=${payload.length} legacy=${drawn.legacyWidgetCount} " +
                     "compact=${drawn.compactWidgetCount} rendered=${drawn.renderedTaskCount} hiddenCheckoffs=${CheckoffStore.consumeHiddenCount(app)} " +
