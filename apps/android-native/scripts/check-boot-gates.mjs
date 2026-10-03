@@ -4030,7 +4030,9 @@ console.log('Entry points: RN\'s alias, links on the build\'s scheme, text share
     assert.match(remindersKt, /if \(Build\.VERSION\.SDK_INT < Build\.VERSION_CODES\.S \|\| manager\.canScheduleExactAlarms\(\)\) \{\s+manager\.setExactAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP, at, intent\)\s+\} else \{\s+manager\.setAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP, at, intent\)/);
     // RN's alarms through RN's receiver's name and its request codes (the row's alarmId), before the maps go, then the table.
     assert.match(remindersKt, /RN_RECEIVER = "com\.emekalites\.react\.alarm\.notification\.AlarmReceiver"/);
-    assert.match(remindersKt, /JSONObject\(row!!\)\.getInt\("alarmId"\)/);
+    // RN's release builds shrink AlarmModel's field names: every whole number in a row is a candidate request code.
+    assert.match(remindersKt, /data\.optInt\("alarmId", Int\.MIN_VALUE\)/);
+    assert.match(remindersKt, /PendingIntent\.getBroadcast\(context, id, intent, PendingIntent\.FLAG_NO_CREATE or PendingIntent\.FLAG_IMMUTABLE\)/, 'a candidate that names no RN alarm cancels nothing');
     // Done and Snooze: CoreWork jobs, unique per request, journaled host methods (WriteJournal.SHAPES), the tap's time with Snooze.
     assert.match(source('CoreWork.kt'), /requestId != null -> work\.enqueueUniqueWork\("mindwtr-core-\$job-\$requestId", ExistingWorkPolicy\.KEEP, request\)/);
     assert.match(remindersKt, /"requestedAt" to System\.currentTimeMillis\(\)\.toString\(\)/);

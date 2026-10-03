@@ -181,10 +181,11 @@ internal object RnAlarmCleanup {
     val FORGOTTEN_KEYS = listOf(ReminderPlan.MAP_KEY)
 
     /** [rows]: each RN alarm's request code, null when RN left no table. The number cancelled. */
-    fun run(rows: () -> List<Int>?, cancel: (Int) -> Unit, cancelNative: () -> Unit, stripButtons: () -> Unit, forgetMaps: () -> Unit,
+    /** [rows]: each RN alarm row's candidate request codes, null when RN left no table. The number of RN alarms. */
+    fun run(rows: () -> List<List<Int>>?, cancel: (Int) -> Unit, cancelNative: () -> Unit, stripButtons: () -> Unit, forgetMaps: () -> Unit,
             deleteTable: () -> Unit): Int {
         val ids = rows() ?: return 0
-        ids.forEach(cancel)
+        ids.flatten().forEach(cancel)
         cancelNative()
         stripButtons()
         forgetMaps()
@@ -193,11 +194,20 @@ internal object RnAlarmCleanup {
     }
 
     /**
-     * Each row's request code (its `gson_data`'s `alarmId`, as RN's library cancels it). A row that cannot be read throws: its alarm
-     * may still be set under a code only that row holds, so the cleanup fails and keeps the table and the maps for the next start.
+     * Each row's candidate request codes. RN's library cancels an alarm under its `gson_data`'s `alarmId`, but RN's release builds
+     * shrink AlarmModel's field names (R8: `"q":1790000001`), so every whole number in the row is a candidate: one that names no RN
+     * alarm finds no PendingIntent and cancels nothing. A row that cannot be read, or holds no whole number, throws: its alarm may
+     * still be set under a code only that row holds, so the cleanup fails and keeps the table and the map for the next start.
      */
-    fun requestCodes(rows: List<String?>): List<Int> = rows.map { row ->
-        runCatching { JSONObject(row!!).getInt("alarmId") }.getOrElse { throw IllegalStateException("An RN alarm row cannot be read", it) }
+    fun requestCodes(rows: List<String?>): List<List<Int>> = rows.map { row ->
+        val data = runCatching { JSONObject(row!!) }.getOrElse { throw IllegalStateException("An RN alarm row cannot be read", it) }
+        val codes = data.keys().asSequence().mapNotNull { name ->
+            (data.get(name) as? Number)?.toDouble()?.takeIf { it % 1.0 == 0.0 && it in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble() }?.toInt()
+        }.distinct().toList()
+        // The real field first when the build kept its name.
+        val named = data.optInt("alarmId", Int.MIN_VALUE).takeIf { data.has("alarmId") && it != Int.MIN_VALUE }
+        val ordered = if (named != null) listOf(named) else codes.sorted()
+        ordered.ifEmpty { throw IllegalStateException("An RN alarm row holds no request code fields=[${data.keys().asSequence().sorted().joinToString(",")}]") }
     }
 
     /** RN's database without its table (a stop inside its onCreate) holds no alarm; any other failed read fails the cleanup. */
@@ -358,7 +368,7 @@ internal class ReminderAlarms(
     }
 
     /** Each RN alarm's request code (its row's `alarmId`); null when RN left no alarm database. */
-    private fun rnAlarmIds(): List<Int>? {
+    private fun rnAlarmIds(): List<List<Int>>? {
         val file = context.getDatabasePath(RN_DATABASE)
         if (!file.exists()) return null
         return SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { database ->

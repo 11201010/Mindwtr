@@ -77,7 +77,7 @@ class ReminderPlanTest {
     }
 
     @Test fun reactNativesMapsAreRemovedOnlyWhenTheyExist() {
-        RnAlarmCleanup.run(rows = { emptyList() }, cancel = { events += "cancel $it" }, cancelNative = { events += "native" }, stripButtons = { events += "strip" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
+        RnAlarmCleanup.run(rows = { emptyList<List<Int>>() }, cancel = { events += "cancel $it" }, cancelNative = { events += "native" }, stripButtons = { events += "strip" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
         assertEquals(listOf("native", "strip", "forget", "delete"), events)
     }
 
@@ -151,26 +151,29 @@ class ReminderPlanTest {
     }
 
     @Test fun reactNativesAlarmsAreCancelledBeforeItsMapGoesAndTheTableLast() {
-        val done = RnAlarmCleanup.run(rows = { listOf(1_790_000_001, 1_790_000_002) }, cancel = { events += "cancel $it" },
+        val done = RnAlarmCleanup.run(rows = { listOf(listOf(1_790_000_001), listOf(3, 1_790_000_002)) }, cancel = { events += "cancel $it" },
             cancelNative = { events += "native" }, stripButtons = { events += "strip" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
         assertEquals(2, done)
         // RN's delivered reminders lose their buttons (they target RN's receiver, which is gone) while RN's inventory still exists.
         // An RN build ran since this app's last start (native → RN → native): every alarm this app made before goes too, so one
         // whose task was completed in RN never shows.
-        assertEquals(listOf("cancel 1790000001", "cancel 1790000002", "native", "strip", "forget", "delete"), events)
+        assertEquals(listOf("cancel 1790000001", "cancel 3", "cancel 1790000002", "native", "strip", "forget", "delete"), events)
     }
 
     @Test fun aCleanupStoppedPartWayKeepsTheMapAndTheTableForTheNextStart() {
         assertThrows(IllegalStateException::class.java) {
-            RnAlarmCleanup.run(rows = { listOf(1, 2) }, cancel = { events += "cancel $it"; if (it == 2) throw IllegalStateException("stopped") },
+            RnAlarmCleanup.run(rows = { listOf(listOf(1), listOf(2)) }, cancel = { events += "cancel $it"; if (it == 2) throw IllegalStateException("stopped") },
                 cancelNative = { events += "native" }, stripButtons = { events += "strip" }, forgetMaps = { events += "forget" }, deleteTable = { events += "delete" })
         }
         assertEquals(listOf("cancel 1", "cancel 2"), events)
     }
 
     @Test fun aReactNativeRowThatCannotBeReadFailsTheCleanupAndKeepsEverything() {
-        assertEquals(listOf(1_790_000_001), RnAlarmCleanup.requestCodes(listOf("""{"alarmId":1790000001,"id":3}""")))
-        for (row in listOf(null, "{not json", """{"id":3}""", """{"alarmId":"x"}""")) {
+        assertEquals(listOf(listOf(1_790_000_001)), RnAlarmCleanup.requestCodes(listOf("""{"alarmId":1790000001,"id":3}""")))
+        // RN's release builds shrink AlarmModel's field names (R8): every whole number in the row is a candidate request code. A code
+        // that names no RN alarm finds no PendingIntent and cancels nothing (FLAG_NO_CREATE).
+        assertEquals(listOf(listOf(3, 1_790_000_001)), RnAlarmCleanup.requestCodes(listOf("""{"A":3,"B":"Pay rent","q":1790000001,"r":true,"s":1.5,"t":99999999999}""")))
+        for (row in listOf(null, "{not json", """{"A":"x","B":true}""")) {
             assertThrows(IllegalStateException::class.java) { RnAlarmCleanup.requestCodes(listOf("""{"alarmId":1}""", row)) }
         }
         assertThrows(IllegalStateException::class.java) {
