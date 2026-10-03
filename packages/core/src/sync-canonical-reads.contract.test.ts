@@ -2074,6 +2074,36 @@ describe('canonical local reads contract', () => {
         if (archivedBulkUndo.storeFields.length > 0 || archivedBulkUndo.readFields.length > 0) {
             notCanonical.push({ action: 'native prepared Archive bulk Delete Undo', ...archivedBulkUndo });
         }
+        const referenceNext = await runMutation('native prepared Reference leading Next', async (control) => {
+            await call('updateTask', 'task-66', { status: 'reference', isFocusedToday: false });
+            const host = await nativeHost(control);
+            const source = useTaskStore.getState()._tasksById.get('task-66');
+            if (!source || source.status !== 'reference') throw new Error('Reference Next fixture must be a live Reference row');
+            const request = { requestId: '2f0e9b35-afcd-4710-8847-9c4219ad0187', source: 'reference' as const,
+                status: 'next' as const, id: source.id, taskRevision: taskRevisionOf(source) };
+            const planned = nativeValue(await host.prepareDoneTaskStatus(request));
+            expect(planned.kind).toBe('prepared');
+            if (planned.kind !== 'prepared') throw new Error('Reference Next must prepare a real write');
+            expect(planned.prepared.kind).toBe('referenceNext');
+            expect(nativeValue(host.validatePreparedDoneTaskStatus({ request, prepared: planned.prepared }))).toEqual({ id: source.id });
+            const after = planned.prepared.checklist.effect.tasks[0].after;
+            expect(after).toMatchObject({ id: source.id, status: 'next', rev: (source.rev ?? 0) + 1 });
+            const before = nativeValue(await readAreaDurableData(false, true)).authority.snapshot;
+            control.expectPersisted((written) => {
+                expect(written.tasks).toEqual(before.tasks.map((row) => row.id === source.id ? after : row));
+                expect(written.projects).toEqual(before.projects);
+                expect(written.sections).toEqual(before.sections);
+                expect(written.areas).toEqual(before.areas);
+                expect(written.people).toEqual(before.people);
+                expect(written.settings).toEqual(before.settings);
+            });
+            control.resetBaseline();
+            expect(nativeValue(await host.commitPreparedDoneTaskStatus({ request, prepared: planned.prepared }))).toEqual({ id: source.id });
+            expect(useTaskStore.getState()._tasksById.get(source.id)).toEqual(after);
+        });
+        if (referenceNext.storeFields.length > 0 || referenceNext.readFields.length > 0) {
+            notCanonical.push({ action: 'native prepared Reference leading Next', ...referenceNext });
+        }
         const doneBulkMove = await runMutation('native prepared Done bulk Move status', async (control) => {
             // Normal load archives the fixture's historical completions. Make
             // two real recent Done rows through RN before resetting baseline.

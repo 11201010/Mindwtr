@@ -1796,7 +1796,7 @@ final class CoreModel: ObservableObject {
     }
     var referenceActionPending: Bool {
         selectedSurface == .reference && retryNeeded &&
-            (referenceTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "reference")
+            (referenceTaskNextRequest != nil || referenceTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "reference")
     }
     var referencePickerActionsEnabled: Bool { referenceActionsEnabled && referencePickerCurrent }
     var historyArchived: Bool { historyTabs.text("tab") == "archived" }
@@ -2879,7 +2879,9 @@ final class CoreModel: ObservableObject {
                 historyTabs = ["tab": recovery.text("source") == "done" ? "done" : "archived"]
                 historyParamsByTab["archive", default: [:]]["segment"] = "tasks"
             }
-            if ["doneTaskStatusCommit", "doneTaskCompletedAtCommit"].contains(recovery.text("method")) {
+            if recovery.text("method") == "doneTaskStatusCommit", recovery.text("source") == "reference" {
+                selectedSurface = .reference
+            } else if ["doneTaskStatusCommit", "doneTaskCompletedAtCommit"].contains(recovery.text("method")) {
                 selectedSurface = .history
                 historyTabs = ["tab": "done"]
             }
@@ -12899,6 +12901,7 @@ final class CoreModel: ObservableObject {
     private var doneTaskDeleteRequest: String?
     private var referenceTaskDeleteRequest: String?
     private var doneTaskStatusRequest: String?
+    private var referenceTaskNextRequest: String?
     private var doneTaskCompletedAtRequest: String?
     private var archiveTaskCompletedAtRequest: String?
 
@@ -13119,6 +13122,57 @@ final class CoreModel: ObservableObject {
             error = failure.localizedDescription
         }
         historyError = failure.localizedDescription
+    }
+
+    func moveReferenceTaskToNext(expectedID: String, expectedRevision: String) async {
+        guard referenceActionsEnabled else { return }
+        guard let item = reference.objects("items").first(where: {
+                  $0.text("type") == "task" && $0.object("row").text("id").utf8.elementsEqual(expectedID.utf8)
+              }), !item.object("row").flag("readOnly"),
+              item.object("row").text("status") == "reference",
+              item.object("row").text("taskRevision").utf8.elementsEqual(expectedRevision.utf8),
+              item.object("row").object("meta").object("swipe").text("target") == "next",
+              !expectedID.isEmpty, expectedID.utf16.count <= 500,
+              !expectedRevision.isEmpty, expectedRevision.utf16.count <= 200 else {
+            referenceError = label("task.updateFailed")
+            return
+        }
+        busy = true
+        referenceError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "id": expectedID,
+                                    "taskRevision": expectedRevision, "source": "reference", "status": "next"])
+            referenceTaskNextRequest = request
+            let result = try await query("doneTaskStatusWrite", [request])
+            try acknowledgeReferenceTaskNext(result)
+            _ = await readReference()
+        } catch { await handleReferenceTaskNextError(error) }
+    }
+
+    private func acknowledgeReferenceTaskNext(_ result: CoreObject) throws {
+        guard let request = referenceTaskNextRequest, Set(result.keys) == Set(["id"]),
+              result.text("id").utf8.elementsEqual((try decode(request)).text("id").utf8) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        referenceTaskNextRequest = nil
+        retryNeeded = false
+        referenceError = nil
+        error = nil
+        referenceCurrent = false
+    }
+
+    private func handleReferenceTaskNextError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            referenceTaskNextRequest = nil
+            retryNeeded = false
+            error = nil
+            _ = await readReference()
+        } else {
+            retryNeeded = referenceTaskNextRequest != nil
+            error = failure.localizedDescription
+        }
+        referenceError = failure.localizedDescription
     }
 
     func deleteReferenceTask(expectedID: String, expectedRevision: String) async {
@@ -19379,6 +19433,25 @@ final class CoreModel: ObservableObject {
                 _ = await readHistory()
                 return
             }
+            if let request = referenceTaskNextRequest {
+                let outcome = try await query("doneTaskStatusRetryOutcome", [request])
+                if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                    let unknown = label("task.doneStatusOutcomeUnknown")
+                    referenceError = unknown
+                    self.error = unknown
+                    return
+                }
+                guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let result = outcome.object("result")
+                if let acknowledgment, !(try json(result)).utf8.elementsEqual((try json(decode(acknowledgment))).utf8) {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try acknowledgeReferenceTaskNext(result)
+                _ = await readReference()
+                return
+            }
             if let request = referenceTaskDeleteRequest {
                 let outcome = try await query("taskDeleteReceiptOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
@@ -19791,6 +19864,10 @@ final class CoreModel: ObservableObject {
             }
             if doneTaskStatusRequest != nil {
                 await handleDoneTaskStatusError(error)
+                return
+            }
+            if referenceTaskNextRequest != nil {
+                await handleReferenceTaskNextError(error)
                 return
             }
             if referenceTaskDeleteRequest != nil {

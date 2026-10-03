@@ -15,7 +15,8 @@ struct ReferenceScreen: View {
                           onChipAction: { action in Task { await model.applyReferenceChipAction(action) } },
                           onClear: { Task { await model.editReferenceFilter(model.reference.object("filters").object("clearEdit")) } },
                           onCollapse: { id in Task { await model.toggleReferenceSection(id) } },
-                          onDeleteTask: { id, revision in Task { await model.deleteReferenceTask(expectedID: id, expectedRevision: revision) } })
+                          onDeleteTask: { id, revision in Task { await model.deleteReferenceTask(expectedID: id, expectedRevision: revision) } },
+                          onNextTask: { id, revision in Task { await model.moveReferenceTaskToNext(expectedID: id, expectedRevision: revision) } })
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
@@ -57,6 +58,7 @@ struct StatusListContent: View {
     let onClear: () -> Void
     let onCollapse: (String) -> Void
     let onDeleteTask: ((String, String) -> Void)?
+    var onNextTask: ((String, String) -> Void)? = nil
     var onStatusOptions: ((CoreObject) async -> CoreObject?)? = nil
     var onStatusChange: ((CoreObject, String) -> Void)? = nil
     var onCompletedAt: ((CoreObject) -> Void)? = nil
@@ -127,6 +129,20 @@ struct StatusListContent: View {
                                  onSelectionStart: enabled && !row.flag("readOnly") ? onSelectionStart : nil)
                     }
                         .id(entry.id)
+                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                            let swipe = row.object("meta").object("swipe")
+                            if let onNextTask, enabled, !selectionActive, !row.flag("readOnly"),
+                               swipe.text("target") == "next", !swipe.text("label").isEmpty,
+                               !row.text("id").isEmpty, !row.text("taskRevision").isEmpty {
+                                Button {
+                                    onNextTask(row.text("id"), row.text("taskRevision"))
+                                } label: {
+                                    Label { Text(swipe.text("label")) } icon: { AppIcon(name: swipe.text("icon"), size: 18) }
+                                }
+                                .tint(palette.tint)
+                                .accessibilityIdentifier(prefix + "-next-" + row.text("id"))
+                            }
+                        }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             if let onDeleteTask, enabled, !selectionActive, !row.flag("readOnly"),
                                !row.text("id").isEmpty, !row.text("taskRevision").isEmpty {
