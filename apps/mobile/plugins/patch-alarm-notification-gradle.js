@@ -1313,6 +1313,39 @@ ${marker}`
   );
 };
 
+// A reminder cycle forgets an expired alarm and deletes its row, but its
+// notification stays in the tray. When the task is later completed, JS still has
+// to remove that notification. removeFiredNotification cannot: it looks the post
+// id up through the deleted row. So JS reads the post id while the row exists
+// (an inactive, fired row too, which getScheduledAlarms does not list) and later
+// clears the notification by that id. AlarmUtil.clearNotification comes from
+// alarm-dead-row-util.
+const applyAlarmDeliveredNotificationModulePatchToSource = (original) => {
+  if (original.includes('public void clearNotification(int notificationId)')) return original;
+  const marker = `    @ReactMethod
+    public void removeAllFiredNotifications() {`;
+  if (!original.includes(marker)) return original;
+  return original.replace(
+    marker,
+    `    @ReactMethod
+    public void getNotificationId(int id, Promise promise) {
+        AlarmModel alarm = getAlarmDB().getAlarm(id);
+        if (alarm == null) {
+            promise.resolve(null);
+            return;
+        }
+        promise.resolve(alarm.getAlarmId());
+    }
+
+    @ReactMethod
+    public void clearNotification(int notificationId) {
+        alarmUtil.clearNotification(notificationId);
+    }
+
+${marker}`
+  );
+};
+
 const androidJavaCandidates = (fileName) => (projectRoot) => getAndroidSourceCandidates(projectRoot, fileName);
 
 const androidGradleCandidates = (projectRoot) => [
@@ -1523,6 +1556,15 @@ const PATCHES = [
     required: true,
     firstMatchOnly: false,
     appliedMarker: 'public void canScheduleExactAlarms(',
+  },
+  {
+    id: 'alarm-delivered-notification-module',
+    platform: 'android',
+    getCandidates: androidJavaCandidates('ANModule.java'),
+    transform: applyAlarmDeliveredNotificationModulePatchToSource,
+    required: true,
+    firstMatchOnly: false,
+    appliedMarker: 'public void clearNotification(int notificationId)',
   },
   {
     id: 'alarm-ios-complete-action',

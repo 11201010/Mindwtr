@@ -40,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -751,6 +752,21 @@ private fun GtdPomodoro(model: InboxViewModel, pomodoro: JSONObject) = with(mode
             }
         }
         for (name in listOf("linkTask", "autoStartBreaks", "autoStartFocus", "completionAlert")) ToggleRow(model, controls.getJSONObject(name), true, write = { gtd(it) })
+        // RN's exact-alarm notice under the Completion alert (exact-alarm-notice.tsx, inline), core's words: only while Android 12+
+        // withholds exact alarms from this app, read again on each resume. Allow opens Android's Alarms & reminders page.
+        controls.optJSONObject("alarmNotice")?.let { notice ->
+            val context = LocalContext.current
+            val denied = remember(model.resumes) { ReminderAlarms.exactAlarmsDenied(context) }
+            if (denied) Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp).testTag("exact-alarm-notice"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(notice.getString("label"), style = rnText(13, 600), color = c.text)
+                Text(notice.getString("description"), style = rnText(13, 400, 18), color = c.secondaryText)
+                val action = notice.getString("actionLabel")
+                Box(Modifier.heightIn(min = 44.dp).clearAndSetSemantics { contentDescription = action; role = Role.Button; onClick { ReminderAlarms.openExactAlarmSettings(context); true } }
+                    .clickable { ReminderAlarms.openExactAlarmSettings(context) }.padding(vertical = 10.dp).testTag("exact-alarm-allow"), contentAlignment = Alignment.CenterStart) {
+                    Text(action, style = rnText(14, 600), color = c.tint)
+                }
+            }
+        }
     }
 }
 

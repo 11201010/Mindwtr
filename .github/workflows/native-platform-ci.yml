@@ -586,8 +586,9 @@ jobs:
       matrix: ${{ fromJSON(needs.changes.outputs.ios_matrix) }}
     runs-on: ${{ matrix.runner }}
     name: iOS SwiftUI client and JavaScriptCore host (${{ matrix.label }})
-    # The full Swift host suite runs before the isolated SwiftUI client build.
-    timeout-minutes: 45
+    # The full Swift host suite takes about 42 minutes before the isolated app build.
+    # Keep the job allowance separate from individual test and performance limits.
+    timeout-minutes: 75
     steps:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -922,7 +923,8 @@ jobs:
     needs: changes
     runs-on: ubuntu-latest
     name: iOS Swift compile (Mac mini Xcode 27)
-    timeout-minutes: 90
+    # One Mac runs both 75-minute Apple jobs serially; allow discovery and evidence transfer too.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:

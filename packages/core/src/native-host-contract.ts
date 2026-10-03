@@ -341,6 +341,7 @@ import { createTaskViewMethods, isNativeJsonWithinBytes, readChecklist, sameChec
 import { createSavedSearchMethods } from './native-host-contract-saved-search';
 import { createCaptureIngestMethods } from './native-host-contract-capture-ingest';
 import { createReminderMethods } from './native-host-contract-reminders';
+export { NATIVE_REMINDER_STATE_STORAGE_KEY } from './native-host-contract-reminders';
 import { createAttachmentMethods, readNativeAttachments, type NativeAttachmentsHost } from './native-host-contract-attachments';
 import { mergeTaskDraftAttachments } from './attachment-editor-model';
 import { createCaptureModalMethods } from './native-host-contract-capture-modal';

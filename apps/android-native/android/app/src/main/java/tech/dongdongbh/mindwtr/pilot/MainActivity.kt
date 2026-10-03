@@ -102,6 +102,8 @@ class MainActivity : FragmentActivity() {
     internal val credential = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         model.lock.answered(if (it.resultCode == RESULT_OK) null else "cancelled")
     }
+    /** RN's notification permission prompt at start; the answer reaches core's reminder plan at the resume that follows it. */
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     @OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -125,6 +127,10 @@ class MainActivity : FragmentActivity() {
                 }
                 // A waiting entry opens once the app is free (EntryRouter.pump); a system capture that ended puts the app behind the previous one.
                 LaunchedEffect(entries.head, entries.blocked) { entries.pump() }
+                // RN asks for the notification permission at start while a reminder feature is on (core's answer, once per process).
+                LaunchedEffect(loading) {
+                    if (!loading && askNotifications()) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
                 LaunchedEffect(leaveApp) { if (leaveApp) { leftApp(); moveTaskToBack(true) } }
                 val modal = captureModal.open
                 val open = editor
