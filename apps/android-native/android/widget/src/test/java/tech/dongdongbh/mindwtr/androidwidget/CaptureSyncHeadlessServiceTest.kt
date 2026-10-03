@@ -86,4 +86,17 @@ class CaptureSyncHeadlessServiceTest {
     offMain { CaptureSyncHeadlessService.queueEvent(context, FileObserver.MOVED_TO, "c.json") }
     assertEquals("no hook: nothing starts", 1, started.size)
   }
+
+  @Test
+  fun theCaptureIntentReceiversQueuedCaptureWaitsForTheStoredJobBeforeTheBroadcastFinishes() {
+    var stored = false
+    CaptureSyncHeadlessService.install(context) { Thread.sleep(200); stored = true }
+    val hook = CaptureIntentReceiver.queuedHook ?: error("no receiver hook")
+    var storedAtReturn = false
+    // RN's receiver runs it on its own thread, before pendingResult.finish().
+    offMain { hook(context); storedAtReturn = stored }
+    assertTrue(storedAtReturn)
+    CaptureSyncHeadlessService.install(context, null)
+    assertEquals(null, CaptureIntentReceiver.queuedHook)
+  }
 }

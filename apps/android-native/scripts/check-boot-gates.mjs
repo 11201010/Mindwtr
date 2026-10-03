@@ -3014,6 +3014,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.deepEqual(readdirSync(resolve(app, 'android/widget/src/main/java/tech/dongdongbh/mindwtr/androidwidget')), ['CaptureSyncHeadlessService.kt'], 'the module\'s one native file is the headless task\'s stand-in');
     const shim = widgetKt('CaptureSyncHeadlessService.kt');
     assert.match(shim, /object : FileObserver\(queue\.path, FileObserver\.MOVED_TO\)/, 'the stand-in watches RN\'s queue folder for a published item');
+    assert.match(shim, /CaptureIntentReceiver\.queuedHook = queued\?\.let \{ \{ context: Context -> start\(context\) \} \}/, 'RN\'s receiver waits for the stored job before its broadcast finishes');
     assert.match(shim, /internal fun queueEvent\(context: Context, event: Int, path: String\?\) \{\s+if \(event and FileObserver\.MOVED_TO != 0 && path\?\.endsWith\("\.json"\) == true\) start\(context\)\s+\}/);
     assert(!existsSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/androidwidget')), 'RN\'s CheckoffStore.kt is compiled in; no native copy is left');
     // The context receiver reads the intent as RN's does; where RN starts its headless task, CoreWork asks core.

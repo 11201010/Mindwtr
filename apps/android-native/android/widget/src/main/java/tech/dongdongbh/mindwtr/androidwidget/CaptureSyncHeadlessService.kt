@@ -28,6 +28,9 @@ object CaptureSyncHeadlessService {
     this.queued = queued
     watcher?.stopWatching()
     watcher = null
+    // RN's capture intent receiver: its queued capture's wake runs on the receiver's thread before the broadcast finishes, so the
+    // process lives until WorkManager stored the job.
+    CaptureIntentReceiver.queuedHook = queued?.let { { context: Context -> start(context) } }
     if (queued == null) return
     // A folder is watched only while it exists; RN's writer would create it with its first item anyway.
     val queue = File(app.filesDir, PendingCaptureWriter.DIRECTORY).apply { mkdirs() }
