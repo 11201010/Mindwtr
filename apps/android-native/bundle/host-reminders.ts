@@ -48,9 +48,10 @@ type Stored = { alarms: string | null; state: string | null };
 
 export type NativeReminderBindings = {
     /** Core's planReminderAlarms; `remake: 'all'` makes every held alarm again. */
-    plan: (input: { storedAlarms: string | null; permissionGranted: boolean; storedState: string | null; remake?: 'all' | string[] }) => Promise<NativeHostResult<ReminderPlan>>;
+    plan: (input: { storedAlarms: string | null; permissionGranted: boolean; storedState: string | null; remake?: 'all' | string[]; fired?: number[]; shown?: number[] })
+        => Promise<NativeHostResult<ReminderPlan>>;
     /** Core's planReminderSnooze: whether to make a Snooze's alarm, and the native state before and after. */
-    planSnooze: (input: { storedState: string | null; alarm: SnoozeAlarm; permissionGranted: boolean }) => NativeHostResult<{ schedule: SnoozeAlarm[]; stateAhead: string | null; state: string | null }>;
+    planSnooze: (input: { storedState: string | null; alarm: SnoozeAlarm; permissionGranted: boolean; fired?: number[] }) => NativeHostResult<{ schedule: SnoozeAlarm[]; stateAhead: string | null; state: string | null }>;
     /** RN's alarm map and the native reminder state, as stored (RKStorage). */
     readStored: () => Promise<Stored>;
     /** Kotlin: the notification permission, as RN reads it. */
@@ -59,6 +60,8 @@ export type NativeReminderBindings = {
     apply: (planJson: string) => void;
     /** Kotlin: RN's alarms cancelled and its alarm maps removed; how many were cancelled. */
     cleanupRn: () => number;
+    /** Kotlin's ledger: ids of alarms that showed, and of reminder notifications still in the tray. */
+    ledger?: () => { fired: number[]; shown: number[] };
     /** Kotlin: deliveries its receiver dropped and receiver jobs WorkManager did not store, since the last call (then zero). */
     receiverCounts?: () => { dropped: number; notQueued: number };
 };
@@ -86,7 +89,7 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
         const stored = await bindings.readStored();
         const permissionGranted = bindings.permissionGranted();
         const remake = rebuild ? { remake: 'all' as const } : Array.isArray(requested) ? { remake: requested } : {};
-        const result = await bindings.plan({ storedAlarms: stored.alarms, permissionGranted, storedState: stored.state, ...remake });
+        const result = await bindings.plan({ storedAlarms: stored.alarms, permissionGranted, storedState: stored.state, ...remake, ...bindings.ledger?.() });
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         const plan = result.value;
         // Nothing to store when the stored value already says it (none stored reads as empty).
@@ -123,7 +126,7 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
     /** A Snooze's alarm made once against the native state, in the queue: the state as not yet made, the alarm, the state as made. */
     const runSnooze = async (alarm: SnoozeAlarm) => {
         const stored = await bindings.readStored();
-        const result = bindings.planSnooze({ storedState: stored.state, alarm, permissionGranted: bindings.permissionGranted() });
+        const result = bindings.planSnooze({ storedState: stored.state, alarm, permissionGranted: bindings.permissionGranted(), fired: bindings.ledger?.().fired });
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         const { schedule, stateAhead, state } = result.value;
         bindings.apply(JSON.stringify({ mode: 'active', cancel: [], schedule, writeAhead: null, stateAhead, alarms: stored.alarms, unchanged: true, state,

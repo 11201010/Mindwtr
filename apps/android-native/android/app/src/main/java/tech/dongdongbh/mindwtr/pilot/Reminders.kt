@@ -16,6 +16,7 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import org.json.JSONArray
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.RnKeyValue
@@ -310,6 +311,12 @@ internal class ReminderAlarms(
     override fun permissionGranted() = permissionGranted(context)
 
     override fun receiverCounts(): String = ReminderReceiverCounts.of(context).take().toString()
+
+    override fun ledger(): String = synchronized(LOCK) {
+        val shown = notifications.activeNotifications.filter { NotificationCompat.getChannelId(it.notification) == CoreNotifications.REMINDER_CHANNEL }
+            .map { it.id }
+        JSONObject().put("fired", JSONArray(ReminderLedger.of(context).fired())).put("shown", JSONArray(shown)).toString()
+    }
 
     override fun cleanupRn(): Int = RnAlarmCleanup.run(rows = ::rnAlarmIds, cancel = ::cancelRn, cancelNative = ::cancelEveryNative,
         stripButtons = ::stripRnButtons,

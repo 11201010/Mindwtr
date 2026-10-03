@@ -85,6 +85,7 @@ type NativeBridge = {
     notificationsAllowed?(): boolean | string;
     rnAlarmCleanup?(): number | string;
     reminderReceiverCounts?(): string;
+    reminderLedger?(): string;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown };
@@ -332,6 +333,7 @@ const reminders = typeof (globalThis.__mindwtrNative as { alarmApply?: unknown }
         apply: (planJson) => { checked(native().alarmApply!(planJson)); },
         cleanupRn: () => Number(checked(native().rnAlarmCleanup!())),
         receiverCounts: () => JSON.parse(String(checked(native().reminderReceiverCounts!()))) as { dropped: number; notQueued: number },
+        ledger: () => JSON.parse(String(checked(native().reminderLedger!()))) as { fired: number[]; shown: number[] },
     })
     : null;
 const requireReminders = () => {

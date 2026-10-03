@@ -23,7 +23,8 @@
  *   none of these alarms, finds no signature of its own, and makes every alarm again.
  *   A task or project reminder whose alarm expires (its time passed, so it may sit in the
  *   tray) is remembered in the native host's own state (`storedState`, stored with `alarms`)
- *   for up to 30 days, by core's rule for a held alarm: once its task or project would no
+ *   while it is in the tray (the host's `shown`; without one, for up to 30 days), by core's
+ *   rule for a held alarm: once its task or project would no
  *   longer give it (done, gone, moved, its reminders off), a cancel `withdrawn` removes what
  *   it delivered. Its id stays taken meanwhile.
  * - completeReminderTask: Done. Completes the task through the store once per request
@@ -228,12 +229,16 @@ export function createReminderMethods(deps: ReminderDeps) {
             permissionGranted: boolean;
             storedState?: string | null;
             remake?: 'all' | string[];
+            /** The host's ledger (Android): ids of alarms that showed, and of reminder notifications still in the tray. */
+            fired?: number[];
+            shown?: number[];
         }): Promise<NativeHostResult<NativeReminderAlarmPlan>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             if (!isObjectRecord(input) || (input.storedAlarms !== null && typeof input.storedAlarms !== 'string') || typeof input.permissionGranted !== 'boolean'
                 || (input.storedState != null && typeof input.storedState !== 'string')
-                || (input.remake !== undefined && input.remake !== 'all' && !(Array.isArray(input.remake) && input.remake.every((key) => typeof key === 'string')))) {
+                || (input.remake !== undefined && input.remake !== 'all' && !(Array.isArray(input.remake) && input.remake.every((key) => typeof key === 'string')))
+                || [input.fired, input.shown].some((ids) => ids !== undefined && !(Array.isArray(ids) && ids.every(Number.isInteger)))) {
                 return fail('INVALID_INPUT', 'The stored alarm map (a string or null) and the notification permission are required');
             }
             let held: Map<string, ReminderAlarmEntry>;
@@ -273,19 +278,32 @@ export function createReminderMethods(deps: ReminderDeps) {
             const withdrawnDelivered: NativeReminderAlarmPlan['cancel'] = [];
             const snoozes: NativeReminderAlarm[] = [];
             const owners = { tasks: new Map(state.tasks.map((task) => [task.id, task])), projects: new Map(state.projects.map((project) => [project.id, project])) };
+            // The host's ledger, when it has one (Android): the alarms that showed, and the notifications still in the tray.
+            const fired = new Set(input.fired ?? []);
+            const shown = input.shown ? new Set(input.shown) : null;
+            const stillShown = (id: number, sinceMs: number) => (shown ? shown.has(id) : nowMs - sinceMs <= DELIVERED_RETENTION_MS);
             for (const [key, entry] of readNativeReminderState(input.storedState)) {
                 if (entry.kind === 'snooze') {
+                    const late = entry.fireAtMs < nowMs - SNOOZE_LATE_LIMIT_MS;
                     if (plan.mode === 'revoked' || isReminderOwnerGone(snoozedKey(entry), owners.tasks, owners.projects)) {
                         withdrawnDelivered.push({ key, id: entry.id, reason: 'withdrawn' });
-                    } else if (!entry.armed && entry.fireAtMs < nowMs - SNOOZE_LATE_LIMIT_MS) {
+                    } else if (fired.has(entry.id)) {
+                        // It showed: never made again; kept while it may be in the tray, so its task's completion withdraws it.
+                        if (stillShown(entry.id, entry.fireAtMs)) remembered.set(key, { ...entry, armed: true });
+                        else withdrawnDelivered.push({ key, id: entry.id, reason: 'expired' });
+                    } else if (late && (!entry.armed || input.fired)) {
+                        // Never made, or made but never shown, more than a day ago (RN's 24 h window): it expires.
                         withdrawnDelivered.push({ key, id: entry.id, reason: 'expired' });
                     } else if (entry.fireAtMs >= nowMs - DELIVERED_RETENTION_MS) {
-                        if (!entry.armed || (remakeAll && entry.fireAtMs > nowMs)) snoozes.push(snoozeAlarm(key, entry));
+                        // Made now: one never made; at a process start, one ahead (a reboot dropped it) or one the phone missed while
+                        // off (made but not shown; it shows once, now). Only a host with a ledger knows one was not shown.
+                        const missed = Boolean(input.fired) && entry.fireAtMs <= nowMs;
+                        if (!entry.armed || (remakeAll && (entry.fireAtMs > nowMs || missed))) snoozes.push(snoozeAlarm(key, entry));
                         remembered.set(key, { ...entry, armed: true });
                     }
                     continue;
                 }
-                if (nowMs - entry.firedAtMs > DELIVERED_RETENTION_MS) continue;
+                if (!stillShown(entry.id, entry.firedAtMs)) continue;
                 if (!judge || getActiveCancelReason(key, entry, false, judge) === 'withdrawn') withdrawnDelivered.push({ key, id: entry.id, reason: 'withdrawn' });
                 else remembered.set(key, entry);
             }
@@ -317,7 +335,7 @@ export function createReminderMethods(deps: ReminderDeps) {
                 next.delete(key);
                 if (!entry) return [];
                 const reason = getReminderAlarmCancelReason(plan, key);
-                if (reason === 'expired' && (key.startsWith('task:') || key.startsWith('project:'))) {
+                if (reason === 'expired' && (key.startsWith('task:') || key.startsWith('project:')) && (!shown || shown.has(entry.id))) {
                     remembered.set(key, { kind: 'delivered', id: entry.id, ...(entry.signature ? { signature: entry.signature } : {}), firedAtMs: signedFireAtMs(entry.signature) ?? nowMs });
                 }
                 return [{ key, id: entry.id, reason }];
@@ -374,7 +392,7 @@ export function createReminderMethods(deps: ReminderDeps) {
          * Whether to make a Snooze's alarm (snoozeReminder's reply) now, against the stored native state: store `stateAhead`,
          * make each `schedule` alarm, then store `state`. Nothing when it was made already (a retry, a replay after a restart).
          */
-        planReminderSnooze(input: { storedState: string | null; alarm: NativeReminderAlarm; permissionGranted: boolean }): NativeHostResult<{
+        planReminderSnooze(input: { storedState: string | null; alarm: NativeReminderAlarm; permissionGranted: boolean; fired?: number[] }): NativeHostResult<{
             schedule: NativeReminderAlarm[];
             stateAhead: string | null;
             state: string | null;
@@ -390,6 +408,10 @@ export function createReminderMethods(deps: ReminderDeps) {
             const nothing = { ok: true as const, value: { schedule: [], stateAhead: null, state: null } };
             if (held?.kind === 'snooze' && held.armed) return nothing;
             const entry: SnoozeReminder = { kind: 'snooze', id, fireAtMs, details, armed: false };
+            // Made by an earlier try that stopped before storing it as made, and it showed already: store it as made, make nothing.
+            if (held?.kind === 'snooze' && input.fired?.includes(id)) {
+                return { ok: true, value: { schedule: [], stateAhead: null, state: writeNativeReminderState(new Map(state).set(key, { ...entry, armed: true })) } };
+            }
             // A replay after a plan withdrew it (no permission, its task or project done or gone) makes nothing: the plan would
             // withdraw it again, after it may have shown.
             const { tasks, projects } = useTaskStore.getState();

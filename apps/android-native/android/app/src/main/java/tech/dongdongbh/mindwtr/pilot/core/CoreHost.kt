@@ -63,6 +63,8 @@ class CoreHost(
         fun cleanupRn(): Int
         /** `{ dropped, notQueued }` since the last call, then zero (ReminderReceiverCounts). */
         fun receiverCounts(): String
+        /** `{ fired, shown }`: ids of alarms that showed (ReminderLedger), and of reminder notifications still in the tray. */
+        fun ledger(): String
     }
 
     companion object {
@@ -362,6 +364,7 @@ class CoreHost(
             bridge.setProperty("notificationsAllowed", guarded { _ -> alarms.permissionGranted() })
             bridge.setProperty("rnAlarmCleanup", guarded { _ -> alarms.cleanupRn() })
             bridge.setProperty("reminderReceiverCounts", guarded { _ -> alarms.receiverCounts() })
+            bridge.setProperty("reminderLedger", guarded { _ -> alarms.ledger() })
         }
         engine.globalObject.setProperty("__mindwtrNative", bridge)
     }

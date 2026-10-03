@@ -731,7 +731,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 35, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: each guarded');
+assert.equal(bridgeCallbacks.length, 36, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: each guarded');
 assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })'));
 // The attachment file port and the installer only start their call on the engine thread; HostIo's files thread runs it.
@@ -4213,6 +4213,20 @@ globalThis.standStore = useTaskStore;
         receiverCounts: () => ({ dropped: 2, notQueued: 1 }),
     });
     assert.deepEqual(await counted.cycle(false), { mode: 'active', rebuild: true, scheduled: 0, withdrawn: 0, expired: 0, held: 0, dropped: 2, notQueued: 1 });
+    // The ledger (Kotlin): what showed and what is still in the tray go into every plan and every Snooze.
+    const ledgerInputs = [];
+    const withLedger = mod.createNativeReminders({
+        plan: async (input) => { ledgerInputs.push(['plan', input.fired, input.shown]); return { ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', state: '{}', topUpDelayMs: null } }; },
+        planSnooze: (input) => { ledgerInputs.push(['snooze', input.fired]); return { ok: true, value: { schedule: [], stateAhead: null, state: null } }; },
+        readStored: async () => ({ alarms: null, state: null }),
+        permissionGranted: () => true,
+        apply: () => {},
+        cleanupRn: () => 0,
+        ledger: () => ({ fired: [7], shown: [7, 9] }),
+    });
+    await withLedger.cycle(false);
+    await withLedger.snooze({ key: 'snooze:u', id: 1073741900, fireAtMs: 5, repeat: 'once', details: {}, replacing: null });
+    assert.deepEqual(ledgerInputs, [['plan', [7], [7, 9]], ['snooze', [7]]]);
     const starting = fresh.start();
     await sleep(5);
     globalThis.standStore.setState({ tasks: [] });
