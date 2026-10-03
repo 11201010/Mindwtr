@@ -3178,7 +3178,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.equal(realpathSync(resolve(app, 'android/widget/src/main/res')), realpathSync(resolve(app, '../mobile/modules/android-widget/android/src/main/res')), 'the module\'s resources are RN\'s');
     // The widget module's hook is CoreWork's ingest job, set before any component runs.
     assert.match(readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/MindwtrApplication.kt'), 'utf8'),
-        /CaptureSyncHeadlessService\.install\(this\) \{ context -> CoreWork\.enqueue\(context, CoreJob\.INGEST\) \}/);
+        /CaptureSyncHeadlessService\.install\(this\) \{ context -> CoreWork\.enqueue\(context, CoreJob\.INGEST\)\.result\.get\(DURABLE_WAIT_SECONDS, TimeUnit\.SECONDS\) \}/, 'the wake returns once WorkManager stored the job');
     assert.match(readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8'), /android:name="\.MindwtrApplication"/);
     // The Android bridge's two calls are guarded in CoreHost and published off the engine thread (HostWidgets).
     const coreHostKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');

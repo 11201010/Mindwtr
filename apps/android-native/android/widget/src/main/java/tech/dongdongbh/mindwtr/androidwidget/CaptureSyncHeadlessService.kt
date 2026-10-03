@@ -2,8 +2,10 @@ package tech.dongdongbh.mindwtr.androidwidget
 
 import android.content.Context
 import android.os.FileObserver
+import android.os.Looper
 import android.util.Log
 import java.io.File
+import java.util.concurrent.Executors
 
 /**
  * Native: RN's CaptureSyncHeadlessService woke React Native's JS to import the pending-captures queue (#1257). Here the app's
@@ -40,14 +42,24 @@ object CaptureSyncHeadlessService {
     if (event and FileObserver.MOVED_TO != 0 && path?.endsWith(".json") == true) start(context)
   }
 
-  /** Call once a pending-captures file is on disk. */
+  /**
+   * Call once a pending-captures file is on disk. The hook returns once WorkManager stored the job: off the main thread (the
+   * queue folder's watcher) this waits for it; on the main thread (the dialog's Save, while it still shows) it waits on a thread
+   * of its own.
+   */
   fun start(context: Context) {
     val hook = queued ?: return
-    try {
-      hook(context.applicationContext)
-    } catch (error: RuntimeException) {
-      // The capture is already queued; the app imports it the next time it opens.
-      Log.w(TAG, "capture sync start refused: ${error.javaClass.simpleName}")
+    val app = context.applicationContext
+    val wake: () -> Unit = {
+      try {
+        hook(app)
+      } catch (error: Exception) {
+        // The capture is already queued; the app imports it the next time it opens.
+        Log.w(TAG, "capture sync start refused: ${error.javaClass.simpleName}")
+      }
     }
+    if (Looper.myLooper() == Looper.getMainLooper()) wakes.execute(wake) else wake()
   }
+
+  private val wakes = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-capture-wake").apply { isDaemon = true } }
 }

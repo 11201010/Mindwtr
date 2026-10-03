@@ -1,6 +1,7 @@
 package tech.dongdongbh.mindwtr.pilot
 
 import android.app.Application
+import java.util.concurrent.TimeUnit
 import tech.dongdongbh.mindwtr.androidwidget.CaptureSyncHeadlessService
 
 /**
@@ -11,6 +12,11 @@ import tech.dongdongbh.mindwtr.androidwidget.CaptureSyncHeadlessService
 class MindwtrApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        CaptureSyncHeadlessService.install(this) { context -> CoreWork.enqueue(context, CoreJob.INGEST) }
+        // The wake returns once WorkManager stored the job: a process started only for a capture may end soon after.
+        CaptureSyncHeadlessService.install(this) { context -> CoreWork.enqueue(context, CoreJob.INGEST).result.get(DURABLE_WAIT_SECONDS, TimeUnit.SECONDS) }
+    }
+
+    private companion object {
+        const val DURABLE_WAIT_SECONDS = 10L
     }
 }
