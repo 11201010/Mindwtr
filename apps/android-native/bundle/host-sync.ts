@@ -9,14 +9,20 @@
  *
  * - the attachment passes and the editor's attachment IO (host-attachments.ts), on the host's app-private files.
  *
- * Not on this host yet, and refused the way core refuses an unbound port: sync encryption's cipher (S4), Dropbox (S4), File
- * Sync's folder (S5) and the background job (S4). The fence owner stays `mindwtr-mobile` and the device keys keep RN's names,
+ * - sync encryption: core's cipher on the host's crypto calls (HostCrypto.kt: Argon2id and AES-GCM off the engine thread),
+ *   and core's encryption transitions (sync-encryption-service.ts) as RN's lib/sync-encryption-service.ts binds them, with
+ *   RN's WebDAV XML parser (@xmldom/xmldom).
+ *
+ * Not on this host yet, and refused the way core refuses an unbound port: Dropbox (S4), File Sync's folder (S5) and the
+ * background job (S4). The fence owner stays `mindwtr-mobile` and the device keys keep RN's names,
  * so an upgraded RN user's configuration and deviceId carry over.
  */
+import { DOMParser } from '@xmldom/xmldom';
 import { createNativeAttachments, nativeFileChannels } from './host-attachments';
 import {
     SETTINGS_SYNC_BADGE_COLORS,
     SYNC_BACKEND_KEY,
+    SyncCryptoAuthError,
     buildDiagnosticsErrorEntry,
     buildDiagnosticsLogEntry,
     classifySyncFailure,
@@ -24,13 +30,16 @@ import {
     createMobileSyncService,
     createMobileSyncTriggers,
     createSecureSyncConfigStore,
+    createSyncEncryptionService,
     createSyncEncryptionStateStore,
     createSyncSecretVault,
     createWebdavCapabilityProofStore,
     flushPendingSave,
     generateUUID,
     getInMemorySyncChangeFingerprint,
+    getMobileWebDavRequestOptions,
     isLikelyOfflineSyncError,
+    loadWebDavSyncConfig,
     nameNotifyListener,
     normalizeExternalCalendarColor,
     readSyncLocationScope,
@@ -75,6 +84,42 @@ export type NativeSyncBindings = {
     trace: (line: string) => void;
 };
 
+/** host-polyfills.js's sync crypto call (HostCrypto.kt); absent where the host has no crypto (the gates' stand-in). */
+type HostCryptoCall = (request: Record<string, unknown>) => Promise<Uint8Array>;
+
+const unavailableCipher = (): never => {
+    throw new Error('Sync encryption is not available on this build yet');
+};
+
+/**
+ * Core's SyncCryptoPrimitives on the host's crypto calls, as RN's sync-crypto-native.ts gives them: Argon2id and AES-GCM off the
+ * engine thread, a tag or AAD mismatch as core's own SyncCryptoAuthError (core tells it apart with instanceof), and random bytes
+ * from the host's SecureRandom. Without the calls, every primitive refuses: a device whose state says `enabled` then fails
+ * closed and never writes plaintext beside ciphertext.
+ */
+export const createHostSyncCrypto = (call: HostCryptoCall | undefined): SyncCryptoPrimitives => {
+    if (!call) {
+        return { argon2id: async () => unavailableCipher(), aesGcmSeal: async () => unavailableCipher(), aesGcmOpen: async () => unavailableCipher(), randomBytes: () => unavailableCipher() };
+    }
+    return {
+        argon2id: (pass, salt, params, dkLen) => call({ op: 'argon2id', pass, salt, m: params.mKib, t: params.t, p: params.p, dkLen }),
+        aesGcmSeal: (key, nonce, plaintext, aad) => call({ op: 'aesGcmSeal', key, nonce, data: plaintext, aad }),
+        aesGcmOpen: async (key, nonce, ctAndTag, aad) => {
+            try {
+                return await call({ op: 'aesGcmOpen', key, nonce, data: ctAndTag, aad });
+            } catch (error) {
+                if ((error as { code?: unknown } | null)?.code === 'auth') throw new SyncCryptoAuthError();
+                throw error;
+            }
+        },
+        randomBytes: (n) => {
+            const bytes = new Uint8Array(n);
+            globalThis.crypto.getRandomValues(bytes);
+            return bytes;
+        },
+    };
+};
+
 /** RN's key for the device's calendar feeds (lib/external-calendar.ts EXTERNAL_CALENDARS_KEY). */
 const EXTERNAL_CALENDARS_KEY = 'mindwtr-external-calendars';
 
@@ -114,12 +159,27 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
     });
     const capabilityProof = createWebdavCapabilityProofStore(storage);
 
-    // Sync encryption's cipher comes with the crypto bridge (S4). A device whose state says `enabled` has key material, so a
-    // cycle reaches these and fails closed: it never writes plaintext beside ciphertext.
-    const noCipher = (): never => {
-        throw new Error('Sync encryption is not available on this build yet');
-    };
-    const crypto: SyncCryptoPrimitives = { argon2id: async () => noCipher(), aesGcmSeal: async () => noCipher(), aesGcmOpen: async () => noCipher(), randomBytes: () => noCipher() };
+    const crypto = createHostSyncCrypto((globalThis as { __mindwtrCryptoCall?: HostCryptoCall }).__mindwtrCryptoCall);
+
+    // Core's encryption transitions (enable, change, disable, unlock), as RN's lib/sync-encryption-service.ts binds them. They
+    // run on core's serialized sync queue, so a transition and a cycle never interleave. Dropbox and File Sync come later.
+    const transitions = createSyncEncryptionService<never>({
+        storage: { getItem: (key) => keyValue.get(key) },
+        state: encryptionState,
+        crypto,
+        fetch: (input, init) => fetch(input, init),
+        parseWebdavXml: (source) => {
+            const errors: string[] = [];
+            const document = new DOMParser({
+                errorHandler: (level, message) => errors.push(`${level}: ${String(message)}`),
+            }).parseFromString(source, 'application/xml') as unknown as Document;
+            return { document, errors };
+        },
+        loadWebDavConfig: () => loadWebDavSyncConfig(storage, (key) => secureConfig.getSecureConfigValue(key)),
+        webDavRequestOptions: (allowInsecureHttp) => getMobileWebDavRequestOptions(allowInsecureHttp),
+        getDropboxClientId: async () => '',
+        runDropboxAuthorized: unavailable('Dropbox'),
+    });
 
     const networkListeners = new Set<(state: MobileSyncNetworkState) => void>();
 
@@ -310,11 +370,15 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
         encryption: {
             getStatus: () => encryptionState.getSyncEncryptionStatus(),
             getIncompleteTransition: () => encryptionState.getIncompleteSyncEncryptionTransition(),
-            // Core's sync-encryption-service.ts isSyncEncryptionBackendPending: no durable backend yet.
-            isBackendPending: async () => {
-                const backend = (await keyValue.get(SYNC_BACKEND_KEY))?.trim();
-                return !backend || backend === 'off';
+            transitions: {
+                enable: (passphrase, options) => transitions.enableSyncEncryption(passphrase, options),
+                change: (current, next, options) => transitions.changeSyncEncryptionPassphrase(current, next, options),
+                disable: (options) => transitions.disableSyncEncryption(options),
+                provide: (passphrase) => transitions.provideSyncEncryptionPassphrase(passphrase),
+                decline: () => transitions.declineSyncEncryptionPassphrase(),
+                randomBytes: (length) => crypto.randomBytes(length),
             },
+            isBackendPending: () => transitions.isSyncEncryptionBackendPending(),
         },
         log: {
             info: (message, context) => logLine('info', message, context),

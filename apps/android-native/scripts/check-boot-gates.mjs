@@ -366,6 +366,112 @@ for (const [init, key] of [['?token=first&a=1&token=second', 'token'], ['?a=1', 
     run("fetch('https://dav.example/later')");
     assert.equal(sent.at(-1).url, 'https://dav.example/later', 'calls reach the host again once it resumes them');
 }
+
+// S4b: sync encryption's primitives on the host's crypto calls (host-polyfills.js __mindwtrCryptoCall, host-sync.ts
+// createHostSyncCrypto) with core itself. The fake bridge answers as HostCrypto.kt does (Argon2id, AES-256-GCM, `auth` for a tag
+// mismatch); HostCryptoTest proves the Kotlin bytes. Here: every byte crosses the base64 transport whole, an answer settles only in
+// the pump, core opens and reproduces every MWENC1 vector, a tag mismatch is core's own SyncCryptoAuthError (core checks it with
+// instanceof), and a host without the calls refuses every primitive.
+{
+    const { argon2id } = await import('@noble/hashes/argon2.js');
+    const nodeCrypto = await import('node:crypto');
+    const vectors = JSON.parse(readFileSync(resolve(app, '../../packages/core/src/__fixtures__/sync-crypto/vectors.json'), 'utf8'));
+    const answers = [];
+    const requests = [];
+    let taken = '';
+    let ids = 0;
+    const b = (text) => Buffer.from(text, 'base64');
+    const bridge = {
+        log() {},
+        nowMs: () => performance.now(),
+        randomBytes: (length) => JSON.stringify([...nodeCrypto.randomBytes(length)]),
+        cryptoCall(json) {
+            const request = JSON.parse(json);
+            requests.push(request);
+            const id = String(++ids);
+            try {
+                let out;
+                if (request.op === 'argon2id') out = argon2id(b(request.pass), b(request.salt), { m: request.m, t: request.t, p: request.p, dkLen: request.dkLen });
+                else if (request.op === 'aesGcmSeal') {
+                    const cipher = nodeCrypto.createCipheriv('aes-256-gcm', b(request.key), b(request.nonce)).setAAD(b(request.aad));
+                    out = Buffer.concat([cipher.update(b(request.data)), cipher.final(), cipher.getAuthTag()]);
+                } else {
+                    const data = b(request.data);
+                    if (data.length < 16) throw Object.assign(new Error('wrong passphrase or corrupted data'), { auth: true });
+                    const decipher = nodeCrypto.createDecipheriv('aes-256-gcm', b(request.key), b(request.nonce)).setAAD(b(request.aad));
+                    decipher.setAuthTag(data.subarray(data.length - 16));
+                    try { out = Buffer.concat([decipher.update(data.subarray(0, data.length - 16)), decipher.final()]); }
+                    catch { throw Object.assign(new Error('wrong passphrase or corrupted data'), { auth: true }); }
+                }
+                answers.push({ json: JSON.stringify({ id, body: true }), body: Buffer.from(out).toString('base64') });
+            } catch (error) {
+                answers.push({ json: JSON.stringify({ id, error: error.message, ...(error.auth ? { auth: true } : {}) }) });
+            }
+            return id;
+        },
+        ioNext() { const next = answers.shift(); taken = next?.body ?? ''; return next?.json ?? ''; },
+        ioBody() { return taken; },
+    };
+    const entry = `import { createHostSyncCrypto } from './host-sync';
+import { SyncCryptoAuthError, SyncCryptoUnsupportedError, decryptSyncArtifact, deriveSyncKeyMaterial, encryptSyncArtifact } from '@mindwtr/core';
+globalThis.cryptoGate = { prims: createHostSyncCrypto(globalThis.__mindwtrCryptoCall), refusing: createHostSyncCrypto(undefined),
+    SyncCryptoAuthError, SyncCryptoUnsupportedError, decryptSyncArtifact, deriveSyncKeyMaterial, encryptSyncArtifact };`;
+    const gateBundle = await build({ stdin: { contents: entry, loader: 'ts', resolveDir: resolve(app, 'bundle') }, bundle: true, write: false, format: 'iife', logLevel: 'silent' });
+    const context = vm.createContext({ console: { info() {}, warn() {}, error() {}, log() {} }, Intl: undefined, __mindwtrNative: bridge });
+    vm.runInContext(readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8'), context);
+    vm.runInContext(gateBundle.outputFiles[0].text, context);
+    const gate = context.cryptoGate;
+    // Settles a crypto promise the way CoreHost's pump does: only __pumpTimers hands an answer back.
+    const pumped = async (promise) => {
+        let done = false;
+        const settled = promise.finally(() => { done = true; });
+        settled.catch(() => {}); // the caller takes the rejection; this only keeps Node from calling it unhandled meanwhile
+        await new Promise((tick) => setImmediate(tick));
+        assert.equal(done, false, 'a crypto call settles only in the pump');
+        while (!done) { context.__pumpTimers(); await new Promise((tick) => setImmediate(tick)); }
+        return settled;
+    };
+    const ContextBytes = vm.runInContext('Uint8Array', context);
+    const u8 = (bytes) => new ContextBytes(bytes);
+    for (const vector of vectors) {
+        const material = await pumped(gate.deriveSyncKeyMaterial(vector.passphrase, u8(b(vector.saltB64)), vector.params, gate.prims));
+        const encrypted = u8(b(vector.encryptedB64));
+        const opened = await pumped(gate.decryptSyncArtifact(encrypted, material.key, gate.prims));
+        assert(Buffer.from(opened).equals(b(vector.plaintextB64)), `${vector.name} opens through the host's calls`);
+        // The same key, salt and nonce reproduce the container byte for byte.
+        const nonce = encrypted.slice(34, 46);
+        const sealed = await pumped(gate.encryptSyncArtifact(u8(b(vector.plaintextB64)), material, { ...gate.prims, randomBytes: () => nonce }));
+        assert(Buffer.from(sealed).equals(b(vector.encryptedB64)), `${vector.name} seals byte for byte`);
+    }
+    const argonRequest = requests.find((request) => request.op === 'argon2id' && request.m === 19456);
+    assert.deepEqual([argonRequest.t, argonRequest.p, argonRequest.dkLen, b(argonRequest.pass).toString()], [2, 1, 32, 'hunter2'], 'Argon2id\'s cost reaches the host as core asked it');
+    // A changed byte: core's own SyncCryptoAuthError, so core reads it as a wrong passphrase, never as a transport failure.
+    const first = vectors[0];
+    const material = await pumped(gate.deriveSyncKeyMaterial(first.passphrase, u8(b(first.saltB64)), first.params, gate.prims));
+    const tampered = u8(b(first.encryptedB64));
+    tampered[tampered.length - 1] ^= 1;
+    const authError = await pumped(gate.decryptSyncArtifact(tampered, material.key, gate.prims)).then(() => null, (error) => error);
+    assert(authError instanceof gate.SyncCryptoAuthError, 'a tag mismatch is core\'s SyncCryptoAuthError');
+    const short = await pumped(gate.prims.aesGcmOpen(material.key, u8(new Uint8Array(12)), u8(new Uint8Array(15)), u8(new Uint8Array(0)))).then(() => null, (error) => error);
+    assert(short instanceof gate.SyncCryptoAuthError, 'a body too short for a tag is an auth failure too');
+    // A refused Argon2id cost (fewer than 8 KiB per lane) rejects, and core names it unsupported.
+    const badParams = await pumped(gate.deriveSyncKeyMaterial('x', u8(new Uint8Array(16)), { mKib: 8, t: 1, p: 2 }, gate.prims)).then(() => null, (error) => error);
+    assert(badParams instanceof gate.SyncCryptoUnsupportedError, 'an Argon2id refusal is core\'s SyncCryptoUnsupportedError');
+    assert.equal(gate.prims.randomBytes(12).length, 12, 'random bytes come from the host at the asked length');
+    // No crypto calls: every primitive refuses, so an encrypted location fails closed instead of syncing plaintext.
+    await assert.rejects(gate.refusing.argon2id(u8([1]), u8(new Uint8Array(16)), { mKib: 64, t: 1, p: 1 }, 32), /Sync encryption is not available/);
+    await assert.rejects(gate.refusing.aesGcmSeal(u8(new Uint8Array(32)), u8(new Uint8Array(12)), u8([1]), u8([])), /Sync encryption is not available/);
+    assert.throws(() => gate.refusing.randomBytes(12), /Sync encryption is not available/);
+    // The bridge: started on the engine thread, run on HostIo's crypto thread, its callback guarded; never refused after a deadline.
+    const kotlinCore = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core', name), 'utf8');
+    const coreHostSource = kotlinCore('CoreHost.kt');
+    const hostIoSource = kotlinCore('HostIo.kt');
+    assert.match(coreHostSource, /bridge\.setProperty\("cryptoCall", guarded \{ args -> io\.crypto\(args\[0\] as String\) \}\)/);
+    assert.match(hostIoSource, /private val cryptoThread = Executors\.newSingleThreadExecutor/);
+    assert.match(hostIoSource, /cryptoThread\.execute \{\s+answers\.add\(runCatching \{ cryptoReply\(id, json\) \}/, 'a crypto failure, an OutOfMemoryError included, is an answer, never a crash');
+    const polyfillSource = readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8');
+    assert.doesNotMatch(polyfillSource.slice(polyfillSource.indexOf('// --- sync crypto'), polyfillSource.indexOf('// --- localStorage')), /refuseIfCancelled/);
+}
 const coreHost = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');
 const sqliteBridge = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/SqliteBridge.kt'), 'utf8');
 const hostEntry = readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8');
@@ -731,7 +837,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 39, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls: each guarded');
+assert.equal(bridgeCallbacks.length, 40, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch, secret and sync crypto calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls: each guarded');
 assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })'));
 // The attachment file port and the installer only start their call on the engine thread; HostIo's files thread runs it.
@@ -792,7 +898,7 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     const fileJobs = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/FileJobs.kt'), 'utf8');
     assert.match(fileJobs, /if \(aborted\.remove\(id\)\) throw IOException\("Request cancelled"\)/);
     assert.match(fileJobs, /if \(readsDocument\) Thread\(job, "mindwtr-document-\$id"\)\.apply \{ isDaemon = true \}\.start\(\) else queue\.execute\(job\)/);
-    assert.equal(hostIo.match(/answers\.add\(/g).length, 4, 'the answer queue is the only way back');
+    assert.equal(hostIo.match(/answers\.add\(/g).length, 5, 'the answer queue is the only way back');
     // A body leaves apart from its answer's JSON (ioBody), and only for the answer just taken.
     assert.match(hostIo, /taken = answer\.body\s+return answer\.json/);
     assert.match(hostIo, /fun body\(\): String = \(taken \?: ""\)\.also \{ taken = null \}/);
@@ -804,7 +910,9 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.doesNotMatch(read, /catch|runCatching|getOrNull|getOrDefault|getOrElse|\?: ""|orEmpty/, 'HostIo.read swallows no IOException');
     // The only places HostIo catches: each turns the failure into the call's error answer, so fetch rejects.
     assert.doesNotMatch(hostIo, /catch \(|getOrNull|getOrDefault/);
-    assert.deepEqual(hostIo.match(/runCatching \{[\s\S]*?\}\.getOrElse \{ [^\n]*/g).map((line) => /getOrElse \{ (failure\(id, call, it\)|(Answer\()?JSONObject\(\)\.put\("id", id\)\.put\("error")/.test(line)), [true, true]);
+    assert.deepEqual(hostIo.match(/runCatching \{[\s\S]*?\}\.getOrElse \{ [^\n]*/g).map((line) => /getOrElse \{ (failure\(id, call, it\)|(Answer\()?JSONObject\(\)\.put\("id", id\)\.put\("error")/.test(line)), [true, true, false]);
+    // A crypto call's failure (S4b) is its error answer too: `auth` for a tag mismatch, else the failure's own text.
+    assert.match(hostIo, /runCatching \{ cryptoReply\(id, json\) \}\.getOrElse \{ failure ->\s+val answer = JSONObject\(\)\.put\("id", id\)[\s\S]{0,400}?Answer\(answer\.toString\(\)\)\s+\}\)\s+wake\(\)/);
     // A file call's failure (FileJobs runs it in runCatching and delivers the Result) is its error answer.
     assert.match(fileJobs, /val result = runCatching \{[\s\S]*?compute\(\)\s*\}[\s\S]*?deliver\(result\)/);
     assert.match(hostIo, /\}\) \{ Answer\(JSONObject\(\)\.put\("id", id\)\.put\("error", it\.message \?: it\.javaClass\.simpleName\)\.toString\(\)\) \}\)/);

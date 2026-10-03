@@ -137,6 +137,8 @@ dependencies {
     implementation("androidx.work:work-runtime:2.9.1")
     // RN's home-screen widgets, quick capture dialog and capture intent (apps/mobile/modules/android-widget, widget/build.gradle.kts).
     implementation(project(":widget"))
+    // Sync encryption's Argon2id (D3, HostCrypto.kt): BouncyCastle's, under its MIT-style licence; AES-GCM is the platform's.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
     // JVM unit tests of plain Kotlin (the entry queue, WriteJournalTest); Android's org.json is a stub there.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

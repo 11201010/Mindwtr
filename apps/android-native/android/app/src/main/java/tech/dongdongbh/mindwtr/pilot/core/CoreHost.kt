@@ -325,6 +325,8 @@ class CoreHost(
         bridge.setProperty("netFetch", guarded { args -> io.fetch(args[0] as String) })
         bridge.setProperty("netAbort", guarded { args -> io.abort(args[0] as String); null })
         bridge.setProperty("secretCall", guarded { args -> io.secret(args[0] as String) })
+        // Sync encryption's Argon2id and AES-GCM (HostCrypto): started here, run on HostIo's crypto thread, settled as a fetch.
+        bridge.setProperty("cryptoCall", guarded { args -> io.crypto(args[0] as String) })
         bridge.setProperty("ioNext", guarded { _ -> io.next() })
         bridge.setProperty("ioBody", guarded { _ -> io.body() })
         // RN's diagnostics log file: core's diagnostics-log.ts decides every write; this is its file IO.
