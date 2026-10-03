@@ -50,7 +50,7 @@ export type NativeReminderBindings = {
     /** Core's planReminderAlarms; `remake: 'all'` makes every held alarm again. */
     plan: (input: { storedAlarms: string | null; permissionGranted: boolean; storedState: string | null; remake?: 'all' | string[] }) => Promise<NativeHostResult<ReminderPlan>>;
     /** Core's planReminderSnooze: whether to make a Snooze's alarm, and the native state before and after. */
-    planSnooze: (input: { storedState: string | null; alarm: SnoozeAlarm }) => NativeHostResult<{ schedule: SnoozeAlarm[]; stateAhead: string | null; state: string | null }>;
+    planSnooze: (input: { storedState: string | null; alarm: SnoozeAlarm; permissionGranted: boolean }) => NativeHostResult<{ schedule: SnoozeAlarm[]; stateAhead: string | null; state: string | null }>;
     /** RN's alarm map and the native reminder state, as stored (RKStorage). */
     readStored: () => Promise<Stored>;
     /** Kotlin: the notification permission, as RN reads it. */
@@ -123,7 +123,7 @@ export const createNativeReminders = (bindings: NativeReminderBindings) => {
     /** A Snooze's alarm made once against the native state, in the queue: the state as not yet made, the alarm, the state as made. */
     const runSnooze = async (alarm: SnoozeAlarm) => {
         const stored = await bindings.readStored();
-        const result = bindings.planSnooze({ storedState: stored.state, alarm });
+        const result = bindings.planSnooze({ storedState: stored.state, alarm, permissionGranted: bindings.permissionGranted() });
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         const { schedule, stateAhead, state } = result.value;
         bindings.apply(JSON.stringify({ mode: 'active', cancel: [], schedule, writeAhead: null, stateAhead, alarms: stored.alarms, unchanged: true, state,

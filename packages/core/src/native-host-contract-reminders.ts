@@ -36,7 +36,8 @@
  *   returns the same alarm. planReminderSnooze then says whether to make it, against the
  *   native state: stored as not yet made (`stateAhead`), made, then stored as made
  *   (`state`); a request already made is never made again, so a retry after it fired
- *   shows nothing twice. Each plan then keeps it: one never made is made (unless a day
+ *   shows nothing twice, and none is made without permission or for a task or project
+ *   done, gone or archived (a replay after a plan withdrew it). Each plan then keeps it: one never made is made (unless a day
  *   late), a reboot's remake makes it again while its time is ahead, and no permission or
  *   its task or project done, gone or archived withdraws it, as React Native's start does
  *   with a Snooze of such a task. It is forgotten 30 days after its time.
@@ -373,21 +374,27 @@ export function createReminderMethods(deps: ReminderDeps) {
          * Whether to make a Snooze's alarm (snoozeReminder's reply) now, against the stored native state: store `stateAhead`,
          * make each `schedule` alarm, then store `state`. Nothing when it was made already (a retry, a replay after a restart).
          */
-        planReminderSnooze(input: { storedState: string | null; alarm: NativeReminderAlarm }): NativeHostResult<{
+        planReminderSnooze(input: { storedState: string | null; alarm: NativeReminderAlarm; permissionGranted: boolean }): NativeHostResult<{
             schedule: NativeReminderAlarm[];
             stateAhead: string | null;
             state: string | null;
         }> {
             if (!isObjectRecord(input) || (input.storedState !== null && typeof input.storedState !== 'string') || !isObjectRecord(input.alarm)
                 || typeof input.alarm.key !== 'string' || !input.alarm.key.startsWith('snooze:') || !Number.isInteger(input.alarm.id)
-                || !Number.isFinite(input.alarm.fireAtMs) || !isObjectRecord(input.alarm.details)) {
+                || !Number.isFinite(input.alarm.fireAtMs) || !isObjectRecord(input.alarm.details) || typeof input.permissionGranted !== 'boolean') {
                 return fail('INVALID_INPUT', 'The stored native state (a string or null) and a Snooze\'s alarm are required');
             }
             const { key, id, fireAtMs, details } = input.alarm;
             const state = readNativeReminderState(input.storedState);
             const held = state.get(key);
-            if (held?.kind === 'snooze' && held.armed) return { ok: true, value: { schedule: [], stateAhead: null, state: null } };
+            const nothing = { ok: true as const, value: { schedule: [], stateAhead: null, state: null } };
+            if (held?.kind === 'snooze' && held.armed) return nothing;
             const entry: SnoozeReminder = { kind: 'snooze', id, fireAtMs, details, armed: false };
+            // A replay after a plan withdrew it (no permission, its task or project done or gone) makes nothing: the plan would
+            // withdraw it again, after it may have shown.
+            const { tasks, projects } = useTaskStore.getState();
+            if (!input.permissionGranted || isReminderOwnerGone(snoozedKey(entry), new Map(tasks.map((task) => [task.id, task])),
+                new Map(projects.map((project) => [project.id, project])))) return nothing;
             const stateAhead = writeNativeReminderState(new Map(state).set(key, entry));
             return { ok: true, value: { schedule: [snoozeAlarm(key, entry)], stateAhead, state: writeNativeReminderState(new Map(state).set(key, { ...entry, armed: true })) } };
         },

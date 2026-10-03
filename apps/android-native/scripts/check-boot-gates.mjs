@@ -4108,7 +4108,7 @@ globalThis.standStore = useTaskStore;
             return { ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', state: planState, topUpDelayMs: topUp } };
         },
         readStored: async () => ({ alarms: stored, state: storedState }),
-        planSnooze: (input) => { calls.push(`snooze ${input.storedState} ${input.alarm.key}`); return { ok: true, value: { schedule: [input.alarm], stateAhead: '{"ahead":1}', state: '{"after":1}' } }; },
+        planSnooze: (input) => { calls.push(`snooze ${input.storedState} ${input.alarm.key} ${input.permissionGranted}`); return { ok: true, value: { schedule: [input.alarm], stateAhead: '{"ahead":1}', state: '{"after":1}' } }; },
         permissionGranted: () => false,
         apply: (json) => { calls.push(`apply ${JSON.parse(json).channelName}`); applied.push(JSON.parse(json)); },
         cleanupRn: () => { calls.push('cleanup'); if (cleanupFailure) throw new Error('rnandb locked'); return 2; },
@@ -4165,7 +4165,7 @@ globalThis.standStore = useTaskStore;
     storedState = '{"x":1}';
     const snoozeAlarm = { key: 'snooze:u', id: 1073741900, fireAtMs: 5, repeat: 'once', details: { title: 'Pay rent' }, replacing: null };
     await reminders.snooze(snoozeAlarm);
-    assert.deepEqual(calls, ['snooze {"x":1} snooze:u', 'apply Mindwtr reminders']);
+    assert.deepEqual(calls, ['snooze {"x":1} snooze:u false', 'apply Mindwtr reminders'], 'the Snooze is judged with the permission');
     assert.deepEqual(applied, [{ mode: 'active', cancel: [], schedule: [snoozeAlarm], writeAhead: null, stateAhead: '{"ahead":1}', alarms: stored,
         unchanged: true, state: '{"after":1}', topUpDelayMs: null, clearDelivered: false, channelName: 'Mindwtr reminders' }]);
     storedState = null;

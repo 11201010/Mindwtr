@@ -394,14 +394,14 @@ describe('native host contract: reminders', () => {
         vi.setSystemTime(new Date('2026-09-28T11:00:42.000Z'));
         const snooze = value(await host.snoozeReminder({ requestId: generateUUID(), requestedAt: Date.now(), details: fired.details }));
         // Stored as not yet made, made, then stored as made.
-        const made = value(await host.planReminderSnooze({ storedState: first.state, alarm: snooze }));
+        const made = value(await host.planReminderSnooze({ storedState: first.state, alarm: snooze, permissionGranted: true }));
         expect(made.schedule).toEqual([snooze]);
         expect(JSON.parse(made.stateAhead!)[snooze.key]).toMatchObject({ kind: 'snooze', id: snooze.id, fireAtMs: snooze.fireAtMs, armed: false });
         expect(JSON.parse(made.state!)[snooze.key]).toMatchObject({ armed: true });
         // A retry after it was made, even after it fired, makes nothing again; a stop before it was made makes it.
         vi.setSystemTime(new Date('2026-09-28T11:11:00.000Z'));
-        expect(value(await (await openHost()).planReminderSnooze({ storedState: made.state, alarm: snooze }))).toEqual({ schedule: [], stateAhead: null, state: null });
-        expect(value(await host.planReminderSnooze({ storedState: made.stateAhead, alarm: snooze })).schedule).toEqual([snooze]);
+        expect(value(await (await openHost()).planReminderSnooze({ storedState: made.state, alarm: snooze, permissionGranted: true }))).toEqual({ schedule: [], stateAhead: null, state: null });
+        expect(value(await host.planReminderSnooze({ storedState: made.stateAhead, alarm: snooze, permissionGranted: true })).schedule).toEqual([snooze]);
         // A plan after such a stop makes it too; a plain plan leaves a made one alone.
         const stopped = value(await host.planReminderAlarms({ storedAlarms: first.alarms, permissionGranted: true, storedState: made.stateAhead }));
         expect(stopped.schedule.filter((alarm) => alarm.key === snooze.key)).toEqual([snooze]);
@@ -430,19 +430,39 @@ describe('native host contract: reminders', () => {
         expect(JSON.parse(done.state)[snooze.key]).toBeUndefined();
     });
 
+    it('never makes a replayed Snooze again once a plan withdrew it: no permission, or its task done', async () => {
+        freezeClock();
+        await seed();
+        const host = await openHost();
+        const fired = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true })).schedule.find((alarm) => alarm.key === 'task:t-rent')!;
+        const snooze = value(await host.snoozeReminder({ requestId: generateUUID(), requestedAt: Date.now(), details: fired.details }));
+        const made = value(await host.planReminderSnooze({ storedState: null, alarm: snooze, permissionGranted: true }));
+        // Permission revoked: the plan withdraws it; a replay of the Snooze job (WorkManager's retry) makes nothing.
+        const revoked = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: false, storedState: made.state }));
+        expect(revoked.cancel).toContainEqual({ key: snooze.key, id: snooze.id, reason: 'withdrawn' });
+        expect(value(await host.planReminderSnooze({ storedState: revoked.state, alarm: snooze, permissionGranted: false })))
+            .toEqual({ schedule: [], stateAhead: null, state: null });
+        // Its task done: the same.
+        await useTaskStore.getState().updateTask('t-rent', { status: 'done' });
+        await flushPendingSave();
+        const done = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true, storedState: made.state }));
+        expect(value(await host.planReminderSnooze({ storedState: done.state, alarm: snooze, permissionGranted: true })))
+            .toEqual({ schedule: [], stateAhead: null, state: null });
+    });
+
     it('lets a Snooze that was never made expire a day after its time', async () => {
         freezeClock();
         await seed();
         const host = await openHost();
         const fired = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true })).schedule.find((alarm) => alarm.key === 'task:t-rent')!;
         const snooze = value(await host.snoozeReminder({ requestId: generateUUID(), requestedAt: Date.now(), details: fired.details }));
-        const { stateAhead } = value(await host.planReminderSnooze({ storedState: null, alarm: snooze }));
+        const { stateAhead } = value(await host.planReminderSnooze({ storedState: null, alarm: snooze, permissionGranted: true }));
         vi.setSystemTime(new Date(snooze.fireAtMs + 25 * 60 * 60 * 1000));
         const plan = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true, storedState: stateAhead }));
         expect(plan.schedule.filter((alarm) => alarm.key === snooze.key)).toEqual([]);
         expect(plan.cancel).toEqual([{ key: snooze.key, id: snooze.id, reason: 'expired' }]);
         expect(plan.state).toBe('{}');
-        expect(await host.planReminderSnooze({ storedState: null, alarm: { ...snooze, key: 'task:t-rent' } })).toMatchObject(invalid);
+        expect(await host.planReminderSnooze({ storedState: null, alarm: { ...snooze, key: 'task:t-rent' }, permissionGranted: true })).toMatchObject(invalid);
     });
 
     it('routes a notification tap, the same way after a restart', async () => {
