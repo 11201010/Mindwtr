@@ -96,13 +96,19 @@ class HostFiles(
             "copy" -> Reply(null.also { copy(uri) { target(local(request.getString("to"))) } })
             "move" -> Reply(null.also { writable(local(uri)).let { from -> if (!from.exists()) missing(); move(from, target(local(request.getString("to")))) } })
             "delete" -> Reply(null.also { remove(entry(uri)) })
+            "syncParent" -> Reply(null.also { syncDirectory(entry(uri).parentFile!!) })
             else -> throw IllegalArgumentException("Unsupported file call $op")
         }
     }
 
-    /** A delete on the caller's thread (the engine's), with the same rules as [call]'s `delete`. */
+    /**
+     * The unlink of [call]'s `delete` (its rules, no folder sync), on the caller's thread: the engine's, in the turn that asked
+     * core who owns the file. The folder's sync, slow and deciding nothing, follows on the files thread (`syncParent`).
+     */
+    // ponytail: one unlink on the engine thread (a file; a folder's tree would be slower), the price of a race-free ownership check.
     fun deleteNow(uri: String) {
-        remove(entry(uri))
+        val file = entry(uri)
+        if (file.exists() || isLink(file)) removeTree(file)
     }
 
     private fun info(uri: String): JSONObject {

@@ -102,6 +102,8 @@ export const createNativeAttachments = (bindings: NativeAttachmentBindings, chan
             await call({ op: 'barrier' });
             if (keep()) return false;
             channels.deleteNow(uri);
+            // The unlink above decided it; the folder's sync (slow, deciding nothing) runs on the files thread.
+            await call({ op: 'syncParent', uri }).catch(() => undefined);
             return true;
         },
         // Storage Access Framework folders come with File Sync (S5).

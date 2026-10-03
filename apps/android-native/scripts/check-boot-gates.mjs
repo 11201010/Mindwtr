@@ -4052,6 +4052,7 @@ console.log('Runner: CoreWork on the one host after the app\'s boot order, the q
                 if (request.op === 'getInfo') return { exists: true, isDirectory: true, uri: request.uri };
                 if (request.op === 'barrier') { waiting = true; await held; return null; }
                 if (request.op === 'delete') { deleted.push(request.uri); return null; }
+                if (request.op === 'syncParent') { deleted.push(`synced ${request.uri}`); return null; }
                 return null;
             };
             const { contractHost } = createNativeAttachments({
@@ -4071,7 +4072,9 @@ console.log('Runner: CoreWork on the one host after the app\'s boot order, the q
             return { result: await outcome, deleted };
         };
         assert.deepEqual(await deleteRace(true), { result: false, deleted: [] }, 'an attachment restored while its delete waited keeps its bytes');
-        assert.deepEqual(await deleteRace(false), { result: true, deleted: ['file:///data/user/0/app/files/attachments/a1.pdf'] }, 'an unowned copy is deleted once');
+        // The unlink in the turn that asked keep(), then the folder's sync on the files thread.
+        assert.deepEqual(await deleteRace(false), { result: true, deleted: ['file:///data/user/0/app/files/attachments/a1.pdf',
+            'synced file:///data/user/0/app/files/attachments/a1.pdf'] }, 'an unowned copy is deleted once, then its folder synced');
     } finally {
         rmSync(scratch, { recursive: true, force: true });
     }

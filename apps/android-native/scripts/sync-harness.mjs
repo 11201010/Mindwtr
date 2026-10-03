@@ -232,7 +232,7 @@ export const hostDevice = async ({ bundle, name, log = () => {}, filesRoot }) =>
         missing: () => Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }),
         call: (request, bytes) => {
             if (request.op === 'sha256') return { value: createHash('sha256').update(bytes ?? Buffer.alloc(0)).digest('hex') };
-            if (request.op === 'barrier') return { value: null };
+            if (request.op === 'barrier' || request.op === 'syncParent') return { value: null };
             const path = files.path(request.uri);
             switch (request.op) {
                 case 'sha256File': if (!existsSync(path)) throw files.missing(); return { value: createHash('sha256').update(readFileSync(path)).digest('hex') };

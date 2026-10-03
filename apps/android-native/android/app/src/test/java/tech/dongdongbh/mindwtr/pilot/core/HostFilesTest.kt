@@ -224,8 +224,13 @@ class HostFilesTest {
         val files = open()
         assertEquals(null, files.call(JSONObject().put("op", "barrier").toString()).value)
         val file = File(attachments().apply { mkdirs() }, "a.pdf").apply { writeText("x") }
+        synced.clear()
         files.deleteNow(uri(file))
         assertFalse(file.exists())
+        // The unlink only: the folder's sync is slow and decides nothing, so it runs on the files thread after (syncParent).
+        assertEquals(emptyList<String>(), synced)
+        call(files, "syncParent", file)
+        assertEquals(listOf("attachments"), synced)
         files.deleteNow(uri(file))
         File(filesDir, "journal").mkdirs()
         val journal = File(filesDir, "journal/1.json").apply { writeText("{}") }
