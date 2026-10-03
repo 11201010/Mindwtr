@@ -127,7 +127,7 @@ internal class ReminderReceiverCounts(private val read: (String) -> Int, private
  * alarms before it changes any; the receiver records a one-shot that showed (core reads the fired ones: a Snooze that showed is
  * never made again). Guarded by [ReminderAlarms.LOCK], which each apply and each delivery hold.
  */
-internal class ReminderLedger(private val read: () -> Map<Int, String>, private val write: (Map<Int, String?>) -> Unit) {
+internal class ReminderLedger(private val read: () -> Map<Int, String>, private val write: (Map<Int, String?>) -> Boolean) {
     companion object {
         /** RN's patched library discards a one-shot delivered more than a day late (patch-alarm-notification-gradle.js). */
         const val ONE_SHOT_LATE_LIMIT_MS = 24 * 60 * 60 * 1000L
@@ -145,7 +145,8 @@ internal class ReminderLedger(private val read: () -> Map<Int, String>, private 
         val held = read()
         val changes = cancelled.filter { it in held }.associateWith { null as String? } +
             armed.filter { (id, at) -> held[id] != "armed:$at" }.associate { (id, at) -> id to "armed:$at" }
-        if (changes.isNotEmpty()) write(changes)
+        // A write that did not reach the disk stops the plan before any alarm changes; the cycle retries.
+        if (changes.isNotEmpty()) check(write(changes)) { "The reminder ledger was not written" }
     }
 
     /** Whether a delivery of alarm [id], armed for [fireAtMs], shows at [nowMs]; a one-shot that shows is recorded as fired. */
@@ -153,6 +154,7 @@ internal class ReminderLedger(private val read: () -> Map<Int, String>, private 
         if (read()[id] != "armed:$fireAtMs") return false
         if (repeat != "once") return true
         if (nowMs - fireAtMs > ONE_SHOT_LATE_LIMIT_MS) return false
+        // Shown even when the fired mark is not written: one more showing after a restart is better than silence.
         write(mapOf(id to "fired:$fireAtMs"))
         return true
     }
@@ -161,7 +163,8 @@ internal class ReminderLedger(private val read: () -> Map<Int, String>, private 
 
     fun ids(): Set<Int> = read().keys
 
-    fun clear() { read().keys.takeIf { it.isNotEmpty() }?.let { ids -> write(ids.associateWith { null }) } }
+    /** Throws when the write did not reach the disk: the RN cleanup then stops and runs again at the next start. */
+    fun clear() { read().keys.takeIf { it.isNotEmpty() }?.let { ids -> check(write(ids.associateWith { null })) { "The reminder ledger was not cleared" } } }
 }
 
 /**

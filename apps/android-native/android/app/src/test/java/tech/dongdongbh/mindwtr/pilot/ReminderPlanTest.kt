@@ -109,7 +109,24 @@ class ReminderPlanTest {
 
     /** A ledger on [store], as a new process would open it (SharedPreferences in the app). */
     private fun ledger(store: MutableMap<Int, String>) = ReminderLedger(read = { store.toMap() },
-        write = { changes -> changes.forEach { (id, value) -> if (value == null) store.remove(id) else store[id] = value } })
+        write = { changes -> changes.forEach { (id, value) -> if (value == null) store.remove(id) else store[id] = value }; true })
+
+    @Test fun aLedgerWriteThatFailsStopsThePlanBeforeAnyAlarmChangesButNeverHidesADelivery() {
+        val disk = mutableMapOf(5 to "armed:1000")
+        val failing = ReminderLedger(read = { disk.toMap() }, write = { false })
+        assertThrows(IllegalStateException::class.java) { failing.record(cancelled = listOf(5), armed = listOf(6 to 2_000L)) }
+        assertThrows(IllegalStateException::class.java) { failing.clear() }
+        // Through a plan: the write-ahead is stored, then the ledger write fails, and no alarm is cancelled or made.
+        val port = object : ReminderPlan.Port by port {
+            override fun record(cancelled: List<Int>, armed: List<Pair<Int, Long>>) = failing.record(cancelled, armed)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            ReminderPlan.apply(plan("{ahead}", listOf(5 to "expired"), listOf(alarm("task:a", 6, null))), port)
+        }
+        assertEquals(listOf("store {ahead}"), events)
+        // A one-shot whose fired mark cannot be written still shows once: silence is worse than a rare second showing.
+        assertEquals(true, failing.deliver(5, 1000, "once", 1001))
+    }
 
     @Test fun aDeliveryShowsOnlyWhileTheLedgerOnDiskHoldsItsAlarmAtItsTimeAcrossProcesses() {
         val disk = mutableMapOf<Int, String>()
