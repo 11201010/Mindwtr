@@ -869,7 +869,8 @@ const NATIVE_FIRE = 'tech.dongdongbh.mindwtr.reminder.FIRE';
 const packageAlarms = () => sh('dumpsys alarm').split(/\n(?=\s*(?:RTC_WAKEUP|RTC|ELAPSED_WAKEUP|ELAPSED) #\d+: Alarm\{)/)
     .filter((block) => block.includes(PKG))
     .map((block) => ({ rn: block.includes(RN_RECEIVER), native: block.includes(`*walarm*:${NATIVE_FIRE}`), at: Number(/origWhen[= ](\d+)/.exec(block)?.[1] ?? NaN) }))
-    .filter((alarm) => alarm.rn || alarm.native);
+    // Reminder alarms are RTC (an epoch time); a block that ends dumpsys's pending list can carry the delivery history's lines.
+    .filter((alarm) => (alarm.rn || alarm.native) && alarm.at > 1e12);
 // RN's library sets the minute and second but keeps the current milliseconds (AlarmUtil's Calendar), so its alarm is in that minute.
 const rnMinute = (alarm) => Math.floor(alarm.at / 60_000) * 60_000;
 /** The process gone without a force-stop (a force-stop would drop the alarms this scenario is about). */
