@@ -22,6 +22,10 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-reference-bulk-status`** — `packages/core/src/native-host-contract-reference-bulk-status.ts`. `Native Reference bulk status confirmed` with aggregate `count`, requested `status` and `outcome=moved` proves the selected batch and any shared recurring children reached durable storage with its exact request receipt. Cancel, hidden or stale selection, failed saves and unproven retries do not claim success. No task text, identifiers, dates, attachment details or URLs are logged.
+
+- **`v1.3.4/ios-reference-bulk-refresh`** — `apps/ios-native/App/ReferenceScreen.swift`. `Native iOS Reference periodic refresh deferred` with `outcome=selection` proves the minute timer deferred its reread while bulk selection was active, avoiding transiently disabled controls during the interaction. Keep selection active across a minute, then use Range or Exit. No task content, identifiers or settings are logged.
+
 - **`v1.3.4/ios-reference-bulk-trash`** — `packages/core/src/native-host-contract-archive-bulk-delete.ts`. `Native Reference bulk Trash confirmed` with `outcome=deleted` or `outcome=restored` and the aggregate `count` confirms the selected batch Delete or Undo reached durable storage with its exact request receipt. Selection, Cancel, stale refusals, failed saves and unproven retries do not claim success. No task text, identifiers, dates, attachment details or URLs are logged.
 
 - **`v1.3.4/ios-reference-project-next-action`** — `packages/core/src/native-host-contract-project-next-action.ts`. `Native Reference project next action confirmed` with `outcome=choose`, `outcome=add` or `outcome=completeProject` confirms the follow-up reached durable storage with its exact request receipt. The preceding completion is a separate operation. Options, typing, Skip, rejected actions, failed saves and unproven retries do not claim a saved follow-up. No task/project identifiers, text, dates or URLs are logged.

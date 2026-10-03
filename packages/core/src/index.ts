@@ -327,3 +327,6 @@ export * from './native-host-contract-person-edit';
 export * from './native-host-contract-taxonomy';
 export * from './native-host-contract-general-preference';
 export * from './taxonomy-policy';
+
+export type { NativeReferenceTasksMoveRequest, NativeReferenceTasksMovePrepared, NativeReferenceTasksMoveEnvelope,
+    NativeReferenceTasksMoveResult, NativeReferenceTasksMovePreparation, NativeReferenceTasksMoveParams } from './native-host-contract-reference-bulk-status';

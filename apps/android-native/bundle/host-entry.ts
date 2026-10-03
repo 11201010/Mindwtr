@@ -42,6 +42,8 @@ import {
     useTaskStore,
     flushPendingSave,
     formatListItemCount,
+    getBulkMoveStatusOptions,
+    type TaskStatus,
     webdavDeleteFile,
     webdavGetFile,
     webdavGetJson,
@@ -892,7 +894,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2409,6 +2411,33 @@ globalThis.MindwtrHost = {
     },
     archivedTasksDeleteUndoOutcome(json: string): string {
         return submit(async () => unwrap(contract.archivedTasksDeleteUndoOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.archivedTasksDeleteUndoOutcome>[0])));
+    },
+    referenceTasksMoveNotice(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            const result = completionJson(json, 2_000) as { count?: unknown; status?: unknown };
+            if (!result || typeof result !== 'object' || Array.isArray(result)
+                || Object.keys(result).sort().join(',') !== 'count,status'
+                || typeof result.count !== 'number' || !Number.isInteger(result.count)
+                || result.count < 1 || result.count > 10_000
+                || !getBulkMoveStatusOptions('reference').includes(result.status as TaskStatus)) {
+                throw new Error('INVALID_INPUT: Reference move notice requires a bounded result');
+            }
+            const t = (key: string): string => unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key;
+            return { message: formatListItemCount(result.count, 'task', t) };
+        });
+    },
+    referenceTasksMovePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareReferenceTasksMove(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareReferenceTasksMove>[0])); });
+    },
+    referenceTasksMoveValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedReferenceTasksMove(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedReferenceTasksMove>[0])));
+    },
+    referenceTasksMoveCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedReferenceTasksMove(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedReferenceTasksMove>[0])));
+    },
+    referenceTasksMoveOutcome(json: string): string {
+        return submit(async () => unwrap(await contract.referenceTasksMoveOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.referenceTasksMoveOutcome>[0])));
     },
     archivedTasksRestorePrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchivedTasksRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareArchivedTasksRestore>[0])); });

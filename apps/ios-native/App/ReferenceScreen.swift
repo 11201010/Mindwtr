@@ -46,6 +46,16 @@ struct ReferenceScreen: View {
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
                 guard scenePhase == .active, model.selectedSurface == .reference else { return }
+                // The first selection query has not published selection mode yet.
+                // Do not queue a timer refresh behind that in-flight operation.
+                guard !model.busy else { continue }
+                // A periodic reread disables the current controls while it runs.
+                // Keep an in-progress selection usable; writes still validate
+                // the selected revisions against durable data before committing.
+                guard !model.referenceSelectionMode else {
+                    NSLog("Native iOS Reference periodic refresh deferred releaseCheck=v1.3.4/ios-reference-bulk-refresh outcome=selection")
+                    continue
+                }
                 await model.refresh()
             }
         }
@@ -53,16 +63,38 @@ struct ReferenceScreen: View {
 
     private var bulkDeleteBar: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(model.referenceBulk.object("bar").text("countLabel"))
-                .rnFont(13).foregroundStyle(palette.secondary)
-                .accessibilityIdentifier("reference-bulk-count")
+            HStack(spacing: 8) {
+                Text(model.referenceBulk.object("bar").text("countLabel"))
+                    .rnFont(13).foregroundStyle(palette.secondary)
+                    .accessibilityIdentifier("reference-bulk-count")
+                Spacer(minLength: 0)
+                Button { model.leaveReferenceTaskSelection() } label: {
+                    AppIcon(name: "x", size: 16).frame(width: 45, height: 45).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.secondary)
+                .disabled(!model.referenceActionsEnabled)
+                .accessibilityLabel(model.referenceBulk.object("bar").object("exit").text("accessibilityLabel"))
+                .accessibilityIdentifier("reference-bulk-exit")
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    Button { model.leaveReferenceTaskSelection() } label: {
-                        bulkActionLabel(model.referenceBulk.object("bar").object("exit").text("accessibilityLabel"))
+                    let statuses = model.referenceBulk.object("bar").objects("statuses")
+                    ForEach(statuses.indices, id: \.self) { index in
+                        let option = statuses[index]
+                        Button { Task { await model.moveSelectedReferenceTasks(status: option.text("status")) } } label: {
+                            bulkActionLabel(option.text("label"))
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint)
+                        .disabled(!model.referenceBulkStatusEnabled(option.text("status")))
+                        .accessibilityLabel(option.text("accessibilityLabel"))
+                        .accessibilityIdentifier("reference-bulk-status-" + option.text("status"))
                     }
-                    .buttonStyle(.plain).disabled(!model.referenceActionsEnabled)
-                    .accessibilityIdentifier("reference-bulk-exit")
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("reference-bulk-status-scroll")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
                     Button { Task { await model.toggleReferenceTaskRange() } } label: {
                         bulkActionLabel(model.referenceBulk.object("bar").object("range").text("label"))
                     }
@@ -89,7 +121,7 @@ struct ReferenceScreen: View {
 
     private func bulkActionLabel(_ text: String) -> some View {
         Text(text).rnFont(13, .semibold).fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 12).frame(minWidth: 44, minHeight: 44)
+            .padding(.horizontal, 12).frame(minWidth: 45, minHeight: 45)
             .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border).allowsHitTesting(false))
             .contentShape(Rectangle())

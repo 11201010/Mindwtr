@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
 import { loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts } from './native-request-receipts';
-import { SqliteAdapter, type SqliteClient } from './sqlite-adapter';
+import { SqliteAdapter, type SqliteAdapterOptions, type SqliteClient } from './sqlite-adapter';
 import { flushPendingSave, getPersistenceStatus, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppData, AppSettings, Area, Project, Task } from './types';
 
@@ -149,6 +149,7 @@ export async function openSqliteHost(
     wrap: (client: SqliteClient) => SqliteClient = (client) => client,
     /** The host's bindings (createNativeHostContract's options), such as `ai`. */
     bindings: Omit<NonNullable<Parameters<typeof createNativeHostContract>[0]>, 'replayTokens'> = {},
+    adapterOptions?: SqliteAdapterOptions,
 ) {
     const dir = mkdtempSync(join(tmpdir(), 'mindwtr-receipts-'));
     const file = join(dir, 'mindwtr.db');
@@ -164,7 +165,7 @@ export async function openSqliteHost(
             settings: {}, error: null, persistenceFailure: null, isLoading: false, editLockCount: 0, lastDataChangeAt: 0,
         } as never);
         const client = wrap(clientOf(database));
-        setStorageAdapter(new NativeReceiptSqliteAdapter(client));
+        setStorageAdapter(new NativeReceiptSqliteAdapter(client, adapterOptions));
         await loadNativeRequestReceipts(client);
         const host = createNativeHostContract({ ...bindings, replayTokens: 'required' });
         value(await host.setLanguage({ storedLanguage: 'en', systemLocale: null }));

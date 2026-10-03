@@ -451,6 +451,9 @@ export class SqliteAdapter {
         this.rejectConcurrentWrites = options.rejectConcurrentWrites === true;
     }
 
+    /** Read-only capability for prepared native writes that require a BEGIN epoch fence. */
+    get concurrentWritesGuarded(): boolean { return this.rejectConcurrentWrites; }
+
     private async loadAllRows(table: 'tasks' | 'projects' | 'sections' | 'areas' | 'people'): Promise<Record<string, unknown>[]> {
         const rows: Record<string, unknown>[] = [];
         try {

@@ -19741,7 +19741,7 @@ final class FoundationUITests: XCTestCase {
         if !app.buttons["reference-overflow-button"].exists { openReferenceSortTest(app) }
         boardEnabled(app.buttons["reference-overflow-button"], timeout: 30)
     }
-    private func task186Filter(_ app: XCUIApplication, _ query: String, archived: Bool = true, rtl: Bool = false) {
+    private func task186Filter(_ app: XCUIApplication, _ query: String, archived: Bool = true, rtl: Bool = false, selectAllBeforeReplacing: Bool = false) {
         boardTap(app, "reference-overflow-button"); boardTap(app, "reference-filter-action")
         let input = app.textFields["reference-filter-search"]
         XCTAssertTrue(input.waitForExistence(timeout: 15))
@@ -19755,7 +19755,32 @@ final class FoundationUITests: XCTestCase {
         let previous = input.value as? String ?? ""
         let actual = previous == input.placeholderValue ? "" : previous
         if actual != query {
-            input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: actual.count) + query)
+            if selectAllBeforeReplacing && !actual.isEmpty {
+                // Task193 searches can overflow at XXXL. Select all instead of
+                // deleting from a caret placed in the middle of the old query.
+                input.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 1)
+                let allLabels = ["Select All", "تحديد الكل"]
+                let nextLabels = ["Next Page", "الصفحة التالية", "التالي"]
+                let selectAll = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@ OR identifier IN %@", allLabels, allLabels)).firstMatch
+                for _ in 0..<4 {
+                    if selectAll.waitForExistence(timeout: 1), selectAll.isHittable { break }
+                    let next = app.buttons.matching(NSPredicate(format: "label IN %@ OR identifier IN %@", nextLabels, nextLabels)).firstMatch
+                    guard next.exists && next.isHittable else { break }
+                    next.tap()
+                }
+                guard selectAll.exists && selectAll.isHittable else { XCTFail("Task193 search Select All unavailable"); return }
+                selectAll.tap(); input.typeText(XCUIKeyboardKey.delete.rawValue)
+                let cleared = NSPredicate { _, _ in
+                    let value = input.value as? String ?? ""
+                    return value.isEmpty || value == input.placeholderValue
+                }
+                guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: cleared, object: nil)], timeout: 5) == .completed else {
+                    XCTFail("Task193 search was not completely cleared"); return
+                }
+                input.typeText(query)
+            } else {
+                input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: actual.count) + query)
+            }
         }
         XCTAssertEqual(input.value as? String, query)
         let toggle = app.switches["reference-include-archived-projects"]
@@ -21263,4 +21288,260 @@ extension FoundationUITests {
 
     func testTask192ReferenceBulkTrashOriginalJournalColdRecovery() { task192Cold("0db5794f-3e72-43b9-897e-1ebccf72ae85", undo: false) }
     func testTask192ReferenceBulkUndoOriginalJournalColdRecovery() { task192Cold("4cab3239-a1bc-4063-912b-8033e671161c", undo: true) }
+}
+
+
+// Task193 keeps the Task192 measured viewport controls and exercises all shared
+// Reference status choices against fresh task-owned libraries staged by root.
+extension FoundationUITests {
+    private var task193Statuses: [String] { ["inbox", "next", "waiting", "someday", "done"] }
+    private func task193IDs(_ status: String) -> [String] { (1...4).map { String(format: "task193-%@-%02d", status, $0) } }
+    private func task193Query(_ status: String) -> String { "Task193 " + status + " batch" }
+    private func task193Filter(_ app: XCUIApplication, _ query: String, rtl: Bool = false) {
+        XCTAssertTrue(app.buttons["task-view-close"].waitForNonExistence(timeout: 20))
+        boardEnabled(app.buttons["reference-overflow-button"], timeout: 30)
+        let search = app.buttons["reference-chip-search"]
+        let archived = app.buttons["reference-chip-reference:include-archived-projects"]
+        let chips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reference-chip-"))
+        func hasRequestedScope() -> Bool {
+            if query.isEmpty { return !search.exists && archived.exists && chips.count == 1 }
+            // Core/native build the localized label as Remove: Search: query.
+            // Read the entire query from AX, including text outside the viewport.
+            return search.exists && search.label.components(separatedBy: ": ").dropFirst(2).joined(separator: ": ").utf8.elementsEqual(query.utf8)
+                && archived.exists && chips.count == 2
+        }
+        // Viewer close refreshes this same scope. Reopening its filter panel
+        // immediately adds a redundant touch during the dismissal transition.
+        if !hasRequestedScope() { task186Filter(app, query, rtl: rtl, selectAllBeforeReplacing: true) }
+        let ready = NSPredicate { _, _ in hasRequestedScope() && (query.isEmpty || search.isEnabled) && archived.isEnabled }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 20), .completed)
+        XCTAssertFalse(app.staticTexts["reference-error"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+    }
+
+    private func task193Observe(_ app: XCUIApplication, library: String, operation: String, status: String, ids: [String], query: String) {
+        let record: [String: Any] = ["fixture": library, "operation": operation, "source": "reference", "status": status,
+            "taskIds": ids, "params": ["groupBy": "none", "filters": ["searchQuery": query], "includeArchivedProjects": true],
+            "countLabel": app.staticTexts["reference-bulk-count"].exists ? app.staticTexts["reference-bulk-count"].label : "",
+            "beforeActionWallEpoch": Date().timeIntervalSince1970]
+        if let bytes = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]), let text = String(data: bytes, encoding: .utf8) {
+            print("Task193 action observation " + text)
+        } else { XCTFail("Cannot encode Task193 pre-action observation") }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task193 before " + operation + " " + status; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func task193Options(_ app: XCUIApplication, enabled: Bool) {
+        for status in task193Statuses {
+            let id = "reference-bulk-status-" + status
+            let button = task192Reveal(app, id, buttons: true, scrollID: "reference-bulk-status-scroll", horizontal: true, scans: 16)
+            XCTAssertEqual(app.buttons.matching(identifier: id).count, 1)
+            XCTAssertEqual(button.isEnabled, enabled)
+            XCTAssertFalse(button.label.isEmpty)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+        }
+        XCTAssertFalse(app.buttons["reference-bulk-status-reference"].exists)
+        XCTAssertFalse(app.buttons["reference-bulk-status-archived"].exists)
+        XCTAssertFalse(app.buttons["reference-bulk-select-all"].exists)
+    }
+
+    private func task193Exit(_ app: XCUIApplication) {
+        let button = task192Exact(app, "reference-bulk-exit", buttons: true)
+        boardEnabled(button, timeout: 20)
+        XCTAssertEqual(app.buttons.matching(identifier: "reference-bulk-exit").count, 1)
+        XCTAssertGreaterThanOrEqual(button.frame.width, 44); XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        XCTAssertTrue(task192Inside(button.frame, app.frame))
+        let count = app.staticTexts["reference-bulk-count"]
+        XCTAssertTrue(count.exists)
+        let status = app.descendants(matching: .any)["reference-bulk-status-scroll"]
+        let actions = app.descendants(matching: .any)["reference-bulk-actions-scroll"]
+        XCTAssertTrue(status.exists); XCTAssertTrue(actions.exists)
+        XCTAssertLessThanOrEqual(button.frame.maxY, status.frame.minY + 0.01)
+        XCTAssertFalse(button.frame.intersects(status.frame)); XCTAssertFalse(button.frame.intersects(actions.frame))
+        XCTAssertLessThan(button.frame.minY, count.frame.maxY)
+        XCTAssertGreaterThan(button.frame.maxY, count.frame.minY)
+        print("Task193 header exit frame=\(button.frame) count=\(count.frame) status=\(status.frame) actions=\(actions.frame) enabled=\(button.isEnabled)")
+        button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(count.waitForNonExistence(timeout: 20))
+    }
+
+    private func task193Range(_ app: XCUIApplication, status: String, rtl: Bool = false) {
+        task193Filter(app, task193Query(status), rtl: rtl)
+        task192Start(app, task193IDs(status)[0])
+        task192Tap(app, "reference-bulk-range")
+        task192Tap(app, "reference-select-none-" + task193IDs(status)[3], scrollID: "reference-scroll", horizontal: false, scans: 80)
+        task192Count(app, 4)
+        XCTAssertFalse(app.buttons["reference-select-none-task193-" + status + "-05"].exists)
+        task193Options(app, enabled: true)
+    }
+
+    private func task193NoCompletionExtras(_ app: XCUIApplication) {
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        XCTAssertFalse(app.buttons["task-referenceBulkMove-undo"].exists)
+        XCTAssertFalse(app.buttons["reference-project-next-action-add"].exists)
+        XCTAssertFalse(app.buttons["reference-project-next-action-close"].exists)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        XCTAssertFalse(app.buttons["task-view-close"].exists)
+    }
+
+    private func task193MovedRows(_ app: XCUIApplication, status: String, rtl: Bool = false) {
+        task193Filter(app, task193Query(status), rtl: rtl)
+        for id in task193IDs(status) { XCTAssertTrue(task192Exact(app, "task-title-" + id).waitForNonExistence(timeout: 20)) }
+        XCTAssertTrue(task192Reveal(app, "task-title-task193-" + status + "-05", scans: 80).exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.staticTexts["reference-error"].exists)
+        task193NoCompletionExtras(app)
+    }
+
+    private func task193HoldSelectionAcrossMinute(_ app: XCUIApplication) {
+        let began = Date()
+        print("Task193 selected minute hold begin epoch=\(began.timeIntervalSince1970)")
+        while Date().timeIntervalSince(began) < 65 {
+            let count = app.staticTexts["reference-bulk-count"]
+            XCTAssertTrue(count.exists)
+            let digits = count.label.compactMap { $0.wholeNumberValue }.map(String.init).joined()
+            XCTAssertEqual(Int(digits), 4)
+            XCTAssertTrue(app.buttons["reference-bulk-exit"].isEnabled)
+            for status in task193Statuses { XCTAssertTrue(app.buttons["reference-bulk-status-" + status].isEnabled) }
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            XCTAssertFalse(app.staticTexts["reference-error"].exists)
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        let elapsed = Date().timeIntervalSince(began)
+        XCTAssertGreaterThanOrEqual(elapsed, 65)
+        print("Task193 selected minute hold passed elapsed=\(elapsed) endEpoch=\(Date().timeIntervalSince1970)")
+    }
+
+    private func task193Flow(_ library: String, largest: Bool = false, rtl: Bool = false, movedStatuses: [String]? = nil, holdSelectionAcrossMinute: Bool = false) {
+        continueAfterFailure = false
+        let statuses = movedStatuses ?? task193Statuses
+        let app = XCUIApplication(); app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
+        app.launch(); task186Open(app); referenceGroup(app, "none")
+        for status in statuses {
+            task193Filter(app, task193Query(status), rtl: rtl)
+            let readonly = task192Reveal(app, "task-title-task193-" + status + "-05", scans: 80)
+            readonly.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            boardEnabled(app.buttons["task-view-close"], timeout: 20); boardTap(app, "task-view-close")
+            task193Range(app, status: status, rtl: rtl)
+            if holdSelectionAcrossMinute { task193HoldSelectionAcrossMinute(app) }
+            task193Observe(app, library: library, operation: "exit", status: status, ids: task193IDs(status), query: task193Query(status))
+            task193Exit(app)
+            XCTAssertTrue(app.staticTexts["reference-bulk-count"].waitForNonExistence(timeout: 20))
+            for id in task193IDs(status) { XCTAssertTrue(task192Reveal(app, "task-title-" + id, scans: 80).exists) }
+            task193Range(app, status: status, rtl: rtl)
+            let second = "reference-select-none-" + task193IDs(status)[1]
+            task192Tap(app, second, scrollID: "reference-scroll", horizontal: false, scans: 80); task192Count(app, 3)
+            task192Tap(app, second, scrollID: "reference-scroll", horizontal: false, scans: 80); task192Count(app, 4)
+            task193Observe(app, library: library, operation: "move", status: status, ids: task193IDs(status), query: task193Query(status))
+            task192Tap(app, "reference-bulk-status-" + status, scrollID: "reference-bulk-status-scroll")
+            XCTAssertTrue(app.staticTexts["reference-bulk-count"].waitForNonExistence(timeout: 30))
+            XCTAssertTrue(app.staticTexts["task-referenceBulkMove-notice"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.alerts.firstMatch.exists)
+            task193MovedRows(app, status: status, rtl: rtl)
+        }
+        app.terminate(); app.launch(); task186Open(app)
+        for status in statuses { task193MovedRows(app, status: status, rtl: rtl) }
+        XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists)
+        XCTAssertFalse(app.staticTexts["task-referenceBulkMove-notice"].exists)
+        app.terminate()
+    }
+
+    func testTask193ReferenceBulkMoveAllStatusesNormal() { task193Flow("9909e67e-6497-4b19-9229-17a3133bf15b") }
+    func testTask193ReferenceBulkMoveAllStatusesLargestDark() { task193Flow("cc247d9f-710e-4550-b991-345f7a05afb4", largest: true) }
+    func testTask193ReferenceBulkMoveAllStatusesArabicRTL() { task193Flow("db3a9a97-5d65-44d0-bc33-818553a3d826", rtl: true) }
+    func testTask193ReferenceBulkMoveLargestDarkNextGestureRegression() {
+        task193Flow("21223088-7e3d-457d-9ac6-25613b119710", largest: true, movedStatuses: ["next"])
+    }
+
+    func testTask193ReferenceBulkMoveArabicRTLNextHeaderRegression() {
+        task193Flow("3b092692-7eb2-4492-8fd1-9d4d72a54d91", rtl: true, movedStatuses: ["next"], holdSelectionAcrossMinute: true)
+    }
+
+    func testTask193ReferenceBulkMovePagedRangeAndPruning() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task192Arguments("cd30ebca-0514-4120-ad94-1c2406432d53")
+        app.launch(); task186Open(app); referenceGroup(app, "none"); task193Filter(app, "Task193 Page")
+        task192Start(app, "task193-page-000"); task192Tap(app, "reference-bulk-range")
+        for _ in 0..<2 {
+            task192Tap(app, "reference-more", scrollID: "reference-scroll", horizontal: false, scans: 80, forwardOnly: true)
+            boardEnabled(app.buttons["reference-overflow-button"], timeout: 30)
+        }
+        task192Tap(app, "reference-select-none-task193-page-129", scrollID: "reference-scroll", horizontal: false, scans: 80, forwardOnly: true)
+        task192Count(app, 130); task193Options(app, enabled: true)
+        task193Filter(app, "Task193 Page 129"); task192Count(app, 1)
+        task193Filter(app, "Task193 Page"); task192Count(app, 1)
+        task193Exit(app); referenceGroup(app, "tag"); task193Filter(app, task193Query("inbox"))
+        task192Start(app, "task193-inbox-01")
+        for group in ["Task193 A", "Task193 B"] {
+            let duplicate = task192Reveal(app, "reference-select-tag:#" + group + "-task193-inbox-01", buttons: true, scans: 80)
+            XCTAssertTrue(duplicate.isSelected); task192Count(app, 1)
+        }
+        for group in ["Task193 A", "Task193 B"] {
+            let header = task192Reveal(app, "reference-section-tag:#" + group, buttons: true, scans: 80)
+            boardEnabled(header); XCTAssertEqual(header.value as? String, "Collapse")
+            print("Task193 fold \(group) frame=\(header.frame) enabled=\(header.isEnabled) value=\(String(describing: header.value))")
+            header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reference-select-tag:#" + group + "-"))
+            let folded = NSPredicate { _, _ in (header.value as? String) == "Expand" && rows.count == 0 }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: folded, object: nil)], timeout: 20), .completed)
+            XCTAssertEqual(header.value as? String, "Expand"); XCTAssertEqual(rows.count, 0)
+            boardEnabled(app.buttons["reference-overflow-button"], timeout: 20)
+        }
+        task192Count(app, 0); task193Options(app, enabled: false)
+        task193NoCompletionExtras(app); task193Exit(app); app.terminate()
+    }
+
+    func testTask193ReferenceBulkMoveNFDLeavesNFCReadonlyTwin() {
+        continueAfterFailure = false
+        let library = "1ca9e00d-d674-49bb-a59b-e8970fa1c62a", nfd = "task193-cafe\u{301}", nfc = "task193-café"
+        let app = XCUIApplication(); app.launchArguments = task192Arguments(library)
+        app.launch(); task186Open(app); referenceGroup(app, "none"); task193Filter(app, "Task193 Unicode")
+        task192Start(app, nfd)
+        let readonlySelector = "reference-select-none-" + nfc
+        XCTAssertFalse(app.buttons.matching(identifier: readonlySelector).allElementsBoundByIndex.contains { $0.identifier.utf8.elementsEqual(readonlySelector.utf8) })
+        task193Observe(app, library: library, operation: "move", status: "waiting", ids: [nfd], query: "Task193 Unicode")
+        task192Tap(app, "reference-bulk-status-waiting", scrollID: "reference-bulk-status-scroll")
+        XCTAssertTrue(app.staticTexts["reference-bulk-count"].waitForNonExistence(timeout: 30))
+        XCTAssertTrue(task192Exact(app, "task-title-" + nfc).exists)
+        let movedSelector = "task-title-" + nfd
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: movedSelector).allElementsBoundByIndex.contains { $0.identifier.utf8.elementsEqual(movedSelector.utf8) })
+        task193NoCompletionExtras(app)
+        app.terminate(); app.launch(); task186Open(app); task193Filter(app, "Task193 Unicode")
+        XCTAssertTrue(task192Exact(app, "task-title-" + nfc).exists); XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists); app.terminate()
+    }
+
+    func testTask193ReferenceBulkMoveTwoFailedSaveRetries() {
+        continueAfterFailure = false
+        let library = "5dc25c45-104b-45e6-92a4-c267638f6dcd", app = XCUIApplication()
+        app.launchArguments = task192Arguments(library); app.launch(); task186Open(app); referenceGroup(app, "none")
+        task193Range(app, status: "waiting")
+        task193Observe(app, library: library, operation: "move", status: "waiting", ids: task193IDs("waiting"), query: task193Query("waiting"))
+        task192Tap(app, "reference-bulk-status-waiting", scrollID: "reference-bulk-status-scroll")
+        for id in ["reference-retry", "persistence-retry"] {
+            boardEnabled(app.buttons[id], timeout: 30)
+            XCTAssertTrue(app.staticTexts["reference-error"].exists); task192Count(app, 4)
+            XCTAssertFalse(app.buttons["reference-overflow-button"].isEnabled)
+            XCTAssertFalse(app.buttons["reference-bulk-exit"].isEnabled)
+            task193Options(app, enabled: false); task193NoCompletionExtras(app)
+            app.buttons[id].tap()
+        }
+        boardEnabled(app.buttons["reference-retry"], timeout: 30)
+        XCTAssertTrue(app.staticTexts["reference-error"].exists); task192Count(app, 4)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task193 owned Move failure"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testTask193ReferenceBulkMoveOriginalJournalColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task192Arguments("c7b8c930-fa79-41b3-bacb-598e4a43606a")
+        for launch in 0..<2 {
+            app.launch()
+            if launch == 0 { XCTAssertTrue(app.buttons["reference-overflow-button"].waitForExistence(timeout: 30)) }
+            else { task186Open(app) }
+            task193MovedRows(app, status: "waiting")
+            XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists)
+            XCTAssertFalse(app.staticTexts["task-referenceBulkMove-notice"].exists)
+            task193NoCompletionExtras(app); app.terminate()
+        }
+    }
 }

@@ -1050,6 +1050,152 @@ struct InboxScreen: View {
     }
 }
 
+private struct TaskCardSelectionLongPress: ViewModifier {
+    @Environment(\.isEnabled) private var interactionEnabled
+    let identity: String
+    let enabled: Bool
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        content.background(TaskCardLongPressRegistrar(identity: identity, enabled: enabled && interactionEnabled, action: action)
+            .allowsHitTesting(false))
+    }
+}
+
+private struct TaskCardLongPressRegistrar: UIViewRepresentable {
+    let identity: String
+    let enabled: Bool
+    let action: () -> Void
+
+    func makeUIView(context: Context) -> RegistrarView { RegistrarView(frame: .zero) }
+    func updateUIView(_ view: RegistrarView, context: Context) {
+        view.configure(identity: identity, enabled: enabled, action: action)
+    }
+    static func dismantleUIView(_ view: RegistrarView, coordinator: ()) { view.stop() }
+
+    final class RegistrarView: UIView {
+        private var identity = ""
+        private var enabled = false
+        private var press = CardLongPress()
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+            isAccessibilityElement = false
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        func configure(identity: String, enabled: Bool, action: @escaping () -> Void) {
+            if !self.identity.utf8.elementsEqual(identity.utf8) {
+                press.retire()
+                press = CardLongPress()
+                self.identity = identity
+            }
+            self.enabled = enabled
+            press.marker = self
+            press.configure(enabled: enabled, action: action)
+            attach()
+        }
+        override func didMoveToSuperview() { super.didMoveToSuperview(); attach() }
+        override func didMoveToWindow() { super.didMoveToWindow(); attach() }
+        override func layoutSubviews() { super.layoutSubviews(); attach() }
+        func stop() { enabled = false; press.retire() }
+
+        private func attach() {
+            guard enabled, window != nil else { press.detach(); return }
+            // List provides a row-local UIKit host on both iOS 17 and newer
+            // systems. Never put a per-card recognizer on a shared scroll/window.
+            var ancestor = superview
+            var host: UIView?
+            while let candidate = ancestor {
+                if let cell = candidate as? UICollectionViewCell { host = cell.contentView; break }
+                if let cell = candidate as? UITableViewCell { host = cell.contentView; break }
+                if candidate is UIScrollView || candidate is UIWindow { break }
+                ancestor = candidate.superview
+            }
+            guard let host, isDescendant(of: host) else { press.detach(); return }
+            var parent = host.superview
+            while let candidate = parent, !(candidate is UIScrollView), !(candidate is UIWindow) {
+                parent = candidate.superview
+            }
+            guard let scroll = parent as? UIScrollView else { press.detach(); return }
+            press.attach(to: host, scroll: scroll)
+        }
+    }
+
+    final class CardLongPress: UILongPressGestureRecognizer, UIGestureRecognizerDelegate {
+        weak var marker: UIView?
+        private weak var enclosingScroll: UIScrollView?
+        private var requestedEnabled = false
+        private var retired = false
+        private var fired = false
+        private var action: (() -> Void)?
+        private var recognizing: Bool { state == .began || state == .changed }
+
+        init(marker: UIView? = nil) {
+            super.init(target: nil, action: nil)
+            self.marker = marker
+            minimumPressDuration = 0.5
+            allowableMovement = 10
+            cancelsTouchesInView = true
+            delegate = self
+            addTarget(self, action: #selector(handlePress))
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        func configure(enabled: Bool, action: (() -> Void)?) {
+            requestedEnabled = enabled && !retired
+            self.action = requestedEnabled ? action : nil
+            // Keep an already recognized touch cancelled through its release,
+            // even if selection rerenders this card with a nil handler.
+            if !requestedEnabled && !recognizing { detach() }
+        }
+        func attach(to host: UIView, scroll: UIScrollView) {
+            guard requestedEnabled, !retired else { return }
+            if view !== host {
+                guard !recognizing else { return }
+                detach()
+                host.addGestureRecognizer(self)
+            }
+            enclosingScroll = scroll
+            isEnabled = true
+        }
+        func detach() {
+            guard !recognizing else { return }
+            view?.removeGestureRecognizer(self)
+            enclosingScroll = nil
+            isEnabled = false
+        }
+        func retire() {
+            retired = true
+            requestedEnabled = false
+            action = nil
+            marker = nil
+            detach()
+        }
+        @objc private func handlePress() {
+            if state == .began, requestedEnabled, !retired, !fired {
+                fired = true
+                action?()
+            } else if state == .ended || state == .cancelled || state == .failed {
+                fired = false
+                if !requestedEnabled || retired || marker?.window == nil { detach() }
+            }
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard requestedEnabled, !retired, let marker, let host = view, let touched = touch.view,
+                  marker.window != nil, marker.window === host.window,
+                  marker.isDescendant(of: host), (touched === host || touched.isDescendant(of: host)),
+                  marker.bounds.width > 0, marker.bounds.height > 0 else { return false }
+            let point = touch.location(in: marker)
+            return point.x.isFinite && point.y.isFinite && marker.bounds.contains(point)
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            other === enclosingScroll?.panGestureRecognizer
+        }
+    }
+}
+
 struct TaskCard: View {
     let row: CoreObject
     @ObservedObject var model: CoreModel
@@ -1197,10 +1343,10 @@ struct TaskCard: View {
         .environment(\.layoutDirection, meta.text("textDirection") == "rtl" ? .rightToLeft : .leftToRight)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(meta.text("accessibilityLabel"))
-        // Preserve RN inspection taps when a selection long press is unavailable.
-        .highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+        // Observe the whole card without adding a hit-testing overlay or replacing taps.
+        .modifier(TaskCardSelectionLongPress(identity: row.text("id"), enabled: onSelectionStart != nil, action: {
             onSelectionStart?(row)
-        }, including: onSelectionStart == nil ? .subviews : .all)
+        }))
         .confirmationDialog(onStatusOptions == nil ? meta.text("statusLabel") : statusOptions.text("title"),
                             isPresented: $statusMenu, titleVisibility: .visible) {
             if let onStatusChange {

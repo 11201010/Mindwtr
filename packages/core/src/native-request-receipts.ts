@@ -366,6 +366,11 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
         });
     }
 
+    /** Read-only canonical authority check; does not advance any snapshot or receipt baseline. */
+    async hasForeignKeyViolations(): Promise<boolean> {
+        return Boolean(await this.receiptClient.get('SELECT 1 AS present FROM pragma_foreign_key_check LIMIT 1'));
+    }
+
     /** Current durable proof for a prerequisite receipt; never updates the session cache. */
     async readDurableReceipt(requestId: string, payload: string): Promise<NativeHostResult<unknown | null>> {
         return this.readCurrentReceipt(requestId, fingerprintOf(payload));
