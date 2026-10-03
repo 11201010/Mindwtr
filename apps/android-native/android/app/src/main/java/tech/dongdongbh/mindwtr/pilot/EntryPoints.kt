@@ -16,8 +16,8 @@ import java.io.File
 
 /*
  * RN's system entry points (app/+native-intent.ts and hooks/root-layout/use-root-layout-external-capture.ts, with the share
- * and assistant intents of app.json and plugins/android-app-shortcuts.js): a link of the app's scheme, a text share, and an
- * assistant note. Kotlin reads only the intent's data and text extras; core's resolveNativeEntryPoint
+ * and assistant intents of app.json and plugins/android-app-shortcuts.js): a link of the app's scheme, a text share, an
+ * assistant note, and a tap on one of the app's notifications (RN's use-root-layout-notification-open-handler.ts). Kotlin reads only the intent's data and text extras; core's resolveNativeEntryPoint
  * (native-host-contract-entry-points.ts) says where the entry goes, and this opens what core names.
  */
 
@@ -40,6 +40,9 @@ private val TILE_ROUTES = setOf("review", "calendar", "contexts", "board", "tras
  */
 fun Intent.entryInput(): JSONObject? = runCatching {
     fun JSONObject.extra(name: String, value: String?) = put(name, value ?: JSONObject.NULL)
+    // A tap on this app's own notification (CoreNotifications): its data, which core routes (routeNotificationOpen). Only this app
+    // can start MainActivity itself (its exported alias carries no such extra into a route core would not check again).
+    getStringExtra(CoreNotifications.EXTRA_OPEN)?.let { data -> return@runCatching JSONObject().put("kind", "notification").put("data", JSONObject(data)) }
     when (action) {
         Intent.ACTION_VIEW -> dataString?.let { JSONObject().put("kind", "link").put("url", it).put("scheme", BuildConfig.URL_SCHEME) }
         Intent.ACTION_SEND -> if (type?.startsWith("text/plain") != true) null else JSONObject().put("kind", "share")
@@ -181,6 +184,10 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
                 if (id == null) closeProject()
                 openFromSearch(Screen.Projects, id)
             }
+            // A notification's routes (core's routeNotificationOpen): a context automation's context, a digest, the weekly review.
+            route == "/contexts" && reply.menuText("contextToken") != null -> menu.openContexts(reply.menuText("contextToken")!!)
+            route == "/daily-review" -> menu.openReview("daily")
+            route == "/weekly-review" -> menu.openReview("weekly")
             route == "/global-search" -> reply.getJSONObject("search").let { search ->
                 openSearch(SearchState(search.getString("query"), search.optJSONObject("filters")))
             }
