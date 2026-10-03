@@ -542,11 +542,11 @@ object WidgetPayloadStore {
   fun read(context: Context): WidgetPayload =
     readRaw(context)?.let { WidgetPayload.parse(it) } ?: WidgetPayload.EMPTY
 
-  fun write(context: Context, json: String) {
+  /** False when the payload did not reach the disk: the caller publishes it again. */
+  fun write(context: Context, json: String): Boolean =
     // commit(), not apply(): the widget provider and the dialog read this from
     // other components right after the write.
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(KEY_PAYLOAD, json).commit()
-  }
 
   /** The quick-capture dialog saved one Inbox item; show it before the app next publishes. */
   fun incrementInboxCount(context: Context) {
