@@ -15,7 +15,6 @@ import {
     normalizeProjectUpdate,
 } from '../project-status';
 import { normalizeCancellationTimestamp, normalizeTaskForLoad } from '../task-status';
-import { getPersistenceStatus } from '../store';
 import { mapSqliteTaskRow, rawReadTaskSnapshot } from '../sqlite-adapter';
 import { rawReadProjectSnapshot } from '../sqlite-raw-snapshot';
 import { TASK_SQLITE_COLUMNS, taskToSqliteRow } from '../task-sync-schema';
@@ -523,6 +522,7 @@ export const createProjectCoreActions = ({
     get,
     debouncedSave,
     flushPendingSave,
+    getSaveGeneration,
 }: ProjectActionContext): ProjectCoreActions => ({
     addProject: async (title: string, color: string, initialProps?: Partial<Project>) => {
         const changeAt = Date.now();
@@ -1024,7 +1024,7 @@ export const createProjectCoreActions = ({
                     { ...durable, tasks, projects, sections, settings });
                 const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
                 raw.authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
-                    generation: getPersistenceStatus().generation, failure: memory.persistenceFailure };
+                    generation: getSaveGeneration(), failure: memory.persistenceFailure };
                 result = { success: true, id: current.id, outcome: 'applied' };
                 return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: sections,
                     _allAreas: durable.areas ?? [], _allPeople: durable.people ?? [], settings, lastDataChangeAt };

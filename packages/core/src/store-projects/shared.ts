@@ -80,6 +80,7 @@ export type ProjectActionContext = {
     get: () => TaskStore;
     debouncedSave: (data: AppData, onError?: (msg: string) => void) => void;
     flushPendingSave: () => Promise<void>;
+    getSaveGeneration: () => number;
 };
 
 export type ProjectCoreActions = Pick<
