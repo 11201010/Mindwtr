@@ -574,6 +574,7 @@ export const deOverrides: Record<string, string> = {
         'calendar.eventSingular': 'Termin',
         'calendar.eventPlural': 'Termine',
         'calendar.allDay': 'Ganzer Tag',
+        'calendar.due': "Fällig",
         'calendar.deadline': 'Frist',
         'calendar.projectedRecurrence': 'Vorschau',
         'calendar.projectedRecurrenceDescription': 'Nur Planungsvorschau. Schließe die aktuelle wiederkehrende Aufgabe ab, um die echte nächste Aufgabe zu erstellen.',

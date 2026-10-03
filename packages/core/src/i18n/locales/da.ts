@@ -708,6 +708,7 @@ export const daOverrides: Record<string, string> = {
     'calendar.eventSingular': 'begivenhed',
     'calendar.eventPlural': 'begivenheder',
     'calendar.allDay': 'Hele dagen',
+    'calendar.due': "Frist",
     'calendar.deadline': 'Deadline',
     'calendar.showCompleted': 'Afsluttet',
     'calendar.showScheduled': 'Starter',

@@ -692,6 +692,7 @@ export const esOverrides: Record<string, string> = {
 'calendar.eventSingular': 'evento',
 'calendar.eventPlural': 'eventos',
 'calendar.allDay': "Todo el día",
+'calendar.due': "Vencimiento",
 'calendar.deadline': "Fecha de vencimiento",
 'calendar.showCompleted': "Completadas",
 'calendar.showScheduled': "Inicios",

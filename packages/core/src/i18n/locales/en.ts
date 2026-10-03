@@ -726,6 +726,7 @@ export const en: Record<string, string> = {
         'calendar.eventSingular': 'event',
         'calendar.eventPlural': 'events',
         'calendar.allDay': 'All day',
+        'calendar.due': "Due",
         'calendar.deadline': 'Deadline',
         'calendar.showCompleted': 'Completed',
         'calendar.showScheduled': 'Starts',

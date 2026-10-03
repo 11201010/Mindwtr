@@ -715,6 +715,7 @@ export const viOverrides: Record<string, string> = {
         'calendar.eventSingular': 'sự kiện',
         'calendar.eventPlural': 'sự kiện',
         'calendar.allDay': 'Cả ngày',
+        'calendar.due': "Đến hạn",
         'calendar.deadline': 'Hạn chót',
         'calendar.projectedRecurrence': 'Dự kiến',
         'calendar.projectedRecurrenceDescription': 'Chỉ xem trước cho lên kế hoạch. Hoàn thành nhiệm vụ lặp lại hiện tại để tạo nhiệm vụ thực sự tiếp theo.',

@@ -559,7 +559,8 @@ private fun WeekView(model: InboxViewModel, view: JSONObject, content: JSONObjec
     val days = placed.days
     Column(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            val column = ((maxWidth - GUTTER) / visible).coerceAtLeast(40.dp)
+            val hasDeadlines = days.any { placed.lane("deadlineMarker", it.getString("key")).isNotEmpty() }
+            val column = ((maxWidth - GUTTER) / visible).coerceAtLeast(if (hasDeadlines) 260.dp else 40.dp)
             val compact = column < 86.dp
             val ultra = column < 58.dp
             val columnPx = with(density) { column.toPx() }
@@ -687,7 +688,9 @@ private fun WeekTimeline(model: InboxViewModel, content: JSONObject, placed: Pla
                     }
                     if (today) content.optInt("nowMinutes", -1).takeIf { it >= 0 }?.let { NowLine(it, Modifier.fillMaxWidth()) }
                     BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = if (ultra) 1.dp else if (compact) 2.dp else 4.dp)) {
-                        for (item in placed.lane("timed", key)) WeekBlock(model, item, maxWidth, compact, ultra)
+                        val markers = placed.lane("deadlineMarker", key)
+                        for (item in placed.lane("timed", key)) WeekBlock(model, item, if (markers.isEmpty()) maxWidth else maxWidth * 0.58f, compact, ultra)
+                        DeadlineMarkers(model, markers, maxWidth)
                     }
                 }
             }
@@ -890,7 +893,38 @@ private fun DayTimeline(model: InboxViewModel, content: JSONObject, placed: Plac
             }
             content.optInt("nowMinutes", -1).takeIf { it >= 0 }?.let { NowLine(it, Modifier.offset(x = 50.dp).padding(end = 62.dp).fillMaxWidth()) }
             BoxWithConstraints(Modifier.fillMaxSize().padding(start = 56.dp, end = 12.dp)) {
-                for (item in placed.lane("timed", dayKey)) DayBlock(model, item, dayKey, extent, maxWidth)
+                val markers = placed.lane("deadlineMarker", dayKey)
+                for (item in placed.lane("timed", dayKey)) DayBlock(model, item, dayKey, extent, if (markers.isEmpty()) maxWidth else maxWidth * 0.58f)
+                DeadlineMarkers(model, markers, maxWidth)
+            }
+        }
+    }
+}
+
+/** Deadline points and a separate scrollable label rail; no drag or work duration. */
+@Composable
+private fun DeadlineMarkers(model: InboxViewModel, markers: List<JSONObject>, lane: Dp) = with(model.menu) {
+    val c = LocalTheme.current.colors
+    for (marker in markers) {
+        Text("◆", style = rnText(10, 700), color = c.tint,
+            modifier = Modifier.offset(x = lane * 0.6f, y = maxOf(0f, marker.getJSONObject("deadline").getInt("startMinutes") * PPM - 6).dp).zIndex(11f))
+    }
+    for (first in markers.filter { it.getJSONObject("deadline").getInt("groupIndex") == 0 }) {
+        val geometry = first.getJSONObject("deadline")
+        val group = markers.filter { it.getJSONObject("deadline").getString("groupId") == geometry.getString("groupId") }
+        Box(Modifier.offset(x = lane * 0.6f, y = (geometry.getDouble("labelMinutes").toFloat() * PPM).dp)
+            .width(lane * 0.4f).height((minOf(3, group.size) * 32 * PPM).dp).background(c.cardBg).zIndex(10f)) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 10.dp)) {
+                for (item in group) {
+                    val pressable = item.optBoolean("pressable")
+                    Column(Modifier.fillMaxWidth().height((32 * PPM).dp)
+                        .clickable(enabled = idle && pressable) { calendar.openItem(item) }
+                        .semantics { contentDescription = item.getString("accessibilityLabel") }
+                        .testTag("calendar-deadline-${item.getString("taskId")}"), verticalArrangement = Arrangement.Center) {
+                        Text(item.getString("title"), style = rnText(11, 400), color = c.text, maxLines = 1)
+                        Text(item.getString("detail"), style = rnText(11, 700), color = c.tint, maxLines = 1)
+                    }
+                }
             }
         }
     }

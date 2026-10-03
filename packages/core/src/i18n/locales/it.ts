@@ -596,6 +596,7 @@ export const itOverrides: Record<string, string> = {
         'calendar.eventSingular': 'evento',
         'calendar.eventPlural': 'eventi',
         'calendar.allDay': 'Tutto il giorno',
+        'calendar.due': "Scadenza",
         'calendar.deadline': 'Scadenza',
         'calendar.unschedule': 'Rimuovi dal calendario',
         'calendar.changeTime': 'Cambia orario',

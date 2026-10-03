@@ -541,6 +541,7 @@ export const trOverrides: Record<string, string> = {
         'calendar.eventSingular': 'olay',
         'calendar.eventPlural': 'olaylar',
         'calendar.allDay': 'Bütün gün',
+        'calendar.due': "Son tarih",
         'calendar.deadline': 'Son teslim tarihi',
         'calendar.projectedRecurrence': 'Önizleme',
         'calendar.projectedRecurrenceDescription': 'Yalnızca planlama önizlemesi. Gerçek sonraki görevi oluşturmak için mevcut tekrarlayan görevi tamamlayın.',

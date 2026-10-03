@@ -534,6 +534,7 @@ export const ruOverrides: Record<string, string> = {
         'calendar.eventSingular': 'событие',
         'calendar.eventPlural': 'события',
         'calendar.allDay': 'Весь день',
+        'calendar.due': "Срок",
         'calendar.deadline': 'Крайний срок',
         'calendar.projectedRecurrence': 'Предпросмотр',
         'calendar.projectedRecurrenceDescription': 'Только предварительный просмотр для планирования. Завершите текущую повторяющуюся задачу, чтобы создать настоящую следующую задачу.',

@@ -3,7 +3,7 @@
  * scheduled/deadline/event list for a date, and the overlap layout for timed
  * blocks.
  */
-import { safeParseDate, safeParseDueDate } from './date';
+import { hasTimeComponent, safeParseDate, safeParseDueDate } from './date';
 import type { ExternalCalendarEvent } from './ics';
 import { isProjectedRecurringTask } from './recurrence';
 import { isTaskActionable, isTaskCompleted } from './task-status';
@@ -58,19 +58,26 @@ export type CalendarDayItemsInput = {
     deadlines: readonly Task[];
     events: readonly ExternalCalendarEvent[];
     scheduled: readonly Task[];
+    /** Day/week views keep a timed due marker alongside the same task's start.
+     * Month views retain the compact, one-row-per-task default. */
+    preserveTimedDeadlines?: boolean;
 };
 
 /**
  * Merges a day's scheduled tasks, deadline-only tasks, completed tasks and
  * external events into one time-ordered list. A task that is both scheduled and
- * due that day appears once, as its scheduled block. Undated items sort last,
- * then by title.
+ * due that day appears once, as its scheduled block, unless the caller keeps
+ * explicit timed deadlines for a separate marker rail. Undated items sort
+ * last, then by title.
  *
  * Completed tasks need no such de-duplication: a done or archived task is
  * excluded from the scheduled and deadline buckets by the caller's visibility
  * rule, so it can only ever appear here as its completion.
  */
-export function buildCalendarDayItems({ completed = [], deadlines, events, scheduled }: CalendarDayItemsInput): CalendarDayItem[] {
+export function buildCalendarDayItems({ completed = [], deadlines, events, scheduled, preserveTimedDeadlines = false }: CalendarDayItemsInput): CalendarDayItem[] {
+    const scheduledIds = new Set(scheduled.map((task) => task.id));
+    const distinctDeadlines = deadlines.filter((task) => !scheduledIds.has(task.id)
+        || (preserveTimedDeadlines && hasTimeComponent(task.dueDate) && safeParseDueDate(task.dueDate) !== null));
     return [
         ...completed.filter(isCompletedCalendarTask).map((task): CalendarDayItem => ({
             id: `completed-${task.id}`,
@@ -86,7 +93,7 @@ export function buildCalendarDayItems({ completed = [], deadlines, events, sched
             task,
             title: task.title,
         })),
-        ...getCalendarDistinctDeadlines(deadlines, scheduled)
+        ...distinctDeadlines
             .map((task): CalendarDayItem => ({
                 id: `deadline-${task.id}`,
                 kind: 'deadline',
@@ -107,6 +114,76 @@ export function buildCalendarDayItems({ completed = [], deadlines, events, sched
         if (aTime !== bTime) return aTime - bTime;
         return a.title.localeCompare(b.title);
     });
+}
+
+/** A due instant is a marker, never an estimated work interval. */
+export type CalendarDeadlineMarker = {
+    id: string;
+    kind: 'deadline';
+    task: Task;
+    title: string;
+    start: Date;
+};
+
+export function getCalendarTimedDeadlines(deadlines: readonly Task[]): CalendarDeadlineMarker[] {
+    const markers: CalendarDeadlineMarker[] = [];
+    for (const task of deadlines) {
+        if (!isSchedulableCalendarTask(task) || !hasTimeComponent(task.dueDate)) continue;
+        const start = safeParseDueDate(task.dueDate);
+        if (!start) continue;
+        markers.push({ id: `deadline-${task.id}`, kind: 'deadline', task, title: task.title, start });
+    }
+    return markers;
+}
+
+export type CalendarDeadlineMarkerGroup = {
+    markers: CalendarDeadlineMarker[];
+    /** The first due clock minute. Every marker retains its exact instant. */
+    anchorMinutes: number;
+    /** Rendering position for the label group, bounded inside the day. */
+    startMinutes: number;
+};
+
+/**
+ * Groups labels that would collide in a dedicated deadline rail. The gap and
+ * visible-row cap describe label geometry only; they reserve no calendar time.
+ * Renderers scroll groups larger than the cap instead of overlapping labels.
+ */
+export function getCalendarDeadlineMarkerGroups(
+    markers: readonly CalendarDeadlineMarker[],
+    options: { dayStart: Date; minGapMinutes?: number; maxVisibleRows?: number },
+): CalendarDeadlineMarkerGroup[] {
+    const gap = Number.isFinite(options.minGapMinutes) && (options.minGapMinutes ?? 0) > 0
+        ? Math.min(1440, options.minGapMinutes!) : 32;
+    const maxRows = Number.isFinite(options.maxVisibleRows) && (options.maxVisibleRows ?? 0) > 0
+        ? Math.max(1, Math.floor(options.maxVisibleRows!)) : 3;
+    const sameDay = (start: Date) => start.getFullYear() === options.dayStart.getFullYear()
+        && start.getMonth() === options.dayStart.getMonth() && start.getDate() === options.dayStart.getDate();
+    const minutes = (marker: CalendarDeadlineMarker) => marker.start.getHours() * 60 + marker.start.getMinutes()
+        + marker.start.getSeconds() / 60 + marker.start.getMilliseconds() / 60_000;
+    const sorted = markers.filter((marker) => sameDay(marker.start))
+        .sort((a, b) => minutes(a) - minutes(b) || a.title.localeCompare(b.title));
+    const groups: CalendarDeadlineMarkerGroup[] = [];
+    const height = (group: CalendarDeadlineMarkerGroup) => Math.min(1440, Math.min(group.markers.length, maxRows) * gap);
+    const place = (group: CalendarDeadlineMarkerGroup) => {
+        group.startMinutes = Math.max(0, Math.min(group.anchorMinutes, 1440 - height(group)));
+    };
+    for (const marker of sorted) {
+        const anchorMinutes = minutes(marker);
+        let group: CalendarDeadlineMarkerGroup = { markers: [marker], anchorMinutes, startMinutes: anchorMinutes };
+        place(group);
+        // End-of-day clamping can collide with an earlier label group too.
+        while (groups.length > 0) {
+            const previous = groups[groups.length - 1];
+            if (group.startMinutes >= previous.startMinutes + height(previous)) break;
+            groups.pop();
+            previous.markers.push(...group.markers);
+            group = previous;
+            place(group);
+        }
+        groups.push(group);
+    }
+    return groups;
 }
 
 export const getCalendarDistinctDeadlines = (deadlines: readonly Task[], scheduled: readonly Task[]): Task[] => {

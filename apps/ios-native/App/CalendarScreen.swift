@@ -284,7 +284,7 @@ struct CalendarScreen: View {
 
     private var week: some View {
         GeometryReader { geometry in
-            let columnWidth = max(44, (geometry.size.width - gutter) / CGFloat(max(1, content.number("visibleDays"))))
+            let columnWidth = max(entries.contains { $0.text("lane") == "deadlineMarker" } ? 260 : 44, (geometry.size.width - gutter) / CGFloat(max(1, content.number("visibleDays"))))
             let canvasWidth = gutter + columnWidth * CGFloat(days.count)
             let allDayCount = days.map { day in
                 entries.filter { $0.text("type") == "item" && $0.text("lane") == "allDay" && $0.text("dayKey") == day.text("key") }.count
@@ -382,6 +382,8 @@ struct CalendarScreen: View {
 
     private func timelineColumn(dayKey: String, width: CGFloat, today: Bool) -> some View {
         let items = entries.filter { $0.text("type") == "item" && $0.text("lane") == "timed" && $0.text("dayKey") == dayKey }
+        let markers = entries.filter { $0.text("type") == "item" && $0.text("lane") == "deadlineMarker" && $0.text("dayKey") == dayKey }.map { $0.object("item") }
+        let blockLaneWidth = markers.isEmpty ? width : width * 0.58
         let mode = content.text("mode")
         let dayTitle = days.first(where: { $0.text("key") == dayKey })?.text("title") ?? ""
         return ZStack(alignment: .topLeading) {
@@ -421,11 +423,41 @@ struct CalendarScreen: View {
                 let fraction = CGFloat((column["widthPercent"] as? NSNumber)?.doubleValue ?? 100)
                 let inset: CGFloat = column.number("columnIndex") > 0 ? 2 : 0
                 let trailing: CGFloat = column.number("columnIndex") < column.number("columnCount") - 1 ? 2 : 0
-                let blockWidth = max(1, width * fraction / 100 - inset - trailing - 4)
+                let blockWidth = max(1, blockLaneWidth * fraction / 100 - inset - trailing - 4)
                 let height = max(24, (end - start) * pixelsPerMinute)
                 CalendarItemButton(item: item, model: model, palette: palette, compact: height < 48, timed: true)
                     .frame(width: blockWidth, height: height).clipped()
-                    .position(x: width * left / 100 + inset + 2 + blockWidth / 2, y: start * pixelsPerMinute + height / 2)
+                    .position(x: blockLaneWidth * left / 100 + inset + 2 + blockWidth / 2, y: start * pixelsPerMinute + height / 2)
+            }
+            ForEach(markers.indices, id: \.self) { index in
+                let marker = markers[index]
+                let minute = CGFloat((marker.object("deadline")["startMinutes"] as? NSNumber)?.doubleValue ?? 0)
+                Text("◆").rnFont(10).foregroundStyle(palette.tint)
+                    .position(x: width * 0.6 + 4, y: max(6, minute * pixelsPerMinute))
+                    .allowsHitTesting(false).accessibilityHidden(true).zIndex(2)
+            }
+            ForEach(markers.filter { $0.object("deadline").number("groupIndex") == 0 }.indices, id: \.self) { index in
+                let first = markers.filter { $0.object("deadline").number("groupIndex") == 0 }[index]
+                let groupId = first.object("deadline").text("groupId")
+                let group = markers.filter { $0.object("deadline").text("groupId") == groupId }
+                let minute = CGFloat((first.object("deadline")["labelMinutes"] as? NSNumber)?.doubleValue ?? 0)
+                let height = CGFloat(min(3, group.count)) * 32 * pixelsPerMinute
+                ScrollView(.vertical) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(group.indices, id: \.self) { row in
+                                let marker = group[row]
+                                Button { Task { await model.openCalendarItem(marker) } } label: {
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(marker.text("title")).rnFont(11).foregroundStyle(palette.text).lineLimit(1)
+                                        Text(marker.text("detail")).rnFont(11, .semibold).foregroundStyle(palette.tint).lineLimit(1)
+                                    }.frame(maxWidth: .infinity, minHeight: 32 * pixelsPerMinute, alignment: .leading)
+                                }.buttonStyle(.plain).disabled(!model.calendarActionsEnabled || !marker.flag("pressable"))
+                                    .accessibilityLabel(marker.text("accessibilityLabel"))
+                                    .accessibilityIdentifier("calendar-deadline-" + marker.text("taskId"))
+                            }
+                        }.padding(.leading, 10)
+                }.frame(width: width * 0.4, height: height).background(palette.card)
+                    .position(x: width * 0.8, y: minute * pixelsPerMinute + height / 2)
             }
         }.frame(width: width, height: timelineHeight + 22).clipped()
     }

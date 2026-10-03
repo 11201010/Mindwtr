@@ -93,6 +93,37 @@ describe('native host contract: Calendar', () => {
         return { host, recorder };
     };
 
+    it('emits deadline points separately from durations, including midnight', async () => {
+        freezeClock();
+        const { host, recorder } = await openHost(scenario());
+        const store = useTaskStore.getState();
+        const add = async (title: string, props: Record<string, unknown>) => {
+            const result = await store.addTask(title, { status: 'next', ...props });
+            if (!result.success || !result.id) throw new Error('seed failed');
+            return result.id;
+        };
+        const same = await add('Timed same', { startTime: '2026-10-28T13:00:00Z', dueDate: '2026-10-28T19:00:00Z' });
+        const midnight = await add('Midnight point', { dueDate: '2026-10-28T04:00:00Z' });
+        const close = await add('Close point', { dueDate: '2026-10-28T19:05:00Z' });
+        const end = await add('Last minute', { dueDate: '2026-10-29T03:59:00Z' });
+        await flushPendingSave();
+        const before = JSON.stringify(useTaskStore.getState().tasks);
+        recorder.log.length = 0;
+        for (const viewMode of ['day', 'week'] as const) {
+            const view = value(host.getCalendarView({ state: { ...week, viewMode }, calendar: ready, ...page }));
+            const markers = items(view, 'deadlineMarker');
+            const point = markers.find((item) => item.taskId === same)!;
+            expect(point).toMatchObject({ kind: 'deadline', detail: '3:00 PM · Due', timed: null, pressable: true, deadline: { startMinutes: 900 } });
+            expect(items(view, 'timed').some((item) => item.taskId === same)).toBe(true);
+            expect(items(view, 'allDay').some((item) => [same, midnight].includes(item.taskId!))).toBe(false);
+            expect(markers.find((item) => item.taskId === midnight)?.deadline?.startMinutes).toBe(0);
+            expect(markers.find((item) => item.taskId === close)?.deadline?.groupId).toBe(point.deadline?.groupId);
+            expect(markers.find((item) => item.taskId === end)?.deadline?.startMinutes).toBe(1439);
+        }
+        expect(JSON.stringify(useTaskStore.getState().tasks)).toBe(before);
+        expect(recorder.log).toEqual([]);
+    });
+
     it('returns what core\'s calendar model returns when called directly', async () => {
         freezeClock();
         const { host } = await openHost(scenario('completed'));

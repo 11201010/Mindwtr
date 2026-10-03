@@ -564,6 +564,28 @@ export const getCalendarItemTitle = (item: CalendarDayItem, projectedLabel: stri
         : item.title
 );
 
+const getCalendarTimedDueLabel = (task: Task, options: { t: Translate; formatDate: DateFormatter }): string => {
+    if (!hasTimeComponent(task.dueDate)) return '';
+    const due = safeParseDueDate(task.dueDate);
+    return due ? `${options.t('calendar.due')} ${options.formatDate(due, 'p')}` : '';
+};
+
+/** One compact month row keeps the due clock, including a same-day scheduled task. */
+export function getCalendarMonthItemTitle(
+    item: CalendarDayItem,
+    date: Date,
+    options: { t: Translate; formatDate: DateFormatter; projectedLabel?: string },
+): string {
+    const title = options.projectedLabel
+        ? getCalendarItemTitle(item, options.projectedLabel, options.formatDate) : item.title;
+    if (item.kind !== 'deadline' && item.kind !== 'scheduled') return title;
+    const due = safeParseDueDate(item.task.dueDate);
+    if (!due || !isSameCalendarDate(due, date)) return title;
+    if (!hasTimeComponent(item.task.dueDate)) return title;
+    // Keep the exact clock visible even when a compact row truncates its title.
+    return `${options.formatDate(due, 'p')} · ${options.t('calendar.due')} · ${title}`;
+}
+
 /** Appends the projected label to a time or kind label. */
 export const withCalendarProjectedLabel = (label: string, task: Task, projectedLabel: string, formatDate: DateFormatter): string => (
     isProjectedRecurringTask(task) ? `${label} · ${getProjectedRecurrenceDisplayLabel(task, projectedLabel, formatDate)}` : label
@@ -698,7 +720,10 @@ export const getCalendarDayLists = (index: CalendarDayIndex, date: Date): Calend
     };
 };
 
-export const getCalendarDayItems = (lists: CalendarDayLists): CalendarDayItem[] => buildCalendarDayItems(lists);
+export const getCalendarDayItems = (
+    lists: CalendarDayLists,
+    options: { preserveTimedDeadlines?: boolean } = {},
+): CalendarDayItem[] => buildCalendarDayItems({ ...lists, ...options });
 
 /** Month details use the same scheduled-over-deadline choice as other views. */
 export const getCalendarDetailsTaskLists = (lists: Pick<CalendarDayLists, 'deadlines' | 'scheduled'>) => {
@@ -722,9 +747,9 @@ export const getCalendarDayTimedTasks = (scheduled: readonly Task[]): Task[] => 
     && task.status !== 'reference'
 ));
 
-/** Items without a clock time: deadlines, completions, date-only starts and all-day events. */
+/** Items without a clock time: date-only deadlines, completions, starts and all-day events. */
 export const isCalendarAllDayItem = (item: CalendarDayItem): boolean => (
-    item.kind === 'deadline'
+    (item.kind === 'deadline' && !hasTimeComponent(item.task.dueDate))
     || item.kind === 'completed'
     || (item.kind === 'scheduled' && isAllDayScheduledTask(item.task))
     || (item.kind === 'event' && item.event.allDay)
@@ -910,15 +935,18 @@ export function getCalendarDetailsTaskRow(
     options: { t: Translate; formatDate: DateFormatter; projectedLabel: string; timeEstimateToMinutes: (estimate: Task['timeEstimate']) => number },
 ) {
     const projected = isProjectedRecurringTask(task);
+    const dueLabel = getCalendarTimedDueLabel(task, options);
     const scheduledLabel = (): string => {
         const start = safeParseDate(task.startTime);
         if (!start) return '';
         const end = new Date(start.getTime() + options.timeEstimateToMinutes(task.timeEstimate) * 60 * 1000);
         const label = !isTimedScheduledTask(task) ? options.t('calendar.allDay') : formatCalendarClockRange(start, end, options.formatDate);
-        return withCalendarProjectedLabel(label, task, options.projectedLabel, options.formatDate);
+        const due = safeParseDueDate(task.dueDate);
+        const combined = dueLabel && due && isSameCalendarDate(start, due) ? `${label} · ${dueLabel}` : label;
+        return withCalendarProjectedLabel(combined, task, options.projectedLabel, options.formatDate);
     };
     const detail = kind === 'deadline'
-        ? withCalendarProjectedLabel(options.t('calendar.deadline'), task, options.projectedLabel, options.formatDate)
+        ? withCalendarProjectedLabel(dueLabel || options.t('calendar.deadline'), task, options.projectedLabel, options.formatDate)
         : scheduledLabel();
     return {
         detail,

@@ -734,6 +734,7 @@ export const jaOverrides: Record<string, string> = {
         'calendar.eventSingular': '予定',
         'calendar.eventPlural': '予定',
         'calendar.allDay': '終日',
+        'calendar.due': "期限",
         'calendar.deadline': '期限',
         'calendar.showCompleted': '完了したもの',
         'calendar.showScheduled': '開始日',

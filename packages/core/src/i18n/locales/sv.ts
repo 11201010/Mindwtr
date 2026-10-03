@@ -707,6 +707,7 @@ export const svOverrides: Record<string, string> = {
         'calendar.eventSingular': 'händelse',
         'calendar.eventPlural': 'händelser',
         'calendar.allDay': 'Heldag',
+        'calendar.due': "Förfaller",
         'calendar.deadline': 'Tidsfrist',
         'calendar.showCompleted': 'Slutförda',
         'calendar.showScheduled': 'Startdatum',

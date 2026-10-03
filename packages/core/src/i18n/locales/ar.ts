@@ -543,6 +543,7 @@ export const arOverrides: Record<string, string> = {
         'calendar.month': 'شهر',
         'calendar.schedule': 'جدول',
         'calendar.allDay': 'طوال اليوم',
+        'calendar.due': "الاستحقاق",
         'calendar.deadline': 'موعد التسليم',
         'calendar.unschedule': 'إزالة من التقويم',
         'calendar.changeTime': 'تغيير الوقت',

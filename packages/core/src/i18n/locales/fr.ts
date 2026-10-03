@@ -617,6 +617,7 @@ export const frOverrides: Record<string, string> = {
         'calendar.eventSingular': 'événement',
         'calendar.eventPlural': 'événements',
         'calendar.allDay': 'Toute la journée',
+        'calendar.due': "Échéance",
         'calendar.deadline': 'Date limite',
         'calendar.projectedRecurrence': 'Planifié',
         'calendar.projectedRecurrenceDescription': 'Aperçu uniquement dans le planning. Terminez la tâche récurrente en cours pour créer la prochaine tâche.',

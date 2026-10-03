@@ -18,6 +18,7 @@ export const ukOverrides: Record<string, string> = {
     'settings.archiveRetentionCandidates': "Елементи, що підходять зараз:",
     'settings.archiveRetentionNoCandidates': "Зараз немає елементів, що підходять.",
     'settings.archiveRetentionSection': "Розділ",
+    'calendar.due': "Термін",
     'calendar.eventSingular': 'подія',
     'calendar.eventPlural': 'події',
     'filters.searchTasks': "Пошук за назвами завдань",

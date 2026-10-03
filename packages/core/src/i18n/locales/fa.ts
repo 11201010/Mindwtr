@@ -707,6 +707,7 @@ export const faOverrides: Record<string, string> = {
         'calendar.eventSingular': 'رویداد',
         'calendar.eventPlural': 'رویدادها',
         'calendar.allDay': 'تمام روز',
+        'calendar.due': "سررسید",
         'calendar.deadline': 'مهلت',
         'calendar.showCompleted': 'تکمیل‌شده',
         'calendar.showScheduled': 'تاریخ شروع',

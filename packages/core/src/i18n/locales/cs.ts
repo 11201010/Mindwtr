@@ -689,6 +689,7 @@ export const csOverrides: Record<string, string> = {
         'calendar.eventSingular': 'událost',
         'calendar.eventPlural': 'události',
         'calendar.allDay': 'Celý den',
+        'calendar.due': "Termín",
         'calendar.deadline': 'Uzávěrka',
         'calendar.showCompleted': 'Dokončené',
         'calendar.showCompletedHint': 'Zobrazit dokončené a archivované úkoly v den, kdy byly dokončeny',

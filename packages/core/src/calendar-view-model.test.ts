@@ -11,6 +11,14 @@ import {
     createCalendarLocaleDates,
     createCalendarPatternDates,
     getCalendarDayTimeline,
+    getCalendarDayItems,
+    getCalendarDetailsTaskRow,
+    getCalendarMonthItemTitle,
+    getCalendarWeekTimedEntries,
+    isCalendarAllDayItem,
+    isCalendarTimedItem,
+    isCalendarSlotFree,
+    indexCalendarDeadlineTasks,
     getCalendarWallMinutes,
     getCalendarMovedStart,
     getCalendarMonthCell,
@@ -25,6 +33,7 @@ import {
     getCalendarWeekStart,
 } from './calendar-view-model';
 import { configureDateFormatting, createDateFormatter } from './date';
+import { getCalendarTimedDeadlines } from './calendar-day-items';
 import { createNativeHostContract } from './native-host-contract';
 import { resetForTests } from './store';
 import type { Task } from './types';
@@ -79,6 +88,66 @@ const task = (overrides: Partial<Task>): Task => ({
 });
 
 describe('calendar view model', () => {
+    const deadlineTextOptions = {
+        t: (key: string) => ({ 'calendar.due': 'Due', 'calendar.deadline': 'Deadline', 'calendar.allDay': 'All day' }[key] ?? key),
+        formatDate: createDateFormatter({ language: 'en', dateFormat: 'mdy', systemLocale: 'en-US' }),
+        projectedLabel: 'Projected',
+        timeEstimateToMinutes: () => 30,
+    };
+
+    it('keeps timed deadlines out of all-day and duration layouts, even with Starts off', () => {
+        const both = task({ startTime: '2026-05-04T08:00:00', dueDate: '2026-05-04T17:00:00' });
+        const lists = { scheduled: [both], deadlines: [both], events: [], completed: [] };
+        const items = getCalendarDayItems(lists, { preserveTimedDeadlines: true });
+        expect(items).toHaveLength(2);
+        expect(items.filter(isCalendarAllDayItem)).toEqual([]);
+        expect(items.filter(isCalendarTimedItem).map((item) => item.kind)).toEqual(['scheduled']);
+        const startsOffItems = getCalendarDayItems({ ...lists, scheduled: [] }, { preserveTimedDeadlines: true });
+        const bounds = { dayStart: new Date(2026, 4, 4), dayEnd: new Date(2026, 4, 5) };
+        expect(getCalendarWeekTimedEntries({ items: startsOffItems, ...bounds, ...deadlineTextOptions })).toEqual([]);
+        expect(getCalendarTimedDeadlines(lists.deadlines).map((marker) => marker.task.id)).toEqual([both.id]);
+        const dateOnly = getCalendarDayItems({ ...lists, scheduled: [], deadlines: [{ ...both, dueDate: '2026-05-04' }] });
+        expect(dateOnly.filter(isCalendarAllDayItem)).toHaveLength(1);
+    });
+
+    it('does not reserve free time or mutate a due-only task with an estimate', () => {
+        const due = task({ dueDate: '2026-05-04T17:00:00', timeEstimate: '2h' });
+        const before = JSON.stringify(due);
+        getCalendarTimedDeadlines([due]);
+        expect(isCalendarSlotFree(new Date(2026, 4, 4), new Date(2026, 4, 4, 17), 60, { tasks: [due], events: [], timeEstimatesEnabled: true })).toBe(true);
+        expect(JSON.stringify(due)).toBe(before);
+    });
+
+    it('adds exact due time to one compact month row and its same-day scheduled details', () => {
+        const both = task({ title: 'Finish report', startTime: '2026-05-04T08:00:00', dueDate: '2026-05-04T17:00:00' });
+        const [item] = getCalendarDayItems({ scheduled: [both], deadlines: [both], events: [], completed: [] });
+        expect(getCalendarMonthItemTitle(item, new Date(2026, 4, 4), deadlineTextOptions)).toBe('5:00 PM · Due · Finish report');
+        const longTitle = { ...item, title: 'A long task title that a compact month cell will truncate' };
+        expect(getCalendarMonthItemTitle(longTitle, new Date(2026, 4, 4), deadlineTextOptions).startsWith('5:00 PM · Due · ')).toBe(true);
+        expect(getCalendarMonthItemTitle(item, new Date(2026, 4, 3), deadlineTextOptions)).toBe('Finish report');
+        expect(getCalendarMonthItemTitle({ ...item, task: { ...both, dueDate: '2026-05-04' } }, new Date(2026, 4, 4), deadlineTextOptions)).toBe('Finish report');
+        expect(getCalendarDetailsTaskRow(both, 'scheduled', deadlineTextOptions).detail).toBe('8:00 AM-8:30 AM · Due 5:00 PM');
+        expect(getCalendarDetailsTaskRow(both, 'deadline', deadlineTextOptions).detail).toBe('Due 5:00 PM');
+        expect(getCalendarDetailsTaskRow({ ...both, dueDate: '2026-05-05T17:00:00' }, 'scheduled', deadlineTextOptions).detail).toBe('8:00 AM-8:30 AM');
+        expect(getCalendarDetailsTaskRow({ ...both, dueDate: '2026-05-04' }, 'deadline', deadlineTextOptions).detail).toBe('Deadline');
+    });
+
+    it.each(['2026-03-08T07:30:00.000Z', '2026-11-01T06:30:00.000Z'])('uses due local clock and day on DST instant %s', (dueDate) => {
+        const previous = process.env.TZ;
+        process.env.TZ = 'America/New_York';
+        try {
+            const due = task({ dueDate });
+            const [marker] = getCalendarTimedDeadlines([due]);
+            expect(marker.start.getTime()).toBe(new Date(dueDate).getTime());
+            expect(getCalendarWallMinutes(new Date(marker.start.getFullYear(), marker.start.getMonth(), marker.start.getDate()), marker.start))
+                .toBe(dueDate.includes('03-08') ? 210 : 90);
+            expect(indexCalendarDeadlineTasks([due]).get(calendarDateKey(marker.start))).toEqual([due]);
+        } finally {
+            if (previous === undefined) delete process.env.TZ;
+            else process.env.TZ = previous;
+        }
+    });
+
     it.each([[2026, 2, 8], [2026, 10, 1]])('keeps a drawn block at 10:00 when dropped in place on %i-%i-%i', (year, month, day) => {
         const start = new Date(year, month, day, 10);
         const dayStart = new Date(year, month, day);

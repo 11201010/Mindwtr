@@ -739,6 +739,7 @@ export const koOverrides: Record<string, string> = {
         'calendar.eventSingular': '이벤트',
         'calendar.eventPlural': '이벤트',
         'calendar.allDay': '하루 종일',
+        'calendar.due': "마감",
         'calendar.deadline': '마감',
         'calendar.projectedRecurrence': '예정됨',
         'calendar.projectedRecurrenceDescription': '계획 전용 미리보기입니다. 현재 반복 할 일을 완료하여 실제 다음 할 일을 생성하세요.',

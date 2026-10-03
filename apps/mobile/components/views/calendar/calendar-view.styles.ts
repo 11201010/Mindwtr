@@ -1,6 +1,9 @@
 import { StyleSheet } from 'react-native';
 
 export const styles = StyleSheet.create({
+  deadlineRail: { position: 'absolute', left: '60%', right: 0, top: 0, bottom: 0 },
+  deadlineAnchor: { position: 'absolute', left: 0, fontSize: 10, zIndex: 3 },
+  deadlineGroup: { position: 'absolute', left: 0, right: 0, borderRadius: 4, zIndex: 2 },
   container: {
     flex: 1,
     backgroundColor: '#F9FAFB',

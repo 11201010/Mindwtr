@@ -571,6 +571,7 @@ export const ptOverrides: Record<string, string> = {
         'calendar.eventSingular': 'evento',
         'calendar.eventPlural': 'eventos',
         'calendar.allDay': 'O dia todo',
+        'calendar.due': "Vencimento",
         'calendar.deadline': 'Prazo final',
         'calendar.showCompleted': 'Concluídas',
         'calendar.showCompletedHint': 'Mostrar tarefas concluídas e arquivadas no dia em que foram concluídas',

@@ -533,6 +533,7 @@ export const hiOverrides: Record<string, string> = {
         'calendar.eventSingular': 'घटना',
         'calendar.eventPlural': 'घटनाएँ',
         'calendar.allDay': 'पूरे दिन',
+        'calendar.due': "नियत समय",
         'calendar.deadline': 'अंतिम तारीख',
         'calendar.unschedule': 'कैलेंडर से हटाएँ',
         'calendar.changeTime': 'समय परिवर्तन करें',

@@ -714,6 +714,7 @@ export const zhHant: Record<string, string> = {
         'calendar.eventSingular': '日程',
         'calendar.eventPlural': '日程',
         'calendar.allDay': '全天',
+        'calendar.due': "到期",
         'calendar.deadline': '截止',
         'calendar.showCompleted': '已完成',
         'calendar.showScheduled': '開始日期',
