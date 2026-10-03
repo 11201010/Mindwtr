@@ -253,7 +253,7 @@ Thanks to these monthly sponsors for supporting Mindwtr. Companies interested in
     <img src="docs/assets/sponsors/alxgda.png" width="60" height="60" alt="@alxgda" />
   </a>
   <a href="https://github.com/TomLisankie" title="@TomLisankie">
-    <img src="docs/assets/sponsors/tomlisankie.jpg" width="60" height="60" alt="@TomLisankie" />
+    <img src="docs/assets/sponsors/tomlisankie.png" width="60" height="60" alt="@TomLisankie" />
   </a>
 </p>
 

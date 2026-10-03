@@ -255,7 +255,7 @@ Mindwtr 的发展离不开用户与贡献者的支持，感谢大家一起把它
     <img src="docs/assets/sponsors/alxgda.png" width="60" height="60" alt="@alxgda" />
   </a>
   <a href="https://github.com/TomLisankie" title="@TomLisankie">
-    <img src="docs/assets/sponsors/tomlisankie.jpg" width="60" height="60" alt="@TomLisankie" />
+    <img src="docs/assets/sponsors/tomlisankie.png" width="60" height="60" alt="@TomLisankie" />
   </a>
 </p>
 
