@@ -13,47 +13,61 @@ struct HistoryScreen: View {
     @State private var archiveProjectDeleteRevision = ""
     @State private var archiveProjectDeleteConfirmation: CoreObject = [:]
     @State private var archiveProjectDeletePresented = false
+    @State private var completedAtRow: CoreObject = [:]
+    @State private var completedAtOptions: CoreObject = [:]
+    @State private var completedAtOptionsTask: Task<Void, Never>?
+    @State private var completedAtError = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach(model.historyTabs.objects("tabs").indices, id: \.self) { index in
-                    let tab = model.historyTabs.objects("tabs")[index]
-                    Button {
-                        searchFocused = false
-                        Task { await model.selectHistoryTab(tab.text("id")) }
-                    } label: {
-                        Text(tab.text("label")).rnFont(14, .bold).multilineTextAlignment(.center)
-                            .foregroundStyle(tab.flag("selected") ? palette.tint : palette.secondary)
-                            .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 2)
-                            .overlay(alignment: .bottom) { (tab.flag("selected") ? palette.tint : .clear).frame(height: 2) }
-                            .contentShape(Rectangle())
+        ZStack {
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    ForEach(model.historyTabs.objects("tabs").indices, id: \.self) { index in
+                        let tab = model.historyTabs.objects("tabs")[index]
+                        Button {
+                            searchFocused = false
+                            Task { await model.selectHistoryTab(tab.text("id")) }
+                        } label: {
+                            Text(tab.text("label")).rnFont(14, .bold).multilineTextAlignment(.center)
+                                .foregroundStyle(tab.flag("selected") ? palette.tint : palette.secondary)
+                                .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 2)
+                                .overlay(alignment: .bottom) { (tab.flag("selected") ? palette.tint : .clear).frame(height: 2) }
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || !model.historyCurrent)
+                        .accessibilityAddTraits(tab.flag("selected") ? .isSelected : [])
+                        .accessibilityIdentifier("history-tab-" + tab.text("id"))
                     }
-                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || !model.historyCurrent)
-                    .accessibilityAddTraits(tab.flag("selected") ? .isSelected : [])
-                    .accessibilityIdentifier("history-tab-" + tab.text("id"))
+                }
+                .padding(.horizontal, 12).background(palette.card)
+                .overlay(alignment: .bottom) { palette.border.frame(height: 0.5) }
+                if model.historyArchived { archiveContent }
+                else {
+                    StatusListContent(model: model, palette: palette, data: model.history, prefix: "done",
+                                      current: model.historyCurrent, enabled: model.historyActionsEnabled,
+                                      error: model.historyError, disableStatus: false,
+                                      onRetry: { Task { await model.retryHistory() } },
+                                      onMore: { Task { await model.loadMoreHistory() } },
+                                      onFilters: { model.setHistoryPanel("filters") },
+                                      onChipAction: { action in Task { await model.applyHistoryChipAction(action) } },
+                                      onClear: clearFilters,
+                                      onCollapse: { id in Task { await model.toggleHistorySection(id) } },
+                                      onDeleteTask: { id, revision in
+                                          completedAtError = false
+                                          Task { await model.deleteDoneTask(expectedID: id, expectedRevision: revision) }
+                                      },
+                                      onStatusOptions: { row in await model.doneTaskStatusOptions(row) },
+                                      onStatusChange: { row, status in
+                                          completedAtError = false
+                                          Task { await model.changeDoneTaskStatus(row, status: status) }
+                                      }, onCompletedAt: openCompletedAt,
+                                      errorIdentifier: completedAtError ? "done-completed-at-error" : nil)
                 }
             }
-            .padding(.horizontal, 12).background(palette.card)
-            .overlay(alignment: .bottom) { palette.border.frame(height: 0.5) }
-            if model.historyArchived { archiveContent }
-            else {
-                StatusListContent(model: model, palette: palette, data: model.history, prefix: "done",
-                                  current: model.historyCurrent, enabled: model.historyActionsEnabled,
-                                  error: model.historyError, disableStatus: false,
-                                  onRetry: { Task { await model.retryHistory() } },
-                                  onMore: { Task { await model.loadMoreHistory() } },
-                                  onFilters: { model.setHistoryPanel("filters") },
-                                  onChipAction: { action in Task { await model.applyHistoryChipAction(action) } },
-                                  onClear: clearFilters,
-                                  onCollapse: { id in Task { await model.toggleHistorySection(id) } },
-                                  onDeleteTask: { id, revision in
-                                      Task { await model.deleteDoneTask(expectedID: id, expectedRevision: revision) }
-                                  },
-                                  onStatusOptions: { row in await model.doneTaskStatusOptions(row) },
-                                  onStatusChange: { row, status in
-                                      Task { await model.changeDoneTaskStatus(row, status: status) }
-                                  })
+            .accessibilityHidden(!completedAtOptions.isEmpty)
+            if !completedAtOptions.isEmpty {
+                DoneTaskCompletedAtDialog(model: model, palette: palette, options: completedAtOptions,
+                                         close: closeCompletedAt, save: saveCompletedAt)
             }
         }
         .task(id: scenePhase == .active) {
@@ -86,6 +100,40 @@ struct HistoryScreen: View {
         } message: {
             Text(archiveProjectDeleteConfirmation.text("message"))
         }
+        .onDisappear { closeCompletedAt() }
+        .onChange(of: model.historyArchived) { if $0 { closeCompletedAt() } }
+    }
+
+    private func openCompletedAt(_ displayed: CoreObject) {
+        guard model.historyActionsEnabled, !model.historyArchived, !model.taskStatusMenuPresented,
+              completedAtOptionsTask == nil else { return }
+        searchFocused = false
+        completedAtError = false
+        completedAtRow = displayed
+        model.taskStatusMenuPresented = true
+        completedAtOptionsTask = Task {
+            defer { completedAtOptionsTask = nil }
+            let options = await model.doneTaskCompletedAtOptions(displayed)
+            guard !Task.isCancelled else { return }
+            if let options { completedAtOptions = options }
+            else {
+                completedAtError = model.historyError != nil
+                model.taskStatusMenuPresented = false
+            }
+        }
+    }
+
+    private func closeCompletedAt() {
+        let ownsDialog = completedAtOptionsTask != nil || !completedAtOptions.isEmpty
+        completedAtOptionsTask?.cancel()
+        completedAtOptions = [:]
+        if ownsDialog { model.taskStatusMenuPresented = false }
+    }
+
+    private func saveCompletedAt(_ instant: String) {
+        let displayed = completedAtRow
+        closeCompletedAt()
+        Task { completedAtError = !(await model.changeDoneTaskCompletedAt(displayed, completedAt: instant)) }
     }
 
     private var archiveContent: some View {
@@ -335,6 +383,86 @@ struct HistoryScreen: View {
     private func clearFilters() {
         searchFocused = false
         Task { await model.editHistoryFilter(model.history.object("filters").object("clearEdit")) }
+    }
+}
+
+private struct DoneTaskCompletedAtDialog: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let options: CoreObject
+    let close: () -> Void
+    let save: (String) -> Void
+    @State private var initialInstant: String
+    @State private var date: Date
+    @State private var dateChanged = false
+    private var frozen: Bool { model.busy || model.retryNeeded }
+
+    init(model: CoreModel, palette: AppPalette, options: CoreObject,
+         close: @escaping () -> Void, save: @escaping (String) -> Void) {
+        self.model = model
+        self.palette = palette
+        self.options = options
+        self.close = close
+        self.save = save
+        let initial = options["initialValue"] as? String
+        let date = (options["initialEpochMilliseconds"] as? NSNumber)
+            .map { Date(timeIntervalSince1970: $0.doubleValue / 1_000) } ?? Date()
+        _initialInstant = State(initialValue: initial ?? TaskDatePickerComponents.instantString(date))
+        _date = State(initialValue: date)
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { cancel() }.accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 12) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(options.text("title")).rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+                            DatePicker(options.text("title"), selection: Binding(get: { date }, set: { next in
+                                guard TaskDatePickerComponents.string(next, time: false) != TaskDatePickerComponents.string(date, time: false)
+                                    || TaskDatePickerComponents.string(next, time: true) != TaskDatePickerComponents.string(date, time: true) else { return }
+                                date = next
+                                dateChanged = true
+                            }), displayedComponents: [.date, .hourAndMinute])
+                                .datePickerStyle(.wheel).labelsHidden().tint(palette.tint)
+                                .accessibilityLabel(options.text("title"))
+                                .accessibilityIdentifier("done-completed-at-picker").disabled(frozen)
+                        }
+                    }
+                    .frame(maxHeight: max(120, min(dynamicTypeSize.isAccessibilitySize ? .infinity : 360, geometry.size.height - 132)))
+                    .accessibilityElement(children: .contain).accessibilityIdentifier("done-completed-at-dialogscroll")
+                    HStack {
+                        Spacer()
+                        Button(action: cancel) {
+                            Text(options.text("cancelLabel")).frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.secondary)
+                        .disabled(frozen).accessibilityIdentifier("done-completed-at-cancel")
+                        Button {
+                            guard !frozen else { return }
+                            save(dateChanged ? TaskDatePickerComponents.instantString(date) : initialInstant)
+                        } label: {
+                            Text(options.text("saveLabel")).frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint)
+                        .disabled(frozen).accessibilityIdentifier("done-completed-at-save")
+                    }
+                }
+                .padding(16).frame(maxWidth: 420)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(16)
+            }
+            .foregroundStyle(palette.text).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) { cancel() }
+        }
+    }
+
+    private func cancel() {
+        guard !frozen else { return }
+        close()
     }
 }
 

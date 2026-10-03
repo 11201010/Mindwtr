@@ -59,6 +59,8 @@ struct StatusListContent: View {
     let onDeleteTask: ((String, String) -> Void)?
     var onStatusOptions: ((CoreObject) async -> CoreObject?)? = nil
     var onStatusChange: ((CoreObject, String) -> Void)? = nil
+    var onCompletedAt: ((CoreObject) -> Void)? = nil
+    var errorIdentifier: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -88,7 +90,7 @@ struct StatusListContent: View {
     @ViewBuilder private var contentRows: some View {
         if let error = error {
             Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
-                .accessibilityIdentifier(prefix + "-error")
+                .accessibilityIdentifier(errorIdentifier ?? prefix + "-error")
             Button(model.label("common.retry")) { onRetry() }
                 .rnFont(14, .semibold).frame(minHeight: 44)
                 .disabled(model.busy || (model.retryNeeded && !model.historyDoneActionPending))
@@ -102,7 +104,8 @@ struct StatusListContent: View {
                     let row = item.object("row")
                     TaskCard(row: row, model: model, palette: palette, readOnly: disableStatus || row.flag("readOnly"),
                              onProject: { project in Task { await model.openProject(project) } },
-                             onStatusOptions: onStatusOptions, onStatusChange: onStatusChange)
+                             onStatusOptions: onStatusOptions, onStatusChange: onStatusChange,
+                             onCompletedAt: onCompletedAt)
                         .id(entry.id)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             if let onDeleteTask, enabled, !row.flag("readOnly"),

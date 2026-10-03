@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const arOverrides: Record<string, string> = {
+    'task.doneCompletedAtOutcomeUnknown': "تعذر تأكيد تغيير وقت الإكمال. أعد تشغيل Mindwtr لإعادة تحميل البيانات المحفوظة.",
     'filters.searchTasks': "البحث في عناوين المهام",
     'filters.searchOptions': "البحث في الخيارات",
     'filters.tokenCycleHint': "انقر للتضمين، ثم للاستبعاد، ثم مرة أخرى للمسح.",

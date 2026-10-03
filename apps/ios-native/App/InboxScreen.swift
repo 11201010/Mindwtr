@@ -1048,6 +1048,7 @@ struct TaskCard: View {
     var moveToSectionLabel: String = ""
     var onStatusOptions: ((CoreObject) async -> CoreObject?)? = nil
     var onStatusChange: ((CoreObject, String) -> Void)? = nil
+    var onCompletedAt: ((CoreObject) -> Void)? = nil
     @State private var statusMenu = false
     @State private var statusRow: CoreObject = [:]
     @State private var statusOptions: CoreObject = [:]
@@ -1072,11 +1073,21 @@ struct TaskCard: View {
                 }
                 let parts = meta.objects("parts").filter { showDetails || !$0.flag("detail") }
                 if !parts.isEmpty {
-                    if onProject != nil || onToken != nil {
+                    if onProject != nil || onToken != nil || onCompletedAt != nil {
                         AppChipFlow {
                             ForEach(parts.indices, id: \.self) { index in
                                 let part = parts[index]
-                                if part.text("kind") == "project", !part.text("projectId").isEmpty, let onProject {
+                                if part.text("kind") == "completed", row.text("status") == "done", let onCompletedAt {
+                                    Button {
+                                        beforeAction?()
+                                        onCompletedAt(row)
+                                    } label: {
+                                        Text(metadata([part])).rnFont(12, .medium).frame(minHeight: 44).contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || readOnly || row.flag("readOnly"))
+                                    .accessibilityLabel(model.label("task.editCompletedAt"))
+                                    .accessibilityIdentifier("task-completed-at-" + row.text("id"))
+                                } else if part.text("kind") == "project", !part.text("projectId").isEmpty, let onProject {
                                     Button {
                                         beforeAction?()
                                         onProject(["id": part.text("projectId"),

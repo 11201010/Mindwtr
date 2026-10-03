@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const frOverrides: Record<string, string> = {
+    'task.doneCompletedAtOutcomeUnknown': "Impossible de confirmer la modification de la date de fin. Redémarrez Mindwtr pour recharger les données enregistrées.",
     'filters.searchTasks': "Rechercher dans les titres des tâches",
     'filters.searchOptions': "Rechercher des options",
     'filters.tokenCycleHint': "Cliquez pour inclure, à nouveau pour exclure, puis une dernière fois pour effacer la sélection.",

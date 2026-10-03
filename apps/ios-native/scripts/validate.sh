@@ -7,6 +7,7 @@ export TMPDIR="$app/.build/tmp"
 mkdir -p "$TMPDIR"
 cd "$repo"
 node apps/ios-native/scripts/build-bundle.mjs
+node apps/ios-native/scripts/check-task-date-codec.mjs
 export MINDWTR_CORE_BUNDLE="$app/Resources/core-host.js"
 export TZ=America/New_York
 swift test --package-path "$app" --jobs 2

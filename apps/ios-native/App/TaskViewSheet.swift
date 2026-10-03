@@ -1660,14 +1660,28 @@ enum TaskDatePickerComponents {
     }
 
     static func instant(_ value: String) -> Date? {
-        let codec = formatter("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", timeZone: TimeZone(secondsFromGMT: 0)!)
-        guard let date = codec.date(from: value), codec.string(from: date) == value else { return nil }
+        let input = value.hasPrefix("+") ? String(value.dropFirst()) : value
+        guard let date = instantFormatter().date(from: input), instantString(date) == value else { return nil }
         return date
     }
 
     static func instantString(_ date: Date) -> String {
-        formatter("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", timeZone: TimeZone(secondsFromGMT: 0)!)
-            .string(from: date)
+        let output = instantFormatter().string(from: date)
+        guard let separator = output.dropFirst(output.hasPrefix("-") ? 1 : 0).firstIndex(of: "-"),
+              let year = Int(output[..<separator]) else { return output }
+        let extended = year < 0 || year > 9_999
+        let digits = String(abs(year))
+        let padding = String(repeating: "0", count: max(0, (extended ? 6 : 4) - digits.count))
+        let sign = year < 0 ? "-" : extended ? "+" : ""
+        return sign + padding + digits + String(output[separator...])
+    }
+
+    private static func instantFormatter() -> DateFormatter {
+        // JS ISO instants use a proleptic Gregorian calendar and astronomical
+        // years. Local date/time wheel components keep their existing calendar.
+        let codec = formatter("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'", timeZone: TimeZone(secondsFromGMT: 0)!)
+        codec.gregorianStartDate = Date(timeIntervalSince1970: -8_640_000_000_000)
+        return codec
     }
 }
 

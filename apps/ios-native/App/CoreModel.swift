@@ -1770,7 +1770,7 @@ final class CoreModel: ObservableObject {
     }
     var historyDoneActionPending: Bool {
         selectedSurface == .history && !historyArchived && retryNeeded &&
-            (doneTaskStatusRequest != nil || doneTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "done")
+            (doneTaskStatusRequest != nil || doneTaskCompletedAtRequest != nil || doneTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "done")
     }
     var historyPickerActionsEnabled: Bool { historyActionsEnabled && historyPickerCurrent }
     var trashActionsEnabled: Bool {
@@ -2784,7 +2784,7 @@ final class CoreModel: ObservableObject {
                 historyTabs = ["tab": "archived"]
                 historyParamsByTab["archive", default: [:]]["segment"] = "tasks"
             }
-            if recovery.text("method") == "doneTaskStatusCommit" {
+            if ["doneTaskStatusCommit", "doneTaskCompletedAtCommit"].contains(recovery.text("method")) {
                 selectedSurface = .history
                 historyTabs = ["tab": "done"]
             }
@@ -3606,7 +3606,8 @@ final class CoreModel: ObservableObject {
                     "taskEdit.assignedTo", "taskEdit.priorityLabel", "taskEdit.timeEstimateLabel", "taskEdit.timeSpentLabel",
                     "taskEdit.contextsLabel", "taskEdit.statusLabel", "taskEdit.reviewDateLabel",
                     "taskEdit.startModeRelative", "taskEdit.recurrenceLabel", "recurrence.showFutureInCalendar",
-                    "task.completedAtPromptTitle", "status.inbox", "status.next", "status.done", "status.reference",
+                    "task.completedAtPromptTitle", "task.editCompletedAt", "status.inbox", "status.next", "status.done", "status.reference",
+                    "task.doneCompletedAtOutcomeUnknown", "task.doneStatusOutcomeUnknown",
                     "taskEdit.descriptionPlaceholder", "search.placeholder", "search.noResults", "search.searching",
                     "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators", "search.saveSearch", "search.saveSearchPrompt", "search.savedSearches",
                     "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone", "review.markReviewedDone",
@@ -12202,6 +12203,81 @@ final class CoreModel: ObservableObject {
 
     private var doneTaskDeleteRequest: String?
     private var doneTaskStatusRequest: String?
+    private var doneTaskCompletedAtRequest: String?
+
+    func doneTaskCompletedAtOptions(_ displayed: CoreObject) async -> CoreObject? {
+        guard historyActionsEnabled, !historyArchived else { return nil }
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let id = displayed.text("id"), revision = displayed.text("taskRevision")
+            guard displayed.text("status") == "done", !displayed.flag("readOnly") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let options = try await query("doneTaskCompletedAtOptions", [try json(["id": id, "taskRevision": revision])])
+            let initialMissing = options["initialValue"] is NSNull
+            let epoch = options["initialEpochMilliseconds"] as? NSNumber
+            guard Set(options.keys) == Set(["title", "saveLabel", "cancelLabel", "taskId", "taskRevision", "initialValue", "initialEpochMilliseconds"]),
+                  options.text("taskId") == id, options.text("taskRevision") == revision,
+                  !options.text("title").isEmpty, !options.text("saveLabel").isEmpty, !options.text("cancelLabel").isEmpty,
+                  (initialMissing && options["initialEpochMilliseconds"] is NSNull)
+                    || (!initialMissing && (options["initialValue"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true
+                        && epoch.map({ CFGetTypeID($0) != CFBooleanGetTypeID() && $0.doubleValue.isFinite }) == true) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            return options
+        } catch {
+            historyError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func changeDoneTaskCompletedAt(_ displayed: CoreObject, completedAt: String) async -> Bool {
+        guard historyActionsEnabled, !historyArchived else { return false }
+        let id = displayed.text("id"), revision = displayed.text("taskRevision")
+        guard displayed.text("status") == "done", !displayed.flag("readOnly") else {
+            historyError = label("task.updateFailed")
+            return false
+        }
+        busy = true
+        historyError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "id": id,
+                                    "taskRevision": revision, "completedAt": completedAt])
+            doneTaskCompletedAtRequest = request
+            let result = try await query("doneTaskCompletedAtWrite", [request])
+            try acknowledgeDoneTaskCompletedAt(result)
+            _ = await readHistory()
+            return true
+        } catch {
+            await handleDoneTaskCompletedAtError(error)
+            return false
+        }
+    }
+
+    private func acknowledgeDoneTaskCompletedAt(_ result: CoreObject) throws {
+        guard let request = doneTaskCompletedAtRequest, Set(result.keys) == Set(["id"]),
+              result.text("id") == (try decode(request)).text("id") else { throw CocoaError(.coderReadCorrupt) }
+        doneTaskCompletedAtRequest = nil
+        retryNeeded = false
+        historyError = nil
+        error = nil
+    }
+
+    private func handleDoneTaskCompletedAtError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            doneTaskCompletedAtRequest = nil
+            retryNeeded = false
+            error = nil
+            _ = await readHistory()
+        } else {
+            retryNeeded = doneTaskCompletedAtRequest != nil
+            error = failure.localizedDescription
+        }
+        historyError = failure.localizedDescription
+    }
 
     func doneTaskStatusOptions(_ displayed: CoreObject) async -> CoreObject? {
         guard historyActionsEnabled, !historyArchived else { return nil }
@@ -18312,6 +18388,25 @@ final class CoreModel: ObservableObject {
                 _ = await readHistory()
                 return
             }
+            if let request = doneTaskCompletedAtRequest {
+                let outcome = try await query("doneTaskCompletedAtRetryOutcome", [request])
+                if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                    let unknown = label("task.doneCompletedAtOutcomeUnknown")
+                    historyError = unknown
+                    self.error = unknown
+                    return
+                }
+                guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let result = outcome.object("result")
+                if let acknowledgment, try json(result) != json(decode(acknowledgment)) {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try acknowledgeDoneTaskCompletedAt(result)
+                _ = await readHistory()
+                return
+            }
             if let request = doneTaskStatusRequest {
                 let outcome = try await query("doneTaskStatusRetryOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
@@ -18688,6 +18783,10 @@ final class CoreModel: ObservableObject {
             }
             if archivedTaskDeleteRequest != nil {
                 await handleArchivedTaskDeleteError(error)
+                return
+            }
+            if doneTaskCompletedAtRequest != nil {
+                await handleDoneTaskCompletedAtError(error)
                 return
             }
             if doneTaskStatusRequest != nil {

@@ -364,6 +364,7 @@ export const zhHans: Record<string, string> = {
         'task.archiveRestoreOutcomeUnknown': '无法确认已归档任务是否已恢复。请重启 Mindwtr 以重新加载已保存的数据。',
         'task.archiveDeleteOutcomeUnknown': "无法确认已归档任务是否已删除。请重启 Mindwtr 以重新加载已保存的数据。",
         'task.doneStatusOutcomeUnknown': "无法确认状态更改。请重启 Mindwtr 以重新加载已保存的数据。",
+        'task.doneCompletedAtOutcomeUnknown': "无法确认完成时间的更改。请重启 Mindwtr 以重新加载已保存的数据。",
         'task.trashOutcomeUnknown': "无法确认回收站操作是否完成。请重启 Mindwtr 以重新加载已保存的数据。",
         'projects.archiveDeleteOutcomeUnknown': "无法确认已归档项目是否已删除。请重启 Mindwtr 以重新加载已保存的数据。",
         'projects.archiveRestoreOutcomeUnknown': "无法确认已归档项目是否已恢复。请重启 Mindwtr 以重新加载已保存的数据。",

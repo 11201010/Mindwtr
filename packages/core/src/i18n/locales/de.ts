@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const deOverrides: Record<string, string> = {
+    'task.doneCompletedAtOutcomeUnknown': "Die Änderung des Abschlusszeitpunkts konnte nicht bestätigt werden. Starte Mindwtr neu, um die gespeicherten Daten erneut zu laden.",
     'filters.searchTasks': "Aufgabentitel durchsuchen",
     'filters.searchOptions': "Optionen durchsuchen",
     'filters.tokenCycleHint': "Klicken zum Einschließen, erneut zum Ausschließen und nochmals zum Zurücksetzen.",
