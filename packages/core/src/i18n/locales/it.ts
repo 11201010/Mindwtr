@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const itOverrides: Record<string, string> = {
+    'task.doneTagOutcomeUnknown': "Impossibile confermare la modifica dei tag. Riavvia Mindwtr per ricaricare i dati salvati.",
     'task.doneCompletedAtOutcomeUnknown': "Impossibile confermare la modifica della data di completamento. Riavvia Mindwtr per ricaricare i dati salvati.",
     'filters.searchTasks': "Cerca nei titoli delle attività",
     'filters.searchOptions': "Cerca opzioni",

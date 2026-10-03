@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const frOverrides: Record<string, string> = {
+    'task.doneTagOutcomeUnknown': "Impossible de confirmer la modification des étiquettes. Redémarrez Mindwtr pour recharger les données enregistrées.",
     'task.doneCompletedAtOutcomeUnknown': "Impossible de confirmer la modification de la date de fin. Redémarrez Mindwtr pour recharger les données enregistrées.",
     'filters.searchTasks': "Rechercher dans les titres des tâches",
     'filters.searchOptions': "Rechercher des options",

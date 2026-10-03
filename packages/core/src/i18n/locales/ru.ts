@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ruOverrides: Record<string, string> = {
+    'task.doneTagOutcomeUnknown': "Не удалось подтвердить изменение тегов. Перезапустите Mindwtr, чтобы повторно загрузить сохранённые данные.",
     'task.doneCompletedAtOutcomeUnknown': "Не удалось подтвердить изменение времени завершения. Перезапустите Mindwtr, чтобы заново загрузить сохранённые данные.",
     'filters.searchTasks': "Поиск по названиям задач",
     'filters.searchOptions': "Поиск вариантов",

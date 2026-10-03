@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const koOverrides: Record<string, string> = {
+    'task.doneTagOutcomeUnknown': "태그 변경을 확인할 수 없습니다. 저장된 데이터를 다시 불러오려면 Mindwtr를 다시 시작하세요.",
     'task.doneCompletedAtOutcomeUnknown': "완료 시간 변경을 확인할 수 없습니다. 저장된 데이터를 다시 불러오려면 Mindwtr를 다시 시작하세요.",
     'settings.archiveRetention': "보관 항목 보존 기간",
     'settings.archiveRetentionDesc': "선택한 일수가 지나면 취소된 항목을 포함한 보관된 작업과 프로젝트를 자동으로 삭제합니다. 이 설정은 기기 간에 동기화됩니다.",

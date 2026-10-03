@@ -282,7 +282,7 @@ private final class Engine: @unchecked Sendable {
         "projectStatusOptions": 1, "projectStatusWrite": 1, "projectStatusRetryOutcome": 1,
         "projectDateOptions": 1, "projectDateWrite": 1, "projectDateRetryOutcome": 1,
         "projectAreaOptions": 1, "projectAreaWrite": 1, "projectAreaRetryOutcome": 1,
-        "menuRead": 2, "archiveTaskSelection": 1, "destinationPicker": 1, "editorSuggestions": 4, "calendarPreference": 1, "calendarUnschedule": 1, "calendarDelete": 1, "boardAction": 1,
+        "menuRead": 2, "archiveTaskSelection": 1, "doneBulkTagInput": 2, "destinationPicker": 1, "editorSuggestions": 4, "calendarPreference": 1, "calendarUnschedule": 1, "calendarDelete": 1, "boardAction": 1,
         "calendarComposerOpen": 1, "calendarComposerEdit": 1, "calendarComposerSave": 1,
         "mindSweepGuide": 1, "mindSweepAdd": 1,
         "inboxStart": 1, "inboxStep": 1, "inboxEnd": 1,
@@ -2840,7 +2840,12 @@ private final class Engine: @unchecked Sendable {
             do { command = try prepareTaskCompletionCommand(method, args: args) }
             catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if let prefix = Self.archivedRestorePrefix(method), method == prefix + "Write" {
-            do { command = try prepareArchivedRestoreCommand(prefix: prefix, arguments: args) }
+            do {
+                switch try prepareArchivedRestoreCommand(prefix: prefix, arguments: args) {
+                case .noop(let result): return result
+                case .prepared(let prepared): command = prepared
+                }
+            }
             catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if let prefix = Self.historyTaskWritePrefix(method), method == prefix + "Write" {
             do {
@@ -3819,10 +3824,12 @@ private final class Engine: @unchecked Sendable {
         }
         if command.method == "archivedTasksRestoreCommit", case .success = terminal {
             let done = historyBulkSource(command) == "done"
+            let addTag = historyBulkAddTag(command)
 #if DEBUG
-            faults?.commandDiagnostic?(done ? "doneTasksMove" : "archivedTasksRestore")
+            faults?.commandDiagnostic?(addTag ? "doneTasksAddTag" : done ? "doneTasksMove" : "archivedTasksRestore")
 #endif
-            if done { NSLog("Native iOS Done bulk status confirmed releaseCheck=v1.3.4/ios-done-bulk-status outcome=moved") }
+            if addTag { NSLog("Native iOS Done bulk tag confirmed releaseCheck=v1.3.4/ios-done-bulk-tag outcome=added") }
+            else if done { NSLog("Native iOS Done bulk status confirmed releaseCheck=v1.3.4/ios-done-bulk-status outcome=moved") }
             else { NSLog("Native iOS Archive bulk restore saved releaseCheck=v1.3.4/ios-archive-bulk-restore outcome=confirmed") }
         }
         if command.method == "taskPromoteCommit", case .success = terminal {
@@ -5874,6 +5881,14 @@ private final class Engine: @unchecked Sendable {
         return (deletion?["request"] as? [String: Any])?["source"] as? String == "done" ? "done" : "archive"
     }
 
+    private func historyBulkAddTag(_ command: PendingCommand) -> Bool {
+        guard command.method == "archivedTasksRestoreCommit",
+              let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+              let encoded = args.first, let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any] else { return false }
+        return Self.isDoneBulkAddTagRequest(request)
+    }
+
     private func archivedTasksDeleteJournalArguments(_ command: PendingCommand) throws -> [Any] {
         guard let prefix = Self.archivedTasksDeletePrefix(command.method), command.method == prefix + "Commit", command.editorDraft == nil,
               command.argumentsJSON.utf8.count <= 12_000_000,
@@ -5998,6 +6013,23 @@ private final class Engine: @unchecked Sendable {
         return status
     }
 
+    private static func isDoneBulkAddTagRequest(_ request: [String: Any]) -> Bool {
+        guard Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "source", "action", "tag"]),
+              request["source"] as? String == "done", request["action"] as? String == "addTag",
+              let tag = request["tag"] as? String, !tag.isEmpty, tag.utf16.count <= 2_000 else { return false }
+        return true // Shared canSaveTaskListTag owns whitespace and token semantics.
+    }
+
+    private static func validArchivedTasksRestoreResult(_ result: [String: Any], request: [String: Any], allowNoop: Bool = false) -> Bool {
+        guard let ids = request["taskIds"] as? [String], isInteger(result["count"]), let count = result["count"] as? NSNumber else { return false }
+        if isDoneBulkAddTagRequest(request) {
+            guard Set(result.keys) == Set(["count", "changed"]), isBoolean(result["changed"]), let changed = result["changed"] as? Bool else { return false }
+            return changed ? count.doubleValue > 0 && count.doubleValue <= Double(ids.count) : allowNoop && count.doubleValue == 0
+        }
+        guard let target = archivedTasksRestoreTarget(request) else { return false }
+        return Set(result.keys) == Set(["count", "status"]) && count.doubleValue == Double(ids.count) && result["status"] as? String == target
+    }
+
     private func validateArchivedTasksRestoreStructure(_ prepared: [String: Any]) throws {
         guard let scope = prepared["scope"] as? [String: Any], Set(scope.keys) == Set(["tasks", "projects", "sections", "areas", "settings"]),
               scope["tasks"] is [[String: Any]], scope["projects"] is [[String: Any]], scope["sections"] is [[String: Any]],
@@ -6049,9 +6081,7 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("Malformed archived Task restore result")
             }
         } else {
-            guard let ids = request["taskIds"] as? [String], Set(result.keys) == Set(["count", "status"]),
-                  let target = Self.archivedTasksRestoreTarget(request), result["status"] as? String == target,
-                  Self.isInteger(result["count"], equalTo: ids.count) else {
+            guard Self.validArchivedTasksRestoreResult(result, request: request) else {
                 throw HostFailure("Malformed Archive bulk restore result")
             }
         }
@@ -6061,14 +6091,30 @@ private final class Engine: @unchecked Sendable {
         return args
     }
 
-    private func prepareArchivedRestoreCommand(prefix: String, arguments args: [Any]) throws -> PendingCommand {
+    private enum ArchivedRestorePreparation {
+        case noop(String)
+        case prepared(PendingCommand)
+    }
+
+    private func prepareArchivedRestoreCommand(prefix: String, arguments args: [Any]) throws -> ArchivedRestorePreparation {
         guard let encodedRequest = args.first as? String,
               let request = try NativeJSON.jsonObject(with: Data(encodedRequest.utf8)) as? [String: Any] else {
             throw HostFailure("INVALID_INPUT: Archived Task restore needs a bounded request")
         }
         let value = try invoke(prefix + "Prepare", arguments: [encodedRequest])
-        guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
-              Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+        guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any] else {
+            throw HostFailure("Malformed archived Task restore preparation")
+        }
+        if response["kind"] as? String == "noop" {
+            guard prefix == "archivedTasksRestore", Self.isDoneBulkAddTagRequest(request),
+                  Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any],
+                  result["changed"] as? Bool == false,
+                  Self.validArchivedTasksRestoreResult(result, request: request, allowNoop: true) else {
+                throw HostFailure("Malformed Done tag no-op")
+            }
+            return .noop(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
+        }
+        guard Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
               let prepared = response["prepared"] as? [String: Any],
               Self.equalJSON(prepared["request"], request) else {
             throw HostFailure("Malformed archived Task restore preparation")
@@ -6079,7 +6125,7 @@ private final class Engine: @unchecked Sendable {
         guard outer.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Archive restore journal is too large; select fewer tasks") }
         let command = PendingCommand(version: 2, method: prefix + "Commit", argumentsJSON: outer)
         _ = try invoke(prefix + "Validate", arguments: archivedRestoreJournalArguments(command))
-        return command
+        return .prepared(command)
     }
 
     private func archivedRestoreReceiptOutcome(prefix: String, arguments args: [Any]) throws -> String {
@@ -6432,9 +6478,7 @@ private final class Engine: @unchecked Sendable {
             }
         }
         if command.method == "archivedTasksRestoreCommit" {
-            guard let request = envelope["request"] as? [String: Any], let ids = request["taskIds"] as? [String],
-                  Set(result.keys) == Set(["count", "status"]), Self.isInteger(result["count"], equalTo: ids.count),
-                  let target = Self.archivedTasksRestoreTarget(request), result["status"] as? String == target else {
+            guard let request = envelope["request"] as? [String: Any], Self.validArchivedTasksRestoreResult(result, request: request) else {
                 throw HostFailure("Malformed Archive bulk restore acknowledgment")
             }
         }
@@ -7728,6 +7772,10 @@ private final class Engine: @unchecked Sendable {
                 || (method == "editorSuggestions" && index == 3) {
                 guard Self.isInteger(argument) else {
                     throw HostFailure("Core numeric arguments must be integers")
+                }
+            } else if method == "doneBulkTagInput" && index == 1 {
+                guard Self.isInteger(argument), let count = argument as? NSNumber, count.doubleValue >= 0, count.doubleValue <= 10_000 else {
+                    throw HostFailure("INVALID_INPUT: Done tag count must be an integer from 0 to 10000")
                 }
             } else if !(argument is String) { throw HostFailure("Core arguments must be strings") }
         }
@@ -9095,7 +9143,7 @@ private final class Engine: @unchecked Sendable {
         if ["archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
-                  ((method.hasPrefix("archivedTasksRestore") && Self.archivedTasksRestoreTarget(request) != nil)
+                  ((method.hasPrefix("archivedTasksRestore") && (Self.archivedTasksRestoreTarget(request) != nil || Self.isDoneBulkAddTagRequest(request)))
                     || (method.hasPrefix("archivedTasksDelete")
                         && (Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions"])
                             || (request["source"] as? String == "done"
@@ -9372,6 +9420,11 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func validateMenuAndDraftArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
+        if method == "doneBulkTagInput" {
+            guard let tag = args.first as? String, tag.utf16.count <= 2_000 else {
+                throw HostFailure("INVALID_INPUT: Done tag input exceeds 2000 characters")
+            }
+        }
         if method == "menuRead" {
             guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "bulk", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
                   let json = args[1] as? String,

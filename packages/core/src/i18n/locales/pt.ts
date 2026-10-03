@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ptOverrides: Record<string, string> = {
+    'task.doneTagOutcomeUnknown': "Não foi possível confirmar a alteração das etiquetas. Reinicie o Mindwtr para recarregar os dados salvos.",
     'task.doneCompletedAtOutcomeUnknown': "Não foi possível confirmar a alteração da data de conclusão. Reinicie o Mindwtr para recarregar os dados salvos.",
     'filters.searchTasks': "Pesquisar títulos de tarefas",
     'filters.searchOptions': "Pesquisar opções",

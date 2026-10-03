@@ -364,6 +364,7 @@ export const zhHant: Record<string, string> = {
         'task.archiveRestoreOutcomeUnknown': '無法確認已封存任務是否已還原。請重新啟動 Mindwtr 以重新載入已儲存的資料。',
         'task.archiveDeleteOutcomeUnknown': "無法確認已封存任務是否已刪除。請重新啟動 Mindwtr 以重新載入已儲存的資料。",
         'task.doneStatusOutcomeUnknown': "無法確認狀態變更。請重新啟動 Mindwtr 以重新載入已儲存的資料。",
+        'task.doneTagOutcomeUnknown': "無法確認標籤變更。請重新啟動 Mindwtr 以重新載入已儲存的資料。",
         'task.doneCompletedAtOutcomeUnknown': "無法確認完成時間的變更。請重新啟動 Mindwtr 以重新載入已儲存的資料。",
         'task.trashOutcomeUnknown': "無法確認垃圾桶操作是否完成。請重新啟動 Mindwtr 以重新載入已儲存的資料。",
         'projects.archiveDeleteOutcomeUnknown': "無法確認已封存專案是否已刪除。請重新啟動 Mindwtr 以重新載入已儲存的資料。",
