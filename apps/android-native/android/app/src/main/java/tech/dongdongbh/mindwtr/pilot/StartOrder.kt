@@ -22,7 +22,7 @@ internal object StartOrder {
         data object Unswept : Drain
     }
 
-    fun afterReplay(drain: () -> Drain, owe: (String) -> Unit, retryLater: () -> Unit, startSync: () -> Unit): Boolean {
+    fun afterReplay(drain: () -> Drain, owe: (String) -> Unit, retryLater: () -> Unit, startSync: () -> Unit, refreshWidgets: () -> Unit): Boolean {
         when (val result = drain()) {
             Drain.Done -> {
                 startSync()
@@ -30,6 +30,8 @@ internal object StartOrder {
             }
             Drain.Unswept -> {
                 startSync()
+                // Its job retries, so no job end publishes them; a boot's publication may wait for a screen that never opens.
+                refreshWidgets()
                 retryLater()
             }
             Drain.Waiting -> retryLater()

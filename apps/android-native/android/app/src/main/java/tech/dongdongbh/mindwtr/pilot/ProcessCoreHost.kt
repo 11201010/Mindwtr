@@ -263,6 +263,7 @@ internal object ProcessCoreHost {
             }
             if (deferSync) deferredSync.set(start) else start()
         },
+        refreshWidgets = { refreshWidgets(runtime) },
     )
 
     // ---- Reminder alarms (bundle/host-reminders.ts: core plans every alarm and runs the timers) ----

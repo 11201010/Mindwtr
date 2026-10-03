@@ -8,7 +8,8 @@ class StartOrderTest {
     private val events = mutableListOf<String>()
 
     private fun run(drain: StartOrder.Drain) = StartOrder.afterReplay({ events += "drain"; drain },
-        owe = { events += "owe ${it.substringBefore(':')}" }, retryLater = { events += "retry" }, startSync = { events += "sync" })
+        owe = { events += "owe ${it.substringBefore(':')}" }, retryLater = { events += "retry" }, startSync = { events += "sync" },
+        refreshWidgets = { events += "widgets" })
 
     @Test fun aFinishedDrainStartsSync() {
         assertEquals(true, run(StartOrder.Drain.Done))
@@ -36,8 +37,9 @@ class StartOrderTest {
         assertEquals(listOf("drain", "retry"), events)
     }
 
-    @Test fun aDrainWhoseCheckOffSweepFailedStartsSyncKeepsTheScreensAndRetries() {
+    @Test fun aDrainWhoseCheckOffSweepFailedStartsSyncKeepsTheScreensPublishesTheWidgetsAndRetries() {
+        // Its job retries, so no job end publishes the widgets: the drain does, whatever it stored.
         assertEquals(false, run(StartOrder.Drain.Unswept))
-        assertEquals(listOf("drain", "sync", "retry"), events)
+        assertEquals(listOf("drain", "sync", "widgets", "retry"), events)
     }
 }
