@@ -681,6 +681,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringTaskDeleteUndoCommand = pending?.method == "taskDeleteUndoCommit" ? pending : nil
         let recoveringArchivedTaskRestore = pending?.method == "archivedTaskRestoreCommit"
         let recoveringArchivedTasksRestore = pending?.method == "archivedTasksRestoreCommit"
+        let recoveringArchivedTasksRestoreCommand = recoveringArchivedTasksRestore ? pending : nil
         let recoveringArchivedTasksDelete = pending?.method == "archivedTasksDeleteCommit"
         let recoveringArchivedTasksDeleteUndo = pending?.method == "archivedTasksDeleteUndoCommit"
         let recoveringArchivedTasksDeleteCommand = recoveringArchivedTasksDelete || recoveringArchivedTasksDeleteUndo ? pending : nil
@@ -939,7 +940,12 @@ private final class Engine: @unchecked Sendable {
                 : startupSomedaySectionUndoResult != nil ? "somedaySectionMoveUndoCommit" : "focusGroupWrite")),
                               "result": try NativeJSON.jsonObject(with: Data(recovered.utf8))]
         if let command = recoveringArchivedTasksDeleteCommand, archiveMutationRecoveryMethod != nil,
-           archivedTasksDeleteSource(command) == "done", var recovery = window["recovery"] as? [String: Any] {
+           historyBulkSource(command) == "done", var recovery = window["recovery"] as? [String: Any] {
+            recovery["source"] = "done"
+            window["recovery"] = recovery
+        }
+        if let command = recoveringArchivedTasksRestoreCommand, startupArchivedTasksRestoreResult != nil,
+           historyBulkSource(command) == "done", var recovery = window["recovery"] as? [String: Any] {
             recovery["source"] = "done"
             window["recovery"] = recovery
         }
@@ -3803,7 +3809,7 @@ private final class Engine: @unchecked Sendable {
             NSLog("Native iOS archived Task restored releaseCheck=v1.3.4/ios-archive-task-restore outcome=confirmed")
         }
         if let prefix = Self.archivedTasksDeletePrefix(command.method), case .success = terminal {
-            let done = archivedTasksDeleteSource(command) == "done"
+            let done = historyBulkSource(command) == "done"
             #if DEBUG
             faults?.commandDiagnostic?(done ? (prefix == "archivedTasksDelete" ? "doneTasksDelete" : "doneTasksDeleteUndo") : prefix)
             #endif
@@ -3812,10 +3818,12 @@ private final class Engine: @unchecked Sendable {
             else { NSLog("Native iOS Archive bulk Trash confirmed releaseCheck=v1.3.4/ios-archive-bulk-trash outcome=\(outcome)") }
         }
         if command.method == "archivedTasksRestoreCommit", case .success = terminal {
+            let done = historyBulkSource(command) == "done"
 #if DEBUG
-            faults?.commandDiagnostic?("archivedTasksRestore")
+            faults?.commandDiagnostic?(done ? "doneTasksMove" : "archivedTasksRestore")
 #endif
-            NSLog("Native iOS Archive bulk restore saved releaseCheck=v1.3.4/ios-archive-bulk-restore outcome=confirmed")
+            if done { NSLog("Native iOS Done bulk status confirmed releaseCheck=v1.3.4/ios-done-bulk-status outcome=moved") }
+            else { NSLog("Native iOS Archive bulk restore saved releaseCheck=v1.3.4/ios-archive-bulk-restore outcome=confirmed") }
         }
         if command.method == "taskPromoteCommit", case .success = terminal {
             NSLog("Native iOS task promoted to project releaseCheck=v1.3.4/ios-task-promote outcome=confirmed")
@@ -5858,7 +5866,7 @@ private final class Engine: @unchecked Sendable {
         }
     }
 
-    private func archivedTasksDeleteSource(_ command: PendingCommand) -> String {
+    private func historyBulkSource(_ command: PendingCommand) -> String {
         guard let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
               let encoded = args.first, let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else { return "archive" }
         let deletion = command.method == "archivedTasksDeleteUndoCommit"
@@ -5982,6 +5990,14 @@ private final class Engine: @unchecked Sendable {
         }
     }
 
+    private static func archivedTasksRestoreTarget(_ request: [String: Any]) -> String? {
+        if Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions"]) { return "inbox" }
+        guard Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "source", "status"]),
+              request["source"] as? String == "done", let status = request["status"] as? String,
+              ["inbox", "next", "waiting", "someday", "reference", "archived"].contains(status) else { return nil }
+        return status
+    }
+
     private func validateArchivedTasksRestoreStructure(_ prepared: [String: Any]) throws {
         guard let scope = prepared["scope"] as? [String: Any], Set(scope.keys) == Set(["tasks", "projects", "sections", "areas", "settings"]),
               scope["tasks"] is [[String: Any]], scope["projects"] is [[String: Any]], scope["sections"] is [[String: Any]],
@@ -6024,16 +6040,17 @@ private final class Engine: @unchecked Sendable {
               Self.isInteger(prepared["boundaryOffsetMinutes"]),
               (prepared["futureBoundary"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 100 }) == true,
               prepared["dates"] is [[String: Any]],
-              let result = prepared["result"] as? [String: Any],
-              result["status"] as? String == "inbox" else {
+              let result = prepared["result"] as? [String: Any] else {
             throw HostFailure("Malformed archived Task restore journal")
         }
         if prefix == "archivedTaskRestore" {
-            guard Set(result.keys) == Set(["id", "status"]), result["id"] as? String == request["taskId"] as? String else {
+            guard Set(result.keys) == Set(["id", "status"]), result["id"] as? String == request["taskId"] as? String,
+                  result["status"] as? String == "inbox" else {
                 throw HostFailure("Malformed archived Task restore result")
             }
         } else {
             guard let ids = request["taskIds"] as? [String], Set(result.keys) == Set(["count", "status"]),
+                  let target = Self.archivedTasksRestoreTarget(request), result["status"] as? String == target,
                   Self.isInteger(result["count"], equalTo: ids.count) else {
                 throw HostFailure("Malformed Archive bulk restore result")
             }
@@ -6417,7 +6434,9 @@ private final class Engine: @unchecked Sendable {
         if command.method == "archivedTasksRestoreCommit" {
             guard let request = envelope["request"] as? [String: Any], let ids = request["taskIds"] as? [String],
                   Set(result.keys) == Set(["count", "status"]), Self.isInteger(result["count"], equalTo: ids.count),
-                  result["status"] as? String == "inbox" else { throw HostFailure("Malformed Archive bulk restore acknowledgment") }
+                  let target = Self.archivedTasksRestoreTarget(request), result["status"] as? String == target else {
+                throw HostFailure("Malformed Archive bulk restore acknowledgment")
+            }
         }
         if let prefix = Self.archivedTasksDeletePrefix(command.method) {
             guard let request = envelope["request"] as? [String: Any] else { throw HostFailure("Malformed Archive bulk Delete acknowledgment") }
@@ -9076,9 +9095,11 @@ private final class Engine: @unchecked Sendable {
         if ["archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
-                  (Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions"])
-                    || (method.hasPrefix("archivedTasksDelete") && request["source"] as? String == "done"
-                        && Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "source"]))),
+                  ((method.hasPrefix("archivedTasksRestore") && Self.archivedTasksRestoreTarget(request) != nil)
+                    || (method.hasPrefix("archivedTasksDelete")
+                        && (Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions"])
+                            || (request["source"] as? String == "done"
+                                && Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "source"]))))),
                   let requestID = request["requestId"] as? String, UUID(uuidString: requestID)?.uuidString.lowercased() == requestID,
                   let ids = request["taskIds"] as? [String], !ids.isEmpty, ids.count <= 10_000,
                   Set(ids.map { Data($0.utf8) }).count == ids.count, ids.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 500 }),

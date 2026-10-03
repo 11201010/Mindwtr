@@ -1787,13 +1787,21 @@ final class CoreModel: ObservableObject {
     var historyDoneActionPending: Bool {
         selectedSurface == .history && !historyArchived && retryNeeded &&
             (doneTaskStatusRequest != nil || doneTaskCompletedAtRequest != nil || doneTaskDeleteRequest != nil ||
-                archivedTasksDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "done")
+                archivedTasksRestoreRequest != nil || archivedTasksDeleteRequest != nil ||
+                taskActionUndoRequest != nil && taskActionNotice.text("source") == "done")
     }
     var historyDoneRowActionsEnabled: Bool { historyActionsEnabled && !historyDoneSelectionMode }
     var historyDoneBulkDeleteEnabled: Bool {
         historyActionsEnabled && !historyArchived && historyDoneSelectionMode
             && !historyDoneSelectedIDs.isEmpty && historyDoneSelectedRevisions.count == historyDoneSelectedIDs.count
             && historyDoneBulk.object("bar").object("delete").flag("enabled")
+    }
+    func historyDoneBulkStatusEnabled(_ status: String) -> Bool {
+        historyActionsEnabled && !historyArchived && historyDoneSelectionMode && !taskStatusMenuPresented
+            && historyTextEdits.isEmpty && historyPendingEdit == nil
+            && (historyPickerName.isEmpty || historyPickerCurrent)
+            && !historyDoneSelectedIDs.isEmpty && historyDoneSelectedRevisions.count == historyDoneSelectedIDs.count
+            && historyDoneBulk.object("bar").objects("statuses").contains { $0.text("status") == status && $0.flag("enabled") }
     }
     var historyArchiveRowActionsEnabled: Bool { historyActionsEnabled && !historyArchiveSelectionMode }
     var historyArchiveBulkRestoreEnabled: Bool {
@@ -12430,14 +12438,18 @@ final class CoreModel: ObservableObject {
         } catch { historyError = error.localizedDescription }
     }
 
-    func restoreSelectedArchiveTasks() async {
-        guard historyArchiveBulkRestoreEnabled else { return }
-        let ids = historyArchiveSelectedIDs, revisions = historyArchiveSelectedRevisions
+    func restoreSelectedArchiveTasks(doneStatus: String? = nil) async {
+        if let doneStatus { guard historyDoneBulkStatusEnabled(doneStatus) else { return } }
+        else { guard historyArchiveBulkRestoreEnabled else { return } }
+        let ids = doneStatus == nil ? historyArchiveSelectedIDs : historyDoneSelectedIDs
+        let revisions = doneStatus == nil ? historyArchiveSelectedRevisions : historyDoneSelectedRevisions
         busy = true
         historyError = nil
         defer { finishOperation() }
         do {
-            let request = try json(["requestId": UUID().uuidString.lowercased(), "taskIds": ids, "taskRevisions": revisions])
+            var frozen: CoreObject = ["requestId": UUID().uuidString.lowercased(), "taskIds": ids, "taskRevisions": revisions]
+            if let doneStatus { frozen["source"] = "done"; frozen["status"] = doneStatus }
+            let request = try json(frozen)
             archivedTasksRestoreRequest = request
             let result = try await query("archivedTasksRestoreWrite", [request])
             try acknowledgeArchivedTasksRestore(result)
@@ -12532,16 +12544,18 @@ final class CoreModel: ObservableObject {
     }
 
     private func acknowledgeArchivedTasksRestore(_ result: CoreObject) throws {
-        guard let request = archivedTasksRestoreRequest,
-              let ids = (try decode(request))["taskIds"] as? [String],
-              Set(result.keys) == Set(["count", "status"]), result.text("status") == "inbox",
+        guard let request = archivedTasksRestoreRequest else { throw CocoaError(.coderReadCorrupt) }
+        let frozen = try decode(request)
+        let done = frozen.text("source") == "done"
+        guard let ids = frozen["taskIds"] as? [String],
+              Set(result.keys) == Set(["count", "status"]), result.text("status") == (done ? frozen.text("status") : "inbox"),
               let count = result["count"] as? NSNumber, CFGetTypeID(count) != CFBooleanGetTypeID(),
               count.doubleValue == Double(ids.count) else { throw CocoaError(.coderReadCorrupt) }
         archivedTasksRestoreRequest = nil
         retryNeeded = false
         historyError = nil
         error = nil
-        clearArchiveTaskSelection()
+        if done { clearDoneTaskSelection() } else { clearArchiveTaskSelection() }
     }
 
     private func handleArchivedTasksRestoreError(_ failure: Error) async {
@@ -18855,7 +18869,8 @@ final class CoreModel: ObservableObject {
             if let request = archivedTasksRestoreRequest {
                 let outcome = try await query("archivedTasksRestoreRetryOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
-                    let unknown = label("task.archiveRestoreOutcomeUnknown")
+                    let done = try decode(request).text("source") == "done"
+                    let unknown = label(done ? "task.doneStatusOutcomeUnknown" : "task.archiveRestoreOutcomeUnknown")
                     historyError = unknown
                     self.error = unknown
                     return

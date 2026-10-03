@@ -5,6 +5,7 @@ import { taskRevisionOf } from './native-request-receipts';
 import { flushPendingSave, getStorageAdapter, resetForTests, useTaskStore } from './store';
 import { buildSaveSnapshot } from './store-helpers';
 import type { AppData, Project, Section, Task } from './types';
+import { deterministicHash128 } from './uuid';
 
 const NOW = '2026-10-02T13:00:00.000Z';
 const ARCHIVED = '2026-09-25T12:34:56.789Z';
@@ -66,6 +67,28 @@ const prepare = async (host = methods(), input = request()) => {
 afterEach(async () => { await flushPendingSave(); resetForTests(); vi.useRealTimers(); });
 
 describe('guarded Archive bulk Restore', () => {
+    it('preserves the old exact Archive request/prepared shape and full canonical receipt fingerprint bytes', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(NOW));
+        const sqlite = await openSqliteHost(seed());
+        try {
+            const host = methods(); const command = await prepare(host);
+            expect(Object.keys(command.request).sort()).toEqual(['requestId', 'taskIds', 'taskRevisions'].sort());
+            expect(Object.keys(command.prepared).sort()).toEqual(['version', 'request', 'scope', 'effect', 'deviceIdBefore', 'deviceIdToInitialize',
+                'updateAt', 'preparedLocalDay', 'preparedOffsetMinutes', 'boundaryOffsetMinutes', 'futureBoundary', 'dates', 'result'].sort());
+            const payload = JSON.stringify(['archivedTasksRestore', command], (_name, item) => item && typeof item === 'object' && !Array.isArray(item)
+                ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item);
+            const fingerprint = `archivedTasksRestore:${deterministicHash128(payload).map((part) => part.toString(16).padStart(8, '0')).join('')}`;
+            const result = value(await host.commitPreparedArchivedTasksRestore(command));
+            expect(await sqlite.sql('SELECT * FROM native_request_receipts ORDER BY request_id')).toEqual([
+                { request_id: UUID, method: fingerprint, reply: JSON.stringify(result), saved_at: NOW },
+            ]);
+            await sqlite.restart(undefined, { recoveryLoad: true });
+            expect(value(await methods().commitPreparedArchivedTasksRestore(command))).toEqual(result);
+            expect(await sqlite.sql('SELECT * FROM native_request_receipts ORDER BY request_id')).toEqual([
+                { request_id: UUID, method: fingerprint, reply: JSON.stringify(result), saved_at: NOW },
+            ]);
+        } finally { await sqlite.close(); }
+    });
     it.each([['a', 'b'], ['a', 'sibling', 'b']])('matches actual RN batchMoveTasks whole content/all nine tables for selection %j', async (...selected) => {
         vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(NOW));
         const rn = await openSqliteHost(seed());

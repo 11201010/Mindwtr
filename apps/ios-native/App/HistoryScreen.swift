@@ -314,6 +314,25 @@ struct HistoryScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(model.historyDoneBulk.object("bar").text("countLabel")).rnFont(13).foregroundStyle(palette.secondary)
                 .accessibilityIdentifier("done-bulk-count")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(model.historyDoneBulk.object("bar").objects("statuses").indices, id: \.self) { index in
+                        let option = model.historyDoneBulk.object("bar").objects("statuses")[index]
+                        Button { Task { await model.restoreSelectedArchiveTasks(doneStatus: option.text("status")) } } label: {
+                            Text(option.text("label")).rnFont(13, .semibold)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .padding(.horizontal, 12).frame(minWidth: 44, minHeight: 44)
+                                .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(!model.historyDoneBulkStatusEnabled(option.text("status")))
+                        .accessibilityLabel(option.text("accessibilityLabel"))
+                        .accessibilityIdentifier("done-bulk-status-" + option.text("status"))
+                    }
+                }
+            }
+            .accessibilityIdentifier("done-bulk-status-scroll")
             if dynamicTypeSize.isAccessibilitySize { VStack(spacing: 8) { doneBulkControls } }
             else { HStack(spacing: 8) { doneBulkControls } }
         }

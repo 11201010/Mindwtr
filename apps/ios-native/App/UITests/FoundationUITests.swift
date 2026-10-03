@@ -19419,4 +19419,78 @@ final class FoundationUITests: XCTestCase {
     func testTask182DoneBulkDeleteColdRecovery() { task182Cold("cd3c1bc6-eb16-4b7a-95b1-20bb8068f39c", undo: false) }
     func testTask182DoneBulkUndoColdRecovery() { task182Cold("c893efa9-6bd6-4a59-b0c9-b0bddf42c561", undo: true) }
 
+
+    private func task183SelectRange(_ app: XCUIApplication) {
+        historyViewChoice(app, "done", "group", "none")
+        historyViewChoice(app, "done", "sort", "title")
+        task182Filter(app, "Task183 batch")
+        let first = app.descendants(matching: .any).matching(identifier: "task-title-task183-batch-01").firstMatch
+        task182Reveal(app, first); first.press(forDuration: 0.8)
+        let count = app.staticTexts["done-bulk-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 15)); XCTAssertTrue(count.label.contains("1"))
+        boardTap(app, "done-bulk-range")
+        let last = app.buttons["done-select-none-task183-batch-05"]
+        task182Reveal(app, last); last.tap()
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "4"), evaluatedWith: count)
+        waitForExpectations(timeout: 15)
+        XCTAssertFalse(app.buttons["done-select-none-task183-readonly"].exists)
+    }
+    private func task183Move(_ app: XCUIApplication, status: String) {
+        let scroll = app.scrollViews["done-bulk-status-scroll"]
+        let option = app.buttons["done-bulk-status-" + status]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 15))
+        for _ in 0..<8 {
+            if option.exists, option.isHittable,
+               scroll.frame.intersection(app.frame).contains(CGPoint(x: option.frame.midX, y: option.frame.midY)) { break }
+            scroll.swipeLeft()
+        }
+        boardEnabled(option)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task183 Move " + status; shot.lifetime = .keepAlways; add(shot)
+        option.tap()
+    }
+    private func task183CheckMoved(_ app: XCUIApplication) {
+        task182Filter(app, "Task183 batch")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-title-task183-batch-01").firstMatch.waitForNonExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.buttons["task-doneBulkDelete-undo"].exists)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+    private func task183Flow(_ library: String, status: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task176OpenDone(app); task183SelectRange(app); task183Move(app, status: status)
+        XCTAssertTrue(app.staticTexts["done-bulk-count"].waitForNonExistence(timeout: 30))
+        task183CheckMoved(app); app.terminate()
+        app.launch(); task176OpenDone(app); task183CheckMoved(app); app.terminate()
+    }
+    func testTask183DoneBulkMoveInbox() { task183Flow("9a6deb12-f556-4751-a0a1-39a25c887b58", status: "inbox") }
+    func testTask183DoneBulkMoveNext() { task183Flow("bffd2a7a-5a39-4503-bc3d-964fb5247f1f", status: "next") }
+    func testTask183DoneBulkMoveWaiting() { task183Flow("0f269d70-870e-473c-8d11-3851e9a5114f", status: "waiting") }
+    func testTask183DoneBulkMoveSomeday() { task183Flow("87bc2f11-6812-491f-9cab-2aa27f8aa5ec", status: "someday") }
+    func testTask183DoneBulkMoveReference() { task183Flow("599a3802-1fd2-4b08-8614-6edda45b4df1", status: "reference") }
+    func testTask183DoneBulkMoveArchived() { task183Flow("de7d6760-ed10-48db-9cf1-0ec906430f45", status: "archived") }
+    func testTask183DoneBulkMoveLargest() { task183Flow("96aebe7a-f183-4c9a-8412-62829f00e922", status: "archived") }
+    func testTask183DoneBulkMoveFailedSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "35cb4714-f136-4066-b508-8bbfc3ee04be"]
+        app.launch(); task176OpenDone(app); task183SelectRange(app); task183Move(app, status: "next")
+        for _ in 0..<2 {
+            boardEnabled(app.buttons["persistence-retry"], timeout: 30)
+            XCTAssertFalse(app.buttons["history-tab-archived"].isEnabled)
+            boardTap(app, "persistence-retry")
+        }
+        boardEnabled(app.buttons["persistence-retry"], timeout: 30); app.terminate()
+    }
+    func testTask183DoneBulkMoveColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "b689c603-3ce2-4fd1-9cd4-1c0019797c7a"]
+        for launch in 0..<2 {
+            app.launch()
+            if app.buttons["persistence-retry"].waitForExistence(timeout: 5) { boardTap(app, "persistence-retry") }
+            if launch > 0 { task176OpenDone(app) }
+            boardEnabled(app.buttons["history-tab-done"], timeout: 30)
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+            task183CheckMoved(app); app.terminate()
+        }
+    }
 }

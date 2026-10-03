@@ -2074,6 +2074,37 @@ describe('canonical local reads contract', () => {
         if (archivedBulkUndo.storeFields.length > 0 || archivedBulkUndo.readFields.length > 0) {
             notCanonical.push({ action: 'native prepared Archive bulk Delete Undo', ...archivedBulkUndo });
         }
+        const doneBulkMove = await runMutation('native prepared Done bulk Move status', async (control) => {
+            // Normal load archives the fixture's historical completions. Make
+            // two real recent Done rows through RN before resetting baseline.
+            await call('batchMoveTasks', ['task-66', 'task-132'], 'done');
+            const host = await nativeHost(control);
+            const sources = useTaskStore.getState()._allTasks.filter((row) => row.status === 'done' && !row.deletedAt && !row.projectId).slice(0, 2);
+            expect(sources).toHaveLength(2);
+            const taskIds = sources.map((row) => row.id);
+            const request = { requestId: '2f0e9b35-afcd-4710-8847-9c4219ad0183', source: 'done' as const, status: 'next' as const,
+                taskIds, taskRevisions: Object.fromEntries(sources.map((row) => [row.id, taskRevisionOf(row)])) };
+            const planned = nativeValue(await host.prepareArchivedTasksRestore(request));
+            const envelope = { request, prepared: planned.prepared };
+            expect(nativeValue(host.validatePreparedArchivedTasksRestore(envelope))).toEqual({ count: 2, status: 'next' });
+            const changed = new Map(planned.prepared.effect.tasks.map((pair) => [pair.after.id, pair.after]));
+            expect([...changed.keys()].sort()).toEqual([...taskIds].sort());
+            for (const source of sources) expect(changed.get(source.id)).toMatchObject({ status: 'next', rev: (source.rev ?? 0) + 1 });
+            const durable = nativeValue(await readAreaDurableData(false, true));
+            const before = durable.authority.snapshot;
+            control.expectPersisted((written) => {
+                expect(written.tasks).toEqual(before.tasks.map((row) => changed.get(row.id) ?? row));
+                expect(written.projects).toEqual(before.projects);
+                expect(written.sections).toEqual(before.sections);
+                expect(written.settings).toEqual(before.settings);
+            });
+            control.resetBaseline();
+            expect(await useTaskStore.getState().commitPreparedArchivedTasksRestore(planned.prepared, durable.authority))
+                .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+        });
+        if (doneBulkMove.storeFields.length > 0 || doneBulkMove.readFields.length > 0) {
+            notCanonical.push({ action: 'native prepared Done bulk Move status', ...doneBulkMove });
+        }
         const preparedTheme = await runMutation('native prepared General Theme', async (control) => {
             const host = await nativeHost(control);
             const options = nativeValue(await host.getGeneralPreferenceOptions({}));

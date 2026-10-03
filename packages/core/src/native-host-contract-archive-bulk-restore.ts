@@ -1,5 +1,5 @@
 import type { NativeHostResult } from './native-host-contract';
-import type { AppData, Area, Project, Section, Task } from './types';
+import type { AppData, Area, Project, Section, Task, TaskStatus } from './types';
 import type { PreparedAreaAuthority, PreparedNativeSaveBoundary } from './store-types';
 import { exact, iso, record, validProject } from './native-host-contract-project-shared';
 import { validSection } from './native-host-contract-project-section-rename';
@@ -17,11 +17,13 @@ import { normalizeProjectLifecycleFields } from './project-status';
 import { isProjectedRecurringTaskId } from './recurrence';
 import { projectFocusDateValues, type FocusDateProjection } from './task-utils';
 import { logInfo } from './logger';
+import { getBulkMoveStatusOptions } from './task-list-bulk-actions';
+import { isStatusListTaskReadOnly } from './menu-views-model';
 
 export type NativeArchivedTasksRestoreRequest = {
     requestId: string; taskIds: string[]; taskRevisions: Record<string, string>;
-};
-export type NativeArchivedTasksRestoreResult = { count: number; status: 'inbox' };
+} & ({ source?: never; status?: never } | { source: 'done'; status: Exclude<TaskStatus, 'done'> });
+export type NativeArchivedTasksRestoreResult = { count: number; status: Exclude<TaskStatus, 'done'> };
 export type NativeArchivedTasksRestoreScope = {
     tasks: Task[]; projects: Project[]; sections: Section[]; areas: Area[]; settings: AppData['settings'];
 };
@@ -77,7 +79,8 @@ const jsonSafe = <T>(value: unknown): T | null => {
 };
 const readRequest = (input: unknown): NativeArchivedTasksRestoreRequest | null => {
     const request = detach<Record<string, unknown>>(input);
-    if (!request || !exact(request, ['requestId', 'taskIds', 'taskRevisions'])
+    if (!request || !exact(request, request.source === 'done' ? ['requestId', 'taskIds', 'taskRevisions', 'source', 'status'] : ['requestId', 'taskIds', 'taskRevisions'])
+        || (request.source === 'done' && !getBulkMoveStatusOptions('done').includes(request.status as TaskStatus))
         || typeof request.requestId !== 'string' || !UUID.test(request.requestId)
         || !Array.isArray(request.taskIds) || request.taskIds.length === 0 || request.taskIds.length > 10_000
         || !request.taskIds.every((id) => text(id, 500)) || new Set(request.taskIds).size !== request.taskIds.length
@@ -85,6 +88,9 @@ const readRequest = (input: unknown): NativeArchivedTasksRestoreRequest | null =
         || !Object.values(request.taskRevisions).every((revision) => text(revision, 200))) return null;
     return request as NativeArchivedTasksRestoreRequest;
 };
+const targetStatus = (request: NativeArchivedTasksRestoreRequest): Exclude<TaskStatus, 'done'> => request.source === 'done' ? request.status : 'inbox';
+const sourceName = (request: unknown): 'Done' | 'Archive' => record(request) && request.source === 'done' ? 'Done' : 'Archive';
+const actionName = (request: unknown): string => sourceName(request) === 'Done' ? 'Done Move' : 'Archive Restore';
 const validTask = (row: unknown): row is Task => record(row) && text(row.id, 500) && validRawTask(row, row.id);
 const validArea = (row: unknown): row is Area => record(row) && text(row.id, 500)
     && typeof row.name === 'string' && iso(row.createdAt) && iso(row.updatedAt)
@@ -118,8 +124,9 @@ const selectedSourcesMatch = (request: NativeArchivedTasksRestoreRequest, scope:
     const byId = buildEntityMap(scope.tasks);
     return request.taskIds.every((id) => {
         const row = byId.get(id);
-        return row && row.status === 'archived' && !row.deletedAt && !row.purgedAt
-            && !isProjectedRecurringTaskId(id) && taskRevisionOf(row) === request.taskRevisions[id];
+        return row && row.status === (request.source === 'done' ? 'done' : 'archived') && !row.deletedAt && !row.purgedAt
+            && !isProjectedRecurringTaskId(id) && taskRevisionOf(row) === request.taskRevisions[id]
+            && (request.source !== 'done' || !isStatusListTaskReadOnly(row, scope.projects));
     });
 };
 
@@ -131,7 +138,7 @@ export const archivedTasksRestoreEffect = (prepared: Pick<NativePreparedArchived
     const tasks = scope.tasks.map((row) => historyRowLoadProjection(row, prepared.updateAt));
     const projects = scope.projects.map(normalizeProjectLifecycleFields);
     const preflight = prepareTaskBatchUpdatesForStore({
-        updatesList: request.taskIds.map((id) => ({ id, updates: { status: 'inbox' } })),
+        updatesList: request.taskIds.map((id) => ({ id, updates: { status: targetStatus(request) } })),
         state: { _tasksById: buildEntityMap(tasks), _projectsById: buildEntityMap(projects),
             _allProjects: projects, _allSections: scope.sections, _allAreas: scope.areas,
             settings: scope.settings, persistenceFailure: null },
@@ -181,7 +188,7 @@ const readEnvelope = (input: unknown): NativeArchivedTasksRestoreEnvelope | null
         || !Number.isInteger(raw.boundaryOffsetMinutes) || Math.abs(raw.boundaryOffsetMinutes as number) > 840
         || !Array.isArray(raw.dates) || !raw.dates.every(validFrozenFocusDate)
         || !record(raw.result) || !exact(raw.result, ['count', 'status'])
-        || raw.result.count !== request.taskIds.length || raw.result.status !== 'inbox') return null;
+        || raw.result.count !== request.taskIds.length || raw.result.status !== targetStatus(request)) return null;
     try {
         const prepared = raw as unknown as NativePreparedArchivedTasksRestore;
         if (!selectedSourcesMatch(request, prepared.scope)
@@ -191,7 +198,7 @@ const readEnvelope = (input: unknown): NativeArchivedTasksRestoreEnvelope | null
             || new Date(Date.parse(`${prepared.preparedLocalDay}T23:59:59.999Z`) + prepared.boundaryOffsetMinutes * 60_000).toISOString() !== prepared.futureBoundary
             || !same(requiredDates(prepared.scope), prepared.dates.map((row) => row.value))) return null;
         const expected = archivedTasksRestoreEffect(prepared);
-        const restoredIds = new Set(expected?.tasks.filter((pair) => pair.after.status === 'inbox').map((pair) => pair.before.id));
+        const restoredIds = new Set(expected?.tasks.filter((pair) => pair.after.status === targetStatus(request)).map((pair) => pair.before.id));
         if (!expected || !same(expected, prepared.effect)
             || !request.taskIds.every((id) => restoredIds.has(id))
             || [...prepared.effect.tasks, ...prepared.effect.projects, ...prepared.effect.sections].some((pair) =>
@@ -206,33 +213,34 @@ export function createArchivedTasksRestoreMethods(deps: {
     const saves = createAreaSaveGuard(deps.save);
     let pending: { envelope: NativeArchivedTasksRestoreEnvelope; adapter: ReturnType<typeof getStorageAdapter>;
         boundary: PreparedNativeSaveBoundary | undefined } | null = null;
-    const payload = (envelope: NativeArchivedTasksRestoreEnvelope) => canonicalPayload(['archivedTasksRestore', envelope]);
+    const payload = (envelope: NativeArchivedTasksRestoreEnvelope) => canonicalPayload([
+        envelope.request.source === 'done' ? 'doneTasksMove' : 'archivedTasksRestore', envelope]);
     const checkAuthority = (envelope: NativeArchivedTasksRestoreEnvelope, authority: PreparedAreaAuthority): NativeHostResult<null> => {
         const prepared = envelope.prepared;
         const current = archivedTasksRestoreScope(envelope.request, authority.snapshot);
         if (!same({ ...current, settings: prepared.scope.settings }, prepared.scope)
             || !selectedSourcesMatch(envelope.request, current)
             || (current.settings.deviceId ?? null) !== prepared.deviceIdBefore)
-            return fail('STALE_REVISION', 'Archive selection or its saved parent context changed');
+            return fail('STALE_REVISION', `${sourceName(envelope.request)} selection or its saved parent context changed`);
         try {
             return same(archivedTasksRestoreEffect({ ...prepared, scope: current }), prepared.effect)
-                ? { ok: true, value: null } : fail('STALE_REVISION', 'Archive Restore rules changed since preparation');
-        } catch { return fail('STALE_REVISION', 'Archive Restore destination changed since preparation'); }
+                ? { ok: true, value: null } : fail('STALE_REVISION', `${actionName(envelope.request)} rules changed since preparation`);
+        } catch { return fail('STALE_REVISION', `${actionName(envelope.request)} destination changed since preparation`); }
     };
     const apply = (envelope: NativeArchivedTasksRestoreEnvelope, authority: PreparedAreaAuthority) =>
         useTaskStore.getState().commitPreparedArchivedTasksRestore(envelope.prepared, authority);
     const receipts = createNativeRequestReceipts({ save: async (requestId) => {
         const owned = pending;
-        if (!owned || owned.envelope.request.requestId !== requestId) return fail('SAVE_FAILED', 'Archive Restore has no owned raw save');
+        if (!owned || owned.envelope.request.requestId !== requestId) return fail('SAVE_FAILED', `${actionName(owned?.envelope.request)} has no owned raw save`);
         if (useTaskStore.getState().persistenceFailure) {
-            if (!saves.mayApply(owned.envelope, owned.adapter)) return fail('SAVE_FAILED', 'Archive Restore has an unrelated persistence failure');
+            if (!saves.mayApply(owned.envelope, owned.adapter)) return fail('SAVE_FAILED', `${actionName(owned.envelope.request)} has an unrelated persistence failure`);
             const read = await readAreaDurableData(true, true);
             if (!read.ok) return read;
-            if (read.value.adapter !== owned.adapter) return fail('STALE_REVISION', 'Archive Restore storage changed before retry');
+            if (read.value.adapter !== owned.adapter) return fail('STALE_REVISION', `${actionName(owned.envelope.request)} storage changed before retry`);
             const checked = checkAuthority(owned.envelope, read.value.authority);
             if (!checked.ok) return checked;
             const applied = await apply(owned.envelope, read.value.authority);
-            if (!applied.success || applied.outcome !== 'applied') return fail('STALE_REVISION', applied.error ?? 'Archive Restore retry was superseded');
+            if (!applied.success || applied.outcome !== 'applied') return fail('STALE_REVISION', applied.error ?? `${actionName(owned.envelope.request)} retry was superseded`);
             owned.boundary = read.value.authority.saveBoundary;
         }
         const saved = await saves.finish(owned.envelope, owned.adapter, false, owned.boundary);
@@ -243,13 +251,13 @@ export function createArchivedTasksRestoreMethods(deps: {
         async prepareArchivedTasksRestore(input: NativeArchivedTasksRestoreRequest): Promise<NativeHostResult<NativeArchivedTasksRestorePreparation>> {
             const ready = deps.readiness(); if (!ready.ok) return ready;
             const request = readRequest(input);
-            if (!request) return fail('INVALID_INPUT', 'Select saved Archive tasks with their exact revisions; select fewer tasks if the request is too large');
+            if (!request) return fail('INVALID_INPUT', `Select saved ${sourceName(input)} tasks with their exact revisions; select fewer tasks if the request is too large`);
             const memory = useTaskStore.getState();
-            if (!selectedSourcesMatch(request, { tasks: memory._allTasks, projects: [], sections: [], areas: [], settings: memory.settings }))
-                return fail('STALE_REVISION', 'Archive selection changed since it was shown');
+            if (!selectedSourcesMatch(request, { tasks: memory._allTasks, projects: memory._allProjects, sections: [], areas: [], settings: memory.settings }))
+                return fail('STALE_REVISION', `${sourceName(request)} selection changed since it was shown`);
             const read = await readAreaDurableData(false, true); if (!read.ok) return read;
             const scope = archivedTasksRestoreScope(request, read.value.authority.snapshot);
-            if (!selectedSourcesMatch(request, scope)) return fail('STALE_REVISION', 'Saved Archive selection changed');
+            if (!selectedSourcesMatch(request, scope)) return fail('STALE_REVISION', `Saved ${sourceName(request)} selection changed`);
             const device = ensureDeviceId(scope.settings);
             const now = new Date(); const end = new Date(now); end.setHours(23, 59, 59, 999);
             const base = { version: 1 as const, request, scope, deviceIdBefore: scope.settings.deviceId ?? null,
@@ -257,50 +265,51 @@ export function createArchivedTasksRestoreMethods(deps: {
                 preparedLocalDay: new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10),
                 preparedOffsetMinutes: now.getTimezoneOffset(), boundaryOffsetMinutes: end.getTimezoneOffset(),
                 futureBoundary: end.toISOString(), dates: projectFocusDateValues(requiredDates(scope)),
-                result: { count: request.taskIds.length, status: 'inbox' as const } };
+                result: { count: request.taskIds.length, status: targetStatus(request) } };
             let effect;
             try { effect = archivedTasksRestoreEffect(base); } catch { effect = null; }
             const prepared = effect && jsonSafe<NativePreparedArchivedTasksRestore>({ ...base, effect });
             return prepared && readEnvelope({ request, prepared }) ? { ok: true, value: { kind: 'prepared', prepared } }
-                : fail('INVALID_INPUT', 'Archive Restore cannot prepare these rows or its journal is too large; select fewer tasks');
+                : fail('INVALID_INPUT', `${actionName(request)} cannot prepare these rows or its journal is too large; select fewer tasks`);
         },
         validatePreparedArchivedTasksRestore(input: NativeArchivedTasksRestoreEnvelope): NativeHostResult<NativeArchivedTasksRestoreResult> {
             const envelope = readEnvelope(input);
-            return envelope ? { ok: true, value: envelope.prepared.result } : fail('INVALID_INPUT', 'Prepared Archive Restore is malformed');
+            return envelope ? { ok: true, value: envelope.prepared.result } : fail('INVALID_INPUT', `Prepared ${actionName(record(input) ? input.request : null)} is malformed`);
         },
         archivedTasksRestoreOutcome(input: NativeArchivedTasksRestoreEnvelope): NativeHostResult<NativeArchivedTasksRestoreResult | null> {
             const envelope = readEnvelope(input);
-            if (!envelope) return fail('INVALID_INPUT', 'Prepared Archive Restore is malformed');
+            if (!envelope) return fail('INVALID_INPUT', `Prepared ${actionName(record(input) ? input.request : null)} is malformed`);
             return receipts.saved<NativeArchivedTasksRestoreResult>(envelope.request.requestId, payload(envelope)) ?? { ok: true, value: null };
         },
         async commitPreparedArchivedTasksRestore(input: NativeArchivedTasksRestoreEnvelope): Promise<NativeHostResult<NativeArchivedTasksRestoreResult>> {
             const envelope = readEnvelope(input);
-            if (!envelope) return fail('INVALID_INPUT', 'Prepared Archive Restore is malformed');
+            if (!envelope) return fail('INVALID_INPUT', `Prepared ${actionName(record(input) ? input.request : null)} is malformed`);
             const ready = deps.readiness(); if (!ready.ok) return ready;
             const boundPayload = payload(envelope);
             const saved = receipts.saved<NativeArchivedTasksRestoreResult>(envelope.request.requestId, boundPayload);
             if (saved) return saved.ok && !same(saved.value, envelope.prepared.result)
-                ? fail('INVALID_INPUT', 'Saved Archive Restore result does not match its journal') : saved;
+                ? fail('INVALID_INPUT', `Saved ${actionName(envelope.request)} result does not match its journal`) : saved;
             let prewriteFailure: NativeHostResult<never> | null = null;
             const notLanded = (message: string): NativeHostResult<never> => {
                 prewriteFailure = fail('SAVE_FAILED', message);
                 return { ok: false, error: { code: 'ACTION_FAILED', message } };
             };
             const confirmed = await receipts.run(envelope.request.requestId, boundPayload, async () => {
-                if (useTaskStore.getState().persistenceFailure) return notLanded('Archive Restore has an unresolved persistence failure');
+                if (useTaskStore.getState().persistenceFailure) return notLanded(`${actionName(envelope.request)} has an unresolved persistence failure`);
                 const read = await readAreaDurableData(false, true);
                 if (!read.ok) return read.error.code === 'SAVE_FAILED' ? notLanded(read.error.message) : read;
                 const checked = checkAuthority(envelope, read.value.authority); if (!checked.ok) return checked;
                 const applied = await apply(envelope, read.value.authority);
-                if (!applied.success || applied.outcome !== 'applied') return fail('STALE_REVISION', applied.error ?? 'Archive Restore conflicts with saved data');
+                if (!applied.success || applied.outcome !== 'applied') return fail('STALE_REVISION', applied.error ?? `${actionName(envelope.request)} conflicts with saved data`);
                 pending = { envelope, adapter: read.value.adapter, boundary: read.value.authority.saveBoundary };
                 return { ok: true, value: envelope.prepared.result };
             });
             if (prewriteFailure) return prewriteFailure;
-            if (confirmed.ok && !same(confirmed.value, envelope.prepared.result)) return fail('INVALID_INPUT', 'Saved Archive Restore result does not match its journal');
+            if (confirmed.ok && !same(confirmed.value, envelope.prepared.result)) return fail('INVALID_INPUT', `Saved ${actionName(envelope.request)} result does not match its journal`);
             if (confirmed.ok) {
-                try { logInfo('Native Archive bulk Restore confirmed', { scope: 'native-host', category: 'storage',
-                    context: { releaseCheck: 'v1.3.4/ios-archive-bulk-restore', outcome: 'confirmed' } }); }
+                try { logInfo(envelope.request.source === 'done' ? 'Native Done bulk status confirmed' : 'Native Archive bulk Restore confirmed', { scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: envelope.request.source === 'done' ? 'v1.3.4/ios-done-bulk-status' : 'v1.3.4/ios-archive-bulk-restore',
+                        outcome: envelope.request.source === 'done' ? 'moved' : 'confirmed' } }); }
                 catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
             }
             return confirmed;

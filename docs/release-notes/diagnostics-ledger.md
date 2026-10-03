@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-done-bulk-status`** — `packages/core/src/native-host-contract-archive-bulk-restore.ts` and `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `outcome=moved` confirms the complete selected Done batch reached durable storage with its exact status-move receipt. Failed saves and unproven retries do not claim success. No task content, identifiers, target status, selection details, dates or URLs are logged.
+
 - **`v1.3.4/ios-done-bulk-trash`** — `packages/core/src/native-host-contract-archive-bulk-delete.ts` and `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `outcome=deleted` or `outcome=restored` confirms the complete selected Done batch reached durable storage with its exact Delete or Undo receipt. Failed saves and unproven retries do not claim success. No task content, identifiers, selection details, dates or URLs are logged.
 
 - **`v1.3.4/ios-archive-bulk-trash`** — `packages/core/src/native-host-contract-archive-bulk-delete.ts` and `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `outcome=deleted` or `outcome=restored` confirms the complete selected Archive batch reached durable storage with its exact Delete or Undo receipt. Failed saves and unproven retries do not claim success. No task content, identifiers, selection details, dates or URLs are logged.
