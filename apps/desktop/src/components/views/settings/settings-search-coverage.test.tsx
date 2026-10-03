@@ -9,7 +9,7 @@ import {
     type SettingsSearchPageId,
 } from '@mindwtr/core';
 
-import { en } from '@mindwtr/core/i18n/locales/en';
+import { en } from '../../../../../../packages/core/src/i18n/locales/en';
 import { getEnglishSettingsLabels } from './labels';
 import { SettingsAboutPage } from './SettingsAboutPage';
 import { SettingsAdvancedPage } from './SettingsAdvancedPage';
