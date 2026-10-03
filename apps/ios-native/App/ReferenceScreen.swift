@@ -5,8 +5,11 @@ struct ReferenceScreen: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     @Environment(\.scenePhase) private var scenePhase
+    @State private var bulkDeletePresented = false
 
     var body: some View {
+        VStack(spacing: 0) {
+            if model.referenceSelectionMode { bulkDeleteBar }
         StatusListContent(model: model, palette: palette, data: model.reference, prefix: "reference",
                           current: model.referenceCurrent, enabled: model.referenceActionsEnabled,
                           error: model.referenceError, disableStatus: false,
@@ -23,7 +26,21 @@ struct ReferenceScreen: View {
                           onBackdateOptions: { row in await model.referenceTaskBackdateOptions(row) },
                           onBackdateSave: { row, instant, minutes in await model.backdateReferenceTask(row, completedAt: instant, timeSpentText: minutes) },
                           onDestinationOptions: { row, query, offset in await model.referenceTaskDestinationOptions(row, query: query, offset: offset) },
-                          onDestinationChoose: { row, destination in await model.moveReferenceTaskDestination(row, destination: destination) })
+                          onDestinationChoose: { row, destination in await model.moveReferenceTaskDestination(row, destination: destination) },
+                          selectionActive: model.referenceSelectionMode, selectedTaskIDs: model.referenceSelectedIDs,
+                          onSelection: { row in Task { await model.selectReferenceTask(row) } },
+                          onSelectionStart: { row in Task { await model.selectReferenceTask(row) } })
+        }
+        .alert(model.archiveBulkDeleteConfirmation.text("title"), isPresented: $bulkDeletePresented) {
+            Button(model.archiveBulkDeleteConfirmation.text("cancelLabel"), role: .cancel) {
+                model.cancelArchiveBulkDeleteConfirmation()
+            }.accessibilityIdentifier("reference-bulk-cancel")
+            Button(model.archiveBulkDeleteConfirmation.text("confirmLabel"), role: .destructive) {
+                Task { await model.confirmDeleteSelectedArchiveTasks() }
+            }.accessibilityIdentifier("reference-bulk-confirm")
+        } message: { Text(model.archiveBulkDeleteConfirmation.text("message")) }
+        .onChange(of: model.archiveBulkDeleteConfirmation.isEmpty) { if $0 { bulkDeletePresented = false } }
+        .onDisappear { model.referenceSelectionOwnerChanged() }
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
@@ -32,6 +49,50 @@ struct ReferenceScreen: View {
                 await model.refresh()
             }
         }
+    }
+
+    private var bulkDeleteBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(model.referenceBulk.object("bar").text("countLabel"))
+                .rnFont(13).foregroundStyle(palette.secondary)
+                .accessibilityIdentifier("reference-bulk-count")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Button { model.leaveReferenceTaskSelection() } label: {
+                        bulkActionLabel(model.referenceBulk.object("bar").object("exit").text("accessibilityLabel"))
+                    }
+                    .buttonStyle(.plain).disabled(!model.referenceActionsEnabled)
+                    .accessibilityIdentifier("reference-bulk-exit")
+                    Button { Task { await model.toggleReferenceTaskRange() } } label: {
+                        bulkActionLabel(model.referenceBulk.object("bar").object("range").text("label"))
+                    }
+                    .buttonStyle(.plain).disabled(!model.referenceBulkDeleteEnabled)
+                    .accessibilityAddTraits(model.referenceBulk.object("bar").object("range").flag("active") ? .isSelected : [])
+                    .accessibilityIdentifier("reference-bulk-range")
+                    Button {
+                        model.requestDeleteSelectedReferenceTasks()
+                        bulkDeletePresented = !model.archiveBulkDeleteConfirmation.isEmpty
+                    } label: {
+                        bulkActionLabel(model.referenceBulk.object("bar").object("delete").text("label"))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.danger).disabled(!model.referenceBulkDeleteEnabled)
+                    .accessibilityIdentifier("reference-bulk-delete")
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("reference-bulk-actions-scroll")
+        }
+        .padding(12).background(palette.card, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border).allowsHitTesting(false))
+        .padding(.horizontal, 16).padding(.vertical, 8)
+    }
+
+    private func bulkActionLabel(_ text: String) -> some View {
+        Text(text).rnFont(13, .semibold).fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 12).frame(minWidth: 44, minHeight: 44)
+            .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border).allowsHitTesting(false))
+            .contentShape(Rectangle())
     }
 }
 
@@ -309,17 +370,20 @@ struct StatusListContent: View {
                 let item = entry.item
                 if item.text("type") == "task" {
                     let row = item.object("row")
+                    let selected = prefix == "reference"
+                        ? selectedTaskIDs.contains(where: { $0.utf8.elementsEqual(row.text("id").utf8) })
+                        : selectedTaskIDs.contains(row.text("id"))
                     HStack(spacing: 8) {
                         if selectionActive, !row.flag("readOnly") {
                             Button { onSelection?(row) } label: {
-                                Image(systemName: selectedTaskIDs.contains(row.text("id")) ? "checkmark.circle.fill" : "circle")
+                                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                                     .font(.system(size: 22)).foregroundStyle(palette.tint)
                                     .frame(width: 44, height: 44).contentShape(Rectangle())
                             }
                             .buttonStyle(.plain).disabled(!enabled || ownsReferenceStatusMenu)
                             .accessibilityLabel(row.text("title"))
-                            .accessibilityAddTraits(selectedTaskIDs.contains(row.text("id")) ? .isSelected : [])
-                            .accessibilityIdentifier("done-select-" + (item.text("groupId").isEmpty ? "none" : item.text("groupId")) + "-" + row.text("id"))
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                            .accessibilityIdentifier(prefix + "-select-" + (item.text("groupId").isEmpty ? "none" : item.text("groupId")) + "-" + row.text("id"))
                         }
                         TaskCard(row: row, model: model, palette: palette, readOnly: disableStatus || selectionActive || row.flag("readOnly"),
                                  hideStatusBadge: selectionActive,

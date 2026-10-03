@@ -20984,3 +20984,260 @@ extension FoundationUITests {
     func testTask191ReferencePromptCompleteProjectColdRecovery() { task191ColdFollowUp("8836e789-8937-491a-a6a7-6642e3d6e3f8") }
 
 }
+
+// Task192 exercises the shared Reference selection scope through real controls.
+extension FoundationUITests {
+    private var task192Batch: [String] { (1...4).map { String(format: "task192-batch-%02d", $0) } }
+
+    private func task192Arguments(_ library: String, rtl: Bool = false, largest: Bool = false) -> [String] {
+        var args = ["--native-ui-test-library", library, "-AppleLanguages", rtl ? "(ar)" : "(en-US)", "-AppleLocale", rtl ? "ar_SA" : "en_US"]
+        if largest { args += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-AppleInterfaceStyle", "Dark"] }
+        return args
+    }
+
+    private func task192Exact(_ app: XCUIApplication, _ id: String, buttons: Bool = false) -> XCUIElement {
+        let matches = buttons ? app.buttons.matching(identifier: id) : app.staticTexts.matching(identifier: id)
+        // ASCII selectors remain live during List virtualization. Only Unicode
+        // twins need enumeration, since XCTest matches canonical equivalents.
+        if id.utf8.allSatisfy({ $0 < 128 }) { return matches.firstMatch }
+        return matches.allElementsBoundByIndex.first { $0.identifier.utf8.elementsEqual(id.utf8) } ?? matches.element(boundBy: matches.count)
+    }
+
+    private func task192Inside(_ frame: CGRect, _ viewport: CGRect) -> Bool {
+        !frame.isEmpty && frame.minX >= viewport.minX - 0.01 && frame.maxX <= viewport.maxX + 0.01
+            && frame.minY >= viewport.minY - 0.01 && frame.maxY <= viewport.maxY + 0.01
+    }
+
+    @discardableResult
+    private func task192Reveal(_ app: XCUIApplication, _ id: String, buttons: Bool = false,
+                               scrollID: String = "reference-scroll", horizontal: Bool = false, scans: Int = 48) -> XCUIElement {
+        let list = app.descendants(matching: .any).matching(identifier: scrollID).firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 20))
+        for _ in 0..<scans {
+            let viewport = list.frame.intersection(app.frame), element = task192Exact(app, id, buttons: buttons)
+            if element.exists && task192Inside(element.frame, viewport) { return element }
+            guard !viewport.isEmpty else { break }
+            let frame = element.exists ? element.frame : .zero
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            if horizontal {
+                let left = !frame.isEmpty && frame.minX < viewport.minX
+                let distance = viewport.width * 0.55, x = viewport.minX + viewport.width * (left ? 0.3 : 0.7)
+                origin.withOffset(CGVector(dx: x, dy: viewport.midY)).press(forDuration: 0.05,
+                    thenDragTo: origin.withOffset(CGVector(dx: x + (left ? distance : -distance), dy: viewport.midY)),
+                    withVelocity: .slow, thenHoldForDuration: 0.15)
+            } else {
+                // Use List content, not its non-scrolling outer gutter. Slow,
+                // measured drags keep large multi-line rows from flicking past.
+                let above = !frame.isEmpty && frame.minY < viewport.minY
+                let distance = viewport.height * 0.6, y = viewport.minY + viewport.height * (above ? 0.25 : 0.75)
+                origin.withOffset(CGVector(dx: viewport.midX, dy: y)).press(forDuration: 0.05,
+                    thenDragTo: origin.withOffset(CGVector(dx: viewport.midX, dy: y + (above ? distance : -distance))),
+                    withVelocity: .slow, thenHoldForDuration: 0.15)
+            }
+        }
+        let element = task192Exact(app, id, buttons: buttons), viewport = list.frame.intersection(app.frame)
+        if !element.exists || !task192Inside(element.frame, viewport) {
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task192 measured visibility failure"; shot.lifetime = .keepAlways; add(shot)
+            let tree = XCTAttachment(string: app.debugDescription); tree.name = "Task192 visibility hierarchy"; tree.lifetime = .keepAlways; add(tree)
+            XCTFail("Task192 control must fit its visible viewport: " + id)
+        }
+        return element
+    }
+
+    private func task192Tap(_ app: XCUIApplication, _ id: String, scrollID: String = "reference-bulk-actions-scroll",
+                            horizontal: Bool = true, scans: Int = 12) {
+        let button = task192Reveal(app, id, buttons: true, scrollID: scrollID, horizontal: horizontal, scans: scans)
+        boardEnabled(button, timeout: 20)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.01); XCTAssertGreaterThanOrEqual(button.frame.width, 44 - 0.01)
+        // Task191 demonstrated false XCTest isHittable for some fully visible
+        // custom controls. Record it, then prove the actual tap's exact outcome.
+        print("Task192 tap \(id) frame=\(button.frame) enabled=\(button.isEnabled) hittable=\(button.isHittable)")
+        button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    }
+
+    private func task192Count(_ app: XCUIApplication, _ expected: Int) {
+        let count = app.staticTexts["reference-bulk-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 20))
+        let predicate = NSPredicate { _, _ in
+            let digits = count.label.compactMap { $0.wholeNumberValue }.map(String.init).joined()
+            return Int(digits) == expected
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 20), .completed)
+        XCTAssertFalse(app.buttons["reference-bulk-select-all"].exists)
+    }
+
+    private func task192Start(_ app: XCUIApplication, _ id: String) {
+        let title = task192Reveal(app, "task-title-" + id)
+        title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.8)
+        task192Count(app, 1)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists); XCTAssertFalse(app.buttons["task-view-close"].exists)
+    }
+
+    private func task192Range(_ app: XCUIApplication, query: String = "Task192 batch", rtl: Bool = false) {
+        task186Filter(app, query, rtl: rtl); task192Start(app, "task192-batch-01")
+        task192Tap(app, "reference-bulk-range")
+        task192Tap(app, "reference-select-none-task192-batch-04", scrollID: "reference-scroll", horizontal: false, scans: 48)
+        task192Count(app, 4)
+        XCTAssertFalse(app.buttons["reference-bulk-range"].isSelected)
+        XCTAssertFalse(app.buttons["reference-select-none-task192-batch-05"].exists)
+        XCTAssertTrue(task192Exact(app, "reference-select-none-task192-batch-04", buttons: true).isSelected)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+        XCTAssertFalse(app.staticTexts["reference-error"].exists)
+    }
+
+    private func task192Observe(_ app: XCUIApplication, fixture: String, operation: String, ids: [String], query: String) {
+        let record: [String: Any] = ["fixture": fixture, "operation": operation, "source": "reference", "taskIds": ids,
+            "groupBy": "none", "searchQuery": query, "includeArchivedProjects": true,
+            "countLabel": app.staticTexts["reference-bulk-count"].exists ? app.staticTexts["reference-bulk-count"].label : "",
+            "beforeActionWallEpoch": Date().timeIntervalSince1970]
+        if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]), let value = String(data: data, encoding: .utf8) { print("Task192 action observation " + value) }
+        else { XCTFail("Cannot encode Task192 pre-action observation") }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task192 before " + operation; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func task192Confirm(_ app: XCUIApplication, fixture: String, ids: [String], query: String = "Task192 batch") {
+        task192Tap(app, "reference-bulk-delete")
+        let confirm = app.alerts.buttons.matching(identifier: "reference-bulk-confirm").firstMatch
+        boardEnabled(confirm, timeout: 20)
+        XCTAssertTrue(app.alerts.buttons.matching(identifier: "reference-bulk-cancel").firstMatch.exists)
+        task192Observe(app, fixture: fixture, operation: "delete", ids: ids, query: query)
+        confirm.tap()
+    }
+
+    private func task192Rows(_ app: XCUIApplication, restored: Bool, rtl: Bool = false) {
+        task186Filter(app, "Task192 batch", rtl: rtl)
+        for id in task192Batch {
+            let title = task192Exact(app, "task-title-" + id)
+            if restored { XCTAssertTrue(title.waitForExistence(timeout: 20)) }
+            else { XCTAssertTrue(title.waitForNonExistence(timeout: 20)) }
+        }
+        XCTAssertTrue(task192Exact(app, "task-title-task192-batch-05").exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists); XCTAssertFalse(app.staticTexts["reference-error"].exists)
+    }
+
+    private func task192Flow(_ library: String, largest: Bool = false, rtl: Bool = false) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
+        app.launch(); task186Open(app); referenceGroup(app, "none")
+        task186Filter(app, "Task192 batch", rtl: rtl)
+        let readonly = task192Reveal(app, "task-title-task192-batch-05")
+        readonly.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        boardEnabled(app.buttons["task-view-close"], timeout: 20); boardTap(app, "task-view-close")
+        task192Range(app, rtl: rtl)
+        task192Tap(app, "reference-select-none-task192-batch-02", scrollID: "reference-scroll", horizontal: false, scans: 48); task192Count(app, 3)
+        task192Tap(app, "reference-select-none-task192-batch-02", scrollID: "reference-scroll", horizontal: false, scans: 48); task192Count(app, 4)
+        task192Tap(app, "reference-bulk-delete")
+        let cancel = app.alerts.buttons.matching(identifier: "reference-bulk-cancel").firstMatch; boardEnabled(cancel, timeout: 20); cancel.tap()
+        task192Count(app, 4)
+        task192Tap(app, "reference-bulk-exit")
+        XCTAssertTrue(app.staticTexts["reference-bulk-count"].waitForNonExistence(timeout: 20))
+        task192Range(app, rtl: rtl); task192Confirm(app, fixture: library, ids: task192Batch)
+        let undo = app.buttons.matching(identifier: "task-referenceBulkDelete-undo").firstMatch
+        boardEnabled(undo, timeout: 30)
+        XCTAssertEqual(app.buttons.matching(identifier: "task-referenceBulkDelete-undo").count, 1)
+        XCTAssertGreaterThanOrEqual(undo.frame.height, 44 - 0.01)
+        task192Observe(app, fixture: library, operation: "undo", ids: task192Batch, query: "Task192 batch")
+        undo.tap()
+        XCTAssertTrue(app.staticTexts["reference-bulk-count"].waitForNonExistence(timeout: 30))
+        task192Rows(app, restored: true, rtl: rtl)
+        task192Range(app, rtl: rtl); task192Confirm(app, fixture: library, ids: task192Batch)
+        XCTAssertTrue(app.staticTexts["reference-bulk-count"].waitForNonExistence(timeout: 30))
+        task192Rows(app, restored: false, rtl: rtl)
+        app.terminate(); app.launch(); task186Open(app); task192Rows(app, restored: false, rtl: rtl)
+        XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists); XCTAssertFalse(app.buttons["task-referenceBulkDelete-undo"].exists); app.terminate()
+    }
+
+    func testTask192ReferenceBulkTrashUndoNormal() { task192Flow("17664d7a-8c5d-47da-a9e5-562cfc958f5f") }
+    func testTask192ReferenceBulkTrashUndoLargestDark() { task192Flow("6e1621c5-3b9b-44b8-aee2-90de5b3619e1", largest: true) }
+    func testTask192ReferenceBulkTrashUndoArabicRTL() { task192Flow("5211b88f-d2c9-4c29-84c6-c038993efdf6", rtl: true) }
+
+    func testTask192ReferencePagedRangeFilterFoldAndDuplicatePruning() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task192Arguments("a8629565-a880-427a-b721-9170556b8d76")
+        app.launch(); task186Open(app); referenceGroup(app, "none"); task186Filter(app, "Task192 Page")
+        task192Start(app, "task192-page-000"); task192Tap(app, "reference-bulk-range")
+        for _ in 0..<2 {
+            task192Tap(app, "reference-more", scrollID: "reference-scroll", horizontal: false, scans: 80)
+            boardEnabled(app.buttons["reference-overflow-button"], timeout: 30)
+        }
+        task192Tap(app, "reference-select-none-task192-page-129", scrollID: "reference-scroll", horizontal: false, scans: 48)
+        task192Count(app, 130); XCTAssertFalse(app.buttons["reference-bulk-range"].isSelected)
+        task186Filter(app, "Task192 Page 129"); task192Count(app, 1)
+        task186Filter(app, "Task192 Page"); task192Count(app, 1)
+        task192Tap(app, "reference-bulk-exit")
+        referenceGroup(app, "tag"); task186Filter(app, "Task192 batch")
+        // Both groups expose the same IDs, but the shared selected count is one.
+        task192Start(app, "task192-batch-01")
+        let firstGroup = app.buttons["reference-select-tag:#Task192 A-task192-batch-01"]
+        let secondGroup = app.buttons["reference-select-tag:#Task192 B-task192-batch-01"]
+        XCTAssertTrue(firstGroup.exists); XCTAssertTrue(secondGroup.exists); XCTAssertTrue(firstGroup.isSelected); XCTAssertTrue(secondGroup.isSelected)
+        for group in ["Task192 A", "Task192 B"] {
+            let header = task192Reveal(app, "reference-section-tag:#" + group, buttons: true, scans: 80)
+            boardEnabled(header); XCTAssertEqual(header.value as? String, "Collapse"); header.tap()
+            boardEnabled(app.buttons["reference-overflow-button"], timeout: 20)
+        }
+        task192Count(app, 0); XCTAssertFalse(app.buttons["reference-bulk-delete"].isEnabled)
+        XCTAssertFalse(app.buttons["task-referenceBulkDelete-undo"].exists)
+        task192Tap(app, "reference-bulk-exit"); app.terminate()
+    }
+
+    func testTask192ReferenceNFDSelectionLeavesNFCReadonlyTwin() {
+        continueAfterFailure = false
+        let library = "aedd486b-0a8f-4f53-afda-f016e39a984f", nfc = "task192-café", nfd = "task192-cafe\u{301}"
+        let app = XCUIApplication(); app.launchArguments = task192Arguments(library)
+        app.launch(); task186Open(app); referenceGroup(app, "none"); task186Filter(app, "Task192 Unicode")
+        task192Start(app, nfd)
+        let readonlySelector = "reference-select-none-" + nfc
+        XCTAssertFalse(app.buttons.matching(identifier: readonlySelector).allElementsBoundByIndex.contains { $0.identifier.utf8.elementsEqual(readonlySelector.utf8) })
+        task192Confirm(app, fixture: library, ids: [nfd], query: "Task192 Unicode")
+        XCTAssertTrue(app.staticTexts["reference-bulk-count"].waitForNonExistence(timeout: 30))
+        XCTAssertTrue(task192Exact(app, "task-title-" + nfc).exists)
+        let deletedSelector = "task-title-" + nfd
+        XCTAssertFalse(app.staticTexts.matching(identifier: deletedSelector).allElementsBoundByIndex.contains { $0.identifier.utf8.elementsEqual(deletedSelector.utf8) })
+        app.terminate(); app.launch(); task186Open(app)
+        XCTAssertTrue(task192Exact(app, "task-title-" + nfc).exists); XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists); app.terminate()
+    }
+
+    private func task192Failure(_ library: String, undo: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task192Arguments(library)
+        app.launch(); task186Open(app); referenceGroup(app, "none"); task192Range(app); task192Confirm(app, fixture: library, ids: task192Batch)
+        if undo {
+            let button = app.buttons.matching(identifier: "task-referenceBulkDelete-undo").firstMatch
+            boardEnabled(button, timeout: 30); task192Observe(app, fixture: library, operation: "undo", ids: task192Batch, query: "Task192 batch"); button.tap()
+        }
+        for id in ["reference-retry", "persistence-retry"] {
+            boardEnabled(app.buttons[id], timeout: 30)
+            XCTAssertTrue(app.staticTexts["reference-error"].exists)
+            XCTAssertFalse(app.buttons["reference-overflow-button"].isEnabled)
+            if !undo {
+                task192Count(app, 4); XCTAssertFalse(app.buttons["reference-bulk-delete"].isEnabled)
+            } else { XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists) }
+            if app.buttons["task-referenceBulkDelete-undo"].exists { XCTAssertFalse(app.buttons["task-referenceBulkDelete-undo"].isEnabled) }
+            app.buttons[id].tap()
+        }
+        boardEnabled(app.buttons["reference-retry"], timeout: 30); XCTAssertTrue(app.staticTexts["reference-error"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = undo ? "Task192 owned Undo failure" : "Task192 owned Delete failure"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testTask192ReferenceBulkTrashTwoFailedSaveRetries() { task192Failure("10848f72-bce7-4734-8e11-140443ce56f9", undo: false) }
+    func testTask192ReferenceBulkUndoTwoFailedSaveRetries() { task192Failure("83fd7fd0-9126-496d-b5e6-dcae787f8169", undo: true) }
+
+    private func task192Cold(_ library: String, undo: Bool) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task192Arguments(library)
+        for launch in 0..<2 {
+            app.launch()
+            if launch == 0 { XCTAssertTrue(app.buttons["reference-overflow-button"].waitForExistence(timeout: 30)) }
+            else { task186Open(app) }
+            task192Rows(app, restored: undo)
+            XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists)
+            XCTAssertFalse(app.buttons["task-referenceBulkDelete-undo"].exists)
+            XCTAssertFalse(app.buttons["persistence-retry"].exists); app.terminate()
+        }
+    }
+
+    func testTask192ReferenceBulkTrashOriginalJournalColdRecovery() { task192Cold("704bbf63-5be3-4fbe-8301-df723d8b4828", undo: false) }
+    func testTask192ReferenceBulkUndoOriginalJournalColdRecovery() { task192Cold("8196bdf9-22f5-4439-b7ed-4e6c06b8d860", undo: true) }
+}

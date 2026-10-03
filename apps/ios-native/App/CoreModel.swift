@@ -536,6 +536,13 @@ final class CoreModel: ObservableObject {
     @Published private(set) var reference: CoreObject = [:]
     @Published private(set) var referenceCurrent = false
     @Published private(set) var referenceError: String?
+    @Published private(set) var referenceSelectionMode = false
+    @Published private(set) var referenceSelectedIDs: [String] = []
+    @Published private(set) var referenceBulk: CoreObject = [:]
+    private var referenceSelectedRevisions: CoreObject = [:]
+    private var referenceAnchorID: String?
+    private var referenceRangeSelectMode = false
+    private var referenceBulkDeleteConfirmationContext: String?
     @Published var referencePanel = ""
     @Published private(set) var referenceSortOptions: CoreObject = [:]
     @Published private(set) var referenceSortError: String?
@@ -1793,11 +1800,18 @@ final class CoreModel: ObservableObject {
     var somedayMoveUndoCanRetry: Bool { somedayMoveUndoRequest != nil || somedayMoveUndoAwaitingRefresh }
     var referenceActionsEnabled: Bool {
         ready && selectedSurface == .reference && referenceCurrent && !busy && !retryNeeded && !taskPresented
+            && archiveBulkDeleteConfirmation.isEmpty
     }
     var referenceActionPending: Bool {
         selectedSurface == .reference && retryNeeded &&
-            (referenceTaskNextRequest != nil || referenceTaskStatusRequest != nil || referenceTaskBackdateRequest != nil || referenceTaskDestinationRequest != nil || referenceCompletionPending
+            (archivedTasksDeleteRequest != nil || referenceTaskNextRequest != nil || referenceTaskStatusRequest != nil || referenceTaskBackdateRequest != nil || referenceTaskDestinationRequest != nil || referenceCompletionPending
                 || referenceTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "reference")
+    }
+    var referenceBulkDeleteEnabled: Bool {
+        referenceActionsEnabled && referenceSelectionMode && !taskStatusMenuPresented
+            && referenceTextEdits.isEmpty && referencePendingEdit == nil
+            && !referenceSelectedIDs.isEmpty && referenceSelectedRevisions.count == referenceSelectedIDs.count
+            && referenceBulk.object("bar").object("delete").flag("enabled")
     }
     var referencePickerActionsEnabled: Bool { referenceActionsEnabled && referencePickerCurrent }
     var historyArchived: Bool { historyTabs.text("tab") == "archived" }
@@ -2876,9 +2890,12 @@ final class CoreModel: ObservableObject {
             }
             if ["taskDeleteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit"].contains(recovery.text("method")) { selectedSurface = .trash }
             if ["archivedTaskRestoreCommit", "archivedTasksRestoreCommit", "archivedTasksDeleteCommit", "archivedTasksDeleteUndoCommit", "archiveTaskCompletedAtCommit"].contains(recovery.text("method")) {
-                selectedSurface = .history
-                historyTabs = ["tab": recovery.text("source") == "done" ? "done" : "archived"]
-                historyParamsByTab["archive", default: [:]]["segment"] = "tasks"
+                if recovery.text("source") == "reference" { selectedSurface = .reference }
+                else {
+                    selectedSurface = .history
+                    historyTabs = ["tab": recovery.text("source") == "done" ? "done" : "archived"]
+                    historyParamsByTab["archive", default: [:]]["segment"] = "tasks"
+                }
             }
             if ["taskCompletionCommit", "taskCompletionUndoCommit"].contains(recovery.text("method")), recovery.text("source") == "reference" {
                 selectedSurface = .reference
@@ -11457,7 +11474,7 @@ final class CoreModel: ObservableObject {
 
     func openReference() async {
         guard ready, !settingsPersonCreatePresented, !settingsPersonEditPresented && !settingsTaxonomyActive && !generalPreferenceActive, !settingsPersonDeleteActive, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
-        if selectedSurface != .reference { referenceCaller = selectedSurface }
+        if selectedSurface != .reference { referenceCaller = selectedSurface; clearReferenceTaskSelection() }
         morePresented = false
         selectedSurface = .reference
         await refresh()
@@ -11466,6 +11483,7 @@ final class CoreModel: ObservableObject {
     func closeReference() async {
         guard selectedSurface == .reference, !busy, !retryNeeded, !taskPresented else { return }
         closeReferencePicker()
+        clearReferenceTaskSelection()
         selectedSurface = referenceCaller
         await refresh()
     }
@@ -11732,6 +11750,28 @@ final class CoreModel: ObservableObject {
                     guard collection.number("total") >= 0,
                           collection.objects("items").count == min(100, collection.number("total")) else {
                         throw CocoaError(.coderReadCorrupt)
+                    }
+                }
+                if referenceSelectionMode {
+                    let selected = referenceSelectedIDs
+                    let bulk = try await query("menuRead", ["bulk", try json(referenceTaskBulkInput(params: params))])
+                    guard selectedSurface == .reference, referenceSelectionMode else { return false }
+                    guard bulk.text("revision").utf8.elementsEqual(next.text("revision").utf8),
+                          let ids = bulk["selectedIds"] as? [String],
+                          ids.allSatisfy({ id in selected.contains { $0.utf8.elementsEqual(id.utf8) } }) else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    try acceptReferenceTaskBulk(bulk)
+                    if let request = archiveBulkDeleteConfirmationRequest, (try decode(request)).text("source") == "reference" {
+                        let frozen = try decode(request)
+                        let frozenIDs = try json(frozen["taskIds"] ?? NSNull()), currentIDs = try json(referenceSelectedIDs)
+                        let frozenRevisions = try json(frozen.object("taskRevisions")), currentRevisions = try json(referenceSelectedRevisions)
+                        let currentParams = try json(params)
+                        if !frozenIDs.utf8.elementsEqual(currentIDs.utf8)
+                            || !frozenRevisions.utf8.elementsEqual(currentRevisions.utf8)
+                            || referenceBulkDeleteConfirmationContext?.utf8.elementsEqual(currentParams.utf8) != true {
+                            cancelArchiveBulkDeleteConfirmation()
+                        }
                     }
                 }
                 referenceParams = params
@@ -12588,6 +12628,118 @@ final class CoreModel: ObservableObject {
         } catch { doneBulkRemoveWriteError = true; await handleArchivedTasksRestoreError(error) }
     }
 
+    private func referenceTaskBulkInput(params: CoreObject) -> CoreObject {
+        ["list": "reference", "params": params, "taskIds": referenceSelectedIDs,
+         "anchorId": referenceAnchorID as Any? ?? NSNull(), "rangeSelectMode": referenceRangeSelectMode, "busy": false]
+    }
+
+    private func acceptReferenceTaskBulk(_ bulk: CoreObject) throws {
+        guard bulk.text("list") == "reference", bulk["selectAll"] is NSNull,
+              let ids = bulk["selectedIds"] as? [String], bulk.number("selectedCount") == ids.count,
+              try json(bulk).utf8.count <= 2_000_000 else { throw CocoaError(.coderReadCorrupt) }
+        let revisions = try archiveTaskSelectionRevisions(bulk, ids: ids)
+        // Swift dictionaries cannot retain both canonically equivalent String keys.
+        // Exact key bytes must bind every selected ID; ambiguity refuses the read.
+        guard Set(revisions.keys.map { Data($0.utf8) }) == Set(ids.map { Data($0.utf8) }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        referenceSelectedIDs = ids
+        referenceSelectedRevisions = revisions
+        referenceAnchorID = bulk["anchorId"] as? String
+        referenceBulk = bulk
+    }
+
+    private func clearReferenceTaskSelection() {
+        if referenceBulkDeleteConfirmationContext != nil { cancelArchiveBulkDeleteConfirmation() }
+        referenceSelectionMode = false
+        referenceSelectedIDs = []
+        referenceSelectedRevisions = [:]
+        referenceAnchorID = nil
+        referenceRangeSelectMode = false
+        referenceBulk = [:]
+    }
+
+    func leaveReferenceTaskSelection() {
+        guard !busy, !retryNeeded else { return }
+        clearReferenceTaskSelection()
+    }
+
+    func referenceSelectionOwnerChanged() {
+        guard selectedSurface != .reference, !referenceActionPending else { return }
+        clearReferenceTaskSelection()
+    }
+
+    func selectReferenceTask(_ displayed: CoreObject) async {
+        guard referenceActionsEnabled, !taskStatusMenuPresented, !displayed.flag("readOnly"),
+              referenceTextEdits.isEmpty, referencePendingEdit == nil else { return }
+        let params = referenceParams, panel = referencePanel, picker = referencePickerName, queryText = referencePickerQuery
+        let search = referenceSearchText, location = referenceLocationText
+        let selectionMode = referenceSelectionMode, selected = referenceSelectedIDs
+        let anchor = referenceAnchorID, range = referenceRangeSelectMode
+        func contextIsCurrent() throws -> Bool {
+            guard selectedSurface == .reference, referenceCurrent, !taskPresented, !retryNeeded,
+                  !taskStatusMenuPresented, referenceTextEdits.isEmpty, referencePendingEdit == nil,
+                  referencePanel == panel, referencePickerName == picker,
+                  referencePickerQuery.utf8.elementsEqual(queryText.utf8), referenceSearchText.utf8.elementsEqual(search.utf8),
+                  referenceLocationText.utf8.elementsEqual(location.utf8), referenceSelectionMode == selectionMode,
+                  referenceRangeSelectMode == range else { return false }
+            return try json(referenceParams).utf8.elementsEqual(json(params).utf8)
+                && json(referenceSelectedIDs).utf8.elementsEqual(json(selected).utf8)
+                && json(referenceAnchorID as Any? ?? NSNull()).utf8.elementsEqual(json(anchor as Any? ?? NSNull()).utf8)
+        }
+        busy = true
+        referenceError = nil
+        defer { finishOperation() }
+        do {
+            var input = referenceTaskBulkInput(params: params)
+            input["selectionEdit"] = ["taskId": displayed.text("id"), "range": range]
+            input["rangeSelectMode"] = false
+            for attempt in 0..<2 {
+                guard try contextIsCurrent() else { return }
+                guard reference.objects("items").contains(where: { item in
+                    let row = item.object("row")
+                    return item.text("type") == "task" && !row.flag("readOnly") && row.text("status") == "reference"
+                        && row.text("id").utf8.elementsEqual(displayed.text("id").utf8)
+                        && row.text("taskRevision").utf8.elementsEqual(displayed.text("taskRevision").utf8)
+                }) else { referenceError = label("task.updateFailed"); return }
+                let revision = reference.text("revision")
+                let bulk = try await query("menuRead", ["bulk", try json(input)])
+                guard try contextIsCurrent(), reference.text("revision").utf8.elementsEqual(revision.utf8) else { return }
+                if !bulk.text("revision").utf8.elementsEqual(revision.utf8) {
+                    guard attempt == 0, await readReference() else { referenceError = label("task.updateFailed"); return }
+                    continue
+                }
+                try acceptReferenceTaskBulk(bulk)
+                referenceSelectionMode = true
+                referenceRangeSelectMode = false
+                return
+            }
+        } catch { referenceError = error.localizedDescription }
+    }
+
+    func toggleReferenceTaskRange() async {
+        guard referenceBulkDeleteEnabled else { return }
+        referenceRangeSelectMode.toggle()
+        busy = true
+        defer { finishOperation() }
+        _ = await readReference()
+    }
+
+    func requestDeleteSelectedReferenceTasks() {
+        guard referenceBulkDeleteEnabled else { return }
+        let copy = referenceBulk.object("deleteConfirmation")
+        guard !copy.text("title").isEmpty, !copy.text("message").isEmpty,
+              !copy.text("cancelLabel").isEmpty, !copy.text("confirmLabel").isEmpty else {
+            referenceError = label("task.updateFailed"); return
+        }
+        do {
+            archiveBulkDeleteConfirmationRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                "taskIds": referenceSelectedIDs, "taskRevisions": referenceSelectedRevisions, "source": "reference"])
+            referenceBulkDeleteConfirmationContext = try json(referenceParams)
+            archiveBulkDeleteConfirmation = copy
+        } catch { referenceError = error.localizedDescription }
+    }
+
     private func doneTaskBulkInput(params: CoreObject) -> CoreObject {
         var input: CoreObject = ["list": "done", "params": params, "taskIds": historyDoneSelectedIDs,
             "anchorId": historyDoneAnchorID as Any? ?? NSNull(), "rangeSelectMode": historyDoneRangeSelectMode]
@@ -12804,31 +12956,44 @@ final class CoreModel: ObservableObject {
 
     func cancelArchiveBulkDeleteConfirmation() {
         archiveBulkDeleteConfirmationRequest = nil
+        referenceBulkDeleteConfirmationContext = nil
         archiveBulkDeleteConfirmation = [:]
     }
 
     func confirmDeleteSelectedArchiveTasks() async {
         guard let request = archiveBulkDeleteConfirmationRequest else { return }
+        let referenceContext = referenceBulkDeleteConfirmationContext
         cancelArchiveBulkDeleteConfirmation()
         do {
             let frozen = try decode(request)
             let done = frozen.text("source") == "done"
-            guard done ? historyDoneBulkDeleteEnabled : historyArchiveBulkRestoreEnabled,
-                  historyArchived != done,
-                  try json(frozen["taskIds"] ?? NSNull()) == json(done ? historyDoneSelectedIDs : historyArchiveSelectedIDs),
-                  try json(frozen.object("taskRevisions")) == json(done ? historyDoneSelectedRevisions : historyArchiveSelectedRevisions) else {
-                historyError = label("task.updateFailed")
-                return
+            if frozen.text("source") == "reference" {
+                guard referenceBulkDeleteEnabled,
+                      referenceContext?.utf8.elementsEqual((try json(referenceParams)).utf8) == true,
+                      (try json(frozen["taskIds"] ?? NSNull())).utf8.elementsEqual((try json(referenceSelectedIDs)).utf8),
+                      (try json(frozen.object("taskRevisions"))).utf8.elementsEqual((try json(referenceSelectedRevisions)).utf8) else {
+                    referenceError = label("task.updateFailed"); return
+                }
+            } else {
+                guard done ? historyDoneBulkDeleteEnabled : historyArchiveBulkRestoreEnabled,
+                      historyArchived != done,
+                      try json(frozen["taskIds"] ?? NSNull()) == json(done ? historyDoneSelectedIDs : historyArchiveSelectedIDs),
+                      try json(frozen.object("taskRevisions")) == json(done ? historyDoneSelectedRevisions : historyArchiveSelectedRevisions) else {
+                    historyError = label("task.updateFailed"); return
+                }
             }
-        } catch { historyError = error.localizedDescription; return }
+        } catch {
+            if referenceContext != nil { referenceError = error.localizedDescription } else { historyError = error.localizedDescription }
+            return
+        }
         busy = true
-        historyError = nil
+        if referenceContext != nil { referenceError = nil } else { historyError = nil }
         defer { finishOperation() }
         do {
             archivedTasksDeleteRequest = request
             let result = try await query("archivedTasksDeleteWrite", [request])
             let notice = try acknowledgeArchivedTasksDelete(result)
-            _ = await readHistory()
+            if notice.text("source") == "reference" { _ = await readReference() } else { _ = await readHistory() }
             showTaskActionNotice(notice)
         } catch { await handleArchivedTasksDeleteError(error) }
     }
@@ -12845,29 +13010,32 @@ final class CoreModel: ObservableObject {
               !notice.text("undoLabel").isEmpty, notice.text("undoLabel").utf16.count <= 80,
               let enabled = notice["undoEnabled"] as? NSNumber,
               CFGetTypeID(enabled) == CFBooleanGetTypeID(), enabled.boolValue else { throw CocoaError(.coderReadCorrupt) }
-        let done = (try decode(request)).text("source") == "done"
+        let source = (try decode(request)).text("source")
+        let done = source == "done", referenceSource = source == "reference"
         let presentation: CoreObject = ["requestId": (try decode(request)).text("requestId"), "count": ids.count,
-            "operation": done ? "doneBulkDelete" : "archiveBulkDelete", "source": done ? "done" : "archive"]
+            "operation": referenceSource ? "referenceBulkDelete" : done ? "doneBulkDelete" : "archiveBulkDelete",
+            "source": referenceSource ? "reference" : done ? "done" : "archive"]
         archivedTasksDeleteRequest = nil
         retryNeeded = false
         error = nil
         historyError = nil
-        if done { clearDoneTaskSelection() } else { clearArchiveTaskSelection() }
-        historyCurrent = false
+        if referenceSource { clearReferenceTaskSelection(); referenceCurrent = false; referenceError = nil }
+        else { if done { clearDoneTaskSelection() } else { clearArchiveTaskSelection() }; historyCurrent = false }
         return notice.merging(presentation) { _, new in new }
     }
 
     private func handleArchivedTasksDeleteError(_ failure: Error) async {
+        let referenceSource = archivedTasksDeleteRequest.flatMap { try? decode($0).text("source") } == "reference"
         if isDefiniteRejection(failure) {
             archivedTasksDeleteRequest = nil
             retryNeeded = false
             error = nil
-            _ = await readHistory()
+            if referenceSource { _ = await readReference() } else { _ = await readHistory() }
         } else {
             retryNeeded = archivedTasksDeleteRequest != nil
             error = failure.localizedDescription
         }
-        historyError = failure.localizedDescription
+        if referenceSource { referenceError = failure.localizedDescription } else { historyError = failure.localizedDescription }
     }
 
     private func acknowledgeArchivedTasksRestore(_ result: CoreObject, allowNoop: Bool = false) throws {
@@ -13161,7 +13329,7 @@ final class CoreModel: ObservableObject {
 
     private func referenceTaskRowContext(_ displayed: CoreObject, retainingBackdate: Bool) -> String? {
         guard ready, selectedSurface == .reference, referenceCurrent, (!retryNeeded || retainingBackdate),
-              !taskPresented, !capturePresented, referencePanel.isEmpty,
+              !taskPresented, !capturePresented, !referenceSelectionMode, referencePanel.isEmpty,
               referenceTextEdits.isEmpty, referencePendingEdit == nil,
               displayed.text("status") == "reference", !displayed.flag("readOnly"),
               !displayed.text("id").isEmpty, displayed.text("id").utf16.count <= 500,
@@ -13397,7 +13565,7 @@ final class CoreModel: ObservableObject {
     }
 
     func moveReferenceTaskToNext(expectedID: String, expectedRevision: String) async {
-        guard referenceActionsEnabled else { return }
+        guard referenceActionsEnabled, !referenceSelectionMode else { return }
         guard let item = reference.objects("items").first(where: {
                   $0.text("type") == "task" && $0.object("row").text("id").utf8.elementsEqual(expectedID.utf8)
               }), !item.object("row").flag("readOnly"),
@@ -13448,7 +13616,7 @@ final class CoreModel: ObservableObject {
     }
 
     func deleteReferenceTask(expectedID: String, expectedRevision: String) async {
-        guard referenceActionsEnabled else { return }
+        guard referenceActionsEnabled, !referenceSelectionMode else { return }
         guard let item = reference.objects("items").first(where: {
                   $0.text("type") == "task" && $0.object("row").text("id").utf8.elementsEqual(expectedID.utf8)
               }), !item.object("row").flag("readOnly"),
@@ -16916,7 +17084,7 @@ final class CoreModel: ObservableObject {
     private var taskActionUndoMethod: String {
         switch taskActionNotice.text("operation") {
         case "archiveBulkDelete": return "archivedTasksDeleteUndoWrite"
-        case "doneBulkDelete": return "archivedTasksDeleteUndoWrite"
+        case "doneBulkDelete", "referenceBulkDelete": return "archivedTasksDeleteUndoWrite"
         case "delete": return "taskDeleteUndo"
         case "completion": return "taskCompletionUndo"
         default: return "taskCancellationUndo"
@@ -16957,7 +17125,7 @@ final class CoreModel: ObservableObject {
         error = nil
         defer { finishOperation() }
         do {
-            let proofField = ["delete", "archiveBulkDelete", "doneBulkDelete"].contains(taskActionNotice.text("operation")) ? "deleteRequestId"
+            let proofField = ["delete", "archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete"].contains(taskActionNotice.text("operation")) ? "deleteRequestId"
                 : taskActionNotice.text("operation") == "completion" ? "completionRequestId" : "cancelRequestId"
             let request = try json(["requestId": UUID().uuidString.lowercased(),
                                     proofField: taskActionNotice.text("requestId")])
@@ -16981,7 +17149,7 @@ final class CoreModel: ObservableObject {
 
     private func acknowledgeTaskActionUndo(_ result: CoreObject) throws {
         guard taskActionUndoRequest != nil else { throw CocoaError(.coderReadCorrupt) }
-        if ["archiveBulkDelete", "doneBulkDelete"].contains(taskActionNotice.text("operation")) {
+        if ["archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete"].contains(taskActionNotice.text("operation")) {
             guard Set(result.keys) == Set(["count"]), let count = result["count"] as? NSNumber,
                   CFGetTypeID(count) != CFBooleanGetTypeID(),
                   count.doubleValue == Double(taskActionNotice.number("count")) else { throw CocoaError(.coderReadCorrupt) }
@@ -19304,9 +19472,9 @@ final class CoreModel: ObservableObject {
             }
             if let request = taskActionUndoRequest {
                 let result: CoreObject
-                if ["archiveBulkDelete", "doneBulkDelete"].contains(taskActionNotice.text("operation"))
+                if ["archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete"].contains(taskActionNotice.text("operation"))
                     || (taskActionNotice.text("operation") == "delete" && ["done", "reference"].contains(taskActionNotice.text("source"))) {
-                    let bulk = ["archiveBulkDelete", "doneBulkDelete"].contains(taskActionNotice.text("operation"))
+                    let bulk = ["archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete"].contains(taskActionNotice.text("operation"))
                     let outcome = try await query(bulk ? "archivedTasksDeleteUndoRetryOutcome" : "taskDeleteUndoReceiptOutcome", [request])
                     if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
                         let unknown = label("task.trashOutcomeUnknown")
@@ -19849,7 +20017,7 @@ final class CoreModel: ObservableObject {
                 let outcome = try await query("archivedTasksDeleteRetryOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
                     let unknown = label("task.archiveDeleteOutcomeUnknown")
-                    historyError = unknown
+                    if (try decode(request)).text("source") == "reference" { referenceError = unknown } else { historyError = unknown }
                     self.error = unknown
                     return
                 }
@@ -19859,7 +20027,7 @@ final class CoreModel: ObservableObject {
                 let result = outcome.object("result")
                 if let acknowledgment, try json(result) != json(decode(acknowledgment)) { throw CocoaError(.coderReadCorrupt) }
                 let notice = try acknowledgeArchivedTasksDelete(result)
-                _ = await readHistory()
+                if notice.text("source") == "reference" { _ = await readReference() } else { _ = await readHistory() }
                 showTaskActionNotice(notice)
                 return
             }
@@ -20426,11 +20594,13 @@ final class CoreModel: ObservableObject {
                 await handleTrashRestoreError(error)
                 return
             }
-            if taskActionUndoRequest != nil, ["archiveBulkDelete", "doneBulkDelete"].contains(taskActionNotice.text("operation")) {
+            if taskActionUndoRequest != nil, ["archiveBulkDelete", "doneBulkDelete", "referenceBulkDelete"].contains(taskActionNotice.text("operation")) {
+                let referenceUndo = taskActionNotice.text("source") == "reference"
                 if isDefiniteRejection(error) { taskActionUndoRequest = nil; taskActionNotice = [:] }
                 retryNeeded = taskActionUndoRequest != nil
                 self.error = error.localizedDescription
-                historyError = error.localizedDescription
+                if referenceUndo { referenceError = error.localizedDescription }
+                else { historyError = error.localizedDescription }
                 return
             }
             if taskActionUndoRequest != nil, taskActionNotice.text("source") == "reference" {

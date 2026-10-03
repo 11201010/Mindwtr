@@ -970,8 +970,8 @@ private final class Engine: @unchecked Sendable {
                 : startupSomedaySectionUndoResult != nil ? "somedaySectionMoveUndoCommit" : "focusGroupWrite")),
                               "result": try NativeJSON.jsonObject(with: Data(recovered.utf8))]
         if let command = recoveringArchivedTasksDeleteCommand, archiveMutationRecoveryMethod != nil,
-           historyBulkSource(command) == "done", var recovery = window["recovery"] as? [String: Any] {
-            recovery["source"] = "done"
+           ["done", "reference"].contains(historyBulkSource(command)), var recovery = window["recovery"] as? [String: Any] {
+            recovery["source"] = historyBulkSource(command)
             window["recovery"] = recovery
         }
         if let command = recoveringArchivedTasksRestoreCommand, startupArchivedTasksRestoreResult != nil,
@@ -2992,7 +2992,15 @@ private final class Engine: @unchecked Sendable {
                 _ = try invoke(prefix + "Validate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if let prefix = Self.archivedTasksDeletePrefix(method), method == prefix + "Write" {
-            do { command = try prepareArchivedTasksDeleteCommand(prefix: prefix, arguments: args) }
+            do {
+                let encoded = prefix == "archivedTasksDeleteUndo" ? confirmedArchivedTasksDeleteEnvelope : args.first as? String
+                let value = encoded.flatMap { try? NativeJSON.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+                let request = prefix == "archivedTasksDeleteUndo" ? value?["request"] as? [String: Any] : value
+                guard request?["source"] as? String != "reference" || editorAttempt == nil else {
+                    throw HostFailure("INVALID_INPUT: Reference bulk Trash cannot carry an editor draft")
+                }
+                command = try prepareArchivedTasksDeleteCommand(prefix: prefix, arguments: args)
+            }
             catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "taskDelete" {
             do {
@@ -3954,13 +3962,15 @@ private final class Engine: @unchecked Sendable {
             NSLog("Native iOS archived Task restored releaseCheck=v1.3.4/ios-archive-task-restore outcome=confirmed")
         }
         if let prefix = Self.archivedTasksDeletePrefix(command.method), case .success = terminal {
-            let done = historyBulkSource(command) == "done"
+            let source = historyBulkSource(command), done = source == "done", reference = source == "reference"
             #if DEBUG
-            faults?.commandDiagnostic?(done ? (prefix == "archivedTasksDelete" ? "doneTasksDelete" : "doneTasksDeleteUndo") : prefix)
+            faults?.commandDiagnostic?(reference ? (prefix == "archivedTasksDelete" ? "referenceTasksDelete" : "referenceTasksDeleteUndo")
+                : done ? (prefix == "archivedTasksDelete" ? "doneTasksDelete" : "doneTasksDeleteUndo") : prefix)
             #endif
             let outcome = prefix == "archivedTasksDelete" ? "deleted" : "restored"
+            // Reference's shared core emits its ACK diagnostic; preserve old native logs.
             if done { NSLog("Native iOS Done bulk Trash confirmed releaseCheck=v1.3.4/ios-done-bulk-trash outcome=\(outcome)") }
-            else { NSLog("Native iOS Archive bulk Trash confirmed releaseCheck=v1.3.4/ios-archive-bulk-trash outcome=\(outcome)") }
+            else if !reference { NSLog("Native iOS Archive bulk Trash confirmed releaseCheck=v1.3.4/ios-archive-bulk-trash outcome=\(outcome)") }
         }
         if command.method == "archivedTasksRestoreCommit", case .success = terminal {
             let done = historyBulkSource(command) == "done"
@@ -6021,7 +6031,8 @@ private final class Engine: @unchecked Sendable {
               let encoded = args.first, let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else { return "archive" }
         let deletion = command.method == "archivedTasksDeleteUndoCommit"
             ? (envelope["prepared"] as? [String: Any])?["delete"] as? [String: Any] : envelope
-        return (deletion?["request"] as? [String: Any])?["source"] as? String == "done" ? "done" : "archive"
+        let source = (deletion?["request"] as? [String: Any])?["source"] as? String
+        return source == "reference" ? "reference" : source == "done" ? "done" : "archive"
     }
 
     private func historyBulkTagAction(_ command: PendingCommand) -> String? {
@@ -6050,9 +6061,9 @@ private final class Engine: @unchecked Sendable {
         let keys: Set<String> = ["version", "request", "before", "after", "deviceIdBefore", "deviceIdToInitialize", "updateAt", "result"]
         let ids: [String]
         if prefix == "archivedTasksDelete" {
-            let done = request["source"] as? String == "done"
-            guard Set(prepared.keys) == (done ? keys.union(["projects"]) : keys),
-                  !done || prepared["projects"] is [[String: Any]], let selected = request["taskIds"] as? [String] else {
+            let withProjects = ["done", "reference"].contains(request["source"] as? String ?? "")
+            guard Set(prepared.keys) == (withProjects ? keys.union(["projects"]) : keys),
+                  !withProjects || prepared["projects"] is [[String: Any]], let selected = request["taskIds"] as? [String] else {
                 throw HostFailure("Malformed Archive bulk Delete structure")
             }
             ids = selected
@@ -9636,13 +9647,14 @@ private final class Engine: @unchecked Sendable {
                   ((method.hasPrefix("archivedTasksRestore") && (Self.archivedTasksRestoreTarget(request) != nil || Self.isDoneBulkAddTagRequest(request) || Self.isDoneBulkRemoveTagRequest(request)))
                     || (method.hasPrefix("archivedTasksDelete")
                         && (Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions"])
-                            || (request["source"] as? String == "done"
+                            || (["done", "reference"].contains(request["source"] as? String ?? "")
                                 && Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "source"]))))),
                   let requestID = request["requestId"] as? String, UUID(uuidString: requestID)?.uuidString.lowercased() == requestID,
                   let ids = request["taskIds"] as? [String], !ids.isEmpty, ids.count <= 10_000,
                   Set(ids.map { Data($0.utf8) }).count == ids.count, ids.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 500 }),
                   let revisions = request["taskRevisions"] as? [String: Any], revisions.count == ids.count,
                   Set(revisions.keys) == Set(ids),
+                  request["source"] as? String != "reference" || Set(revisions.keys.map { Data($0.utf8) }) == Set(ids.map { Data($0.utf8) }),
                   revisions.values.allSatisfy({ ($0 as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true }) else {
                 throw HostFailure("INVALID_INPUT: Archive bulk restore needs unique selected IDs, exact revisions and a lowercase UUID")
             }
