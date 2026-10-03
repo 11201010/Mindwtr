@@ -3824,11 +3824,13 @@ private final class Engine: @unchecked Sendable {
         }
         if command.method == "archivedTasksRestoreCommit", case .success = terminal {
             let done = historyBulkSource(command) == "done"
-            let addTag = historyBulkAddTag(command)
+            let action = historyBulkTagAction(command)
+            let addTag = action == "addTag", removeTag = action == "removeTag"
 #if DEBUG
-            faults?.commandDiagnostic?(addTag ? "doneTasksAddTag" : done ? "doneTasksMove" : "archivedTasksRestore")
+            faults?.commandDiagnostic?(removeTag ? "doneTasksRemoveTag" : addTag ? "doneTasksAddTag" : done ? "doneTasksMove" : "archivedTasksRestore")
 #endif
-            if addTag { NSLog("Native iOS Done bulk tag confirmed releaseCheck=v1.3.4/ios-done-bulk-tag outcome=added") }
+            if removeTag { NSLog("Native iOS Done bulk tag removal confirmed releaseCheck=v1.3.4/ios-done-bulk-tag-remove outcome=removed") }
+            else if addTag { NSLog("Native iOS Done bulk tag confirmed releaseCheck=v1.3.4/ios-done-bulk-tag outcome=added") }
             else if done { NSLog("Native iOS Done bulk status confirmed releaseCheck=v1.3.4/ios-done-bulk-status outcome=moved") }
             else { NSLog("Native iOS Archive bulk restore saved releaseCheck=v1.3.4/ios-archive-bulk-restore outcome=confirmed") }
         }
@@ -5881,12 +5883,13 @@ private final class Engine: @unchecked Sendable {
         return (deletion?["request"] as? [String: Any])?["source"] as? String == "done" ? "done" : "archive"
     }
 
-    private func historyBulkAddTag(_ command: PendingCommand) -> Bool {
+    private func historyBulkTagAction(_ command: PendingCommand) -> String? {
         guard command.method == "archivedTasksRestoreCommit",
               let args = try? NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
               let encoded = args.first, let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
-              let request = envelope["request"] as? [String: Any] else { return false }
-        return Self.isDoneBulkAddTagRequest(request)
+              let request = envelope["request"] as? [String: Any] else { return nil }
+        if Self.isDoneBulkAddTagRequest(request) { return "addTag" }
+        return Self.isDoneBulkRemoveTagRequest(request) ? "removeTag" : nil
     }
 
     private func archivedTasksDeleteJournalArguments(_ command: PendingCommand) throws -> [Any] {
@@ -6020,9 +6023,18 @@ private final class Engine: @unchecked Sendable {
         return true // Shared canSaveTaskListTag owns whitespace and token semantics.
     }
 
+    private static func isDoneBulkRemoveTagRequest(_ request: [String: Any]) -> Bool {
+        guard Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "source", "action", "tags"]),
+              request["source"] as? String == "done", request["action"] as? String == "removeTag",
+              let tags = request["tags"] as? [String], !tags.isEmpty, tags.count <= 10_000,
+              Set(tags.map { Data($0.utf8) }).count == tags.count,
+              tags.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 2_000_000 }) else { return false }
+        return true // Shared request decoder and token builder own trim/normalization.
+    }
+
     private static func validArchivedTasksRestoreResult(_ result: [String: Any], request: [String: Any], allowNoop: Bool = false) -> Bool {
         guard let ids = request["taskIds"] as? [String], isInteger(result["count"]), let count = result["count"] as? NSNumber else { return false }
-        if isDoneBulkAddTagRequest(request) {
+        if isDoneBulkAddTagRequest(request) || isDoneBulkRemoveTagRequest(request) {
             guard Set(result.keys) == Set(["count", "changed"]), isBoolean(result["changed"]), let changed = result["changed"] as? Bool else { return false }
             return changed ? count.doubleValue > 0 && count.doubleValue <= Double(ids.count) : allowNoop && count.doubleValue == 0
         }
@@ -6106,7 +6118,7 @@ private final class Engine: @unchecked Sendable {
             throw HostFailure("Malformed archived Task restore preparation")
         }
         if response["kind"] as? String == "noop" {
-            guard prefix == "archivedTasksRestore", Self.isDoneBulkAddTagRequest(request),
+            guard prefix == "archivedTasksRestore", Self.isDoneBulkAddTagRequest(request) || Self.isDoneBulkRemoveTagRequest(request),
                   Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any],
                   result["changed"] as? Bool == false,
                   Self.validArchivedTasksRestoreResult(result, request: request, allowNoop: true) else {
@@ -9143,7 +9155,7 @@ private final class Engine: @unchecked Sendable {
         if ["archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
-                  ((method.hasPrefix("archivedTasksRestore") && (Self.archivedTasksRestoreTarget(request) != nil || Self.isDoneBulkAddTagRequest(request)))
+                  ((method.hasPrefix("archivedTasksRestore") && (Self.archivedTasksRestoreTarget(request) != nil || Self.isDoneBulkAddTagRequest(request) || Self.isDoneBulkRemoveTagRequest(request)))
                     || (method.hasPrefix("archivedTasksDelete")
                         && (Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions"])
                             || (request["source"] as? String == "done"
@@ -9433,7 +9445,7 @@ private final class Engine: @unchecked Sendable {
             }
             if name == "bulk" {
                 guard json.utf8.count <= 2_000_000, input["list"] as? String == "done",
-                      Set(input.keys).isSubset(of: ["list", "params", "taskIds", "anchorId", "selectionEdit", "rangeSelectMode", "busy"]),
+                      Set(input.keys).isSubset(of: ["list", "params", "taskIds", "anchorId", "selectionEdit", "rangeSelectMode", "busy", "picker"]),
                       input["rangeSelectMode"] == nil || Self.isBoolean(input["rangeSelectMode"]),
                       input["busy"] == nil || Self.isBoolean(input["busy"]),
                       input["anchorId"] == nil || input["anchorId"] is NSNull
@@ -9451,6 +9463,17 @@ private final class Engine: @unchecked Sendable {
                           Set(ids.map { Data($0.utf8) }).count == ids.count,
                           ids.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 500 }) else {
                         throw HostFailure("INVALID_INPUT: Done selection requires bounded unique task IDs")
+                    }
+                }
+                if let picker = input["picker"] {
+                    guard let value = picker as? [String: Any], Set(value.keys).isSubset(of: ["kind", "query", "offset", "limit", "revision"]),
+                          value["kind"] as? String == "removeTag",
+                          value["query"] == nil || (value["query"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                          value["offset"] == nil || Self.isInteger(value["offset"]) && (0...9_007_199_254_740_991).contains((value["offset"] as? NSNumber)?.doubleValue ?? -1),
+                          value["limit"] == nil || Self.isInteger(value["limit"]) && (1...100).contains((value["limit"] as? NSNumber)?.intValue ?? 0),
+                          value["revision"] == nil || value["revision"] is String,
+                          ((value["offset"] as? NSNumber)?.doubleValue ?? 0) == 0 || value["revision"] is String else {
+                        throw HostFailure("INVALID_INPUT: Done Remove tag requires a bounded query and revision-bound option window")
                     }
                 }
                 if let selection = input["selectionEdit"] {

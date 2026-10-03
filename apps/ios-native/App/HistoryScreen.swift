@@ -65,18 +65,19 @@ struct HistoryScreen: View {
                                           completedAtError = false
                                           Task { await model.changeDoneTaskStatus(row, status: status) }
                                       }, onCompletedAt: { openCompletedAt($0) },
-                                      errorIdentifier: model.doneBulkTagWriteError ? "done-bulk-tag-error" : completedAtError ? "done-completed-at-error" : nil,
+                                      errorIdentifier: model.doneBulkRemoveWriteError ? "done-bulk-remove-tag-error" : model.doneBulkTagWriteError ? "done-bulk-tag-error" : completedAtError ? "done-completed-at-error" : nil,
                                       selectionActive: model.historyDoneSelectionMode, selectedTaskIDs: model.historyDoneSelectedIDs,
                                       onSelection: { row in Task { await model.selectDoneTask(row) } },
                                       onSelectionStart: { row in Task { await model.selectDoneTask(row) } })
                 }
             }
-            .accessibilityHidden(!completedAtOptions.isEmpty || model.doneBulkTagPresented)
+            .accessibilityHidden(!completedAtOptions.isEmpty || model.doneBulkTagPresented || model.doneBulkRemovePresented)
             if !completedAtOptions.isEmpty {
                 HistoryTaskCompletedAtDialog(model: model, palette: palette, options: completedAtOptions,
                                             prefix: completedAtArchived ? "archive" : "done", close: closeCompletedAt, save: saveCompletedAt)
             }
             if model.doneBulkTagPresented { HistoryDoneBulkTagDialog(model: model, palette: palette) }
+            if model.doneBulkRemovePresented { HistoryDoneBulkRemoveTagDialog(model: model, palette: palette) }
         }
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
@@ -123,6 +124,7 @@ struct HistoryScreen: View {
         .onDisappear {
             closeCompletedAt()
             model.closeDoneBulkTag()
+            model.closeDoneBulkRemove()
             archiveBulkDeletePresented = false
             model.cancelArchiveBulkDeleteConfirmation()
             model.leaveArchiveTaskSelection()
@@ -335,8 +337,19 @@ struct HistoryScreen: View {
                 }
             }
             .accessibilityIdentifier("done-bulk-status-scroll")
-            if dynamicTypeSize.isAccessibilitySize { VStack(spacing: 8) { doneBulkControls } }
-            else { HStack(spacing: 8) { doneBulkControls } }
+            if dynamicTypeSize.isAccessibilitySize {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        doneBulkControls
+                        doneBulkTagControls
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("done-bulk-actions-scroll")
+            } else {
+                HStack(spacing: 8) { doneBulkControls }
+                HStack(spacing: 8) { doneBulkTagControls }
+            }
         }
         .padding(12).background(palette.card, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
@@ -345,31 +358,43 @@ struct HistoryScreen: View {
 
     @ViewBuilder private var doneBulkControls: some View {
         Button { model.leaveDoneTaskSelection() } label: {
-            Text(model.historyDoneBulk.object("bar").object("exit").text("accessibilityLabel"))
-                .rnFont(13, .semibold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+            doneBulkActionLabel(model.historyDoneBulk.object("bar").object("exit").text("accessibilityLabel"))
         }
         .buttonStyle(.plain).disabled(!model.historyActionsEnabled).accessibilityIdentifier("done-bulk-exit")
         Button { Task { await model.toggleDoneTaskRange() } } label: {
-            Text(model.historyDoneBulk.object("bar").object("range").text("label"))
-                .rnFont(13, .semibold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+            doneBulkActionLabel(model.historyDoneBulk.object("bar").object("range").text("label"))
         }
         .buttonStyle(.plain).disabled(!model.historyDoneBulkDeleteEnabled)
         .accessibilityAddTraits(model.historyDoneBulk.object("bar").object("range").flag("active") ? .isSelected : [])
         .accessibilityIdentifier("done-bulk-range")
-        Button { model.openDoneBulkTag() } label: {
-            Text(model.historyDoneBulk.object("bar").object("addTag").text("label"))
-                .rnFont(13, .semibold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain).disabled(!model.historyDoneBulkTagEnabled).accessibilityIdentifier("done-bulk-add-tag")
         Button {
             model.requestDeleteSelectedArchiveTasks(done: true)
             archiveBulkDeletePresented = !model.archiveBulkDeleteConfirmation.isEmpty
         } label: {
-            Text(model.historyDoneBulk.object("bar").object("delete").text("label"))
-                .rnFont(13, .semibold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+            doneBulkActionLabel(model.historyDoneBulk.object("bar").object("delete").text("label"))
         }
         .buttonStyle(.plain).foregroundStyle(palette.danger).disabled(!model.historyDoneBulkDeleteEnabled)
         .accessibilityIdentifier("done-bulk-delete")
+    }
+
+    @ViewBuilder private var doneBulkTagControls: some View {
+        Button { model.openDoneBulkTag() } label: {
+            doneBulkActionLabel(model.historyDoneBulk.object("bar").object("addTag").text("label"))
+        }
+        .buttonStyle(.plain).disabled(!model.historyDoneBulkTagEnabled).accessibilityIdentifier("done-bulk-add-tag")
+        Button { model.openDoneBulkRemove() } label: {
+            doneBulkActionLabel(model.historyDoneBulk.object("bar").object("removeTag").text("label"))
+        }
+        .buttonStyle(.plain).disabled(!model.historyDoneBulkRemoveEnabled).accessibilityIdentifier("done-bulk-remove-tag")
+    }
+
+    @ViewBuilder private func doneBulkActionLabel(_ text: String) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            Text(text).rnFont(13, .semibold).fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 12).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+        } else {
+            Text(text).rnFont(13, .semibold).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
     }
 
     private var archiveSelectionSummary: some View {
@@ -734,6 +759,90 @@ private struct HistoryDoneBulkTagDialog: View {
             }
             .foregroundStyle(palette.text).accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
             .accessibilityIdentifier("done-bulk-tag-dialog").accessibilityAction(.escape) { model.closeDoneBulkTag() }
+        }
+    }
+}
+
+private struct HistoryDoneBulkRemoveTagDialog: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { model.closeDoneBulkRemove() }.accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 12) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(model.doneBulkRemoveOptions.text("title")).rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+                            Text(model.doneBulkRemoveOptions.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                            TextField(model.doneBulkRemoveOptions.text("placeholder"), text: Binding(get: { model.doneBulkRemoveQuery }, set: { model.setDoneBulkRemoveQuery($0) }))
+                                .rnFont(16).textInputAutocapitalization(.never).autocorrectionDisabled().focused($focused)
+                                .padding(12).frame(minHeight: 44).background(palette.input, in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                                .accessibilityLabel(model.doneBulkRemoveOptions.text("placeholder"))
+                                .accessibilityIdentifier("done-bulk-remove-tag-input")
+                            AppChipFlow {
+                                ForEach(model.doneBulkRemoveItems.indices, id: \.self) { index in
+                                    let item = model.doneBulkRemoveItems[index]
+                                    let picked = model.doneBulkRemovePicked(item.text("value"))
+                                    Button { model.toggleDoneBulkRemove(item.text("value")) } label: {
+                                        Text(item.text("label")).rnFont(14).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                                            .padding(.horizontal, 12).padding(.vertical, 8).frame(minWidth: 44, minHeight: 44)
+                                            .background(picked ? palette.tint : palette.filter, in: RoundedRectangle(cornerRadius: 8))
+                                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(picked ? palette.tint : palette.border, lineWidth: 1))
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain).foregroundStyle(picked ? palette.onTint : palette.text)
+                                    .disabled(!model.doneBulkRemoveCurrent || model.doneBulkRemoveReading)
+                                    .accessibilityLabel(item.text("label")).accessibilityAddTraits(picked ? .isSelected : [])
+                                    .accessibilityIdentifier("done-bulk-remove-tag-option-\(index)")
+                                }
+                            }
+                            if model.doneBulkRemoveReading { ProgressView().accessibilityLabel(model.label("common.loading")) }
+                            if model.doneBulkRemoveCurrent && model.doneBulkRemoveTotal == 0 {
+                                Text(model.label("common.noMatches")).rnFont(14).foregroundStyle(palette.secondary)
+                                    .accessibilityIdentifier("done-bulk-remove-tag-no-matches")
+                            }
+                            if model.doneBulkRemoveItems.count < model.doneBulkRemoveTotal {
+                                Button { model.loadMoreDoneBulkRemove() } label: {
+                                    Text(model.label("common.more")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.doneBulkRemoveCanLoadMore)
+                                .accessibilityIdentifier("done-bulk-remove-tag-more")
+                            }
+                            if let error = model.doneBulkRemoveReadError {
+                                Text(error).rnFont(13).foregroundStyle(palette.danger).accessibilityIdentifier("done-bulk-remove-tag-error")
+                                Button { model.retryDoneBulkRemoveRead() } label: {
+                                    Text(model.label("common.retry")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.doneBulkRemoveReading)
+                                .accessibilityIdentifier("done-bulk-remove-tag-read-retry")
+                            }
+                        }
+                    }
+                    .scrollDismissesKeyboard(.interactively).frame(maxHeight: min(480, max(100, geometry.size.height - 132)))
+                    .accessibilityIdentifier("done-bulk-remove-tag-scroll")
+                    HStack {
+                        Spacer()
+                        Button { model.closeDoneBulkRemove() } label: {
+                            Text(model.doneBulkRemoveOptions.text("cancelLabel")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.secondary).accessibilityIdentifier("done-bulk-remove-tag-cancel")
+                        Button { Task { await model.saveDoneBulkRemove() } } label: {
+                            Text(model.doneBulkRemoveOptions.text("saveLabel")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.doneBulkRemoveSaveEnabled)
+                        .accessibilityIdentifier("done-bulk-remove-tag-save")
+                    }
+                }
+                .padding(16).frame(maxWidth: 420).background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(16)
+            }
+            .foregroundStyle(palette.text).accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("done-bulk-remove-tag-dialog").accessibilityAction(.escape) { model.closeDoneBulkRemove() }
+            .onAppear { focused = true }
         }
     }
 }

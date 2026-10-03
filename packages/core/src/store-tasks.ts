@@ -1622,7 +1622,8 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
 
     commitPreparedArchivedTasksRestore: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
-            error: input.request.source === 'done' ? input.request.action === 'addTag' ? 'Done Add tag conflicts with saved data' : 'Done Move conflicts with saved data' : 'Archive Restore conflicts with saved data' };
+            error: input.request.source === 'done' ? input.request.action === 'addTag' ? 'Done Add tag conflicts with saved data'
+                : input.request.action === 'removeTag' ? 'Done Remove tag conflicts with saved data' : 'Done Move conflicts with saved data' : 'Archive Restore conflicts with saved data' };
         set((memory) => {
             const before = authority.state;
             if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
@@ -1651,23 +1652,29 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             const sectionAfter = bindRows(durable.sections, input.effect.sections, (left, right) =>
                 sameSectionSqliteRow(left, right) && sameSectionDeleteJson(left, right));
             if (!taskAfter || !projectAfter || !sectionAfter) return memory;
-            if (input.request.source === 'done' && input.request.action === 'addTag' && input.request.status === undefined
-                && typeof input.request.tag === 'string' && input.request.tag.trim() && input.request.tag.length <= 2000
-                && Object.keys(input.request).length === 6) {
+            const addTag = input.request.source === 'done' && input.request.action === 'addTag' && input.request.tags === undefined
+                && typeof input.request.tag === 'string' && input.request.tag.trim() && input.request.tag.length <= 2000;
+            const removeTag = input.request.source === 'done' && input.request.action === 'removeTag' && input.request.tag === undefined
+                && Array.isArray(input.request.tags) && input.request.tags.length > 0 && input.request.tags.length <= 10_000
+                && input.request.tags.every((tag) => typeof tag === 'string' && tag.trim() && tag.length <= 2_000_000)
+                && new Set(input.request.tags).size === input.request.tags.length;
+            if ((addTag || removeTag) && input.request.status === undefined && Object.keys(input.request).length === 6) {
                 const sources = new Map(durable.tasks.map((row) => [row.id, row]));
                 if (!input.request.taskIds.every((id) => {
                     const row = sources.get(id);
                     return row?.status === 'done' && !row.deletedAt && !row.purgedAt && !isStatusListTaskReadOnly(row, durable.projects);
                 })) return memory;
-                const updates = buildBulkTaskTokenUpdates(input.request.taskIds, sources, 'tags', input.request.tag, 'add');
+                const updates = buildBulkTaskTokenUpdates(input.request.taskIds, sources, 'tags',
+                    addTag ? input.request.tag! : input.request.tags!, addTag ? 'add' : 'remove');
                 const selected = new Set(input.request.taskIds);
                 if (!updates.length || [...taskAfter.keys()].filter((id) => selected.has(id)).length !== updates.length
                     || updates.some(({ id, updates: patch }) => taskAfter.get(id)?.status !== 'done'
                         || !taskEditValuesEqual(taskAfter.get(id)?.tags, patch.tags))) return memory;
             } else {
                 const target = input.request.source === undefined && input.request.status === undefined
-                    && input.request.action === undefined && input.request.tag === undefined ? 'inbox'
+                    && input.request.action === undefined && input.request.tag === undefined && input.request.tags === undefined ? 'inbox'
                     : input.request.source === 'done' && input.request.action === undefined && input.request.tag === undefined
+                        && input.request.tags === undefined
                         && getBulkMoveStatusOptions('done').includes(input.request.status) ? input.request.status : null;
                 if (!target || !input.request.taskIds.every((id) => taskAfter.get(id)?.status === target)) return memory;
             }
