@@ -1896,8 +1896,22 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     for (const key of ['boardFilters', 'boardSearch', 'boardSheet']) assert.match(boardModel, new RegExp(`saved(\\.get<\\w+>\\("${key}"\\)|\\["${key}"\\])`), `${key} rides the Bundle`);
     // No Kotlin task policy, sorting, filtering, date math or date formatting in the new files.
     for (const [name, text] of Object.entries(pass8)) {
+        // Deadline labels consume core's precomputed group identity and first-row
+        // index. These two exact rendering partitions do not decide which tasks
+        // are visible, their order, dates, or grouping policy. Every other filter
+        // call remains forbidden, including any changed predicate here.
+        let policyCode = code(text);
+        if (name === 'calendarUi') {
+            for (const renderingPartition of [
+                'markers.filter { it.getJSONObject("deadline").getInt("groupIndex") == 0 }',
+                'markers.filter { it.getJSONObject("deadline").getString("groupId") == geometry.getString("groupId") }',
+            ]) {
+                assert.equal(policyCode.split(renderingPartition).length - 1, 1, 'one exact core-owned deadline rendering partition');
+                policyCode = policyCode.replace(renderingPartition, 'coreProvidedDeadlineRows');
+            }
+        }
         // `.filters` is core's filter state (the Board view's), not a filtering call.
-        assert.doesNotMatch(code(text), /\.(sort\w*|sorted\w*|filter(?!Bg\b|Edit\b|s\b)\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/, `${name}: no Kotlin sorting, filtering, or grouping`);
+        assert.doesNotMatch(policyCode, /\.(sort\w*|sorted\w*|filter(?!Bg\b|Edit\b|s\b)\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/, `${name}: no Kotlin sorting, filtering, or grouping`);
         assert.doesNotMatch(code(text), /SimpleDateFormat|DateTimeFormatter|LocalDate|LocalTime|java\.time|java\.util\.Calendar|Calendar\.getInstance|GregorianCalendar|Instant\b|\.format\(|toLocal|currentTimeMillis|\bDate\(|TimeZone/, `${name}: no Kotlin date math, formatting or parsing`);
         assert.doesNotMatch(code(text), new RegExp(`${STATUS}(?:\\s*,\\s*${STATUS})*\\s*->\\s*${STATUS}`), `${name}: no status-to-status map`);
     }
