@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { en } from '@mindwtr/core/i18n/locales/en';
-import { zhHans } from '@mindwtr/core/i18n/locales/zh-Hans';
+import { en } from '../../../../packages/core/src/i18n/locales/en';
+import { zhHans } from '../../../../packages/core/src/i18n/locales/zh-Hans';
 import {
     GLOBAL_QUICK_ADD_SHORTCUT_ALTERNATE_N,
     GLOBAL_QUICK_ADD_SHORTCUT_ALTERNATE_Q,

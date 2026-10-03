@@ -9,8 +9,8 @@ const fontMocks = vi.hoisted(() => ({
 vi.mock('../../../lib/font-family', () => fontMocks);
 
 import { useUiStore } from '../../../store/ui-store';
-import { en } from '@mindwtr/core/i18n/locales/en';
-import { zhHans } from '@mindwtr/core/i18n/locales/zh-Hans';
+import { en } from '../../../../../../packages/core/src/i18n/locales/en';
+import { zhHans } from '../../../../../../packages/core/src/i18n/locales/zh-Hans';
 import { buildSettingsLabels, getEnglishSettingsLabels } from './labels';
 import { SettingsMainPage, type SettingsMainPageProps } from './SettingsMainPage';
 
