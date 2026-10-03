@@ -1179,9 +1179,10 @@ struct TaskCard: View {
         .environment(\.layoutDirection, meta.text("textDirection") == "rtl" ? .rightToLeft : .leftToRight)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(meta.text("accessibilityLabel"))
+        // Preserve RN inspection taps when a selection long press is unavailable.
         .highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
             onSelectionStart?(row)
-        }, including: onSelectionStart == nil ? .none : .all)
+        }, including: onSelectionStart == nil ? .subviews : .all)
         .confirmationDialog(onStatusOptions == nil ? meta.text("statusLabel") : statusOptions.text("title"),
                             isPresented: $statusMenu, titleVisibility: .visible) {
             if let onStatusChange {
