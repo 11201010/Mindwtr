@@ -22,6 +22,16 @@ internal object StartOrder {
         data object Unswept : Drain
     }
 
+    /**
+     * Whether the queue folder holds nothing: [names] is its listing (null when it could not be listed). A missing folder is empty;
+     * one that exists but cannot be listed (unreadable, or a file at its path) is null: not "nothing queued".
+     */
+    fun queueEmpty(names: Array<String>?, exists: Boolean): Boolean? = when {
+        names != null -> names.isEmpty()
+        exists -> null
+        else -> true
+    }
+
     fun afterReplay(drain: () -> Drain, owe: (String) -> Unit, retryLater: () -> Unit, startSync: () -> Unit, refreshWidgets: () -> Unit): Boolean {
         when (val result = drain()) {
             Drain.Done -> {

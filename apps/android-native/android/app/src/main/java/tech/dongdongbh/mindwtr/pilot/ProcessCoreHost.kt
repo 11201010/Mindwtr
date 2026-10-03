@@ -353,7 +353,15 @@ internal object ProcessCoreHost {
         val unswept = runCatching { CheckoffStore.sweep(app).failed > 0 }.onFailure { Log.w(CoreHost.TAG, "Native Android widget check-off sweep failed", it) }.getOrDefault(true)
         if (unswept) runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "unswept"))
         val drained = if (unswept) StartOrder.Drain.Unswept else StartOrder.Drain.Done
-        if (queue.list().isNullOrEmpty()) return drained
+        when (StartOrder.queueEmpty(queue.list(), queue.exists())) {
+            true -> return drained
+            // An unreadable queue folder strands its work as a failed sweep would: retried, never taken for empty.
+            null -> {
+                runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "unreadable"))
+                return StartOrder.Drain.Unswept
+            }
+            false -> Unit
+        }
         return try {
             val ingested = runtime.ingestPendingCaptures(UUID.randomUUID().toString()).optInt("ingested")
             runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "drained").put("ingested", ingested))

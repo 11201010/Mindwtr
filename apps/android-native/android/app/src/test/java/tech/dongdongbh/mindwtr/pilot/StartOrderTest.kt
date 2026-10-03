@@ -42,4 +42,12 @@ class StartOrderTest {
         assertEquals(false, run(StartOrder.Drain.Unswept))
         assertEquals(listOf("drain", "sync", "widgets", "retry"), events)
     }
+
+    @Test fun aMissingQueueFolderIsEmptyButAnUnreadableOneIsNot() {
+        assertEquals(true, StartOrder.queueEmpty(null, exists = false))
+        assertEquals(true, StartOrder.queueEmpty(emptyArray(), exists = true))
+        assertEquals(false, StartOrder.queueEmpty(arrayOf("a.json"), exists = true))
+        // A folder that cannot be listed (unreadable, or a file at its path): not "nothing queued".
+        assertEquals(null, StartOrder.queueEmpty(null, exists = true))
+    }
 }
