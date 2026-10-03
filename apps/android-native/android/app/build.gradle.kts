@@ -181,13 +181,13 @@ val rnCaptureIntent by tasks.registering(Sync::class) {
     into(layout.buildDirectory.dir("generated/rnKotlin"))
 }
 // RN's attachment installer (apps/mobile/modules/attachment-file-installer): its install, hash and journal recovery policy and its
-// Android file operations, with RN's JVM test of the policy. The native publisher (C++) that only File Sync's immutable publication
+// Android file operations, with RN's JVM tests of both (the hard-link fallback and its errno names, #1139, included). The native publisher (C++) that only File Sync's immutable publication
 // loads is not built: File Sync is not on this host yet (S5), and nothing here reaches it.
 val rnAttachmentInstaller by tasks.registering(Sync::class) {
     val installer = "tech/dongdongbh/mindwtr/attachmentfileinstaller"
     from(rootProject.projectDir.resolve("../../mobile/modules/attachment-file-installer/android/src")) {
         include(listOf("AttachmentFileInstallerCore", "AndroidAttachmentInstallerFileOps").map { "main/java/$installer/$it.kt" })
-        include("test/java/$installer/AttachmentFileInstallerCoreTest.kt")
+        include(listOf("AttachmentFileInstallerCoreTest", "AndroidAttachmentInstallerFileOpsTest").map { "test/java/$installer/$it.kt" })
     }
     into(layout.buildDirectory.dir("generated/rnInstaller"))
 }

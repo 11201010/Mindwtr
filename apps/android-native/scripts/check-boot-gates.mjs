@@ -613,6 +613,8 @@ assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnSt
 // can reach files/attachments (pass A2); it is RN's own Kotlin, compiled as it is.
 assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s*(?:\/\/[^\n]*\n\s*)*recoverInstalls\(installer\)\s*if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)/);
 assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /include\(listOf\("AttachmentFileInstallerCore", "AndroidAttachmentInstallerFileOps"\)\.map \{ "main\/java\/\$installer\/\$it\.kt" \}\)/);
+// RN's JVM tests of both, the file operations' hard-link fallback and errno names (#1139) included, run in this app's unit tests.
+assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /include\(listOf\("AttachmentFileInstallerCoreTest", "AndroidAttachmentInstallerFileOpsTest"\)\.map \{ "test\/java\/\$installer\/\$it\.kt" \}\)/);
 // The Kotlin host journals every write, and says so at boot: core then requires each write's replay tokens. Only this
 // flag sets 'required'; iOS boots and recovers with none.
 assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)/);
