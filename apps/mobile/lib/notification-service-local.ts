@@ -18,7 +18,9 @@ import {
   cancelUnrequestedReminderAlarms,
   countReminderAlarmCancelReasons,
   findStaleNativeReminderAlarms,
+  getActiveCancelReason,
   getReminderAlarmCancelReason,
+  getSignedFireAtMs,
   getMaxPendingOneShotReminderAlarms,
   isExplicitPomodoroAlarmCancellation,
   isPomodoroAlarmDue,
@@ -102,6 +104,25 @@ const REMINDER_CANCEL_RELEASE_CHECK = 'v1.3.4/reminder-withdrawn-clears-tray';
 const DENIED_RESUME_CLEANUP_RELEASE_CHECK = 'v1.3.4/denied-resume-cleanup';
 const SERIALIZED_RESCHEDULE_RELEASE_CHECK = 'v1.3.4/serialized-reminder-cycles';
 const STALE_REMINDER_GUARD_RELEASE_CHECK = 'v1.3.4/stale-reminder-guard';
+const DELIVERED_REMINDER_RELEASE_CHECK = 'v1.3.4/delivered-reminder-withdrawn';
+const DELIVERED_REMINDERS_STORAGE_KEY = 'mindwtr:local:delivered-reminders:v1';
+// The platforms cannot tell JS whether a notification is still in the tray, so an
+// entry is forgotten this long after its reminder's time (the native app's bound).
+const DELIVERED_REMINDER_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * A task or project reminder whose alarm expired after its time: its notification may
+ * still be in the tray, under `notificationId` (Android's post id, iOS's alarm id).
+ * Each cycle judges it by core's rule for a held alarm; once withdrawn, the
+ * notification is removed and the entry forgotten.
+ */
+type DeliveredReminder = { key: string; notificationId: number; signature: string };
+
+/** The patched Android module's calls (patch-alarm-notification-gradle.js). */
+type DeliveredNotificationModule = {
+  getNotificationId?: (id: AlarmId) => Promise<unknown>;
+  clearNotification?: (notificationId: number) => void;
+};
 
 let started = false;
 let alarmApi: AlarmNotificationsApi | null = null;
@@ -121,6 +142,9 @@ let loadedAlarmMap = false;
 let alarmMapLoadPromise: Promise<void> | null = null;
 // Last payload `saveAlarmMap` actually wrote; null means "unknown, write it".
 let lastSavedAlarmMapJson: string | null = null;
+// Null until loaded from DELIVERED_REMINDERS_STORAGE_KEY.
+let deliveredReminders: DeliveredReminder[] | null = null;
+let lastSavedDeliveredJson: string | null = null;
 
 const logNotificationError = (message: string, error?: unknown) => {
   const extra = error ? { error: error instanceof Error ? error.message : String(error) } : undefined;
@@ -288,6 +312,7 @@ async function clearScheduledAlarms(
   alarmMap.clear();
   await saveAlarmMap();
   loadedAlarmMap = false;
+  if (api) await withdrawDeliveredReminders(api, null, Date.now());
   logNotificationInfo('Scheduled alarms cleared', { scheduledAlarmCount });
 }
 
@@ -518,6 +543,106 @@ async function deleteStaleNativeAlarms(api: AlarmNotificationsApi): Promise<void
   }
 }
 
+const getDeliveredNotificationModule = (): DeliveredNotificationModule | undefined => (
+  (NativeModules as Record<string, unknown>).RNAlarmNotification as DeliveredNotificationModule | undefined
+);
+
+async function loadDeliveredReminders(): Promise<DeliveredReminder[]> {
+  if (deliveredReminders) return deliveredReminders;
+  let loaded: DeliveredReminder[] = [];
+  try {
+    const parsed = JSON.parse(await AsyncStorage.getItem(DELIVERED_REMINDERS_STORAGE_KEY) ?? '[]') as unknown;
+    if (Array.isArray(parsed)) {
+      loaded = parsed.filter((entry): entry is DeliveredReminder => (
+        Boolean(entry) && typeof entry.key === 'string' && Number.isInteger(entry.notificationId) && typeof entry.signature === 'string'
+      ));
+    }
+  } catch (error) {
+    logNotificationError('Failed to load delivered reminders', error);
+  }
+  deliveredReminders = loaded;
+  lastSavedDeliveredJson = JSON.stringify(loaded);
+  return loaded;
+}
+
+async function saveDeliveredReminders(): Promise<void> {
+  const serialized = JSON.stringify(deliveredReminders ?? []);
+  if (serialized === lastSavedDeliveredJson) return;
+  try {
+    await AsyncStorage.setItem(DELIVERED_REMINDERS_STORAGE_KEY, serialized);
+    lastSavedDeliveredJson = serialized;
+  } catch (error) {
+    lastSavedDeliveredJson = null;
+    logNotificationError('Failed to persist delivered reminders', error);
+  }
+}
+
+// Held task and project alarms whose time has passed, so they may have delivered,
+// with the id their notification sits under. Read before a cycle cancels them:
+// Android's post id is found through the alarm row, which the cancel deletes.
+async function readDeliveredCandidates(nowMs: number): Promise<(DeliveredReminder & { id: AlarmId })[]> {
+  const native = Platform.OS === 'android' ? getDeliveredNotificationModule() : undefined;
+  if (Platform.OS === 'android' && typeof native?.getNotificationId !== 'function') return [];
+  const candidates: (DeliveredReminder & { id: AlarmId })[] = [];
+  for (const [key, entry] of alarmMap) {
+    if ((!key.startsWith('task:') && !key.startsWith('project:')) || entry.pending || !entry.signature) continue;
+    const firedAtMs = getSignedFireAtMs(entry);
+    if (firedAtMs === null || firedAtMs > nowMs) continue;
+    let notificationId: unknown = entry.id;
+    try {
+      if (native?.getNotificationId) notificationId = await native.getNotificationId(entry.id);
+    } catch (error) {
+      logNotificationError('Failed to read delivered notification id', error);
+      continue;
+    }
+    if (typeof notificationId !== 'number' || !Number.isInteger(notificationId)) continue;
+    candidates.push({ key, id: entry.id, notificationId, signature: entry.signature });
+  }
+  return candidates;
+}
+
+// After a cycle's cancels: keep each candidate whose alarm went as expired.
+async function rememberExpiredReminders(candidates: (DeliveredReminder & { id: AlarmId })[], plan: ReminderAlarmPlan): Promise<void> {
+  if (candidates.length === 0) return;
+  const kept = await loadDeliveredReminders();
+  for (const { id, ...entry } of candidates) {
+    if (alarmMap.get(entry.key)?.id === id || getReminderAlarmCancelReason(plan, entry.key) !== 'expired') continue;
+    kept.push(entry);
+  }
+  await saveDeliveredReminders();
+}
+
+// Judges every kept delivered reminder as core judges a held alarm. `judge` null
+// (every reminder off, no permission, the service stopped) withdraws them all.
+async function withdrawDeliveredReminders(
+  api: AlarmNotificationsApi,
+  judge: Parameters<typeof getActiveCancelReason>[3] | null,
+  nowMs: number,
+): Promise<void> {
+  const kept = await loadDeliveredReminders();
+  if (kept.length === 0) return;
+  let count = 0;
+  deliveredReminders = kept.filter((entry) => {
+    const alarm = { id: entry.notificationId, signature: entry.signature };
+    const firedAtMs = getSignedFireAtMs(alarm);
+    if (firedAtMs === null || nowMs - firedAtMs > DELIVERED_REMINDER_RETENTION_MS) return false;
+    if (judge && getActiveCancelReason(entry.key, alarm, false, judge) === 'expired') return true;
+    try {
+      if (Platform.OS === 'android') getDeliveredNotificationModule()?.clearNotification?.(entry.notificationId);
+      else api.removeFiredNotification(entry.notificationId);
+    } catch (error) {
+      logNotificationError('Failed to remove delivered reminder', error);
+      return true;
+    }
+    count += 1;
+    return false;
+  });
+  await saveDeliveredReminders();
+  if (count > 0) {
+    logNotificationInfo('Delivered reminders withdrawn', { releaseCheck: DELIVERED_REMINDER_RELEASE_CHECK, count });
+  }
+}
+
 function scheduleOneShotTopUp(api: AlarmNotificationsApi, delayMs: number | null): void {
   clearOneShotTopUpTimer();
   if (delayMs === null) return;
@@ -559,6 +684,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
   if (options.deleteStale) await deleteStaleNativeAlarms(api);
 
   const port = toReminderAlarmPort(api);
+  const delivered = activeFeature ? await readDeliveredCandidates(Date.now()) : [];
   const translations = await loadReminderTranslations(activeFeature);
   const now = new Date();
 
@@ -579,6 +705,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
     clearOneShotTopUpTimer();
     await cancelUnrequestedReminderAlarms(plan, alarmMap, port);
     await saveAlarmMap();
+    await withdrawDeliveredReminders(api, null, now.getTime());
     logCancelReasons(plan);
     logNotificationInfo('Reschedule cycle complete', {
       activeFeature,
@@ -604,7 +731,13 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
     await cancelUnrequestedReminderAlarms(plan, alarmMap, port);
   } finally {
     await saveAlarmMap();
+    await rememberExpiredReminders(delivered, plan);
   }
+  await withdrawDeliveredReminders(api, {
+    diagnostics,
+    tasks: new Map(tasks.map((task) => [task.id, task])),
+    projects: new Map(projects.map((project) => [project.id, project])),
+  }, now.getTime());
   if (!taskRemindersEnabled) {
     const morningDigestEnabled = recurringRequests.some((request) => request.key === 'digest:morning');
     const eveningDigestEnabled = recurringRequests.some((request) => request.key === 'digest:evening');
@@ -1086,6 +1219,7 @@ export async function rescheduleLocalAlarmsAsExact(): Promise<void> {
     .catch(() => undefined)
     .then(async () => {
       await loadAlarmMapIfNeeded();
+      const delivered = await readDeliveredCandidates(Date.now());
       // Remade at once, so what an alarm delivered stays, unless its reminder was
       // withdrawn since the last cycle. The texts load first; the tasks are read
       // after that await, and every alarm is judged and cancelled in the same turn,
@@ -1104,6 +1238,7 @@ export async function rescheduleLocalAlarmsAsExact(): Promise<void> {
       const port = toReminderAlarmPort(api);
       const keys = Array.from(alarmMap.keys());
       await Promise.all(keys.map((key) => cancelReminderAlarm(alarmMap, key, port, getReminderAlarmCancelReason(plan, key))));
+      await rememberExpiredReminders(delivered, plan);
       await runRescheduleCycle(api);
     })
     .catch((error) => logNotificationError('Failed to rebuild alarms as exact', error));
@@ -1161,6 +1296,7 @@ export const __localNotificationTestUtils = {
     alarmApi = null;
     alarmMap = new Map<string, ReminderAlarmEntry>();
     loadedAlarmMap = false;
+    deliveredReminders = null;
     resetRuntimeState();
     pomodoroAlarmQueue = Promise.resolve();
     pomodoroRequestOrder = 0;

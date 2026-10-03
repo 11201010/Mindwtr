@@ -233,7 +233,7 @@ const toReminderAlarmRequest = (request: ReminderScheduleRequest): ReminderAlarm
 };
 
 /** The time a held one-shot alarm was made for, from its signature; null when it cannot be read. */
-function getSignedFireAtMs(entry: ReminderAlarmEntry): number | null {
+export function getSignedFireAtMs(entry: Pick<ReminderAlarmEntry, 'signature'>): number | null {
     if (!entry.signature) return null;
     try {
         const fireAt = (JSON.parse(entry.signature) as { fireAt?: unknown }).fireAt;
