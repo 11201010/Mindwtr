@@ -42,6 +42,7 @@ class CaptureIntentReceiver : BroadcastReceiver() {
             PendingCaptureWriter.writeCaptureIntent(appContext.filesDir, title) != null
           }
           if (queued && ordered) pendingResult.resultCode = Activity.RESULT_OK
+          if (queued) queuedHook?.invoke(appContext)
         } catch (_: Exception) {
           // Fail closed. Broadcasts have no result channel, and private text or
           // tokens must never enter logs.
@@ -55,6 +56,12 @@ class CaptureIntentReceiver : BroadcastReceiver() {
   }
 
   companion object {
+    /**
+     * A host's follow-up once a capture is queued, on this receiver's thread before the broadcast finishes (it keeps the process
+     * while it runs). None in this app: the capture waits for the next start. A failure is the receiver's (fail closed).
+     */
+    @Volatile var queuedHook: ((Context) -> Unit)? = null
+
     // One short internal-storage write per job, with a bounded queue so a noisy
     // sender cannot create unbounded process memory pressure.
     private val executor = ThreadPoolExecutor(
