@@ -7,10 +7,13 @@
  * - the fetch bridge, the device's network state, the app log;
  * - the local snapshot (the boot's validated SQLite adapter).
  *
+ * - the attachment passes and the editor's attachment IO (host-attachments.ts), on the host's app-private files.
+ *
  * Not on this host yet, and refused the way core refuses an unbound port: sync encryption's cipher (S4), Dropbox (S4), File
- * Sync's folder (S5), the attachment passes (A2) and the background job (S4). The fence owner stays `mindwtr-mobile` and the
- * device keys keep RN's names, so an upgraded RN user's configuration and deviceId carry over.
+ * Sync's folder (S5) and the background job (S4). The fence owner stays `mindwtr-mobile` and the device keys keep RN's names,
+ * so an upgraded RN user's configuration and deviceId carry over.
  */
+import { createNativeAttachments, nativeFileChannels } from './host-attachments';
 import {
     SETTINGS_SYNC_BADGE_COLORS,
     SYNC_BACKEND_KEY,
@@ -120,6 +123,23 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
 
     const networkListeners = new Set<(state: MobileSyncNetworkState) => void>();
 
+    // Attachments (host-attachments.ts) on the host's files, with sync's own stores, keystore, log and encryption state.
+    const channels = nativeFileChannels();
+    const attachments = channels ? createNativeAttachments({
+        storage,
+        getSecureConfigValue: (key) => secureConfig.getSecureConfigValue(key),
+        log: {
+            info: (message, context) => logLine('info', message, context),
+            warn: (message, context) => logLine('warn', message, context),
+            sanitize: (message) => sanitizeLogMessage(message),
+        },
+        crypto,
+        encryption: {
+            logSyncEncryptionEvent: (event, extra, options) => encryptionState.logSyncEncryptionEvent(event, extra, options),
+            getSyncEncryptionMaterial: () => encryptionState.getSyncEncryptionMaterial(),
+        },
+    }, channels) : null;
+
     const service = createMobileSyncService<never>({
         storage,
         getSecureConfigValue: (key) => secureConfig.getSecureConfigValue(key),
@@ -204,8 +224,8 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
             revalidateLease: unavailable('File sync'),
             releaseLease: async () => undefined,
         },
-        // ponytail: no attachment pass until A2; a cycle syncs attachment metadata only and uploads, downloads and deletes nothing.
-        attachments: {
+        // Core's attachment passes on the host's files; a host without app files (the gates' stand-in) syncs metadata only.
+        attachments: attachments?.syncPort ?? {
             syncWebdav: async () => null,
             syncCloud: async () => null,
             syncDropbox: async () => null,
@@ -325,6 +345,8 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
 
     return {
         settingsHost,
+        /** The editor's and the project screen's attachment IO (core's NativeAttachmentsHost); null without app files. */
+        attachmentsHost: attachments?.contractHost ?? null,
         /** The badge and cycle count now. */
         state,
         /**

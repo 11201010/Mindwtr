@@ -261,6 +261,17 @@ describe('native host contract: attachments, crash safety', () => {
         expect(await env.receiptIds()).toEqual([input.requestId]);
     });
 
+    it('refuses a project file replayed after a restart whose picked document can no longer be read, and saves nothing', async () => {
+        // The process died before the first send's receipt; at the next boot the picker's read grant is gone.
+        const state = { ports: { persist: 'unreadable' } as Ports, log: [] as unknown[][] };
+        env = await openSqliteHost({ projects: [seedProject()] }, undefined, { attachments: fakeHost(state) });
+        const input = { requestId: '00000000-0000-4000-8000-00000000a0f1', owner: projectOwner, source: 'image' as const, picked: PICKED };
+        const replay = await env.replay((host) => host.addAttachmentFile(input));
+        expect(replay.result).toMatchObject({ ok: true, value: { kind: 'refused' } });
+        expect(replay.wrote).toBe(false);
+        expect(stored().attachments ?? []).toEqual([]);
+    });
+
     it('adds a project link batch once: a replay after a restart answers its first reply', async () => {
         env = await openSqliteHost({ projects: [seedProject()] }, undefined, { attachments: fakeHost({ ports: {}, log: [] }) });
         const input = { requestId: '00000000-0000-4000-8000-00000000a002', owner: projectOwner, text: 'https://one.example\nTwo | https://two.example' };
@@ -497,6 +508,16 @@ describe('native host contract: attachments, the list and the editor\'s helpers'
         }
         expect(host.getAttachmentList({ owner: { kind: 'task', taskId: 't1' } as never })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(host.getAttachmentList({ owner: { kind: 'project', projectId: 'missing' } })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    });
+
+    it('checks the link sheet\'s text as React Native\'s sheet does while typing: the first line that is not a link', async () => {
+        const { host } = await open();
+        expect(ok(host.getAttachmentLinkCheck({ text: 'https://a.example\n\nDocs | https://b.example' }))).toEqual({ error: null });
+        expect(ok(host.getAttachmentLinkCheck({ text: 'https://a.example\nnot a link' }))).toEqual({ error: 'Line 2: enter a valid link.' });
+        // The edit sheet takes one line and shows no line error, as RN's single-line field does.
+        expect(ok(host.getAttachmentLinkCheck({ text: 'not a link', editing: true }))).toEqual({ error: null });
+        expect(ok(host.getAttachmentLinkCheck({ text: '' }))).toEqual({ error: null });
+        expect(host.getAttachmentLinkCheck({ text: 7 } as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     });
 
     it('takes no edit on an archived project', async () => {

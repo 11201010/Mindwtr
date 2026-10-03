@@ -870,6 +870,39 @@ describe('mobile sync-service runtime', () => {
     expect(localData.tasks[0].attachments?.every((attachment) => !attachment.cloudKey)).toBe(true);
   });
 
+  it('names a refused attachment\'s file and owner only in the activation answer, never in the log', async () => {
+    const stamp = '2026-10-03T00:00:00.000Z';
+    const localData: AppData = {
+      ...emptyData,
+      tasks: [{
+        id: 'task-private', title: 'Private task title', status: 'inbox', tags: [], contexts: [],
+        createdAt: stamp, updatedAt: stamp,
+        attachments: [{
+          id: 'attachment-private', kind: 'file', title: 'private-file-name.pdf', uri: '',
+          cloudKey: 'cloudkit:private', localStatus: 'missing', createdAt: stamp, updatedAt: stamp,
+        }],
+      }],
+    };
+    storageMocks.getData.mockResolvedValue(localData);
+    coreMocks.getInMemoryAppDataSnapshot.mockReturnValue(localData);
+    coreMocks.webdavGetJson.mockResolvedValue(null);
+    attachmentSyncMocks.syncWebdavAttachments.mockImplementation(async (data: AppData) => data);
+
+    const result = await syncServiceModule.performMobileSync(undefined, {
+      activationProbe: true, manual: true,
+      configOverride: { backend: 'webdav', webdav: {
+        url: 'https://candidate.example.com/data.json', username: 'candidate', password: 'secret', allowInsecureHttp: false,
+      } },
+    });
+
+    expect(result).toMatchObject({ success: false });
+    expect(result.error).toContain('"private-file-name.pdf" on task "Private task title"');
+    const logged = JSON.stringify([...logMocks.logWarn.mock.calls, ...logMocks.logInfo.mock.calls]);
+    expect(logged).toContain('attachment-private');
+    expect(logged).not.toContain('Private task title');
+    expect(logged).not.toContain('private-file-name');
+  });
+
   it('probes a candidate transport despite stale global no-key state', async () => {
     asyncStorageMocks.getItem.mockImplementation(async (key: string) => (
       key === SYNC_ENCRYPTION_STATE_KEY

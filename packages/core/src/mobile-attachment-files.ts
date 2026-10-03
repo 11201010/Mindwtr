@@ -10,7 +10,7 @@
 // write never leaves a truncated file at the real path.
 import type { AppData, Attachment } from './types';
 import { ATTACHMENTS_DIR_NAME, extractExtension } from './attachment-paths';
-import { computeSha256Hex } from './attachment-hash';
+import { computeSha256Hex, isSha256Hex } from './attachment-hash';
 import { isAttachmentPresenceStampFresh, type AttachmentPresenceStamp } from './attachment-presence-repair';
 import { collectAttachmentsById, type LocalAttachmentPresence } from './attachment-transfer';
 import type { LocalFileStat } from './attachment-change-detection';
@@ -87,8 +87,17 @@ export type MobileAttachmentFileSystemPort = {
   move(from: string, to: string): Promise<void>;
   /** Deletes a file or directory; a missing path is not an error. */
   delete(uri: string): Promise<void>;
+  /**
+   * Deletes the file unless `keep()` says a record owns it again, asking `keep()` in the same turn as the delete and after
+   * every file call made before this one, so no restore can land between the check and the delete. Answers whether it deleted.
+   * Absent where a delete starts at once (React Native: expo's delete); then `keep()` runs right before `delete`.
+   */
+  deleteUnlessKept?(uri: string, keep: () => boolean): Promise<boolean>;
   /** Null when the platform has no Storage Access Framework. Read on every use. */
   saf(): MobileAttachmentSafPort | null;
+  /** A file's SHA-256 (hex), streamed by the host so its bytes never cross into memory here. Absent where only bytes can be
+   *  hashed (React Native: they go through `setSha256HexProvider`). */
+  sha256?(uri: string): Promise<string>;
 };
 
 export type AttachmentSyncDir =
@@ -447,6 +456,7 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
     if (fileName !== attachment.id && !fileName.startsWith(`${attachment.id}.`)) return false;
     if (options?.keep?.()) return false;
     try {
+      if (fs.deleteUnlessKept) return await fs.deleteUnlessKept(attachment.uri, () => Boolean(options?.keep?.()));
       await fs.delete(attachment.uri);
       return true;
     } catch (error) {
@@ -660,6 +670,10 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
 
   const computeAttachmentFileHash = async (uri: string): Promise<string | null> => {
     try {
+      if (fs.sha256) {
+        const hex = (await fs.sha256(uri)).trim().toLowerCase();
+        return isSha256Hex(hex) ? hex : null;
+      }
       return await computeSha256Hex(await readFileAsBytes(uri));
     } catch (error) {
       logAttachmentWarn('Failed to hash attachment file', error);

@@ -4,11 +4,13 @@ import android.app.Application
 import android.util.Log
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.androidwidget.PendingCaptureWriter
+import tech.dongdongbh.mindwtr.pilot.core.AndroidContentSource
 import tech.dongdongbh.mindwtr.pilot.core.BytecodeCache
 import tech.dongdongbh.mindwtr.pilot.core.CoreBundle
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.DiagnosticsLogFile
 import tech.dongdongbh.mindwtr.pilot.core.HostFiles
+import tech.dongdongbh.mindwtr.pilot.core.HostInstaller
 import tech.dongdongbh.mindwtr.pilot.core.HostIo
 import tech.dongdongbh.mindwtr.pilot.core.HostNetwork
 import tech.dongdongbh.mindwtr.pilot.core.LegacyRnStoreGuard
@@ -105,13 +107,17 @@ internal object ProcessCoreHost {
         } else {
             null
         }
+        val installer = HostInstaller(app.filesDir, app.cacheDir)
         val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir }, HostIo(app),
             File(app.filesDir, "journal"), deviceStore(app), File(app.filesDir, DiagnosticsLogFile.RELATIVE_PATH),
-            RnKeyValue(app.getDatabasePath("RKStorage")), HostFiles(app.filesDir, app.cacheDir))
+            RnKeyValue(app.getDatabasePath("RKStorage")), HostFiles(app.filesDir, app.cacheDir, content = AndroidContentSource(app)), installer)
         try {
             runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)
             loadTheme(runtime, legacy?.theme)
+            // Before the journal's replay, the first write that can reach files/attachments: an install a death cut short is
+            // finished or rolled back by RN's rules, so no attachment write meets a half-installed file.
+            recoverInstalls(installer)
             if (replay(runtime)) recovered(app, runtime, deferSync = true)
             return runtime
         } catch (failure: Throwable) {
@@ -168,6 +174,19 @@ internal object ProcessCoreHost {
         return true
     }
 
+    /**
+     * RN's installer journal recovery (HostInstaller.recover) at boot. A journal it cannot prove stays on disk as it is, and a
+     * failure here never fails the boot: an install of that target recovers it first, as in RN.
+     */
+    private fun recoverInstalls(installer: HostInstaller) {
+        runCatching { installer.recover() }
+            .onSuccess { found ->
+                if (found.isNotEmpty()) Log.i(CoreHost.TAG, "Native Android install recovery " +
+                    found.groupingBy { it.outcome }.eachCount().entries.joinToString(" ") { "${it.key}=${it.value}" })
+            }
+            .onFailure { Log.w(CoreHost.TAG, "Native Android install recovery failed ${failureForLog(it)}") }
+    }
+
     // ---- Sync (bundle/host-sync.ts: core's service and triggers decide every cycle) ----
 
     /** RN's AppState: "active" while MainActivity is resumed, else "background" (RN's onHostResume and onHostPause). */
@@ -211,7 +230,7 @@ internal object ProcessCoreHost {
             // Resumed or paused while the triggers started.
             appState.takeIf { it != startedWith }?.let { now -> syncThread.execute { runCatching { runtime.syncAppState(now) } } }
             Log.i(CoreHost.TAG, "Native Android sync started appState=$appState")
-        }.onFailure { Log.w(CoreHost.TAG, "Native Android sync start failed", it) }
+        }.onFailure { Log.w(CoreHost.TAG, "Native Android sync start failed ${failureForLog(it)}") }
     }
 
     /**
@@ -232,7 +251,7 @@ internal object ProcessCoreHost {
         if (state == appState) return
         appState = state
         val runtime = syncHost ?: return
-        syncThread.execute { runCatching { runtime.syncAppState(state) }.onFailure { Log.w(CoreHost.TAG, "Native Android sync app state failed", it) } }
+        syncThread.execute { runCatching { runtime.syncAppState(state) }.onFailure { Log.w(CoreHost.TAG, "Native Android sync app state failed ${failureForLog(it)}") } }
     }
 
     /**

@@ -139,9 +139,10 @@ class EditorModel(val source: String) {
     private val content = root.getJSONObject("content")
     /** The saved checklist (getTaskView's checklistBase), as JSON text: where the editor's checklist starts, and the save's base. */
     val checklistBase: String = content.getJSONArray("checklistBase").toString()
-    /** The attachment titles, shown read-only in the Form tab (its attachment editor is not built). */
-    val attachments = content.getJSONArray("rows").objects().firstOrNull { it.getString("type") == "attachments" }
-        ?.getJSONArray("items")?.objects().orEmpty().map { it.getString("title") }
+    /** The saved attachment records, removed ones included (getTaskView's attachmentsBase): where the editor's attachments start. */
+    val attachmentsBase: String = content.optJSONArray("attachmentsBase")?.toString() ?: "[]"
+    /** The saved task's revision as the editor read it (getTaskView's taskRevision): a Discard's draft settlement sends it. */
+    val taskRevision: String = content.optString("taskRevision")
     /** Core's Form tab checklist field for the draft and the editor's checklist; null for a read-only task. */
     val checklistField: JSONObject? = root.optJSONObject("field")
     /** Core's schedule and estimate controls for this draft: date labels, picker starts, quick dates, recurrence, reminders. */
@@ -154,6 +155,15 @@ class EditorModel(val source: String) {
         fun of(model: JSONObject, content: JSONObject, field: JSONObject? = null) =
             EditorModel(JSONObject().put("model", model).put("content", content).apply { field?.let { put("field", it) } }.toString())
     }
+}
+
+/**
+ * RN's areDraftAttachmentsDirty (core's task-draft.ts attachmentFingerprint): two attachment lists differ for the editor when an
+ * attachment's id, uri, title or removal differs, in order. A download's availability alone is no unsaved edit.
+ */
+fun sameAttachments(left: String, right: String): Boolean {
+    val print = { text: String -> JSONArray(text).objects().map { listOf(it.getString("id"), it.optString("uri"), it.optString("title"), it.optString("deletedAt")) } }
+    return print(left) == print(right)
 }
 
 /** Two checklists as core sends them hold the same items (id, title, done) in the same order. */
@@ -230,6 +240,13 @@ data class TaskEditor(
     val nextSeq: Long = 1,
     val checklist: String? = null,
     val tab: String = "task",
+    /**
+     * RN's draft attachments: the list core's attachment commands answered (JSON), and the saved list it started from, kept with
+     * it so a reload never changes what Save compares against (core's mergeTaskDraftAttachments applies only the editor's changes).
+     * Null while the attachments are untouched.
+     */
+    val attachments: String? = null,
+    val attachmentsFrom: String? = null,
 ) {
     val id get() = model.id
     val readOnly get() = model.readOnly
@@ -258,8 +275,16 @@ data class TaskEditor(
     val checklistChanged get() = checklist != null && !sameChecklist(checklist, model.checklistBase)
     /** saveTaskDraft's `checklist`: the base the editor loaded and the edited items; "" while unchanged. */
     val checklistSave: String get() = if (!checklistChanged) "" else JSONObject().put("base", JSONArray(model.checklistBase)).put("value", JSONArray(checklistNow)).toString()
-    /** Unsaved: a changed field or checklist, or typed text core has not turned into a draft value yet (RN asks before closing any). */
-    val dirty get() = patch.isNotEmpty() || waiting || checklistChanged
+    /** The attachments as the draft holds them, or the saved ones. */
+    val attachmentsNow get() = attachments ?: model.attachmentsBase
+    val attachmentsChanged get() = attachments != null && !sameAttachments(attachments, attachmentsFrom ?: model.attachmentsBase)
+    /** saveTaskDraft's `attachments`: the list the draft started from and the edited one; "" while unchanged. */
+    val attachmentsSave: String get() = if (!attachmentsChanged) "" else
+        JSONObject().put("base", JSONArray(attachmentsFrom ?: model.attachmentsBase)).put("value", JSONArray(attachmentsNow)).toString()
+    /** The draft list after a core attachment command's answer [next]; the first change remembers the list it started from. */
+    fun withAttachments(next: String) = copy(attachments = next, attachmentsFrom = attachmentsFrom ?: model.attachmentsBase)
+    /** Unsaved: a changed field, checklist or attachment, or typed text core has not turned into a draft value yet (RN asks before closing any). */
+    val dirty get() = patch.isNotEmpty() || waiting || checklistChanged || attachmentsChanged
 
     fun typed(field: String, text: String) = copy(inputs = inputs + (field to text))
 
@@ -305,8 +330,9 @@ data class TaskEditor(
         // The edited checklist stays while the saved one is unchanged, or after Reset checklist (its items are then reopened).
         val list = checklist?.takeIf { keepChecklist || sameChecklist(fresh.checklistBase, model.checklistBase) }
         // A new session: a reply to an edit sent before the reload never enters the reloaded editor.
+        // The draft attachments stay with the list they started from: core's save merge applies only their own changes.
         return TaskEditor(fresh, edited.filterKeys(kept), inputs.filterKeys(kept), resolved.filterKeys(kept), waitingFor = waitingFor, view = view,
-            checklist = list, tab = tab)
+            checklist = list, tab = tab, attachments = attachments, attachmentsFrom = attachmentsFrom)
     }
 
     /** The draft's own state, without the model: the edits with their bases, the typed text, and the open prompt. */
@@ -314,6 +340,7 @@ data class TaskEditor(
         .put("inputs", JSONObject(inputs)).put("resolved", JSONObject(resolved)).put("waitingFor", waitingFor ?: JSONObject.NULL)
         .put("edits", JSONArray().apply { pending.forEach { put(JSONObject().put("seq", it.seq).put("edit", it.edit).put("field", it.field ?: JSONObject.NULL)) } })
         .put("nextSeq", nextSeq).put("checklist", checklist ?: JSONObject.NULL).put("tab", tab)
+        .put("attachments", attachments ?: JSONObject.NULL).put("attachmentsFrom", attachmentsFrom ?: JSONObject.NULL)
 
     companion object {
         fun open(model: EditorModel, tab: String) = TaskEditor(model, emptyMap(), tab = tab)
@@ -328,7 +355,9 @@ data class TaskEditor(
             return TaskEditor(model, map("edited"), map("inputs"), map("resolved"), map("bases"),
                 if (saved.isNull("waitingFor")) null else saved.getString("waitingFor"),
                 pending = edits, nextSeq = saved.optLong("nextSeq", (edits.maxOfOrNull { it.seq } ?: 0) + 1),
-                checklist = if (saved.isNull("checklist")) null else saved.optString("checklist").ifEmpty { null }, tab = saved.optString("tab", "task"))
+                checklist = if (saved.isNull("checklist")) null else saved.optString("checklist").ifEmpty { null }, tab = saved.optString("tab", "task"),
+                attachments = saved.optString("attachments").takeIf { saved.has("attachments") && !saved.isNull("attachments") },
+                attachmentsFrom = saved.optString("attachmentsFrom").takeIf { saved.has("attachmentsFrom") && !saved.isNull("attachmentsFrom") })
         }
     }
 }
@@ -754,10 +783,10 @@ private fun EditorField(model: InboxViewModel, editor: TaskEditor, id: String, l
         }
         // RN's checklist field on core's field model (TaskView.kt); every change is core's checklist edit on the draft.
         "checklist" -> ChecklistField(model, editor, locked)
-        // Read-only: the attachment editor is not built.
-        "attachments" -> if (editor.view.attachments.isNotEmpty()) FormGroup {
+        // RN's attachments field (TaskEditContentField): Add file, Add photo, Add link, and core's rows of the draft's list.
+        "attachments" -> FormGroup {
             FieldHeading(Lucide.Paperclip, t("attachments.title"))
-            for (title in editor.view.attachments) Text(title, style = rnText(14, 500), color = c.text, modifier = Modifier.padding(vertical = 4.dp))
+            EditorAttachments(model, editor, locked)
         }
         else -> Unit
     }
@@ -1001,11 +1030,11 @@ private fun CollapsibleSection(editorId: String, section: EditorSection, content
 }
 
 @Composable
-private fun FormGroup(content: @Composable ColumnScope.() -> Unit) = Column(Modifier.fillMaxWidth().padding(bottom = 16.dp), content = content)
+internal fun FormGroup(content: @Composable ColumnScope.() -> Unit) = Column(Modifier.fillMaxWidth().padding(bottom = 16.dp), content = content)
 
 /** RN's FieldHeading: the glyph and the label in capitals, both in the secondary text color. */
 @Composable
-private fun FieldHeading(icon: ImageVector, label: String, modifier: Modifier = Modifier, bottom: Int = 8) {
+internal fun FieldHeading(icon: ImageVector, label: String, modifier: Modifier = Modifier, bottom: Int = 8) {
     val c = LocalTheme.current.colors
     Row(modifier.padding(bottom = bottom.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, tint = c.secondaryText, modifier = Modifier.size(16.dp))

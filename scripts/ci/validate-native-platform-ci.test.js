@@ -347,7 +347,7 @@ test("attachment installer native CI collects the recovery suites", () => {
     "utf8",
   );
 
-  expect(androidTests.match(/^\s*@Test$/gm)).toHaveLength(35);
+  expect(androidTests.match(/^\s*@Test$/gm)).toHaveLength(38);
   expect(androidTests).toContain(
     "unclaimedPrivateRetirementIsRecoveredFromItsDurableReservation",
   );

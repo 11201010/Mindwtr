@@ -5,6 +5,7 @@ import { createMobileAttachmentFiles } from './mobile-attachment-files';
 import { createMobileAttachmentCommon } from './mobile-attachment-common';
 import { createMobileAttachmentAvailability, type MobileAttachmentCloudKitPort } from './mobile-attachment-availability';
 import { CLOUD_PROVIDER_KEY, CLOUD_URL_KEY, SYNC_BACKEND_KEY, SYNC_PATH_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY } from './sync-storage-keys';
+import { DropboxFileNotFoundError } from './dropbox';
 import { createMemoryFileSystem, createMemoryStorage, createRecordingLog, MANAGED } from './__fixtures__/mobile-attachment-fakes';
 
 const now = '2026-09-28T00:00:00.000Z';
@@ -138,6 +139,37 @@ describe('mobile attachment availability', () => {
     if (outcome.status !== 'unrecoverable') throw new Error('Expected a terminal outcome');
     await expect(availability.ensureAttachmentAvailableDetailed(outcome.attachment)).resolves.toEqual({ status: 'unavailable' });
     expect(webdavGetFile).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['self-hosted cloud', { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_URL_KEY]: 'https://cloud.example/v1/data' }, 'cloudGetFile',
+      Object.assign(new Error('Cloud File GET failed (404)'), { status: 404 }), 'Cloud attachment att-1 is no longer available', 'v1.3.4/cloud-download-not-found'],
+    ['Dropbox', { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' }, 'downloadDropboxFile',
+      new DropboxFileNotFoundError(), 'Dropbox attachment att-1 is no longer available', 'v1.3.4/dropbox-download-not-found'],
+  ] as const)('treats a %s not-found as terminal, as WebDAV: no second request, no Download, local bytes kept', async (_name, storage, fetcher, failure, line, releaseCheck) => {
+    const ports = setup({ storage });
+    ports[fetcher].mockRejectedValueOnce(failure);
+    const requested = remoteAttachment({ fileHash: 'a'.repeat(64) });
+
+    const outcome = await ports.availability.ensureAttachmentAvailableDetailed(requested);
+
+    expect(outcome).toMatchObject({
+      status: 'unrecoverable',
+      attachment: { cloudKey: undefined, fileHash: undefined, localStatus: 'missing', deletedAt: expect.any(String) },
+    });
+    expect(requested.cloudKey).toBe('attachments/att-1.txt');
+    expect(deletesOutsideScratch(ports.memory.calls)).toEqual([]);
+    expect(ports.lines).toContainEqual(expect.objectContaining({ level: 'warn', message: line, extra: expect.objectContaining({ releaseCheck }) }));
+    if (outcome.status !== 'unrecoverable') throw new Error('Expected a terminal outcome');
+    await expect(ports.availability.ensureAttachmentAvailableDetailed(outcome.attachment)).resolves.toEqual({ status: 'unavailable' });
+    expect(ports[fetcher]).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a self-hosted cloud failure other than 404 retryable', async () => {
+    const { availability, cloudGetFile } = setup({ storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_URL_KEY]: 'https://cloud.example/v1/data' } });
+    cloudGetFile.mockRejectedValueOnce(Object.assign(new Error('Cloud File GET failed (500)'), { status: 500 }));
+
+    await expect(availability.ensureAttachmentAvailableDetailed(remoteAttachment())).resolves.toEqual({ status: 'unavailable' });
   });
 
   it('uses a managed file already on disk only when it matches the remote hash', async () => {

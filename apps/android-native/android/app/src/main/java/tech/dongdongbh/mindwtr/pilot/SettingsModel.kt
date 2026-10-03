@@ -415,7 +415,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
             send.clipData = ClipData.newRawUri(null, uri)
             activity.startActivity(Intent.createChooser(send, null))
         } catch (failure: Exception) {
-            Log.w(CoreHost.TAG, "Share log failed", failure)
+            Log.w(CoreHost.TAG, "Share log failed ${failureForLog(failure)}")
             shell.showToast(words.getString("toastTitle"), words.getString("shareUnavailable"), "warning")
         }
     }

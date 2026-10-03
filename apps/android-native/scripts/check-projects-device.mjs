@@ -230,6 +230,14 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
                 await flushPendingSave();
                 pruned += 1;
             }
+            // The attachments check's projects (A2 project, a 12-digit run id): their synced files point at a WebDAV folder that
+            // ended with its run, so a live one would refuse the next run's new folder (core's activation proof).
+            for (const project of live(store()._allProjects).filter((item) => /^A2 project [0-9]{12}$/.test(item.title))) {
+                const result = await store().deleteProject(project.id);
+                if (!result.success) throw new Error('prune failed: ' + result.error);
+                await flushPendingSave();
+                pruned += 1;
+            }
             // Only what earlier versions of this check injected per run: its four title shapes with a 12-digit run id.
             // [0-9], not \\d: this code sits in a template literal, which drops the backslash.
             for (const project of live(store()._allProjects).filter((item) => /^(Seq|Arch|Many)[0-9]{12}$/.test(item.title) && !item.title.endsWith(names.run))) {
@@ -267,7 +275,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
             // injected task and the 2-3 of its two captures), entry points 77 (plus the 1 of its shared text; 2 to 8 are never saved),
             // the capture screen 79 (plus the 0-8 of its captures; 3 and 4 are never saved),
             // the runner 80 (plus the 1-9 of its captures),
-            // sync 93 (plus the 1-4 of its four captures) and its two emoji titles (a 12-digit run id after them).
+            // sync 93 (plus the 1-4 of its four captures) and its two emoji titles (a 12-digit run id after them), attachments 94.
             // No other title matches. [0-9], not \\d: this code sits in a template literal, which drops the backslash.
             const shapes = {
                 lifecycle: /^8[1-6][0-9]{12}$/,
@@ -286,6 +294,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
                 captureModal: /^79[0-9]{12}[0-8]$/,
                 sync: /^(93[0-9]{12}[1-4]|(Sync ✓ Grüße|Cloud ✓ 雲) 😀 [0-9]{12})$/,
                 runner: /^80[0-9]{12}[1-9]$/,
+                attachments: /^94[0-9]{12}$/,
             };
             for (const [check, shape] of Object.entries(shapes)) {
                 const ids = live(store()._allTasks).filter((item) => shape.test(item.title)).map((item) => item.id);

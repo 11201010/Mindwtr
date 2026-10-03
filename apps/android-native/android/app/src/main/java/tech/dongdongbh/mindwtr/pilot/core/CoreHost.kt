@@ -44,8 +44,10 @@ class CoreHost(
     private val devices: DeviceWrites,
     private val logFile: File,
     private val keyValue: RnKeyValue,
-    /** The pending-captures queue's files (host-entry's queue port). */
+    /** The pending-captures queue's files (host-entry's queue port), and core's attachment file port. */
     private val files: HostFiles,
+    /** RN's attachment installer: core's native installer port. */
+    private val installer: HostInstaller,
 ) {
     companion object {
         const val TAG = "MindwtrNativeDev"
@@ -59,6 +61,16 @@ class CoreHost(
         const val OPERATION_DEADLINE_MS = 30_000L
         /** An operation that sends requests: HostIo's ceiling for one request, plus core's 30 s for the work around it. */
         const val NETWORK_DEADLINE_MS = HostIo.CALL_TIMEOUT_MS + OPERATION_DEADLINE_MS
+        /** A project's attachment commands (Attachments.kt ATTACHMENT_KINDS): each copies a picked file, which a slow provider stretches. */
+        private val ATTACHMENT_COMMANDS = setOf("attachmentAddFile", "attachmentLinks", "attachmentRemove")
+
+        /**
+         * An operation's deadline: a request's (NETWORK_DEADLINE_MS) for an attachment command, on its first send and on the journal's
+         * replay alike, so a slow copy never stops the host; [OPERATION_DEADLINE_MS] for everything else.
+         */
+        fun deadlineOf(method: String, args: List<Any?>): Long =
+            if (method == "menuCommand" && args.firstOrNull() in ATTACHMENT_COMMANDS) NETWORK_DEADLINE_MS else OPERATION_DEADLINE_MS
+
         /** How long a timed-out operation may take to end once cancelled, before the host stops for good. */
         const val DRAIN_MS = 10_000L
         /**
@@ -156,6 +168,9 @@ class CoreHost(
                 install(engine, database)
                 // A fetch or secret answer queued while no call runs wakes the idle pump, which settles it at once.
                 io.wake = { runCatching { executor.execute { idlePump() } } }
+                // An aborted file call's stalled document read ends (fileAbort), and each call's reader is forgotten when it ends.
+                io.abortReader = files::abortRead
+                io.readDone = files::readDone
                 load(engine, database, bundle)
             })
         }
@@ -312,6 +327,19 @@ class CoreHost(
         bridge.setProperty("fileList", guarded { args -> files.list(args[0] as String) })
         bridge.setProperty("fileRead", guarded { args -> files.readText(args[0] as String) })
         bridge.setProperty("fileDelete", guarded { args -> queueStop(); files.delete(args[0] as String); null })
+        // Core's attachment file port (bundle/host-attachments.ts): each call only starts here; HostIo runs it on its files
+        // thread and the pump settles it, as a fetch. The folders are named as expo-file-system names them.
+        bridge.setProperty("fileCall", guarded { args -> io.file(args[0] as String, files::call) })
+        // RN's attachment installer (HostInstaller): install and hash, on the same thread, after the file calls before them.
+        bridge.setProperty("installerCall", guarded { args -> io.file(args[0] as String, installer::call) })
+        // A managed attachment's delete, at once on this thread: core asked who owns the file in this same turn (host-attachments.ts).
+        bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })
+        // A file call whose operation passed its deadline: HostIo ends it (a copy stalled on a document provider), so the operation
+        // drains and the host never stops (host-polyfills.js fileChannel's cancel).
+        bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })
+        bridge.setProperty("fileDirectories", guarded { _ ->
+            JSONObject().put("document", files.documentDirectory).put("cache", files.cacheDirectory).toString()
+        })
         engine.globalObject.setProperty("__mindwtrNative", bridge)
     }
 
@@ -434,12 +462,13 @@ class CoreHost(
         callAsync("editorSuggestions", id, field, query, limit)
 
     /**
-     * [baseJson], [patchJson] and [checklistJson] (`{ base, value }`, "" when the checklist is unchanged) go to core's saveTaskDraft
-     * unchanged, in one write; core decides everything. [requestId] makes a repeat answer the first reply (core's receipt).
+     * [baseJson], [patchJson], [checklistJson] and [attachmentsJson] (each half `{ base, value }`, "" when unchanged) go to core's
+     * saveTaskDraft unchanged, in one write; core decides everything. [requestId] makes a repeat answer the first reply (core's receipt).
      */
-    fun saveTaskDraft(id: String, baseJson: String, patchJson: String, checklistJson: String, requestId: String): JSONObject =
+    fun saveTaskDraft(id: String, baseJson: String, patchJson: String, checklistJson: String, attachmentsJson: String, requestId: String): JSONObject =
         callAsync("saveDraft", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson))
-            .apply { if (checklistJson.isNotEmpty()) put("checklist", JSONObject(checklistJson)) }.put("requestId", requestId).toString())
+            .apply { if (checklistJson.isNotEmpty()) put("checklist", JSONObject(checklistJson)) }
+            .apply { if (attachmentsJson.isNotEmpty()) put("attachments", JSONObject(attachmentsJson)) }.put("requestId", requestId).toString())
 
     /**
      * The status menu and the Restore and Next swipes: [baseJson] and [patchJson] go to core's updateTask unchanged, with the
@@ -520,6 +549,13 @@ class CoreHost(
     fun aiRequest(name: String, json: String, handle: LongCall = LongCall()): JSONObject = callLong("aiRequest", name, json, handle = handle)
 
     /**
+     * An attachment's Download, Open (the bytes first) or the editor's draft settlement (host-entry.ts ATTACHMENT_REQUESTS) with
+     * [json] unchanged: a download waits on the network for minutes, so it never holds the engine ([callLong]). None is a journaled
+     * write: a project download's availability fields are identity-guarded and run again by the next Download or sync.
+     */
+    fun attachmentRequest(name: String, json: String): JSONObject = callLong("attachmentRequest", name, json)
+
+    /**
      * A long call's handle: [cancel] frees the thread that waits on it at once and aborts its operation's signal
      * (host-entry.ts abort), so its provider call stops. Main thread safe: nothing here waits for the engine.
      */
@@ -589,7 +625,7 @@ class CoreHost(
      * settles it: a final reply drops it, SAVE_FAILED keeps it for the owed retry, and no reply (a timeout, a stopped engine,
      * process death) keeps it for the next boot's replay.
      */
-    private fun callAsync(method: String, vararg args: Any?, deadlineMs: Long = OPERATION_DEADLINE_MS): JSONObject = onEngine {
+    private fun callAsync(method: String, vararg args: Any?, deadlineMs: Long = deadlineOf(method, args.toList())): JSONObject = onEngine {
         stopped?.let { throw IllegalStateException(it) }
         val entry = if (method in WriteJournal.WRITES) checkNotNull(journal).append(method, args.toList()) else null
         val stop = if (entry != null) debugFault("journal_stop") else ""
@@ -663,7 +699,7 @@ class CoreHost(
         pumpAt = Long.MAX_VALUE
         val engine = context ?: return
         if (stopped != null) return
-        runCatching { global(engine, "__pumpTimers").call() }.onFailure { Log.w(TAG, "Native Android idle pump failed", it) }
+        runCatching { global(engine, "__pumpTimers").call() }.onFailure { Log.w(TAG, "Native Android idle pump failed error=${it.javaClass.simpleName}") }
         settleWatched()
         schedulePump()
     }
@@ -740,7 +776,7 @@ class CoreHost(
             sent += 1
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             val error = try {
-                answer(entry.method, entry.args.toTypedArray(), OPERATION_DEADLINE_MS).also { if (settle(entry, it, replay = true)) dropped += 1 }.error()
+                answer(entry.method, entry.args.toTypedArray(), deadlineOf(entry.method, entry.args)).also { if (settle(entry, it, replay = true)) dropped += 1 }.error()
             } catch (failure: Throwable) {
                 owed = failure.message ?: failure.javaClass.simpleName
                 break

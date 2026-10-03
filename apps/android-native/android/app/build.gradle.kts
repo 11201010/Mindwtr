@@ -72,10 +72,13 @@ android {
 
     // RN's app shortcuts, generated per build type (buildShortcuts below).
     sourceSets { urlSchemes.keys.forEach { getByName(it).res.srcDir(layout.buildDirectory.dir("generated/shortcuts/$it/res")) } }
-    // RN's capture intent Kotlin and its JVM tests, compiled as they are (rnCaptureIntent below).
+    // RN's capture intent Kotlin and its attachment installer, with their JVM tests, compiled as they are (rnCaptureIntent and
+    // rnAttachmentInstaller below).
     sourceSets {
         getByName("main").java.srcDir(layout.buildDirectory.dir("generated/rnKotlin/main/java"))
         getByName("test").java.srcDir(layout.buildDirectory.dir("generated/rnKotlin/test/java"))
+        getByName("main").java.srcDir(layout.buildDirectory.dir("generated/rnInstaller/main/java"))
+        getByName("test").java.srcDir(layout.buildDirectory.dir("generated/rnInstaller/test/java"))
     }
     // Its core-host.js replaces main's in benchmarkTrace only (a build type's assets win over main's).
     sourceSets { getByName("benchmarkTrace").assets.srcDir(tracedBundleAssets) }
@@ -177,5 +180,16 @@ val rnCaptureIntent by tasks.registering(Sync::class) {
     }
     into(layout.buildDirectory.dir("generated/rnKotlin"))
 }
-tasks.named("preBuild") { dependsOn(buildCoreBundle, buildShortcuts, rnCaptureIntent) }
+// RN's attachment installer (apps/mobile/modules/attachment-file-installer): its install, hash and journal recovery policy and its
+// Android file operations, with RN's JVM tests of both (the hard-link fallback and its errno names, #1139, included). The native publisher (C++) that only File Sync's immutable publication
+// loads is not built: File Sync is not on this host yet (S5), and nothing here reaches it.
+val rnAttachmentInstaller by tasks.registering(Sync::class) {
+    val installer = "tech/dongdongbh/mindwtr/attachmentfileinstaller"
+    from(rootProject.projectDir.resolve("../../mobile/modules/attachment-file-installer/android/src")) {
+        include(listOf("AttachmentFileInstallerCore", "AndroidAttachmentInstallerFileOps").map { "main/java/$installer/$it.kt" })
+        include(listOf("AttachmentFileInstallerCoreTest", "AndroidAttachmentInstallerFileOpsTest").map { "test/java/$installer/$it.kt" })
+    }
+    into(layout.buildDirectory.dir("generated/rnInstaller"))
+}
+tasks.named("preBuild") { dependsOn(buildCoreBundle, buildShortcuts, rnCaptureIntent, rnAttachmentInstaller) }
 tasks.matching { it.name == "preBenchmarkTraceBuild" }.configureEach { dependsOn(buildTracedCoreBundle) }

@@ -207,7 +207,7 @@ class AISettingsModel(private val menu: MenuModel) {
         picker = null; typed = emptyMap(); keyTexts.clear(); keys = emptyMap(); extraDraft = null; extraFollowed = null; consent = null
         asked.clear(); unsaved.clear()
         val runtime = shell.coreHost() ?: return
-        ordered.execute { runCatching { runtime.menuRead("aiSettingsClose", "{}") }.onFailure { Log.w(CoreHost.TAG, "AI screen close failed", it) } }
+        ordered.execute { runCatching { runtime.menuRead("aiSettingsClose", "{}") }.onFailure { Log.w(CoreHost.TAG, "AI screen close failed ${failureForLog(it)}") } }
     }
 
     // ---- Writes ----

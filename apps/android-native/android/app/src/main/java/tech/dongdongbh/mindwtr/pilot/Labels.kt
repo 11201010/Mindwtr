@@ -71,6 +71,10 @@ val LABEL_KEYS = listOf(
     // RN's app lock screen (AppLock.kt); General's switch and its failure lines are core's view.
     "appLock.title", "appLock.description", "appLock.prompt", "appLock.unlock", "appLock.authenticating",
     "appLock.unavailable", "appLock.cancelled", "appLock.failed",
+    // Attachments (Attachments.kt): the editor's field and the project card, the link sheet, the preview and the player; the rows are core's.
+    "attachments.addFile", "attachments.addPhoto", "attachments.addLink", "attachments.download", "attachments.missing", "attachments.remove",
+    "attachments.linkPlaceholder", "attachments.linkInputHint", "attachments.linkBatchHint", "common.validationRequired", "common.share",
+    "share.unavailable", "common.play", "common.pause", "audio.loading", "quickAdd.audioNoteTitle", "quickAdd.audioErrorBody",
 )
 
 /** The label map: core's text for each of [LABEL_KEYS]. It has no fallback text; a key core lacks shows as the key. */

@@ -24,10 +24,10 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * The JS host's fetch and secret calls (bundle/host-polyfills.js). Each runs off the engine thread, on OkHttp's dispatcher
- * or the secrets thread, and only queues its answer as JSON (a body apart, as base64); the engine takes the answers in
- * CoreHost's pump loop, where timers fire too. [fetch], [abort], [secret], [busy], [await], [next] and [body] are called
- * on the engine thread only.
+ * The JS host's fetch, secret and attachment file calls (bundle/host-polyfills.js). Each runs off the engine thread, on
+ * OkHttp's dispatcher, the secrets thread or the files thread, and only queues its answer as JSON (a body apart, as base64);
+ * the engine takes the answers in CoreHost's pump loop, where timers fire too. [fetch], [abort], [secret], [file], [busy],
+ * [await], [next] and [body] are called on the engine thread only.
  */
 class HostIo(context: Context) {
     companion object {
@@ -74,6 +74,8 @@ class HostIo(context: Context) {
     private val maxResponseBytes = debugProperty("net_max_bytes").toLongOrNull()?.takeIf { it > 0 }?.let { minOf(it, ceiling) } ?: ceiling
     private val secrets = SecretStore(context.applicationContext)
     private val secretThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-secrets") }
+    /** Core's attachment file port (HostFiles.call), one call at a time, in the order JS made them. */
+    private val fileThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-files") }
     private val calls = ConcurrentHashMap<String, Call>()
     private val answers = LinkedBlockingQueue<Answer>()
     /** An answer [await] took before [next] asked for it. */
@@ -167,6 +169,41 @@ class HostIo(context: Context) {
         return id
     }
 
+    /**
+     * Starts a file call on the files thread: [run] is core's attachment file port (HostFiles.call) or the installer
+     * (HostInstaller.call), and [json] its request, a write's bytes as `base64` in it. Its answer is `{ id, value }`, a read's
+     * bytes as the body, or `{ id, error }`. Even the request is read there, so a large write's base64 never holds the engine.
+     */
+    fun file(json: String, run: (String, ByteArray?) -> HostFiles.Reply): String {
+        val id = (++nextId).toString()
+        fileJobs.start(id, FileJobs.readsPickedDocument(json), {
+            val request = JSONObject(json)
+            val bytes = if (request.has("base64")) Base64.decode(request.getString("base64"), Base64.NO_WRAP) else null
+            request.remove("base64")
+            run(request.toString(), bytes)
+        }) { result ->
+            answers.add(result.fold({ reply ->
+                val answer = JSONObject().put("id", id).put("value", reply.value ?: JSONObject.NULL)
+                if (reply.bytes == null) Answer(answer.toString())
+                else Answer(answer.put("body", true).toString(), Base64.encodeToString(reply.bytes, Base64.NO_WRAP))
+            }) { Answer(JSONObject().put("id", id).put("error", it.message ?: it.javaClass.simpleName).toString()) })
+            wake()
+        }
+        open += 1
+        return id
+    }
+
+    /** The files thread and the picked documents' own threads (FileJobs); CoreHost sets the reader hooks (HostFiles). */
+    @Volatile var abortReader: (Thread) -> Unit = {}
+    @Volatile var readDone: (Thread) -> Unit = {}
+    private val fileJobs = FileJobs(fileThread, { abortReader(it) }, { readDone(it) })
+
+    /**
+     * A file call whose operation passed its deadline (host-polyfills.js cancel): one not started never runs; a running one has its
+     * document read closed, so a copy stalled on a provider ends. Its late answer settles nothing.
+     */
+    fun fileAbort(id: String) = fileJobs.abort(id)
+
     fun busy() = open > 0
 
     /** Waits up to [ms] for an answer, so the pump loop wakes as soon as one is queued. */
@@ -189,6 +226,7 @@ class HostIo(context: Context) {
     fun close() {
         calls.values.forEach { it.cancel() }
         secretThread.shutdown()
+        fileThread.shutdown()
         client.dispatcher.executorService.shutdown()
     }
 
