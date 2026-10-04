@@ -413,7 +413,8 @@ for (const [init, key] of [['?token=first&a=1&token=second', 'token'], ['?a=1', 
         ioBody() { return taken; },
     };
     const entry = `import { createHostSyncCrypto } from './host-sync';
-import { SyncCryptoAuthError, SyncCryptoUnsupportedError, decryptSyncArtifact, deriveSyncKeyMaterial, encryptSyncArtifact } from '@mindwtr/core';
+// Core's own file, not its index: esbuild never runs a lazily initialized module that an entry reaches only through the index.
+import { SyncCryptoAuthError, SyncCryptoUnsupportedError, decryptSyncArtifact, deriveSyncKeyMaterial, encryptSyncArtifact } from '../../../packages/core/src/sync-crypto';
 globalThis.cryptoGate = { prims: createHostSyncCrypto(globalThis.__mindwtrCryptoCall), refusing: createHostSyncCrypto(undefined),
     SyncCryptoAuthError, SyncCryptoUnsupportedError, decryptSyncArtifact, deriveSyncKeyMaterial, encryptSyncArtifact };`;
     const gateBundle = await build({ stdin: { contents: entry, loader: 'ts', resolveDir: resolve(app, 'bundle') }, bundle: true, write: false, format: 'iife', logLevel: 'silent' });
