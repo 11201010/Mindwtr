@@ -436,7 +436,8 @@ export default function ProjectsScreen() {
     if (orderedIds) reorderAreas(orderedIds);
   };
 
-  const toggleProjectTag = (tag: string) => {
+  // A chip toggles its tag; the picker's + only adds the typed one (a tag already there stays).
+  const changeProjectTag = (tag: string, kind: 'add' | 'toggle') => {
     if (!selectedProject) return;
     const normalized = normalizeProjectTag(tag);
     if (!normalized) return;
@@ -444,13 +445,14 @@ export default function ProjectsScreen() {
       projectId: selectedProject.id,
       updates: (project) => {
         const current = project.tagIds || [];
-        return { tagIds: projectTagsForIntent(current, { kind: 'toggle', input: tag }) };
+        return { tagIds: projectTagsForIntent(current, { kind, input: tag }) };
       },
       updateProject,
       setSelectedProject,
       onBlocked: () => setShowTagPicker(false),
     });
   };
+  const toggleProjectTag = (tag: string) => changeProjectTag(tag, 'toggle');
 
   const handleDeleteProject = useCallback((projectIdToDelete: string) => {
     // Deleting detaches the project's tasks, and only Undo can know which they
@@ -1277,7 +1279,7 @@ export default function ProjectsScreen() {
         onAddTag={() => {
           const nextTag = normalizeProjectTag(tagDraft);
           if (!nextTag) return;
-          toggleProjectTag(nextTag);
+          changeProjectTag(nextTag, 'add');
           setTagDraft('');
         }}
         onClose={() => setShowTagPicker(false)}
