@@ -22,7 +22,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, connect, draftText, evidenced, fail, field, hasText, inEditor, Stopped, tab, tabSelected, tagged, withDescription } from './device.mjs';
+import { button, check, connect, draftText, evidenced, fail, field, hasText, inEditor, projectTitled, Stopped, tab, tabSelected, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -239,7 +239,7 @@ try {
     await tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close in the editor'), onTabs(en['tab.next']), 'Focus under the editor');
     check(true, '(c) open?task opens the task in the editor over Focus');
     if (stored.project) {
-        await link(`/open?project=${stored.project.id}`, (current) => hasText(current, stored.project.title) && Boolean(button(current, 'Back')), 'the project');
+        await link(`/open?project=${stored.project.id}`, (current) => projectTitled(current, stored.project.title) && Boolean(button(current, 'Back')), 'the project');
         await back('the tabs after the project');
         check(true, `(c) open?project opens the project ${stored.project.title}`);
     } else console.log('skip - (c) open?project: the development data has no project that takes tasks');

@@ -438,11 +438,13 @@ try {
     const secondCopy = (id, ext) => { try { return sha256(readFileSync(resolve(second.files.dir, 'attachments', `${id}${ext}`))); } catch { return null; } };
     check(secondCopy(pdf.id, '.pdf') === sha256(pdfBytes) && secondCopy(png.id, '.png') === sha256(pngBytes), '(5) the second device downloaded both files byte for byte');
 
-    // (6) The project's card: Add link writes at once; Remove soft-deletes it.
+    // (6) The project's Attachments (in its Details): Add link writes at once; Remove soft-deletes it.
     nodes = await toTabs();
     nodes = await tapExpecting(tab(nodes, en['nav.projects']), (current) => tabSelected(current, en['nav.projects']), 'Projects');
     nodes = await device.reveal(names.project);
-    await tapExpecting(inList(nodes, names.project) ?? fail('no project row'), (current) => Boolean(tagged(current, 'project-attachment-add-link')), 'the project and its Attachments card');
+    // The project's Attachments sit inside its Details panel (RN's ProjectDetailModal), folded when the project opens.
+    nodes = await tapExpecting(inList(nodes, names.project) ?? fail('no project row'), (current) => Boolean(tagged(current, 'project-details-toggle')), 'the project and its Details');
+    await tapExpecting(tagged(nodes, 'project-details-toggle'), (current) => Boolean(tagged(current, 'project-attachment-add-link')), 'the project Details and its Attachments');
     await tapExpecting(tagged(await screen(), 'project-attachment-add-link'), (current) => Boolean(tagged(current, 'attachment-link-sheet')), 'the project link sheet');
     const projectLink = `${names.link}/project`;
     await typeInto(tagged(await screen(), 'attachment-link-input'), projectLink);

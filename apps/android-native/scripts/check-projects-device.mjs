@@ -43,7 +43,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { besideRow, bootFailure, box, button, check, connect, evidenced, fail, field, hasText, inEditor, isOn, owedRetry, readRetry, Stopped, tab, tabSelected, taskRows, withDescription } from './device.mjs';
+import { besideRow, bootFailure, box, button, check, connect, evidenced, fail, field, hasText, inEditor, isOn, owedRetry, projectTitled, readRetry, Stopped, tab, tabSelected, taskRows, withDescription } from './device.mjs';
 
 const cliArgs = process.argv.slice(2);
 const prune = cliArgs.includes('--prune-old');
@@ -117,7 +117,8 @@ const stopApp = async () => {
 const inbox = () => waitFor('the Inbox', (nodes) => tabSelected(nodes, 'Inbox') && !inEditor(nodes) && hasText(nodes, 'Inbox'), 60_000);
 const textNode = (nodes, text) => nodes.find((node) => node.text === text && node.class !== 'android.widget.EditText');
 /** The open project: the Projects tab, core's project title as the heading, and Back. */
-const inProject = (nodes, title) => tabSelected(nodes, 'Projects') && !inEditor(nodes) && hasText(nodes, title) && Boolean(button(nodes, 'Back'));
+// The header's title is RN's editable title field (ProjectDetails.kt's ProjectTitleField).
+const inProject = (nodes, title) => tabSelected(nodes, 'Projects') && !inEditor(nodes) && projectTitled(nodes, title) && Boolean(button(nodes, 'Back'));
 const openProject = (title, description = `the project ${title}`) => waitFor(description, (nodes) => inProject(nodes, title), 60_000);
 const showTab = async (name) => {
     const nodes = await waitFor('the tabs', (current) => tab(current, name), 60_000);
