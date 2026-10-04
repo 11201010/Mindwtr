@@ -791,7 +791,7 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
         return applied.ok ? { ok: true, value: { attachments: applied.value } } : applied;
     },
     // Project details (ProjectDetails.kt): each write's options (the project's token and choices) and its preparation, which
-    // writes nothing; the notes' resolved blocks for the preview and a reference's target.
+    // writes nothing; the notes' resolved blocks for the preview of the typed draft and a reference's target.
     projectRenameOptions: (input) => contract.getProjectRenameOptions(input),
     projectRenamePrepare: (input) => contract.prepareProjectRename(input),
     projectStatusOptions: (input) => contract.getProjectStatusOptions(input),
@@ -822,7 +822,7 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
         return value ? { ok: true, value: { instant: value } }
             : { ok: false, error: { code: 'INVALID_INPUT', message: 'A picked day and the picker instant are required' } };
     },
-    projectNotesView: (input) => contract.getProjectNotes(input),
+    projectNotesPreview: (input) => contract.getProjectNotesPreview(input),
     projectNotesTarget: (input) => contract.getProjectNotesReferenceTarget(input),
 };
 /**

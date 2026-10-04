@@ -1764,6 +1764,15 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     assert.match(detailsKt, /private fun changeTag\(kind: String, tag: String\) \{[\s\S]{0,200}?put\("intent", JSONObject\(\)\.put\("kind", kind\)/);
     assert.match(detailsKt, /testTag\("project-tag-add"\)/);
     assert.match(detailsKt, /\.clickable\(role = Role\.Button\) \{ addTag\(tagDraft\); tagDraft = "" \}/, '+ adds the typed tag');
+    // RN's Notes Preview shows the unsaved draft (dd 2026-10-04): the preview reads core's blocks for the draft text, and
+    // switching to Preview stores nothing; leaving the field for the preview stores nothing either.
+    assert.match(detailsKt, /menuRead\("projectNotesPreview", /, 'the preview reads core\'s blocks for the draft');
+    assert.doesNotMatch(detailsKt, /projectNotesView/, 'the preview never reads the stored notes in place of the draft');
+    const previewToggles = detailsKt.match(/\{ [^{}]*(notesPreview = !notesPreview|editing = !editing)[^{}]*\}/g) ?? [];
+    assert.equal(previewToggles.length, 2, 'the inline and the full-screen Preview switches parsed');
+    for (const toggle of previewToggles) {
+        assert.doesNotMatch(toggle, /commitNotes/, 'switching to Preview stores nothing');
+    }
     // RN's field sets autoCorrect={false} and autoCapitalize="none" (review PD 6).
     assert.match(tagField, /KeyboardOptions\(capitalization = KeyboardCapitalization\.None, autoCorrectEnabled = false,/, 'the tag field neither corrects nor capitalizes');
     assert.match(hostEntry, new RegExp(`type AttachmentCommand = ${attachmentKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));

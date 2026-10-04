@@ -153,22 +153,13 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
     fun status(): String? = raw?.getJSONObject("status")?.getJSONObject("project")?.getString("status")
     fun flow(): JSONObject? = raw?.getJSONObject("flow")?.getJSONObject("project")
 
-    /** Core's notes blocks for the preview, every window at one revision. */
+    /** Core's blocks for the notes as typed (RN previews the unsaved draft), for the preview; a read, it stores nothing. */
     fun readNotes() {
         val id = projectId ?: return
+        val text = notesDraft ?: storedNotes()
         shell.background(emptyList(), { runtime ->
-            var view = runtime.menuRead("projectNotesView", input(id).put("offset", 0).put("limit", 100).toString())
-            val blocks = view.getJSONArray("blocks")
-            while (blocks.length() < view.getInt("total")) {
-                val next = runtime.menuRead("projectNotesView", input(id).put("offset", blocks.length()).put("limit", 100)
-                    .put("revision", view.getString("revision")).toString())
-                val more = next.getJSONArray("blocks")
-                if (more.length() == 0) break
-                for (index in 0 until more.length()) blocks.put(more.get(index))
-                view = view.put("blocks", blocks)
-            }
-            view
-        }) { reply, _ -> if (projectId == id) notesView = reply }
+            runtime.menuRead("projectNotesPreview", input(id).put("text", text).toString())
+        }) { reply, _ -> if (projectId == id && (notesDraft ?: storedNotes()) == text) notesView = reply }
     }
 
     /** The area picker, on core's area options. */
@@ -554,7 +545,7 @@ private fun ProjectNotes(model: InboxViewModel, projectId: String, archived: Boo
     val c = LocalTheme.current.colors
     val context = LocalContext.current
     val preview = notesPreview || archived
-    LaunchedEffect(projectId, model.project, notesExpanded, preview, model.busy) { if (notesExpanded && preview && !model.busy) readNotes() }
+    LaunchedEffect(projectId, model.project, notesExpanded, preview, notesDraft, model.busy) { if (notesExpanded && preview && !model.busy) readNotes() }
     val link = { target: JSONObject ->
         when (target.getString("kind")) {
             "external" -> { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, target.getString("href").toUri())) } }
@@ -570,7 +561,8 @@ private fun ProjectNotes(model: InboxViewModel, projectId: String, archived: Boo
                 modifier = Modifier.weight(1f).clickable(role = Role.Button) { if (notesExpanded) notesPreview = false; notesExpanded = !notesExpanded }
                     .testTag("project-notes-toggle").padding(vertical = 8.dp))
             if (notesExpanded) {
-                SmallButton(t(if (notesPreview) "markdown.edit" else "markdown.preview"), !archived, "project-notes-mode") { commitNotes(); notesPreview = !notesPreview }
+                // RN previews the unsaved draft: switching stores nothing.
+                SmallButton(t(if (notesPreview) "markdown.edit" else "markdown.preview"), !archived, "project-notes-mode") { notesPreview = !notesPreview }
                 val expand = t("markdown.expand")
                 Box(Modifier.padding(start = 8.dp).size(30.dp).fade(if (archived) 0.5f else 1f).clickable(enabled = !archived, role = Role.Button) { notesFullscreen = true }
                     .semantics { contentDescription = expand }, contentAlignment = Alignment.Center) {
@@ -583,7 +575,7 @@ private fun ProjectNotes(model: InboxViewModel, projectId: String, archived: Boo
         if (preview) Box(Modifier.padding(top = 8.dp).fillMaxWidth().clip(shape).background(c.filterBg).border(1.dp, c.border, shape).padding(12.dp)
             .testTag("project-notes-preview")) {
             notesView?.takeIf { it.getString("projectId") == projectId }?.let { MarkdownBlocks(it.menuObjects("blocks"), it.getJSONObject("markdownLabels"), link) }
-        } else NotesField(model, Modifier.padding(top = 8.dp).fillMaxWidth().heightIn(min = 100.dp), RoundedCornerShape(8.dp), 14, 10)
+        } else NotesField(model, Modifier.padding(top = 8.dp).fillMaxWidth().heightIn(min = 100.dp), RoundedCornerShape(8.dp), 14, 10) { !notesPreview }
     }
     if (notesFullscreen && !archived) NotesFullscreen(model, model.projects?.title(projectId).orEmpty(), link)
 }
@@ -591,7 +583,7 @@ private fun ProjectNotes(model: InboxViewModel, projectId: String, archived: Boo
 /** The notes field: the typed draft over core's text, stored when it loses focus (RN's onBlur and onEndEditing). */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
-private fun NotesField(model: InboxViewModel, modifier: Modifier, shape: RoundedCornerShape, size: Int, inner: Int) = with(model.projectDetails) {
+private fun NotesField(model: InboxViewModel, modifier: Modifier, shape: RoundedCornerShape, size: Int, inner: Int, storeOnBlur: () -> Boolean) = with(model.projectDetails) {
     val c = LocalTheme.current.colors
     val placeholder = t("projects.notesPlaceholder")
     var focused by remember { mutableStateOf(false) }
@@ -603,7 +595,8 @@ private fun NotesField(model: InboxViewModel, modifier: Modifier, shape: Rounded
     BasicTextField(value, { notesDraft = it }, enabled = raw != null && !model.busy && model.failedAction == null,
         textStyle = rnText(size, 400, if (size == 16) 24 else null).copy(color = c.text), cursorBrush = SolidColor(c.tint),
         modifier = modifier.bringIntoViewRequester(reveal).semantics { contentDescription = t("project.notes") }.testTag("project-notes-input").onFocusChanged { state ->
-            if (focused && !state.isFocused) commitNotes()
+            // Leaving the field stores the notes (RN's onBlur), except for the preview of the unsaved draft.
+            if (focused && !state.isFocused && storeOnBlur()) commitNotes()
             focused = state.isFocused
         },
         decorationBox = { field ->
@@ -631,12 +624,12 @@ private fun NotesFullscreen(model: InboxViewModel, title: String, follow: (JSONO
                 val modeLabel = t(if (editing) "markdown.preview" else "markdown.edit")
                 val shape = RoundedCornerShape(8.dp)
                 Box(Modifier.align(Alignment.CenterEnd).size(40.dp, 34.dp).clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
-                    .clickable(role = Role.Button) { if (editing) commitNotes(); editing = !editing }.semantics { contentDescription = modeLabel },
+                    .clickable(role = Role.Button) { editing = !editing }.semantics { contentDescription = modeLabel },
                     contentAlignment = Alignment.Center) { Icon(if (editing) Lucide.Eye else Lucide.Pencil, null, tint = c.tint, modifier = Modifier.size(18.dp)) }
             }
-            if (editing) NotesField(model, Modifier.padding(16.dp).fillMaxWidth().weight(1f), RoundedCornerShape(12.dp), 16, 16)
+            if (editing) NotesField(model, Modifier.padding(16.dp).fillMaxWidth().weight(1f), RoundedCornerShape(12.dp), 16, 16) { editing && notesFullscreen }
             else {
-                LaunchedEffect(model.project, model.busy) { if (!model.busy) readNotes() }
+                LaunchedEffect(model.project, notesDraft, model.busy) { if (!model.busy) readNotes() }
                 val shape = RoundedCornerShape(12.dp)
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
                     Box(Modifier.fillMaxWidth().heightIn(min = 120.dp).clip(shape).background(c.filterBg).border(1.dp, c.border, shape).padding(16.dp)) {

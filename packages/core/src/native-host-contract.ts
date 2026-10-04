@@ -2558,6 +2558,37 @@ export function createNativeHostContract(options: {
             return { ok: true, value: { kind: run.target.kind, id: run.target.id } };
         },
 
+        /**
+         * RN's Notes Preview of the unsaved draft (MarkdownText of the typed notes): core's resolved blocks for [text], with the
+         * labels and direction getProjectNotes gives. A read: it stores nothing.
+         */
+        getProjectNotesPreview(input: { projectId: string; text: string }): NativeHostResult<Omit<NativeProjectNotes, 'revision' | 'total'>> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || Object.keys(input).length !== 2 || typeof input.projectId !== 'string'
+                || !input.projectId.trim() || input.projectId.length > 500 || typeof input.text !== 'string'
+                || !isNativeJsonWithinBytes(input)) {
+                return fail('INVALID_INPUT', 'A bounded Project Notes draft is required');
+            }
+            const state = useTaskStore.getState();
+            const project = state._allProjects.find((candidate) => candidate.id === input.projectId);
+            if (!project || project.deletedAt || project.purgedAt) return fail('TASK_NOT_FOUND', 'Project not found');
+            const value: Omit<NativeProjectNotes, 'revision' | 'total'> = {
+                version: NATIVE_HOST_CONTRACT_VERSION,
+                projectId: project.id,
+                readOnly: getProjectDetailTaskListOptions(project).readOnly,
+                direction: resolveAutoTextDirection(`${project.title ?? ''}\n${input.text}`.trim(), language),
+                blocks: input.text.trim() ? resolveMarkdownBlocks(input.text, createMarkdownLinkLookup(state._allTasks, state._allProjects)) : [],
+                markdownLabels: {
+                    deletedTask: tFallback(translate, 'markdown.referenceDeletedTask', 'deleted task'),
+                    deletedProject: tFallback(translate, 'markdown.referenceDeletedProject', 'deleted project'),
+                    copyCode: tFallback(translate, 'markdown.copyCode', 'Copy code'),
+                },
+            };
+            return isNativeJsonWithinBytes(value) ? { ok: true, value }
+                : fail('INVALID_INPUT', 'Project Notes preview exceeds the bounded native read');
+        },
+
         getProjectNotesDraftDirection(input: { projectId: string; text: string }): NativeHostResult<{ direction: 'ltr' | 'rtl' }> {
             const ready = readiness();
             if (!ready.ok) return ready;
