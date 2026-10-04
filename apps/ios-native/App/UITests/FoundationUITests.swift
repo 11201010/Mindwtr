@@ -22234,6 +22234,18 @@ extension FoundationUITests {
         boardEnabled(app.buttons["diagnostics-clear"], timeout: 30)
     }
 
+    func testTask209OmniFocusImportNormal() {
+        task202RecoveryFlow("ae1b551b-e4c2-44fb-a444-a03a0981e8fb", omnifocusPicker: true)
+    }
+
+    func testTask209OmniFocusImportLargestText() {
+        task202RecoveryFlow("e2abdb27-7e40-4e41-97ff-fdb3be6fb34a", largest: true, omnifocusPicker: true)
+    }
+
+    func testTask209OmniFocusImportArabicRTL() {
+        task202RecoveryFlow("a0da8ba8-7ddb-45fa-8aad-515a90deeb70", rtl: true, omnifocusPicker: true)
+    }
+
     func testTask208DGTImportNormal() {
         task202RecoveryFlow("900db2d9-9384-4196-958a-4268ee0462e4", dgtPicker: true)
     }
@@ -22306,7 +22318,7 @@ extension FoundationUITests {
         task202RecoveryFlow("58a103bb-e6c7-4c8e-971b-e548b5f29464", rtl: true)
     }
 
-    private func task202RecoveryFlow(_ library: String, largest: Bool = false, rtl: Bool = false, csvPicker: Bool = false, replacePicker: Bool = false, todoistPicker: Bool = false, ticktickPicker: Bool = false, dgtPicker: Bool = false) {
+    private func task202RecoveryFlow(_ library: String, largest: Bool = false, rtl: Bool = false, csvPicker: Bool = false, replacePicker: Bool = false, todoistPicker: Bool = false, ticktickPicker: Bool = false, dgtPicker: Bool = false, omnifocusPicker: Bool = false) {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
         app.launch()
@@ -22315,12 +22327,12 @@ extension FoundationUITests {
             boardTap(app, "general-back"); boardTap(app, "settings-back")
         }
         task197Data(app); boardTap(app, "backup-disclosure")
-        let importAction = dgtPicker ? "data-transfer-import-dgt" : ticktickPicker ? "data-transfer-import-ticktick" : todoistPicker ? "data-transfer-import-todoist" : replacePicker ? "data-transfer-restore" : (csvPicker ? "data-transfer-import-csv" : "data-transfer-merge")
+        let importAction = omnifocusPicker ? "data-transfer-import-omnifocus" : dgtPicker ? "data-transfer-import-dgt" : ticktickPicker ? "data-transfer-import-ticktick" : todoistPicker ? "data-transfer-import-todoist" : replacePicker ? "data-transfer-restore" : (csvPicker ? "data-transfer-import-csv" : "data-transfer-merge")
         task192Reveal(app, importAction, buttons: true, scrollID: "diagnostics-scroll")
         boardEnabled(app.buttons[importAction]); boardTap(app, importAction)
         let cancel = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Cancel", "إلغاء")).firstMatch
         boardEnabled(cancel, timeout: 30)
-        task197Observe(app, dgtPicker ? "Task208 DGT file picker" : ticktickPicker ? "Task207 TickTick file picker" : todoistPicker ? "Task205 Todoist file picker" : replacePicker ? "Task204 selected JSON restore picker" : (csvPicker ? "Task203 CSV file picker" : "Task202 real JSON file picker"))
+        task197Observe(app, omnifocusPicker ? "Task209 OmniFocus file picker" : dgtPicker ? "Task208 DGT file picker" : ticktickPicker ? "Task207 TickTick file picker" : todoistPicker ? "Task205 Todoist file picker" : replacePicker ? "Task204 selected JSON restore picker" : (csvPicker ? "Task203 CSV file picker" : "Task202 real JSON file picker"))
         cancel.tap()
         boardEnabled(app.buttons[importAction], timeout: 30)
         XCTAssertFalse(app.staticTexts["backup-import-error"].exists)

@@ -809,3 +809,127 @@ describe('native DGT JSON and ZIP prepared import', () => {
         await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:'); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
     });
 });
+
+const omniHeaders = ['Task ID','Type','Name','Status','Project','Context','Start Date','Planned Date','Due Date','Completion Date','Duration','Flagged','Notes','Tags'];
+const omniCsv = csvFile(omniHeaders, [
+    ['p1','Project','Test project','On Hold','','','2026-06-10','','2026-06-20','','','0','Project support 日本語 🦉','Work'],
+    ['a1','Action','Plan sprint','Available','Test project','Errands','2026-06-17','2026-06-18','2026-06-19','','45m','1','Plan details','Ops'],
+    ['a2','Action','Inbox capture','Available','','Calls','','','','','','0','Call contractor','Personal'],
+    ['a3','Action','Completed','Completed','Test project','','','','','2026-06-15T12:00:00.000Z','','0','',''],
+    ['a4','Action','Reference','Reference','Test project','','2026-06-17','','2026-06-18','','','1','Reference detail','Ops'],
+    ['p2','Project','Archived project','Dropped','','','','','','','','0','Archived notes',''],
+    ['a5','Action','Archived','Dropped','Archived project','','','','','','','0','',''],
+    ['a6','Action','Waiting','Waiting','','','','','','','','0','',''],
+    ['a7','Mystery','Someday','On Hold','','','','','','','','0','',''],
+]);
+const omniExport = {
+    tasks: [
+        { id: 'p1', name: 'Test project', note: 'Root project note', deferDate: '2026-06-10', plannedDate: '2026-06-11', projectId: 'p1', tagIds: ['tag1'] },
+        { id: 'a1', name: 'Plan sprint', note: 'Plan details 日本語 🦉', deferDate: '2026-06-17', dueDate: '2026-06-19', plannedDate: '2026-06-18', flagged: true, projectId: 'p1', parentTaskId: 'p1', tagIds: ['tag1'], repetition: { unit: 'weekly', interval: 2, byDay: 'MO,WE', fromCompletion: true } },
+        { id: 'child1', name: 'Confirm scope', parentTaskId: 'a1', projectId: 'p1', completed: true, completionDate: '2026-06-15T12:00:00.000Z' },
+        { id: 'child2', name: 'Book room', note: 'Need room', dueDate: '2026-06-20', parentTaskId: 'a1', projectId: 'p1', tagIds: ['tag1'] },
+        { id: 'child3', name: 'Share agenda', note: 'Email team', parentTaskId: 'child2', projectId: 'p1' },
+        { id: 'a2', name: 'Inbox capture' },
+        { id: 'a3', name: 'Completed', completionDate: '2026-06-15T12:00:00.000Z' },
+        { id: 'a4', name: 'Reference', status: 'reference', flagged: true, dueDate: '2026-06-18', deferDate: '2026-06-17', repetition: 'daily', projectId: 'p1' },
+        { id: 'a5', name: 'Archived', status: 'dropped' },
+        { id: 'a6', name: 'Waiting', status: 'waiting' },
+    ],
+    projects: [{ id: 'p1', name: 'Test project', note: 'Metadata support', folderId: 'f1', folderName: 'Work', dueDate: '2026-06-20', status: 'on hold', tagIds: ['tag1'] }],
+    tags: [{ id: 'tag1', name: 'Ops' }],
+};
+const omniInput = (text = JSON.stringify(omniExport)): NativeBackupDocumentPrepareInput => ({ ...input(), mode: 'omnifocus', text: bytesToBase64(strToU8(text)), metadata: { ...metadata, fileName: 'OmniFocus.json' } });
+const omniSource = (kind: 'csv' | 'json' | 'zip') => {
+    const source = omniInput(); let bytes: Uint8Array;
+    if (kind === 'csv') { bytes = strToU8(omniCsv); source.metadata.fileName = 'OmniFocus.csv'; }
+    else if (kind === 'zip') { bytes = zipSync({ 'OmniFocus.json': strToU8(JSON.stringify({ tasks: omniExport.tasks })), 'metadata.json': strToU8(JSON.stringify({ projects: omniExport.projects, tags: omniExport.tags })), 'readme.txt': strToU8('ignored'), 'nested.zip': strToU8('ignored') }); source.metadata.fileName = 'OmniFocus.zip'; }
+    else bytes = strToU8(JSON.stringify(omniExport));
+    source.text = bytesToBase64(bytes); return { source, bytes };
+};
+
+describe('native OmniFocus CSV/JSON/ZIP prepared import', () => {
+    it.each(['csv','json','zip'] as const)('previews immutable %s with every actual RN OmniFocus count/copy/warning; cancellation writes nothing', async (kind) => {
+        const env = await open(); const before = await env.state(); const { source, bytes } = omniSource(kind); const parsed = parseImportSource('omnifocus', { bytes, fileName: source.metadata.fileName }); expect(parsed.valid).toBe(true); const counts = parsed.preview!;
+        const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'omnifocus'); expect(preview.valid).toBe(true); expect(Object.keys(preview)).toHaveLength(7); expect(preview.title).toBe(t('settings.backupMobile.importOmnifocusData')); expect(preview.confirmLabel).toBe(t('settings.backupMobile.import'));
+        expect(preview.summary).toContain(t('settings.backupMobile.importTaskCountFromFile', { taskCount: counts.taskCount, fileName: counts.fileName })); expect(preview.summary).toContain(t('settings.backupMobile.projectsWillBeCreatedWhenNeeded', { projectCount: counts.projectCount }));
+        if (counts.areaCount) expect(preview.summary).toContain(t('settings.backupMobile.omnifocusAreasWillBeCreated', { areaCount: counts.areaCount })); if (counts.checklistItemCount) expect(preview.summary).toContain(t('settings.backupMobile.nestedTasksWillBecomeChecklistItems', { taskCount: counts.checklistItemCount }));
+        expect(preview.summary).toContain(t('settings.backupMobile.tasksWillStayOutsideProjects', { taskCount: counts.standaloneTaskCount })); expect(preview.summary).toContain(t('settings.backupMobile.importedTasksKeepOmnifocusNotesDatesTagsRecurrenceAndChecklist'));
+        for (const project of counts.projects) expect(preview.summary).toContain(`• ${project.name}: ${project.taskCount}`); for (const diagnostic of createImportDiagnostics(counts.warnings, 'warning')) expect(preview.summary).toContain(formatImportDiagnostic(diagnostic, t));
+        expect(inspectNativeBackupDocument(omniInput('{}').text, source.metadata, t, 'omnifocus').valid).toBe(false); expect(preview.valid).toBe(true); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+    });
+    it('preview limits project examples to first four and retains remaining count', () => {
+        const source = omniInput(csvFile(['Type','Name'], [1,2,3,4,5].map((value) => ['Project',`Project${value}`]))); const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'omnifocus'); expect(preview.valid).toBe(true);
+        for (const value of [1,2,3,4]) expect(preview.summary).toContain(`• Project${value}: 0`); expect(preview.summary).not.toContain('• Project5:'); expect(preview.summary).toContain(t('settings.backupMobile.moreProjects', { projectCount: 1 }));
+    });
+    it.each(['csv','json','zip'] as const)('freezes actual %s policy and generated IDs from fresh durable data; cold exact replay preserves later edits', async (kind) => {
+        const base = clone(original); base.people = [{ id: 'person', name: 'Taylor', createdAt: AT, updatedAt: AT, rev: 1 }]; const env = await open(base); const { source, bytes } = omniSource(kind);
+        inspectNativeBackupDocument(source.text, source.metadata, t, 'omnifocus'); const latest = await env.adapter.getData(); latest.tasks.push(task('latest-omni')); await env.adapter.saveData(latest); env.writes.length = 0; const before = await env.state();
+        const prepared = await prepareNativeBackupDocument(env.adapter, source); const plan = JSON.parse(prepared.planJSON); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before); expect(plan.expectedCurrent.tasks.some((item: Task) => item.id === 'latest-omni')).toBe(true); expect(validateBackupJson(prepared.recoveryJSON!).valid).toBe(true);
+        const parsed = parseImportSource('omnifocus', { bytes, fileName: source.metadata.fileName }); const counts = parsed.preview!; const oracle = applyImportSource('omnifocus', plan.expectedCurrent, parsed.parsedData!);
+        expect(plan.reply.result).toMatchObject({ importedAreaCount: counts.areaCount, importedChecklistItemCount: counts.checklistItemCount, importedProjectCount: counts.projectCount, importedSectionCount: 0, importedStandaloneTaskCount: counts.standaloneTaskCount, importedTaskCount: counts.taskCount, warnings: oracle.result.warnings }); expect(Object.keys(plan.reply)).toHaveLength(4); expect(Object.keys(plan.reply.result)).toHaveLength(7); expect(plan.reply.result).not.toHaveProperty('data');
+        const imported = plan.data.tasks.find((item: Task) => item.title === 'Plan sprint'); expect(imported).toMatchObject({ status: 'inbox', priority: 'high', tags: ['#ops'], startTime: '2026-06-17', dueDate: '2026-06-19' }); expect(imported.description).toContain('Plan details'); expect(imported.description).toContain('Planned date in OmniFocus: 2026-06-18'); expect(imported.projectId).toBeTruthy();
+        const project = plan.data.projects.find((item: { title: string }) => item.title === 'Test project'); expect(project).toMatchObject({ status: 'someday', startDate: '2026-06-10', dueDate: '2026-06-20' });
+        if (kind === 'csv') { expect(imported.contexts).toEqual(['@Errands']); expect(imported.description).toContain('Estimated duration in OmniFocus: 45m'); expect(project.supportNotes).toContain('Project support 日本語 🦉'); expect(project.tagIds).toEqual(['#work']); expect(plan.data.projects.find((item: { title: string }) => item.title === 'Archived project').status).toBe('archived'); expect(plan.data.tasks.find((item: Task) => item.title === 'Someday').status).toBe('someday'); }
+        else { expect(imported.checklist).toEqual([{ id: expect.any(String), title: 'Confirm scope', isCompleted: true }]); expect(imported.recurrence).toMatchObject({ rule: 'weekly', strategy: 'fluid', byDay: ['MO','WE'], rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE' }); expect(project.supportNotes).toContain('Root project note'); expect(project.supportNotes).toContain('Metadata support'); expect(project.areaId).toBe(plan.data.areas[0].id);
+            expect(plan.data.tasks.find((item: Task) => item.title === 'Plan sprint -> Book room')).toMatchObject({ dueDate: '2026-06-20', tags: ['#ops'] }); expect(plan.data.tasks.find((item: Task) => item.title === 'Plan sprint -> Book room -> Share agenda').description).toContain('Original OmniFocus hierarchy: Plan sprint > Book room'); }
+        expect(plan.data.tasks.find((item: Task) => item.title === 'Reference')).toMatchObject({ status: 'reference' }); for (const field of ['startTime','dueDate','priority','recurrence']) expect(plan.data.tasks.find((item: Task) => item.title === 'Reference')[field]).toBeUndefined();
+        expect(plan.data.tasks.find((item: Task) => item.title === 'Completed')).toMatchObject({ status: 'done', completedAt: '2026-06-15T12:00:00.000Z' }); expect(plan.data.tasks.find((item: Task) => item.title === 'Archived').status).toBe('archived'); expect(plan.data.tasks.find((item: Task) => item.title === 'Waiting').status).toBe('waiting'); expect(plan.data.people).toEqual(plan.expectedCurrent.people);
+        const first = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME); expect((await env.adapter.getData()).tasks.find((item) => item.id === imported.id)?.checklist).toEqual(imported.checklist);
+        const later = await env.adapter.getData(); const changed = later.tasks.find((item) => item.id === imported.id)!; changed.title = 'Later OmniFocus edit'; changed.rev! += 1; await env.adapter.saveData(later); const committed = await env.state();
+        resetNativeRequestReceipts(); await loadNativeRequestReceipts(env.sql.client, { durableCommands: ['backupDocument'] }); const cold = new NativeReceiptSqliteAdapter(env.client, { rejectConcurrentWrites: true }); await cold.ensureSchema(); setStorageAdapter(cold); env.writes.length = 0;
+        expect(await readNativeBackupDocumentOutcome(cold, reference, prepared.planJSON, NAME)).toEqual(first); expect(await commitNativeBackupDocument(cold, reference, prepared.planJSON, NAME)).toEqual(first); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(committed); expect(useTaskStore.getState()._allTasks.find((item) => item.id === imported.id)?.title).toBe('Later OmniFocus edit');
+    });
+    it.each(['live','deleted'] as const)('a genuinely new import mints fresh IDs while preserving %s prior imported records', async (condition) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, omniInput()); const firstPlan = JSON.parse(prepared.planJSON); await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        const firstIds = new Set(firstPlan.data.tasks.filter((item: Task) => !firstPlan.expectedCurrent.tasks.some((existing: Task) => existing.id === item.id)).map((item: Task) => item.id)); const latest = await env.adapter.getData();
+        for (const item of latest.tasks) if (firstIds.has(item.id)) { item.title = `Edited ${item.title}`; item.rev! += 1; if (condition === 'deleted') item.deletedAt = AT; } if (condition === 'deleted') { for (const item of latest.projects) item.deletedAt = AT; for (const item of latest.areas) item.deletedAt = AT; }
+        await env.adapter.saveData(latest); env.writes.length = 0; const id = '22222222-2222-4222-8222-222222222222'; const again = await prepareNativeBackupDocument(env.adapter, { ...omniInput(), requestId: id }); const plan = JSON.parse(again.planJSON); expect(plan.reply.result.importedTaskCount).toBe(firstPlan.reply.result.importedTaskCount); expect(plan.reply.result.importedProjectCount).toBe(1); expect(plan.reply.result.importedAreaCount).toBe(1);
+        const newTasks = plan.data.tasks.filter((item: Task) => !plan.expectedCurrent.tasks.some((existing: Task) => existing.id === item.id)); expect(newTasks).toHaveLength(firstPlan.reply.result.importedTaskCount); for (const item of newTasks) expect(firstIds.has(item.id)).toBe(false);
+        for (const item of plan.data.tasks) if (firstIds.has(item.id)) { expect(item.title.startsWith('Edited ')).toBe(true); if (condition === 'deleted') expect(item.deletedAt).toBe(AT); } expect(env.writes).toEqual([]);
+        await commitNativeBackupDocument(env.adapter, { ...reference, id, sha256: 'b'.repeat(64) }, again.planJSON, NAME); const savedIds = (await env.adapter.getData()).tasks.map((item) => item.id); env.writes.length = 0;
+        await commitNativeBackupDocument(env.adapter, { ...reference, id, sha256: 'b'.repeat(64) }, again.planJSON, NAME); expect((await env.adapter.getData()).tasks.map((item) => item.id)).toEqual(savedIds); expect(env.writes).toEqual([]);
+    });
+    it.each(['csv','json','zip'] as const)('uses exact RN %s result counts, optional fields, all execution warnings and snapshot Undo', async (kind) => {
+        const env = await open(); const { source } = omniSource(kind); const reply = JSON.parse((await prepareNativeBackupDocument(env.adapter, source)).planJSON).reply; const result = reply.result;
+        const model = buildNativeBackupDocumentResult(reply, t); expect(model.title).toBe(t('settings.backupMobile.importComplete')); expect(model.undoLabel).toBe(t('settings.undoImport')); expect(model.message).toContain(t('settings.backupMobile.importedTaskProjectCounts', { taskCount: result.importedTaskCount, projectCount: result.importedProjectCount }));
+        if (result.importedAreaCount) expect(model.message).toContain(t('settings.backupMobile.omnifocusAreasCreated', { areaCount: result.importedAreaCount })); if (result.importedChecklistItemCount) expect(model.message).toContain(t('settings.backupMobile.nestedTasksBecameChecklistItems', { taskCount: result.importedChecklistItemCount })); expect(model.message).toContain(t('settings.backupMobile.tasksStayedOutsideProjects', { taskCount: result.importedStandaloneTaskCount })); expect(model.message).toContain(NAME);
+        for (const diagnostic of createImportDiagnostics(result.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
+    });
+    it('accepts shared UTF16LE CSV bytes through unchanged binary transport', async () => {
+        const bytes = new Uint8Array(2 + omniCsv.length * 2); bytes[0] = 0xff; bytes[1] = 0xfe; for (let index = 0; index < omniCsv.length; index += 1) { bytes[2 + index * 2] = omniCsv.charCodeAt(index) & 0xff; bytes[3 + index * 2] = omniCsv.charCodeAt(index) >> 8; }
+        const env = await open(); const source = { ...omniInput(), text: bytesToBase64(bytes), metadata: { ...metadata, fileName: 'UTF16.csv' } }; expect(inspectNativeBackupDocument(source.text, source.metadata, t, 'omnifocus').valid).toBe(true); const plan = JSON.parse((await prepareNativeBackupDocument(env.adapter, source)).planJSON); expect(plan.data.tasks.some((item: Task) => item.title === 'Plan sprint')).toBe(true); expect(env.writes).toEqual([]);
+    });
+    it('OmniFocus Undo restores exact pre-import snapshot and tombstones later edits without a second recovery', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, omniInput()); await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        const later = await env.adapter.getData(); later.tasks.push(task('after-omni')); later.tasks.find((item) => item.id === 'visible')!.title = 'Later'; await env.adapter.saveData(later);
+        const id = '22222222-2222-4222-8222-222222222222'; const undo = await prepareNativeBackupDocument(env.adapter, { ...input(prepared.recoveryJSON!, 'restore'), requestId: id }); expect(undo.recoveryJSON).toBeNull(); await commitNativeBackupDocument(env.adapter, { ...reference, id, sha256: 'b'.repeat(64) }, undo.planJSON, NAME);
+        const restored = await env.adapter.getData(); expect(restored.tasks.find((item) => item.id === 'visible')?.title).toBe('visible'); expect(restored.tasks.find((item) => item.id === 'after-omni')?.deletedAt).toBeTruthy(); expect(restored.projects.filter((item) => !item.deletedAt)).toEqual([]);
+    });
+    it.each(['{}','{"tasks":[]}','Title,List Name\nPrivate,Private','{private'])('invalid OmniFocus source %s returns localized refusal without adapter access', async (text) => {
+        const env = await open(); const source = omniInput(text); const read = vi.spyOn(env.adapter, 'getData'); const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'omnifocus'); expect(preview.valid).toBe(false); expect(preview.errorMessage).not.toContain('Private'); await expect(prepareNativeBackupDocument(env.adapter, source)).rejects.toThrow('INVALID_INPUT:'); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it.each(['TR==','TWF=','TQ=','====','VHlwZSxO\n','VHlwZSxO_'])('OmniFocus rejects noncanonical binary transport %s before adapter access', async (text) => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData'); await expect(prepareNativeBackupDocument(env.adapter, { ...omniInput(), text })).rejects.toThrow('INVALID_INPUT:'); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('OmniFocus bounds binary input to16MiB before allocation and retains shared8MiB text/ZIP limits', async () => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData'); await expect(prepareNativeBackupDocument(env.adapter, { ...omniInput(), text: 'A'.repeat(4 * Math.ceil((16 * 1024 * 1024 + 1) / 3)) })).rejects.toThrow('OmniFocus source exceeds 16 MiB');
+        const exact = 'A'.repeat(4 * Math.ceil(16 * 1024 * 1024 / 3) - 2) + '=='; await expect(prepareNativeBackupDocument(env.adapter, { ...omniInput(), text: exact })).rejects.toThrow('INVALID_INPUT: Invalid backup document input'); expect(inspectNativeBackupDocument(exact, omniInput().metadata, t, 'omnifocus').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded'));
+        const zip = bytesToBase64(zipSync({ 'too-large.json': new Uint8Array(8 * 1024 * 1024 + 1) })); expect(inspectNativeBackupDocument(zip, omniInput().metadata, t, 'omnifocus').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded')); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    }, 15_000);
+    it('refuses actual complete over64KiB OmniFocus execution warnings before returning a plan', async () => {
+        const base = clone(original); const rows: string[][] = []; for (let index = 0; index < 40; index += 1) { const name = `Project${index}-${'A'.repeat(1000)}`; base.projects.push({ ...createMockProject(`existing-${index}`, AT), title: name }); rows.push(['Project', name]); }
+        const env = await open(base); await expect(prepareNativeBackupDocument(env.adapter, omniInput(csvFile(['Type','Name'], rows)))).rejects.toThrow('OmniFocus import result exceeds 64 KiB'); expect(env.writes).toEqual([]);
+    });
+    it.each(['extra','data','missing-standalone','negative','fraction','unsafe','warning','overflow','mode'] as const)('refuses malformed OmniFocus result %s at every boundary before writes', async (fault) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, omniInput()); const plan = JSON.parse(prepared.planJSON);
+        if (fault === 'extra') plan.reply.added = 1; if (fault === 'data') plan.reply.result.data = plan.data; if (fault === 'missing-standalone') delete plan.reply.result.importedStandaloneTaskCount; if (fault === 'negative') plan.reply.result.importedTaskCount = -1; if (fault === 'fraction') plan.reply.result.importedStandaloneTaskCount = 0.5; if (fault === 'unsafe') plan.reply.result.importedTaskCount = Number.MAX_SAFE_INTEGER + 1;
+        if (fault === 'warning') plan.reply.result.warnings = [1]; if (fault === 'overflow') plan.reply.result.warnings = ['私'.repeat(23_000)]; if (fault === 'mode') plan.reply.operation = 'other'; const save = vi.spyOn(env.adapter, 'saveDocumentWithReceipt');
+        expect(() => buildNativeBackupDocumentResult(plan.reply, t)).toThrow('INVALID_INPUT:'); await expect(commitNativeBackupDocument(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); await expect(readNativeBackupDocumentOutcome(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); expect(save).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('refuses valid CSV-shaped reply that mismatches frozen OmniFocus plan mode before writes', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, omniInput()); const plan = JSON.parse(prepared.planJSON); plan.reply.operation = 'csv'; expect(() => buildNativeBackupDocumentResult(plan.reply, t)).not.toThrow(); await expect(commitNativeBackupDocument(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); await expect(readNativeBackupDocumentOutcome(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); expect(env.writes).toEqual([]);
+    });
+    it('refuses stale OmniFocus frozen plan after intervening durable change without writes', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, omniInput()); const later = await env.adapter.getData(); later.tasks[0].title = 'Changed after OmniFocus'; later.tasks[0].rev! += 1; await env.adapter.saveData(later); const before = await env.state(); env.writes.length = 0; await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:'); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+    });
+});

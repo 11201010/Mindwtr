@@ -23,6 +23,7 @@ export type DataSettingsModel = {
         todoistImportLabel: string; todoistImportDescription: string;
         ticktickImportLabel: string; ticktickImportDescription: string;
         dgtImportLabel: string; dgtImportDescription: string;
+        omnifocusImportLabel: string; omnifocusImportDescription: string;
         tasknotesLabel: string; tasknotesDescription: string; tasknotesFailed: string;
         mergeLabel: string; mergeDescription: string; mergeFailed: string; snapshotsLabel: string; restoreLabel: string;
     };
@@ -62,6 +63,8 @@ export function buildDataSettingsModel(settings: AppSettings, t: Translate): Dat
             ticktickImportDescription: t('settings.importTickTickDesc'),
             dgtImportLabel: t('settings.importDgt'),
             dgtImportDescription: t('settings.importDgtDesc'),
+            omnifocusImportLabel: t('settings.importOmniFocus'),
+            omnifocusImportDescription: t('settings.importOmniFocusDesc'),
             tasknotesLabel: t('settings.exportTaskNotes'),
             tasknotesDescription: t('settings.exportTaskNotesDesc'),
             tasknotesFailed: t('settings.exportTaskNotesFailed'),

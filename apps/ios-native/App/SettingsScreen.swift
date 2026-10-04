@@ -2004,6 +2004,7 @@ struct DiagnosticsCard: View {
             get: { owner == model.settingsDiagnosticsOwner && model.backupImportPickerPresented },
             set: { if owner == model.settingsDiagnosticsOwner { model.setBackupImportPickerPresented($0) } }
         ), allowedContentTypes: pickerAction == .dgt ? [.json, .zip, .data]
+            : pickerAction == .omnifocus ? [.commaSeparatedText, .json, .zip, .data]
             : pickerAction.usesBinarySource ? [.commaSeparatedText, .zip, .data] : [.json],
            allowsMultipleSelection: false) { result in
             Task { await model.receiveBackupImportSelection(result, pickerID: pickerID, action: pickerAction) }
@@ -2133,6 +2134,16 @@ struct DiagnosticsCard: View {
         }
         .disabled(!model.backupImportEnabled)
         .accessibilityIdentifier("data-transfer-import-dgt")
+        Button { model.openBackupImportPicker(action: .omnifocus) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("omnifocusImportLabel")).rnFont(15, .semibold)
+                Text(backup.text("omnifocusImportDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-import-omnifocus")
         if model.backupImportBusy {
             ProgressView().accessibilityIdentifier("backup-import-progress")
         }

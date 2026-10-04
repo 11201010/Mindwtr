@@ -2842,7 +2842,7 @@ globalThis.MindwtrHost = {
             if (pending.queued || pending.inFlight || pending.immediate || pending.retrying || pending.failed) {
                 throw new Error('NOT_READY: Backup inspection is unavailable while saving is pending');
             }
-            if (format !== 'json' && format !== 'json-restore' && format !== 'csv' && format !== 'todoist' && format !== 'ticktick' && format !== 'dgt') throw new Error('INVALID_INPUT: Invalid backup document input');
+            if (format !== 'json' && format !== 'json-restore' && format !== 'csv' && format !== 'todoist' && format !== 'ticktick' && format !== 'dgt' && format !== 'omnifocus') throw new Error('INVALID_INPUT: Invalid backup document input');
             return inspectNativeBackupDocument(text, backupJson(metadataJSON) as Parameters<typeof inspectNativeBackupDocument>[1], backupTranslate, format);
         });
     },

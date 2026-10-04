@@ -16,11 +16,11 @@ public struct CoreHostAppLockRecovery: LocalizedError, Sendable {
 }
 
 public enum NativeBackupImportAction: String, Sendable {
-    case merge = "json", replace = "json-restore", csv = "csv", todoist = "todoist", ticktick = "ticktick", dgt = "dgt"
+    case merge = "json", replace = "json-restore", csv = "csv", todoist = "todoist", ticktick = "ticktick", dgt = "dgt", omnifocus = "omnifocus"
     public var operation: String {
-        switch self { case .merge: return "merge"; case .replace: return "replace"; case .csv: return "csv"; case .todoist: return "todoist"; case .ticktick: return "ticktick"; case .dgt: return "dgt" }
+        switch self { case .merge: return "merge"; case .replace: return "replace"; case .csv: return "csv"; case .todoist: return "todoist"; case .ticktick: return "ticktick"; case .dgt: return "dgt"; case .omnifocus: return "omnifocus" }
     }
-    public var usesBinarySource: Bool { self == .csv || self == .todoist || self == .ticktick || self == .dgt }
+    public var usesBinarySource: Bool { self == .csv || self == .todoist || self == .ticktick || self == .dgt || self == .omnifocus }
     var maximumBytes: Int { usesBinarySource ? 16 * 1024 * 1024 : NativeBackupImportFile.maximumBytes }
 }
 
@@ -1440,6 +1440,7 @@ private final class Engine: @unchecked Sendable {
                 "INVALID_INPUT: Todoist source exceeds 16 MiB", "INVALID_INPUT: Todoist import result exceeds 64 KiB",
                 "INVALID_INPUT: TickTick source exceeds 16 MiB", "INVALID_INPUT: TickTick import result exceeds 64 KiB",
                 "INVALID_INPUT: DGT source exceeds 16 MiB", "INVALID_INPUT: DGT import result exceeds 64 KiB",
+                "INVALID_INPUT: OmniFocus source exceeds 16 MiB", "INVALID_INPUT: OmniFocus import result exceeds 64 KiB",
                 "INVALID_INPUT: Backup source exceeds 128 MiB", "INVALID_INPUT: Recovery snapshot exceeds 128 MiB",
                 "INVALID_INPUT: Prepared backup plan exceeds 512 MiB", "INVALID_INPUT: Recovery snapshot is not a valid backup"
             ].contains(failure.message) { throw CoreHostRejection(message: failure.message) }
@@ -1500,6 +1501,7 @@ private final class Engine: @unchecked Sendable {
                 "INVALID_INPUT: Todoist source exceeds 16 MiB", "INVALID_INPUT: Todoist import result exceeds 64 KiB",
                 "INVALID_INPUT: TickTick source exceeds 16 MiB", "INVALID_INPUT: TickTick import result exceeds 64 KiB",
                 "INVALID_INPUT: DGT source exceeds 16 MiB", "INVALID_INPUT: DGT import result exceeds 64 KiB",
+                "INVALID_INPUT: OmniFocus source exceeds 16 MiB", "INVALID_INPUT: OmniFocus import result exceeds 64 KiB",
                 "INVALID_INPUT: Backup source exceeds 128 MiB", "INVALID_INPUT: Recovery snapshot exceeds 128 MiB",
                 "INVALID_INPUT: Prepared backup plan exceeds 512 MiB", "INVALID_INPUT: Recovery snapshot is not a valid backup"
             ].contains(failure.message) { throw CoreHostRejection(message: failure.message) }
@@ -1518,7 +1520,7 @@ private final class Engine: @unchecked Sendable {
               Set(value.keys) == Set(["planJSON", "recoveryJSON"]), let plan = value["planJSON"] as? String else {
             throw HostFailure("Backup plan unavailable")
         }
-        if mode == "merge" || mode == "csv" || mode == "replace" || mode == "todoist" || mode == "ticktick" || mode == "dgt" {
+        if mode == "merge" || mode == "csv" || mode == "replace" || mode == "todoist" || mode == "ticktick" || mode == "dgt" || mode == "omnifocus" {
             guard let snapshot = value["recoveryJSON"] as? String, existingSnapshot == nil else {
                 throw HostFailure("Backup recovery copy unavailable")
             }

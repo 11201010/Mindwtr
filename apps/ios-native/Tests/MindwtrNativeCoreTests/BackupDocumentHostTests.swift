@@ -804,4 +804,240 @@ final class BackupDocumentHostTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 
+    private var omniFocusCSVFixture: String {
+        """
+        Task ID,Type,Name,Status,Project,Context,Start Date,Planned Date,Due Date,Completion Date,Duration,Flagged,Notes,Tags
+        1,Project,Task209 House Renovation,Active,,,2035-04-01,,2035-04-10,,,0,Project support note,Home
+        2,Action,Task209 Buy paint,Available,Task209 House Renovation,Errands,2035-04-01,2035-04-03,2035-04-02,,45m,1,Eggshell white,Deep Work
+        3,Action,Task209 Call contractor,Completed,,Calls,2035-04-02,,2035-04-04,2035-04-04T09:00:00.000Z,,0,Call support note,Phone
+        """
+    }
+
+    private var omniFocusJSONFixture: String {
+        """
+        {"tasks":[{"id":"project-1","name":"Task209 Launch","note":"Root project note","dueDate":"2035-04-10","deferDate":"2035-04-01","tagIds":["tag-1"],"projectId":"project-1"},{"id":"task-1","name":"Task209 Plan sprint","note":"Plan details","dueDate":"2035-04-02","deferDate":"2035-04-01","plannedDate":"2035-04-03","flagged":true,"tagIds":["tag-1"],"parentTaskId":"project-1","projectId":"project-1","repetition":{"byDay":"MO,WE","fromCompletion":true,"interval":2,"unit":"weekly"}},{"id":"task-1a","name":"Confirm scope","completed":true,"completionDate":"2035-04-02T08:00:00.000Z","parentTaskId":"task-1","projectId":"project-1"},{"id":"task-1b","name":"Book room","note":"Need room","dueDate":"2035-04-04","tagIds":["tag-1"],"parentTaskId":"task-1","projectId":"project-1"},{"id":"task-1c","name":"Share agenda","note":"Email team","parentTaskId":"task-1b","projectId":"project-1"},{"id":"inbox-1","name":"Task209 Inbox capture","note":"Standalone support note"}],"projects":[{"id":"project-1","name":"Task209 Launch","note":"Metadata project note","folderId":"folder-1","folderName":"Task209 Work","completed":false,"status":"active","creationDate":"2035-04-01T00:00:00.000Z"}],"tags":[{"id":"tag-1","name":"Tag 1"}]}
+        """
+    }
+
+    private func omniFocusResult(_ reply: [String: Any]) throws -> [String: Any] {
+        XCTAssertEqual(Set(reply.keys), ["version", "operation", "snapshotName", "result"])
+        XCTAssertEqual(reply["version"] as? Int, 1)
+        XCTAssertEqual(reply["operation"] as? String, "omnifocus")
+        XCTAssertFalse((reply["snapshotName"] as? String ?? "").isEmpty)
+        let result = try XCTUnwrap(reply["result"] as? [String: Any])
+        XCTAssertEqual(Set(result.keys), ["importedAreaCount", "importedChecklistItemCount", "importedProjectCount", "importedSectionCount", "importedStandaloneTaskCount", "importedTaskCount", "warnings"])
+        return result
+    }
+
+    private func omniFocusStoredStrings(_ value: Any?) throws -> [String] {
+        let encoded = try XCTUnwrap(value as? String)
+        return try XCTUnwrap(NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String])
+    }
+
+    func testOmniFocusOwnedCSVFreshConfirmationNewImportsMintFreshIDsAndColdUndo() async throws {
+        let core = host(); _ = try await core.start()
+        let local = try await capture(core, "Existing before OmniFocus")
+        let url = root.appendingPathComponent("Task209-OmniFocus.csv")
+        try omniFocusCSVFixture.write(to: url, atomically: true, encoding: .utf8)
+        let preview = try await core.prepareBackupImport(url, action: .omnifocus)
+        XCTAssertEqual(preview.action, .omnifocus)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        let during = try await capture(core, "After OmniFocus preview")
+        try "Changed provider bytes".write(to: url, atomically: true, encoding: .utf8)
+        let reply = try object(await core.mergeBackupImport(preview.id))
+        let result = try omniFocusResult(reply)
+        XCTAssertEqual(result["importedTaskCount"] as? Int, 2)
+        XCTAssertEqual(result["importedProjectCount"] as? Int, 1)
+        XCTAssertEqual(result["importedAreaCount"] as? Int, 0)
+        XCTAssertEqual(result["importedSectionCount"] as? Int, 0)
+        XCTAssertEqual(result["importedChecklistItemCount"] as? Int, 0)
+        XCTAssertEqual(result["importedStandaloneTaskCount"] as? Int, 1)
+        XCTAssertEqual(result["warnings"] as? [String], [])
+        let task = try XCTUnwrap(rows("SELECT * FROM tasks WHERE title = ?", ["Task209 Buy paint"]).first)
+        XCTAssertEqual(task["status"] as? String, "inbox")
+        XCTAssertEqual(task["priority"] as? String, "high")
+        XCTAssertEqual(task["startTime"] as? String, "2035-04-01")
+        XCTAssertEqual(task["dueDate"] as? String, "2035-04-02")
+        XCTAssertEqual(try omniFocusStoredStrings(task["contexts"]), ["@Errands"])
+        XCTAssertEqual(try omniFocusStoredStrings(task["tags"]), ["#deep work"])
+        XCTAssertTrue((task["description"] as? String ?? "").contains("Planned date in OmniFocus: 2035-04-03"))
+        XCTAssertTrue((task["description"] as? String ?? "").contains("Estimated duration in OmniFocus: 45m"))
+        let completed = try XCTUnwrap(rows("SELECT * FROM tasks WHERE title = ?", ["Task209 Call contractor"]).first)
+        XCTAssertEqual(completed["status"] as? String, "done")
+        XCTAssertEqual(completed["completedAt"] as? String, "2035-04-04T09:00:00.000Z")
+        XCTAssertNil(completed["projectId"] as? String)
+        XCTAssertEqual(try omniFocusStoredStrings(completed["contexts"]), ["@Calls"])
+        XCTAssertEqual(try omniFocusStoredStrings(completed["tags"]), ["#phone"])
+        let project = try XCTUnwrap(rows("SELECT * FROM projects WHERE title = ?", ["Task209 House Renovation"]).first)
+        XCTAssertEqual(project["supportNotes"] as? String, "Project support note")
+        XCTAssertEqual(project["startDate"] as? String, "2035-04-01")
+        XCTAssertEqual(project["dueDate"] as? String, "2035-04-10")
+        XCTAssertEqual(task["projectId"] as? String, project["id"] as? String)
+        let firstIDs = Set(try rows("SELECT id FROM tasks WHERE title IN (?, ?) AND deletedAt IS NULL", ["Task209 Buy paint", "Task209 Call contractor"]).compactMap { $0["id"] as? String })
+        XCTAssertEqual(firstIDs.count, 2)
+        let model = try object(await core.backupDocumentResultModel(json(reply)))
+        XCTAssertFalse((model["undoLabel"] as? String ?? "").isEmpty)
+        // A new import intentionally creates new OmniFocus identities; only an
+        // exact request retry reuses the frozen IDs in its prepared document.
+        try omniFocusCSVFixture.write(to: url, atomically: true, encoding: .utf8)
+        let repeatedPreview = try await core.prepareBackupImport(url, action: .omnifocus)
+        let repeated = try omniFocusResult(object(await core.mergeBackupImport(repeatedPreview.id)))
+        XCTAssertEqual(repeated["importedTaskCount"] as? Int, 2)
+        XCTAssertEqual(repeated["importedProjectCount"] as? Int, 1)
+        let allImportIDs = Set(try rows("SELECT id FROM tasks WHERE title IN (?, ?) AND deletedAt IS NULL", ["Task209 Buy paint", "Task209 Call contractor"]).compactMap { $0["id"] as? String })
+        XCTAssertEqual(allImportIDs.count, 4)
+        XCTAssertTrue(firstIDs.isSubset(of: allImportIDs))
+        XCTAssertEqual(allImportIDs.subtracting(firstIDs).count, 2)
+        XCTAssertEqual(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").count, 6)
+        let roster = try await snapshots(core)
+        let original = try XCTUnwrap(roster.first { $0["name"] as? String == reply["snapshotName"] as? String })
+        let later = try await capture(core, "Later OmniFocus change undone")
+        await core.close()
+        let reopened = host(); _ = try await reopened.start()
+        let restored = try object(await reopened.restoreBackupSnapshot(json(original)))
+        XCTAssertEqual(restored["operation"] as? String, "restore")
+        await reopened.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(Set(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").compactMap { $0["id"] as? String }), [local, during])
+        for id in allImportIDs.union([later]) {
+            XCTAssertNotNil(try rows("SELECT deletedAt FROM tasks WHERE id = ?", [id]).first?["deletedAt"] as? String)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testOmniFocusLostAcknowledgmentColdExactReplayKeepsLaterEditsAndFrozenIDs() async throws {
+        let faults = HostIOFaults(); let core = host(faults); _ = try await core.start()
+        let url = root.appendingPathComponent("Task209-OmniFocus.csv")
+        try omniFocusCSVFixture.write(to: url, atomically: true, encoding: .utf8)
+        let preview = try await core.prepareBackupImport(url, action: .omnifocus)
+        var writes = 0
+        faults.journalWrite = { writes += 1; if writes == 2 { throw HostFailure("Injected OmniFocus lost reply") } }
+        await failure { _ = try await core.mergeBackupImport(preview.id) }
+        let owedJournal = try Data(contentsOf: journal)
+        XCTAssertEqual(try object(String(decoding: owedJournal, as: UTF8.self))["method"] as? String, "backupDocumentCommit")
+        let frozenIDs = Set(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").compactMap { $0["id"] as? String })
+        XCTAssertEqual(frozenIDs.count, 2)
+        await core.close()
+        XCTAssertEqual(try Data(contentsOf: journal), owedJournal)
+        let id = try XCTUnwrap(rows("SELECT id FROM tasks WHERE title = ?", ["Task209 Buy paint"]).first?["id"] as? String)
+        _ = try rows("UPDATE tasks SET title = ?, rev = rev + 1, updatedAt = ? WHERE id = ?", ["Later OmniFocus edit", "2037-01-01T00:00:00.000Z", id])
+        let beforeTasks = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let beforeProjects = try json(rows("SELECT * FROM projects ORDER BY id"))
+        let reopened = host(); _ = try await reopened.start()
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), beforeTasks)
+        XCTAssertEqual(try json(rows("SELECT * FROM projects ORDER BY id")), beforeProjects)
+        XCTAssertEqual(Set(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").compactMap { $0["id"] as? String }), frozenIDs)
+        let roster = try await snapshots(reopened); XCTAssertEqual(roster.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), beforeTasks)
+        XCTAssertEqual(try json(rows("SELECT * FROM projects ORDER BY id")), beforeProjects)
+    }
+
+    func testOmniFocusJSONAndZIPSharedHierarchyMetadataAndCancelWithoutWrite() async throws {
+        let core = host(); _ = try await core.start()
+        _ = try await capture(core, "OmniFocus ZIP baseline")
+        let before = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let jsonURL = root.appendingPathComponent("Task209-OmniFocus.json")
+        try omniFocusJSONFixture.write(to: jsonURL, atomically: true, encoding: .utf8)
+        let direct = try await core.prepareBackupImport(jsonURL, action: .omnifocus)
+        XCTAssertEqual(try object(direct.json)["valid"] as? Bool, true)
+        await core.discardBackupImport(direct.id)
+        await failure { _ = try await core.mergeBackupImport(direct.id) }
+        try "{invalid".write(to: jsonURL, atomically: true, encoding: .utf8)
+        let invalid = try await core.prepareBackupImport(jsonURL, action: .omnifocus)
+        XCTAssertEqual(try object(invalid.json)["valid"] as? Bool, false)
+        let url = root.appendingPathComponent("Task209-OmniFocus.zip")
+        try XCTUnwrap(Data(base64Encoded: "UEsDBBQAAAAIAACYn1udNic6dgEAAMQDAAAOAAAAT21uaUZvY3VzLmpzb26lk09PwkAQxb/KZs/FrICJ9ihwIPFfhMREw2Fph7LS7my2W5WQfnd3SrGhFjUx6aF5M933ezPbHXcy3+Q8fNlxFfOQG4uvELneOQ+4lhl4ae47+uKK3chCR2vS0ZH+iOhY3c8qLeBxAWNZVfticNETw965IBlWYFsFQRZOJtOY7OnNmy6CA8H0mKYMakDi7aJ7SKVmubFKuwaxEmNwUqV5J53o/0Rn/Oca4nZp4EurVCYJeCBnC+jOIS1oR3itKKciBtyCAaecQs3DHV9ux3LrO27vg6cJWVrMRpiZ1PdQx97Z5wX7JlMe9gNeaOX8F+8Am3TLy9bQZDO1EeqVshnLIzS0t2h/bhOoFrzRt4nNxWUohH/OhBDPFOc46deG/rTJZQN1jbhhFjFrFngHEB+kju0NT1yh/wBFDdBs7Q9iMgEdV7PbM00yf52YA0lQnVaU6RcvpZf40XWPp1RgkTSusLSZ2nTmpIdIUQPLC2PQ1r9cuSg/AVBLAwQUAAAACAAAmJ9bdTF9PqkAAAD/AAAADQAAAG1ldGFkYXRhLmpzb25Vj00PgjAMhv8K6XmY4sdBzl5M1BOJicZDMwYiHyNb8UL4725DE0l6aJ+2b/uO0Bv9UpItpPcRqhzSH4kTENBRqxzKyNZr3EcnGjr59Fyz52fFlBNT9N2JAhdQ6CZX5ujV5jSIzellKXnVpnY9qdu+UazcSkGNVQIsEw/uLSDJ1durSqOIK90dKBxf42YX4zbGJENMQ6wQ8QbTQwBT+WfJVUs7ZZS4sekDUEsBAhQAFAAAAAgAAJifW502Jzp2AQAAxAMAAA4AAAAAAAAAAAAAAAAAAAAAAE9tbmlGb2N1cy5qc29uUEsBAhQAFAAAAAgAAJifW3UxfT6pAAAA/wAAAA0AAAAAAAAAAAAAAAAAogEAAG1ldGFkYXRhLmpzb25QSwUGAAAAAAIAAgB3AAAAdgIAAAAA")).write(to: url)
+        let preview = try await core.prepareBackupImport(url, action: .omnifocus)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        await core.discardBackupImport(preview.id)
+        await failure { _ = try await core.mergeBackupImport(preview.id) }
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), before)
+        XCTAssertTrue(try rows("SELECT * FROM projects").isEmpty)
+        XCTAssertTrue(try rows("SELECT * FROM areas").isEmpty)
+        let initial = try await snapshots(core); XCTAssertTrue(initial.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let accepted = try await core.prepareBackupImport(url, action: .omnifocus)
+        let reply = try object(await core.mergeBackupImport(accepted.id))
+        let result = try omniFocusResult(reply)
+        XCTAssertEqual(result["importedAreaCount"] as? Int, 1)
+        XCTAssertEqual(result["importedProjectCount"] as? Int, 1)
+        XCTAssertEqual(result["importedSectionCount"] as? Int, 0)
+        XCTAssertEqual(result["importedTaskCount"] as? Int, 4)
+        XCTAssertEqual(result["importedChecklistItemCount"] as? Int, 1)
+        XCTAssertEqual(result["importedStandaloneTaskCount"] as? Int, 1)
+        XCTAssertEqual(result["warnings"] as? [String], ["2 nested OmniFocus tasks were flattened because Mindwtr cannot preserve their hierarchy directly."])
+        let area = try XCTUnwrap(rows("SELECT * FROM areas WHERE name = ?", ["Task209 Work"]).first)
+        let project = try XCTUnwrap(rows("SELECT * FROM projects WHERE title = ?", ["Task209 Launch"]).first)
+        XCTAssertEqual(project["areaId"] as? String, area["id"] as? String)
+        XCTAssertEqual(project["startDate"] as? String, "2035-04-01")
+        XCTAssertEqual(project["dueDate"] as? String, "2035-04-10")
+        XCTAssertTrue((project["supportNotes"] as? String ?? "").contains("Metadata project note"))
+        XCTAssertTrue((project["supportNotes"] as? String ?? "").contains("Root project note"))
+        XCTAssertEqual(try omniFocusStoredStrings(project["tagIds"]), ["#tag 1"])
+        let parent = try XCTUnwrap(rows("SELECT * FROM tasks WHERE title = ?", ["Task209 Plan sprint"]).first)
+        XCTAssertEqual(parent["projectId"] as? String, project["id"] as? String)
+        XCTAssertEqual(parent["status"] as? String, "inbox")
+        XCTAssertEqual(parent["priority"] as? String, "high")
+        XCTAssertEqual(parent["dueDate"] as? String, "2035-04-02")
+        XCTAssertEqual(parent["startTime"] as? String, "2035-04-01")
+        XCTAssertEqual(try omniFocusStoredStrings(parent["tags"]), ["#tag 1"])
+        XCTAssertTrue((parent["description"] as? String ?? "").contains("Planned date in OmniFocus: 2035-04-03"))
+        let recurrence = try XCTUnwrap(NativeJSON.jsonObject(with: Data((parent["recurrence"] as? String ?? "").utf8)) as? [String: Any])
+        XCTAssertEqual(recurrence["rule"] as? String, "weekly")
+        XCTAssertEqual(recurrence["strategy"] as? String, "fluid")
+        XCTAssertEqual(recurrence["rrule"] as? String, "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE")
+        XCTAssertEqual(recurrence["byDay"] as? [String], ["MO", "WE"])
+        let checklist = try XCTUnwrap(NativeJSON.jsonObject(with: Data((parent["checklist"] as? String ?? "").utf8)) as? [[String: Any]])
+        XCTAssertEqual(checklist.count, 1)
+        XCTAssertEqual(checklist.first?["title"] as? String, "Confirm scope")
+        XCTAssertEqual(checklist.first?["isCompleted"] as? Bool, true)
+        XCTAssertTrue(try rows("SELECT id FROM tasks WHERE title = ?", ["Confirm scope"]).isEmpty)
+        let flattened = try XCTUnwrap(rows("SELECT * FROM tasks WHERE title = ?", ["Task209 Plan sprint -> Book room -> Share agenda"]).first)
+        XCTAssertTrue((flattened["description"] as? String ?? "").contains("Original OmniFocus hierarchy: Task209 Plan sprint > Book room"))
+        let standalone = try XCTUnwrap(rows("SELECT * FROM tasks WHERE title = ?", ["Task209 Inbox capture"]).first)
+        XCTAssertEqual(standalone["status"] as? String, "inbox")
+        XCTAssertNil(standalone["projectId"] as? String)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testOmniFocusOversizedCompleteWarningsKeepFixedReasonBeforeJournalOrSnapshot() async throws {
+        let core = host(); _ = try await core.start()
+        _ = try await capture(core, "OmniFocus capacity baseline")
+        let exported = try await core.prepareDataBackup()
+        var document = try object(String(contentsOf: exported.url, encoding: .utf8))
+        await core.discardDataBackup(exported.id)
+        let names = (0..<40).map { "Project\($0)-" + String(repeating: "A", count: 1000) }
+        document["projects"] = names.map { ["id": UUID().uuidString.lowercased(), "title": $0,
+            "status": "active", "color": "#94a3b8", "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z", "rev": 1] as [String: Any] }
+        let baselineURL = root.appendingPathComponent("baseline.json")
+        try json(document).write(to: baselineURL, atomically: true, encoding: .utf8)
+        let baseline = try await core.prepareBackupImport(baselineURL)
+        _ = try await core.mergeBackupImport(baseline.id)
+        let beforeTasks = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let beforeProjects = try json(rows("SELECT * FROM projects ORDER BY id"))
+        let beforeSnapshots = try json(await snapshots(core))
+        let url = root.appendingPathComponent("omnifocus-large-result.csv")
+        let input = "Task ID,Type,Name,Status,Project,Context,Start Date,Planned Date,Due Date,Completion Date,Duration,Flagged,Notes,Tags\n"
+            + names.enumerated().map { "\($0.offset + 1),Project,\($0.element),Active,,,,,,,,0,," }.joined(separator: "\n")
+        try input.write(to: url, atomically: true, encoding: .utf8)
+        let preview = try await core.prepareBackupImport(url, action: .omnifocus)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        do {
+            _ = try await core.mergeBackupImport(preview.id)
+            XCTFail("Expected bounded complete OmniFocus result refusal")
+        } catch {
+            XCTAssertTrue(error is CoreHostRejection)
+            XCTAssertEqual(error.localizedDescription, "INVALID_INPUT: OmniFocus import result exceeds 64 KiB")
+        }
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), beforeTasks)
+        XCTAssertEqual(try json(rows("SELECT * FROM projects ORDER BY id")), beforeProjects)
+        let finalSnapshots = try await snapshots(core)
+        XCTAssertEqual(try json(finalSnapshots), beforeSnapshots)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.discardBackupImport(preview.id)
+    }
 }

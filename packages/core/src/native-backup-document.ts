@@ -9,6 +9,7 @@ import type { MindwtrCsvImportExecutionResult } from './mindwtr-csv-import';
 import type { TodoistImportExecutionResult } from './todoist-import';
 import type { TickTickImportExecutionResult } from './ticktick-import';
 import type { DgtImportExecutionResult } from './dgt-import';
+import type { OmniFocusImportExecutionResult } from './omnifocus-import';
 import { MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES, type NativeReceiptSqliteAdapter } from './native-request-receipts';
 import { flushPendingSave, useTaskStore } from './store';
 import { markNextLoadAsDocumentReplacement } from './store-settings';
@@ -26,6 +27,7 @@ export type NativeBackupCsvImportResult = Omit<MindwtrCsvImportExecutionResult, 
 export type NativeBackupTodoistImportResult = Omit<TodoistImportExecutionResult, 'data'>;
 export type NativeBackupTickTickImportResult = Omit<TickTickImportExecutionResult, 'data'>;
 export type NativeBackupDgtImportResult = Omit<DgtImportExecutionResult, 'data'>;
+export type NativeBackupOmniFocusImportResult = Omit<OmniFocusImportExecutionResult, 'data'>;
 export type NativeBackupDocumentReply = NativeBackupJsonDocumentReply | {
     version: 1; operation: 'csv'; snapshotName: string; result: NativeBackupCsvImportResult;
 } | {
@@ -34,8 +36,10 @@ export type NativeBackupDocumentReply = NativeBackupJsonDocumentReply | {
     version: 1; operation: 'ticktick'; snapshotName: string; result: NativeBackupTickTickImportResult;
 } | {
     version: 1; operation: 'dgt'; snapshotName: string; result: NativeBackupDgtImportResult;
+} | {
+    version: 1; operation: 'omnifocus'; snapshotName: string; result: NativeBackupOmniFocusImportResult;
 };
-type Operation = 'merge' | 'restore' | 'replace' | 'csv' | 'todoist' | 'ticktick' | 'dgt';
+type Operation = 'merge' | 'restore' | 'replace' | 'csv' | 'todoist' | 'ticktick' | 'dgt' | 'omnifocus';
 export type NativeBackupDocumentPrepareInput = {
     requestId: string; mode: Operation; snapshotName: string;
     text: string; metadata: NativeBackupDocumentMetadata;
@@ -52,7 +56,7 @@ const exact = (value: unknown, fields: string[]): value is Record<string, unknow
     && Object.keys(value).length === fields.length && fields.every((field) => Object.prototype.hasOwnProperty.call(value, field));
 const uuid = (value: unknown): value is string => typeof value === 'string'
     && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(value);
-const mode = (value: unknown): value is Operation => value === 'merge' || value === 'restore' || value === 'replace' || value === 'csv' || value === 'todoist' || value === 'ticktick' || value === 'dgt';
+const mode = (value: unknown): value is Operation => value === 'merge' || value === 'restore' || value === 'replace' || value === 'csv' || value === 'todoist' || value === 'ticktick' || value === 'dgt' || value === 'omnifocus';
 const snapshotPattern = /^data\.(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:\.(\d{3})(?:\.\d+)?)?\.snapshot\.json$/u;
 const snapshot = (value: unknown): value is string => {
     if (typeof value !== 'string' || value.length > 128) return false;
@@ -93,7 +97,7 @@ const sextet = (code: number): number => code >= 65 && code <= 90 ? code - 65
     : code >= 97 && code <= 122 ? code - 71 : code >= 48 && code <= 57 ? code + 4
         : code === 43 ? 62 : code === 47 ? 63 : -1;
 // Validate canonical padding and trailing bits, and bound decoded bytes before allocating.
-const decodeBinarySource = (text: unknown, metadata: unknown, label: 'CSV' | 'Todoist' | 'TickTick' | 'DGT') => {
+const decodeBinarySource = (text: unknown, metadata: unknown, label: 'CSV' | 'Todoist' | 'TickTick' | 'DGT' | 'OmniFocus') => {
     const limit = DEFAULT_IMPORT_SOURCE_LIMITS.maxInputBytes;
     if (typeof text !== 'string') invalid();
     if (text.length > 4 * Math.ceil(limit / 3)) invalid(`${label} source exceeds 16 MiB`);
@@ -111,6 +115,7 @@ const parseCsvSource = (text: unknown, metadata: unknown) => parseImportSource('
 const parseTodoistSource = (text: unknown, metadata: unknown) => parseImportSource('todoist', decodeBinarySource(text, metadata, 'Todoist'));
 const parseTickTickSource = (text: unknown, metadata: unknown) => parseImportSource('ticktick', decodeBinarySource(text, metadata, 'TickTick'));
 const parseDgtSource = (text: unknown, metadata: unknown) => parseImportSource('dgt', decodeBinarySource(text, metadata, 'DGT'));
+const parseOmniFocusSource = (text: unknown, metadata: unknown) => parseImportSource('omnifocus', decodeBinarySource(text, metadata, 'OmniFocus'));
 const warningMessages = (warnings: string[], t: ImportDiagnosticTranslator) => createImportDiagnostics(warnings, 'warning')
     .map((item) => formatImportDiagnostic(item, t));
 const inspectCsv = (text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator) => {
@@ -202,12 +207,37 @@ const inspectDgt = (text: string, metadata: NativeBackupDocumentMetadata, t: Imp
     } catch { return model; }
 };
 
+const inspectOmniFocus = (text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator) => {
+    const model = { valid: false, title: t('settings.backupMobile.importOmnifocusData'), summary: '',
+        confirmLabel: t('settings.backupMobile.import'), cancelLabel: t('common.cancel'),
+        errorTitle: t('settings.backupMobile.importFailed'), errorMessage: t('settings.backupMobile.theSelectedFileIsNotASupportedOmnifocusExport') };
+    try {
+        const parsed = parseOmniFocusSource(text, metadata);
+        if (!parsed.valid || !parsed.preview || !parsed.parsedData) {
+            const error = parsed.diagnostics.find((item) => item.severity === 'error');
+            return { ...model, errorMessage: error ? formatImportDiagnostic(error, t) : model.errorMessage };
+        }
+        const preview = parsed.preview;
+        const projects = preview.projects.slice(0, 4).map((project) => `• ${project.name}: ${project.taskCount}`);
+        if (preview.projects.length > 4) projects.push(t('settings.backupMobile.moreProjects', { projectCount: preview.projects.length - 4 }));
+        const details = [t('settings.backupMobile.importTaskCountFromFile', { taskCount: preview.taskCount, fileName: preview.fileName }),
+            preview.projectCount > 0 ? t('settings.backupMobile.projectsWillBeCreatedWhenNeeded', { projectCount: preview.projectCount }) : null,
+            preview.areaCount > 0 ? t('settings.backupMobile.omnifocusAreasWillBeCreated', { areaCount: preview.areaCount }) : null,
+            preview.checklistItemCount > 0 ? t('settings.backupMobile.nestedTasksWillBecomeChecklistItems', { taskCount: preview.checklistItemCount }) : null,
+            preview.standaloneTaskCount > 0 ? t('settings.backupMobile.tasksWillStayOutsideProjects', { taskCount: preview.standaloneTaskCount }) : null,
+            t('settings.backupMobile.importedTasksKeepOmnifocusNotesDatesTagsRecurrenceAndChecklist'),
+            ...projects, ...warningMessages(preview.warnings, t)].filter(Boolean);
+        return { ...model, valid: true, summary: details.join('\n'), errorMessage: '' };
+    } catch { return model; }
+};
+
 /** RN's immutable inspection preview. Invalid files are ordinary localized values. */
-export function inspectNativeBackupDocument(text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator, format: 'json' | 'json-restore' | 'csv' | 'todoist' | 'ticktick' | 'dgt' = 'json') {
+export function inspectNativeBackupDocument(text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator, format: 'json' | 'json-restore' | 'csv' | 'todoist' | 'ticktick' | 'dgt' | 'omnifocus' = 'json') {
     if (format === 'csv') return inspectCsv(text, metadata, t);
     if (format === 'todoist') return inspectTodoist(text, metadata, t);
     if (format === 'ticktick') return inspectTickTick(text, metadata, t);
     if (format === 'dgt') return inspectDgt(text, metadata, t);
+    if (format === 'omnifocus') return inspectOmniFocus(text, metadata, t);
     if (format !== 'json' && format !== 'json-restore') invalid();
     const replacing = format === 'json-restore';
     const model = {
@@ -257,11 +287,13 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
     let todoist: ReturnType<typeof parseTodoistSource>['parsedProjects'] | undefined;
     let ticktick: ReturnType<typeof parseTickTickSource>['parsedData'];
     let dgt: ReturnType<typeof parseDgtSource>['parsedData'];
+    let omnifocus: ReturnType<typeof parseOmniFocusSource>['parsedData'];
     try {
         if (input.mode === 'csv') { const validation = parseCsvSource(input.text, input.metadata); if (!validation.valid || !validation.parsedData) invalid(); csv = validation.parsedData; }
         else if (input.mode === 'todoist') { const validation = parseTodoistSource(input.text, input.metadata); if (!validation.valid || !validation.preview) invalid(); todoist = validation.parsedProjects; }
         else if (input.mode === 'ticktick') { const validation = parseTickTickSource(input.text, input.metadata); if (!validation.valid || !validation.parsedData) invalid(); ticktick = validation.parsedData; }
         else if (input.mode === 'dgt') { const validation = parseDgtSource(input.text, input.metadata); if (!validation.valid || !validation.parsedData) invalid(); dgt = validation.parsedData; }
+        else if (input.mode === 'omnifocus') { const validation = parseOmniFocusSource(input.text, input.metadata); if (!validation.valid || !validation.parsedData) invalid(); omnifocus = validation.parsedData; }
         else { const validation = parseSource(input.text, input.metadata); if (!validation.valid || !validation.data) invalid(); parsed = validation.data; }
     }
     catch (error) { if (error instanceof BackupInputError) throw error; return invalid(); }
@@ -278,10 +310,18 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
             const todoistApplied = operation === 'todoist' ? applyImportSource('todoist', current, todoist!) : null;
             const ticktickApplied = operation === 'ticktick' ? applyImportSource('ticktick', current, ticktick!) : null;
             const dgtApplied = operation === 'dgt' ? applyImportSource('dgt', current, dgt!) : null;
-            const data = dgtApplied?.data ?? ticktickApplied?.data ?? todoistApplied?.data ?? csvApplied?.data ?? applied?.data ?? applyImportSource('backup', current, parsed!).data;
+            const omnifocusApplied = operation === 'omnifocus' ? applyImportSource('omnifocus', current, omnifocus!) : null;
+            const data = omnifocusApplied?.data ?? dgtApplied?.data ?? ticktickApplied?.data ?? todoistApplied?.data ?? csvApplied?.data ?? applied?.data ?? applyImportSource('backup', current, parsed!).data;
             const counts = applied ? summarizeBackupMerge(applied.result) : { added: 0, updated: 0 };
             let reply: NativeBackupDocumentReply;
-            if (dgtApplied) {
+            if (omnifocusApplied) {
+                const result = omnifocusApplied.result;
+                reply = { version: 1, operation: 'omnifocus', snapshotName, result: {
+                    importedAreaCount: result.importedAreaCount, importedChecklistItemCount: result.importedChecklistItemCount,
+                    importedProjectCount: result.importedProjectCount, importedSectionCount: result.importedSectionCount,
+                    importedStandaloneTaskCount: result.importedStandaloneTaskCount, importedTaskCount: result.importedTaskCount, warnings: result.warnings,
+                } };
+            } else if (dgtApplied) {
                 const result = dgtApplied.result;
                 reply = { version: 1, operation: 'dgt', snapshotName, result: {
                     importedAreaCount: result.importedAreaCount, importedChecklistItemCount: result.importedChecklistItemCount,
@@ -331,8 +371,8 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
 const validateReply = (value: unknown, snapshotName?: string, operation?: Operation): NativeBackupDocumentReply => {
     if (!record(value) || value.version !== 1 || !mode(value.operation) || !snapshot(value.snapshotName)
         || snapshotName !== undefined && value.snapshotName !== snapshotName || operation !== undefined && value.operation !== operation) invalid();
-    if (value.operation === 'csv' || value.operation === 'todoist' || value.operation === 'ticktick' || value.operation === 'dgt') {
-        const counts = value.operation === 'csv'
+    if (value.operation === 'csv' || value.operation === 'todoist' || value.operation === 'ticktick' || value.operation === 'dgt' || value.operation === 'omnifocus') {
+        const counts = value.operation === 'csv' || value.operation === 'omnifocus'
             ? ['importedAreaCount', 'importedChecklistItemCount', 'importedProjectCount', 'importedSectionCount', 'importedStandaloneTaskCount', 'importedTaskCount']
             : value.operation === 'ticktick' || value.operation === 'dgt' ? ['importedAreaCount', 'importedChecklistItemCount', 'importedProjectCount', 'importedSectionCount', 'importedTaskCount']
                 : ['importedChecklistItemCount', 'importedProjectCount', 'importedSectionCount', 'importedTaskCount'];
@@ -340,7 +380,7 @@ const validateReply = (value: unknown, snapshotName?: string, operation?: Operat
         if (!exact(value, ['version', 'operation', 'snapshotName', 'result']) || !exact(result, [...counts, 'warnings'])
             || !counts.every((field) => count(result[field])) || !Array.isArray(result.warnings)
             || !result.warnings.every((warning) => typeof warning === 'string')) invalid();
-        if (!withinUtf8Limit(JSON.stringify(value), MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES)) invalid(`${value.operation === 'csv' ? 'CSV' : value.operation === 'ticktick' ? 'TickTick' : value.operation === 'dgt' ? 'DGT' : 'Todoist'} import result exceeds 64 KiB`);
+        if (!withinUtf8Limit(JSON.stringify(value), MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES)) invalid(`${value.operation === 'csv' ? 'CSV' : value.operation === 'ticktick' ? 'TickTick' : value.operation === 'dgt' ? 'DGT' : value.operation === 'omnifocus' ? 'OmniFocus' : 'Todoist'} import result exceeds 64 KiB`);
     } else if (!exact(value, ['version', 'operation', 'snapshotName', 'added', 'updated']) || !count(value.added) || !count(value.updated)
         || (value.operation === 'restore' || value.operation === 'replace') && (value.added !== 0 || value.updated !== 0)) invalid();
     return value as NativeBackupDocumentReply;
@@ -415,6 +455,16 @@ export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAda
 
 export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply, t: ImportDiagnosticTranslator) {
     validateReply(reply);
+    if (reply.operation === 'omnifocus') {
+        const result = reply.result;
+        return { title: t('settings.backupMobile.importComplete'), message: [
+            t('settings.backupMobile.importedTaskProjectCounts', { taskCount: result.importedTaskCount, projectCount: result.importedProjectCount }),
+            result.importedAreaCount > 0 ? t('settings.backupMobile.omnifocusAreasCreated', { areaCount: result.importedAreaCount }) : null,
+            result.importedChecklistItemCount > 0 ? t('settings.backupMobile.nestedTasksBecameChecklistItems', { taskCount: result.importedChecklistItemCount }) : null,
+            result.importedStandaloneTaskCount > 0 ? t('settings.backupMobile.tasksStayedOutsideProjects', { taskCount: result.importedStandaloneTaskCount }) : null,
+            t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
+            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done') };
+    }
     if (reply.operation === 'ticktick' || reply.operation === 'dgt') {
         const result = reply.result;
         return { title: t('settings.backupMobile.importComplete'), message: [

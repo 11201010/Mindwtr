@@ -3729,6 +3729,8 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
     assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', 'UEsDBA==', metadata, 'ticktick']), 'TickTick binary transport and action pass unchanged');
     assert.equal((await poll(backup, backup.MindwtrHost.backupDocumentInspect('eyJUQVNL', metadataJSON, 'dgt'))).ok, true);
     assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', 'eyJUQVNL', metadata, 'dgt']), 'DGT binary JSON transport and action pass unchanged');
+    assert.equal((await poll(backup, backup.MindwtrHost.backupDocumentInspect('VHlwZSxOYW1l', metadataJSON, 'omnifocus'))).ok, true);
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', 'VHlwZSxOYW1l', metadata, 'omnifocus']), 'OmniFocus binary transport and action pass unchanged');
     const beforeInvalidFormat = backup.backupInputs.length;
     assert.match((await poll(backup, backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON, 'other'))).error, /^INVALID_INPUT:/);
     assert.equal(backup.backupInputs.length, beforeInvalidFormat, 'unsupported format never reaches service');

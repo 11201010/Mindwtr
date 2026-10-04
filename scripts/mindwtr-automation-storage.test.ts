@@ -654,6 +654,8 @@ describe('automation script sqlite writes', () => {
         expect(stderrLines.join('')).toContain('v1.3.2/automation-failed-operation-settled');
     });
 
+    // Real save retries wait 250 + 500 + 1000 + 2000 ms before terminal failure.
+    // Leave room for filesystem work without racing Bun's default five-second deadline.
     test('preserves the operation error when failed settlement is terminal', async () => {
         const firstRoot = mkdtempSync(join(tmpdir(), 'mindwtr-automation-storage-'));
         tempDirs.push(firstRoot);
@@ -695,5 +697,5 @@ describe('automation script sqlite writes', () => {
         const secondMirror = JSON.parse(readFileSync(second.dataPath, 'utf8')) as AppData;
         expect(secondMirror.tasks.map((task) => task.title)).toEqual(['Second profile private task']);
         expect(secondMirror.projects).toEqual([]);
-    });
+    }, 15_000);
 });
