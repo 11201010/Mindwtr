@@ -2743,7 +2743,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert(markerAt >= 0 && markerAt < shareBody.indexOf('diagnosticsLog.serialize'), 'iOS marker queues before the final export barrier');
     assert.match(shareBody, /__mindwtrHostPlatform === 'ios'/);
     assert.match(shareBody, /force: true/);
-    assert.match(shareBody, /context: \{ releaseCheck: 'v1\.3\.4\/ios-diagnostics', operation: 'share' \}/);
+    assert(shareBody.includes("context: { releaseCheck: 'v1.3.4/ios-diagnostics', operation: 'share' }"));
     const clearBody = hostEntry.slice(hostEntry.indexOf('    logClear(): string {'), hostEntry.indexOf('    archiveTaskSelection(json: string)'));
     assert.doesNotMatch(clearBody, /logInfo\(|logWarn\(|diagnosticsLog\.append\(/, 'Clear cannot append a line that recreates its target');
     assert.match(clearBody, /logClearChecked\(\): string \{\s+return submit\(\(\) => diagnosticsLog\.clearChecked\(\)\);/);
