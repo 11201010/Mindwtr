@@ -393,7 +393,7 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
                 {/* Errors raised outside a flow (an incomplete transition found by the
                     status read) have no field to sit next to. */}
                 {flow === 'none' && errorBlock}
-                {flow === 'none' && incompleteTransition
+                {flow !== 'abandon' && incompleteTransition
                     && renderAction(t('settings.syncEncryptionAbandon'), () => openFlow('abandon'))}
             </View>
         </>

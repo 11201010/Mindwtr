@@ -928,6 +928,10 @@ describe('native host contract: Settings › Sync commands replayed after a rest
         const abandon = (await rows()).find((row) => row.kind === 'action' && row.label === t('settings.syncEncryptionAbandon'));
         expect(abandon).toMatchObject({ action: { type: 'open', flow: 'abandon' }, enabled: true });
         expect((await rows()).some((row) => row.kind === 'text' && row.text === t('settings.syncEncryptionErrorTransitionIncomplete'))).toBe(true);
+        // Also in an open flow, right where a retry just failed.
+        value(await contract.runSyncEncryptionAction({ action: { type: 'open', flow: 'enable' } }));
+        expect((await rows()).some((row) => row.kind === 'action' && row.label === t('settings.syncEncryptionAbandon'))).toBe(true);
+        value(await contract.runSyncEncryptionAction({ action: { type: 'cancel' } }));
         value(await contract.runSyncEncryptionAction({ action: { type: 'open', flow: 'abandon' } }));
         const open = await rows();
         expect(open.some((row) => row.kind === 'text' && row.tone === 'warning' && row.text === t('settings.syncEncryptionAbandonWarning'))).toBe(true);

@@ -25,7 +25,7 @@
     "base": "027fde392",
     "command": "cd apps/mobile && MINDWTR_DUMP_SYNC_SETTINGS=<file> TZ=UTC bunx vitest run components/settings/sync-settings-screen.parity.test.tsx, with \"Abandon setup\" in place (dd's decision, 2026-10-04); only the observation below was replaced, and every other observation matched the frozen one",
     "observations": [
-     "encryption: a peer turned it off, mid-transition: the card offers \"Abandon setup\" under the incomplete-change error, as it does for every unfinished change."
+     "encryption: a peer turned it off, mid-transition: the card offers \"Abandon setup\" under the incomplete-change error, and inside an open flow (here Disable) after its Cancel, as it does for every unfinished change."
     ]
    }
   ]
@@ -24315,6 +24315,7 @@
      ],
      "Turn off encryption",
      "Cancel",
+     "Abandon setup",
      "Settings sync options",
      "Choose which preferences stay in sync across devices.",
      "▸",
@@ -24391,6 +24392,12 @@
      ],
      [
       "Cancel",
+      true,
+      false,
+      false
+     ],
+     [
+      "Abandon setup",
       true,
       false,
       false
@@ -24490,6 +24497,7 @@
      ],
      "Turn off encryption",
      "Cancel",
+     "Abandon setup",
      "Settings sync options",
      "Choose which preferences stay in sync across devices.",
      "▸",
@@ -24566,6 +24574,12 @@
      ],
      [
       "Cancel",
+      true,
+      false,
+      false
+     ],
+     [
+      "Abandon setup",
       true,
       false,
       false

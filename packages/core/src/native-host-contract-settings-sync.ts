@@ -932,8 +932,9 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         // Errors raised outside a flow (an incomplete transition found by the
         // status read) have no field to sit next to.
         if (card.flow === 'none') error();
-        // An unfinished change this device cannot finish (its location is gone): drop it here only.
-        if (card.flow === 'none' && card.incompleteTransition) act(t('settings.syncEncryptionAbandon'), { type: 'open', flow: 'abandon' });
+        // An unfinished change this device cannot finish (its location is gone): drop it here only. Offered in an open flow too,
+        // right where a retry just failed.
+        if (card.flow !== 'abandon' && card.incompleteTransition) act(t('settings.syncEncryptionAbandon'), { type: 'open', flow: 'abandon' });
         return {
             title: t('settings.syncEncryption'),
             guide: {
