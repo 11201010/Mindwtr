@@ -182,6 +182,8 @@ const cardShows = async (text, timeoutMs = 60_000) => {
 const saveWebdav = async (port) => {
     await openSync();
     if (!tagged(await screen(), 'sync-url')) await tapNode((current) => tagged(current, 'sync-backend-webdav'), (current) => Boolean(tagged(current, 'sync-url')), 'the WebDAV form');
+    // The card shows once WebDAV is chosen: a change an earlier run left unfinished would refuse this Save.
+    if (await abandonIfStranded()) console.log('info - an earlier run\'s unfinished change was abandoned first');
     await fillTag('sync-url', fields(port).url);
     const label = en['settings.allowInsecureHttp'];
     await hideKeyboard();
@@ -192,6 +194,25 @@ const saveWebdav = async (port) => {
     const before = commands('saveSyncBackend');
     await tapNode((current) => tagged(current, 'sync-save'), () => commands('saveSyncBackend') > before, 'Save', 90_000);
 };
+/**
+ * A change an earlier run left unfinished (its server stopped for good) pauses sync everywhere: take "Abandon setup" when the
+ * Sync screen offers it. True when it did.
+ */
+const abandonIfStranded = async () => {
+    await openSync();
+    // Only the first screens of Settings › Sync: the card's actions sit below the form, so scroll down without failing.
+    let nodes = await device.toTop();
+    for (let step = 0; step < 18 && !withDescription(nodes, en['settings.syncEncryptionAbandon']); step += 1) nodes = await device.swipe(nodes, 'down');
+    const offered = withDescription(nodes, en['settings.syncEncryptionAbandon']);
+    if (!offered) return false;
+    const abandons = () => (logs().match(/encryption-abandon-setup/g) ?? []).length;
+    const before = abandons();
+    await tap(offered);
+    await tap(await reveal((current) => tagged(current, 'sync-encryption-submit'), 'Abandon setup (confirm)'));
+    await until('the stranded change abandoned', () => abandons() > before, 60_000, 1_000);
+    return true;
+};
+
 /** How many times the Sync screen's [operation] answered, whatever its outcome. */
 const answered = (operation) => logs().replace(/\\/g, '').split('\n').filter((line) => line.includes(`"operation":"${operation}"`) && line.includes('"outcome":')).length;
 const syncNow = async () => {
@@ -458,6 +479,7 @@ try {
     // check's app does not keep failing syncs (and their toasts) against it.
     if (process.exitCode) {
         try {
+            if (await abandonIfStranded()) console.log('info - the unfinished change was abandoned after the failure');
             await openSync();
             await tapNode((current) => tagged(current, 'sync-backend-off'), (current) => current.some((node) => node.text === en['settings.syncOff']), 'Sync off after a failure');
             console.log('info - Sync set Off after the failure');
