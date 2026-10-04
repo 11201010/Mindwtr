@@ -16,6 +16,7 @@ import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { logSettingsError } from '@/lib/settings-utils';
 import { mobileSyncCryptoPrimitives } from '@/lib/sync-crypto-native';
 import {
+    abandonSyncEncryptionTransition,
     changeSyncEncryptionPassphrase,
     declineSyncEncryptionPassphrase,
     disableSyncEncryption,
@@ -59,6 +60,7 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
         disable: (options) => disableSyncEncryption(options),
         provide: (passphrase) => provideSyncEncryptionPassphrase(passphrase),
         decline: () => declineSyncEncryptionPassphrase(),
+        abandon: () => abandonSyncEncryptionTransition(),
         isCleanupDeferredError: (error): error is Error & { cleanupKind?: string; outcome?: unknown } => isSyncEncryptionCleanupDeferredError(error),
         randomBytes: (length) => mobileSyncCryptoPrimitives.randomBytes(length),
         appData: () => appDataRef.current,
@@ -68,6 +70,7 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
     const {
         state,
         stateUnavailable,
+        incompleteTransition,
         flow,
         busy,
         currentPassphrase,
@@ -100,6 +103,9 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
     };
     const submitDisable = () => {
         void card.submitDisable();
+    };
+    const submitAbandon = () => {
+        void card.submitAbandon();
     };
     const submitUnlock = () => {
         void card.submitUnlock();
@@ -228,43 +234,42 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
                                 {t('settings.syncEncryptionDesc')}
                             </Text>
                         </View>
-                        {flow !== 'enable'
-                            ? renderAction(t('settings.syncEncryptionEnable'), () => openFlow('enable'))
-                            : (
-                                <>
-                                    <View style={[styles.settingRowColumn, { borderTopWidth: 1, borderTopColor: tc.border }]}>
-                                        <Text style={[styles.settingDescription, { color: tc.warning }]}>
-                                            {t('settings.syncEncryptionWarningLost')}
+                        {flow === 'none' && renderAction(t('settings.syncEncryptionEnable'), () => openFlow('enable'))}
+                        {flow === 'enable' && (
+                            <>
+                                <View style={[styles.settingRowColumn, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                    <Text style={[styles.settingDescription, { color: tc.warning }]}>
+                                        {t('settings.syncEncryptionWarningLost')}
+                                    </Text>
+                                    <Text style={[styles.settingDescription, { color: tc.warning, marginTop: 8 }]}>
+                                        {t('settings.syncEncryptionWarningDevices')}
+                                    </Text>
+                                    {pendingFirstSync && (
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText, marginTop: 8 }]}>
+                                            {t('settings.syncEncryptionEnableBeforeFirstSyncHint')}
                                         </Text>
-                                        <Text style={[styles.settingDescription, { color: tc.warning, marginTop: 8 }]}>
-                                            {t('settings.syncEncryptionWarningDevices')}
+                                    )}
+                                </View>
+                                {renderPassphraseInput(t('settings.syncEncryptionPassphrase'), nextPassphrase, 'next')}
+                                {renderPassphraseInput(t('settings.syncEncryptionPassphraseConfirm'), confirmPassphrase, 'confirm')}
+                                {errorBlock}
+                                {renderRevealToggle()}
+                                {renderAction(t('settings.syncEncryptionGenerate'), generate)}
+                                {generated && (
+                                    <View style={styles.settingRowColumn}>
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                            {t('settings.syncEncryptionGeneratedHint')}
                                         </Text>
-                                        {pendingFirstSync && (
-                                            <Text style={[styles.settingDescription, { color: tc.secondaryText, marginTop: 8 }]}>
-                                                {t('settings.syncEncryptionEnableBeforeFirstSyncHint')}
-                                            </Text>
-                                        )}
                                     </View>
-                                    {renderPassphraseInput(t('settings.syncEncryptionPassphrase'), nextPassphrase, 'next')}
-                                    {renderPassphraseInput(t('settings.syncEncryptionPassphraseConfirm'), confirmPassphrase, 'confirm')}
-                                    {errorBlock}
-                                    {renderRevealToggle()}
-                                    {renderAction(t('settings.syncEncryptionGenerate'), generate)}
-                                    {generated && (
-                                        <View style={styles.settingRowColumn}>
-                                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                                {t('settings.syncEncryptionGeneratedHint')}
-                                            </Text>
-                                        </View>
-                                    )}
-                                    {renderAction(
-                                        t('settings.syncEncryptionEnable'),
-                                        submitEnable,
-                                        !nextPassphrase || !confirmPassphrase,
-                                    )}
-                                    {renderAction(t('common.cancel'), closeFlow)}
-                                </>
-                            )}
+                                )}
+                                {renderAction(
+                                    t('settings.syncEncryptionEnable'),
+                                    submitEnable,
+                                    !nextPassphrase || !confirmPassphrase,
+                                )}
+                                {renderAction(t('common.cancel'), closeFlow)}
+                            </>
+                        )}
                     </>
                 )}
 
@@ -344,17 +349,30 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
                                 {t('settings.syncEncryptionLockedRecheckHint')}
                             </Text>
                         </View>
-                        {flow !== 'unlock'
-                            ? renderAction(t('settings.syncEncryptionUnlock'), () => openFlow('unlock'))
-                            : (
-                                <>
-                                    {renderPassphraseInput(t('settings.syncEncryptionPassphrase'), currentPassphrase, 'current')}
-                                    {errorBlock}
-                                    {renderRevealToggle()}
-                                    {renderAction(t('settings.syncEncryptionUnlock'), submitUnlock, !currentPassphrase)}
-                                    {renderAction(t('settings.syncEncryptionDecline'), decline)}
-                                </>
-                            )}
+                        {flow === 'none' && renderAction(t('settings.syncEncryptionUnlock'), () => openFlow('unlock'))}
+                        {flow === 'unlock' && (
+                            <>
+                                {renderPassphraseInput(t('settings.syncEncryptionPassphrase'), currentPassphrase, 'current')}
+                                {errorBlock}
+                                {renderRevealToggle()}
+                                {renderAction(t('settings.syncEncryptionUnlock'), submitUnlock, !currentPassphrase)}
+                                {renderAction(t('settings.syncEncryptionDecline'), decline)}
+                            </>
+                        )}
+                    </>
+                )}
+
+                {/* "Abandon setup": an unfinished change this device cannot finish is dropped here only. */}
+                {flow === 'abandon' && (
+                    <>
+                        <View style={[styles.settingRowColumn, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                            <Text style={[styles.settingDescription, { color: tc.warning }]}>
+                                {t('settings.syncEncryptionAbandonWarning')}
+                            </Text>
+                        </View>
+                        {errorBlock}
+                        {renderAction(t('settings.syncEncryptionAbandon'), submitAbandon)}
+                        {renderAction(t('common.cancel'), closeFlow)}
                     </>
                 )}
 
@@ -375,6 +393,8 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
                 {/* Errors raised outside a flow (an incomplete transition found by the
                     status read) have no field to sit next to. */}
                 {flow === 'none' && errorBlock}
+                {flow === 'none' && incompleteTransition
+                    && renderAction(t('settings.syncEncryptionAbandon'), () => openFlow('abandon'))}
             </View>
         </>
     );

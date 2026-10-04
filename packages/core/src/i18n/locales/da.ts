@@ -1310,6 +1310,9 @@ export const daOverrides: Record<string, string> = {
         'Denne WebDAV-server tilbyder eller håndhæver ikke sikker versionskontrol (stærke ETags og betingede skrivninger), så Mindwtr kan ikke synkronisere eller ændre kryptering sikkert. Brug en kompatibel WebDAV-udbyder, Filsynkronisering eller Dropbox.',
     'settings.syncEncryptionErrorTransitionIncomplete':
         'Denne krypteringsændring kan være ufuldstændig, fordi Mindwtr ikke kunne bekræfte en ekstern filversion. Synkronisering forbliver sat på pause. Prøv den samme krypteringsændring igen, før du ændrer eller frakobler denne synkroniseringsplacering.',
+    'settings.syncEncryptionAbandon': 'Opgiv opsætning',
+    'settings.syncEncryptionAbandonWarning': 'Opgiv den ufærdige ændring af krypteringen kun på denne enhed. Krypteringen slås fra her, og synkroniseringsplaceringen kontaktes ikke, så den kan forblive delvist krypteret. Gør ændringen færdig eller fortryd den der fra en enhed, der kan nå den.',
+    'settings.syncEncryptionPassphraseTooLong': 'En adgangssætning må højst bestå af 1.000 tegn.',
     'settings.syncEncryptionEnableBeforeFirstSyncHint':
         'Synkronisering er ikke konfigureret endnu - adgangssætningen er gemt på denne enhed nu, og den første synkronisering uploader alt, der allerede er krypteret.',
     'settings.syncEncryptionProgressAttachments': 'Opdatering af vedhæftede filer',

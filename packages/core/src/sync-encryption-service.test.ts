@@ -217,6 +217,30 @@ describe('sync encryption service', () => {
         expect(JSON.parse(plain.get(SYNC_ENCRYPTION_STATE_KEY)!)).toMatchObject({ incompleteTransition: 'enable' });
     });
 
+    it('"Abandon setup" turns this device off, forgets the key and the unfinished change, and contacts no location', async () => {
+        const { plain, secrets, service, logs, fileSync } = createHarness({
+            [SYNC_BACKEND_KEY]: 'file',
+            [SYNC_PATH_KEY]: '/sync',
+            [SYNC_ENCRYPTION_STATE_KEY]: JSON.stringify({ state: 'off', incompleteTransition: 'enable' }),
+        });
+        secrets.set(SYNC_ENCRYPTION_KEY_KEY, 'AAAA');
+        await expect(service.getSyncEncryptionStatus()).resolves.toMatchObject({ incompleteTransition: 'enable' });
+
+        await expect(service.abandonSyncEncryptionTransition()).resolves.toBe('enable');
+
+        expect(plain.has(SYNC_ENCRYPTION_STATE_KEY)).toBe(false);
+        expect(secrets.has(SYNC_ENCRYPTION_KEY_KEY)).toBe(false);
+        const status = await service.getSyncEncryptionStatus();
+        expect(status.state).toBe('off');
+        expect(status.incompleteTransition).toBeUndefined();
+        expect(fileSync.acquireLease).not.toHaveBeenCalled();
+        const line = logs.find((entry) => entry.extra.releaseCheck === 'v1.3.4/encryption-abandon-setup');
+        expect(line).toMatchObject({ force: true, extra: { kind: 'abandon', abandoned: 'enable', outcome: 'ok' } });
+
+        // Nothing unfinished: nothing to abandon, nothing changes.
+        await expect(service.abandonSyncEncryptionTransition()).resolves.toBeNull();
+    });
+
     it('"Not now" keeps the no-key state', async () => {
         const { plain, service } = createHarness({
             [SYNC_ENCRYPTION_STATE_KEY]: JSON.stringify({ state: 'remote-encrypted-no-key', discoveredScope: '["file","/sync"]' }),

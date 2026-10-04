@@ -35,6 +35,7 @@ import {
     runChangeSyncEncryptionPassphraseOverRemote,
     runDisableSyncEncryptionLocalOnly,
     runDisableSyncEncryptionOverRemote,
+    runAbandonSyncEncryptionTransition,
     runEnableSyncEncryptionLocalOnly,
     runEnableSyncEncryptionOverRemote,
     runProvideSyncEncryptionPassphraseOverRemote,
@@ -46,6 +47,7 @@ import {
     type SyncEncryptionRemotePort,
     type SyncEncryptionRemoteRead,
     type SyncEncryptionStatus,
+    type SyncEncryptionTransitionKind,
     type SyncEncryptionTransitionProgress,
 } from './sync-encryption';
 import {
@@ -1127,6 +1129,21 @@ export const createSyncEncryptionService = <Lease>(deps: SyncEncryptionServiceDe
             reaffirmRemoteEncryptionNoKey(state.syncEncryptionLocalState);
             await state.flushSyncEncryptionLocalState();
         },
+        /** "Abandon setup" (sync-encryption.ts runAbandonSyncEncryptionTransition): on the sync queue, local only. */
+        abandonSyncEncryptionTransition: (): Promise<SyncEncryptionTransitionKind | null> => runSerializedSyncDocumentOperation(async () => {
+            await state.loadSyncEncryptionLocalState();
+            const abandoned = await runAbandonSyncEncryptionTransition(state.syncEncryptionKeyCache, state.syncEncryptionLocalState);
+            await state.flushSyncEncryptionLocalState();
+            if (abandoned) {
+                const backend = (await storage.getItem(SYNC_BACKEND_KEY).catch(() => null))?.trim() || 'off';
+                state.logSyncEncryptionEvent(SYNC_ENCRYPTION_LOG_EVENTS.transition, {
+                    ...buildSyncEncryptionTransitionExtra({ kind: 'abandon', backend, phase: 'end', outcome: 'ok' }),
+                    abandoned,
+                    releaseCheck: 'v1.3.4/encryption-abandon-setup',
+                }, { level: 'warn', force: true });
+            }
+            return abandoned;
+        }),
         __testUtils: {
             buildTransitionEntries,
             captureTransitionInventory,

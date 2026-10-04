@@ -20,6 +20,13 @@
      "Every Sync now tap on a stored, already proven backend (webdav: stored and synced, webdav: a slow sync, webdav: failures, webdav: encryption on and a legacy server, self-hosted: stored, file: stored, lock busy and cleanup deferred, dropbox: connect, test and disconnect): one normal sync with ignorePendingRemoteWriteBackoff false instead of the activation probe (the WebDAV probe, the capability proof, the activation log line) followed by a re-commit of the unchanged settings, so no device writes. The frozen run recorded the bug: each tap re-proved and re-wrote the backend. Because the probe no longer takes the first queued sync answer, the later answers in each scenario queue reach later steps, which changes those steps' toasts and, in webdav: failures, the Test connection step's answer.",
      "ios: iCloud and the file panel, step 1 (iCloud with the account unavailable): no activation log line, since no verification sync runs; the line now prints only when the activation probe starts."
     ]
+   },
+   {
+    "base": "027fde392",
+    "command": "cd apps/mobile && MINDWTR_DUMP_SYNC_SETTINGS=<file> TZ=UTC bunx vitest run components/settings/sync-settings-screen.parity.test.tsx, with \"Abandon setup\" in place (dd's decision, 2026-10-04); only the observation below was replaced, and every other observation matched the frozen one",
+    "observations": [
+     "encryption: a peer turned it off, mid-transition: the card offers \"Abandon setup\" under the incomplete-change error, as it does for every unfinished change."
+    ]
    }
   ]
  },
@@ -24128,6 +24135,7 @@
       "danger",
       "This encryption change may be incomplete because Mindwtr could not verify a remote file version. Sync remains paused. Retry the same encryption change before changing or disconnecting this sync location."
      ],
+     "Abandon setup",
      "Settings sync options",
      "Choose which preferences stay in sync across devices.",
      "▸",
@@ -24198,6 +24206,12 @@
      ],
      [
       "Turn off encryption",
+      true,
+      false,
+      false
+     ],
+     [
+      "Abandon setup",
       true,
       false,
       false

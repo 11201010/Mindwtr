@@ -257,7 +257,8 @@ export type SyncEncryptionTransitionLogKind =
     | SyncEncryptionTransitionKind
     | 'unlock'
     | 'enable-local-only'
-    | 'disable-local-only';
+    | 'disable-local-only'
+    | 'abandon';
 
 export type SyncEncryptionTransitionOutcome =
     | 'ok'

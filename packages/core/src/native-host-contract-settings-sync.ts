@@ -161,7 +161,7 @@ export type NativeSyncSettingsHost = {
         /** True while no durable sync backend exists (transitions then run local-only). */
         isBackendPending(): Promise<boolean>;
         /** The transitions (core's sync encryption service on the host's crypto); absent until the host has them. */
-        transitions?: Pick<SyncEncryptionCardHost, 'enable' | 'change' | 'disable' | 'provide' | 'decline' | 'randomBytes'>;
+        transitions?: Pick<SyncEncryptionCardHost, 'enable' | 'change' | 'disable' | 'provide' | 'decline' | 'abandon' | 'randomBytes'>;
     };
     /** The app log: an info line (no secrets are ever passed) and an error. */
     log: { info(message: string, context: { scope: string; extra: Record<string, string> }): unknown; error(error: unknown): void };
@@ -290,7 +290,8 @@ export type NativeSyncEncryptionAction =
 export type NativeSyncEncryptionRow =
     | { kind: 'text'; text: string; tone: 'label' | 'description' | 'warning' | 'danger' }
     /** The host's own secure text field; its text goes back with `{ type: 'typed' }`. */
-    | { kind: 'field'; field: SyncEncryptionPassphraseField; label: string; secure: boolean }
+    /** `maxLength`: the most characters core takes (a longer text is refused, never cut); `tooLong`: what to say then. */
+    | { kind: 'field'; field: SyncEncryptionPassphraseField; label: string; secure: boolean; maxLength: number; tooLong: string }
     | { kind: 'reveal'; label: string; revealed: boolean; action: NativeSyncEncryptionAction }
     | { kind: 'action'; label: string; action: NativeSyncEncryptionAction; enabled: boolean; busy: boolean };
 
@@ -362,7 +363,9 @@ const TO_LOCALE_STRING_OPTIONS: Intl.DateTimeFormatOptions = {
 };
 const PASSWORD_DOTS = '••••••••';
 const PASSPHRASE_FIELDS = new Set<string>(['current', 'next', 'confirm']);
-const FLOWS = new Set<string>(['enable', 'change', 'disable', 'unlock']);
+const FLOWS = new Set<string>(['enable', 'change', 'disable', 'unlock', 'abandon']);
+/** The longest passphrase a field takes (runSyncEncryptionAction's `typed`): a host's field stops there and says so. */
+export const SYNC_ENCRYPTION_PASSPHRASE_MAX_LENGTH = 1000;
 
 /** A value's 128-bit fingerprint: never readable, the same for the same value. */
 const fingerprint = (value: unknown): string => deterministicHash128Hex(JSON.stringify(value));
@@ -520,6 +523,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             disable: transitions ? (options) => transitions.disable(options) : missing,
             provide: transitions ? (passphrase) => transitions.provide(passphrase) : missing,
             decline: transitions ? () => transitions.decline() : missing,
+            abandon: transitions ? () => transitions.abandon() : missing,
             isCleanupDeferredError: (error): error is Error & { cleanupKind?: string; outcome?: unknown } => isSyncEncryptionCleanupDeferredError(error),
             randomBytes: (length) => {
                 if (!transitions) throw new Error('Sync encryption is not available on this host yet');
@@ -834,7 +838,10 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         const act = (label: string, target: NativeSyncEncryptionAction, disabled = false) => rows.push({
             kind: 'action', label, action: target, enabled: !(disabled || card.busy), busy: card.busy,
         });
-        const field = (label: string, name: SyncEncryptionPassphraseField) => rows.push({ kind: 'field', field: name, label, secure: !card.revealed });
+        const field = (label: string, name: SyncEncryptionPassphraseField) => rows.push({
+            kind: 'field', field: name, label, secure: !card.revealed,
+            maxLength: SYNC_ENCRYPTION_PASSPHRASE_MAX_LENGTH, tooLong: t('settings.syncEncryptionPassphraseTooLong'),
+        });
         const reveal = () => rows.push({ kind: 'reveal', label: t('settings.syncEncryptionShowPassphrase'), revealed: card.revealed, action: { type: 'reveal' } });
         const { errorMessage, progressLabel, warningMessage } = getSyncEncryptionCardMessages(card, t);
         const error = () => {
@@ -851,9 +858,9 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         }
         if (card.state === 'off') {
             text(t('settings.syncEncryptionDesc'));
-            if (card.flow !== 'enable') {
+            if (card.flow === 'none') {
                 act(t('settings.syncEncryptionEnable'), { type: 'open', flow: 'enable' });
-            } else {
+            } else if (card.flow === 'enable') {
                 text(t('settings.syncEncryptionWarningLost'), 'warning');
                 text(t('settings.syncEncryptionWarningDevices'), 'warning');
                 if (card.pendingFirstSync) text(t('settings.syncEncryptionEnableBeforeFirstSyncHint'));
@@ -904,9 +911,9 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             text(t('settings.syncEncryptionLockedDesc'));
             text(t('settings.syncEncryptionPausedDesc'));
             text(t('settings.syncEncryptionLockedRecheckHint'));
-            if (card.flow !== 'unlock') {
+            if (card.flow === 'none') {
                 act(t('settings.syncEncryptionUnlock'), { type: 'open', flow: 'unlock' });
-            } else {
+            } else if (card.flow === 'unlock') {
                 field(t('settings.syncEncryptionPassphrase'), 'current');
                 error();
                 reveal();
@@ -914,11 +921,19 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                 act(t('settings.syncEncryptionDecline'), { type: 'decline' });
             }
         }
+        if (card.flow === 'abandon') {
+            text(t('settings.syncEncryptionAbandonWarning'), 'warning');
+            error();
+            act(t('settings.syncEncryptionAbandon'), { type: 'submit', flow: 'abandon' });
+            act(t('common.cancel'), { type: 'cancel' });
+        }
         if (progressLabel) text(progressLabel);
         if (warningMessage) text(warningMessage, 'warning');
         // Errors raised outside a flow (an incomplete transition found by the
         // status read) have no field to sit next to.
         if (card.flow === 'none') error();
+        // An unfinished change this device cannot finish (its location is gone): drop it here only.
+        if (card.flow === 'none' && card.incompleteTransition) act(t('settings.syncEncryptionAbandon'), { type: 'open', flow: 'abandon' });
         return {
             title: t('settings.syncEncryption'),
             guide: {
@@ -1320,6 +1335,9 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                     : type === 'typed' ? Object.keys(target).length === 3 && PASSPHRASE_FIELDS.has(target.field as string) && isText(target.value, 1000)
                         : ['cancel', 'generate', 'reveal', 'decline', 'retry'].includes(type as string) && Object.keys(target).length === 1
             );
+            if (type === 'typed' && typeof target!.value === 'string' && target!.value.length > SYNC_ENCRYPTION_PASSPHRASE_MAX_LENGTH) {
+                return fail('INVALID_INPUT', deps.t()('settings.syncEncryptionPassphraseTooLong'));
+            }
             const needsRequest = type === 'submit' || type === 'decline';
             if (!valid || (needsRequest ? !isRequestId(input.requestId) : input.requestId !== undefined)) {
                 return fail('INVALID_INPUT', 'An encryption card action is required; a submit or decline takes a request UUID');
@@ -1360,7 +1378,8 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                         : target!.flow === 'enable' ? () => card.submitEnable()
                             : target!.flow === 'change' ? () => card.submitChange()
                                 : target!.flow === 'disable' ? () => card.submitDisable()
-                                    : () => card.submitUnlock();
+                                    : target!.flow === 'abandon' ? () => card.submitAbandon()
+                                        : () => card.submitUnlock();
                     // The passphrases the submit runs with are part of its identity, as fingerprints.
                     const fields = card.getState();
                     const identity = ['encryption', target, secretPrint(fields.currentPassphrase), secretPrint(fields.nextPassphrase), secretPrint(fields.confirmPassphrase)];

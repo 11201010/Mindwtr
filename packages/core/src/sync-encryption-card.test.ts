@@ -6,21 +6,27 @@ import { SyncEncryptionCleanupDeferredError, isSyncEncryptionCleanupDeferredErro
 function setup(overrides: Partial<SyncEncryptionCardHost> = {}) {
     const calls: unknown[][] = [];
     let state: 'off' | 'enabled' | 'remote-encrypted-no-key' = 'off';
+    let incomplete: 'enable' | undefined;
     const host: SyncEncryptionCardHost = {
-        getStatus: async () => ({ state }),
+        getStatus: async () => ({ state, ...(incomplete ? { incompleteTransition: incomplete } : {}) }),
         isBackendPending: async () => false,
         enable: async (passphrase) => { calls.push(['enable', passphrase]); state = 'enabled'; },
         change: async () => undefined,
         disable: async () => { state = 'off'; },
         provide: async (passphrase) => (passphrase === 'right' ? 'ok' : 'wrong-passphrase'),
         decline: async () => undefined,
+        abandon: async () => { calls.push(['abandon']); const kind = incomplete ?? null; incomplete = undefined; state = 'off'; return kind; },
         isCleanupDeferredError: (error): error is Error & { cleanupKind?: string } => isSyncEncryptionCleanupDeferredError(error),
         randomBytes: (length) => new Uint8Array(length).fill(3),
         appData: () => null,
         logSettingsError: () => undefined,
         ...overrides,
     };
-    return { card: createSyncEncryptionCard(host), calls, setState: (next: typeof state) => { state = next; } };
+    return {
+        card: createSyncEncryptionCard(host), calls,
+        setState: (next: typeof state) => { state = next; },
+        setIncomplete: (next: typeof incomplete) => { incomplete = next; },
+    };
 }
 
 describe('sync encryption card', () => {
@@ -75,6 +81,21 @@ describe('sync encryption card', () => {
         const failing = setup({ getStatus: async () => { throw new Error('unreadable'); } });
         await failing.card.refresh().done;
         expect(failing.card.getState()).toMatchObject({ state: null, stateUnavailable: true });
+    });
+
+    it('offers "Abandon setup" only while a change is unfinished, and it clears the unfinished change', async () => {
+        const fresh = setup();
+        await fresh.card.refresh().done;
+        expect(fresh.card.getState().incompleteTransition).toBe(false);
+
+        const { card, calls, setIncomplete } = setup();
+        setIncomplete('enable');
+        await card.refresh().done;
+        expect(card.getState()).toMatchObject({ incompleteTransition: true, error: 'transition-incomplete' });
+        card.openFlow('abandon');
+        await card.submitAbandon();
+        expect(calls).toEqual([['abandon']]);
+        expect(card.getState()).toMatchObject({ state: 'off', flow: 'none', incompleteTransition: false, error: null, busy: false });
     });
 
     it('names a server without strong ETags as incompatible when it is refused before anything changed', async () => {

@@ -376,6 +376,7 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
                 disable: (options) => transitions.disableSyncEncryption(options),
                 provide: (passphrase) => transitions.provideSyncEncryptionPassphrase(passphrase),
                 decline: () => transitions.declineSyncEncryptionPassphrase(),
+                abandon: () => transitions.abandonSyncEncryptionTransition(),
                 randomBytes: (length) => crypto.randomBytes(length),
             },
             isBackendPending: () => transitions.isSyncEncryptionBackendPending(),

@@ -3,8 +3,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
 import { NATIVE_UNJOURNALED_COMMANDS } from './native-request-receipts';
+import { en } from './i18n/locales/en';
 import {
     NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS,
+    SYNC_ENCRYPTION_PASSPHRASE_MAX_LENGTH,
     type NativeSyncEncryptionAction,
     type NativeSyncSettings,
     type NativeSyncSettingsHost,
@@ -286,6 +288,13 @@ function createDevice(input: Device): { state: DeviceState; host: NativeSyncSett
                     return outcome;
                 },
                 decline: async () => { calls.push(['declineSyncEncryptionPassphrase']); },
+                abandon: async () => {
+                    calls.push(['abandonSyncEncryptionTransition']);
+                    const abandoned = device.encryption.incomplete;
+                    device.encryption.incomplete = null;
+                    device.encryption.state = 'off';
+                    return abandoned;
+                },
                 randomBytes: (length) => new Uint8Array(length).fill(7),
             },
         },
@@ -910,6 +919,41 @@ describe('native host contract: Settings › Sync commands replayed after a rest
         const replayed = await restarted.runSyncEncryptionAction(input);
         expect(replayed.ok).toBe(false);
         expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
+    });
+
+    it('runSyncEncryptionAction: "Abandon setup" is offered while a change is unfinished, warns, and runs only on its submit', async () => {
+        const { contract } = await start({ ...WEBDAV_STORED, encryption: { state: 'off', incomplete: 'enable' } });
+        const t = (key: string) => en[key as keyof typeof en];
+        const rows = async () => value(contract.getSyncSettings({ draft: {} } as never)).encryption!.rows;
+        const abandon = (await rows()).find((row) => row.kind === 'action' && row.label === t('settings.syncEncryptionAbandon'));
+        expect(abandon).toMatchObject({ action: { type: 'open', flow: 'abandon' }, enabled: true });
+        expect((await rows()).some((row) => row.kind === 'text' && row.text === t('settings.syncEncryptionErrorTransitionIncomplete'))).toBe(true);
+        value(await contract.runSyncEncryptionAction({ action: { type: 'open', flow: 'abandon' } }));
+        const open = await rows();
+        expect(open.some((row) => row.kind === 'text' && row.tone === 'warning' && row.text === t('settings.syncEncryptionAbandonWarning'))).toBe(true);
+        expect(open.some((row) => row.kind === 'action' && row.label === t('settings.syncEncryptionEnable'))).toBe(false);
+        expect(device.calls.some((call) => call[0] === 'abandonSyncEncryptionTransition')).toBe(false);
+        value(await contract.runSyncEncryptionAction({ requestId: generateUUID(), action: { type: 'submit', flow: 'abandon' } }));
+        expect(device.calls.filter((call) => call[0] === 'abandonSyncEncryptionTransition')).toHaveLength(1);
+        const after = await rows();
+        expect(after.some((row) => row.kind === 'action' && row.label === t('settings.syncEncryptionAbandon'))).toBe(false);
+        expect(after.some((row) => row.kind === 'text' && row.tone === 'danger')).toBe(false);
+        expect(after.some((row) => row.kind === 'action' && row.label === t('settings.syncEncryptionEnable'))).toBe(true);
+    });
+
+    it('runSyncEncryptionAction: a passphrase field states core\'s limit, and a longer text is refused in words', async () => {
+        const { contract } = await start(WEBDAV_STORED);
+        value(await contract.runSyncEncryptionAction({ action: { type: 'open', flow: 'enable' } }));
+        const view = value(contract.getSyncSettings({ draft: {} } as never));
+        const fields = view.encryption!.rows.filter((row) => row.kind === 'field');
+        expect(fields.map((row) => row.kind === 'field' && [row.field, row.maxLength, row.tooLong])).toEqual([
+            ['next', SYNC_ENCRYPTION_PASSPHRASE_MAX_LENGTH, en['settings.syncEncryptionPassphraseTooLong']],
+            ['confirm', SYNC_ENCRYPTION_PASSPHRASE_MAX_LENGTH, en['settings.syncEncryptionPassphraseTooLong']],
+        ]);
+        expect(SYNC_ENCRYPTION_PASSPHRASE_MAX_LENGTH).toBe(1000);
+        value(await contract.runSyncEncryptionAction({ action: { type: 'typed', field: 'next', value: 'x'.repeat(1000) } }));
+        const refused = await contract.runSyncEncryptionAction({ action: { type: 'typed', field: 'next', value: 'x'.repeat(1001) } });
+        expect(refused).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT', message: en['settings.syncEncryptionPassphraseTooLong'] } });
     });
 
     it('runSyncEncryptionAction, decline: a replay finds no unlock flow and declines nothing', async () => {

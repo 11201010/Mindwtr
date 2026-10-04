@@ -34,7 +34,7 @@ export type SyncEncryptionCardError =
     | 'transition-incomplete'
     | 'generic';
 
-export type SyncEncryptionCardFlow = 'none' | 'enable' | 'change' | 'disable' | 'unlock';
+export type SyncEncryptionCardFlow = 'none' | 'enable' | 'change' | 'disable' | 'unlock' | 'abandon';
 export type SyncEncryptionCardWarning = 'cleanup-deferred' | 'file-cleanup-deferred' | 'no-encrypted-remote';
 export type SyncEncryptionPassphraseField = 'current' | 'next' | 'confirm';
 
@@ -49,6 +49,8 @@ export type SyncEncryptionCardHost = {
     disable(options: TransitionOptions): Promise<void>;
     provide(passphrase: string): Promise<'ok' | 'wrong-passphrase' | 'no-encrypted-remote'>;
     decline(): Promise<void>;
+    /** "Abandon setup": this device drops an unfinished change, locally (sync-encryption-service.ts). */
+    abandon(): Promise<unknown>;
     isCleanupDeferredError(error: unknown): error is Error & { cleanupKind?: string; outcome?: unknown };
     randomBytes(length: number): Uint8Array;
     /** Supplies the attachment worklist; phase 2 leaves attachments plaintext without it. */
@@ -59,6 +61,8 @@ export type SyncEncryptionCardHost = {
 export type SyncEncryptionCardState = {
     state: SyncEncryptionState | null;
     stateUnavailable: boolean;
+    /** A change (enable, change, disable) is unfinished on this device: "Abandon setup" is offered. */
+    incompleteTransition: boolean;
     flow: SyncEncryptionCardFlow;
     busy: boolean;
     progress: SyncEncryptionTransitionProgress | null;
@@ -77,6 +81,7 @@ export type SyncEncryptionCardState = {
 const INITIAL_STATE: SyncEncryptionCardState = {
     state: null,
     stateUnavailable: false,
+    incompleteTransition: false,
     flow: 'none',
     busy: false,
     progress: null,
@@ -171,7 +176,7 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
         let cancelled = false;
         const read = readState().then((next) => {
             if (!cancelled) {
-                set({ state: next.state, stateUnavailable: next.unavailable });
+                set({ state: next.state, stateUnavailable: next.unavailable, incompleteTransition: next.incomplete });
                 if (next.incomplete) set({ error: 'transition-incomplete' });
             }
         });
@@ -243,7 +248,7 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
         }
         // Transitions are resumable, so a half-finished run still moved the state.
         const nextState = await readState();
-        set({ state: nextState.state, stateUnavailable: nextState.unavailable });
+        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete });
         if (nextState.incomplete) set({ error: 'transition-incomplete' });
         set({ pendingFirstSync: await host.isBackendPending().catch(() => false) });
         set({ progress: null, busy: false });
@@ -315,12 +320,15 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
             }
         }
         const nextState = await readState();
-        set({ state: nextState.state, stateUnavailable: nextState.unavailable, busy: false });
+        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, busy: false });
         if (accepted) {
             closeFlow();
             if (cleanupDeferred) set({ warning: cleanupDeferred });
         }
     };
+
+    /** "Abandon setup": the unfinished change is dropped on this device only; the card reads off again. */
+    const submitAbandon = () => run(async () => { await host.abandon(); }, 'generic');
 
     /** "Not now": keeps the persisted no-key state; sync stays paused. */
     const decline = () => {
@@ -329,14 +337,14 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
             .catch((error) => host.logSettingsError(error))
             .then(async () => {
                 const nextState = await readState();
-                set({ state: nextState.state, stateUnavailable: nextState.unavailable });
+                set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete });
             });
     };
 
     const retryState = async () => {
         set({ busy: true });
         const nextState = await readState();
-        set({ state: nextState.state, stateUnavailable: nextState.unavailable, busy: false });
+        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, busy: false });
     };
 
     return {
@@ -357,6 +365,7 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
         submitChange,
         submitDisable,
         submitUnlock,
+        submitAbandon,
         decline,
         retryState,
     };

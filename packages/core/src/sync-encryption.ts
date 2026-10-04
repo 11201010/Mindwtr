@@ -698,6 +698,23 @@ export async function runDisableSyncEncryptionLocalOnly(
 }
 
 /**
+ * "Abandon setup": this device drops an unfinished change (its server is gone, or the user gave up on it). It goes back to
+ * off and forgets the key, without contacting the sync location, which may stay partly encrypted: a device that can reach it
+ * has to finish or undo the change there. A device that later syncs an encrypted location here finds it encrypted and asks
+ * for the passphrase, so it never writes plaintext beside ciphertext. Returns the change it abandoned, or null for none.
+ */
+export async function runAbandonSyncEncryptionTransition(
+    keyCache: SyncEncryptionKeyCachePort,
+    localState: SyncEncryptionLocalStatePort,
+): Promise<SyncEncryptionTransitionKind | null> {
+    const abandoned = localState.read()?.incompleteTransition ?? null;
+    if (!abandoned) return null;
+    await localState.write(null);
+    await keyCache.clearKey();
+    return abandoned;
+}
+
+/**
  * Enable encryption over a generic remote (WebDAV or Dropbox). Order: every attachment
  * first, then non-base documents (`.bak`/snapshots), then the base document (`data.json`)
  * last — a reader that finds `data.json.enc` should never find it referencing an
