@@ -583,7 +583,7 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
             // eligibility first, then bind the picker to its actual scope/selection
             // and ordered RN token union; never strip an opaque list revision.
             const revision = removeTagPicker ? `${deps.pickerRevision()}:${revisionsToken([
-                JSON.stringify(['removeTag', input.list, input.params ?? {}, input.picker?.query ?? null]),
+                JSON.stringify({ kind: 'removeTag', list: input.list, params: input.params ?? {}, query: input.picker?.query ?? null }),
                 JSON.stringify(selectable),
                 JSON.stringify(selection.map((id) => [id, taskRevisionOf(state._tasksById.get(id)!)])),
                 JSON.stringify(tokens),
