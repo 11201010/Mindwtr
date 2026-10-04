@@ -56,6 +56,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -696,6 +697,7 @@ fun ProjectDetailsDialogs(model: InboxViewModel) = with(model.projectDetails) {
         }
     }
     tagPicker?.let { options ->
+        val focus = LocalFocusManager.current
         PickerCard(t("taskEdit.tagsLabel"), ::closeTags, "project-tag-sheet") {
             val current = options.getJSONObject("project").getJSONArray("tagIds").let { list -> List(list.length()) { list.getString(it) } }
             val shape = RoundedCornerShape(8.dp)
@@ -703,7 +705,8 @@ fun ProjectDetailsDialogs(model: InboxViewModel) = with(model.projectDetails) {
                 verticalAlignment = Alignment.CenterVertically) {
                 val label = t("taskEdit.tagsLabel")
                 BasicTextField(tagDraft, { tagDraft = it }, singleLine = true, textStyle = rnText(14, 400).copy(color = c.text), cursorBrush = SolidColor(c.tint),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { toggleTag(tagDraft); tagDraft = "" }),
+                    // RN: Done only ends editing; + adds the typed tag.
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
                     modifier = Modifier.weight(1f).padding(vertical = 8.dp).semantics { contentDescription = label }.testTag("project-tag-input"),
                     decorationBox = { field -> Box { if (tagDraft.isEmpty()) Text(label, style = rnText(14, 400), color = c.secondaryText); field() } })
                 val add = t("common.add")
