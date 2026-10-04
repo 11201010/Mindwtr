@@ -15,6 +15,9 @@
 //   (5) the app restarted: it syncs encrypted by itself, with no passphrase typed;
 //   (6) Disable: the folder is plaintext again;
 //   (7) a weak-ETag server: Enable is refused in RN's words and nothing there is encrypted or fenced;
+//   (7b) an Enable cut off by its server, then "Abandon setup": the card names the folder partly encrypted, Sync now with the
+//       server back writes nothing there (core's partly-encrypted rule), "Check this location again" reads it, and sync to
+//       another folder works;
 //   (8) no passphrase in any app file, the journal, the log or logcat; the SecureStore entries are printed (no key after Disable).
 // The Argon2id time on the phone is printed. It installs with `install -r`, touches only the development package, and on exit
 // removes the port mappings and the debug property and stops both servers. Exit 0 = pass, 1 = fail, 2 = refused, 3 = stopped.
@@ -430,10 +433,38 @@ try {
     await tapThenFind(action(en['settings.syncEncryptionAbandon']), (current) => withText(current, en['settings.syncEncryptionAbandonWarning']), 'the Abandon flow');
     check(true, '(7b) "Abandon setup" warns first that the location may stay partly encrypted');
     const lostRequests = lost.state.requests.length;
-    await tapThenFind((current) => tagged(current, 'sync-encryption-submit'), (current) => withDescription(current, en['settings.syncEncryptionEnable']), 'Abandon', 60_000);
+    await tapThenFind((current) => tagged(current, 'sync-encryption-submit'), flowClosed, 'Abandon', 60_000);
     check(lost.state.requests.length === lostRequests, '(7b) Abandon contacted no server');
     check(/"releaseCheck":"v1\.3\.4\/encryption-abandon-setup"/.test(logs().replace(/\\/g, '')) || logs().includes('v1.3.4/encryption-abandon-setup'),
         '(7b) the log shows v1.3.4/encryption-abandon-setup');
+    await cardShows(en['settings.syncEncryptionPartlyEncrypted']);
+    await reveal(action(en['settings.syncEncryptionRecheck']), 'Check this location again');
+    check(!withDescription(await screen(), en['settings.syncEncryptionEnable']),
+        '(7b) the card names the folder partly encrypted and offers "Check this location again", not Enable');
+    // The server is back: a device with encryption off never syncs plain data into the half-encrypted folder.
+    lost.state.down = false;
+    lost.state.delayMs = 0;
+    const lostWrites = () => lost.state.requests.filter((request) => /^(PUT|DELETE|MOVE|COPY|MKCOL|LOCK) /.test(request)).length;
+    const lostFiles = remoteArtifacts(lost, FOLDER).fingerprint;
+    const writesBefore = lostWrites();
+    await syncNow();
+    check(lostWrites() === writesBefore && remoteArtifacts(lost, FOLDER).fingerprint === lostFiles, '(7b) Sync now with the server back writes nothing into the partly encrypted folder');
+    check(logs().includes('blocked-partly-encrypted'), '(7b) the log shows sync paused there (decision=blocked-partly-encrypted)');
+    const rechecks = () => logs().replace(/\\/g, '').split('\n').filter((line) => line.includes('"kind":"recheck"'));
+    const rechecked = rechecks().length;
+    await tap(await reveal(action(en['settings.syncEncryptionRecheck']), 'Check this location again'));
+    await until('the recheck answered', () => rechecks().length > rechecked, 60_000, 1_000);
+    const found = rechecks().at(-1).match(/"found":"(\w+)"/)?.[1];
+    let stillPartly = false;
+    await until('the card after the recheck', async () => {
+        try {
+            await reveal((current) => withDescription(current, en['settings.syncEncryptionRecheck']) ?? withDescription(current, en['settings.syncEncryptionEnable']), 'the card after the recheck');
+        } catch { return false; }
+        stillPartly = Boolean(withDescription(await screen(), en['settings.syncEncryptionRecheck']));
+        return true;
+    }, 30_000, 1_000);
+    check((found === 'mixed') === stillPartly && lostWrites() === writesBefore,
+        `(7b) "Check this location again" read the folder (found=${found}) and wrote nothing; the card ${stillPartly ? 'still pauses sync there' : 'cleared the mark'}`);
     await toInbox();
     const abandonCapture = await device.openCapture();
     await device.focusAtEnd(tagged(abandonCapture, 'capture-title') ?? fail('no capture field'));
