@@ -331,3 +331,6 @@ Task199 CSV export (2026-10-04): native Data adds RN's live-task CSV serializer 
 
 
 Task200 TaskNotes ZIP export (2026-10-04): native Data now offers all three RN export formats. TaskNotes uses the shared ZIP builder and strict binary transfer through the existing file owner. Shared/Swift checks, normal/maximum-text simulator flows, JSON regression and the isolated iPhone share/cancel/content comparison passed. Independent Sol review found no blockers in Tasks198–200. Import and restore remain open; see the [parity ledger](native-mobile-parity.md#task200-tasknotes-zip-export).
+
+
+Task201 JSON import foundations (2026-10-04): prepared complete-document writes can now commit their exact retry receipt atomically, and the native file owner provides private bounded copies with digest verification and ownership-aware cleanup. Shared RN import policy remains the source of truth. Independent review findings were corrected; focused core, Swift/JavaScriptCore and simulator-build checks passed. This is infrastructure only: preview, recovery snapshots, journal integration, merge results and Undo still need wiring and runtime acceptance. See the [parity ledger](native-mobile-parity.md#task201-json-import-persistence-foundations).
