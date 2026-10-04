@@ -751,6 +751,7 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     somedaySections: (input) => contract.getSomedaySections(input),
     dataSettings: () => contract.getDataSettings(),
     dataBackup: () => contract.getDataBackup(),
+    dataCsvExport: () => contract.getDataBackup('csv'),
     // Settings › Sync's view (native-host-contract-settings-sync.ts) for the form's typed URL and token.
     syncSettings: (input) => contract.getSyncSettings(input),
     // Mind Sweep and a saved search's screen.
@@ -2793,13 +2794,13 @@ globalThis.MindwtrHost = {
         });
     },
     /** Called by iOS only after the immutable JSON file has been written and closed. */
-    backupExportPrepared(): string {
+    backupExportPrepared(format: string): string {
         return submit(() => {
-            if (globalThis.__mindwtrHostPlatform === 'ios') {
+            if (globalThis.__mindwtrHostPlatform === 'ios' && (format === 'json' || format === 'csv')) {
                 try {
                     logInfo('Native iOS backup file prepared', {
                         scope: 'native-ios', force: true,
-                        context: { releaseCheck: 'v1.3.4/ios-backup-export', outcome: 'prepared' },
+                        context: { releaseCheck: 'v1.3.4/ios-backup-export', outcome: 'prepared', format },
                     });
                 } catch { /* Optional diagnostics cannot prevent sharing a completed file. */ }
             }

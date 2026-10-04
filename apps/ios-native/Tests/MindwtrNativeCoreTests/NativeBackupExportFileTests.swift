@@ -17,8 +17,8 @@ final class NativeBackupExportFileTests: XCTestCase {
         try withRoot { root in
             let port = NativeBackupExportFile(libraryRoot: root)
             let text = "{\"notes\":\"日本語 🦉\\nمرحبا\"}"
-            let first = try port.prepare(fileName: backupName, json: text)
-            let second = try port.prepare(fileName: backupName, json: "{}")
+            let first = try port.prepare(fileName: backupName, content: text)
+            let second = try port.prepare(fileName: backupName, content: "{}")
             XCTAssertNotEqual(first.url, second.url)
             XCTAssertEqual(try Data(contentsOf: first.url), Data(text.utf8))
             XCTAssertEqual(try Data(contentsOf: second.url), Data("{}".utf8))
@@ -31,11 +31,30 @@ final class NativeBackupExportFileTests: XCTestCase {
         }
     }
 
+    func testCSVBytesAreImmutableAndInterruptedCSVIsCleaned() throws {
+        try withRoot { root in
+            let port = NativeBackupExportFile(libraryRoot: root)
+            let name = backupName.replacingOccurrences(of: ".json", with: ".csv")
+            let text = "Title,Description\n\"日本語, \"\"quoted\"\"\",\"two\nlines\""
+            let file = try port.prepare(fileName: name, content: text)
+            XCTAssertEqual(try Data(contentsOf: file.url), Data(text.utf8))
+            port.discard(file.id)
+            let orphan = root.appendingPathComponent("backup-export-" + UUID().uuidString.lowercased())
+            try FileManager.default.createDirectory(at: orphan, withIntermediateDirectories: false)
+            try Data(text.utf8).write(to: orphan.appendingPathComponent(name))
+            try port.discardInterruptedExports()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+            port.beforeWrite = { throw CocoaError(.fileWriteOutOfSpace) }
+            XCTAssertThrowsError(try port.prepare(fileName: name, content: text))
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+        }
+    }
+
     func testFailedWriteLeavesNoFileOrDirectory() throws {
         try withRoot { root in
             let port = NativeBackupExportFile(libraryRoot: root)
             port.beforeWrite = { throw CocoaError(.fileWriteOutOfSpace) }
-            XCTAssertThrowsError(try port.prepare(fileName: backupName, json: "private"))
+            XCTAssertThrowsError(try port.prepare(fileName: backupName, content: "private"))
             XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
         }
     }
@@ -56,7 +75,7 @@ final class NativeBackupExportFileTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
             XCTAssertEqual(try String(contentsOf: retained), "retained")
             XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: linked.path), unrelated.path)
-            let active = try port.prepare(fileName: backupName, json: "{}")
+            let active = try port.prepare(fileName: backupName, content: "{}")
             try port.discardInterruptedExports()
             XCTAssertTrue(FileManager.default.fileExists(atPath: active.url.path))
             port.discard(active.id)
@@ -67,13 +86,13 @@ final class NativeBackupExportFileTests: XCTestCase {
         try withRoot { root in
             let port = NativeBackupExportFile(libraryRoot: root)
             for invalidName in ["../private.json", "/private.json", "mindwtr-backup-x.json", self.backupName + "/other", self.backupName + "\n"] {
-                XCTAssertThrowsError(try port.prepare(fileName: invalidName, json: "private"))
+                XCTAssertThrowsError(try port.prepare(fileName: invalidName, content: "private"))
             }
             let target = root.appendingPathComponent("target", isDirectory: true)
             try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
             let link = root.appendingPathComponent("link", isDirectory: true)
             try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
-            XCTAssertThrowsError(try NativeBackupExportFile(libraryRoot: link).prepare(fileName: backupName, json: "private"))
+            XCTAssertThrowsError(try NativeBackupExportFile(libraryRoot: link).prepare(fileName: backupName, content: "private"))
             XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: target.path), [])
         }
     }

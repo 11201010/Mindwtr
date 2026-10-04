@@ -36262,7 +36262,7 @@ extension CoreHostTests {
         let expected = try object(await core.call("menuRead", argumentsJSON: json(["dataBackup", "{}"])))
         let before = try diagnostics197FullSnapshot()
         let prepared = try await core.prepareDataBackup()
-        XCTAssertEqual(try Data(contentsOf: prepared.url), Data(try XCTUnwrap(expected["json"] as? String).utf8))
+        XCTAssertEqual(try Data(contentsOf: prepared.url), Data(try XCTUnwrap(expected["content"] as? String).utf8))
         XCTAssertTrue(try String(contentsOf: prepared.url, encoding: .utf8).contains("Backup198 日本語 🦉"))
         XCTAssertEqual(try diagnostics197FullSnapshot(), before)
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
@@ -36271,6 +36271,23 @@ extension CoreHostTests {
         XCTAssertEqual(try diagnostics197FullSnapshot(), before)
         await core.close()
         await expectFailure { _ = try await core.prepareDataBackup() }
+        await expectFailure { _ = try await core.prepareDataBackup(format: .csv) }
+    }
+
+    func testBackup199CSVExportUsesSharedBytesAndPreservesRaw21() async throws {
+        let core = host(); _ = try await core.start()
+        let request = try await capture(core, title: "CSV199 日本語, \"quoted\"", id: UUID().uuidString.lowercased())
+        _ = try await core.call("captureSubmit", argumentsJSON: request)
+        let expected = try object(await core.call("menuRead", argumentsJSON: json(["dataCsvExport", "{}"])))
+        let before = try diagnostics197FullSnapshot()
+        let prepared = try await core.prepareDataBackup(format: .csv)
+        XCTAssertEqual(prepared.url.pathExtension, "csv")
+        XCTAssertEqual(try Data(contentsOf: prepared.url), Data(try XCTUnwrap(expected["content"] as? String).utf8))
+        XCTAssertTrue(try String(contentsOf: prepared.url, encoding: .utf8).contains("\"CSV199 日本語, \"\"quoted\"\"\""))
+        XCTAssertEqual(try diagnostics197FullSnapshot(), before)
+        await core.discardDataBackup(prepared.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: prepared.url.path))
+        await core.close()
     }
 
     func testBackup198ExclusiveOwnerProtectsLiveShareAndRestartCleansInterruptedFile() async throws {
@@ -36292,6 +36309,7 @@ extension CoreHostTests {
     func testBackup198PendingWriteAndUninitializedHostRefuseWithoutRecovery() async throws {
         let faults = HostIOFaults(), core = host(faults)
         await expectFailure { _ = try await core.prepareDataBackup() }
+        await expectFailure { _ = try await core.prepareDataBackup(format: .csv) }
         _ = try await core.start()
         let request = try await capture(core, title: "Backup198 pending", id: UUID().uuidString.lowercased())
         let before = try diagnostics197FullSnapshot()
@@ -36299,6 +36317,7 @@ extension CoreHostTests {
         await expectFailure { _ = try await core.call("captureSubmit", argumentsJSON: request) }
         let exact = try Data(contentsOf: journal)
         await expectFailure { _ = try await core.prepareDataBackup() }
+        await expectFailure { _ = try await core.prepareDataBackup(format: .csv) }
         XCTAssertEqual(try Data(contentsOf: journal), exact)
         XCTAssertEqual(try diagnostics197FullSnapshot(), before)
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: directory.path).contains { $0.hasPrefix("backup-export-") })

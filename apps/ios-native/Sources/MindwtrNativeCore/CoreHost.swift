@@ -51,8 +51,8 @@ public final class CoreHost: @unchecked Sendable {
         try await perform { try $0.validatedDiagnosticsShareURL(path) }
     }
 
-    public func prepareDataBackup() async throws -> NativeBackupExport {
-        try await perform { try $0.prepareDataBackup() }
+    public func prepareDataBackup(format: NativeBackupFormat = .json) async throws -> NativeBackupExport {
+        try await perform { try $0.prepareDataBackup(format: format) }
     }
 
     public func discardDataBackup(_ id: UUID) async {
@@ -1262,16 +1262,17 @@ private final class Engine: @unchecked Sendable {
         return try diagnosticsFile.validatedShareURL(path)
     }
 
-    func prepareDataBackup() throws -> NativeBackupExport {
+    func prepareDataBackup(format: NativeBackupFormat = .json) throws -> NativeBackupExport {
         // Use the normal read gate. Unlike Diagnostics, export cannot bypass pending work.
-        let encoded = try call("menuRead", argumentsJSON: #"["dataBackup","{}"]"#)
+        let method = format == .json ? "dataBackup" : "dataCsvExport"
+        let encoded = try call("menuRead", argumentsJSON: "[\"\(method)\",\"{}\"]")
         guard let reply = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
-              Set(reply.keys) == Set(["fileName", "json"]),
-              let fileName = reply["fileName"] as? String, let json = reply["json"] as? String else {
+              Set(reply.keys) == Set(["fileName", "content"]),
+              let fileName = reply["fileName"] as? String, let content = reply["content"] as? String else {
             throw HostFailure("Backup reply unavailable")
         }
-        let prepared = try backupExportFile.prepare(fileName: fileName, json: json)
-        _ = try? invoke("backupExportPrepared", arguments: [])
+        let prepared = try backupExportFile.prepare(fileName: fileName, content: content)
+        _ = try? invoke("backupExportPrepared", arguments: [format.rawValue])
         return prepared
     }
 
@@ -10484,12 +10485,12 @@ private final class Engine: @unchecked Sendable {
             }
         }
         if method == "menuRead" {
-            guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "bulk", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "dataSettings", "dataBackup", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
+            guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "bulk", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "dataSettings", "dataBackup", "dataCsvExport", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
                   let json = args[1] as? String,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
             }
-            if ["dataSettings", "dataBackup"].contains(name), !input.isEmpty { throw HostFailure("INVALID_INPUT: Unsupported Data settings read") }
+            if ["dataSettings", "dataBackup", "dataCsvExport"].contains(name), !input.isEmpty { throw HostFailure("INVALID_INPUT: Unsupported Data settings read") }
             if name == "bulk" {
                 let referenceSelection = input["list"] as? String == "reference"
                 // Both lists expose only the revision-bound Remove tag picker validated below.

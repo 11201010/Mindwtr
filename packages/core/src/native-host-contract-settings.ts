@@ -63,6 +63,7 @@
  */
 import { AREA_PRESET_COLORS, DEFAULT_AREA_COLOR } from './color-constants';
 import { createBackupFileName, serializeBackupData } from './backup-transfer';
+import { serializeMindwtrCsv } from './mindwtr-csv-export';
 import { getInMemoryAppDataSnapshot } from './sync-client-helpers';
 import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
 import { canUseJalaliCalendar, createDateFormatter, getSystemWeekStart, normalizeClockTimeInput, type DateFormattingConfig } from './date';
@@ -969,8 +970,9 @@ export function createSettingsMethods(deps: SettingsDeps) {
             return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: manageRevision(), ...model } };
         },
 
-        /** RN's JSON export snapshot and serializer. Never flushes or acknowledges an owed save. */
-        getDataBackup(): NativeHostResult<{ fileName: string; json: string }> {
+        /** RN's export snapshot and JSON/CSV serializers. Never flushes or acknowledges an owed save. */
+        getDataBackup(format: 'json' | 'csv' = 'json'): NativeHostResult<{ fileName: string; content: string }> {
+            if (format !== 'json' && format !== 'csv') return fail('INVALID_INPUT', 'Unsupported export format');
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             if (isSandboxMode() || isWorkspaceTransitionActive()) {
@@ -982,8 +984,10 @@ export function createSettingsMethods(deps: SettingsDeps) {
             }
             try {
                 return { ok: true, value: {
-                    fileName: createBackupFileName(),
-                    json: serializeBackupData(getInMemoryAppDataSnapshot()),
+                    fileName: createBackupFileName().replace(/\.json$/u, format === 'csv' ? '.csv' : '.json'),
+                    content: format === 'csv'
+                        ? serializeMindwtrCsv(getInMemoryAppDataSnapshot())
+                        : serializeBackupData(getInMemoryAppDataSnapshot()),
                 } };
             } catch {
                 // Serialization errors can contain data; the host receives only a fixed message.

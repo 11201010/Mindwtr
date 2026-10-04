@@ -1,6 +1,8 @@
 import Foundation
 import Darwin
 
+public enum NativeBackupFormat: String, Sendable { case json, csv }
+
 public struct NativeBackupExport: Sendable, Identifiable {
     public let id: UUID
     public let url: URL
@@ -19,7 +21,7 @@ final class NativeBackupExportFile {
 
     deinit { for id in Array(owned.keys) { discard(id) } }
 
-    func prepare(fileName: String, json: String) throws -> NativeBackupExport {
+    func prepare(fileName: String, content: String) throws -> NativeBackupExport {
         guard Self.isBackupName(fileName) else { throw failure() }
         let parent = try openRoot()
         let id = UUID()
@@ -46,7 +48,7 @@ final class NativeBackupExportFile {
         #if DEBUG
         try beforeWrite?()
         #endif
-        try Data(json.utf8).withUnsafeBytes { bytes in
+        try Data(content.utf8).withUnsafeBytes { bytes in
             var offset = 0
             while offset < bytes.count {
                 let count = Darwin.write(fd, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
@@ -97,7 +99,7 @@ final class NativeBackupExportFile {
     }
 
     private static func isBackupName(_ name: String) -> Bool {
-        name.range(of: #"\Amindwtr-backup-[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{3}Z\.json\z"#,
+        name.range(of: #"\Amindwtr-backup-[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{3}Z\.(json|csv)\z"#,
                    options: .regularExpression) != nil
     }
 

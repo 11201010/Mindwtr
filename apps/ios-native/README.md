@@ -110,3 +110,6 @@ Task194 archived-project task previews now read saved content directly through t
 
 
 Settings → Data → Backup → Export Backup exports JSON using RN's shared snapshot and serializer. The system share sheet receives a completed private file; cancellation, stale sessions and interrupted-share restart clean up owned exports. Saving must be healthy before export. JSON contains attachment metadata, not attachment bytes. Task198 passed focused shared/Swift checks, final maximum-text/Arabic/delayed-result simulator checks and isolated iPhone share/cancel/restart checks. See the [parity ledger](../../docs/development/native-mobile-parity.md#task198-json-backup-export) for exact evidence and limitations. Import, restore and other export formats remain unavailable.
+
+
+Data → Backup also supports Export CSV through RN's shared serializer. It exports live tasks, including completed history, while excluding deleted/purged records. Native CSV import is not implemented. Task199 passed shared/host checks, normal and maximum-text simulator checks, JSON regression and an isolated iPhone byte comparison/share cancellation. See the [parity ledger](../../docs/development/native-mobile-parity.md#task199-csv-export).

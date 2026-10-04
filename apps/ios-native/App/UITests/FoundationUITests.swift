@@ -22234,6 +22234,14 @@ extension FoundationUITests {
         boardEnabled(app.buttons["diagnostics-clear"], timeout: 30)
     }
 
+    func testTask199CSVExportLargestText() {
+        task198BackupFlow("27081d30-a8da-4ba8-9917-ce89e4b87b37", largest: true, csv: true)
+    }
+
+    func testTask199CSVExportNormal() {
+        task198BackupFlow("782625fd-3ad5-4fcd-a56a-5e9caa9055cb", csv: true)
+    }
+
     func testTask198BackupLargestText() {
         task198BackupFlow("29dca0e0-05ee-4663-bf63-badce42f92c7", largest: true)
     }
@@ -22259,7 +22267,8 @@ extension FoundationUITests {
         app.terminate()
     }
 
-    private func task198BackupFlow(_ library: String, rtl: Bool = false, largest: Bool = false) {
+    private func task198BackupFlow(_ library: String, rtl: Bool = false, largest: Bool = false, csv: Bool = false) {
+        let exportID = csv ? "data-transfer-export-csv" : "data-transfer-export"
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
@@ -22270,18 +22279,18 @@ extension FoundationUITests {
         }
         task197Data(app)
         if rtl { XCTAssertEqual(app.buttons["backup-disclosure"].label, "نسخة احتياطية") }
-        XCTAssertFalse(app.buttons["data-transfer-export"].exists)
+        XCTAssertFalse(app.buttons[exportID].exists)
         boardTap(app, "backup-disclosure")
-        task192Reveal(app, "data-transfer-export", buttons: true, scrollID: "diagnostics-scroll")
-        boardEnabled(app.buttons["data-transfer-export"], timeout: 30)
-        if rtl { XCTAssertTrue(app.buttons["data-transfer-export"].label.contains("تصدير نسخة احتياطية")) }
+        task192Reveal(app, exportID, buttons: true, scrollID: "diagnostics-scroll")
+        boardEnabled(app.buttons[exportID], timeout: 30)
+        if rtl { XCTAssertTrue(app.buttons[exportID].label.contains("تصدير نسخة احتياطية")) }
         let expanded = XCTAttachment(screenshot: app.screenshot())
-        expanded.name = "Task198 expanded Backup"; expanded.lifetime = .keepAlways; add(expanded)
-        boardTap(app, "data-transfer-export")
+        expanded.name = csv ? "Task199 expanded CSV" : "Task198 expanded Backup"; expanded.lifetime = .keepAlways; add(expanded)
+        boardTap(app, exportID)
         let close = app.buttons["header.closeButton"]
         boardEnabled(close, timeout: 30)
         let sheet = XCTAttachment(screenshot: app.screenshot())
-        sheet.name = "Task198 JSON share sheet"; sheet.lifetime = .keepAlways; add(sheet)
+        sheet.name = csv ? "Task199 CSV share sheet" : "Task198 JSON share sheet"; sheet.lifetime = .keepAlways; add(sheet)
         if !close.isHittable {
             expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: close)
             waitForExpectations(timeout: 10)
@@ -22290,11 +22299,11 @@ extension FoundationUITests {
         closeDetails.name = "Task198 observed Close control"; closeDetails.lifetime = .keepAlways; add(closeDetails)
         close.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(close.waitForNonExistence(timeout: 30))
-        boardEnabled(app.buttons["data-transfer-export"], timeout: 30)
+        boardEnabled(app.buttons[exportID], timeout: 30)
         XCTAssertFalse(app.staticTexts["backup-export-error"].exists)
         boardTap(app, "diagnostics-back"); boardTap(app, "settings-back")
         app.terminate(); app.launch(); task197Data(app)
-        XCTAssertFalse(app.buttons["data-transfer-export"].exists)
+        XCTAssertFalse(app.buttons[exportID].exists)
         XCTAssertFalse(app.staticTexts["backup-export-error"].exists)
         app.terminate()
     }

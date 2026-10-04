@@ -325,3 +325,6 @@ Task197 diagnostics (2026-10-04): native Settings → Data now supports shared-p
 
 
 Task198 JSON backup export (2026-10-04): Settings → Data now prepares JSON with RN's actual snapshot and serializer, then shares a completed private file. Failed saves refuse export; cancelled, stale and interrupted shares clean up their owned files. Focused core/Swift checks, three final simulator scopes and isolated iPhone checks passed; see the [parity ledger](native-mobile-parity.md#task198-json-backup-export) for source generations, data-preservation proof and limits. D02 remains partial: import, restore and other formats are still migration work.
+
+
+Task199 CSV export (2026-10-04): native Data adds RN's live-task CSV serializer through the same immutable-file/share owner. Shared and host checks, normal/maximum-text simulator flows and the isolated iPhone share/cancel flow passed, including byte equality with RN and unchanged persisted data. JSON Arabic regression also passed. D02 still requires TaskNotes export, import and restore; exact evidence is in the [parity ledger](native-mobile-parity.md#task199-csv-export).

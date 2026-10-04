@@ -3748,7 +3748,7 @@ final class CoreModel: ObservableObject {
             && !dataSettingAwaitingRefresh
     }
 
-    func exportDataBackup() async {
+    func exportDataBackup(format: NativeBackupFormat = .json) async {
         guard backupExportEnabled, let session = diagnosticsSession, let currentHost = host else { return }
         backupExportBusy = true
         backupExportError = nil
@@ -3758,7 +3758,7 @@ final class CoreModel: ObservableObject {
             }
         }
         do {
-            let prepared = try await currentHost.prepareDataBackup()
+            let prepared = try await currentHost.prepareDataBackup(format: format)
             #if DEBUG && targetEnvironment(simulator)
             if backupExportTestHoldOnce {
                 backupExportTestHoldOnce = false
@@ -3782,7 +3782,7 @@ final class CoreModel: ObservableObject {
             backupShare = prepared
         } catch {
             if host === currentHost, diagnosticsCurrent(owner: settingsDiagnosticsOwner, session: session) {
-                backupExportError = dataSettings.object("backup").text("failed")
+                backupExportError = dataSettings.object("backup").text(format == .csv ? "csvFailed" : "failed")
             }
         }
     }
@@ -3815,7 +3815,7 @@ final class CoreModel: ObservableObject {
         let labels = result.object("diagnostics")
         let backup = result.object("backup")
         guard result["version"] is NSNumber, !result.text("revision").isEmpty, !result.text("title").isEmpty,
-              ["title", "exportLabel", "description", "failed"].allSatisfy({ backup[$0] is String && !backup.text($0).isEmpty }),
+              ["title", "exportLabel", "description", "failed", "csvLabel", "csvDescription", "csvFailed"].allSatisfy({ backup[$0] is String && !backup.text($0).isEmpty }),
               !labels.text("title").isEmpty, labels.object("debugLogging")["value"] is Bool,
               ["toastTitle", "logMissing", "shareUnavailable", "logCleared", "logClearFailed"].allSatisfy({ labels[$0] is String }),
               labels["shareLog"] is NSNull || labels["shareLog"] is CoreObject,

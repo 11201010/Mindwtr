@@ -3,7 +3,7 @@
  * sync-settings-sections.tsx SyncDiagnosticsCard; its actions in use-sync-settings-backup-actions.ts):
  * the Debug logging switch, then, while logging is on, Share log and Clear log. RN's analytics row
  * shows only in builds with the heartbeat, and its Encryption block comes with sync; neither is
- * here yet. Backup currently exposes RN's JSON export action; restore and the
+ * here yet. Backup currently exposes RN's JSON and CSV export actions; restore and the
  * other transfer formats remain separate migration work.
  */
 import { isDiagnosticsLoggingEnabled } from './diagnostics-log';
@@ -15,7 +15,7 @@ export type DataSettingsEdit = { type: 'debugLogging'; value: boolean };
 
 export type DataSettingsModel = {
     title: string;
-    backup: { title: string; exportLabel: string; description: string; failed: string };
+    backup: { title: string; exportLabel: string; description: string; failed: string; csvLabel: string; csvDescription: string; csvFailed: string };
     diagnostics: {
         title: string;
         debugLogging: { label: string; description: string; value: boolean; edit: DataSettingsEdit };
@@ -39,6 +39,9 @@ export function buildDataSettingsModel(settings: AppSettings, t: Translate): Dat
             exportLabel: t('settings.exportBackup'),
             description: t('settings.exportBackupDesc'),
             failed: t('settings.backupMobile.failedToExportBackup'),
+            csvLabel: t('settings.exportCsv'),
+            csvDescription: t('settings.exportCsvDesc'),
+            csvFailed: t('settings.exportCsvFailed'),
         },
         diagnostics: {
             title: t('settings.diagnostics'),
