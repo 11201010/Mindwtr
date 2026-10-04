@@ -9,7 +9,8 @@
 // so the development data does not grow. Then, on the open project's Details panel (RN's ProjectDetailModal):
 //   (a) the folded Details shows core's summary; a tap unfolds the panel;
 //   (b) Status → Waiting, (c) Type → Sequential, (d) Sequential Scope → Within sections, (e) Sections: Add Section twice,
-//       Move down, Edit, Delete, (f) Area, (g) Tags, (h) Notes (typed, stored on Preview, shown as core's preview),
+//       Move down, Edit, Delete, (f) Area, (g) Tags (+ adds; Done and + on a held tag store nothing), (h) Notes (Preview shows the
+//       typed notes and stores nothing; Back stores them),
 //       (i) Attachments' Add link and Remove, (j) Start, Due and Review dates (the picker's day), and a Clear, (k) the title:
 //       each write is stored once (the pulled database: the value, and the project's rev one higher);
 //   (l) a restart replays a journaled commit: one stopped before the engine saw it (Status → Someday) is stored by the boot's
@@ -50,7 +51,7 @@ const work = resolve(app, 'android/build/project-details-check');
 const coreSrc = resolve(app, '../../packages/core/src');
 const { en } = await import(resolve(coreSrc, 'i18n/locales/en.ts'));
 const run = '535353535353';
-const names = { area: `PDArea${run}`, project: `PD${run}`, renamed: `PDR${run}`, task: `55${run}`, first: `S1${run}`, second: `S2${run}`,
+const names = { area: `PDArea${run}`, project: `PD${run}`, renamed: `PDR${run}`, backTitle: `PDB${run}`, task: `55${run}`, first: `S1${run}`, second: `S2${run}`,
     edited: `S3${run}`, tag: `pd${run}`, replayTag: `pdr${run}`, notes: `Notes ${run}`, link: `https://example.com/pd/${run}` };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
@@ -114,7 +115,7 @@ const core = (db, mode) => JSON.parse(execFileSync('bun', ['-e', `
             await store().updateSettings({ appearance: { mobileQuickAccessView: 'projects' } });
             await flushPendingSave();
         }
-        const found = live(store()._allProjects).filter((project) => [names.project, names.renamed].includes(project.title));
+        const found = live(store()._allProjects).filter((project) => [names.project, names.renamed, names.backTitle].includes(project.title));
         if (found.length > 1) throw new Error('the fixture project title is not unique');
         let area = live(store()._allAreas).find((item) => item.name === names.area);
         if (!area) area = await store().addArea(names.area);
@@ -386,20 +387,32 @@ try {
         await tap(textNode(nodes, names.area) ?? fail(`${names.area} is not in the area picker`));
     }, (current) => current.areaId === ids.area);
 
-    // (g) Tags: typed, then +.
+    // (g) Tags: typed, then + adds it. The keyboard's Done changes nothing, and + on a tag the project has keeps it (RN: Done ends
+    // editing; dd 2026-10-04: + only adds).
     row = await write('(g) Tags', async () => {
         await tap(tagged(await revealTag('project-tag-picker'), 'project-tag-picker'));
         nodes = await waitFor('the tag picker', (current) => Boolean(tagged(current, 'project-tag-input')), 15_000);
         await typeText(tagged(nodes, 'project-tag-input'), names.tag);
         await tap(tagged(await screen(), 'project-tag-add'));
     }, (current) => current.tags.join() === `#${names.tag}`);
+    for (const [label, send] of [['the keyboard\'s Done', () => sh('input keyevent KEYCODE_ENTER')],
+        ['+ on a tag the project has', async () => tap(tagged(await screen(), 'project-tag-add'))]]) {
+        const tagsBefore = stored('before');
+        await typeText(tagged(await screen(), 'project-tag-input'), names.tag);
+        await send();
+        await sleep(2500);
+        const after = stored();
+        check(after.rev === tagsBefore.rev && after.tags.join() === `#${names.tag}`, `(g) ${label} stores nothing and keeps the tag`);
+    }
     await hideKeyboard();
     // Back only while the picker is still up (else Back would close the project).
     if (tagged(await screen(), 'project-tag-input')) sh('input keyevent KEYCODE_BACK');
     await waitFor('the tag picker to close', (current) => !tagged(current, 'project-tag-input'), 10_000);
 
-    // (h) Notes: typed, stored when Preview takes the focus away; core's preview shows them.
-    row = await write('(h) Notes', async () => {
+    // (h) Notes: typed; Preview shows the typed draft and stores nothing (RN previews the unsaved notes); Back stores them, as
+    // RN's blur on close does.
+    const notesBefore = stored('before');
+    {
         await tap(tagged(await revealTag('project-notes-toggle'), 'project-notes-toggle'));
         nodes = await revealTag('project-notes-input');
         await typeText(tagged(nodes, 'project-notes-input'), names.notes);
@@ -412,9 +425,15 @@ try {
         check(Boolean(typed) && /mInputShown=true/.test(sh('dumpsys input_method')), '(h) the notes field stays in view above the open keyboard');
         await hideKeyboard();
         await tap(tagged(await revealTag('project-notes-mode'), 'project-notes-mode'));
-    }, (current) => current.supportNotes === names.notes);
-    nodes = await waitFor('core\'s notes preview', (current) => Boolean(tagged(current, 'project-notes-preview')) && hasText(current, names.notes), 15_000);
-    check(true, '(h) the preview shows core\'s blocks for the stored notes');
+    }
+    nodes = await waitFor('core\'s preview of the typed notes', (current) => Boolean(tagged(current, 'project-notes-preview')) && hasText(current, names.notes), 15_000);
+    await sleep(1500);
+    check(stored().rev === notesBefore.rev && stored().supportNotes !== names.notes, '(h) Preview shows the typed notes and stores nothing');
+    await tap(tagged(await revealTag('project-notes-mode'), 'project-notes-mode'));
+    await waitFor('the notes field again', (current) => tagged(current, 'project-notes-input')?.text === names.notes, 10_000);
+    await tap(button(await screen(), 'Back') ?? fail('no Back in the project header'));
+    row = await expectWrite('(h) Back stores the typed notes', notesBefore, (current) => current.supportNotes === names.notes);
+    nodes = await openDetails(names.project);
 
     // (i) Attachments inside Details: Add link, then Remove.
     row = await write('(i) Add link', async () => {
@@ -440,7 +459,8 @@ try {
     row = await write('(j) Review date', async () => { await tap(tagged(await revealTag('project-review-date-picker'), 'project-review-date-picker')); await pickToday(); },
         (current) => Boolean(current.reviewAt));
     // RN's picker keeps the time of day it opened on (now): an instant within a minute of the tap, on today's date.
-    check(Math.abs(Date.parse(row.reviewAt) - reviewStart) < 120_000 && /Z$/.test(row.reviewAt), `(j) Review date stored as an instant at the opened time: ${row.reviewAt}`);
+    // RN's Android picker answers the hour and minute it opened on, seconds and milliseconds 0.
+    check(Math.abs(Date.parse(row.reviewAt) - reviewStart) < 120_000 && /:00\.000Z$/.test(row.reviewAt), `(j) Review date stored at the opened hour and minute, seconds 0: ${row.reviewAt}`);
     row = await write('(j) Clear Start date', async () => {
         nodes = await revealTag('project-start-date-picker');
         await tap(withDescription(nodes, `${en['common.clear']} ${en['taskEdit.startDateLabel']}`) ?? fail('no Clear beside Start Date'));
@@ -453,6 +473,20 @@ try {
         sh('input keyevent KEYCODE_ENTER');
     }, (current) => current.title === names.renamed);
     await hideKeyboard();
+    // A typed title Back leaves with is stored too (RN's end of editing on close); then Done names it back.
+    const titleBefore = stored('before');
+    nodes = await revealIn((current) => Boolean(tagged(current, 'project-title-input')), 'the title');
+    await typeText(tagged(nodes, 'project-title-input'), names.backTitle);
+    await tap(button(await screen(), 'Back') ?? fail('no Back in the project header'));
+    row = await expectWrite('(k) Back stores the typed title', titleBefore, (current) => current.title === names.backTitle);
+    await hideKeyboard();
+    nodes = await openFixture(names.backTitle);
+    row = await write('(k) Title again', async () => {
+        await typeText(tagged(await screen(), 'project-title-input'), names.renamed);
+        sh('input keyevent KEYCODE_ENTER');
+    }, (current) => current.title === names.renamed);
+    await hideKeyboard();
+    await openDetails();
 
     // (l) Restart replay: stopped before the engine saw it, the boot's replay stores it; stopped after core's reply, the replay
     // stores nothing more.
