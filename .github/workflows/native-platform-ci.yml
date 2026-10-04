@@ -850,6 +850,10 @@ jobs:
             '${{ steps.ios27_release_simulator.outputs.app_path }}' \
             "$RUNNER_TEMP/ios27-artifacts"
 
+      - name: Ensure disk headroom before the device archive
+        if: success() && runner.environment == 'self-hosted' && matrix.lane == 'xcode27'
+        run: bash scripts/ci/prepare-apple-cache.sh before-archive
+
       - name: Create unsigned Release device archive with Xcode 27
         if: matrix.lane == 'xcode27'
         env:

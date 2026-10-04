@@ -356,3 +356,6 @@ Task209 OmniFocus import (2026-10-04): native Data now exposes the remaining RN 
 
 
 Task210 attachment foundation (2026-10-04): native iOS links RN's existing Swift attachment installer and exposes a strict native install/hash adapter. The RN engine's 28 tests, five native adapter tests and signed iPhone development build passed. This prepares shared file IO; picker/draft lifecycle, local file opening and attachment sync remain open. See the [parity ledger](native-mobile-parity.md#task210-shared-apple-attachment-installer-foundation).
+
+
+Task211 Apple CI archive headroom (2026-10-04): the Task206 full native SwiftUI/JSC job passed, including 734 CoreHost tests. The following RN lane passed its simulator build and cold/warm-link smoke, then its runner died with `No space left on device` during the unsigned device archive. A new self-hosted check runs after successful smoke and before archive. Under a conservative 20 GiB floor it removes only the current compiler's completed simulator and previous archive caches, preserves checkout/evidence/dependencies/other caches, and fails before Xcode if space remains insufficient. Forty-nine focused tests passed; the review's trailing-slash HOME symlink case was fixed and covered for both phases. Live archive completion and peak-space acceptance remain pending; the floor is a budget, not a measured guarantee.
