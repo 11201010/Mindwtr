@@ -1758,6 +1758,12 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     // RN's tag picker field (ProjectTagPickerModal): the keyboard's Done only ends editing; only + changes the tags (review PD 5).
     const tagField = code(source('ProjectDetails.kt')).split('BasicTextField(tagDraft')[1].split('testTag("project-tag-input")')[0];
     assert.doesNotMatch(tagField, /onDone = \{[^}]*Tag\(/, 'the tag field\'s Done changes no tag');
+    // The picker's + only adds the typed tag (core's `add` intent; dd 2026-10-04): a tag already there stays. A chip toggles.
+    const detailsKt = code(source('ProjectDetails.kt'));
+    assert.match(detailsKt, /fun addTag\(tag: String\) \{\s*changeTag\("add", tag\)\s*\}/, 'the picker\'s + writes core\'s add intent');
+    assert.match(detailsKt, /private fun changeTag\(kind: String, tag: String\) \{[\s\S]{0,200}?put\("intent", JSONObject\(\)\.put\("kind", kind\)/);
+    assert.match(detailsKt, /testTag\("project-tag-add"\)/);
+    assert.match(detailsKt, /\.clickable\(role = Role\.Button\) \{ addTag\(tagDraft\); tagDraft = "" \}/, '+ adds the typed tag');
     // RN's field sets autoCorrect={false} and autoCapitalize="none" (review PD 6).
     assert.match(tagField, /KeyboardOptions\(capitalization = KeyboardCapitalization\.None, autoCorrectEnabled = false,/, 'the tag field neither corrects nor capitalizes');
     assert.match(hostEntry, new RegExp(`type AttachmentCommand = ${attachmentKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));

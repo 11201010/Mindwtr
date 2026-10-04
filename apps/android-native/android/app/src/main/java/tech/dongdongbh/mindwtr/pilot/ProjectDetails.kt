@@ -228,10 +228,17 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
         }
     }
 
-    /** RN's Android tag picker: a chip and + both toggle the tag. */
-    fun toggleTag(tag: String) {
+    /** A tag chip: toggles its tag. */
+    fun toggleTag(tag: String) = changeTag("toggle", tag)
+
+    /** The picker's +: adds the typed tag; one the project already has stays (dd 2026-10-04; RN fixed the same way). */
+    fun addTag(tag: String) {
+        changeTag("add", tag)
+    }
+
+    private fun changeTag(kind: String, tag: String) {
         if (tag.isBlank()) return
-        write("projectTags") { options -> JSONObject().put("intent", JSONObject().put("kind", "toggle").put("input", tag)).put("expected", expected(options)) }
+        write("projectTags") { options -> JSONObject().put("intent", JSONObject().put("kind", kind).put("input", tag)).put("expected", expected(options)) }
     }
 
     /** The typed notes, stored once the field lets go (RN's blur and end of editing). */
@@ -712,7 +719,7 @@ fun ProjectDetailsDialogs(model: InboxViewModel) = with(model.projectDetails) {
                     modifier = Modifier.weight(1f).padding(vertical = 8.dp).semantics { contentDescription = label }.testTag("project-tag-input"),
                     decorationBox = { field -> Box { if (tagDraft.isEmpty()) Text(label, style = rnText(14, 400), color = c.secondaryText); field() } })
                 val add = t("common.add")
-                Text("+", style = rnText(16, 700), color = c.tint, modifier = Modifier.drawBehind { drawLine(c.border, Offset(0f, 0f), Offset(0f, size.height), 1.dp.toPx()) }.clickable(role = Role.Button) { toggleTag(tagDraft); tagDraft = "" }
+                Text("+", style = rnText(16, 700), color = c.tint, modifier = Modifier.drawBehind { drawLine(c.border, Offset(0f, 0f), Offset(0f, size.height), 1.dp.toPx()) }.clickable(role = Role.Button) { addTag(tagDraft); tagDraft = "" }
                     .semantics { contentDescription = add }.testTag("project-tag-add").padding(horizontal = 10.dp, vertical = 8.dp))
             }
             FlowRow(Modifier.padding(top = 12.dp).heightIn(max = 360.dp).verticalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp),
