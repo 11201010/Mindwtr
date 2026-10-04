@@ -3282,6 +3282,7 @@ export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName, t) {
   return { title: t('settings.undoImportConfirmTitle'), message: t('settings.undoImportConfirm', { snapshotName }),
     confirmLabel: t('markdown.referenceRestore'), cancelLabel: t('common.cancel') };
 }
+export { projectReviewPickerValue } from ${JSON.stringify(resolve(app, '../../packages/core/src/project-details-presentation.ts'))};
 export function setLogger(logger) { globalThis.coreLogger = logger; setRealLogger(logger); }
 export function consoleLogger() {}
 export class SqliteAdapter {

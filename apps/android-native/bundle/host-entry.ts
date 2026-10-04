@@ -5,6 +5,7 @@ import {
     PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY,
     NATIVE_HOST_CONTRACT_VERSION,
     NATIVE_REMINDER_STATE_STORAGE_KEY,
+    projectReviewPickerValue,
     REMINDER_ALARM_MAP_STORAGE_KEY,
     REMINDER_NOTIFICATION_CHANNEL_NAME,
     STATUS_COLORS_BY_THEME,
@@ -813,15 +814,13 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     projectSectionDeletePrepare: (input) => contract.prepareProjectSectionDelete(input),
     projectSectionOrderOptions: (input) => contract.getProjectSectionOrderOptions(input),
     projectSectionOrderPrepare: (input) => contract.prepareProjectSectionOrder(input),
-    // RN's Android date picker answers the picked day at the time of day of the value it opened on (core's picker instant),
-    // in the device's zone; core's review date write takes that instant as toISOString.
+    // RN's Android date picker answers the picked day at the hour and minute of the value it opened on (core's picker instant),
+    // seconds 0, in the device's zone (core's projectReviewPickerValue); core's review date write takes that instant.
     projectReviewInstant: (input) => {
         const { date, instant } = (input ?? {}) as { date?: unknown; instant?: unknown };
-        const day = typeof date === 'string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(date) : null;
-        const opened = typeof instant === 'string' ? new Date(instant) : null;
-        if (!day || !opened || !Number.isFinite(opened.getTime())) return { ok: false, error: { code: 'INVALID_INPUT', message: 'A picked day and the picker instant are required' } };
-        opened.setFullYear(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
-        return { ok: true, value: { instant: opened.toISOString() } };
+        const value = typeof date === 'string' && typeof instant === 'string' ? projectReviewPickerValue(date, instant) : null;
+        return value ? { ok: true, value: { instant: value } }
+            : { ok: false, error: { code: 'INVALID_INPUT', message: 'A picked day and the picker instant are required' } };
     },
     projectNotesView: (input) => contract.getProjectNotes(input),
     projectNotesTarget: (input) => contract.getProjectNotesReferenceTarget(input),

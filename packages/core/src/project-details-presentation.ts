@@ -79,3 +79,26 @@ export function getProjectDetailsPresentation(
         reviewDateLabel: formatProjectDate(project.reviewAt, t('common.notSet')),
     };
 }
+
+/**
+ * A review date picked on Android, as RN's date picker answers it (@react-native-community/datetimepicker
+ * DatePickerModule.onDateSet): the picked `yyyy-MM-dd` [day] at the hour and minute of the value the picker [opened] on, in
+ * the device's zone, seconds and milliseconds 0, as an ISO instant. A repeated hour (clocks set back) resolves to its later
+ * instant, as Java's Calendar does. Null for a malformed day or instant.
+ */
+export function projectReviewPickerValue(day: string, opened: string): string | null {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+    const at = new Date(opened);
+    if (!match || !Number.isFinite(at.getTime())) return null;
+    const [year, month, date] = [Number(match[1]), Number(match[2]) - 1, Number(match[3])];
+    const [hours, minutes] = [at.getHours(), at.getMinutes()];
+    const picked = new Date(year, month, date, hours, minutes, 0, 0);
+    if (!Number.isFinite(picked.getTime())) return null;
+    // JavaScript resolves a repeated wall-clock time to its earlier instant; Java's Calendar to its later one.
+    const backMinutes = new Date(picked.getTime() + 6 * 3_600_000).getTimezoneOffset() - picked.getTimezoneOffset();
+    if (backMinutes > 0) {
+        const later = new Date(picked.getTime() + backMinutes * 60_000);
+        if (later.getDate() === date && later.getHours() === hours && later.getMinutes() === minutes) return later.toISOString();
+    }
+    return picked.toISOString();
+}
