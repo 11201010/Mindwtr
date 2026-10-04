@@ -377,7 +377,7 @@ assert.equal(/createNativeSync\(\{[\s\S]*?localData:/.exec(hostEntry)[0].match(/
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -3229,6 +3229,39 @@ export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLogg
 export { canSaveTaskListTag } from ${JSON.stringify(resolve(app, '../../packages/core/src/task-list-bulk-actions.ts'))};
 export { formatListItemCount } from ${JSON.stringify(resolve(app, '../../packages/core/src/list-count.ts'))};
 export { getBulkMoveStatusOptions } from ${JSON.stringify(resolve(app, '../../packages/core/src/task-list-bulk-actions.ts'))};
+export { formatI18nTemplate } from ${JSON.stringify(resolve(app, '../../packages/core/src/i18n/index.ts'))};
+// These service stand-ins test bridge dispatch/admission, not import or receipt policy.
+// Actual shared policy and SQLite receipts have their own core and Swift/JSC suites.
+export function inspectNativeBackupDocument(text, metadata, t) {
+  globalThis.backupInputs.push(JSON.stringify(['inspect', text, metadata]));
+  return { valid: true, title: t('settings.mergeBackup'),
+    summary: t('settings.backupMobile.backupPreviewCounts', { taskCount: 2, projectCount: 1 }),
+    confirmLabel: t('settings.mergeBackupAction'), cancelLabel: t('common.cancel'),
+    errorTitle: t('settings.backupMobile.invalidBackup'), errorMessage: '' };
+}
+export async function prepareNativeBackupDocument(adapter, input) {
+  globalThis.backupInputs.push(JSON.stringify(['prepare', adapter === globalThis.adapter, input]));
+  if (globalThis.backupPrepareHold) await globalThis.backupPrepareHold;
+  return globalThis.backupPrepared;
+}
+export async function commitNativeBackupDocument(adapter, reference, planJSON, snapshotName) {
+  globalThis.backupInputs.push(JSON.stringify(['commit', adapter === globalThis.adapter, reference, planJSON, snapshotName]));
+  return globalThis.backupReply;
+}
+export async function readNativeBackupDocumentOutcome(adapter, reference, planJSON, snapshotName) {
+  globalThis.backupInputs.push(JSON.stringify(['outcome', adapter === globalThis.adapter, reference, planJSON, snapshotName]));
+  return globalThis.backupOutcome;
+}
+export function buildNativeBackupDocumentResult(reply, t) {
+  globalThis.backupInputs.push(JSON.stringify(['result', reply]));
+  return { title: t('settings.mergeBackup'), message: t('settings.mergeBackupSummary', { addedCount: reply.added, updatedCount: reply.updated }),
+    undoLabel: t('settings.undoImport'), doneLabel: t('common.done') };
+}
+export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName, t) {
+  globalThis.backupInputs.push(JSON.stringify(['restoreModel', snapshotName]));
+  return { title: t('settings.undoImportConfirmTitle'), message: t('settings.undoImportConfirm', { snapshotName }),
+    confirmLabel: t('markdown.referenceRestore'), cancelLabel: t('common.cancel') };
+}
 export function setLogger(logger) { globalThis.coreLogger = logger; setRealLogger(logger); }
 export function consoleLogger() {}
 export class SqliteAdapter {
@@ -3287,6 +3320,7 @@ export const NATIVE_REMINDER_STATE_STORAGE_KEY = 'mindwtr:native:reminders:v1';
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export function buildImmediateNotificationDetails(title, message, data) { return { title, message, channel: 'mindwtr_reminders_v2', data: { kind: 'pomodoro', ...data } }; }
 export function isSandboxMode() { return globalThis.sandbox === true; }
+export function isWorkspaceTransitionActive() { return globalThis.workspaceTransition === true; }
 // The debug net check's WebDAV calls: bundled, never run here.
 export const [cloudHeadJson, webdavDeleteFile, webdavGetFile, webdavGetJson, webdavGetSyncDocument, webdavHeadFile, webdavMakeDirectory, webdavPutFile, webdavPutJson] = Array(9).fill(async () => null);
 export function createNativeHostContract() {
@@ -3354,7 +3388,12 @@ export function createNativeHostContract() {
     },
     getStrings(input) {
         globalThis.languageInputs.push(JSON.stringify(input));
-        return { ok: true, value: { language: 'zh', strings: { 'tab.inbox': '收集箱' }, missing: [] } };
+        return { ok: true, value: { language: 'zh', strings: Object.fromEntries(input.keys.map((key) =>
+          [key, key === 'tab.inbox' ? '收集箱' : globalThis.backupStrings[key] ?? key])), missing: [] } };
+    },
+    getDataSettings() {
+        globalThis.backupReadinessChecks++;
+        return globalThis.backupReadinessResult;
     },
     async prepareReferenceTasksAddTag(input) {
       globalThis.menuInputs.push(JSON.stringify(['referenceTagPrepare', input]));
@@ -3511,6 +3550,15 @@ const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined) =
         languageInputs: [], projectInputs: [], settings: undefined, persistenceStatus: null, aiInputs: [],
         settingsReadFailure: false, afterLanguage: null, newInputs: [], menuInputs: [],
         fileCalls: [], ingestInputs: [], queueFiles: null, kv: {}, deleteResult: null, sandbox: false,
+        workspaceTransition: false, backupInputs: [], backupReadinessChecks: 0,
+        backupReadinessResult: { ok: true, value: { version: 1 } }, backupPrepareHold: null,
+        backupPrepared: { planJSON: '{"frozen":true}', recoveryJSON: '{"before":true}' },
+        backupReply: { version: 1, operation: 'merge', snapshotName: 'data.2026-10-04T12-00-00.000.snapshot.json', added: 2, updated: 1 },
+        backupOutcome: null,
+        backupStrings: { 'settings.mergeBackup': '合并备份',
+          'settings.backupMobile.backupPreviewCounts': '{{taskCount}} tasks / {{projectCount}} projects',
+          'settings.mergeBackupSummary': '{{addedCount}} added / {{updatedCount}} updated',
+          'settings.undoImportConfirm': 'Restore {{snapshotName}}; later edits are rolled back' },
         menuReadResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Someday changed; restart paging from offset zero' } },
         menuCommandResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
         taskFocusResult: { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } },
@@ -3593,6 +3641,84 @@ assert.equal(secondRead.saveCount, 0);
 
 const ready = makeState(0);
 assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
+// Task202: all six bridge callbacks settle through submit's Promise slots. The
+// service's persistence/policy is tested separately; these gates pin transport,
+// localized interpolation, normal admission and recovery-safe admission.
+{
+    const backup = makeState(0, [], 'ios');
+    const metadata = { fileName: 'owned.json', lastModified: 1791115200000, appVersion: '1.3.4' };
+    const metadataJSON = JSON.stringify(metadata);
+    const reference = { id: '11111111-1111-4111-8111-111111111111', sha256: 'a'.repeat(64), byteCount: 420 };
+    const referenceJSON = JSON.stringify(reference);
+    const snapshotName = backup.backupReply.snapshotName;
+    const planJSON = backup.backupPrepared.planJSON;
+    const input = { requestId: reference.id, mode: 'merge', snapshotName, text: 'owned 日本語 🦉', metadata };
+    const gatedCalls = () => [
+        () => backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON),
+        () => backup.MindwtrHost.backupDocumentPrepare(JSON.stringify(input)),
+        () => backup.MindwtrHost.backupDocumentCommit(referenceJSON, planJSON, snapshotName),
+        () => backup.MindwtrHost.backupDocumentOutcome(referenceJSON, planJSON, snapshotName),
+    ];
+    for (const call of gatedCalls()) assert.match((await poll(backup, call())).error, /^NOT_READY:/, 'no adapter-bound backup work before boot');
+    assert.deepEqual(backup.backupInputs, []);
+    assert.equal((await poll(backup, backup.MindwtrHost.boot())).ok, true);
+    assert(backup.receiptScope.includes('backupDocument'), 'iOS bootstrap retains complete-document receipts');
+    const domainBefore = JSON.stringify({ events: backup.events, saves: backup.saveCount, data: backup.fakeData });
+    const inspected = await poll(backup, backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON));
+    assert.deepEqual(inspected, { ok: true, value: { valid: true, title: '合并备份', summary: '2 tasks / 1 projects',
+        confirmLabel: 'settings.mergeBackupAction', cancelLabel: 'common.cancel', errorTitle: 'settings.backupMobile.invalidBackup', errorMessage: '' } });
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', input.text, metadata]), 'owned text and parsed metadata pass unchanged');
+    assert.deepEqual((await poll(backup, backup.MindwtrHost.backupDocumentResultModel(JSON.stringify(backup.backupReply)))).value,
+        { title: '合并备份', message: '2 added / 1 updated', undoLabel: 'settings.undoImport', doneLabel: 'common.done' });
+    assert.equal((await poll(backup, backup.MindwtrHost.backupSnapshotRestoreModel(snapshotName))).value.message,
+        `Restore ${snapshotName}; later edits are rolled back`);
+    assert.equal(JSON.stringify({ events: backup.events, saves: backup.saveCount, data: backup.fakeData }), domainBefore,
+        'inspection and localized result/confirmation reads neither flush nor mutate domain state');
+    let release;
+    backup.backupPrepareHold = new Promise((resolveHeld) => { release = resolveHeld; });
+    const preparedID = backup.MindwtrHost.backupDocumentPrepare(JSON.stringify(input));
+    await new Promise((resolveTick) => setImmediate(resolveTick));
+    assert.equal(backup.MindwtrHost.poll(preparedID), null, 'held service Promise cannot become a false acknowledgment');
+    release();
+    assert.deepEqual(await poll(backup, preparedID), { ok: true, value: backup.backupPrepared });
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['prepare', true, input]));
+    backup.backupPrepareHold = null;
+    backup.backupReadinessResult = { ok: false, error: { code: 'NOT_READY', message: 'presentation reload unavailable' } };
+    const inputsBeforeRefusal = backup.backupInputs.length;
+    for (const call of gatedCalls().slice(0, 2)) assert.match((await poll(backup, call())).error, /^NOT_READY:/);
+    assert.equal(backup.backupInputs.length, inputsBeforeRefusal, 'normal readiness failure reaches neither inspection nor preparation');
+    const readsBeforeRecovery = backup.backupReadinessChecks;
+    assert.deepEqual(await poll(backup, backup.MindwtrHost.backupDocumentCommit(referenceJSON, planJSON, snapshotName)),
+        { ok: true, value: backup.backupReply });
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['commit', true, reference, planJSON, snapshotName]));
+    backup.persistenceFailure = { message: 'owed save' };
+    assert.deepEqual(await poll(backup, backup.MindwtrHost.backupDocumentOutcome(referenceJSON, planJSON, snapshotName)), { ok: true, value: null });
+    backup.backupOutcome = backup.backupReply;
+    assert.deepEqual(await poll(backup, backup.MindwtrHost.backupDocumentOutcome(referenceJSON, planJSON, snapshotName)), { ok: true, value: backup.backupReply });
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['outcome', true, reference, planJSON, snapshotName]));
+    assert.equal(backup.backupReadinessChecks, readsBeforeRecovery, 'recovery dispatch is independent of mutable presentation readiness');
+    assert.equal(JSON.stringify({ events: backup.events, saves: backup.saveCount, data: backup.fakeData }), domainBefore,
+        'terminal outcome dispatch adds no flush or document work');
+    backup.persistenceFailure = null;
+    backup.backupReadinessResult = { ok: true, value: { version: 1 } };
+    backup.persistenceStatus = { queued: true };
+    assert.match((await poll(backup, backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON))).error, /^NOT_READY:/);
+    backup.persistenceStatus = null;
+    for (const field of ['sandbox', 'workspaceTransition']) {
+        backup[field] = true;
+        const before = backup.backupInputs.length;
+        for (const call of gatedCalls()) assert.match((await poll(backup, call())).error, /^NOT_READY:/, `${field} blocks adapter-bound backups`);
+        assert.equal(backup.backupInputs.length, before);
+        backup[field] = false;
+    }
+    for (const call of [() => backup.MindwtrHost.backupDocumentInspect(input.text, '{private-text'),
+        () => backup.MindwtrHost.backupDocumentPrepare('{private-text'),
+        () => backup.MindwtrHost.backupDocumentCommit('{private-text', planJSON, snapshotName),
+        () => backup.MindwtrHost.backupDocumentOutcome('{private-text', planJSON, snapshotName),
+        () => backup.MindwtrHost.backupDocumentResultModel('{private-text')]) {
+        assert.deepEqual(await poll(backup, call()), { ok: false, error: 'INVALID_INPUT: Invalid backup document input' });
+    }
+}
 // Task195: real shared tag-input policy, bounded wrappers and exact raw payload
 // transport. Store/receipt/CAS behavior runs in core and real Swift/JSC tests.
 {
@@ -3677,7 +3803,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);

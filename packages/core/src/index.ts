@@ -176,6 +176,7 @@ export * from './general-settings-model';
 export * from './manage-settings-model';
 export * from './gtd-settings-model';
 export * from './data-settings-model';
+export * from './native-backup-document';
 export * from './more-menu-model';
 export * from './reference';
 export * from './project-grouping';

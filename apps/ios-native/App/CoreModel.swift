@@ -28,6 +28,12 @@ struct DiagnosticsSharePayload: Identifiable {
     let url: URL
 }
 
+struct BackupSnapshotRow: Identifiable {
+    let id: String
+    let name: String
+    let referenceJSON: String
+}
+
 struct TaskSharePayload: Identifiable {
     let id = UUID()
     let title: String?
@@ -50,6 +56,10 @@ final class CoreModel: ObservableObject {
 
     @Published private(set) var selectedSurface: Surface = .inbox {
         didSet {
+            if oldValue == .settings && selectedSurface != .settings {
+                invalidateDiagnostics()
+                settingsDataPresented = false
+            }
             if oldValue == .someday && selectedSurface != .someday && !somedayMovePending
                 && !somedayMoveAwaitingRefresh && !somedayMoveUndoAwaitingRefresh {
                 clearSomedayMoveNotice()
@@ -308,6 +318,27 @@ final class CoreModel: ObservableObject {
     @Published private(set) var backupExportBusy = false
     @Published private(set) var backupExportError: String?
     private var backupShareHost: CoreHost?
+    @Published private(set) var backupImportPickerPresented = false
+    @Published private(set) var backupImportPickerID: UUID?
+    @Published private(set) var backupImportBusy = false
+    @Published private(set) var backupImportPreview: CoreObject = [:]
+    @Published private(set) var backupImportError: String?
+    @Published private(set) var backupDocumentResult: CoreObject = [:]
+    @Published private(set) var backupDocumentPending = false
+    @Published private(set) var backupSnapshots: [BackupSnapshotRow] = []
+    @Published private(set) var backupSnapshotReadError: String?
+    @Published private(set) var backupRestoreConfirmation: CoreObject = [:]
+    private var backupPickerSession: UUID?
+    private var backupImportID: UUID?
+    private var backupImportHost: CoreHost?
+    private var backupImportSession: UUID?
+    private var backupRestoreReference: String?
+    private var backupRestoreSession: UUID?
+    private var backupDocumentHost: CoreHost?
+    private var backupDocumentMode = "merge"
+    private var backupDocumentReply: String?
+    private var backupDocumentRecoveredReply: String?
+    private var backupUndoSnapshotName: String?
     let settingsDiagnosticsOwner = UUID()
     private var diagnosticsCacheHost: ObjectIdentifier?
     private var diagnosticsLockObserver: AnyCancellable?
@@ -330,7 +361,7 @@ final class CoreModel: ObservableObject {
     var diagnosticsToggleEnabled: Bool {
         ready && !appLock.concealed && settingsDataPresented && !busy && !retryNeeded
             && dataSettingRequest == nil && !dataSettingAwaitingRefresh && !diagnosticsFileBusy
-            && diagnosticsCacheIsCurrent && diagnosticsReadError == nil
+            && diagnosticsCacheIsCurrent && diagnosticsReadError == nil && !backupTransferActive
     }
 
     @Published private(set) var settingsGeneralPresented = false
@@ -3096,6 +3127,10 @@ final class CoreModel: ObservableObject {
                 } else if recovery.object("result").text("type") == "taskEditorReset" {
                     gtdTaskEditorFieldId = nil
                 }
+            } else if recovery.text("method") == "backupDocumentCommit" {
+                backupDocumentRecoveredReply = try json(recovery.object("result"))
+                selectedSurface = .settings
+                settingsDataPresented = true
             } else if recovery.text("method") == "dataSetting" {
                 selectedSurface = .settings
                 settingsDataPresented = true
@@ -3126,6 +3161,12 @@ final class CoreModel: ObservableObject {
             try await readSelectedSurface()
             ready = true
             retryNeeded = false
+            if let reply = backupDocumentRecoveredReply, let currentHost = host {
+                try await acceptBackupDocumentReply(reply, from: currentHost)
+                backupDocumentRecoveredReply = nil
+            } else if settingsDataPresented, let currentHost = host, let session = diagnosticsSession {
+                await readBackupTransferModels(currentHost, session: session)
+            }
             if let result = boardRecoveredResult {
                 boardTaskOpened = presentAcknowledgedBoardTask(result)
                 boardRecoveredResult = nil
@@ -3703,6 +3744,22 @@ final class CoreModel: ObservableObject {
 
     func invalidateDiagnostics(dropCache: Bool = false) {
         dismissBackupShare()
+        cancelBackupImportPreview()
+        backupImportPickerPresented = false
+        backupImportPickerID = nil
+        backupPickerSession = nil
+        backupImportBusy = false
+        backupImportError = nil
+        cancelBackupRestore()
+        backupSnapshots = []
+        backupSnapshotReadError = nil
+        backupDocumentResult = [:]
+        if backupDocumentHost !== host {
+            backupDocumentPending = false
+            backupDocumentReply = nil
+            backupDocumentHost = nil
+            backupUndoSnapshotName = nil
+        }
         backupExportBusy = false
         backupExportError = nil
         diagnosticsSession = nil
@@ -3738,7 +3795,22 @@ final class CoreModel: ObservableObject {
     func diagnosticsFileActionsEnabled(owner: UUID) -> Bool {
         diagnosticsOwner == owner && diagnosticsSession != nil && diagnosticsCacheIsCurrent
             && ready && !appLock.concealed && !busy && !diagnosticsFileBusy && diagnosticsShare == nil
-            && !backupExportBusy && backupShare == nil
+            && !backupExportBusy && backupShare == nil && !backupTransferActive
+    }
+
+    private var backupTransferActive: Bool {
+        backupImportPickerPresented || backupImportBusy || !backupImportPreview.isEmpty
+            || !backupRestoreConfirmation.isEmpty || backupDocumentPending
+    }
+
+    var backupImportEnabled: Bool { backupExportEnabled && backupSnapshotReadError == nil }
+
+    var backupUndoEnabled: Bool {
+        backupImportEnabled && backupUndoSnapshotName.map { name in backupSnapshots.contains { $0.name == name } } == true
+    }
+
+    var backupResultReadRetryNeeded: Bool {
+        backupDocumentReply != nil && backupDocumentResult.isEmpty && !backupDocumentPending
     }
 
     var backupExportEnabled: Bool {
@@ -3801,6 +3873,294 @@ final class CoreModel: ObservableObject {
         backupShareHost = nil
     }
 
+    func openBackupImportPicker() {
+        guard backupImportEnabled, let session = diagnosticsSession else { return }
+        backupImportError = nil
+        backupPickerSession = session
+        backupImportPickerID = UUID()
+        backupImportPickerPresented = true
+    }
+
+    func setBackupImportPickerPresented(_ presented: Bool) {
+        if !presented { backupImportPickerPresented = false }
+        // Cancel may dismiss without a completion. Only presentation gates
+        // actions; retain identity to recognize a late selection completion.
+    }
+
+    func receiveBackupImportSelection(_ result: Result<[URL], Error>, pickerID: UUID?) async {
+        guard let pickerID, pickerID == backupImportPickerID else { return }
+        let session = backupPickerSession
+        let currentHost = host
+        backupImportPickerID = nil
+        backupPickerSession = nil
+        backupImportPickerPresented = false
+        guard let session, let currentHost, backupSessionIsCurrent(currentHost, session: session),
+              backupImportEnabled, !Task.isCancelled else { return }
+        // The picker can dismiss before its callback. Recheck all action gates
+        // so a late callback cannot overlap a new export, share, or write.
+        let url: URL
+        switch result {
+        case .success(let urls):
+            guard urls.count == 1, let selected = urls.first else { return }
+            url = selected
+        case .failure(let failure):
+            let error = failure as NSError
+            if error.domain != NSCocoaErrorDomain || error.code != NSUserCancelledError {
+                backupImportError = backupTransferFailure()
+            }
+            return
+        }
+        backupImportBusy = true
+        defer { if backupSessionIsCurrent(currentHost, session: session) { backupImportBusy = false } }
+        do {
+            let prepared = try await currentHost.prepareBackupImport(url)
+            guard backupSessionIsCurrent(currentHost, session: session), !retryNeeded, !Task.isCancelled else {
+                await currentHost.discardBackupImport(prepared.id)
+                return
+            }
+            do {
+                let model = try decode(prepared.json)
+                guard Set(model.keys) == Set(["valid", "title", "summary", "confirmLabel", "cancelLabel", "errorTitle", "errorMessage"]),
+                      model["valid"] is Bool,
+                      ["title", "summary", "confirmLabel", "cancelLabel", "errorTitle", "errorMessage"].allSatisfy({ model[$0] is String }),
+                      !model.text("cancelLabel").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+                backupImportID = prepared.id
+                backupImportHost = currentHost
+                backupImportSession = session
+                backupImportPreview = model
+            } catch {
+                await currentHost.discardBackupImport(prepared.id)
+                throw error
+            }
+        } catch {
+            if backupSessionIsCurrent(currentHost, session: session) { backupImportError = backupControlledFailure(error) }
+        }
+    }
+
+    func cancelBackupImportPreview() {
+        if let id = backupImportID, let owner = backupImportHost {
+            Task { await owner.discardBackupImport(id) }
+        }
+        backupImportID = nil
+        backupImportHost = nil
+        backupImportSession = nil
+        backupImportPreview = [:]
+    }
+
+    func confirmBackupImport() async {
+        guard let id = backupImportID, let currentHost = backupImportHost, let session = backupImportSession,
+              backupSessionIsCurrent(currentHost, session: session), backupImportPreview.flag("valid"),
+              !busy, !retryNeeded, !backupImportBusy, !backupDocumentPending else { return }
+        // From dispatch onward the host owns acceptance and any owed journal.
+        // Session dismissal must not delete or re-prepare that accepted operation.
+        backupImportID = nil
+        backupImportHost = nil
+        backupImportSession = nil
+        backupImportPreview = [:]
+        beginBackupDocumentOperation(currentHost, mode: "merge")
+        defer { finishOperation() }
+        do { try await acceptBackupDocumentReply(await currentHost.mergeBackupImport(id), from: currentHost) }
+        catch {
+            if isDefiniteRejection(error) { await currentHost.discardBackupImport(id) }
+            handleBackupDocumentFailure(error, from: currentHost)
+        }
+    }
+
+    func requestBackupRestore(_ snapshot: BackupSnapshotRow) async {
+        guard backupImportEnabled, backupSnapshots.contains(where: { $0.id == snapshot.id && $0.referenceJSON == snapshot.referenceJSON }),
+              let currentHost = host, let session = diagnosticsSession else { return }
+        backupImportBusy = true
+        backupImportError = nil
+        defer { if backupSessionIsCurrent(currentHost, session: session) { backupImportBusy = false } }
+        do {
+            let model = try decode(await currentHost.backupSnapshotRestoreModel(snapshot.referenceJSON))
+            guard Set(model.keys) == Set(["title", "message", "confirmLabel", "cancelLabel"]),
+                  model.values.allSatisfy({ $0 is String }),
+                  ["title", "message", "confirmLabel", "cancelLabel"].allSatisfy({ !model.text($0).isEmpty }) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            guard backupSessionIsCurrent(currentHost, session: session), !retryNeeded, !Task.isCancelled else { return }
+            backupRestoreReference = snapshot.referenceJSON
+            backupRestoreSession = session
+            backupRestoreConfirmation = model
+        } catch {
+            if backupSessionIsCurrent(currentHost, session: session) { backupImportError = backupTransferFailure(mode: "restore") }
+        }
+    }
+
+    func requestBackupUndo() async {
+        guard backupUndoEnabled, let name = backupUndoSnapshotName,
+              let snapshot = backupSnapshots.first(where: { $0.name == name }) else { return }
+        await requestBackupRestore(snapshot)
+    }
+
+    func cancelBackupRestore() {
+        backupRestoreReference = nil
+        backupRestoreSession = nil
+        backupRestoreConfirmation = [:]
+    }
+
+    func confirmBackupRestore() async {
+        guard let reference = backupRestoreReference, let session = backupRestoreSession, let currentHost = host,
+              backupSessionIsCurrent(currentHost, session: session), !backupRestoreConfirmation.isEmpty,
+              !busy, !retryNeeded, !backupImportBusy, !backupDocumentPending else { return }
+        cancelBackupRestore()
+        beginBackupDocumentOperation(currentHost, mode: "restore")
+        defer { finishOperation() }
+        do { try await acceptBackupDocumentReply(await currentHost.restoreBackupSnapshot(reference), from: currentHost) }
+        catch { handleBackupDocumentFailure(error, from: currentHost) }
+    }
+
+    func dismissBackupDocumentResult() {
+        backupDocumentResult = [:]
+        backupDocumentReply = nil
+        backupUndoSnapshotName = nil
+    }
+
+    func retryBackupTransferRead() async {
+        if backupDocumentPending { await retry(); return }
+        guard ready, settingsDataPresented, !busy, !retryNeeded, !appLock.concealed else { return }
+        busy = true
+        backupImportError = nil
+        defer { finishOperation() }
+        do {
+            try await readLanguage()
+            try await readTheme()
+            try await readAppLock()
+            try await readDataSettings()
+        } catch { backupImportError = backupTransferFailure(mode: backupDocumentMode) }
+    }
+
+    private func backupSessionIsCurrent(_ currentHost: CoreHost, session: UUID) -> Bool {
+        host === currentHost && selectedSurface == .settings && settingsDataPresented
+            && diagnosticsCurrent(owner: settingsDiagnosticsOwner, session: session)
+    }
+
+    private func backupTransferFailure(mode: String = "merge") -> String {
+        let localized = mode == "restore" ? label("settings.backupMobile.failedToRestoreBackup")
+            : dataSettings.object("backup").text("mergeFailed")
+        return localized.isEmpty ? label("settings.feedback.actionFailed") : localized
+    }
+
+    private func backupControlledFailure(_ failure: Error, mode: String = "merge") -> String {
+        let reason: String
+        switch failure.localizedDescription {
+        case "INVALID_INPUT: Backup source exceeds 128 MiB", "Backup exceeds the supported byte limit":
+            reason = "Backup source exceeds 128 MiB"
+        case "INVALID_INPUT: Recovery snapshot exceeds 128 MiB":
+            reason = "Recovery snapshot exceeds 128 MiB"
+        case "INVALID_INPUT: Prepared backup plan exceeds 512 MiB":
+            reason = "Prepared backup plan exceeds 512 MiB"
+        default:
+            return backupTransferFailure(mode: mode)
+        }
+        // Only fixed, owned capacity reasons cross the presentation boundary.
+        return backupTransferFailure(mode: mode) + "\n" + reason
+    }
+
+    private func beginBackupDocumentOperation(_ currentHost: CoreHost, mode: String) {
+        backupDocumentHost = currentHost
+        backupDocumentMode = mode
+        backupDocumentPending = true
+        backupDocumentReply = nil
+        backupDocumentResult = [:]
+        backupUndoSnapshotName = nil
+        backupImportError = nil
+        backupImportBusy = true
+        busy = true
+    }
+
+    private func handleBackupDocumentFailure(_ failure: Error, from currentHost: CoreHost) {
+        guard host === currentHost, backupDocumentHost === currentHost else { return }
+        backupImportBusy = false
+        if isDefiniteRejection(failure) { backupDocumentPending = false; retryNeeded = false }
+        else { retryNeeded = backupDocumentPending }
+        let message = backupControlledFailure(failure, mode: backupDocumentMode)
+        backupImportError = message
+        self.error = retryNeeded ? message : nil
+    }
+
+    private func validBackupInteger(_ value: Any?, maximum: Double = 9_007_199_254_740_991) -> Bool {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
+        let count = number.doubleValue
+        return count.isFinite && count >= 0 && count <= maximum && count.rounded() == count
+    }
+
+    private func acceptBackupDocumentReply(_ encoded: String, from currentHost: CoreHost) async throws {
+        let reply = try decode(encoded)
+        guard Set(reply.keys) == Set(["version", "operation", "snapshotName", "added", "updated"]),
+              validBackupInteger(reply["version"], maximum: 1), reply.number("version") == 1,
+              ["merge", "restore"].contains(reply.text("operation")), !reply.text("snapshotName").isEmpty,
+              validBackupInteger(reply["added"]), validBackupInteger(reply["updated"]) else { throw CocoaError(.coderReadCorrupt) }
+        guard host === currentHost else { return }
+        guard !backupDocumentPending || backupDocumentHost !== currentHost || reply.text("operation") == backupDocumentMode else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        backupDocumentHost = currentHost
+        backupDocumentReply = encoded
+        backupDocumentMode = reply.text("operation")
+        backupUndoSnapshotName = reply.text("operation") == "merge" ? reply.text("snapshotName") : nil
+        backupDocumentPending = false
+        backupImportBusy = false
+        backupImportError = nil
+        retryNeeded = false
+        error = nil
+        // The host already proved the document and canonical reload. A failure
+        // of presentation reads retains this reply and retries only those reads.
+        guard settingsDataPresented, !appLock.concealed else { return }
+        do {
+            try await readLanguage()
+            try await readTheme()
+            try await readAppLock()
+            try await readSettingsMenu()
+            try await readDataSettings()
+        } catch { backupImportError = backupTransferFailure(mode: backupDocumentMode) }
+    }
+
+    private func readBackupTransferModels(_ currentHost: CoreHost, session: UUID) async {
+        guard host === currentHost, settingsDataPresented, !appLock.concealed else { return }
+        do {
+            let encoded = try await currentHost.listBackupSnapshots()
+            guard let references = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [CoreObject] else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            var rows: [BackupSnapshotRow] = []
+            var ids = Set<String>()
+            var names = Set<String>()
+            for reference in references {
+                let id = reference.text("id"), name = reference.text("name"), digest = reference.text("sha256")
+                guard Set(reference.keys) == Set(["id", "name", "sha256", "byteCount"]),
+                      UUID(uuidString: id)?.uuidString.lowercased() == id, !name.isEmpty,
+                      ids.insert(id).inserted, names.insert(name).inserted,
+                      digest.utf8.count == 64, digest.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+                      validBackupInteger(reference["byteCount"], maximum: 134_217_728), reference.number("byteCount") > 0 else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                rows.append(BackupSnapshotRow(id: id, name: name, referenceJSON: try json(reference)))
+            }
+            guard backupSessionIsCurrent(currentHost, session: session) else { return }
+            backupSnapshots = rows
+            backupSnapshotReadError = nil
+        } catch {
+            if backupSessionIsCurrent(currentHost, session: session) {
+                backupSnapshots = []
+                backupSnapshotReadError = label("settings.feedback.actionFailed")
+            }
+        }
+        guard backupSessionIsCurrent(currentHost, session: session), backupDocumentHost === currentHost,
+              let reply = backupDocumentReply else { return }
+        do {
+            let model = try decode(await currentHost.backupDocumentResultModel(reply))
+            guard Set(model.keys) == Set(["title", "message", "undoLabel", "doneLabel"]), model.values.allSatisfy({ $0 is String }),
+                  ["title", "message", "doneLabel"].allSatisfy({ !model.text($0).isEmpty }) else { throw CocoaError(.coderReadCorrupt) }
+            guard backupSessionIsCurrent(currentHost, session: session), backupDocumentReply == reply else { return }
+            backupDocumentResult = model
+            backupImportError = nil
+        } catch {
+            if backupSessionIsCurrent(currentHost, session: session) { backupImportError = backupTransferFailure(mode: backupDocumentMode) }
+        }
+    }
+
     func openDataSettings() async {
         guard ready, selectedSurface == .settings, !busy, !retryNeeded, !appLock.concealed,
               !settingsManagePresented, !settingsGeneralPresented, !settingsGtdPresented else { return }
@@ -3821,7 +4181,7 @@ final class CoreModel: ObservableObject {
         let labels = result.object("diagnostics")
         let backup = result.object("backup")
         guard result["version"] is NSNumber, !result.text("revision").isEmpty, !result.text("title").isEmpty,
-              ["title", "exportLabel", "description", "failed", "csvLabel", "csvDescription", "csvFailed", "tasknotesLabel", "tasknotesDescription", "tasknotesFailed"].allSatisfy({ backup[$0] is String && !backup.text($0).isEmpty }),
+              ["title", "exportLabel", "description", "failed", "csvLabel", "csvDescription", "csvFailed", "tasknotesLabel", "tasknotesDescription", "tasknotesFailed", "mergeLabel", "mergeDescription", "mergeFailed", "snapshotsLabel", "restoreLabel"].allSatisfy({ backup[$0] is String && !backup.text($0).isEmpty }),
               !labels.text("title").isEmpty, labels.object("debugLogging")["value"] is Bool,
               ["toastTitle", "logMissing", "shareUnavailable", "logCleared", "logClearFailed"].allSatisfy({ labels[$0] is String }),
               labels["shareLog"] is NSNull || labels["shareLog"] is CoreObject,
@@ -3831,6 +4191,7 @@ final class CoreModel: ObservableObject {
         diagnosticsCacheHost = ObjectIdentifier(currentHost)
         diagnosticsReadError = nil
         dataSettingAwaitingRefresh = false
+        await readBackupTransferModels(currentHost, session: session)
     }
 
     func retryDataSettingsRead() async {
@@ -4110,6 +4471,7 @@ final class CoreModel: ObservableObject {
 
     private func readStrings() async throws {
         let keys = ["tab.next", "tab.inbox", "tab.review", "tab.menu", "nav.addTask", "search.title",
+                    "settings.backupMobile.failedToRestoreBackup", "settings.recoverySnapshotsEmpty",
                     "appLock.title", "appLock.description", "appLock.prompt", "appLock.enablePrompt", "appLock.unlock",
                     "appLock.authenticating", "appLock.useDevicePasscode", "appLock.unavailable", "appLock.cancelled", "appLock.failed",
                     "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading", "common.ok", "common.noMatches",
@@ -20269,6 +20631,18 @@ final class CoreModel: ObservableObject {
         }
         do {
             let acknowledgment = try await host!.retryPending()
+            if backupDocumentPending, let currentHost = host, backupDocumentHost === currentHost {
+                guard let acknowledgment else { throw CocoaError(.coderReadCorrupt) }
+                if !appLock.concealed {
+                    selectedSurface = .settings
+                    settingsDataPresented = true
+                    if diagnosticsSession == nil || diagnosticsOwner != settingsDiagnosticsOwner {
+                        beginDiagnostics(owner: settingsDiagnosticsOwner)
+                    }
+                }
+                try await acceptBackupDocumentReply(acknowledgment, from: currentHost)
+                return
+            }
             if dataSettingRequest != nil {
                 guard let acknowledgment else { throw CocoaError(.coderReadCorrupt) }
                 try acknowledgeDataSetting(decode(acknowledgment))
@@ -21366,6 +21740,10 @@ final class CoreModel: ObservableObject {
             }
             if !calendarPreferencePending { calendarComposerNavigation = nil }
         } catch {
+            if backupDocumentPending, let currentHost = host, backupDocumentHost === currentHost {
+                handleBackupDocumentFailure(error, from: currentHost)
+                return
+            }
             if projectRenameRequest != nil {
                 await handleProjectRenameWriteError(error)
                 return

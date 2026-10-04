@@ -15,6 +15,11 @@ public struct CoreHostAppLockRecovery: LocalizedError, Sendable {
     public var errorDescription: String? { "App lock outcome is unknown. Cancel the pending change to use the saved setting." }
 }
 
+public struct NativeBackupImportPreview: Sendable {
+    public let id: UUID
+    public let json: String
+}
+
 /// One off-main owner for the core runtime, database and pending command journal.
 /// Every result is the JSON-encoded core value, with host/core failures thrown.
 public final class CoreHost: @unchecked Sendable {
@@ -57,6 +62,34 @@ public final class CoreHost: @unchecked Sendable {
 
     public func discardDataBackup(_ id: UUID) async {
         _ = try? await perform { $0.backupExportFile.discard(id) }
+    }
+
+    public func prepareBackupImport(_ url: URL) async throws -> NativeBackupImportPreview {
+        try await perform { try $0.prepareBackupImport(url) }
+    }
+
+    public func discardBackupImport(_ id: UUID) async {
+        _ = try? await perform { $0.discardBackupImport(id) }
+    }
+
+    public func mergeBackupImport(_ id: UUID) async throws -> String {
+        try await perform { try $0.mergeBackupImport(id) }
+    }
+
+    public func listBackupSnapshots() async throws -> String {
+        try await perform { try $0.listBackupSnapshots() }
+    }
+
+    public func restoreBackupSnapshot(_ referenceJSON: String) async throws -> String {
+        try await perform { try $0.restoreBackupSnapshot(referenceJSON) }
+    }
+
+    public func backupDocumentResultModel(_ replyJSON: String) async throws -> String {
+        try await perform { try $0.backupDocumentResultModel(replyJSON) }
+    }
+
+    public func backupSnapshotRestoreModel(_ referenceJSON: String) async throws -> String {
+        try await perform { try $0.backupSnapshotRestoreModel(referenceJSON) }
     }
 
     public func readEditorDraft() async throws -> EditorDraftSnapshot? {
@@ -137,6 +170,9 @@ private final class Engine: @unchecked Sendable {
     private let bundleURL: URL
     private let diagnosticsFile: NativeDiagnosticsLogFile
     let backupExportFile: NativeBackupExportFile
+    private let backupImportFile: NativeBackupImportFile
+    private let backupOperationFiles: NativeBackupOperationFiles
+    private var backupSelections: [UUID: NativeBackupImportSelection] = [:]
     private let journalURL: URL
     private let editorDrafts: EditorDraftStore
     private let legacyStorage: LegacyRNStorage?
@@ -211,6 +247,8 @@ private final class Engine: @unchecked Sendable {
     private var startupProjectSectionOrderResult: String?
     private var startupAppLockResult: String?
     private var startupGtdWorkflowResult: String?
+    private var backupUnreturnedReply: String?
+    private var startupBackupDocumentResult: String?
     private var startupDataSettingResult: String?
     private var startupGeneralPreferenceResult: String?
     private var startupTaxonomyResult: String?
@@ -370,6 +408,8 @@ private final class Engine: @unchecked Sendable {
         self.bundleURL = bundleURL
         diagnosticsFile = NativeDiagnosticsLogFile(libraryRoot: databaseURL.deletingLastPathComponent())
         backupExportFile = NativeBackupExportFile(libraryRoot: databaseURL.deletingLastPathComponent())
+        backupImportFile = NativeBackupImportFile(libraryRoot: databaseURL.deletingLastPathComponent())
+        backupOperationFiles = NativeBackupOperationFiles(libraryRoot: databaseURL.deletingLastPathComponent())
         self.legacyStorage = legacyStorage
         journalURL = databaseURL.appendingPathExtension("pending.json")
         editorDrafts = EditorDraftStore(databaseURL: databaseURL)
@@ -420,6 +460,17 @@ private final class Engine: @unchecked Sendable {
             // Optional cache cleanup cannot block startup or change an owed command.
             try? backupExportFile.discardInterruptedExports()
             if pending == nil { pending = try loadPendingJournal() }
+            // An uncertain journal never authorizes garbage collection. Validate
+            // every owned backup byte before boot can activate domain work.
+            if let command = pending, command.method == "backupDocumentCommit" {
+                _ = try backupDocumentArguments(command)
+            }
+            let retainedBackup = try pending.flatMap { command -> String? in
+                command.method == "backupDocumentCommit" ? try backupOperationReference(command).id : nil
+            }
+            try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? []))
+            // Accepted operations own their frozen plan, never the picker copy.
+            try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.reference.id }))
             guard let runtime = JSContext() else { throw HostFailure("Cannot create JavaScriptCore runtime") }
             context = runtime
             installBridge(runtime)
@@ -735,6 +786,8 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func startupWindow() throws -> String {
+        let recoveringBackupDocument = pending?.method == "backupDocumentCommit"
+        if pending == nil, let backupUnreturnedReply { startupBackupDocumentResult = backupUnreturnedReply }
         let recoveringBoard = pending?.method == "boardCommit"
         let recoveringTaskDelete = pending?.method == "taskDeleteCommit"
         let recoveringTaskDeleteCommand = recoveringTaskDelete ? pending : nil
@@ -819,6 +872,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringSomedaySectionMove = pending?.method == "somedaySectionMoveCommit"
         let recoveringSomedaySectionUndo = pending?.method == "somedaySectionMoveUndoCommit"
         let terminal = try resolvePending()
+        if recoveringBackupDocument, let terminal, case .success(let value) = terminal { startupBackupDocumentResult = value }
         if let recoveringTaskDeleteCommand, let terminal, case .success = terminal {
             rememberConfirmedTaskDelete(recoveringTaskDeleteCommand)
         }
@@ -932,7 +986,7 @@ private final class Engine: @unchecked Sendable {
         let recoveredSomedaySections = startupSomedaySectionCreateResult ?? startupSomedaySectionRenameResult
             ?? startupSomedaySectionDeleteResult ?? startupSomedaySectionOrderResult
             ?? startupSomedaySectionTaskResult
-        let recoveredManage = startupDataSettingResult ?? startupGtdWorkflowResult ?? startupAppLockResult ?? startupGeneralPreferenceResult ?? startupUnassignedAreaColorResult ?? startupPersonCreateResult
+        let recoveredManage = startupBackupDocumentResult ?? startupDataSettingResult ?? startupGtdWorkflowResult ?? startupAppLockResult ?? startupGeneralPreferenceResult ?? startupUnassignedAreaColorResult ?? startupPersonCreateResult
             ?? startupPersonDeleteResult ?? startupPersonEditResult ?? startupTaxonomyResult
         let recoveredDoneRows = startupDoneTaskCompletedAtResult ?? startupDoneTaskStatusResult
         let recoveredHistoryRows = startupArchiveTaskCompletedAtResult ?? recoveredDoneRows
@@ -1011,6 +1065,7 @@ private final class Engine: @unchecked Sendable {
                 : startupPersonCreateResult != nil ? "managePersonCreateCommit"
                 : startupAppLockResult != nil ? "appLockCommit"
                 : startupGtdWorkflowResult != nil ? "gtdWorkflowCommit"
+                : startupBackupDocumentResult != nil ? "backupDocumentCommit"
                 : startupDataSettingResult != nil ? "dataSetting"
                 : startupGeneralPreferenceResult != nil ? "generalPreferenceCommit"
                 : startupTaxonomyResult != nil ? "manageTaxonomyCommit"
@@ -1104,6 +1159,8 @@ private final class Engine: @unchecked Sendable {
         startupProjectSectionOrderResult = nil
         startupAppLockResult = nil
         startupGtdWorkflowResult = nil
+        if startupBackupDocumentResult != nil { backupUnreturnedReply = nil }
+        startupBackupDocumentResult = nil
         startupDataSettingResult = nil
         startupGeneralPreferenceResult = nil
         startupTaxonomyResult = nil
@@ -1289,6 +1346,212 @@ private final class Engine: @unchecked Sendable {
         let prepared = try backupExportFile.prepare(fileName: fileName, bytes: bytes)
         _ = try? invoke("backupExportPrepared", arguments: [format.rawValue])
         return prepared
+    }
+
+    private func backupAdmission() throws {
+        _ = try call("menuRead", argumentsJSON: "[\"dataSettings\",\"{}\"]")
+        guard try editorDrafts.read() == nil else {
+            throw CoreHostRejection(message: "INVALID_INPUT: Finish or discard the saved task draft before importing a backup")
+        }
+    }
+
+    private func backupMetadata(fileName: String, modifiedAt: Double) -> [String: Any] {
+        ["fileName": fileName, "lastModified": modifiedAt,
+         "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"]
+    }
+
+    private func backupJSON(_ value: Any) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    private func backupEncoded<T: Encodable>(_ value: T) throws -> String {
+        String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
+    }
+
+    func prepareBackupImport(_ url: URL) throws -> NativeBackupImportPreview {
+        try backupAdmission()
+        let selection = try backupImportFile.stage(url)
+        let id = UUID(uuidString: selection.reference.id)!
+        do {
+            guard let text = String(data: try backupImportFile.read(selection.reference), encoding: .utf8) else {
+                throw CoreHostRejection(message: "INVALID_INPUT: Backup file is not valid UTF-8")
+            }
+            let preview = try invoke("backupDocumentInspect", arguments: [text,
+                try backupJSON(backupMetadata(fileName: selection.fileName, modifiedAt: selection.modifiedAtMilliseconds))])
+            guard let result = try NativeJSON.jsonObject(with: Data(preview.utf8)) as? [String: Any],
+                  Self.isBoolean(result["valid"]) else { throw HostFailure("Backup preview unavailable") }
+            if result["valid"] as? Bool == true { backupSelections[id] = selection }
+            else { try? backupImportFile.discard(selection.reference) }
+            return NativeBackupImportPreview(id: id, json: preview)
+        } catch {
+            try? backupImportFile.discard(selection.reference)
+            throw error
+        }
+    }
+
+    func discardBackupImport(_ id: UUID) {
+        guard let selection = backupSelections.removeValue(forKey: id) else { return }
+        try? backupImportFile.discard(selection.reference)
+    }
+
+    func mergeBackupImport(_ id: UUID) throws -> String {
+        // Any pre-journal failure is definitely unwritten. Once pending is set,
+        // only finish may release it, even if durable journal promotion failed.
+        let operation: NativeBackupOperationReference
+        do {
+            try backupAdmission()
+            guard let selection = backupSelections[id],
+                  let text = String(data: try backupImportFile.read(selection.reference), encoding: .utf8) else {
+                throw HostFailure("Backup selection is no longer available")
+            }
+            let name = try backupOperationFiles.nextSnapshotName(at: Date())
+            operation = try prepareBackupOperation(mode: "merge", text: text,
+                metadata: backupMetadata(fileName: selection.fileName, modifiedAt: selection.modifiedAtMilliseconds),
+                snapshotName: name, existingSnapshot: nil)
+        } catch {
+            // Never claim an unrelated owed command was rejected.
+            guard pending == nil else { throw error }
+            if let capacity = error as? NativeBackupOperationFilesError, capacity != .unavailable {
+                throw CoreHostRejection(message: "INVALID_INPUT: " + capacity.localizedDescription)
+            }
+            if let failure = error as? HostFailure, [
+                "INVALID_INPUT: Backup source exceeds 128 MiB", "INVALID_INPUT: Recovery snapshot exceeds 128 MiB",
+                "INVALID_INPUT: Prepared backup plan exceeds 512 MiB", "INVALID_INPUT: Recovery snapshot is not a valid backup"
+            ].contains(failure.message) { throw CoreHostRejection(message: failure.message) }
+            throw CoreHostRejection(message: "INVALID_INPUT: Backup merge could not be prepared")
+        }
+        // The complete immutable plan now owns all accepted input bytes.
+        discardBackupImport(id)
+        return try commitBackupOperation(operation)
+    }
+
+    func listBackupSnapshots() throws -> String {
+        try backupAdmission()
+        return try backupEncoded(backupOperationFiles.listSnapshots())
+    }
+
+    private func backupSnapshotReference(_ encoded: String) throws -> NativeBackupSnapshotReference {
+        guard encoded.utf8.count <= 2048,
+              let raw = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              Set(raw.keys) == Set(["id", "name", "sha256", "byteCount"]),
+              Self.isInteger(raw["byteCount"]),
+              let reference = try? JSONDecoder().decode(NativeBackupSnapshotReference.self, from: Data(encoded.utf8)) else {
+            throw HostFailure("INVALID_INPUT: Recovery snapshot reference is invalid")
+        }
+        // The storage owner proves canonical identity, completion and exact bytes.
+        guard try backupOperationFiles.listSnapshots().contains(reference) else {
+            throw HostFailure("INVALID_INPUT: Recovery snapshot is no longer available")
+        }
+        return reference
+    }
+
+    func backupSnapshotRestoreModel(_ encoded: String) throws -> String {
+        try backupAdmission()
+        let reference = try backupSnapshotReference(encoded)
+        return try invoke("backupSnapshotRestoreModel", arguments: [reference.name])
+    }
+
+    func backupDocumentResultModel(_ encoded: String) throws -> String {
+        try backupAdmission()
+        return try invoke("backupDocumentResultModel", arguments: [encoded])
+    }
+
+    func restoreBackupSnapshot(_ encoded: String) throws -> String {
+        let operation: NativeBackupOperationReference
+        do {
+            try backupAdmission()
+            let reference = try backupSnapshotReference(encoded)
+            let text = try backupOperationFiles.readSnapshot(reference)
+            operation = try prepareBackupOperation(mode: "restore", text: text,
+                metadata: backupMetadata(fileName: reference.name, modifiedAt: 0),
+                snapshotName: reference.name, existingSnapshot: reference)
+        } catch {
+            guard pending == nil else { throw error }
+            if let capacity = error as? NativeBackupOperationFilesError, capacity != .unavailable {
+                throw CoreHostRejection(message: "INVALID_INPUT: " + capacity.localizedDescription)
+            }
+            if let failure = error as? HostFailure, [
+                "INVALID_INPUT: Backup source exceeds 128 MiB", "INVALID_INPUT: Recovery snapshot exceeds 128 MiB",
+                "INVALID_INPUT: Prepared backup plan exceeds 512 MiB", "INVALID_INPUT: Recovery snapshot is not a valid backup"
+            ].contains(failure.message) { throw CoreHostRejection(message: failure.message) }
+            throw CoreHostRejection(message: "INVALID_INPUT: Recovery snapshot could not be prepared")
+        }
+        return try commitBackupOperation(operation)
+    }
+
+    private func prepareBackupOperation(mode: String, text: String, metadata: [String: Any],
+                                        snapshotName: String, existingSnapshot: NativeBackupSnapshotReference?) throws -> NativeBackupOperationReference {
+        let id = UUID().uuidString.lowercased()
+        #if DEBUG
+        #endif
+        let prepared = try invoke("backupDocumentPrepare", arguments: [try backupJSON([
+            "requestId": id, "mode": mode, "snapshotName": snapshotName, "text": text, "metadata": metadata
+        ])])
+        #if DEBUG
+        #endif
+        guard let value = try NativeJSON.jsonObject(with: Data(prepared.utf8)) as? [String: Any],
+              Set(value.keys) == Set(["planJSON", "recoveryJSON"]), let plan = value["planJSON"] as? String else {
+            throw HostFailure("Backup plan unavailable")
+        }
+        if mode == "merge" {
+            guard let snapshot = value["recoveryJSON"] as? String, existingSnapshot == nil else {
+                throw HostFailure("Backup recovery copy unavailable")
+            }
+            return try backupOperationFiles.prepare(id: id, planJSON: plan,
+                newSnapshot: (name: snapshotName, content: snapshot), existingSnapshot: nil)
+        }
+        guard value["recoveryJSON"] is NSNull, let existingSnapshot else { throw HostFailure("Backup restore plan unavailable") }
+        return try backupOperationFiles.prepare(id: id, planJSON: plan, newSnapshot: nil, existingSnapshot: existingSnapshot)
+    }
+
+    private func commitBackupOperation(_ reference: NativeBackupOperationReference) throws -> String {
+        let command = PendingCommand(version: 2, method: "backupDocumentCommit",
+                                     argumentsJSON: try backupJSON([backupEncoded(reference)]))
+        // Full byte ownership is verified before the journal can permit a write.
+        let arguments: [Any]
+        do { arguments = try backupDocumentArguments(command) }
+        catch {
+            try? backupOperationFiles.discard(reference, provenRejected: true)
+            throw CoreHostRejection(message: "INVALID_INPUT: Backup operation is unavailable")
+        }
+        pending = command
+        try persist(command)
+        // Document reload intentionally suppresses maintenance until this exact
+        // journal is complete. Normal activation resumes after durable cleanup.
+        recoveryActivationPending = true
+        let terminal: TerminalResult
+        do { terminal = .success(try invoke(command.method, arguments: arguments)) }
+        catch let error as HostFailure {
+            guard isDefiniteRejection(error.message, method: command.method) else { throw error }
+            terminal = .rejected(error.message)
+        }
+        let finished = try finish(command, with: terminal)
+        try resumeActivationIfNeeded()
+        let reply = try publicValue(finished, method: command.method)
+        backupUnreturnedReply = nil
+        return reply
+    }
+
+    private func backupOperationReference(_ command: PendingCommand) throws -> NativeBackupOperationReference {
+        guard command.method == "backupDocumentCommit", command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= 2048,
+              let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+              let raw = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+              Set(raw.keys) == Set(["id", "sha256", "byteCount"]),
+              let id = raw["id"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+              let sha = raw["sha256"] as? String, sha.count == 64,
+              sha.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              Self.isInteger(raw["byteCount"]), let count = raw["byteCount"] as? Int, (1...8192).contains(count),
+              let reference = try? JSONDecoder().decode(NativeBackupOperationReference.self, from: Data(args[0].utf8)) else {
+            throw HostFailure("Invalid backup document journal")
+        }
+        return reference
+    }
+
+    private func backupDocumentArguments(_ command: PendingCommand) throws -> [Any] {
+        let reference = try backupOperationReference(command)
+        let operation = try backupOperationFiles.read(reference)
+        return [try backupEncoded(reference), operation.planJSON, operation.snapshot.name]
     }
 
     private func call(_ method: String, argumentsJSON: String, editorAttempt: EditorDraftAttempt?) throws -> String {
@@ -3581,7 +3844,8 @@ private final class Engine: @unchecked Sendable {
         let terminal: TerminalResult
         do {
             let replay: [Any]
-            if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
+            if command.method == "backupDocumentCommit" { replay = try backupDocumentArguments(command) }
+            else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
             else { replay = try journalArguments(command) }
             terminal = .success(try invoke(command.method, arguments: replay))
         } catch {
@@ -3608,7 +3872,11 @@ private final class Engine: @unchecked Sendable {
         let method = command?.method
         let terminal = try resolvePending()
         try resumeActivationIfNeeded()
-        guard let terminal else { return nil }
+        guard let terminal else {
+            let reply = backupUnreturnedReply
+            backupUnreturnedReply = nil
+            return reply
+        }
         if case .success = terminal, let command {
             rememberConfirmedSomedayMove(command)
             rememberConfirmedTaskCancellation(command)
@@ -3616,7 +3884,9 @@ private final class Engine: @unchecked Sendable {
             rememberConfirmedTaskDelete(command)
             rememberConfirmedProjectDelete(command)
         }
-        return try publicValue(terminal, method: method)
+        let reply = try publicValue(terminal, method: method)
+        if method == "backupDocumentCommit" { backupUnreturnedReply = nil }
+        return reply
     }
 
     private func validateDraftAcknowledgment(_ command: PendingCommand, value: String? = nil) throws {
@@ -3743,12 +4013,14 @@ private final class Engine: @unchecked Sendable {
         }
         // Also repairs a failed journal promotion before any execution can occur.
         try persist(command)
+        if command.method == "backupDocumentCommit" { recoveryActivationPending = true }
         // A rejection here remains ambiguous: an earlier execution may have
         // succeeded. Only a successful exact replay establishes its terminal value.
         let value: String
         do {
             let replay: [Any]
-            if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
+            if command.method == "backupDocumentCommit" { replay = try backupDocumentArguments(command) }
+            else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
             else { replay = try journalArguments(command) }
             value = try invoke(command.method, arguments: replay)
         }
@@ -3763,6 +4035,16 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func finish(_ command: PendingCommand, with terminal: TerminalResult) throws -> TerminalResult {
+        if command.method == "backupDocumentCommit", case .success(let value) = terminal {
+            // A terminal journal is not permission to apply a missing receipt.
+            // This probe is SQL read-only, including after a cold restart.
+            let proven = try invoke("backupDocumentOutcome", arguments: backupDocumentArguments(command))
+            guard proven != "null",
+                  Self.equalJSON(try NativeJSON.jsonObject(with: Data(proven.utf8)),
+                                 try NativeJSON.jsonObject(with: Data(value.utf8))) else {
+                throw HostFailure("SAVE_FAILED: Backup document outcome cannot be verified")
+            }
+        }
         if command.method == "dataSetting", case .success(let value) = terminal {
             try validateDataSettingAcknowledgment(value)
         }
@@ -4089,6 +4371,9 @@ private final class Engine: @unchecked Sendable {
         // Once persisted, restart can clean up without entering core again.
         pending = finished
         try persist(finished)
+        if command.method == "backupDocumentCommit", case .success = terminal {
+            try backupOperationFiles.complete(backupOperationReference(command))
+        }
         if let attempt = command.editorDraft, case .success = terminal {
             #if DEBUG
             try faults?.editorDraftRemove?()
@@ -4096,6 +4381,14 @@ private final class Engine: @unchecked Sendable {
             try editorDrafts.removeMatching(attempt)
         }
         try clearPending()
+        if command.method == "backupDocumentCommit" {
+            if case .success(let value) = terminal { backupUnreturnedReply = value }
+            let rejected: Bool
+            if case .rejected = terminal { rejected = true } else { rejected = false }
+            // Cleanup failure cannot turn a proven completed write into a retry.
+            // Startup can remove the now unreferenced immutable operation later.
+            try? backupOperationFiles.discard(backupOperationReference(command), provenRejected: rejected)
+        }
         if let attempt = command.editorDraft, case .rejected = terminal {
             try editorDrafts.thaw(attempt)
         }
@@ -4674,7 +4967,7 @@ private final class Engine: @unchecked Sendable {
             || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
-            || (method == "somedaySectionOrderWrite" && message.hasPrefix("STALE_REVISION:"))
+            || (["somedaySectionOrderWrite", "backupDocumentCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
     }
 
     private func validateBoardAcknowledgment(_ command: PendingCommand, value: String) throws {
@@ -7553,6 +7846,10 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func journalArguments(_ command: PendingCommand, checkingEditorSnapshot: Bool = true) throws -> [Any] {
+        if command.method == "backupDocumentCommit" {
+            _ = try backupOperationReference(command)
+            return [try backupEncoded(backupOperationReference(command))]
+        }
         if command.method == "dataSetting" {
             guard command.editorDraft == nil else { throw HostFailure("Invalid Data setting journal") }
             return try arguments(command.method, command.argumentsJSON)

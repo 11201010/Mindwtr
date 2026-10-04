@@ -13,6 +13,13 @@ import {
     consoleLogger,
     createDiagnosticsLog,
     buildImmediateNotificationDetails,
+    buildNativeBackupDocumentResult,
+    buildNativeBackupSnapshotRestoreConfirmation,
+    commitNativeBackupDocument,
+    inspectNativeBackupDocument,
+    prepareNativeBackupDocument,
+    readNativeBackupDocumentOutcome,
+    formatI18nTemplate,
     canSaveTaskListTag,
     createNativeHostContract,
     diagnosticsEntryFromLogPayload,
@@ -21,6 +28,7 @@ import {
     isSupportedLanguage,
     isDiagnosticsLoggingEnabled,
     isSandboxMode,
+    isWorkspaceTransitionActive,
     legacyImportMismatch,
     assertNativeLegacyBackupSafe,
     loadNativeRequestReceipts,
@@ -918,7 +926,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -940,6 +948,25 @@ const taskListBulkTagInput = (tag: string, changedCount: number): string => subm
     return { canSave: canSaveTaskListTag(tag), notice: changedCount === 0 ? null
         : { title: t('common.done'), message: formatListItemCount(changedCount, 'task', t) } };
 });
+
+// New work uses contract readiness; recovery uses the validated boot adapter so an
+// acknowledged save whose reload failed can still prove/reload its durable receipt.
+const backupAdapter = (newWork = false) => {
+    if (!bootAdapter || isSandboxMode() || isWorkspaceTransitionActive()) {
+        throw new Error('NOT_READY: Backup requires validated storage in a stable personal workspace');
+    }
+    if (newWork) { requireSaved(); unwrap(contract.getDataSettings()); }
+    return bootAdapter;
+};
+const backupJson = (json: string): unknown => {
+    try { return JSON.parse(json) as unknown; }
+    catch { throw new Error('INVALID_INPUT: Invalid backup document input'); }
+};
+const backupTranslate = (key: string, values?: Record<string, number | string>): string => {
+    const template = unwrap(contract.getStrings({ keys: [key] })).strings[key];
+    if (typeof template !== 'string') throw new Error('INVALID_INPUT: Backup translation is unavailable');
+    return values ? formatI18nTemplate(template, values) : template;
+};
 
 globalThis.MindwtrHost = {
     /** Read-only upgrade preflight, before the native host opens SQLite. */
@@ -2793,6 +2820,31 @@ globalThis.MindwtrHost = {
             unwrap(contract.endInboxProcessing({ sessionId }));
             return {};
         });
+    },
+    backupDocumentInspect(text: string, metadataJSON: string): string {
+        return submit(async () => {
+            backupAdapter(true);
+            const pending = getPersistenceStatus();
+            if (pending.queued || pending.inFlight || pending.immediate || pending.retrying || pending.failed) {
+                throw new Error('NOT_READY: Backup inspection is unavailable while saving is pending');
+            }
+            return inspectNativeBackupDocument(text, backupJson(metadataJSON) as Parameters<typeof inspectNativeBackupDocument>[1], backupTranslate);
+        });
+    },
+    backupDocumentPrepare(inputJSON: string): string {
+        return submit(async () => prepareNativeBackupDocument(backupAdapter(true), backupJson(inputJSON) as Parameters<typeof prepareNativeBackupDocument>[1]));
+    },
+    backupDocumentCommit(referenceJSON: string, planJSON: string, snapshotName: string): string {
+        return submit(async () => commitNativeBackupDocument(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof commitNativeBackupDocument>[1], planJSON, snapshotName));
+    },
+    backupDocumentOutcome(referenceJSON: string, planJSON: string, snapshotName: string): string {
+        return submit(async () => readNativeBackupDocumentOutcome(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof readNativeBackupDocumentOutcome>[1], planJSON, snapshotName));
+    },
+    backupDocumentResultModel(replyJSON: string): string {
+        return submit(async () => buildNativeBackupDocumentResult(backupJson(replyJSON) as Parameters<typeof buildNativeBackupDocumentResult>[0], backupTranslate));
+    },
+    backupSnapshotRestoreModel(snapshotName: string): string {
+        return submit(async () => buildNativeBackupSnapshotRestoreConfirmation(snapshotName, backupTranslate));
     },
     /** Called by iOS only after the immutable JSON file has been written and closed. */
     backupExportPrepared(format: string): string {

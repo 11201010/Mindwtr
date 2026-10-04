@@ -22234,6 +22234,57 @@ extension FoundationUITests {
         boardEnabled(app.buttons["diagnostics-clear"], timeout: 30)
     }
 
+    func testTask202BackupRecoveryNormal() {
+        task202RecoveryFlow("c72e43dd-d447-49f9-a2f5-97c6fc10f9a6")
+    }
+
+    func testTask202BackupRecoveryLargestText() {
+        task202RecoveryFlow("c209ac46-5b4b-4d3f-9c1d-185df9bed062", largest: true)
+    }
+
+    func testTask202BackupRecoveryArabicRTL() {
+        task202RecoveryFlow("58a103bb-e6c7-4c8e-971b-e548b5f29464", rtl: true)
+    }
+
+    private func task202RecoveryFlow(_ library: String, largest: Bool = false, rtl: Bool = false) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
+        app.launch()
+        if rtl {
+            task97Open(app); task97Picker(app, "language"); task97Choose(app, "ar")
+            boardTap(app, "general-back"); boardTap(app, "settings-back")
+        }
+        task197Data(app); boardTap(app, "backup-disclosure")
+        task192Reveal(app, "data-transfer-merge", buttons: true, scrollID: "diagnostics-scroll")
+        boardEnabled(app.buttons["data-transfer-merge"]); boardTap(app, "data-transfer-merge")
+        let cancel = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Cancel", "إلغاء")).firstMatch
+        boardEnabled(cancel, timeout: 30)
+        task197Observe(app, "Task202 real JSON file picker")
+        cancel.tap()
+        boardEnabled(app.buttons["data-transfer-merge"], timeout: 30)
+        XCTAssertFalse(app.staticTexts["backup-import-error"].exists)
+        let restore = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "backup-snapshot-restore-")).firstMatch
+        revealPagedElement(app, restore, in: app.scrollViews["diagnostics-scroll"])
+        boardEnabled(restore); restore.tap()
+        boardEnabled(app.buttons.matching(identifier: "backup-restore-cancel").firstMatch, timeout: 30)
+        task197Observe(app, "Task202 destructive recovery confirmation")
+        app.buttons.matching(identifier: "backup-restore-cancel").firstMatch.tap()
+        boardEnabled(restore); restore.tap()
+        app.buttons.matching(identifier: "backup-restore-confirm").firstMatch.tap()
+        let done = app.buttons["backup-result-done"]
+        expectation(for: NSPredicate(format: "exists == true"), evaluatedWith: done)
+        waitForExpectations(timeout: 30)
+        revealPagedElement(app, done, in: app.scrollViews["diagnostics-scroll"])
+        boardEnabled(done); task197Observe(app, "Task202 recovery result"); done.tap()
+        XCTAssertFalse(app.staticTexts["backup-import-error"].exists)
+        app.terminate(); app.launch(); task197Data(app); boardTap(app, "backup-disclosure")
+        let reopened = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "backup-snapshot-restore-")).firstMatch
+        revealPagedElement(app, reopened, in: app.scrollViews["diagnostics-scroll"])
+        boardEnabled(reopened); task197Observe(app, "Task202 cold recovery roster")
+        XCTAssertFalse(app.buttons["backup-result-done"].exists)
+        app.terminate()
+    }
+
     func testTask200TaskNotesLargestText() {
         task198BackupFlow("014d89a5-ed6c-4638-a1f2-cad067d6f6fd", largest: true, tasknotes: true)
     }

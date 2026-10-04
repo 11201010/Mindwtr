@@ -19,6 +19,7 @@ export type DataSettingsModel = {
         title: string; exportLabel: string; description: string; failed: string;
         csvLabel: string; csvDescription: string; csvFailed: string;
         tasknotesLabel: string; tasknotesDescription: string; tasknotesFailed: string;
+        mergeLabel: string; mergeDescription: string; mergeFailed: string; snapshotsLabel: string; restoreLabel: string;
     };
     diagnostics: {
         title: string;
@@ -49,6 +50,11 @@ export function buildDataSettingsModel(settings: AppSettings, t: Translate): Dat
             tasknotesLabel: t('settings.exportTaskNotes'),
             tasknotesDescription: t('settings.exportTaskNotesDesc'),
             tasknotesFailed: t('settings.exportTaskNotesFailed'),
+            mergeLabel: t('settings.mergeBackup'),
+            mergeDescription: t('settings.mergeBackupDesc'),
+            mergeFailed: t('settings.mergeBackupFailed'),
+            snapshotsLabel: t('settings.recoverySnapshots'),
+            restoreLabel: t('settings.recoverySnapshotsRestore'),
         },
         diagnostics: {
             title: t('settings.diagnostics'),

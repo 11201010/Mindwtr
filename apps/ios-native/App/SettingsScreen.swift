@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 import MindwtrNativeCore
 
 struct SettingsScreen: View {
@@ -1867,8 +1868,13 @@ struct DiagnosticsCard: View {
     let palette: AppPalette
     let owner: UUID
     @State private var backupOpen = false
+    @State private var backupPreviewPresented = false
+    @State private var backupPreviewAnswered = false
+    @State private var backupRestorePresented = false
+    @State private var backupRestoreAnswered = false
 
     var body: some View {
+        let pickerID = model.backupImportPickerID
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if owner == model.settingsDiagnosticsOwner {
@@ -1918,6 +1924,7 @@ struct DiagnosticsCard: View {
                             Text(failure).rnFont(14).foregroundStyle(palette.danger)
                                 .accessibilityIdentifier("backup-export-error")
                         }
+                        backupTransferContent(backup)
                     }
                 }
                 Text(model.diagnosticsLabels.text("title")).rnFont(18, .bold)
@@ -1991,6 +1998,138 @@ struct DiagnosticsCard: View {
         .sheet(item: Binding(get: { owner == model.settingsDiagnosticsOwner ? model.backupShare : nil },
                              set: { (_: NativeBackupExport?) in model.dismissBackupShare() })) { payload in
             DiagnosticsActivitySheet(url: payload.url)
+        }
+        .fileImporter(isPresented: Binding(
+            get: { owner == model.settingsDiagnosticsOwner && model.backupImportPickerPresented },
+            set: { if owner == model.settingsDiagnosticsOwner { model.setBackupImportPickerPresented($0) } }
+        ), allowedContentTypes: [.json], allowsMultipleSelection: false) { result in
+            Task { await model.receiveBackupImportSelection(result, pickerID: pickerID) }
+        }
+        .alert(model.backupImportPreview.text(model.backupImportPreview.flag("valid") ? "title" : "errorTitle"),
+               isPresented: $backupPreviewPresented) {
+            Button(model.backupImportPreview.text("cancelLabel"), role: .cancel) {
+                backupPreviewAnswered = true
+                model.cancelBackupImportPreview()
+            }.accessibilityIdentifier("backup-import-cancel")
+            if model.backupImportPreview.flag("valid") {
+                Button(model.backupImportPreview.text("confirmLabel")) {
+                    backupPreviewAnswered = true
+                    Task { await model.confirmBackupImport() }
+                }.accessibilityIdentifier("backup-import-confirm")
+            }
+        } message: {
+            Text(model.backupImportPreview.text(model.backupImportPreview.flag("valid") ? "summary" : "errorMessage"))
+        }
+        .alert(model.backupRestoreConfirmation.text("title"), isPresented: $backupRestorePresented) {
+            Button(model.backupRestoreConfirmation.text("cancelLabel"), role: .cancel) {
+                backupRestoreAnswered = true
+                model.cancelBackupRestore()
+            }.accessibilityIdentifier("backup-restore-cancel")
+            Button(model.backupRestoreConfirmation.text("confirmLabel"), role: .destructive) {
+                backupRestoreAnswered = true
+                Task { await model.confirmBackupRestore() }
+            }.accessibilityIdentifier("backup-restore-confirm")
+        } message: {
+            Text(model.backupRestoreConfirmation.text("message"))
+        }
+        .onChange(of: model.backupImportPreview.isEmpty) { empty in
+            guard owner == model.settingsDiagnosticsOwner else { return }
+            backupPreviewAnswered = false
+            backupPreviewPresented = !empty
+        }
+        .onChange(of: backupPreviewPresented) { presented in
+            guard !presented, owner == model.settingsDiagnosticsOwner else { return }
+            DispatchQueue.main.async {
+                if !backupPreviewAnswered && !backupPreviewPresented { model.cancelBackupImportPreview() }
+            }
+        }
+        .onChange(of: model.backupRestoreConfirmation.isEmpty) { empty in
+            guard owner == model.settingsDiagnosticsOwner else { return }
+            backupRestoreAnswered = false
+            backupRestorePresented = !empty
+        }
+        .onChange(of: backupRestorePresented) { presented in
+            guard !presented, owner == model.settingsDiagnosticsOwner else { return }
+            DispatchQueue.main.async {
+                if !backupRestoreAnswered && !backupRestorePresented { model.cancelBackupRestore() }
+            }
+        }
+        .onChange(of: model.backupDocumentResult.isEmpty) { empty in
+            if owner == model.settingsDiagnosticsOwner && !empty { backupOpen = true }
+        }
+        .onChange(of: model.backupDocumentPending) { pending in
+            if owner == model.settingsDiagnosticsOwner && pending { backupOpen = true }
+        }
+        .onAppear {
+            guard owner == model.settingsDiagnosticsOwner else { return }
+            backupOpen = !model.backupDocumentResult.isEmpty || model.backupDocumentPending || model.backupResultReadRetryNeeded
+            backupPreviewPresented = !model.backupImportPreview.isEmpty
+            backupRestorePresented = !model.backupRestoreConfirmation.isEmpty
+        }
+    }
+
+    @ViewBuilder
+    private func backupTransferContent(_ backup: CoreObject) -> some View {
+        Button { model.openBackupImportPicker() } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("mergeLabel")).rnFont(15, .semibold)
+                Text(backup.text("mergeDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-merge")
+        if model.backupImportBusy {
+            ProgressView().accessibilityIdentifier("backup-import-progress")
+        }
+        if let failure = model.backupImportError {
+            Text(failure).rnFont(14).foregroundStyle(palette.danger)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("backup-import-error")
+        }
+        if model.backupDocumentPending || model.backupResultReadRetryNeeded {
+            Button(model.label("common.retry")) { Task { await model.retryBackupTransferRead() } }
+                .disabled(model.busy).frame(minHeight: 44).accessibilityIdentifier("backup-document-retry")
+        }
+        if !model.backupDocumentResult.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(model.backupDocumentResult.text("title")).rnFont(16, .semibold)
+                    .accessibilityAddTraits(.isHeader).accessibilityIdentifier("backup-document-result")
+                Text(model.backupDocumentResult.text("message")).rnFont(14)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("backup-document-message")
+                if !model.backupDocumentResult.text("undoLabel").isEmpty {
+                    Button(model.backupDocumentResult.text("undoLabel")) { Task { await model.requestBackupUndo() } }
+                        .disabled(!model.backupUndoEnabled).frame(minHeight: 44)
+                        .accessibilityIdentifier("backup-result-undo")
+                }
+                Button(model.backupDocumentResult.text("doneLabel")) { model.dismissBackupDocumentResult() }
+                    .disabled(model.busy || model.backupDocumentPending).frame(minHeight: 44)
+                    .accessibilityIdentifier("backup-result-done")
+            }
+        }
+        Text(backup.text("snapshotsLabel")).rnFont(16, .semibold)
+            .accessibilityAddTraits(.isHeader).accessibilityIdentifier("backup-snapshots-title")
+        if let failure = model.backupSnapshotReadError {
+            Text(failure).rnFont(14).foregroundStyle(palette.danger)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("backup-snapshots-error")
+            Button(model.label("common.retry")) { Task { await model.retryBackupTransferRead() } }
+                .disabled(model.busy || model.retryNeeded).frame(minHeight: 44)
+                .accessibilityIdentifier("backup-snapshots-retry")
+        } else if model.backupSnapshots.isEmpty {
+            Text(model.label("settings.recoverySnapshotsEmpty")).rnFont(14).foregroundStyle(palette.secondary)
+                .accessibilityIdentifier("backup-snapshots-empty")
+        } else {
+            ForEach(model.backupSnapshots) { snapshot in
+                Button { Task { await model.requestBackupRestore(snapshot) } } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(snapshot.name).rnFont(14).fixedSize(horizontal: false, vertical: true)
+                        Text(backup.text("restoreLabel")).rnFont(14, .semibold)
+                    }.multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+                .disabled(!model.backupImportEnabled)
+                .accessibilityIdentifier("backup-snapshot-restore-\(snapshot.id)")
+            }
         }
     }
 }
