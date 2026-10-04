@@ -57,6 +57,7 @@ const { en } = await import(resolve(repo, 'packages/core/src/i18n/locales/en.ts'
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
 const WEBDAV_PORT = Number(process.env.MINDWTR_ENC_WEBDAV_PORT ?? 18781);
 const WEAK_PORT = WEBDAV_PORT + 1;
+const LOST_PORT = WEBDAV_PORT + 2;
 const FOLDER = `/dav/mindwtr-enc-${run}`;
 const USER = `enc${run}`;
 const PASSWORD = `pw${run}secret`;
@@ -64,7 +65,7 @@ const PASSPHRASE = `71${run}3`;
 const NEXT = `72${run}4`;
 const DELAY_MS = 6_000;
 const fields = (port) => ({ url: `http://127.0.0.1:${port}${FOLDER}`, username: USER, password: PASSWORD, allowInsecureHttp: true });
-const titles = { phone: `94${run}1`, host: `Enc ✓ 雲 😀 ${run}`, rotated: `Rotated ✓ ${run}`, restart: `Restart 😀 ${run}`, plain: `Plain ✓ ${run}` };
+const titles = { abandoned: `94${run}5`, phone: `94${run}1`, host: `Enc ✓ 雲 😀 ${run}`, rotated: `Rotated ✓ ${run}`, restart: `Restart 😀 ${run}`, plain: `Plain ✓ ${run}` };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
 const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, tapExpecting } = device;
@@ -209,10 +210,13 @@ const flowClosed = (current) => !tagged(current, 'sync-encryption-submit');
 
 let dav = null;
 let weak = null;
+let lost = null;
 let second = null;
 const cleanup = cleanupOnExit([
     () => execFileSync(adbBin, ['-s', serial, 'reverse', '--remove', `tcp:${WEBDAV_PORT}`], { stdio: 'ignore' }),
     () => execFileSync(adbBin, ['-s', serial, 'reverse', '--remove', `tcp:${WEAK_PORT}`], { stdio: 'ignore' }),
+    () => execFileSync(adbBin, ['-s', serial, 'reverse', '--remove', `tcp:${LOST_PORT}`], { stdio: 'ignore' }),
+    () => { void lost?.close(); },
     () => sh("setprop debug.mindwtr.native.crypto_delay_ms ''"),
     () => { void dav?.close(); },
     () => { void weak?.close(); },
@@ -227,7 +231,8 @@ try {
     dav = await serveWebdav({ port: WEBDAV_PORT, username: USER, password: PASSWORD });
     weak = await serveWebdav({ port: WEAK_PORT, username: USER, password: PASSWORD });
     weak.state.weakEtags = true;
-    for (const port of [WEBDAV_PORT, WEAK_PORT]) execFileSync(adbBin, ['-s', serial, 'reverse', `tcp:${port}`, `tcp:${port}`], { stdio: 'inherit' });
+    lost = await serveWebdav({ port: LOST_PORT, username: USER, password: PASSWORD });
+    for (const port of [WEBDAV_PORT, WEAK_PORT, LOST_PORT]) execFileSync(adbBin, ['-s', serial, 'reverse', `tcp:${port}`, `tcp:${port}`], { stdio: 'inherit' });
     execFileSync(adbBin, ['-s', serial, 'install', '-r', apk], { stdio: 'inherit' });
     sh(`am force-stop ${PKG}`);
     sh(`setprop debug.mindwtr.native.crypto_delay_ms ${DELAY_MS}`);
@@ -260,6 +265,24 @@ try {
     for (const warning of ['settings.syncEncryptionWarningLost', 'settings.syncEncryptionWarningDevices']) {
         check(Boolean(await reveal((current) => withText(current, en[warning]), warning)), `(2) the enable flow shows RN's warning "${en[warning].slice(0, 60)}…"`);
     }
+    // Review S4b 1: core takes at most 1,000 characters a field. 1,001 typed: the 1,001st is refused, and so is Enable (the
+    // confirm field holds one character, so core's Enable is enabled and only the refusal stops it). Each typed character is a
+    // core command, so this takes minutes; a pasted text is one edit.
+    const transitionsStarted = () => (logs().match(/transition \{[^\n]*"phase":"start"/g) ?? []).length;
+    await fillTag('sync-passphrase-next', '7'.repeat(1001));
+    await fillTag('sync-passphrase-confirm', '7');
+    await hideKeyboard();
+    const shown = (await reveal((current) => tagged(current, 'sync-passphrase-next'), 'the passphrase field')).text ?? '';
+    check(shown.length === 1000, `(2) a passphrase field holds at most core's 1,000 characters (${shown.length} after 1,001 typed)`);
+    const startedBefore = transitionsStarted();
+    // Core's Enable is enabled once its fields hold text (the typed characters drain first): only then does the tap test the refusal.
+    await until('Enable enabled by core', async () => {
+        try { return (await reveal((current) => tagged(current, 'sync-encryption-submit'), 'the Enable button')).enabled === 'true'; } catch { return false; }
+    }, 600_000, 3_000);
+    await tap(await reveal((current) => tagged(current, 'sync-encryption-submit'), 'the Enable button'));
+    await sleep(3_000);
+    check(transitionsStarted() === startedBefore && argonTimes().length === 0 && remoteArtifacts(dav, FOLDER).encrypted.length === 0,
+        '(2) Enable after a refused 1,001st character runs nothing: no change started, nothing derived, nothing encrypted');
     await fillTag('sync-passphrase-next', PASSPHRASE);
     await fillTag('sync-passphrase-confirm', PASSPHRASE);
     await hideKeyboard();
@@ -272,7 +295,7 @@ try {
     await tap(submit);
     // The derivation starts after the keystrokes sent before Enable, the server's strong-ETag proof and the fence; here it then
     // waits 6 s more (debug only). A tap made once it started must be answered before it ends.
-    await until('the Argon2id derivation to start', () => starts() > startsBefore, 60_000, 250);
+    await until('the Argon2id derivation to start', () => starts() > startsBefore, 600_000, 250);
     const tappedAt = Date.now();
     await tap(showPhrase);
     // Its answer: the switch reads checked (RN's accessibilityState). uiautomator keeps password="true" on the field either way
@@ -353,6 +376,37 @@ try {
     check(weakFiles.encrypted.length === 0 && !weakFiles.all.some((file) => file.path.includes('fence')),
         `(7) a weak-ETag server refuses Enable in RN's words, nothing encrypted or fenced (${weakFiles.all.map((file) => file.path.split('/').pop()).join(', ')})`);
     await tapThenFind(action(en['common.cancel']), (current) => withDescription(current, en['settings.syncEncryptionEnable']), 'Cancel');
+
+    // (7b) dd's "Abandon setup": an enable cut off by its server for good, abandoned, then sync elsewhere works.
+    await saveWebdav(LOST_PORT);
+    await tapThenFind(action(en['settings.syncEncryptionEnable']), (current) => tagged(current, 'sync-passphrase-next'), 'the Enable flow (lost server)');
+    await fillTag('sync-passphrase-next', PASSPHRASE);
+    await fillTag('sync-passphrase-confirm', PASSPHRASE);
+    await hideKeyboard();
+    lost.state.delayMs = 400;
+    await tap(await reveal((current) => tagged(current, 'sync-encryption-submit'), 'the Enable button (lost server)'));
+    await until('the first encrypted file on the lost server', () => remoteArtifacts(lost, FOLDER).encrypted.length > 0, 120_000, 250);
+    lost.state.down = true;
+    await cardShows(en['settings.syncEncryptionErrorTransitionIncomplete'], 180_000);
+    check(true, '(7b) the server gone mid-enable leaves the change unfinished (RN\'s incomplete-change words)');
+    await tapThenFind(action(en['settings.syncEncryptionAbandon']), (current) => withText(current, en['settings.syncEncryptionAbandonWarning']), 'the Abandon flow');
+    check(true, '(7b) "Abandon setup" warns first that the location may stay partly encrypted');
+    const lostRequests = lost.state.requests.length;
+    await tapThenFind((current) => tagged(current, 'sync-encryption-submit'), (current) => withDescription(current, en['settings.syncEncryptionEnable']), 'Abandon', 60_000);
+    check(lost.state.requests.length === lostRequests, '(7b) Abandon contacted no server');
+    check(/"releaseCheck":"v1\.3\.4\/encryption-abandon-setup"/.test(logs().replace(/\\/g, '')) || logs().includes('v1.3.4/encryption-abandon-setup'),
+        '(7b) the log shows v1.3.4/encryption-abandon-setup');
+    await toInbox();
+    const abandonCapture = await device.openCapture();
+    await device.focusAtEnd(tagged(abandonCapture, 'capture-title') ?? fail('no capture field'));
+    requireAppFront();
+    sh(`input text '${titles.abandoned}'`);
+    await waitFor('the capture text', (current) => tagged(current, 'capture-title')?.text === titles.abandoned, 15_000);
+    await tapExpecting(button(await screen(), en['common.save']) ?? fail('no Save'), onInbox, 'the capture to close');
+    await saveWebdav(WEBDAV_PORT);
+    await until('the capture in the other folder', () => remoteArtifacts(dav, FOLDER).plain.some((file) => file.path.endsWith('/data.json') && file.text.includes(titles.abandoned)), 120_000);
+    check(true, '(7b) after Abandon, sync to another location works again (Save, then the new capture is in its folder)');
+    await openSync();
     await tapNode((current) => tagged(current, 'sync-backend-off'), (current) => current.some((node) => node.text === en['settings.syncOff']), 'Sync off');
 
     // (8) No passphrase anywhere on the phone; the key only sealed.
