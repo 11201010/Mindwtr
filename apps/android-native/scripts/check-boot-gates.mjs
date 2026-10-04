@@ -518,7 +518,8 @@ assert.match(model, /if \(stale\) acknowledged\(action!!\)\s+else ui \{/);
 assert.match(model, /\(action != null && !refused\) \|\| message\.startsWith\("SAVE_FAILED"\)/);
 // While a failed command's retry is owed, only that exact command runs: no read starts, and the retry
 // keeps the failure on screen. A read's failure never replaces an owed command, in the ViewModel or the process record.
-assert.match(model, /if \(busy \|\| runtime == null \|\| \(failedAction != null && failedAction != action\)\) return\s+busy = true\s+if \(action != null\) commandAt = \+\+issued\s+if \(failedAction == null\) error = null/);
+// A command whose work makes its exact request ([late], a prepared Project details commit) outdates reads from its start too.
+assert.match(model, /if \(busy \|\| runtime == null \|\| \(failedAction != null && failedAction != action\)\) return false\s+busy = true\s+if \(action != null \|\| late != null\) commandAt = \+\+issued\s+if \(failedAction == null\) error = null/);
 assert.equal(code(model).match(/\berror = null\b/g).length, 4, 'perform and a read\'s success (no retry owed), closeEditor, and an accepted edit clearing only a refused edit\'s message');
 assert.match(model, /if \(error != null && error == editRefusal\) error = null/);
 assert.match(model, /if \(failedAction == null\) error = null\s+\}/, 'a read\'s success never clears an owed retry\'s failure');
@@ -539,7 +540,7 @@ assert.match(model, /fun refreshProjects\(\) \{\s+\/\/[^\n]*\s+if \(projects == 
 assert.match(model, /private fun refreshAll\(\) \{\s+val at = depth\(\)\s+background\(Part\.entries, \{ runtime -> read\(runtime, at\) \}, ::showLists\)/);
 // A command's lists are read again only after it succeeds (or was refused as stale), in the background, once busy is released.
 assert.match(model, /try \{\s+\/\/[^\n]*\s+debugProperty\("delay_action_ms"\)\.toLongOrNull\(\)\?\.let\(Thread::sleep\)\s+work\(runtime\); done = true\s+\}/);
-assert.match(model, /ui \{\s+busy = false\s+if \(\(done \|\| stale\) && action != null\) refreshAll\(\)\s+\}/);
+assert.match(model, /ui \{\s+busy = false\s+if \(\(done \|\| stale\) && \(action \?: late\?\.get\(\)\) != null\) refreshAll\(\)\s+finished\?\.invoke\(\)\s+\}/);
 assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('fun openEditor('))), /read\(runtime/);
 // Stale results never overwrite newer state: every list read takes a number; a command outdates every earlier read;
 // a result is shown only if nothing newer was shown first (a background failure too).
@@ -1755,6 +1756,15 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand \\| AttachmentCommand \\| ProjectDetailCommand;`));
     assert.match(hostEntry, new RegExp(`type ProjectDetailCommand = ${projectDetailKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
     assert.doesNotMatch(menuModel, new RegExp(`"(${projectDetailKinds.join('|')})"`), 'the Menu tab never sends a Project details command itself');
+    // A Project details write is prepared and committed in one action, so the commit's journal entry holds the exact preparation
+    // and nothing between them can drop it; writes wait in order for a free shell (review PD 2; ProjectDetailsTest).
+    {
+        const details = code(source('ProjectDetails.kt'));
+        const start = details.slice(details.indexOf('private fun start(item: Write, done: () -> Unit): Boolean {'), details.indexOf('private fun send(action: FailedAction)'));
+        assert.match(start, /shell\.tryPerform\(late = late, finished = done\) \{ runtime ->[\s\S]*?menuRead\("\$\{item\.kind\}Prepare"[\s\S]*?late\.set\(action\)\s*runtime\.menuCommand\(action\.kind, action\.title\)/, 'the preparation and its commit run in one action');
+        assert.doesNotMatch(details, /shell\.ui \{ shell\.ui \{/, 'no write waits on a posted callback');
+        assert.match(model, /val action = action \?: late\?\.get\(\)/, 'a failure after the commit is made owes that commit');
+    }
     // RN's tag picker field (ProjectTagPickerModal): the keyboard's Done only ends editing; only + changes the tags (review PD 5).
     const tagField = code(source('ProjectDetails.kt')).split('BasicTextField(tagDraft')[1].split('testTag("project-tag-input")')[0];
     assert.doesNotMatch(tagField, /onDone = \{[^}]*Tag\(/, 'the tag field\'s Done changes no tag');

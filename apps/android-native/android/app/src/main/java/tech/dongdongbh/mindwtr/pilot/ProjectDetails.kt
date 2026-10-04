@@ -76,6 +76,9 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
+import android.os.Handler
+import android.os.Looper
 
 /**
  * Project details' writes: each is core's prepared commit (native-host-contract-project-*.ts), sent as a Menu command with its
@@ -275,24 +278,54 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
         JSONObject().put("sectionId", sectionId).put("direction", direction).put("expectedSections", options.getJSONArray("token"))
     }
 
+    /** One write waiting to start: its project, its command, the options read's extra input, and how its request is built. */
+    private class Write(val projectId: String, val kind: String, val extra: JSONObject, val build: (JSONObject) -> JSONObject?)
+
+    private val main = Handler(Looper.getMainLooper())
+    private val writes = WriteQueue<Write> { item, done -> start(item, done) }
+    private var pumping = false
+
     /**
-     * One write: core's options for the project as it is now, the request [build] makes from them (null: nothing to send), and
-     * core's preparation of it. Only a prepared write is sent; core's no-op and its blocked (an archived project) write nothing.
+     * One write for [projectId] (the open project): core's options for the project as it is then, the request [build] makes
+     * from them (null: nothing to send), core's preparation, and the prepared commit. Writes wait their turn in order (another
+     * action running, an owed retry) and none is dropped. Core's no-op and its blocked (an archived project) write nothing.
      */
-    private fun write(kind: String, extra: JSONObject = JSONObject(), build: (JSONObject) -> JSONObject?) {
+    private fun write(kind: String, extra: JSONObject = JSONObject(), projectId: String? = this.projectId, build: (JSONObject) -> JSONObject?) {
         val id = projectId ?: return
-        shell.perform { runtime ->
-            val options = runtime.menuRead("${kind}Options", JSONObject(extra.toString()).put("projectId", id).toString())
-            val request = build(options)?.put("requestId", UUID.randomUUID().toString())?.put("projectId", id) ?: return@perform
-            val plan = runtime.menuRead("${kind}Prepare", request.toString())
-            if (plan.getString("kind") != "prepared") return@perform
-            val action = FailedAction(kind, request.getString("requestId"), JSONObject().put("request", request).put("prepared", plan.getJSONObject("prepared")).toString())
-            // Posted once more, so it starts after this read's end frees the shell.
-            shell.ui { shell.ui { send(action) } }
+        writes.add(Write(id, kind, extra, build))
+        pump()
+    }
+
+    /** Starts the next write when the shell is free; looks again shortly while one waits. */
+    private fun pump() {
+        writes.pump()
+        if (!writes.waiting || pumping) return
+        pumping = true
+        main.postDelayed({ pumping = false; pump() }, 250)
+    }
+
+    /**
+     * [item]'s options, preparation and commit in one action: the commit's journal entry (callAsync writes it before the engine
+     * sees it) holds the exact preparation, so nothing between the preparation and the journal can lose the write. From then
+     * on the action is that commit ([late]): a failure owes its exact retry. False while the shell cannot start it.
+     */
+    private fun start(item: Write, done: () -> Unit): Boolean {
+        if (shell.busy || shell.failedAction != null) return false
+        val late = AtomicReference<FailedAction?>()
+        return shell.tryPerform(late = late, finished = done) { runtime ->
+            val options = runtime.menuRead("${item.kind}Options", JSONObject(item.extra.toString()).put("projectId", item.projectId).toString())
+            val request = item.build(options)?.put("requestId", UUID.randomUUID().toString())?.put("projectId", item.projectId) ?: return@tryPerform
+            val plan = runtime.menuRead("${item.kind}Prepare", request.toString())
+            if (plan.getString("kind") != "prepared") return@tryPerform
+            val action = FailedAction(item.kind, request.getString("requestId"),
+                JSONObject().put("request", request).put("prepared", plan.getJSONObject("prepared")).toString())
+            late.set(action)
+            runtime.menuCommand(action.kind, action.title)
+            shell.acknowledged(action)
         }
     }
 
-    /** A commit with [action]'s exact request and preparation (its title); the failure banner's Try again sends it again. */
+    /** The failure banner's Try again: the owed commit, exactly as first sent. */
     private fun send(action: FailedAction) = shell.perform(action) { runtime ->
         runtime.menuCommand(action.kind, action.title)
         shell.acknowledged(action)
@@ -847,4 +880,31 @@ fun ProjectTitleField(model: InboxViewModel, stored: String, archived: Boolean, 
             if (focused && !state.isFocused) commit()
             focused = state.isFocused
         })
+}
+
+/**
+ * Writes in order, each kept until [start] takes it: one runs at a time, and one [start] cannot begin yet (it answers false)
+ * stays first in line. [start] calls its `done` once the write ended.
+ */
+internal class WriteQueue<T>(private val start: (T, () -> Unit) -> Boolean) {
+    private val items = ArrayDeque<T>()
+    private var running = false
+
+    /** Whether a write waits to start. */
+    val waiting: Boolean get() = !running && items.isNotEmpty()
+
+    fun add(item: T) {
+        items.addLast(item)
+        pump()
+    }
+
+    fun pump() {
+        if (running) return
+        val next = items.removeFirstOrNull() ?: return
+        running = true
+        if (!start(next) { running = false; pump() }) {
+            running = false
+            items.addFirst(next)
+        }
+    }
 }

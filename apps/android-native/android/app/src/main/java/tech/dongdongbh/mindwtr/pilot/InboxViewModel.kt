@@ -25,6 +25,7 @@ import tech.dongdongbh.mindwtr.pilot.core.debugProperty
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * One item of core's row meta line (TaskRowMetaPart), as core sent it: [text] is shown as is.
@@ -1855,13 +1856,20 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     }
 
     /**
-     * A user action, one at a time: a command ([action]) or a read the user asked for.
+     * A user action, one at a time: a command ([action], or [late] once its work made the exact request) or a read the user
+     * asked for. It answers whether it started; [finished] runs once it ended and [busy] is clear.
      * Only these take [busy]. While a failed command's retry is owed, only that exact
      * [action] runs: no read starts, so none can clear the failure or replace it. The
      * retry keeps the failure on screen until it succeeds or fails again. After a
      * command succeeds, its lists are read again in the background.
      */
     internal fun perform(action: FailedAction? = null, work: (CoreHost) -> Unit) {
+        tryPerform(action, work = work)
+    }
+
+    /** [perform], answering whether it started; [late] and [finished] as there. */
+    internal fun tryPerform(action: FailedAction? = null, late: AtomicReference<FailedAction?>? = null, finished: (() -> Unit)? = null,
+                            work: (CoreHost) -> Unit): Boolean {
         val runtime = host
         // A journal retry owed by work no screen sent (a CoreWork queue drain that stored an item but could not save or record
         // it) holds newer edits back too: until its replay, a reopen would be undone by that item's retry.
@@ -1869,9 +1877,9 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             failedAction = owed.action
             error = owed.error
         }
-        if (busy || runtime == null || (failedAction != null && failedAction != action)) return
+        if (busy || runtime == null || (failedAction != null && failedAction != action)) return false
         busy = true
-        if (action != null) commandAt = ++issued
+        if (action != null || late != null) commandAt = ++issued
         if (failedAction == null) error = null
         conflict = false
         Thread({
@@ -1886,6 +1894,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 work(runtime); done = true
             }
             catch (failure: Throwable) {
+                // A command whose exact request its work made ([late]: a prepared Project details commit) is that request from then on.
+                val action = action ?: late?.get()
                 val message = failure.message ?: failure.javaClass.simpleName
                 val refused = message.startsWith("STALE_REVISION") || (action?.kind in REFUSABLE && UPDATE_REFUSALS.any { message.startsWith(it) })
                 stale = action != null && action.kind !in STALE_SHOWN && message.startsWith("STALE_REVISION")
@@ -1910,9 +1920,11 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             } finally {
                 ui {
                     busy = false
-                    if ((done || stale) && action != null) refreshAll()
+                    if ((done || stale) && (action ?: late?.get()) != null) refreshAll()
+                    finished?.invoke()
                 }
             }
         }, "mindwtr-action").start()
+        return true
     }
 }
