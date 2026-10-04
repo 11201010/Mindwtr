@@ -107,7 +107,10 @@ class SyncSettingsModel(private val menu: MenuModel) {
     @Volatile private var opened = false
     var form by mutableStateOf<SyncForm?>(null); private set
     /** The encryption card's passphrase fields as typed (current, next, confirm); core holds their text too. */
-    var fields by mutableStateOf(emptyMap<String, String>()); private set
+    val passphrases = PassphraseFields()
+    val fields: Map<String, String> get() = passphrases.texts
+    /** Core's words for a passphrase past its limit (the field row's `tooLong`), shown when a refused edit blocks a submit. */
+    private var tooLong = ""
     var historyOpen by mutableStateOf(false); private set
     var preferencesOpen by mutableStateOf(false); private set
     var snapshotsOpen by mutableStateOf(false); private set
@@ -197,7 +200,7 @@ class SyncSettingsModel(private val menu: MenuModel) {
         opened = false
         form = null
         followed = null
-        fields = emptyMap()
+        passphrases.clear()
         historyOpen = false
         preferencesOpen = false
         snapshotsOpen = false
@@ -238,16 +241,22 @@ class SyncSettingsModel(private val menu: MenuModel) {
         val type = action.getString("type")
         val input = JSONObject().put("action", action).apply { if (type == "submit" || type == "decline") put("requestId", uuid()) }
         val heavy = type == "submit" || type == "decline"
+        // A field core refused (past its limit) still holds the shorter text core kept: never submit that.
+        if (type == "submit" && !passphrases.submittable) { shell.showToast(null, tooLong, "error"); return }
         // A submit runs with the fields core holds: it waits for every keystroke sent before it (the light queue), never overtakes one.
         run("runSyncEncryptionAction", input, light = !heavy, after = if (heavy) SyncSettingsModel.light else null) { reply ->
-            reply.menuText("passphrase")?.let { phrase -> fields = fields + mapOf("next" to phrase, "confirm" to phrase) }
-            if (type == "cancel" || type == "submit" || type == "decline") fields = emptyMap()
+            reply.menuText("passphrase")?.let { phrase -> passphrases.generated(phrase) }
+            if (type == "cancel" || type == "submit" || type == "decline") passphrases.clear()
         }
     }
 
-    /** A passphrase field as typed; core keeps its copy (`typed`), which also clears the card's error. */
-    fun typePassphrase(field: String, text: String) {
-        fields = fields + (field to text)
+    /**
+     * A passphrase field as typed; core keeps its copy (`typed`), which also clears the card's error. An edit past core's limit
+     * ([maxLength], the row's) is refused with core's words ([tooLongText]) and never reaches core.
+     */
+    fun typePassphrase(field: String, text: String, maxLength: Int, tooLongText: String) {
+        tooLong = tooLongText
+        if (!passphrases.type(field, text, maxLength)) { shell.showToast(null, tooLongText, "error"); return }
         run("runSyncEncryptionAction", JSONObject().put("action", JSONObject().put("type", "typed").put("field", field).put("value", text)), light = true)
     }
 
@@ -626,7 +635,9 @@ private fun EncryptionCard(sync: SyncSettingsModel, card: JSONObject) {
                     val label = row.getString("label")
                     InputGroup(divider) {
                         Text(label, style = rnText(16, 500, 21), color = c.text)
-                        SyncInput(sync.fields[field].orEmpty(), label, null, row.getBoolean("secure"), "sync-passphrase-$field", KeyboardType.Password) { text -> sync.typePassphrase(field, text) }
+                        SyncInput(sync.fields[field].orEmpty(), label, null, row.getBoolean("secure"), "sync-passphrase-$field", KeyboardType.Password) { text ->
+                            sync.typePassphrase(field, text, row.getInt("maxLength"), row.getString("tooLong"))
+                        }
                     }
                 }
                 "reveal" -> {
@@ -652,6 +663,39 @@ private fun EncryptionCard(sync: SyncSettingsModel, card: JSONObject) {
                 }
             }
         }
+    }
+}
+
+/**
+ * The encryption card's passphrase fields as typed, for one visit. Core takes at most the row's `maxLength` characters a field:
+ * a longer edit is refused, never cut to fit, and while a refused edit stands no submit runs (it would run with the shorter text
+ * core kept, a passphrase other devices could never match).
+ */
+class PassphraseFields {
+    var texts by mutableStateOf(emptyMap<String, String>()); private set
+    private var refused by mutableStateOf(emptySet<String>())
+    val submittable: Boolean get() = refused.isEmpty()
+
+    /** True when the edit is taken; false when [text] is past [maxLength] (the field keeps what it held). */
+    fun type(field: String, text: String, maxLength: Int): Boolean {
+        if (text.length > maxLength) {
+            refused = refused + field
+            return false
+        }
+        texts = texts + (field to text)
+        refused = refused - field
+        return true
+    }
+
+    /** Generate's passphrase, in both new-passphrase fields. */
+    fun generated(phrase: String) {
+        texts = texts + mapOf("next" to phrase, "confirm" to phrase)
+        refused = refused - "next" - "confirm"
+    }
+
+    fun clear() {
+        texts = emptyMap()
+        refused = emptySet()
     }
 }
 
