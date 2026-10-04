@@ -9,7 +9,8 @@ class AndroidWidgetModule : Module() {
 
     Function("setPayload") { json: String ->
       val context = appContext.reactContext ?: return@Function
-      WidgetPayloadStore.write(context, json)
+      // A payload that did not reach the disk fails the call, so widget-service.ts publishes it again.
+      check(WidgetPayloadStore.write(context, json)) { "Widget payload not stored" }
     }
 
     Function("updateWidgets") {

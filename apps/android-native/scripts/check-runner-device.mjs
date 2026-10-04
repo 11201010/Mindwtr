@@ -101,10 +101,23 @@ const queued = () => runAs(`ls ${QUEUE} 2>/dev/null || true`).split(/\s+/).filte
 let queueMode = null;
 const lockQueue = () => { queueMode = runAs(`stat -c %a ${QUEUE}`); runAs(`chmod 500 ${QUEUE}`); };
 const unlockQueue = () => { if (queueMode) runAs(`chmod ${queueMode} ${QUEUE}`); queueMode = null; };
-/** One queue item, written as RN's writer does (a temporary name, then a rename): the ingest reads only `*.json`. */
+/**
+ * One queue item, written as RN's writer does (a temporary name, then a rename): the ingest reads only `*.json`. The bytes are
+ * checked before the rename: once renamed, the running app may drain the file at once (it watches the queue folder, pass W1).
+ */
 const enqueue = (name, text) => {
     const bytes = Buffer.from(text, 'utf8').toString('base64');
-    runAs(`mkdir -p ${QUEUE} && echo ${bytes} | base64 -d > ${QUEUE}/${name}.tmp && mv ${QUEUE}/${name}.tmp ${QUEUE}/${name}.json`);
+    runAs(`mkdir -p ${QUEUE} && echo ${bytes} | base64 -d > ${QUEUE}/${name}.tmp`);
+    if (runAs(`cat ${QUEUE}/${name}.tmp 2>/dev/null || true`) !== text) fail(`the queue file ${name}.tmp was not written`);
+    runAs(`mv ${QUEUE}/${name}.tmp ${QUEUE}/${name}.json`);
+};
+/**
+ * One queue item written in place, not renamed in: the running app watches the queue folder for renamed items only (pass W1),
+ * so this one waits for a drain the check starts itself.
+ */
+const enqueueUnseen = (name, text) => {
+    const bytes = Buffer.from(text, 'utf8').toString('base64');
+    runAs(`mkdir -p ${QUEUE} && echo ${bytes} | base64 -d > ${QUEUE}/${name}.json`);
     if (runAs(`cat ${QUEUE}/${name}.json 2>/dev/null || true`) !== text) fail(`the queue file ${name}.json was not written`);
 };
 const journal = () => runAs('ls files/journal 2>/dev/null || true').split(/\s+/).filter((name) => /^\d{16}\.json$/.test(name))
@@ -518,7 +531,8 @@ try {
         const id = randomUUID();
         beginStep();
         const [jobsBefore, postedBefore, replaysBefore, retriesBefore] = [0, 0, 0, 0];
-        enqueue(id, JSON.stringify({ kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
+        // Unseen: a drain of its own would remove the file before the folder is made read-only.
+        enqueueUnseen(id, JSON.stringify({ kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
         lockQueue();
         try {
             contextTrigger('ACTIVATE_CONTEXT', context);

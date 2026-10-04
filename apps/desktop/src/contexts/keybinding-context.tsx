@@ -6,7 +6,7 @@ import { isFlatpakRuntime, isTauriRuntime } from '../lib/runtime';
 import { reportError } from '../lib/report-error';
 import { nextDensityMode } from '../lib/density';
 import { takeUndoableAction } from '../lib/undo-registry';
-import { logWarn } from '../lib/app-log';
+import { logInfo, logWarn } from '../lib/app-log';
 import { useUiStore } from '../store/ui-store';
 import { saveStoredFullscreen } from '../lib/window-state';
 import {
@@ -1109,6 +1109,16 @@ export function KeybindingProvider({
                     isFlatpak: isFlatpakRuntime(),
                     isMac,
                     isWindows,
+                });
+                void logInfo('Hydrated global quick add shortcut applied', {
+                    scope: 'shortcuts',
+                    force: true,
+                    extra: {
+                        releaseCheck: 'v1.3.4/global-shortcut-startup',
+                        requestedShortcut: quickAddShortcut,
+                        appliedShortcut,
+                        outcome: appliedShortcut === quickAddShortcut ? 'applied' : 'fallback',
+                    },
                 });
                 if (result?.warning) {
                     showToast(result.warning, 'info', 6000);

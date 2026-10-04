@@ -1602,6 +1602,25 @@ pub fn run() {
                 let _ = crate::platform::apply_macos_activation_policy(&app.handle(), true);
             }
 
+            // Register the initial default before creating either webview.
+            // WebView2 creation pumps Windows messages: while the second
+            // webview is being created, the main one can already hydrate its
+            // settings and apply the saved shortcut over IPC. Applying the
+            // default later would overwrite that preference (disabled on
+            // Windows) until the setting changes again.
+            let handle = app.handle();
+            let shortcut_state = app.state::<GlobalQuickAddShortcutState>();
+            let default_shortcut = if cfg!(target_os = "linux") && is_flatpak() {
+                GLOBAL_QUICK_ADD_SHORTCUT_DISABLED
+            } else {
+                default_global_quick_add_shortcut()
+            };
+            if let Err(error) =
+                apply_global_quick_add_shortcut(&handle, &shortcut_state, Some(default_shortcut))
+            {
+                log::warn!("Failed to register global quick add shortcut: {error}");
+            }
+
             // The main window is declared create:false so portable mode can pin
             // the webview's browsing profile inside the portable dir (#855).
             {
@@ -1803,18 +1822,6 @@ pub fn run() {
                     // that no longer has a tray.
                     show_main(&handle);
                 }
-            }
-
-            let shortcut_state = app.state::<GlobalQuickAddShortcutState>();
-            let default_shortcut = if is_flatpak_install {
-                GLOBAL_QUICK_ADD_SHORTCUT_DISABLED
-            } else {
-                default_global_quick_add_shortcut()
-            };
-            if let Err(error) =
-                apply_global_quick_add_shortcut(&handle, &shortcut_state, Some(default_shortcut))
-            {
-                log::warn!("Failed to register global quick add shortcut: {error}");
             }
 
             if initial_launch_requests_quick_add {

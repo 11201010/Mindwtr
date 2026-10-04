@@ -3,8 +3,8 @@ package tech.dongdongbh.mindwtr.pilot
 /**
  * The start order after a journal replay that left nothing owed (ProcessCoreHost.recovered): the pending-captures drain, then
  * sync. A drain that did not finish, whatever its failure (owed, items left queued, storage, a timeout), holds the rest back:
- * it becomes the screens' owed "journal" retry (no editable data), sync waits, and CoreWork retries it. JVM-tested
- * (StartOrderTest).
+ * it becomes the screens' owed "journal" retry (no editable data), sync waits, and CoreWork retries it. A widget check-off sweep
+ * that failed holds nothing back (the store is whole): only CoreWork retries it. JVM-tested (StartOrderTest).
  */
 internal object StartOrder {
     /** What one drain did. */
@@ -15,13 +15,34 @@ internal object StartOrder {
         data object Waiting : Drain
         /** The drain failed with [message] (core's code first). */
         data class Failed(val message: String) : Drain
+        /**
+         * The queue is drained (or empty), but RN's widget check-offs did not all go into it (CheckoffStore.sweep failed): the
+         * store is whole, so the screens and sync go on, as in RN, and CoreWork sweeps and drains again with its back-off.
+         */
+        data object Unswept : Drain
     }
 
-    fun afterReplay(drain: () -> Drain, owe: (String) -> Unit, retryLater: () -> Unit, startSync: () -> Unit): Boolean {
+    /**
+     * Whether the queue folder holds nothing: [names] is its listing (null when it could not be listed). A missing folder is empty;
+     * one that exists but cannot be listed (unreadable, or a file at its path) is null: not "nothing queued".
+     */
+    fun queueEmpty(names: Array<String>?, exists: Boolean): Boolean? = when {
+        names != null -> names.isEmpty()
+        exists -> null
+        else -> true
+    }
+
+    fun afterReplay(drain: () -> Drain, owe: (String) -> Unit, retryLater: () -> Unit, startSync: () -> Unit, refreshWidgets: () -> Unit): Boolean {
         when (val result = drain()) {
             Drain.Done -> {
                 startSync()
                 return true
+            }
+            Drain.Unswept -> {
+                startSync()
+                // Its job retries, so no job end publishes them; a boot's publication may wait for a screen that never opens.
+                refreshWidgets()
+                retryLater()
             }
             Drain.Waiting -> retryLater()
             is Drain.Failed -> {

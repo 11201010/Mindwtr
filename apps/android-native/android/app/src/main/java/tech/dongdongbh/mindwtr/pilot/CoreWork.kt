@@ -116,8 +116,8 @@ class CoreWork(context: Context, params: WorkerParameters) : Worker(context, par
                 log("Native Android notification", JSONObject().put("kind", details.optJSONObject("data")?.optString("kind") ?: JSONObject.NULL)
                     .put("outcome", if (shown) "posted" else "blocked"))
             },
-            // The widgets pass refreshes the home-screen widgets here.
-            refreshWidgets = {},
+            // What the job stored reaches the home-screen widgets before the job ends.
+            refreshWidgets = { runCatching { booted?.refreshWidgets() }.onFailure { Log.w(CoreHost.TAG, "Native Android widget refresh failed", it) } },
             log = log)
         return when (outcome) {
             CoreJob.Outcome.Success -> Result.success()

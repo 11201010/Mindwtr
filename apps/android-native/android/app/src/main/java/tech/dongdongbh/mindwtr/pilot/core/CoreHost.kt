@@ -50,6 +50,8 @@ class CoreHost(
     private val installer: HostInstaller,
     /** Reminder alarms' platform side (host-reminders.ts's bridges); null: this host plans no alarms. */
     private val reminders: Reminders? = null,
+    /** RN's home-screen widgets (bundle/host-widgets.ts publishes through it); null: this host has none. */
+    private val widgets: HostWidgets? = null,
 ) {
     /**
      * Reminder alarms on the platform (pilot/Reminders.kt): core's plan applied in core's order, the notification permission as RN
@@ -366,6 +368,12 @@ class CoreHost(
             bridge.setProperty("reminderReceiverCounts", guarded { _ -> alarms.receiverCounts() })
             bridge.setProperty("reminderLedger", guarded { _ -> alarms.ledger() })
         }
+        // RN's widget module (HostWidgets): the publication's device inputs, and core's payload to store and draw.
+        widgets?.let { widgets ->
+            bridge.setProperty("widgetInputs", guarded { _ -> widgets.inputs() })
+            bridge.setProperty("widgetPublish", guarded { args -> widgets.publish(args[0] as String); null })
+            bridge.setProperty("widgetAppState", guarded { _ -> widgets.appState() })
+        }
         engine.globalObject.setProperty("__mindwtrNative", bridge)
     }
 
@@ -543,6 +551,15 @@ class CoreHost(
 
     /** A reminder's Snooze (core's snoozeReminder) with [json] (`{ requestId, requestedAt, details }`), journaled: the alarm to make. */
     fun reminderSnooze(json: String): JSONObject = callAsync("reminderSnooze", json)
+
+    /**
+     * The home-screen widgets published now if what they show changed (bundle/host-widgets.ts), and stored and drawn before this
+     * returns: after a CoreWork job, and when the app comes to the front.
+     */
+    fun refreshWidgets() {
+        callAsync("widgetsRefresh")
+        widgets?.settle()
+    }
 
     /** Core's receipts older than 30 days go; ProcessCoreHost calls it once, after a boot replay that left no entry. */
     fun pruneReceipts(): JSONObject = callAsync("pruneReceipts")

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -608,7 +608,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\) \{ appState \}\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 // RN's installer journal recovery runs at boot after the validated load and before the journal's replay, the first write that
 // can reach files/attachments (pass A2); it is RN's own Kotlin, compiled as it is.
 assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s*(?:\/\/[^\n]*\n\s*)*recoverInstalls\(installer\)\s*if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)/);
@@ -731,7 +731,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 36, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: each guarded');
+assert.equal(bridgeCallbacks.length, 39, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls: each guarded');
 assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })'));
 // The attachment file port and the installer only start their call on the engine thread; HostIo's files thread runs it.
@@ -1115,14 +1115,14 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(owner, /private fun replay\(runtime: CoreHost\): Boolean \{\s+val replay = runtime\.replayJournal\(\)\s+replay\.owed\?\.let \{ recordFailure\(PendingFailure\(FailedAction\("journal", ""\), it, null\)\); return false \}\s+(?:\/\/[^\n]*\s+)+if \(replay\.left > 0\) return true\s+runCatching \{ runtime\.pruneReceipts\(\) \}[\s\S]*?return true\s+\}/);
     // Sync (plan block 1): its triggers start only after the validated load, a replay that finished (no entry owed) and the queue
     // drain (ProcessCoreHost.recovered), or once the owed journal retry went through; nothing else starts them.
-    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
+    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+(?:\/\/[^\n]*\s+)*deferredWidgets\.set\(runtime\)\s+return runtime/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/syncStart\(/g).length, 1, 'one start of the triggers, in startSync');
     assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 1, 'startSync only in recovered, after the drain (at once, or held for the first screen\'s content)');
     // Startup follow-up: the boot's start is held until the first screen shows its content: the Inbox's first rows (contentShown),
     // another tab's boot read, or a 3 s fallback; CoreWork's and the owed retry's start at once. One start at a time.
     // The reminder alarms start with sync (pass R1), held with it.
     assert.match(owner, /startSync = \{\s+val start = \{\s+startSync\(app, runtime\)\s+startReminders\(runtime\)\s+\}\s+if \(deferSync\) deferredSync\.set\(start\) else start\(\)\s+\},/);
-    assert.match(owner, /fun startDeferredSync\(\) \{\s+deferredSync\.getAndSet\(null\)\?\.let \{ start -> syncThread\.execute \{ start\(\) \} \}\s+\}/);
+    assert.match(owner, /fun startDeferredSync\(\) \{\s+deferredSync\.getAndSet\(null\)\?\.let \{ start -> syncThread\.execute \{ start\(\) \} \}\s+deferredWidgets\.getAndSet\(null\)\?\.let\(::refreshWidgets\)\s+\}/, 'the boot\'s widget publication waits with its sync start');
     assert.match(owner, /fun contentShown\(\) \{\s+startDeferredSync\(\)/);
     assert.match(owner, /private fun startSync\(app: Application, runtime: CoreHost\): Unit = synchronized\(syncLock\) \{\s+if \(syncHost != null\) return/);
     assert.match(model, /if \(screen != Screen\.Inbox\) ProcessCoreHost\.startDeferredSync\(\)\s+main\.postDelayed\(ProcessCoreHost::startDeferredSync, SYNC_FALLBACK_MS\)/);
@@ -1300,7 +1300,7 @@ assert.match(editorUi, /clickable\(enabled = !busy && !failed, role = Role\.Butt
 // state (FocusModel) with both, and a control's edit with the first; a read that sends neither keeps the flat Focus.
 assert.match(coreHost, /fun focus\(limit: Int, controls: String = "", controlEdit: String = ""\): JSONObject = callAsync\("focus", limit, controls, controlEdit\)/);
 assert.match(coreHost, /fun focusWindow\(key: String, offset: Int, limit: Int, revision: String, controls: String = ""\): JSONObject =\s*callAsync\("focusWindow", key, offset, limit, revision, controls\)/);
-assert.match(hostEntry, /focus\(limit: number, controls = '', controlEdit = ''\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getFocus\(\{ limit, \.\.\.\(controls \? \{ controls: JSON\.parse\(controls\) \} : \{\}\), \.\.\.\(controlEdit \? \{ controlEdit: JSON\.parse\(controlEdit\) \} : \{\}\) \}\)\);/);
+assert.match(hostEntry, /focus\(limit: number, controls = '', controlEdit = ''\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*const focus = unwrap\(contract\.getFocus\(\{ limit, \.\.\.\(controls \? \{ controls: JSON\.parse\(controls\) \} : \{\}\), \.\.\.\(controlEdit \? \{ controlEdit: JSON\.parse\(controlEdit\) \} : \{\}\) \}\)\);/);
 assert.match(hostEntry, /focusWindow\(key: string, offset: number, limit: number, revision: string, controls = ''\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getFocusSectionWindow\(\{ key: key as FocusTaskSectionKey, offset, limit, revision, \.\.\.\(controls \? \{ controls: JSON\.parse\(controls\) \} : \{\}\) \}\)\);/);
 assert.equal(model.match(/runtime\.focus\(/g).length, 1);
 assert.equal(model.match(/runtime\.focusWindow\(/g).length, 1);
@@ -1362,16 +1362,17 @@ assert.match(labelsKt, /strings = LABEL_KEYS\.filter\(values::has\)\.associateWi
 assert.match(labelsKt, /if \(logged\.add\(name\)\) Log\.w\(/, 'a missing key is logged once');
 assert.equal(kotlinFiles.join('\n').match(/Labels\.load\(/g).length, 1);
 assert.match(owner, /runtime\.language\(stored \?: "", Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
-assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
+assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+(?:\/\/[^\n]*\s+)*deferredWidgets\.set\(runtime\)\s+return runtime/);
 // After a finished replay (the boot's, the owed retry's, CoreWork's): the queue drain, then sync (StartOrder, StartOrderTest). Any
 // drain that did not finish becomes the screens' owed journal retry, holds sync back, and CoreWork retries it.
-assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost, deferSync: Boolean = false\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\)\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+(?:\/\/[^\n]*\s+)*startSync = \{\s+val start = \{\s+startSync\(app, runtime\)\s+startReminders\(runtime\)\s+\}\s+if \(deferSync\) deferredSync\.set\(start\) else start\(\)\s+\},\s+\)/);
-assert.match(source('StartOrder.kt'), /Drain\.Done -> \{\s+startSync\(\)\s+return true\s+\}\s+Drain\.Waiting -> retryLater\(\)\s+is Drain\.Failed -> \{\s+owe\(result\.message\)\s+retryLater\(\)\s+\}/);
+assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost, deferSync: Boolean = false\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\), app\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+(?:\/\/[^\n]*\s+)*startSync = \{\s+val start = \{\s+startSync\(app, runtime\)\s+startReminders\(runtime\)\s+\}\s+if \(deferSync\) deferredSync\.set\(start\) else start\(\)\s+\},\s+refreshWidgets = \{ refreshWidgets\(runtime\) \},\s+\)/);
+assert.match(source('StartOrder.kt'), /Drain\.Done -> \{\s+startSync\(\)\s+return true\s+\}\s+Drain\.Unswept -> \{\s+startSync\(\)\s+(?:\/\/[^\n]*\s+)*refreshWidgets\(\)\s+retryLater\(\)\s+\}\s+Drain\.Waiting -> retryLater\(\)\s+is Drain\.Failed -> \{\s+owe\(result\.message\)\s+retryLater\(\)\s+\}/);
 assert.match(source('CoreWork.kt'), /fun retryDrain\(context: Context\) = enqueue\(context, CoreJob\.INGEST, emptyMap\(\), ExistingWorkPolicy\.KEEP\)/, 'a retry never cancels a running drain');
 // The queue drain (RN's startup drain; CoreWork's ingest job too): after the journal replay, before any screen, entry point or
 // sync gets the host; never while a save is owed; a failed save becomes the journal's owed retry, which drains again.
 assert.match(owner, /fun queue\(app: Application\) = File\(app\.filesDir, PendingCaptureWriter\.DIRECTORY\)/, 'the queue is RN\'s writer\'s folder');
-assert.match(owner, /private fun drain\(runtime: CoreHost, queue: File\): StartOrder\.Drain \{\s+if \(failure != null\) return StartOrder\.Drain\.Waiting\s+if \(queue\.list\(\)\.isNullOrEmpty\(\)\) return StartOrder\.Drain\.Done\s+return try \{\s+val ingested = runtime\.ingestPendingCaptures\(UUID\.randomUUID\(\)\.toString\(\)\)/);
+assert.match(owner, /private fun drain\(runtime: CoreHost, queue: File, app: Application\): StartOrder\.Drain \{\s+if \(failure != null\) return StartOrder\.Drain\.Waiting\s+(?:\/\/[^\n]*\s+)*val unswept = runCatching \{ CheckoffStore\.sweep\(app\)\.failed > 0 \}[^\n]*\.getOrDefault\(true\)\s+if \(unswept\) runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "unswept"\)\)\s+val drained = if \(unswept\) StartOrder\.Drain\.Unswept else StartOrder\.Drain\.Done\s+when \(StartOrder\.queueEmpty\(queue\.list\(\), queue\.exists\(\)\)\) \{\s+true -> return drained\s+(?:\/\/[^\n]*\s+)*null -> \{\s+runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "unreadable"\)\)\s+return StartOrder\.Drain\.Unswept\s+\}\s+false -> Unit\s+\}\s+return try \{\s+val ingested = runtime\.ingestPendingCaptures\(UUID\.randomUUID\(\)\.toString\(\)\)/, 'a failed check-off sweep is retried, the queue still drained');
+assert.match(owner, /val ingested = [^\n]+\n[^\n]+"drained"[^\n]+\n\s+drained\n/);
 assert.match(owner, /\.put\("error", message\.substringBefore\(':'\)\)\)\s+StartOrder\.Drain\.Failed\(message\)/);
 // The runner's lines go through core's logger (logcat, and RN's diagnostics log file), their fields in context; a failure's code only.
 assert.match(owner, /runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "drained"\)\.put\("ingested", ingested\)\)/);
@@ -2563,7 +2564,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(gradle, /buildConfigField\("String", "URL_SCHEME", "\\"\$scheme\\""\)\s+manifestPlaceholders\["urlScheme"\] = scheme/);
     for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
     assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
-    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, rnCaptureIntent, rnAttachmentInstaller\) \}/);
+    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller\) \}/);
     // The bytecode cache's keys (BytecodeCache.kt): the engine version is the QuickJS dependency's, and the bundle carries the
     // SHA-256 of its own body in its first line, written with it in one file (build-bundle.mjs), so a bundle and a hash from
     // two builds cannot pair up. Every variant's merged assets are checked by verify-bundle.mjs before packaging.
@@ -2627,22 +2628,22 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         assert.match(gradle, /if \(name == "mergeBenchmarkTraceAssets"\) "--allow-module-trace"/, 'only benchmarkTrace\'s merged assets may carry them');
     }
     // RN's shortcuts from RN's own builder: the same ids, capabilities, labels and links, on the build's scheme; Add task opens
-    // the capture popup through RN's system capture link until the widget pass brings QuickCaptureActivity.
+    // RN's quick capture dialog in the build's package, as RN's does (pass W1 brings it).
+    assert.match(gradle, /urlSchemes\.map \{ \(type, scheme\) -> "\$type=\$scheme@\$\{packages\.getValue\(type\)\}" \}/);
     const { createRequire } = await import('node:module');
     const rnShortcuts = createRequire(import.meta.url)('../../mobile/plugins/android-app-shortcuts.js').__testables;
     const { buildShortcuts } = await import('./build-shortcuts.mjs');
-    const rnXml = rnShortcuts.buildShortcutsXml('tech.dongdongbh.mindwtr');
     const ids = (xml) => [...xml.matchAll(/android:shortcutId="([^"]+)"/g)].map(([, id]) => id);
     const capabilities = (xml) => [...xml.matchAll(/<capability android:name="([^"]+)"/g)].map(([, id]) => id);
-    for (const scheme of ['mindwtr-native-dev', 'mindwtr-upgradetest', 'mindwtr']) {
-        const { xml, strings } = buildShortcuts(scheme);
+    for (const [scheme, applicationId] of [['mindwtr-native-dev', 'tech.dongdongbh.mindwtr.nativeclient.dev'], ['mindwtr-upgradetest', 'tech.dongdongbh.mindwtr.upgradetest'], ['mindwtr', 'tech.dongdongbh.mindwtr']]) {
+        const { xml, strings } = buildShortcuts(scheme, applicationId);
+        const rnXml = rnShortcuts.buildShortcutsXml(applicationId);
         assert.deepEqual(ids(xml), ['capture', 'inbox', 'focus', 'waiting', 'someday', 'projects', 'review', 'calendar', 'add_task_inbox', 'open_focus', 'open_calendar']);
         assert.deepEqual(ids(xml), ids(rnXml));
         assert.deepEqual(capabilities(xml), capabilities(rnXml));
         assert.equal(strings, rnShortcuts.SHORTCUTS_STRINGS_XML);
-        assert.equal(xml.replaceAll(`${scheme}:///`, 'mindwtr:///').replace(/android:data="mindwtr:\/\/\/capture-quick" \/>/,
-            'android:targetPackage="tech.dongdongbh.mindwtr"\n      android:targetClass="tech.dongdongbh.mindwtr.androidwidget.QuickCaptureActivity" />'), rnXml);
-        assert.doesNotMatch(xml, /QuickCaptureActivity|targetPackage/);
+        assert.equal(xml.replaceAll(`${scheme}:///`, 'mindwtr:///'), rnXml, 'RN\'s shortcuts but for the scheme');
+        assert.match(xml, new RegExp(`android:targetPackage="${applicationId.replace(/\./g, '\\.')}"\\s+android:targetClass="tech\\.dongdongbh\\.mindwtr\\.androidwidget\\.QuickCaptureActivity"`), 'Add task opens RN\'s dialog');
     }
     // Core's buildCreateNoteCapture mirrors RN's MainActivity (the name, else the Assistant's text, else EXTRA_TEXT; the note when
     // it differs): if RN's rule changes, this fails, and core's mirror must change with it.
@@ -2975,14 +2976,19 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
 // Pass B2 (E2 native): CoreWork, the queue's ports, RN's capture intent and context automation receivers under RN's class names,
 // RN's capture intent Kotlin compiled as it is, and GTD › Capture's automation card.
 {
-    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+    // The main manifest and the debug build's widget overlay (RN's plugins' entries, scripts/build-widgets.mjs; pass W1).
+    const { buildManifest } = await import('./build-widgets.mjs');
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + buildManifest('tech.dongdongbh.mindwtr.nativeclient.dev', 'Mindwtr Native Dev');
     const gradle = readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8');
+    const widgetGradle = readFileSync(resolve(app, 'android/widget/build.gradle.kts'), 'utf8');
     const rnWidget = (name) => readFileSync(resolve(app, '../mobile/modules/android-widget/android/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
     const nativeKt = (path) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr', path), 'utf8');
-    // Exported: RN's activity alias, RN's two automation receivers (plugins/android-widget.js, android-manifest-fixes.js), and the
-    // reminders' reschedule receiver in place of RN's exported AlarmBootReceiver (patch-alarm-notification-gradle.js), nothing else.
+    const widgetKt = (name) => readFileSync(resolve(app, 'android/widget/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
+    // Exported: RN's activity alias, RN's two automation receivers (plugins/android-widget.js, android-manifest-fixes.js), the
+    // reminders' reschedule receiver in place of RN's exported AlarmBootReceiver (patch-alarm-notification-gradle.js), and RN's
+    // widget components (pass W1's block lists them), nothing else.
     const exported = [...manifest.matchAll(/<(?:activity-alias|activity|receiver|service|provider)\s[^>]*?android:name="([^"]+)"[^>]*?android:exported="true"/g)].map((m) => m[1]).sort();
-    assert.deepEqual(exported, ['${applicationId}.MainActivity', '.ReminderRescheduleReceiver', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
+    assert.deepEqual(exported.filter((name) => !/Widget|TasksWidget|CaptureTileService/.test(name)), ['${applicationId}.MainActivity', '.ReminderRescheduleReceiver', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
         'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver'], 'only RN\'s exported components');
     const receiver = (name) => manifest.match(new RegExp(`<receiver\\s+android:name="${name.replace(/\./g, '\\.')}"[\\s\\S]*?</receiver>`))?.[0] ?? assert.fail(`no ${name}`);
     const rnPlugin = readFileSync(resolve(app, '../mobile/plugins/android-widget.js'), 'utf8');
@@ -3001,16 +3007,16 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(contextFilters[0], /<data /);
     assert.match(contextFilters[1], /<data android:scheme="mindwtr" \/>/);
     assert.match(manifest, /<uses-permission android:name="android\.permission\.POST_NOTIFICATIONS" \/>/);
-    // RN's capture intent Kotlin compiled as it is, with RN's tests; the receiver is RN's but for its lines marked `native`.
-    for (const name of ['CaptureIntentProcessor', 'CaptureIntentConfigStore', 'PendingCaptureWriter', 'QuickCaptureAudioRecorder']) assert(gradle.includes(`"${name}"`), `RN's ${name}.kt is compiled in`);
-    for (const name of ['CaptureIntentProcessorTest', 'CaptureIntentConfigStoreTest']) assert(gradle.includes(`"${name}"`), `RN's ${name}.kt runs`);
-    assert.doesNotMatch(gradle.slice(gradle.indexOf('val rnCaptureIntent')), /"CaptureIntentReceiver"/, 'RN\'s receiver is replaced, not compiled in');
-    const nativeReceiver = nativeKt('androidwidget/CaptureIntentReceiver.kt');
-    assert.equal(nativeReceiver.split('\n').filter((line) => !line.endsWith('// native')).join('\n').replace(/\n \*\n \* Native:[\s\S]*?(?=\n \*\/)/, ''),
-        rnWidget('CaptureIntentReceiver.kt'), 'the capture intent receiver is RN\'s but for its native lines');
-    assert.match(nativeReceiver, /if \(queued && ordered\) pendingResult\.resultCode = Activity\.RESULT_OK\n[^\n]*\/\/ native\n\s+if \(queued\) runCatching \{ CoreWork\.enqueue\(appContext, CoreJob\.INGEST\) \} \/\/ native\n/, 'a queued capture starts CoreWork after the sender is told');
-    const undo = (text) => /const val UNDO_WINDOW_MS = ([^\n]+)/.exec(text)[1];
-    assert.equal(undo(nativeKt('androidwidget/CheckoffStore.kt')), undo(rnWidget('CheckoffStore.kt')), 'the writer\'s undo window is RN\'s');
+    // RN's capture intent Kotlin, its receiver included, compiled as it is in the widget module (pass W1), with RN's tests. No
+    // native copy of an RN file: a queued capture wakes CoreWork through the headless task's stand-in, which watches the queue.
+    const allowedExclusions = /val rnExcluded = listOf\("AndroidWidgetModule", "CaptureSyncHeadlessService"\)/;
+    assert.match(widgetGradle, allowedExclusions, 'only the Expo bridge and the headless task stay out');
+    assert.deepEqual(readdirSync(resolve(app, 'android/widget/src/main/java/tech/dongdongbh/mindwtr/androidwidget')), ['CaptureSyncHeadlessService.kt'], 'the module\'s one native file is the headless task\'s stand-in');
+    const shim = widgetKt('CaptureSyncHeadlessService.kt');
+    assert.match(shim, /object : FileObserver\(queue\.path, FileObserver\.MOVED_TO\)/, 'the stand-in watches RN\'s queue folder for a published item');
+    assert.match(shim, /CaptureIntentReceiver\.queuedHook = queued\?\.let \{ \{ context: Context -> start\(context\) \} \}/, 'RN\'s receiver waits for the stored job before its broadcast finishes');
+    assert.match(shim, /internal fun queueEvent\(context: Context, event: Int, path: String\?\) \{\s+if \(event and FileObserver\.MOVED_TO != 0 && path\?\.endsWith\("\.json"\) == true\) start\(context\)\s+\}/);
+    assert(!existsSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/androidwidget')), 'RN\'s CheckoffStore.kt is compiled in; no native copy is left');
     // The context receiver reads the intent as RN's does; where RN starts its headless task, CoreWork asks core.
     const rnContext = readFileSync(resolve(app, '../mobile/modules/context-automation/android/src/main/java/tech/dongdongbh/mindwtr/contextautomation/ContextAutomationReceiver.kt'), 'utf8');
     const nativeContext = nativeKt('contextautomation/ContextAutomationReceiver.kt');
@@ -3057,6 +3063,155 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     for (const [name, text] of [['CoreJob.kt', source('CoreJob.kt')], ['CoreWork.kt', coreWork], ['HostFiles.kt', nativeKt('pilot/core/HostFiles.kt')]]) {
         assert.doesNotMatch(code(text), /\.(sort\w*|sorted\w*|groupBy|reversed|distinct\w*|partition)\b/, `${name}: no Kotlin ordering`);
     }
+}
+
+// Pass W1 (widgets native): the engine's widget publisher on real core. The payload Kotlin receives is core's own Android
+// publication for the store, the device's inputs and the device language; an unchanged payload is not sent again; nothing is
+// sent before the boot's validated load; the Focus screen's filter reaches the widget with core's null sortOrder as RN's absent one.
+{
+    const harness = await build({
+        stdin: { contents: `
+            import { createWidgetPublisher } from './bundle/host-widgets.ts';
+            import { buildAndroidWidgetPublication, getFocusWidgetFilter } from '@mindwtr/core';
+            // The store from its own file: core is side-effect free and lazily initializes the modules its own dynamic imports
+            // reach (store.ts among them), so an entry that reaches the store only through index.ts gets no init call from esbuild.
+            import { useTaskStore } from '../../packages/core/src/store';
+            export { buildAndroidWidgetPublication, getFocusWidgetFilter, useTaskStore, createWidgetPublisher };
+        `, resolveDir: app, loader: 'ts' },
+        bundle: true, write: false, format: 'esm', platform: 'node', logLevel: 'silent',
+    });
+    const core = await import(`data:text/javascript;base64,${Buffer.from(harness.outputFiles[0].text).toString('base64')}`);
+    const now = new Date().toISOString();
+    const task = (id, title, extra = {}) => ({ id, title, status: 'next', tags: [], contexts: [], createdAt: now, updatedAt: now, ...extra });
+    const data = {
+        tasks: [task('a', 'Alpha', { contexts: ['@work'], dueDate: now }), task('b', 'Beta'), task('c', 'Gamma', { status: 'inbox' })],
+        projects: [], sections: [], areas: [], settings: { language: 'system' },
+    };
+    core.useTaskStore.setState({ _allTasks: data.tasks, _allProjects: [], _allSections: [], _allAreas: [], settings: data.settings, lastDataChangeAt: 1 });
+    const inputs = { systemColorScheme: 'dark', systemLocale: 'zh-CN', listSelections: ['inbox', 'filter:missing'] };
+    let ready = false;
+    const published = [];
+    const timers = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const pendingTimers = [];
+    let active = false;
+    globalThis.setTimeout = (fn, ms) => { timers.push(ms); pendingTimers.push(fn); return realSetTimeout(() => {}, 0); };
+    const fireTimer = () => pendingTimers.pop()();
+    try {
+        const widgets = core.createWidgetPublisher({ ready: () => ready, inputs: () => inputs, publish: (text) => published.push(text), storedLanguage: () => null, active: () => active });
+        assert.equal(widgets.publish(), false, 'nothing is published before the validated load');
+        ready = true;
+        assert.equal(widgets.publish(), true);
+        // The device language (zh-CN) wins over 'system', as RN's resolveWidgetLanguage(saved, setting, getSystemDefaultLanguage()).
+        const expected = (filter) => JSON.stringify(core.buildAndroidWidgetPublication(data, 'zh', { ...inputs, focusFilter: filter }));
+        assert.equal(published[0], expected(core.getFocusWidgetFilter()), 'the payload is core\'s publication with the device\'s inputs');
+        assert.equal(widgets.publish(), false, 'an unchanged payload is not sent again');
+        assert.equal(published.length, 1);
+        // Kotlin stores and draws off the engine thread; one that failed (or never finished) is sent again, the same payload too.
+        inputs.stale = true;
+        assert.equal(widgets.publish(), true, 'a publication that did not reach the widgets is sent again');
+        assert.equal(published[1], published[0]);
+        delete inputs.stale;
+        assert.equal(widgets.publish(), false, 'once it reached them, it is not sent again');
+        published.pop();
+        widgets.focusFilter({ criteria: { contexts: ['@work'] }, sortBy: 'due', sortOrder: null });
+        assert.deepEqual(timers, [1000], 'a new Focus filter republishes');
+        assert.deepEqual(Object.entries(core.getFocusWidgetFilter()), [['criteria', { contexts: ['@work'] }], ['sortBy', 'due'], ['sortOrder', undefined]], 'core\'s null sortOrder is RN\'s absent one');
+        widgets.focusFilter({ criteria: { contexts: ['@work'] }, sortBy: 'due', sortOrder: null });
+        assert.equal(timers.length, 1, 'the same filter republishes nothing');
+        assert.equal(widgets.publish(), true);
+        assert.equal(published[1], expected({ criteria: { contexts: ['@work'] }, sortBy: 'due', sortOrder: undefined }));
+        assert.notEqual(published[1], published[0], 'the widget shows the filtered Focus list');
+        widgets.focusFilter(undefined);
+        core.useTaskStore.setState({ lastDataChangeAt: 2 });
+        assert.deepEqual(timers, [1000, 1000], 'a store change republishes after the delay');
+        // RN's storage widget refresh (storage-adapter.ts, #766: a redraw costs seconds): while the app is in front, a store change
+        // republishes at most once per five minutes; leaving the app publishes at once (Kotlin's background refresh). The Focus
+        // screen's filter and the Focus start-date setting publish at once, as RN's direct calls do. Away from the front: one second.
+        active = true;
+        const sent = published.length;
+        core.useTaskStore.setState({ _allTasks: [...data.tasks, task('d', 'Delta', { status: 'inbox' })], lastDataChangeAt: 3 });
+        fireTimer();
+        assert.equal(published.length, sent + 1, 'the waiting store change published');
+        core.useTaskStore.setState({ _allTasks: [...data.tasks, task('d', 'Delta', { status: 'inbox' }), task('e', 'Epsilon', { status: 'inbox' })], lastDataChangeAt: 4 });
+        assert(timers.at(-1) > 299_000 && timers.at(-1) <= 300_000, `in front, the next store change waits out five minutes (${timers.at(-1)} ms)`);
+        widgets.focusFilter({ criteria: { contexts: ['@home'] }, sortBy: 'due', sortOrder: null });
+        assert.equal(timers.at(-1), 1000, 'a new Focus filter publishes at once, the waiting change with it');
+        fireTimer();
+        assert.equal(published.length, sent + 2);
+        core.useTaskStore.setState({ settings: { ...data.settings, gtd: { focusIncludeStartDates: false } }, lastDataChangeAt: 5 });
+        assert.equal(timers.at(-1), 1000, 'the Focus start-date setting publishes at once');
+        fireTimer();
+        active = false;
+        core.useTaskStore.setState({ _allTasks: data.tasks, lastDataChangeAt: 6 });
+        assert.equal(timers.at(-1), 1000, 'away from the front, a store change publishes after one second');
+    } finally {
+        globalThis.setTimeout = realSetTimeout;
+    }
+    // RN's widget components from RN's plugins (build-widgets.mjs): the four providers with their info XML, the dialog, the
+    // configure, tap and peek activities, the list service, the capture receiver and the tile, under RN's names, in the app's one
+    // process. Exported: exactly RN's, plus the debug build's two entries for the device check.
+    const { buildManifest, buildTileSource, TILE_PACKAGE } = await import('./build-widgets.mjs');
+    // The debug build's entries: one more manifest of each variant, so the debug build type's own manifest stays.
+    const overlay = buildManifest('tech.dongdongbh.mindwtr.nativeclient.dev', 'Mindwtr Native Dev');
+    assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /onVariants \{ variant ->\s+variant\.sources\.manifests\?\.addStaticManifestFile\(layout\.buildDirectory\.file\("generated\/widgets\/\$\{variant\.buildType\}\/AndroidManifest\.xml"\)/);
+    const merged = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + overlay;
+    const exportedNames = (text) => [...text.matchAll(/<(?:activity-alias|activity|receiver|service|provider)\s[^>]*?android:name="([^"]+)"[^>]*?android:exported="true"/g)].map((m) => m[1]).sort();
+    assert.deepEqual(exportedNames(merged), ['${applicationId}.MainActivity', '.ReminderRescheduleReceiver', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
+        'tech.dongdongbh.mindwtr.androidwidget.CompactWidgetProvider', 'tech.dongdongbh.mindwtr.androidwidget.QuickCaptureWidgetProvider',
+        'tech.dongdongbh.mindwtr.androidwidget.TasksWidgetProvider', 'tech.dongdongbh.mindwtr.androidwidget.WidgetConfigureActivity',
+        'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver', 'tech.dongdongbh.mindwtr.nativeclient.dev.widget.TasksWidget',
+        'tech.dongdongbh.mindwtr.quicksettings.CaptureTileService'], 'only RN\'s exported components');
+    const debugManifest = readFileSync(resolve(app, 'android/app/src/debug/AndroidManifest.xml'), 'utf8');
+    assert.deepEqual(exportedNames(debugManifest), ['${applicationId}.DebugQuickCapture', 'tech.dongdongbh.mindwtr.pilot.WidgetHostActivity'], 'the debug build adds only the check\'s two entries');
+    assert(!existsSync(resolve(app, 'android/app/src/release')) && !existsSync(resolve(app, 'android/app/src/upgradetest')), 'no other build type adds an entry');
+    assert.doesNotMatch(overlay, /android:process=/);
+    for (const info of ['mindwtr_tasks_widget_info', 'mindwtr_compact_widget_info', 'mindwtr_quick_capture_widget_info', 'mindwtr_legacy_tasks_widget_info']) {
+        assert.match(overlay, new RegExp(`android:resource="@xml/${info}"`), `${info} keeps RN's name`);
+    }
+    assert.equal(TILE_PACKAGE, 'tech.dongdongbh.mindwtr', 'the tile keeps RN\'s release class name');
+    assert.equal(buildTileSource().replace('import tech.dongdongbh.mindwtr.pilot.R\n', 'import tech.dongdongbh.mindwtr.R\n'),
+        (await import('node:module')).createRequire(import.meta.url)('../../mobile/plugins/android-quick-settings-tile.js').__testables.buildCaptureTileServiceSource(TILE_PACKAGE), 'the tile is RN\'s but for its R');
+    // RN's check-off request codes and sweep action stay in RN's files, which compile as they are.
+    const rnWidgetKt = (name) => readFileSync(resolve(app, '../mobile/modules/android-widget/android/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
+    assert.match(rnWidgetKt('WidgetRenderer.kt'), /REQUEST_CAPTURE = 4612[\s\S]*REQUEST_ROW = 4613/);
+    assert.match(rnWidgetKt('CheckoffStore.kt'), /ACTION_SWEEP = "tech\.dongdongbh\.mindwtr\.androidwidget\.CHECKOFF_SWEEP"[\s\S]*REQUEST_SWEEP = 4614/);
+    const widgetGradle = readFileSync(resolve(app, 'android/widget/build.gradle.kts'), 'utf8');
+    assert.match(widgetGradle, /namespace = "tech\.dongdongbh\.mindwtr\.androidwidget"/, 'RN\'s R and namespace');
+    assert.match(widgetGradle, /val rnExcluded = listOf\("AndroidWidgetModule", "CaptureSyncHeadlessService"\)/, 'only the Expo bridge and the headless task stay out');
+    assert.equal(realpathSync(resolve(app, 'android/widget/src/main/res')), realpathSync(resolve(app, '../mobile/modules/android-widget/android/src/main/res')), 'the module\'s resources are RN\'s');
+    // The widget module's hook is CoreWork's ingest job, set before any component runs.
+    assert.match(readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/MindwtrApplication.kt'), 'utf8'),
+        /CaptureSyncHeadlessService\.install\(this\) \{ context -> CoreWork\.enqueue\(context, CoreJob\.INGEST\)\.result\.get\(DURABLE_WAIT_SECONDS, TimeUnit\.SECONDS\) \}/, 'the wake returns once WorkManager stored the job');
+    assert.match(readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8'), /android:name="\.MindwtrApplication"/);
+    // The Android bridge's two calls are guarded in CoreHost and published off the engine thread (HostWidgets).
+    const coreHostKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');
+    assert.match(coreHostKt, /bridge\.setProperty\("widgetInputs", guarded \{ _ -> widgets\.inputs\(\) \}\)/);
+    assert.match(coreHostKt, /bridge\.setProperty\("widgetPublish", guarded \{ args -> widgets\.publish\(args\[0\] as String\); null \}\)/);
+    assert.match(coreHostKt, /bridge\.setProperty\("widgetAppState", guarded \{ _ -> widgets\.appState\(\) \}\)/, 'the publisher reads whether the app is in front');
+    // A boot publishes once it finished (its load, replay and drain), whatever the store's own changes did meanwhile: one that
+    // came before the validated load was not sent. It waits with the boot's sync start for the first screen's content (startup
+    // pass). Resume publishes through the same call, off the engine's callers.
+    const ownerKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/ProcessCoreHost.kt'), 'utf8');
+    assert.match(ownerKt, /private fun refreshWidgets\(runtime: CoreHost\) = widgetThread\.execute \{\s+runCatching \{ runtime\.refreshWidgets\(\) \}\.onFailure \{ Log\.w\(CoreHost\.TAG, "Native Android widget refresh failed", it\) \}\s+\}/);
+    // Coming to the front and leaving it both publish (RN's resume refresh and its flush on leaving).
+    assert.match(ownerKt, /if \(state == appState\) return\s+appState = state\s+(?:\/\/[^\n]*\s+)*boot\?\.takeIf \{ it\.isDone \}\?\.let \{ task -> runCatching \{ task\.get\(\) \}\.getOrNull\(\)\?\.let\(::refreshWidgets\) \}/);
+    // Kotlin says when a publication did not reach the widgets (its store or redraw failed), so the publisher sends it again.
+    const hostWidgetsKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/HostWidgets.kt'), 'utf8');
+    assert.match(hostWidgetsKt, /\.put\("stale", stale\)/);
+    assert.match(hostWidgetsKt, /check\(WidgetPayloadStore\.write\(app, payload\)\) \{ "[^"]+" \}/, 'a payload that did not reach the disk keeps the publication stale');
+    assert.match(hostWidgetsKt, /\}\.onSuccess \{ stale = false \}\.onFailure \{\s+stale = true/);
+    // The upgrade check allows the native app's one other file write only as RN's payload store: before, no file or exactly RN's
+    // one `payload` key; after, exactly that key. Any other key added, changed type or removed fails.
+    const { isRnPayloadPrefsWrite, widgetPrefs } = await import('./widget-payload.mjs');
+    const prefs = (...entries) => widgetPrefs(`<map>${entries.join('')}</map>`);
+    const payloadEntry = '<string name="payload">{}</string>';
+    assert.equal(isRnPayloadPrefsWrite(prefs(), prefs(payloadEntry)), true, 'no file before, RN\'s payload after');
+    assert.equal(isRnPayloadPrefsWrite(prefs(payloadEntry), prefs(payloadEntry)), true, 'RN\'s payload before and after');
+    assert.equal(isRnPayloadPrefsWrite(prefs('<string name="other">x</string>'), prefs(payloadEntry)), false, 'another key deleted and the payload added fails');
+    assert.equal(isRnPayloadPrefsWrite(prefs(payloadEntry), prefs(payloadEntry, '<int name="other" value="1" />')), false, 'another key added fails');
+    assert.equal(isRnPayloadPrefsWrite(prefs(payloadEntry), prefs()), false, 'the payload removed fails');
+    console.log('Widgets: core\'s Android publication from the engine with the device\'s inputs and language, sent once per change, after the validated load, with the Focus screen\'s filter');
 }
 
 const fakeCore = `
@@ -3315,9 +3470,10 @@ export function logWarn() { throw new Error('diagnostic sink failed'); }
 `;
 // host-sync.ts's and host-reminders.ts's core imports: bound only on a host with the key-value or the alarm bridges, which the
 // stand-in bridge below lacks, so they are bundled and never run here. Each one the fake does not define throws if anything calls it.
-// host-attachments.ts's too: host-sync.ts binds them on the same host only.
+// host-attachments.ts's too: host-sync.ts binds them on the same host only. host-widgets.ts's are bound only on a host with RN's
+// widget module (Android), which the stand-in bridge lacks too.
 const hostSyncTs = readFileSync(resolve(app, 'bundle/host-sync.ts'), 'utf8') + readFileSync(resolve(app, 'bundle/host-attachments.ts'), 'utf8')
-    + readFileSync(resolve(app, 'bundle/host-reminders.ts'), 'utf8');
+    + readFileSync(resolve(app, 'bundle/host-reminders.ts'), 'utf8') + readFileSync(resolve(app, 'bundle/host-widgets.ts'), 'utf8');
 const syncOnly = [...new Set([...hostSyncTs.matchAll(/^import \{([\s\S]*?)\} from '@mindwtr\/core';/gm)].flatMap((m) => [...m[1].matchAll(/^\s+(\w+),$/gm)].map((n) => n[1])))]
     .filter((name) => !new RegExp(`export (?:async )?(?:function|const|class) ${name}\\b|export \\{[^}]*\\b${name}\\b`).test(fakeCore));
 assert(syncOnly.includes('createMobileSyncService') && syncOnly.includes('createMobileSyncTriggers'), 'host-sync.ts\'s core imports parsed');

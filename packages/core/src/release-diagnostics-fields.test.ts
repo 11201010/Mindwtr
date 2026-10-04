@@ -83,6 +83,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'page', 'integrationsLoadEnabled', 'syncLoadEnabled', 'advancedLoadEnabled',
     // startup-readiness (mobile and desktop)
     'route', 'elapsedMs', 'moduleElapsedMs',
+    // Global shortcut startup: bounded configured and applied shortcut names.
+    'requestedShortcut', 'appliedShortcut',
     'releaseCheck', 'backend', 'statusPublished', 'lastSyncAt', 'lastSyncStatus',
     'artifact', 'cloudProvider', 'scheme', 'host', 'delivery', 'deduped',
     // UpNote handoff diagnostics contain only the surface, scheme and outcome.
