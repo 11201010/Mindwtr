@@ -1903,6 +1903,16 @@ struct DiagnosticsCard: View {
                         }
                         .disabled(!model.backupExportEnabled)
                         .accessibilityIdentifier("data-transfer-export-csv")
+                        Button { Task { await model.exportDataBackup(format: .tasknotes) } } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(backup.text("tasknotesLabel")).rnFont(15, .semibold)
+                                Text(backup.text("tasknotesDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }.multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                        .disabled(!model.backupExportEnabled)
+                        .accessibilityIdentifier("data-transfer-export-tasknotes")
                         if model.backupExportBusy { ProgressView().accessibilityIdentifier("backup-export-progress") }
                         if let failure = model.backupExportError {
                             Text(failure).rnFont(14).foregroundStyle(palette.danger)

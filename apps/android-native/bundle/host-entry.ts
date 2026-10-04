@@ -752,6 +752,7 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     dataSettings: () => contract.getDataSettings(),
     dataBackup: () => contract.getDataBackup(),
     dataCsvExport: () => contract.getDataBackup('csv'),
+    dataTaskNotesExport: () => contract.getDataBackup('tasknotes'),
     // Settings › Sync's view (native-host-contract-settings-sync.ts) for the form's typed URL and token.
     syncSettings: (input) => contract.getSyncSettings(input),
     // Mind Sweep and a saved search's screen.
@@ -2796,7 +2797,7 @@ globalThis.MindwtrHost = {
     /** Called by iOS only after the immutable JSON file has been written and closed. */
     backupExportPrepared(format: string): string {
         return submit(() => {
-            if (globalThis.__mindwtrHostPlatform === 'ios' && (format === 'json' || format === 'csv')) {
+            if (globalThis.__mindwtrHostPlatform === 'ios' && (format === 'json' || format === 'csv' || format === 'tasknotes')) {
                 try {
                     logInfo('Native iOS backup file prepared', {
                         scope: 'native-ios', force: true,

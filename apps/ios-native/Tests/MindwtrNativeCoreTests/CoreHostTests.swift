@@ -36272,6 +36272,7 @@ extension CoreHostTests {
         await core.close()
         await expectFailure { _ = try await core.prepareDataBackup() }
         await expectFailure { _ = try await core.prepareDataBackup(format: .csv) }
+        await expectFailure { _ = try await core.prepareDataBackup(format: .tasknotes) }
     }
 
     func testBackup199CSVExportUsesSharedBytesAndPreservesRaw21() async throws {
@@ -36284,6 +36285,38 @@ extension CoreHostTests {
         XCTAssertEqual(prepared.url.pathExtension, "csv")
         XCTAssertEqual(try Data(contentsOf: prepared.url), Data(try XCTUnwrap(expected["content"] as? String).utf8))
         XCTAssertTrue(try String(contentsOf: prepared.url, encoding: .utf8).contains("\"CSV199 日本語, \"\"quoted\"\"\""))
+        XCTAssertEqual(try diagnostics197FullSnapshot(), before)
+        await core.discardDataBackup(prepared.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: prepared.url.path))
+        await core.close()
+    }
+
+    func testBackup200TaskNotesZIPPreservesBinaryContentAndRaw21() async throws {
+        let core = host(); _ = try await core.start()
+        let request = try await capture(core, title: "ZIP200 日本語 🦉", id: UUID().uuidString.lowercased())
+        _ = try await core.call("captureSubmit", argumentsJSON: request)
+        let expected = try object(await core.call("menuRead", argumentsJSON: json(["dataTaskNotesExport", "{}"])))
+        XCTAssertEqual(expected["encoding"] as? String, "base64")
+        let before = try diagnostics197FullSnapshot()
+        let prepared = try await core.prepareDataBackup(format: .tasknotes)
+        XCTAssertTrue(prepared.url.lastPathComponent.hasSuffix("-tasknotes.zip"))
+        let control = directory.appendingPathComponent("task200-control.zip")
+        try XCTUnwrap(Data(base64Encoded: XCTUnwrap(expected["content"] as? String))).write(to: control)
+        defer { try? FileManager.default.removeItem(at: control) }
+        // ZIP timestamps can differ across these reads; compare exact decompressed entries.
+        func contents(_ url: URL) throws -> Data {
+            let process = Process(), output = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+            process.arguments = ["-p", url.path]
+            process.standardOutput = output
+            try process.run()
+            let bytes = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit(); XCTAssertEqual(process.terminationStatus, 0)
+            return bytes
+        }
+        let actual = try contents(prepared.url)
+        XCTAssertEqual(actual, try contents(control))
+        XCTAssertTrue(String(decoding: actual, as: UTF8.self).contains("ZIP200 日本語 🦉"))
         XCTAssertEqual(try diagnostics197FullSnapshot(), before)
         await core.discardDataBackup(prepared.id)
         XCTAssertFalse(FileManager.default.fileExists(atPath: prepared.url.path))
@@ -36310,6 +36343,7 @@ extension CoreHostTests {
         let faults = HostIOFaults(), core = host(faults)
         await expectFailure { _ = try await core.prepareDataBackup() }
         await expectFailure { _ = try await core.prepareDataBackup(format: .csv) }
+        await expectFailure { _ = try await core.prepareDataBackup(format: .tasknotes) }
         _ = try await core.start()
         let request = try await capture(core, title: "Backup198 pending", id: UUID().uuidString.lowercased())
         let before = try diagnostics197FullSnapshot()
@@ -36318,6 +36352,7 @@ extension CoreHostTests {
         let exact = try Data(contentsOf: journal)
         await expectFailure { _ = try await core.prepareDataBackup() }
         await expectFailure { _ = try await core.prepareDataBackup(format: .csv) }
+        await expectFailure { _ = try await core.prepareDataBackup(format: .tasknotes) }
         XCTAssertEqual(try Data(contentsOf: journal), exact)
         XCTAssertEqual(try diagnostics197FullSnapshot(), before)
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: directory.path).contains { $0.hasPrefix("backup-export-") })

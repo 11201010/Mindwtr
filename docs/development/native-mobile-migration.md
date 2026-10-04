@@ -328,3 +328,6 @@ Task198 JSON backup export (2026-10-04): Settings → Data now prepares JSON wit
 
 
 Task199 CSV export (2026-10-04): native Data adds RN's live-task CSV serializer through the same immutable-file/share owner. Shared and host checks, normal/maximum-text simulator flows and the isolated iPhone share/cancel flow passed, including byte equality with RN and unchanged persisted data. JSON Arabic regression also passed. D02 still requires TaskNotes export, import and restore; exact evidence is in the [parity ledger](native-mobile-parity.md#task199-csv-export).
+
+
+Task200 TaskNotes ZIP export (2026-10-04): native Data now offers all three RN export formats. TaskNotes uses the shared ZIP builder and strict binary transfer through the existing file owner. Shared/Swift checks, normal/maximum-text simulator flows, JSON regression and the isolated iPhone share/cancel/content comparison passed. Independent Sol review found no blockers in Tasks198–200. Import and restore remain open; see the [parity ledger](native-mobile-parity.md#task200-tasknotes-zip-export).

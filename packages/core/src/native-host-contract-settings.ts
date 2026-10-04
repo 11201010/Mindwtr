@@ -63,7 +63,9 @@
  */
 import { AREA_PRESET_COLORS, DEFAULT_AREA_COLOR } from './color-constants';
 import { createBackupFileName, serializeBackupData } from './backup-transfer';
+import { bytesToBase64 } from './base64-bytes';
 import { serializeMindwtrCsv } from './mindwtr-csv-export';
+import { buildTaskNotesExportZip } from './tasknotes-export';
 import { getInMemoryAppDataSnapshot } from './sync-client-helpers';
 import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
 import { canUseJalaliCalendar, createDateFormatter, getSystemWeekStart, normalizeClockTimeInput, type DateFormattingConfig } from './date';
@@ -970,9 +972,9 @@ export function createSettingsMethods(deps: SettingsDeps) {
             return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: manageRevision(), ...model } };
         },
 
-        /** RN's export snapshot and JSON/CSV serializers. Never flushes or acknowledges an owed save. */
-        getDataBackup(format: 'json' | 'csv' = 'json'): NativeHostResult<{ fileName: string; content: string }> {
-            if (format !== 'json' && format !== 'csv') return fail('INVALID_INPUT', 'Unsupported export format');
+        /** RN's export snapshot and serializers. Never flushes or acknowledges an owed save. */
+        getDataBackup(format: 'json' | 'csv' | 'tasknotes' = 'json'): NativeHostResult<{ fileName: string; content: string; encoding: 'utf8' | 'base64' }> {
+            if (format !== 'json' && format !== 'csv' && format !== 'tasknotes') return fail('INVALID_INPUT', 'Unsupported export format');
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             if (isSandboxMode() || isWorkspaceTransitionActive()) {
@@ -983,11 +985,20 @@ export function createSettingsMethods(deps: SettingsDeps) {
                 return fail('NOT_READY', 'Backup export is unavailable while saving is pending');
             }
             try {
+                const snapshot = getInMemoryAppDataSnapshot();
+                if (format === 'tasknotes') {
+                    return { ok: true, value: {
+                        fileName: createBackupFileName().replace(/\.json$/u, '-tasknotes.zip'),
+                        content: bytesToBase64(buildTaskNotesExportZip(snapshot).zip),
+                        encoding: 'base64',
+                    } };
+                }
                 return { ok: true, value: {
                     fileName: createBackupFileName().replace(/\.json$/u, format === 'csv' ? '.csv' : '.json'),
                     content: format === 'csv'
-                        ? serializeMindwtrCsv(getInMemoryAppDataSnapshot())
-                        : serializeBackupData(getInMemoryAppDataSnapshot()),
+                        ? serializeMindwtrCsv(snapshot)
+                        : serializeBackupData(snapshot),
+                    encoding: 'utf8',
                 } };
             } catch {
                 // Serialization errors can contain data; the host receives only a fixed message.

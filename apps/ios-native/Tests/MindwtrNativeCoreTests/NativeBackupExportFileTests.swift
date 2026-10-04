@@ -50,6 +50,26 @@ final class NativeBackupExportFileTests: XCTestCase {
         }
     }
 
+    func testTaskNotesBinaryBytesAndInterruptedCleanup() throws {
+        try withRoot { root in
+            let port = NativeBackupExportFile(libraryRoot: root)
+            let name = backupName.replacingOccurrences(of: ".json", with: "-tasknotes.zip")
+            let bytes = Data([0x50, 0x4b, 0, 255, 128, 13, 10, 0])
+            let file = try port.prepare(fileName: name, bytes: bytes)
+            XCTAssertEqual(try Data(contentsOf: file.url), bytes)
+            port.discard(file.id)
+            let orphan = root.appendingPathComponent("backup-export-" + UUID().uuidString.lowercased())
+            try FileManager.default.createDirectory(at: orphan, withIntermediateDirectories: false)
+            try bytes.write(to: orphan.appendingPathComponent(name))
+            try port.discardInterruptedExports()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+            port.beforeWrite = { throw CocoaError(.fileWriteOutOfSpace) }
+            XCTAssertThrowsError(try port.prepare(fileName: name, bytes: bytes))
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+            XCTAssertThrowsError(try port.prepare(fileName: backupName.replacingOccurrences(of: ".json", with: ".zip"), bytes: bytes))
+        }
+    }
+
     func testFailedWriteLeavesNoFileOrDirectory() throws {
         try withRoot { root in
             let port = NativeBackupExportFile(libraryRoot: root)

@@ -1,11 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { strFromU8, unzipSync } from 'fflate';
+import { base64ToBytes } from './base64-bytes';
 import { serializeMindwtrCsv } from './mindwtr-csv-export';
 import { createBackupFileName, serializeBackupData } from './backup-transfer';
+import { buildDataSettingsModel } from './data-settings-model';
 import { createNativeHostContract } from './native-host-contract';
 import { acquireWorkspaceTransitionLock } from './sandbox';
 import * as sandbox from './sandbox';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import * as store from './store';
 import { getInMemoryAppDataSnapshot } from './sync-client-helpers';
+import * as snapshots from './sync-client-helpers';
+import { buildTaskNotesExportZip } from './tasknotes-export';
 import type { AppData } from './types';
 
 const now = '2026-10-04T12:34:56.789Z';
@@ -34,7 +40,9 @@ async function openHost() {
     return { host, saveData };
 }
 
-describe('native JSON and CSV export', () => {
+const formats = ['json', 'csv', 'tasknotes'] as const;
+
+describe('native JSON, CSV and TaskNotes export', () => {
     afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
     it('uses the actual RN snapshot and serializer without changing the store or saving', async () => {
@@ -46,6 +54,7 @@ describe('native JSON and CSV export', () => {
         const result = host.getDataBackup();
         expect(result).toEqual({ ok: true, value: {
             fileName: createBackupFileName(new Date(now)), content: serializeBackupData(snapshot),
+            encoding: 'utf8',
         } });
         expect(JSON.stringify(getInMemoryAppDataSnapshot())).toBe(before);
         expect(saveData).not.toHaveBeenCalled();
@@ -70,6 +79,7 @@ describe('native JSON and CSV export', () => {
         expect(result.ok).toBe(true);
         if (!result.ok) throw new Error('CSV refused');
         expect(result.value.fileName).toMatch(/^mindwtr-backup-.*\.csv$/);
+        expect(result.value.encoding).toBe('utf8');
         expect(result.value.content).toBe(serializeMindwtrCsv(getInMemoryAppDataSnapshot()));
         expect(result.value.content).toContain('"日本語, ""quoted""\nnext line"');
         expect(result.value.content).toContain('Project,Section,Area');
@@ -81,10 +91,64 @@ describe('native JSON and CSV export', () => {
         expect(host.getDataBackup('zip' as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     });
 
+    it('exports RN TaskNotes ZIP bytes and entries from hidden live records without writes', async () => {
+        const { host, saveData } = await openHost();
+        const task = fixture().tasks[0];
+        useTaskStore.setState({ tasks: [], _allTasks: [
+            { ...task, id: 'hidden00-task', status: 'waiting', title: '日本語 / 🦉',
+                description: 'Body 🦉\nnext line', projectId: 'project', priority: 'medium',
+                contexts: ['@phone'], tags: ['#family'], startTime: '2026-10-04', timeEstimate: '30min' },
+            { ...task, id: 'done0000-task', status: 'done', title: '2026', completedAt: now },
+            { ...task, id: 'archived-task', status: 'archived' },
+            { ...task, id: 'reference-task', title: 'Reference excluded' },
+            { ...task, id: 'deleted-task', status: 'next', title: 'Deleted excluded', deletedAt: now },
+            { ...task, id: 'purged-task', status: 'next', title: 'Purged excluded', purgedAt: now },
+        ], projects: [], _allProjects: [
+            { id: 'project', title: 'Family 日本語', status: 'active', createdAt: now, updatedAt: now },
+        ] } as never);
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(now));
+        const snapshot = getInMemoryAppDataSnapshot();
+        const before = JSON.stringify(useTaskStore.getState());
+        const expected = buildTaskNotesExportZip(snapshot);
+        const result = host.getDataBackup('tasknotes');
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error('TaskNotes refused');
+        expect(result.value.fileName).toBe(createBackupFileName(new Date(now)).replace(/\.json$/u, '-tasknotes.zip'));
+        expect(result.value.encoding).toBe('base64');
+        const decoded = base64ToBytes(result.value.content);
+        expect(decoded).toEqual(expected.zip);
+        const entries = unzipSync(decoded);
+        expect(entries).toEqual(unzipSync(expected.zip));
+        expect(Object.keys(entries)).toEqual([
+            'TaskNotes/日本語-hidden00.md', 'TaskNotes/2026-done0000.md', 'TaskNotes/日本語-archived.md',
+        ]);
+        const hidden = strFromU8(entries['TaskNotes/日本語-hidden00.md']);
+        expect(hidden).toContain('title: 日本語 / 🦉\nstatus: waiting\npriority: normal\ndue: 2026-10-05\nscheduled: 2026-10-04');
+        expect(hidden).toContain('contexts:\n  - phone\nprojects:\n  - "[[Family 日本語]]"\ntags:\n  - task\n  - family\ntimeEstimate: 30');
+        expect(hidden).toContain('Body 🦉\nnext line');
+        expect(strFromU8(entries['TaskNotes/2026-done0000.md'])).toContain('title: "2026"\nstatus: done');
+        expect(strFromU8(entries['TaskNotes/2026-done0000.md'])).toContain(`completedDate: ${now}`);
+        expect(strFromU8(entries['TaskNotes/日本語-archived.md'])).toContain('status: cancelled');
+        expect(Object.values(entries).map((entry) => strFromU8(entry)).join('\n')).not.toMatch(/Reference excluded|Deleted excluded|Purged excluded/);
+        expect(JSON.stringify(useTaskStore.getState())).toBe(before);
+        expect(saveData).not.toHaveBeenCalled();
+        useTaskStore.setState({ tasks: [], _allTasks: [] });
+        expect(base64ToBytes(result.value.content)).toEqual(expected.zip);
+    });
+
+    it('projects TaskNotes labels and failure copy from RN translation keys', () => {
+        expect(buildDataSettingsModel({}, (key) => key).backup).toMatchObject({
+            tasknotesLabel: 'settings.exportTaskNotes',
+            tasknotesDescription: 'settings.exportTaskNotesDesc',
+            tasknotesFailed: 'settings.exportTaskNotesFailed',
+        });
+    });
+
     it('refuses before activation and during workspace handoff without writes', async () => {
         const { saveData } = await openHost();
         const host = createNativeHostContract();
-        for (const format of ['json', 'csv'] as const) {
+        for (const format of formats) {
             expect(host.getDataBackup(format)).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         }
         expect((await host.activate({ writeSafetyReady: true })).ok).toBe(true);
@@ -93,7 +157,7 @@ describe('native JSON and CSV export', () => {
         const release = acquireWorkspaceTransitionLock();
         expect(release).not.toBeNull();
         try {
-            for (const format of ['json', 'csv'] as const) {
+            for (const format of formats) {
                 expect(host.getDataBackup(format)).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
             }
             expect(saveData).not.toHaveBeenCalled();
@@ -104,12 +168,39 @@ describe('native JSON and CSV export', () => {
         const { host, saveData } = await openHost();
         const failure = { message: 'save owed', retrying: false };
         useTaskStore.setState({ persistenceFailure: failure } as never);
-        for (const format of ['json', 'csv'] as const) {
+        for (const format of formats) {
             expect(host.getDataBackup(format)).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         }
         expect(useTaskStore.getState().persistenceFailure).toBe(failure);
         expect(saveData).not.toHaveBeenCalled();
         useTaskStore.setState({ persistenceFailure: null });
+    });
+
+    it.each(['queued', 'inFlight', 'immediate', 'retrying'] as const)('refuses all formats while persistence is %s without preparing or saving', async (field) => {
+        const { host, saveData } = await openHost();
+        const status = { queued: 0, inFlight: false, immediate: 0, retrying: false, generation: 0, failed: false };
+        vi.spyOn(store, 'getPersistenceStatus').mockReturnValue({
+            ...status, [field]: field === 'queued' || field === 'immediate' ? 1 : true,
+        });
+        const snapshot = vi.spyOn(snapshots, 'getInMemoryAppDataSnapshot');
+        for (const format of formats) {
+            expect(host.getDataBackup(format)).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        }
+        expect(snapshot).not.toHaveBeenCalled();
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('returns fixed safe errors for all formats when preparing a snapshot fails', async () => {
+        const { host, saveData } = await openHost();
+        vi.spyOn(snapshots, 'getInMemoryAppDataSnapshot').mockImplementation(() => {
+            throw new Error('private task content');
+        });
+        for (const format of formats) {
+            expect(host.getDataBackup(format)).toEqual({ ok: false, error: {
+                code: 'ACTION_FAILED', message: 'Could not prepare the backup',
+            } });
+        }
+        expect(saveData).not.toHaveBeenCalled();
     });
 
     it('exports hidden records and attachment metadata while compacting purged content exactly as RN does', async () => {
@@ -137,7 +228,7 @@ describe('native JSON and CSV export', () => {
     it('refuses sandbox transfers without preparing personal data', async () => {
         const { host, saveData } = await openHost();
         vi.spyOn(sandbox, 'isSandboxMode').mockReturnValue(true);
-        for (const format of ['json', 'csv'] as const) {
+        for (const format of formats) {
             expect(host.getDataBackup(format)).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         }
         expect(saveData).not.toHaveBeenCalled();

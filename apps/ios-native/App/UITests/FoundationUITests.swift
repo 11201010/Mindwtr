@@ -22234,6 +22234,14 @@ extension FoundationUITests {
         boardEnabled(app.buttons["diagnostics-clear"], timeout: 30)
     }
 
+    func testTask200TaskNotesLargestText() {
+        task198BackupFlow("014d89a5-ed6c-4638-a1f2-cad067d6f6fd", largest: true, tasknotes: true)
+    }
+
+    func testTask200TaskNotesNormal() {
+        task198BackupFlow("9fb6db95-8caa-495c-aee2-039dc495865f", tasknotes: true)
+    }
+
     func testTask199CSVExportLargestText() {
         task198BackupFlow("27081d30-a8da-4ba8-9917-ce89e4b87b37", largest: true, csv: true)
     }
@@ -22267,8 +22275,8 @@ extension FoundationUITests {
         app.terminate()
     }
 
-    private func task198BackupFlow(_ library: String, rtl: Bool = false, largest: Bool = false, csv: Bool = false) {
-        let exportID = csv ? "data-transfer-export-csv" : "data-transfer-export"
+    private func task198BackupFlow(_ library: String, rtl: Bool = false, largest: Bool = false, csv: Bool = false, tasknotes: Bool = false) {
+        let exportID = tasknotes ? "data-transfer-export-tasknotes" : (csv ? "data-transfer-export-csv" : "data-transfer-export")
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
@@ -22285,12 +22293,12 @@ extension FoundationUITests {
         boardEnabled(app.buttons[exportID], timeout: 30)
         if rtl { XCTAssertTrue(app.buttons[exportID].label.contains("تصدير نسخة احتياطية")) }
         let expanded = XCTAttachment(screenshot: app.screenshot())
-        expanded.name = csv ? "Task199 expanded CSV" : "Task198 expanded Backup"; expanded.lifetime = .keepAlways; add(expanded)
+        expanded.name = tasknotes ? "Task200 expanded TaskNotes" : csv ? "Task199 expanded CSV" : "Task198 expanded Backup"; expanded.lifetime = .keepAlways; add(expanded)
         boardTap(app, exportID)
         let close = app.buttons["header.closeButton"]
         boardEnabled(close, timeout: 30)
         let sheet = XCTAttachment(screenshot: app.screenshot())
-        sheet.name = csv ? "Task199 CSV share sheet" : "Task198 JSON share sheet"; sheet.lifetime = .keepAlways; add(sheet)
+        sheet.name = tasknotes ? "Task200 ZIP share sheet" : csv ? "Task199 CSV share sheet" : "Task198 JSON share sheet"; sheet.lifetime = .keepAlways; add(sheet)
         if !close.isHittable {
             expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: close)
             waitForExpectations(timeout: 10)
