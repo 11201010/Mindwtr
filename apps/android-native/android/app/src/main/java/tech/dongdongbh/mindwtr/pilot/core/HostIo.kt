@@ -20,8 +20,8 @@ import java.io.IOException
 import java.io.InterruptedIOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import tech.dongdongbh.mindwtr.pilot.core.HostAnswers.Answer
 
 /**
  * The JS host's fetch, secret, attachment file and sync crypto calls (bundle/host-polyfills.js). Each runs off the engine
@@ -48,9 +48,6 @@ class HostIo(context: Context) {
 
     /** A refusal of this host's own (a redirect the request forbids, an oversized body): its text reaches JS as it is. */
     private class Refused(message: String) : IOException(message)
-
-    /** An answer's JSON, and its body as base64 apart from it, so no copy of the body is wrapped in JSON. */
-    private class Answer(val json: String, val body: String? = null)
 
     // RN's fetch is OkHttp too, with RN's timeouts (connect 10 s, no read or write timeout), so its redirects, TLS and
     // cleartext rule (the network security config, the same as RN's) apply unchanged. No cookie jar (core sends its
@@ -80,15 +77,9 @@ class HostIo(context: Context) {
     private val fileThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-files") }
     /** Sync encryption's Argon2id and AES-GCM (HostCrypto): an Argon2id holds its thread for about a second, never the engine. */
     private val cryptoThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-crypto") }
-    /** Set by [close]: no answer is queued after it, and the queue it cleared is never read again. */
-    @Volatile private var closed = false
-    private val closing = Any()
     private val calls = ConcurrentHashMap<String, Call>()
-    private val answers = LinkedBlockingQueue<Answer>()
-    /** An answer [await] took before [next] asked for it. */
-    private var held: Answer? = null
-    /** The body of the answer [next] returned last, until [body] takes it. */
-    private var taken: String? = null
+    /** Every call's answer; after [close] none is queued or taken, of any kind (a secret's value included). */
+    private val answers = HostAnswers()
     private var nextId = 0L
     /** Calls started and not yet taken by [next], cancelled ones included. */
     private var open = 0
@@ -163,6 +154,8 @@ class HostIo(context: Context) {
         SecretStore.requireKey(key)
         val id = (++nextId).toString()
         secretThread.execute {
+            // A read the closed host would never take is not made.
+            if (op == "get" && answers.closed) return@execute
             answers.add(runCatching {
                 JSONObject().put("id", id).put("value", when (op) {
                     "get" -> secrets.get(key) ?: JSONObject.NULL
@@ -217,7 +210,7 @@ class HostIo(context: Context) {
                 Answer(answer.toString())
             }
             // Once the host closed, nobody reads the queue again: a key or plaintext answer must not wait there.
-            synchronized(closing) { if (reply != null && !closed) answers.add(reply) }
+            if (reply != null) answers.add(reply)
             wake()
         }
         open += 1
@@ -254,7 +247,7 @@ class HostIo(context: Context) {
             }
             else -> throw IllegalArgumentException("Unsupported crypto call $op")
         } }
-        return HostCrypto.answer({ closed }, compute) { out ->
+        return HostCrypto.answer({ answers.closed }, compute) { out ->
             Answer(JSONObject().put("id", id).put("body", true).toString(), Base64.encodeToString(out, Base64.NO_WRAP))
         }
     }
@@ -273,34 +266,26 @@ class HostIo(context: Context) {
     fun busy() = open > 0
 
     /** Waits up to [ms] for an answer, so the pump loop wakes as soon as one is queued. */
-    fun await(ms: Long) {
-        if (held == null) held = answers.poll(ms, TimeUnit.MILLISECONDS)
-    }
+    fun await(ms: Long) = answers.await(ms)
 
-    /** The next queued answer's JSON, or "" when none is. Its body, if any, waits for [body]. */
+    /** The next queued answer's JSON, or "" when none is (or the host closed). Its body, if any, waits for [body]. */
     fun next(): String {
-        val answer = held ?: answers.poll() ?: return ""
-        held = null
+        val answer = answers.next() ?: return ""
         open -= 1
-        taken = answer.body
         return answer.json
     }
 
     /** The body of the answer [next] returned last, as base64; the polyfill asks right after [next]. */
-    fun body(): String = (taken ?: "").also { taken = null }
+    fun body(): String = answers.body()
 
     fun close() {
         calls.values.forEach { it.cancel() }
         secretThread.shutdown()
         fileThread.shutdown()
         // A crypto call still queued never runs; one running is dropped when it ends (HostCrypto.answer). Every answer already
-        // queued goes too: a derived key or plaintext must not outlive the host in a queue nobody drains.
-        synchronized(closing) {
-            closed = true
-            answers.clear()
-            held = null
-            taken = null
-        }
+        // queued goes too, and none is queued after: a secret's value, a derived key or plaintext must not outlive the host in a
+        // queue nobody drains. A secret write still queued runs (its value reaches the keystore), its answer dropped.
+        answers.close()
         cryptoThread.shutdownNow()
         client.dispatcher.executorService.shutdown()
     }

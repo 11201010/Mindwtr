@@ -470,10 +470,19 @@ globalThis.cryptoGate = { prims: createHostSyncCrypto(globalThis.__mindwtrCrypto
     assert.match(coreHostSource, /bridge\.setProperty\("cryptoCall", guarded \{ args -> io\.crypto\(args\[0\] as String\) \}\)/);
     assert.match(hostIoSource, /private val cryptoThread = Executors\.newSingleThreadExecutor/);
     assert.match(hostIoSource, /cryptoThread\.execute \{\s+val reply = runCatching \{ cryptoReply\(id, json\) \}\.getOrElse/, 'a crypto failure, an OutOfMemoryError included, is an answer, never a crash');
-    // Review S4b 3: once the host closed, no crypto answer (a derived key, a plaintext) is queued, and close clears the queue.
-    assert.match(hostIoSource, /synchronized\(closing\) \{ if \(reply != null && !closed\) answers\.add\(reply\) \}/);
-    assert.match(hostIoSource, /synchronized\(closing\) \{\s+closed = true\s+answers\.clear\(\)\s+held = null\s+taken = null\s+\}\s+cryptoThread\.shutdownNow\(\)/);
-    assert.match(hostIoSource, /return HostCrypto\.answer\(\{ closed \}, compute\)/);
+    // Review S4b 3 (and its verification): once the host closed, no answer of any kind (a secret's value, a derived key, a
+    // plaintext, a fetch body) is queued or taken, and close drops what waited (HostAnswers, HostAnswersTest). Every answer goes
+    // through the one HostAnswers queue; HostIo keeps no queue or held answer of its own.
+    const hostAnswersSource = kotlinCore('HostAnswers.kt');
+    assert.match(hostIoSource, /private val answers = HostAnswers\(\)/);
+    assert.doesNotMatch(hostIoSource, /LinkedBlockingQueue|private var held|private var taken/);
+    assert.match(hostIoSource, /answers\.close\(\)\s+cryptoThread\.shutdownNow\(\)/);
+    assert.match(hostIoSource, /return HostCrypto\.answer\(\{ answers\.closed \}, compute\)/);
+    assert.match(hostIoSource, /fun next\(\): String \{\s+val answer = answers\.next\(\) \?: return ""/);
+    assert.match(hostIoSource, /fun body\(\): String = answers\.body\(\)/);
+    assert.match(hostAnswersSource, /fun add\(answer: Answer\): Boolean = synchronized\(lock\) \{ if \(closed\) false else queue\.add\(answer\) \}/);
+    assert.match(hostAnswersSource, /fun next\(\): Answer\? = synchronized\(lock\) \{\s+if \(closed\) return null/);
+    assert.match(hostAnswersSource, /fun close\(\) = synchronized\(lock\) \{\s+closed = true\s+queue\.clear\(\)\s+held = null\s+taken = null\s+\}/);
     // Review S4b 2: Argon2id's cost is read as exact whole numbers (HostCrypto.argon2Params), never getInt's truncation.
     assert.match(hostIoSource, /val \(m, t, p, dkLen\) = HostCrypto\.argon2Params\(request\)/);
     assert.doesNotMatch(hostIoSource, /getInt\("(m|t|p|dkLen)"\)/);
@@ -900,7 +909,7 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.match(hostIo, /override fun onResponse\(call: Call, response: Response\) \{[^{}]*?try \{\s*answers\.add\(runCatching \{ response\.use \{ read\(id, it, redirect\) \} \}\.getOrElse \{ failure\(id, call, it\) \}\)\s*\} finally \{\s*calls\.remove\(id\)\s*\}/);
     assert.equal(hostIo.match(/calls\.remove\(id\)/g).length, 3);
     assert.match(hostIo, /fun close\(\) \{\s*calls\.values\.forEach \{ it\.cancel\(\) \}/);
-    assert.match(hostIo, /secretThread\.execute \{\s*answers\.add\(runCatching \{/, 'a secret call runs on the secrets thread');
+    assert.match(hostIo, /secretThread\.execute \{\s*\/\/ A read the closed host would never take is not made\.\s*if \(op == "get" && answers\.closed\) return@execute\s*answers\.add\(runCatching \{/, 'a secret call runs on the secrets thread');
     // A file call (the attachment file port, the installer) runs on the files thread, its request read there too.
     // A file call runs off the engine (FileJobs: the files thread, or a picked document's own thread), its request read there too;
     // an aborted call that has not started never runs (review finding 2).
@@ -910,8 +919,9 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.match(fileJobs, /if \(readsDocument\) Thread\(job, "mindwtr-document-\$id"\)\.apply \{ isDaemon = true \}\.start\(\) else queue\.execute\(job\)/);
     assert.equal(hostIo.match(/answers\.add\(/g).length, 5, 'the answer queue is the only way back');
     // A body leaves apart from its answer's JSON (ioBody), and only for the answer just taken.
-    assert.match(hostIo, /taken = answer\.body\s+return answer\.json/);
-    assert.match(hostIo, /fun body\(\): String = \(taken \?: ""\)\.also \{ taken = null \}/);
+    const hostAnswers = core('HostAnswers.kt');
+    assert.match(hostAnswers, /held = null\s+taken = answer\.body\s+answer\s+\}/);
+    assert.match(hostAnswers, /fun body\(\): String = synchronized\(lock\) \{ if \(closed\) "" else \(taken \?: ""\)\.also \{ taken = null \} \}/);
     // The whole body or a throw: the declared length and the running size are refused past the limit, and nothing in the
     // read catches a failure (a cut, a reset, a broken gzip stream) into a short body.
     const read = hostIo.slice(hostIo.indexOf('private fun read('), hostIo.indexOf('private fun failure('));
@@ -922,7 +932,7 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.doesNotMatch(hostIo, /catch \(|getOrNull|getOrDefault/);
     assert.deepEqual(hostIo.match(/runCatching \{[\s\S]*?\}\.getOrElse \{ [^\n]*/g).map((line) => /getOrElse \{ (failure\(id, call, it\)|(Answer\()?JSONObject\(\)\.put\("id", id\)\.put\("error")/.test(line)), [true, true, false]);
     // A crypto call's failure (S4b) is its error answer too: `auth` for a tag mismatch, else the failure's own text.
-    assert.match(hostIo, /runCatching \{ cryptoReply\(id, json\) \}\.getOrElse \{ failure ->\s+val answer = JSONObject\(\)\.put\("id", id\)[\s\S]{0,400}?Answer\(answer\.toString\(\)\)\s+\}\s+\/\/[^\n]*\s+synchronized\(closing\) \{ if \(reply != null && !closed\) answers\.add\(reply\) \}\s+wake\(\)/);
+    assert.match(hostIo, /runCatching \{ cryptoReply\(id, json\) \}\.getOrElse \{ failure ->\s+val answer = JSONObject\(\)\.put\("id", id\)[\s\S]{0,400}?Answer\(answer\.toString\(\)\)\s+\}\s+\/\/[^\n]*\s+if \(reply != null\) answers\.add\(reply\)\s+wake\(\)/);
     // A file call's failure (FileJobs runs it in runCatching and delivers the Result) is its error answer.
     assert.match(fileJobs, /val result = runCatching \{[\s\S]*?compute\(\)\s*\}[\s\S]*?deliver\(result\)/);
     assert.match(hostIo, /\}\) \{ Answer\(JSONObject\(\)\.put\("id", id\)\.put\("error", it\.message \?: it\.javaClass\.simpleName\)\.toString\(\)\) \}\)/);
