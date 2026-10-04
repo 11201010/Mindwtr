@@ -595,15 +595,21 @@ private fun EncryptionCard(sync: SyncSettingsModel, card: JSONObject) {
     val c = LocalTheme.current.colors
     SectionTitle(card.getString("title"), top = 16, color = c.text)
     card.optJSONObject("guide")?.let { GuideLink(it, "sync-encryption-guide-link") }
-    // RN groups consecutive texts in one settingRowColumn; every block after the first has a hairline above.
+    // RN groups consecutive texts in one settingRowColumn, but a warning or an error starts its own (the enable flow's warnings sit
+    // below the description, an error stands alone). Every block after the first has a hairline above, except the generated
+    // passphrase's hint under Generate.
     val blocks = mutableListOf<List<JSONObject>>()
     for (row in card.menuObjects("rows")) {
-        if (row.getString("kind") == "text" && blocks.lastOrNull()?.first()?.getString("kind") == "text") blocks[blocks.size - 1] = blocks.last() + row
-        else blocks += listOf(row)
+        val last = blocks.lastOrNull()
+        val tone = row.optString("tone")
+        val joins = row.getString("kind") == "text" && last?.first()?.getString("kind") == "text" && tone != "danger"
+            && last.last().optString("tone") != "danger" && (tone != "warning" || last.last().optString("tone") == "warning")
+        if (joins) blocks[blocks.size - 1] = last!! + row else blocks += listOf(row)
     }
     Card {
         blocks.forEachIndexed { index, block ->
-            val divider = index > 0
+            val divider = index > 0 && !(block.first().getString("kind") == "text"
+                && blocks[index - 1].first().optJSONObject("action")?.optString("type") == "generate")
             val row = block.first()
             when (row.getString("kind")) {
                 "text" -> Column(Modifier.fillMaxWidth().then(if (divider) Modifier.hairline(c.border, top = true) else Modifier).padding(16.dp)) {
