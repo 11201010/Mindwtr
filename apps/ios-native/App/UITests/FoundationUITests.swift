@@ -21804,30 +21804,88 @@ extension FoundationUITests {
 
     private func task196Control(_ app: XCUIApplication, _ id: String, field: Bool = false) -> XCUIElement {
         let element = field ? app.textFields[id] : app.buttons[id]
-        if ["reference-bulk-remove-tag-save", "reference-bulk-remove-tag-cancel"].contains(id) {
-            // These controls are in the fixed footer outside the picker ScrollView.
+        if field || ["reference-bulk-remove-tag-save", "reference-bulk-remove-tag-cancel"].contains(id) {
+            // Search and actions remain outside the scrolling option list.
             boardEnabled(element, timeout: 20)
             XCTAssertTrue(task192Inside(element.frame, app.frame))
             if app.keyboards.firstMatch.exists { XCTAssertFalse(element.frame.intersects(app.keyboards.firstMatch.frame)) }
             XCTAssertGreaterThanOrEqual(element.frame.width, 44 - 0.01)
+            XCTAssertTrue(element.isHittable, id)
+            if field {
+                XCTAssertEqual(app.textFields.matching(identifier: id).count, 1)
+                var viewport = app.scrollViews["reference-bulk-remove-tag-scroll"].frame.intersection(app.frame)
+                if app.keyboards.firstMatch.exists && app.keyboards.firstMatch.frame.intersects(viewport) {
+                    viewport.size.height = max(0, app.keyboards.firstMatch.frame.minY - viewport.minY)
+                }
+                XCTAssertGreaterThanOrEqual(viewport.width, 44 - 0.01)
+                XCTAssertGreaterThanOrEqual(viewport.height, 44 - 0.01)
+            }
         } else { revealPagedElement(app, element, in: app.scrollViews["reference-bulk-remove-tag-scroll"]) }
         XCTAssertGreaterThanOrEqual(element.frame.height, 44 - 0.01)
         return element
     }
 
-    private func task196Query(_ app: XCUIApplication, _ text: String, noMatches: Bool = false, waitForResult: Bool = true) {
+    private func task196Query(_ app: XCUIApplication, _ text: String, noMatches: Bool = false,
+                              waitForResult: Bool = true, keyboardProbe: Bool = false) {
         let input = task196Control(app, "reference-bulk-remove-tag-input", field: true)
+        func captureKeyboard(_ stage: String) {
+            guard keyboardProbe else { return }
+            let frames = app.keyboards.allElementsBoundByIndex.map { String(describing: $0.frame) }
+            print("Task196 query keyboard probe stage=" + stage + " inputFrame=" + String(describing: input.frame)
+                + " appFrame=" + String(describing: app.frame) + " keyboardFrames=" + String(describing: frames))
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task196 query keyboard " + stage
+            shot.lifetime = .keepAlways; add(shot)
+        }
         input.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        if keyboardProbe {
+            captureKeyboard("after-input-tap-before-type")
+            let keyboard = app.keyboards.firstMatch
+            let shown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                keyboard.exists && keyboard.frame.intersection(app.frame).height >= 44
+            }, object: keyboard)
+            XCTAssertEqual(XCTWaiter.wait(for: [shown], timeout: 10), .completed)
+            captureKeyboard("visible-before-type")
+        }
         let current = input.value as? String ?? "", old = current == input.placeholderValue ? "" : current
-        if !old.utf8.elementsEqual(text.utf8) { input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count) + text) }
+        if keyboardProbe {
+            // Exercise actual software keys independently of typeText injection.
+            XCTAssertTrue(old.isEmpty); XCTAssertEqual(text, "caf")
+            var expected = ""
+            for letter in ["c", "a", "f"] {
+                let keyboard = app.keyboards.firstMatch
+                let keys = keyboard.keys.matching(NSPredicate(format: "label == %@", letter))
+                XCTAssertEqual(keys.count, 1)
+                let key = keys.firstMatch; boardEnabled(key, timeout: 10); XCTAssertTrue(key.isHittable)
+                let viewport = keyboard.frame.intersection(app.frame), frame = key.frame
+                XCTAssertGreaterThanOrEqual(viewport.height, 44)
+                XCTAssertTrue(task192Inside(frame, viewport))
+                XCTAssertGreaterThan(frame.width, 0); XCTAssertGreaterThan(frame.height, 0)
+                app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                    dx: frame.midX - app.frame.minX, dy: frame.midY - app.frame.minY)).tap()
+                expected += letter
+                let typed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    (input.value as? String ?? "").utf8.elementsEqual(expected.utf8)
+                }, object: input)
+                XCTAssertEqual(XCTWaiter.wait(for: [typed], timeout: 10), .completed)
+                XCTAssertTrue(app.alerts["reference-bulk-remove-tag-dialog"].exists)
+                XCTAssertEqual(app.secureTextFields.count, 0)
+                XCTAssertGreaterThanOrEqual(keyboard.frame.intersection(app.frame).height, 44)
+                captureKeyboard("after-software-key-" + letter)
+            }
+        } else if !old.utf8.elementsEqual(text.utf8) {
+            input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count) + text)
+        }
+        captureKeyboard("immediately-after-type")
         let actual = input.value as? String ?? ""
         XCTAssertTrue((actual == input.placeholderValue ? "" : actual).utf8.elementsEqual(text.utf8))
+        _ = task196Control(app, "reference-bulk-remove-tag-input", field: true)
         if !waitForResult { return }
         if noMatches {
             XCTAssertTrue(app.staticTexts["reference-bulk-remove-tag-no-matches"].waitForExistence(timeout: 20))
             XCTAssertFalse(app.buttons["reference-bulk-remove-tag-option-0"].exists)
         } else { boardEnabled(app.buttons["reference-bulk-remove-tag-option-0"], timeout: 20) }
         XCTAssertFalse(app.staticTexts["reference-bulk-remove-tag-read-error"].exists)
+        captureKeyboard("read-settled")
     }
 
     private func task196ExactChip(_ app: XCUIApplication, _ value: String) -> XCUIElement {
@@ -21901,11 +21959,66 @@ extension FoundationUITests {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task196 before " + operation; shot.lifetime = .keepAlways; add(shot)
     }
 
+    private func task196DismissKeyboard(_ app: XCUIApplication, input: XCUIElement, library: String) {
+        let keyboard = app.keyboards.firstMatch
+        let done = app.keyboards.buttons["Done"]
+        boardEnabled(done, timeout: 10); XCTAssertTrue(done.isHittable)
+        let visibleDone = done.frame.intersection(keyboard.frame).intersection(app.frame)
+        XCTAssertGreaterThanOrEqual(visibleDone.width, 44)
+        XCTAssertGreaterThanOrEqual(visibleDone.height, 44)
+        XCTAssertEqual(app.alerts.count, 1)
+        XCTAssertTrue(app.alerts["reference-bulk-remove-tag-dialog"].exists)
+        XCTAssertEqual(app.secureTextFields.count, 0)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task196 visible Done before coordinate tap"
+        shot.lifetime = .keepAlways; add(shot)
+        print("Task196 visible Done coordinate frame=" + String(describing: visibleDone) + " fixture=" + library)
+        // Element tap interruption handling cancels this app-owned modal.
+        // Use the same measured app-coordinate pattern as the token chips.
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: visibleDone.midX - app.frame.minX, dy: visibleDone.midY - app.frame.minY)).tap()
+        XCTAssertTrue(app.alerts["reference-bulk-remove-tag-dialog"].exists)
+        XCTAssertTrue(input.exists)
+        XCTAssertEqual(app.textFields.matching(identifier: "reference-bulk-remove-tag-input").count, 1)
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !keyboard.exists || keyboard.frame.intersection(app.frame).isNull || keyboard.frame.intersection(app.frame).isEmpty
+        }, object: keyboard)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 10), .completed)
+    }
+
     private func task196Flow(_ library: String, rtl: Bool = false, largest: Bool = false) {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
         app.launch(); task186Open(app); referenceGroup(app, "none"); task193Range(app, status: "inbox", rtl: rtl)
         task196OpenRemove(app)
+        if largest {
+            // Exercise keyboard dismissal/refocus before the long paged union.
+            let input = task196Control(app, "reference-bulk-remove-tag-input", field: true)
+            input.tap()
+            let keyboard = app.keyboards.firstMatch
+            let shown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                keyboard.exists && keyboard.frame.intersection(app.frame).height >= 44
+            }, object: keyboard)
+            XCTAssertEqual(XCTWaiter.wait(for: [shown], timeout: 10), .completed)
+            task196DismissKeyboard(app, input: input, library: library)
+            task196Query(app, "caf", keyboardProbe: true)
+            XCTAssertGreaterThanOrEqual(keyboard.frame.intersection(app.frame).height, 44 - 0.01)
+            task196Query(app, "")
+            task196Query(app, "Task196 caf")
+            task196Query(app, "")
+            let pagingKeyboard = app.keyboards.firstMatch
+            if pagingKeyboard.exists {
+                let overlap = pagingKeyboard.frame.intersection(app.frame)
+                if !overlap.isNull && !overlap.isEmpty {
+                    task196DismissKeyboard(app, input: input, library: library)
+                }
+            }
+            let pagingHidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                !pagingKeyboard.exists || pagingKeyboard.frame.intersection(app.frame).isNull || pagingKeyboard.frame.intersection(app.frame).isEmpty
+            }, object: pagingKeyboard)
+            XCTAssertEqual(XCTWaiter.wait(for: [pagingHidden], timeout: 10), .completed)
+            _ = task196Control(app, "reference-bulk-remove-tag-input", field: true)
+            print("Task196 largest keyboard hide/refocus exact query PASS fixture=" + library)
+        }
         // Unfiltered union is210. Two actual More actions publish100/100/10;
         // the real-host suite independently checks every value and revision.
         XCTAssertTrue(app.buttons["reference-bulk-remove-tag-option-99"].exists)
@@ -21914,6 +22027,7 @@ extension FoundationUITests {
             let more = task196Control(app, "reference-bulk-remove-tag-more"); more.tap()
             boardEnabled(app.buttons["reference-bulk-remove-tag-option-\(boundary)"], timeout: 20)
             XCTAssertFalse(app.buttons["reference-bulk-remove-tag-option-\(boundary + 1)"].exists)
+            _ = task196Control(app, "reference-bulk-remove-tag-input", field: true)
         }
         XCTAssertFalse(app.buttons["reference-bulk-remove-tag-more"].exists)
         task196Query(app, "Task196 caf"); task196Pick(app, task196Picks[0])
@@ -21946,6 +22060,7 @@ extension FoundationUITests {
     }
 
     func testTask196ReferenceBulkRemoveTagCancelPagingSuccessAndCold() { task196Flow("dc3d1913-4036-412e-a837-1e60991b96af") }
+    func testTask196ReferenceBulkRemoveTagFinalLayoutCancelPagingSuccessAndCold() { task196Flow("3d60dd2b-14dc-418e-a4ee-7ea3dc3f3f04") }
     func testTask196ReferenceBulkRemoveTagLargestDark() { task196Flow("53773fee-d31a-4cb8-8f25-d29c61976ac0", largest: true) }
     func testTask196ReferenceBulkRemoveTagArabicRTL() { task196Flow("58d22302-bd82-4404-9139-255eb43156f4", rtl: true) }
 
