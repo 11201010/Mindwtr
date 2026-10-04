@@ -99,6 +99,36 @@ class HostCryptoTest {
         assertThrows(IllegalArgumentException::class.java) { HostCrypto.argon2id(ByteArray(1), ByteArray(7), 64, 1, 1, 32) }
     }
 
+    @Test fun argon2ParametersAreExactIntegersOrRefused() {
+        val params = { json: String -> HostCrypto.argon2Params(JSONObject(json)) }
+        assertArrayEquals(intArrayOf(19456, 2, 1, 32), params("""{"m":19456,"t":2,"p":1,"dkLen":32}"""))
+        // A whole number written as a float is the same number to JavaScript and to noble.
+        assertArrayEquals(intArrayOf(64, 1, 1, 32), params("""{"m":64.0,"t":1,"p":1,"dkLen":32}"""))
+        for (bad in listOf("""{"m":64.9,"t":1,"p":1,"dkLen":32}""", """{"m":64,"t":1.9,"p":1,"dkLen":32}""",
+            """{"m":64,"t":1,"p":1.9,"dkLen":32}""", """{"m":64,"t":1,"p":1,"dkLen":32.9}""",
+            """{"m":4294967360,"t":1,"p":1,"dkLen":32}""", """{"m":64,"t":4294967297,"p":1,"dkLen":32}""",
+            """{"m":"64","t":1,"p":1,"dkLen":32}""", """{"m":64,"t":1,"p":1}""", """{"m":-64,"t":1,"p":1,"dkLen":32}""",
+            """{"m":64,"t":1,"p":16777216,"dkLen":32}""")) {
+            assertThrows(bad, IllegalArgumentException::class.java) { params(bad) }
+        }
+    }
+
+    @Test fun aResultTheStoppedHostWillNeverReadIsDroppedAndEveryResultIsWiped() {
+        var computed: ByteArray? = null
+        val compute = { byteArrayOf(1, 2, 3).also { computed = it } }
+        val encode = { bytes: ByteArray -> bytes.joinToString(",") }
+        assertEquals("1,2,3", HostCrypto.answer({ false }, compute, encode))
+        assertArrayEquals(byteArrayOf(0, 0, 0), computed)
+        // Stopped while it ran: the derived key or plaintext never reaches a queue, and its bytes are cleared.
+        var closed = false
+        assertEquals(null, HostCrypto.answer({ closed }, { compute().also { closed = true } }, encode))
+        assertArrayEquals(byteArrayOf(0, 0, 0), computed)
+        // Stopped before it ran: it never computes.
+        computed = null
+        assertEquals(null, HostCrypto.answer({ true }, compute, encode))
+        assertEquals(null, computed)
+    }
+
     @Test fun aKeyOrNonceOfAnotherSizeIsRefused() {
         assertThrows(IllegalArgumentException::class.java) { HostCrypto.aesGcmSeal(ByteArray(16), ByteArray(12), ByteArray(1), ByteArray(0)) }
         assertThrows(IllegalArgumentException::class.java) { HostCrypto.aesGcmSeal(ByteArray(32), ByteArray(16), ByteArray(1), ByteArray(0)) }

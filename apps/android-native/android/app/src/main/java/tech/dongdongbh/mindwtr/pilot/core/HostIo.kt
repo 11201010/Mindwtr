@@ -80,6 +80,9 @@ class HostIo(context: Context) {
     private val fileThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-files") }
     /** Sync encryption's Argon2id and AES-GCM (HostCrypto): an Argon2id holds its thread for about a second, never the engine. */
     private val cryptoThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-crypto") }
+    /** Set by [close]: no answer is queued after it, and the queue it cleared is never read again. */
+    @Volatile private var closed = false
+    private val closing = Any()
     private val calls = ConcurrentHashMap<String, Call>()
     private val answers = LinkedBlockingQueue<Answer>()
     /** An answer [await] took before [next] asked for it. */
@@ -206,34 +209,38 @@ class HostIo(context: Context) {
     fun crypto(json: String): String {
         val id = (++nextId).toString()
         cryptoThread.execute {
-            answers.add(runCatching { cryptoReply(id, json) }.getOrElse { failure ->
+            val reply = runCatching { cryptoReply(id, json) }.getOrElse { failure ->
                 val answer = JSONObject().put("id", id)
                 if (failure is HostCrypto.AuthFailure) answer.put("error", failure.message).put("auth", true)
                 // Not a parameter's value: BouncyCastle's and the JDK's texts name only what was wrong.
                 else answer.put("error", "Sync crypto failed: ${failure.message ?: failure.javaClass.simpleName}")
                 Answer(answer.toString())
-            })
+            }
+            // Once the host closed, nobody reads the queue again: a key or plaintext answer must not wait there.
+            synchronized(closing) { if (reply != null && !closed) answers.add(reply) }
             wake()
         }
         open += 1
         return id
     }
 
-    private fun cryptoReply(id: String, json: String): Answer {
+    /** The call's answer, or null when the host closed meanwhile (HostCrypto.answer: the result's bytes are cleared either way). */
+    private fun cryptoReply(id: String, json: String): Answer? {
         val request = JSONObject(json)
         val bytes = { name: String -> Base64.decode(request.getString(name), Base64.NO_WRAP) }
-        val out = when (val op = request.getString("op")) {
+        val compute = { when (val op = request.getString("op")) {
             "argon2id" -> {
+                val (m, t, p, dkLen) = HostCrypto.argon2Params(request)
                 val pass = bytes("pass")
                 Log.i(CoreHost.TAG, "Native Android sync crypto argon2id start")
                 var started = System.nanoTime()
                 try {
                     if (argon2DelayMs > 0) Thread.sleep(argon2DelayMs).also { started = System.nanoTime() }
-                    HostCrypto.argon2id(pass, bytes("salt"), request.getInt("m"), request.getInt("t"), request.getInt("p"), request.getInt("dkLen"))
+                    HostCrypto.argon2id(pass, bytes("salt"), m, t, p, dkLen)
                 } finally {
                     HostCrypto.wipe(pass)
                     // Its cost and time only (the encryption check reads it): never a byte of the pass, salt or key.
-                    Log.i(CoreHost.TAG, "Native Android sync crypto argon2id ms=${(System.nanoTime() - started) / 1_000_000} m=${request.getInt("m")} t=${request.getInt("t")} p=${request.getInt("p")}")
+                    Log.i(CoreHost.TAG, "Native Android sync crypto argon2id ms=${(System.nanoTime() - started) / 1_000_000} m=$m t=$t p=$p")
                 }
             }
             "aesGcmSeal", "aesGcmOpen" -> {
@@ -246,8 +253,10 @@ class HostIo(context: Context) {
                 }
             }
             else -> throw IllegalArgumentException("Unsupported crypto call $op")
+        } }
+        return HostCrypto.answer({ closed }, compute) { out ->
+            Answer(JSONObject().put("id", id).put("body", true).toString(), Base64.encodeToString(out, Base64.NO_WRAP))
         }
-        return Answer(JSONObject().put("id", id).put("body", true).toString(), Base64.encodeToString(out, Base64.NO_WRAP))
     }
 
     /** The files thread and the picked documents' own threads (FileJobs); CoreHost sets the reader hooks (HostFiles). */
@@ -284,7 +293,15 @@ class HostIo(context: Context) {
         calls.values.forEach { it.cancel() }
         secretThread.shutdown()
         fileThread.shutdown()
-        cryptoThread.shutdown()
+        // A crypto call still queued never runs; one running is dropped when it ends (HostCrypto.answer). Every answer already
+        // queued goes too: a derived key or plaintext must not outlive the host in a queue nobody drains.
+        synchronized(closing) {
+            closed = true
+            answers.clear()
+            held = null
+            taken = null
+        }
+        cryptoThread.shutdownNow()
         client.dispatcher.executorService.shutdown()
     }
 

@@ -469,7 +469,14 @@ globalThis.cryptoGate = { prims: createHostSyncCrypto(globalThis.__mindwtrCrypto
     const hostIoSource = kotlinCore('HostIo.kt');
     assert.match(coreHostSource, /bridge\.setProperty\("cryptoCall", guarded \{ args -> io\.crypto\(args\[0\] as String\) \}\)/);
     assert.match(hostIoSource, /private val cryptoThread = Executors\.newSingleThreadExecutor/);
-    assert.match(hostIoSource, /cryptoThread\.execute \{\s+answers\.add\(runCatching \{ cryptoReply\(id, json\) \}/, 'a crypto failure, an OutOfMemoryError included, is an answer, never a crash');
+    assert.match(hostIoSource, /cryptoThread\.execute \{\s+val reply = runCatching \{ cryptoReply\(id, json\) \}\.getOrElse/, 'a crypto failure, an OutOfMemoryError included, is an answer, never a crash');
+    // Review S4b 3: once the host closed, no crypto answer (a derived key, a plaintext) is queued, and close clears the queue.
+    assert.match(hostIoSource, /synchronized\(closing\) \{ if \(reply != null && !closed\) answers\.add\(reply\) \}/);
+    assert.match(hostIoSource, /synchronized\(closing\) \{\s+closed = true\s+answers\.clear\(\)\s+held = null\s+taken = null\s+\}\s+cryptoThread\.shutdownNow\(\)/);
+    assert.match(hostIoSource, /return HostCrypto\.answer\(\{ closed \}, compute\)/);
+    // Review S4b 2: Argon2id's cost is read as exact whole numbers (HostCrypto.argon2Params), never getInt's truncation.
+    assert.match(hostIoSource, /val \(m, t, p, dkLen\) = HostCrypto\.argon2Params\(request\)/);
+    assert.doesNotMatch(hostIoSource, /getInt\("(m|t|p|dkLen)"\)/);
     const polyfillSource = readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8');
     assert.doesNotMatch(polyfillSource.slice(polyfillSource.indexOf('// --- sync crypto'), polyfillSource.indexOf('// --- localStorage')), /refuseIfCancelled/);
 }
@@ -915,7 +922,7 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.doesNotMatch(hostIo, /catch \(|getOrNull|getOrDefault/);
     assert.deepEqual(hostIo.match(/runCatching \{[\s\S]*?\}\.getOrElse \{ [^\n]*/g).map((line) => /getOrElse \{ (failure\(id, call, it\)|(Answer\()?JSONObject\(\)\.put\("id", id\)\.put\("error")/.test(line)), [true, true, false]);
     // A crypto call's failure (S4b) is its error answer too: `auth` for a tag mismatch, else the failure's own text.
-    assert.match(hostIo, /runCatching \{ cryptoReply\(id, json\) \}\.getOrElse \{ failure ->\s+val answer = JSONObject\(\)\.put\("id", id\)[\s\S]{0,400}?Answer\(answer\.toString\(\)\)\s+\}\)\s+wake\(\)/);
+    assert.match(hostIo, /runCatching \{ cryptoReply\(id, json\) \}\.getOrElse \{ failure ->\s+val answer = JSONObject\(\)\.put\("id", id\)[\s\S]{0,400}?Answer\(answer\.toString\(\)\)\s+\}\s+\/\/[^\n]*\s+synchronized\(closing\) \{ if \(reply != null && !closed\) answers\.add\(reply\) \}\s+wake\(\)/);
     // A file call's failure (FileJobs runs it in runCatching and delivers the Result) is its error answer.
     assert.match(fileJobs, /val result = runCatching \{[\s\S]*?compute\(\)\s*\}[\s\S]*?deliver\(result\)/);
     assert.match(hostIo, /\}\) \{ Answer\(JSONObject\(\)\.put\("id", id\)\.put\("error", it\.message \?: it\.javaClass\.simpleName\)\.toString\(\)\) \}\)/);
@@ -1193,6 +1200,11 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // sent before it (the light queue); light actions (Show passphrase) keep answering while it runs.
         assert.match(source('SyncSettings.kt'), /run\("runSyncEncryptionAction", input, light = !heavy, after = if \(heavy\) SyncSettingsModel\.light else null\)/);
         assert.match(source('SyncSettings.kt'), /val result = runCatching \{\s+after\?\.submit \{\}\?\.get\(\)\s+runtime\.syncCommand\(name, input\.toString\(\)\)/);
+        // Review S4b 1: a passphrase field never holds more than core takes (the row's maxLength; PassphraseFieldsTest), and a
+        // refused edit blocks the submit instead of running it with the shorter text core kept.
+        assert.match(source('SyncSettings.kt'), /if \(type == "submit" && !passphrases\.submittable\) \{ shell\.showToast\(null, tooLong, "error"\); return \}/);
+        assert.match(source('SyncSettings.kt'), /sync\.typePassphrase\(field, text, row\.getInt\("maxLength"\), row\.getString\("tooLong"\)\)/);
+        assert.match(source('SyncSettings.kt'), /if \(!passphrases\.type\(field, text, maxLength\)\) \{ shell\.showToast\(null, tooLongText, "error"\); return \}/);
     }
     // Sync's engine work between host calls: a host-call answer wakes the idle pump, and the next timer schedules it; neither
     // runs after the host stopped or closed.

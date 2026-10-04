@@ -2,6 +2,7 @@ package tech.dongdongbh.mindwtr.pilot.core
 
 import org.bouncycastle.crypto.generators.Argon2BytesGenerator
 import org.bouncycastle.crypto.params.Argon2Parameters
+import org.json.JSONObject
 import java.util.Arrays
 import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
@@ -58,6 +59,37 @@ object HostCrypto {
         return Cipher.getInstance("AES/GCM/NoPadding").apply {
             init(mode, SecretKeySpec(key, "AES"), GCMParameterSpec(TAG_BYTES * 8, nonce))
             updateAAD(aad)
+        }
+    }
+
+    /**
+     * An Argon2id request's cost (`m`, `t`, `p`, `dkLen`), each an exact whole number in range, or IllegalArgumentException: a
+     * fraction, an overflow or a text is refused, never rounded or wrapped into a cost core did not ask for. Above Int's range is
+     * refused too (core's own ceiling, 256 MiB, is far below).
+     */
+    fun argon2Params(request: JSONObject): IntArray = intArrayOf(
+        exact(request, "m", 1), exact(request, "t", 1), exact(request, "p", 1, 0xffffff), exact(request, "dkLen", 4),
+    )
+
+    private fun exact(request: JSONObject, name: String, min: Long, max: Long = Int.MAX_VALUE.toLong()): Int {
+        val value = request.opt(name)
+        require(value is Number) { "invalid Argon2id parameters" }
+        val number = value.toDouble()
+        require(number.isFinite() && number == Math.floor(number) && number >= min && number <= max) { "invalid Argon2id parameters" }
+        return number.toInt()
+    }
+
+    /**
+     * One call's answer, off the engine thread: [compute]'s bytes through [encode], or null once [closed] (the host stopped), so
+     * a derived key or a plaintext never waits in a queue nobody drains. The result's bytes are cleared either way.
+     */
+    fun <T> answer(closed: () -> Boolean, compute: () -> ByteArray, encode: (ByteArray) -> T): T? {
+        if (closed()) return null
+        val out = compute()
+        try {
+            return if (closed()) null else encode(out)
+        } finally {
+            wipe(out)
         }
     }
 
