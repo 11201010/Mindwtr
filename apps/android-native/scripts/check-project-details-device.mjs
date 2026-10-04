@@ -491,6 +491,14 @@ try {
     }
     check(metadata.sections.length === 1 && metadata.sections[0].title === names.edited, '(m) core lists the one stored section');
     check(pid() === processId && !bootFailure(await screen()), '(m) one process since the last replay, no boot failure');
+    // (n) Clear Due and Review: each stored once, and the fixture leaves no project due for review or due today in the shared
+    // development data (Focus's "Projects to review" and the other checks' lists stay as they were).
+    for (const [field, label] of [['dueDate', en['taskEdit.dueDateLabel']], ['reviewAt', en['projects.reviewAt']]]) {
+        row = await write(`(n) Clear ${label}`, async () => {
+            nodes = await revealIn((current) => Boolean(withDescription(current, `${en['common.clear']} ${label}`)), `Clear ${label}`);
+            await tap(withDescription(nodes, `${en['common.clear']} ${label}`));
+        }, (current) => current[field] === null);
+    }
     console.log('Project details device check passed');
 } catch (error) {
     evidenced(error);
