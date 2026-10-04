@@ -3072,7 +3072,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const harness = await build({
         stdin: { contents: `
             import { createWidgetPublisher } from './bundle/host-widgets.ts';
-            import { buildAndroidWidgetPublication, getFocusWidgetFilter, useTaskStore } from '@mindwtr/core';
+            import { buildAndroidWidgetPublication, getFocusWidgetFilter } from '@mindwtr/core';
+            // The store from its own file: core is side-effect free and lazily initializes the modules its own dynamic imports
+            // reach (store.ts among them), so an entry that reaches the store only through index.ts gets no init call from esbuild.
+            import { useTaskStore } from '../../packages/core/src/store';
             export { buildAndroidWidgetPublication, getFocusWidgetFilter, useTaskStore, createWidgetPublisher };
         `, resolveDir: app, loader: 'ts' },
         bundle: true, write: false, format: 'esm', platform: 'node', logLevel: 'silent',
