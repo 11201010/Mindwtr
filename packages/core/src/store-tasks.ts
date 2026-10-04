@@ -90,6 +90,7 @@ type TaskActions = Pick<
     | 'commitPreparedArchivedTasksRestore'
     | 'commitPreparedReferenceTasksMove'
     | 'commitPreparedReferenceTasksAddTag'
+    | 'commitPreparedReferenceTasksRemoveTag'
     | 'commitPreparedArchivedTasksMutation'
     | 'commitPreparedTaskFocus'
     | 'commitPreparedFocusOrder'
@@ -1891,6 +1892,15 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 return { validateEnvelope: () => Boolean(readReferenceTasksAddTagEnvelope({ request: input.request, prepared: input })),
                     authorityMatches: (data) => referenceTasksAddTagAuthorityMatches(input, data) };
             }, 'Reference Add tag conflicts with saved data'),
+
+    commitPreparedReferenceTasksRemoveTag: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> =>
+        commitPreparedRawReferenceBatch(input, authority,
+            async () => {
+                const { readReferenceTasksRemoveTagEnvelope, referenceTasksRemoveTagAuthorityMatches } =
+                    await import('./native-host-contract-reference-bulk-remove-tag');
+                return { validateEnvelope: () => Boolean(readReferenceTasksRemoveTagEnvelope({ request: input.request, prepared: input })),
+                    authorityMatches: (data) => referenceTasksRemoveTagAuthorityMatches(input, data) };
+            }, 'Reference Remove tag conflicts with saved data'),
 
     commitPreparedArchivedTasksMutation: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Archive Trash conflicts with saved data' };

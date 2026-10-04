@@ -641,6 +641,9 @@ export interface TaskStore {
     /** Reference Add tag's shared guarded raw batch; contract validates all selected members. */
     commitPreparedReferenceTasksAddTag: (input: import('./native-host-contract-reference-bulk-tag').NativeReferenceTasksAddTagPrepared,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Reference Remove tag's guarded raw batch, including unchanged selected noncarriers. */
+    commitPreparedReferenceTasksRemoveTag: (input: import('./native-host-contract-reference-bulk-remove-tag').NativeReferenceTasksRemoveTagPrepared,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Selected-row raw Delete/Undo overlay; native validates the full effect and receipt guards. */
     commitPreparedArchivedTasksMutation: (input: {
         operation: 'delete' | 'undo'; before: Task[]; after: Task[];

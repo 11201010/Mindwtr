@@ -334,3 +334,6 @@ export type { NativeReferenceTasksMoveRequest, NativeReferenceTasksMovePrepared,
 
 export type { NativeReferenceTasksAddTagRequest, NativeReferenceTasksAddTagPrepared, NativeReferenceTasksAddTagEnvelope,
     NativeReferenceTasksAddTagResult, NativeReferenceTasksAddTagPreparation } from './native-host-contract-reference-bulk-tag';
+
+export type { NativeReferenceTasksRemoveTagRequest, NativeReferenceTasksRemoveTagPrepared, NativeReferenceTasksRemoveTagEnvelope,
+    NativeReferenceTasksRemoveTagResult, NativeReferenceTasksRemoveTagPreparation } from './native-host-contract-reference-bulk-remove-tag';

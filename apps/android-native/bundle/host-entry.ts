@@ -894,7 +894,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2461,6 +2461,18 @@ globalThis.MindwtrHost = {
     },
     referenceTasksAddTagOutcome(json: string): string {
         return submit(async () => unwrap(await contract.referenceTasksAddTagOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.referenceTasksAddTagOutcome>[0])));
+    },
+    referenceTasksRemoveTagPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareReferenceTasksRemoveTag(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareReferenceTasksRemoveTag>[0])); });
+    },
+    referenceTasksRemoveTagValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedReferenceTasksRemoveTag(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedReferenceTasksRemoveTag>[0])));
+    },
+    referenceTasksRemoveTagCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedReferenceTasksRemoveTag(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedReferenceTasksRemoveTag>[0])));
+    },
+    referenceTasksRemoveTagOutcome(json: string): string {
+        return submit(async () => unwrap(await contract.referenceTasksRemoveTagOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.referenceTasksRemoveTagOutcome>[0])));
     },
     archivedTasksRestorePrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchivedTasksRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareArchivedTasksRestore>[0])); });

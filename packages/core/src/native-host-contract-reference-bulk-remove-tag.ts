@@ -9,33 +9,33 @@ import { createAreaSaveGuard, readAreaDurableData } from './native-host-contract
 import { createNativeRequestReceipts, NativeReceiptSqliteAdapter } from './native-request-receipts';
 import { taskEditValuesEqual } from './json-value-equality';
 import { buildEntityMap, ensureDeviceId } from './store-helpers';
-import { planTaskBatchUpdateEffects, prepareTaskBatchUpdatesForStore } from './store-tasks';
+import { referenceTasksTagEffect } from './native-host-contract-reference-bulk-tag';
 import { getStorageAdapter, useTaskStore } from './store';
 import { projectFocusDateValues, type FocusDateProjection } from './task-utils';
 import { buildBulkTaskTokenUpdates } from './bulk-task-tokens';
 import { logInfo } from './logger';
 import { detachReferenceBatchJson, detachReferenceBatchValue, readReferenceBatchSelectionRequest,
-    rawReferenceBatchScope, loadedReferenceBatchProject, referenceBatchSettingsReadable,
+    rawReferenceBatchScope, referenceBatchSettingsReadable,
     requiredReferenceBatchDates, referenceBatchSourcesMatch, validReferenceBatchTask,
     validReferenceBatchProject, validReferenceBatchArea, relevantReferenceBatchSettings, referenceTasksMoveScope,
     type NativeReferenceTasksMoveParams, type NativeReferenceTasksMoveRequest,
     type NativeReferenceTasksMoveScope } from './native-host-contract-reference-bulk-status';
 
-export type NativeReferenceTasksAddTagRequest = { requestId: string; taskIds: string[];
-    taskRevisions: Record<string, string>; tag: string; params: NativeReferenceTasksMoveParams };
-export type NativeReferenceTasksAddTagResult = { count: number; changed: true };
-export type NativeReferenceTasksAddTagPrepared = {
-    version: 1; request: NativeReferenceTasksAddTagRequest; scope: NativeReferenceTasksMoveScope;
+export type NativeReferenceTasksRemoveTagRequest = { requestId: string; taskIds: string[];
+    taskRevisions: Record<string, string>; tags: string[]; params: NativeReferenceTasksMoveParams };
+export type NativeReferenceTasksRemoveTagResult = { count: number; changed: true };
+export type NativeReferenceTasksRemoveTagPrepared = {
+    version: 1; request: NativeReferenceTasksRemoveTagRequest; scope: NativeReferenceTasksMoveScope;
     effect: { tasks: { before: Task; after: Task }[]; projects: { before: Project; after: Project }[];
         sections: { before: Section; after: Section }[] };
     deviceIdBefore: string | null; deviceIdToInitialize: string | null;
     updateAt: string; preparedLocalDay: string; preparedOffsetMinutes: number;
     boundaryOffsetMinutes: number; futureBoundary: string; dates: FocusDateProjection[];
-    result: NativeReferenceTasksAddTagResult;
+    result: NativeReferenceTasksRemoveTagResult;
 };
-export type NativeReferenceTasksAddTagEnvelope = { request: NativeReferenceTasksAddTagRequest; prepared: NativeReferenceTasksAddTagPrepared };
-export type NativeReferenceTasksAddTagPreparation = { kind: 'noop'; result: { count: 0; changed: false } }
-    | { kind: 'prepared'; prepared: NativeReferenceTasksAddTagPrepared };
+export type NativeReferenceTasksRemoveTagEnvelope = { request: NativeReferenceTasksRemoveTagRequest; prepared: NativeReferenceTasksRemoveTagPrepared };
+export type NativeReferenceTasksRemoveTagPreparation = { kind: 'noop'; result: { count: 0; changed: false } }
+    | { kind: 'prepared'; prepared: NativeReferenceTasksRemoveTagPrepared };
 
 const same = taskEditValuesEqual;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
@@ -45,48 +45,26 @@ const fail = (code: 'INVALID_INPUT' | 'STALE_REVISION' | 'TASK_NOT_FOUND' | 'SAV
     ({ ok: false, error: { code, message } });
 const canonicalPayload = (value: unknown): string => JSON.stringify(value, (_name, item) => record(item)
     ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item);
-const selectionRequest = (request: NativeReferenceTasksAddTagRequest): NativeReferenceTasksMoveRequest => ({
+const selectionRequest = (request: NativeReferenceTasksRemoveTagRequest): NativeReferenceTasksMoveRequest => ({
     requestId: request.requestId, taskIds: request.taskIds, taskRevisions: request.taskRevisions, params: request.params, status: 'next' });
-const readRequest = (input: unknown): NativeReferenceTasksAddTagRequest | null => {
-    const request = detachReferenceBatchJson<NativeReferenceTasksAddTagRequest>(input);
-    return request && exact(request, ['requestId', 'taskIds', 'taskRevisions', 'tag', 'params'])
-        && typeof request.tag === 'string' && request.tag.length <= 2000
+const readRequest = (input: unknown): NativeReferenceTasksRemoveTagRequest | null => {
+    const request = detachReferenceBatchJson<NativeReferenceTasksRemoveTagRequest>(input);
+    return request && exact(request, ['requestId', 'taskIds', 'taskRevisions', 'tags', 'params'])
+        && Array.isArray(request.tags) && request.tags.length > 0 && request.tags.length <= 10_000
+        && request.tags.every((tag) => text(tag, 2_000_000)) && new Set(request.tags).size === request.tags.length
         && readReferenceBatchSelectionRequest(selectionRequest(request)) ? request : null;
 };
-export const referenceTasksAddTagScope = (request: NativeReferenceTasksAddTagRequest,
+export const referenceTasksRemoveTagScope = (request: NativeReferenceTasksRemoveTagRequest,
     data: Pick<AppData, 'tasks' | 'projects' | 'sections' | 'areas' | 'settings'>): NativeReferenceTasksMoveScope =>
     referenceTasksMoveScope(selectionRequest(request), data);
-const tagUpdates = (request: NativeReferenceTasksAddTagRequest, scope: NativeReferenceTasksMoveScope, at: string) =>
-    buildBulkTaskTokenUpdates(request.taskIds, buildEntityMap(scope.tasks.map((row) => historyRowLoadProjection(row, at))), 'tags', request.tag.trim(), 'add');
+const tagUpdates = (request: NativeReferenceTasksRemoveTagRequest, scope: NativeReferenceTasksMoveScope, at: string) =>
+    buildBulkTaskTokenUpdates(request.taskIds, buildEntityMap(scope.tasks.map((row) => historyRowLoadProjection(row, at))), 'tags', request.tags, 'remove');
 
-/** Uses the actual RN builder, preflight and batch planner; replay never allocates. */
-export const referenceTasksTagEffect = (prepared: Pick<NativeReferenceTasksAddTagPrepared,
-    'scope' | 'deviceIdBefore' | 'deviceIdToInitialize' | 'updateAt' | 'futureBoundary' | 'dates'>, updatesList: ReturnType<typeof buildBulkTaskTokenUpdates>): NativeReferenceTasksAddTagPrepared['effect'] | null => {
-    const { scope } = prepared;
-    const tasks = scope.tasks.map((row) => historyRowLoadProjection(row, prepared.updateAt));
-    const projects = scope.projects.map(loadedReferenceBatchProject);
-    if (!updatesList.length) return null;
-    const preflight = prepareTaskBatchUpdatesForStore({ updatesList,
-        state: { _tasksById: buildEntityMap(tasks), _projectsById: buildEntityMap(projects), _allProjects: projects,
-            _allSections: scope.sections, _allAreas: scope.areas, settings: scope.settings, persistenceFailure: null },
-        futureBoundary: prepared.futureBoundary, futureDates: new Map(prepared.dates.map((row) => [row.value, row])), nowMs: Date.parse(prepared.updateAt) });
-    if (!preflight.ok || preflight.optimisticRetryProjectIds.length) return null;
-    const planned = planTaskBatchUpdateEffects({ preparedUpdatesById: preflight.preparedUpdatesById,
-        allTasks: tasks, allProjects: projects, allSections: scope.sections, now: prepared.updateAt,
-        deviceId: prepared.deviceIdBefore ?? prepared.deviceIdToInitialize!, createId: () => { throw new Error('Reference tag update allocated'); } });
-    if (planned.createdTasks.length || planned.tasks.length !== tasks.length) return null;
-    const pairs = <T extends { id: string }>(raw: T[], loaded: T[], after: T[]): { before: T; after: T }[] => {
-        const loadedById = buildEntityMap(loaded); const afterById = buildEntityMap(after);
-        return raw.flatMap((before) => { const result = afterById.get(before.id);
-            return !result ? [] : same(loadedById.get(before.id), result) ? [] : [{ before, after: result }]; });
-    };
-    return { tasks: pairs(scope.tasks, tasks, planned.tasks), projects: pairs(scope.projects, projects, planned.projects),
-        sections: pairs(scope.sections, scope.sections, planned.sections) };
-};
-export const referenceTasksAddTagEffect = (prepared: Pick<NativeReferenceTasksAddTagPrepared,
-    'request' | 'scope' | 'deviceIdBefore' | 'deviceIdToInitialize' | 'updateAt' | 'futureBoundary' | 'dates'>): NativeReferenceTasksAddTagPrepared['effect'] | null =>
+/** Same RN planner as Add tag; only the shared token builder's operation differs. */
+export const referenceTasksRemoveTagEffect = (prepared: Pick<NativeReferenceTasksRemoveTagPrepared,
+    'request' | 'scope' | 'deviceIdBefore' | 'deviceIdToInitialize' | 'updateAt' | 'futureBoundary' | 'dates'>): NativeReferenceTasksRemoveTagPrepared['effect'] | null =>
     referenceTasksTagEffect(prepared, tagUpdates(prepared.request, prepared.scope, prepared.updateAt));
-export const readReferenceTasksAddTagEnvelope = (input: unknown): NativeReferenceTasksAddTagEnvelope | null => {
+export const readReferenceTasksRemoveTagEnvelope = (input: unknown): NativeReferenceTasksRemoveTagEnvelope | null => {
     const envelope = detachReferenceBatchJson<Record<string, unknown>>(input);
     if (!envelope || !exact(envelope, ['request', 'prepared']) || !record(envelope.prepared)) return null;
     const request = readRequest(envelope.request); const raw = envelope.prepared;
@@ -111,71 +89,71 @@ export const readReferenceTasksAddTagEnvelope = (input: unknown): NativeReferenc
         || !record(raw.result) || !exact(raw.result, ['count', 'changed']) || raw.result.changed !== true
         || !Number.isInteger(raw.result.count) || (raw.result.count as number) < 1 || (raw.result.count as number) > request.taskIds.length) return null;
     try {
-        const prepared = raw as unknown as NativeReferenceTasksAddTagPrepared;
-        const expected = referenceTasksAddTagEffect(prepared);
+        const prepared = raw as unknown as NativeReferenceTasksRemoveTagPrepared;
+        const expected = referenceTasksRemoveTagEffect(prepared);
         return referenceBatchSourcesMatch(selectionRequest(request), prepared.scope, prepared.updateAt)
             && (prepared.scope.settings.deviceId ?? null) === prepared.deviceIdBefore
-            && same(referenceTasksAddTagScope(request, prepared.scope), prepared.scope)
+            && same(referenceTasksRemoveTagScope(request, prepared.scope), prepared.scope)
             && new Date(Date.parse(prepared.updateAt) - prepared.preparedOffsetMinutes * 60_000).toISOString().slice(0, 10) === prepared.preparedLocalDay
             && new Date(Date.parse(`${prepared.preparedLocalDay}T23:59:59.999Z`) + prepared.boundaryOffsetMinutes * 60_000).toISOString() === prepared.futureBoundary
             && same(requiredReferenceBatchDates(prepared.scope), prepared.dates.map((row) => row.value))
             && expected && same(expected, prepared.effect) && prepared.result.count === tagUpdates(request, prepared.scope, prepared.updateAt).length
             && [...prepared.effect.tasks, ...prepared.effect.projects, ...prepared.effect.sections].every((pair) => record(pair) && exact(pair, ['before', 'after']))
-            ? envelope as NativeReferenceTasksAddTagEnvelope : null;
+            ? envelope as NativeReferenceTasksRemoveTagEnvelope : null;
     } catch { return null; }
 };
-export const referenceTasksAddTagAuthorityMatches = (prepared: NativeReferenceTasksAddTagPrepared, data: AppData): boolean => {
-    const current = rawReferenceBatchScope(referenceTasksAddTagScope(prepared.request, data));
+export const referenceTasksRemoveTagAuthorityMatches = (prepared: NativeReferenceTasksRemoveTagPrepared, data: AppData): boolean => {
+    const current = rawReferenceBatchScope(referenceTasksRemoveTagScope(prepared.request, data));
     return Boolean(current && same(current, prepared.scope) && referenceBatchSourcesMatch(selectionRequest(prepared.request), current, prepared.updateAt)
-        && same(referenceTasksAddTagEffect({ ...prepared, scope: current }), prepared.effect));
+        && same(referenceTasksRemoveTagEffect({ ...prepared, scope: current }), prepared.effect));
 };
 
-export function createReferenceTasksAddTagMethods(deps: {
+export function createReferenceTasksRemoveTagMethods(deps: {
     readiness: () => NativeHostResult<null>; save: () => Promise<NativeHostResult<null>>;
 }) {
     const guardedAdapter = (): NativeHostResult<null> => {
         const adapter = getStorageAdapter();
         return adapter instanceof NativeReceiptSqliteAdapter && adapter.concurrentWritesGuarded
-            ? { ok: true, value: null } : fail('SAVE_FAILED', 'Reference Add tag requires guarded canonical SQLite storage');
+            ? { ok: true, value: null } : fail('SAVE_FAILED', 'Reference Remove tag requires guarded canonical SQLite storage');
     };
     const checkForeignKeyAuthority = async (adapter: ReturnType<typeof getStorageAdapter>): Promise<NativeHostResult<null>> => {
-        if (getStorageAdapter() !== adapter) return fail('STALE_REVISION', 'Reference Add tag storage changed while reading');
+        if (getStorageAdapter() !== adapter) return fail('STALE_REVISION', 'Reference Remove tag storage changed while reading');
         if (!(adapter instanceof NativeReceiptSqliteAdapter) || !adapter.concurrentWritesGuarded)
-            return fail('SAVE_FAILED', 'Reference Add tag requires guarded canonical SQLite storage');
+            return fail('SAVE_FAILED', 'Reference Remove tag requires guarded canonical SQLite storage');
         try {
             const invalid = await adapter.hasForeignKeyViolations();
-            if (getStorageAdapter() !== adapter) return fail('STALE_REVISION', 'Reference Add tag storage changed while reading');
+            if (getStorageAdapter() !== adapter) return fail('STALE_REVISION', 'Reference Remove tag storage changed while reading');
             return invalid ? fail('SAVE_FAILED', 'Saved Reference data has invalid container references') : { ok: true, value: null };
         } catch { return fail('SAVE_FAILED', 'Saved Reference container references could not be checked'); }
     };
     const saves = createAreaSaveGuard(deps.save);
-    let pending: { envelope: NativeReferenceTasksAddTagEnvelope; adapter: ReturnType<typeof getStorageAdapter>;
+    let pending: { envelope: NativeReferenceTasksRemoveTagEnvelope; adapter: ReturnType<typeof getStorageAdapter>;
         boundary: PreparedNativeSaveBoundary | undefined } | null = null;
-    const payload = (envelope: NativeReferenceTasksAddTagEnvelope) => canonicalPayload(['referenceTasksAddTag', envelope]);
-    const checkAuthority = (envelope: NativeReferenceTasksAddTagEnvelope, authority: PreparedAreaAuthority): NativeHostResult<null> => {
+    const payload = (envelope: NativeReferenceTasksRemoveTagEnvelope) => canonicalPayload(['referenceTasksRemoveTag', envelope]);
+    const checkAuthority = (envelope: NativeReferenceTasksRemoveTagEnvelope, authority: PreparedAreaAuthority): NativeHostResult<null> => {
         const guarded = guardedAdapter(); if (!guarded.ok) return guarded;
         if (!referenceBatchSettingsReadable(authority.snapshot.settings)) return fail('SAVE_FAILED', 'Saved Reference settings JSON is unreadable');
-        const prepared = envelope.prepared; const current = rawReferenceBatchScope(referenceTasksAddTagScope(envelope.request, authority.snapshot));
+        const prepared = envelope.prepared; const current = rawReferenceBatchScope(referenceTasksRemoveTagScope(envelope.request, authority.snapshot));
         if (!current) return fail('SAVE_FAILED', 'Saved Reference raw JSON could not be bound safely');
         if (!same(current, prepared.scope) || !referenceBatchSourcesMatch(selectionRequest(envelope.request), current, prepared.updateAt))
             return fail('STALE_REVISION', 'Reference selection or its saved dependency context changed');
-        try { return same(referenceTasksAddTagEffect({ ...prepared, scope: current }), prepared.effect)
-            ? { ok: true, value: null } : fail('STALE_REVISION', 'Reference Add tag rules changed since preparation'); }
-        catch { return fail('STALE_REVISION', 'Reference Add tag destination changed since preparation'); }
+        try { return same(referenceTasksRemoveTagEffect({ ...prepared, scope: current }), prepared.effect)
+            ? { ok: true, value: null } : fail('STALE_REVISION', 'Reference Remove tag rules changed since preparation'); }
+        catch { return fail('STALE_REVISION', 'Reference Remove tag destination changed since preparation'); }
     };
-    const apply = (envelope: NativeReferenceTasksAddTagEnvelope, authority: PreparedAreaAuthority) =>
-        useTaskStore.getState().commitPreparedReferenceTasksAddTag(envelope.prepared, authority);
+    const apply = (envelope: NativeReferenceTasksRemoveTagEnvelope, authority: PreparedAreaAuthority) =>
+        useTaskStore.getState().commitPreparedReferenceTasksRemoveTag(envelope.prepared, authority);
     const receipts = createNativeRequestReceipts({ save: async (requestId) => {
         const owned = pending;
-        if (!owned || owned.envelope.request.requestId !== requestId) return fail('SAVE_FAILED', 'Reference Add tag has no owned raw save');
+        if (!owned || owned.envelope.request.requestId !== requestId) return fail('SAVE_FAILED', 'Reference Remove tag has no owned raw save');
         if (useTaskStore.getState().persistenceFailure) {
-            if (!saves.mayApply(owned.envelope, owned.adapter)) return fail('SAVE_FAILED', 'Reference Add tag has an unrelated persistence failure');
+            if (!saves.mayApply(owned.envelope, owned.adapter)) return fail('SAVE_FAILED', 'Reference Remove tag has an unrelated persistence failure');
             const read = await readAreaDurableData(true, true); if (!read.ok) return read;
-            if (read.value.adapter !== owned.adapter) return fail('STALE_REVISION', 'Reference Add tag storage changed before retry');
+            if (read.value.adapter !== owned.adapter) return fail('STALE_REVISION', 'Reference Remove tag storage changed before retry');
             const foreignKeys = await checkForeignKeyAuthority(read.value.adapter); if (!foreignKeys.ok) return foreignKeys;
             const checked = checkAuthority(owned.envelope, read.value.authority); if (!checked.ok) return checked;
             const applied = await apply(owned.envelope, read.value.authority);
-            if (!applied.success || applied.outcome !== 'applied') return fail('STALE_REVISION', applied.error ?? 'Reference Add tag retry was superseded');
+            if (!applied.success || applied.outcome !== 'applied') return fail('STALE_REVISION', applied.error ?? 'Reference Remove tag retry was superseded');
             owned.boundary = read.value.authority.saveBoundary;
         }
         const saved = await saves.finish(owned.envelope, owned.adapter, false, owned.boundary);
@@ -183,7 +161,7 @@ export function createReferenceTasksAddTagMethods(deps: {
         return saved;
     } });
     return {
-        async prepareReferenceTasksAddTag(input: NativeReferenceTasksAddTagRequest): Promise<NativeHostResult<NativeReferenceTasksAddTagPreparation>> {
+        async prepareReferenceTasksRemoveTag(input: NativeReferenceTasksRemoveTagRequest): Promise<NativeHostResult<NativeReferenceTasksRemoveTagPreparation>> {
             const ready = deps.readiness(); if (!ready.ok) return ready;
             const guarded = guardedAdapter(); if (!guarded.ok) return guarded;
             const request = readRequest(input);
@@ -196,7 +174,7 @@ export function createReferenceTasksAddTagMethods(deps: {
             const foreignKeys = await checkForeignKeyAuthority(read.value.adapter); if (!foreignKeys.ok) return foreignKeys;
             const data = read.value.authority.snapshot;
             if (!referenceBatchSettingsReadable(data.settings)) return fail('SAVE_FAILED', 'Saved Reference settings JSON is unreadable');
-            const scope = rawReferenceBatchScope(referenceTasksAddTagScope(request, data));
+            const scope = rawReferenceBatchScope(referenceTasksRemoveTagScope(request, data));
             if (!scope) return fail('SAVE_FAILED', 'Saved Reference raw JSON could not be bound safely');
             if (!referenceBatchSourcesMatch(selectionRequest(request), scope, now.toISOString())) return fail('STALE_REVISION', 'Saved Reference selection changed');
             if (!tagUpdates(request, scope, now.toISOString()).length) return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
@@ -212,50 +190,50 @@ export function createReferenceTasksAddTagMethods(deps: {
                 const fullScope = rawReferenceBatchScope({ tasks: data.tasks, projects: data.projects, sections: data.sections,
                     areas: data.areas, settings: relevantReferenceBatchSettings(data.settings) });
                 if (!fullScope) return fail('SAVE_FAILED', 'Saved Reference raw JSON could not be bound safely');
-                const first = referenceTasksAddTagEffect({ ...base, scope: fullScope, dates: projectFocusDateValues(requiredReferenceBatchDates(fullScope)) });
-                effect = referenceTasksAddTagEffect(base);
+                const first = referenceTasksRemoveTagEffect({ ...base, scope: fullScope, dates: projectFocusDateValues(requiredReferenceBatchDates(fullScope)) });
+                effect = referenceTasksRemoveTagEffect(base);
                 if (!same(first, effect)) effect = null;
             } catch { effect = null; }
-            const prepared = effect && detachReferenceBatchValue<NativeReferenceTasksAddTagPrepared>({ ...base, effect });
-            return prepared && readReferenceTasksAddTagEnvelope({ request, prepared }) ? { ok: true, value: { kind: 'prepared', prepared } }
-                : fail('INVALID_INPUT', 'Reference Add tag cannot prepare these rows or its journal is too large; select fewer tasks');
+            const prepared = effect && detachReferenceBatchValue<NativeReferenceTasksRemoveTagPrepared>({ ...base, effect });
+            return prepared && readReferenceTasksRemoveTagEnvelope({ request, prepared }) ? { ok: true, value: { kind: 'prepared', prepared } }
+                : fail('INVALID_INPUT', 'Reference Remove tag cannot prepare these rows or its journal is too large; select fewer tasks');
         },
-        validatePreparedReferenceTasksAddTag(input: NativeReferenceTasksAddTagEnvelope): NativeHostResult<NativeReferenceTasksAddTagResult> {
-            const envelope = readReferenceTasksAddTagEnvelope(input); return envelope ? { ok: true, value: envelope.prepared.result }
-                : fail('INVALID_INPUT', 'Prepared Reference Add tag is malformed');
+        validatePreparedReferenceTasksRemoveTag(input: NativeReferenceTasksRemoveTagEnvelope): NativeHostResult<NativeReferenceTasksRemoveTagResult> {
+            const envelope = readReferenceTasksRemoveTagEnvelope(input); return envelope ? { ok: true, value: envelope.prepared.result }
+                : fail('INVALID_INPUT', 'Prepared Reference Remove tag is malformed');
         },
-        referenceTasksAddTagOutcome(input: NativeReferenceTasksAddTagEnvelope): NativeHostResult<NativeReferenceTasksAddTagResult | null> {
-            const envelope = readReferenceTasksAddTagEnvelope(input); return envelope
-                ? receipts.saved<NativeReferenceTasksAddTagResult>(envelope.request.requestId, payload(envelope)) ?? { ok: true, value: null }
-                : fail('INVALID_INPUT', 'Prepared Reference Add tag is malformed');
+        referenceTasksRemoveTagOutcome(input: NativeReferenceTasksRemoveTagEnvelope): NativeHostResult<NativeReferenceTasksRemoveTagResult | null> {
+            const envelope = readReferenceTasksRemoveTagEnvelope(input); return envelope
+                ? receipts.saved<NativeReferenceTasksRemoveTagResult>(envelope.request.requestId, payload(envelope)) ?? { ok: true, value: null }
+                : fail('INVALID_INPUT', 'Prepared Reference Remove tag is malformed');
         },
-        async commitPreparedReferenceTasksAddTag(input: NativeReferenceTasksAddTagEnvelope): Promise<NativeHostResult<NativeReferenceTasksAddTagResult>> {
-            const envelope = readReferenceTasksAddTagEnvelope(input); if (!envelope) return fail('INVALID_INPUT', 'Prepared Reference Add tag is malformed');
+        async commitPreparedReferenceTasksRemoveTag(input: NativeReferenceTasksRemoveTagEnvelope): Promise<NativeHostResult<NativeReferenceTasksRemoveTagResult>> {
+            const envelope = readReferenceTasksRemoveTagEnvelope(input); if (!envelope) return fail('INVALID_INPUT', 'Prepared Reference Remove tag is malformed');
             const ready = deps.readiness(); if (!ready.ok) return ready;
             const guarded = guardedAdapter(); if (!guarded.ok) return guarded;
-            const boundPayload = payload(envelope); const saved = receipts.saved<NativeReferenceTasksAddTagResult>(envelope.request.requestId, boundPayload);
+            const boundPayload = payload(envelope); const saved = receipts.saved<NativeReferenceTasksRemoveTagResult>(envelope.request.requestId, boundPayload);
             if (saved) return saved.ok && !same(saved.value, envelope.prepared.result)
-                ? fail('INVALID_INPUT', 'Saved Reference Add tag result does not match its journal') : saved;
+                ? fail('INVALID_INPUT', 'Saved Reference Remove tag result does not match its journal') : saved;
             let prewriteFailure: NativeHostResult<never> | null = null;
             const notLanded = (message: string): NativeHostResult<never> => { prewriteFailure = fail('SAVE_FAILED', message);
                 return { ok: false, error: { code: 'ACTION_FAILED', message } }; };
             const confirmed = await receipts.run(envelope.request.requestId, boundPayload, async () => {
-                if (useTaskStore.getState().persistenceFailure) return notLanded('Reference Add tag has an unresolved persistence failure');
+                if (useTaskStore.getState().persistenceFailure) return notLanded('Reference Remove tag has an unresolved persistence failure');
                 const read = await readAreaDurableData(false, true);
                 if (!read.ok) return read.error.code === 'SAVE_FAILED' ? notLanded(read.error.message) : read;
                 const foreignKeys = await checkForeignKeyAuthority(read.value.adapter);
                 if (!foreignKeys.ok) return foreignKeys.error.code === 'SAVE_FAILED' ? notLanded(foreignKeys.error.message) : foreignKeys;
                 const checked = checkAuthority(envelope, read.value.authority); if (!checked.ok) return checked;
                 const applied = await apply(envelope, read.value.authority);
-                if (!applied.success || applied.outcome !== 'applied') return fail('STALE_REVISION', applied.error ?? 'Reference Add tag conflicts with saved data');
+                if (!applied.success || applied.outcome !== 'applied') return fail('STALE_REVISION', applied.error ?? 'Reference Remove tag conflicts with saved data');
                 pending = { envelope, adapter: read.value.adapter, boundary: read.value.authority.saveBoundary };
                 return { ok: true, value: envelope.prepared.result };
             });
             if (prewriteFailure) return prewriteFailure;
-            if (confirmed.ok && !same(confirmed.value, envelope.prepared.result)) return fail('INVALID_INPUT', 'Saved Reference Add tag result does not match its journal');
+            if (confirmed.ok && !same(confirmed.value, envelope.prepared.result)) return fail('INVALID_INPUT', 'Saved Reference Remove tag result does not match its journal');
             if (confirmed.ok) {
-                try { logInfo('Native Reference bulk tag confirmed', { scope: 'native-host', category: 'storage',
-                    context: { releaseCheck: 'v1.3.4/ios-reference-bulk-tag', count: confirmed.value.count, outcome: 'added' } }); }
+                try { logInfo('Native Reference bulk Remove tag confirmed', { scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: 'v1.3.4/ios-reference-bulk-remove-tag', count: confirmed.value.count, outcome: 'removed' } }); }
                 catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
             }
             return confirmed;

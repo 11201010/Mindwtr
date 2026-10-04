@@ -213,6 +213,8 @@ export type BulkActionDeps = {
     formatDate: () => DateFormatter;
     /** The list views, read to know which rows are on screen. */
     views: ListViews;
+    /** Data/settings/language/locale authority, without the minute used to refresh row labels. */
+    pickerRevision: () => string;
 };
 
 type Row = { id: string; readOnly: boolean };
@@ -549,8 +551,9 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
             if (input.picker?.kind === 'removeTag' && !screen.removeTags) return fail('INVALID_INPUT', 'This list does not offer Remove tag');
             const read = listRows(input.list, input.params ?? {});
             if (!read.ok) return read;
-            const { revision, rows } = read.value;
-            if ((input.picker?.offset ?? 0) > 0 && input.picker?.revision !== revision) return fail('STALE_REVISION', 'The list changed; open the picker again');
+            const { revision: listRevision, rows } = read.value;
+            const removeTagPicker = input.picker?.kind === 'removeTag';
+            if (!removeTagPicker && (input.picker?.offset ?? 0) > 0 && input.picker?.revision !== listRevision) return fail('STALE_REVISION', 'The list changed; open the picker again');
             const selectable = selectableIds(rows);
             const onScreen = new Set(selectable);
 
@@ -576,6 +579,16 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
             const t = deps.t();
             const state = useTaskStore.getState();
             const tokens = screen.removeTags ? collectBulkTaskTokens(selection, state._tasksById, 'tags') : [];
+            // A minute refreshes labels, not an unchanged tag inventory. Re-read
+            // eligibility first, then bind the picker to its actual scope/selection
+            // and ordered RN token union; never strip an opaque list revision.
+            const revision = removeTagPicker ? `${deps.pickerRevision()}:${revisionsToken([
+                JSON.stringify(['removeTag', input.list, input.params ?? {}, input.picker?.query ?? null]),
+                JSON.stringify(selectable),
+                JSON.stringify(selection.map((id) => [id, taskRevisionOf(state._tasksById.get(id)!)])),
+                JSON.stringify(tokens),
+            ])}` : listRevision;
+            if (removeTagPicker && (input.picker?.offset ?? 0) > 0 && input.picker?.revision !== revision) return fail('STALE_REVISION', 'The selection or tags changed; open the picker again');
             const bar = buildTaskListBulkBarModel({
                 selectedCount: selection.length,
                 hasSelection: selection.length > 0,

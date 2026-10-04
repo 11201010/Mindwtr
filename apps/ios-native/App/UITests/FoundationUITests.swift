@@ -21785,3 +21785,314 @@ extension FoundationUITests {
         }
     }
 }
+
+
+// Task196 Reference Remove uses fresh root-staged fixtures and exact UTF-8 AX
+// identities. Core/RN and raw snapshots independently prove persisted effects.
+extension FoundationUITests {
+    private var task196Picks: [String] {
+        ["#Task196 café 🧭", "#Task196 cafe\u{301} 🧭", "#Task196 CASE", "#Task196 imported " + String(repeating: "x", count: 2_001)]
+    }
+
+    private func task196OpenRemove(_ app: XCUIApplication) {
+        task192Tap(app, "reference-bulk-remove-tag", scrollID: "reference-bulk-actions-scroll")
+        XCTAssertTrue(app.descendants(matching: .any)["reference-bulk-remove-tag-dialog"].waitForExistence(timeout: 15))
+        boardEnabled(app.textFields["reference-bulk-remove-tag-input"], timeout: 15)
+        boardEnabled(app.buttons["reference-bulk-remove-tag-option-0"], timeout: 20)
+        XCTAssertFalse(app.buttons["reference-bulk-remove-tag-save"].isEnabled)
+    }
+
+    private func task196Control(_ app: XCUIApplication, _ id: String, field: Bool = false) -> XCUIElement {
+        let element = field ? app.textFields[id] : app.buttons[id]
+        if ["reference-bulk-remove-tag-save", "reference-bulk-remove-tag-cancel"].contains(id) {
+            // These controls are in the fixed footer outside the picker ScrollView.
+            boardEnabled(element, timeout: 20)
+            XCTAssertTrue(task192Inside(element.frame, app.frame))
+            if app.keyboards.firstMatch.exists { XCTAssertFalse(element.frame.intersects(app.keyboards.firstMatch.frame)) }
+            XCTAssertGreaterThanOrEqual(element.frame.width, 44 - 0.01)
+        } else { revealPagedElement(app, element, in: app.scrollViews["reference-bulk-remove-tag-scroll"]) }
+        XCTAssertGreaterThanOrEqual(element.frame.height, 44 - 0.01)
+        return element
+    }
+
+    private func task196Query(_ app: XCUIApplication, _ text: String, noMatches: Bool = false, waitForResult: Bool = true) {
+        let input = task196Control(app, "reference-bulk-remove-tag-input", field: true)
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        let current = input.value as? String ?? "", old = current == input.placeholderValue ? "" : current
+        if !old.utf8.elementsEqual(text.utf8) { input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count) + text) }
+        let actual = input.value as? String ?? ""
+        XCTAssertTrue((actual == input.placeholderValue ? "" : actual).utf8.elementsEqual(text.utf8))
+        if !waitForResult { return }
+        if noMatches {
+            XCTAssertTrue(app.staticTexts["reference-bulk-remove-tag-no-matches"].waitForExistence(timeout: 20))
+            XCTAssertFalse(app.buttons["reference-bulk-remove-tag-option-0"].exists)
+        } else { boardEnabled(app.buttons["reference-bulk-remove-tag-option-0"], timeout: 20) }
+        XCTAssertFalse(app.staticTexts["reference-bulk-remove-tag-read-error"].exists)
+    }
+
+    private func task196ExactChip(_ app: XCUIApplication, _ value: String) -> XCUIElement {
+        let query = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reference-bulk-remove-tag-option-"))
+        let matches = { query.allElementsBoundByIndex.filter { $0.label.utf8.elementsEqual(value.utf8) } }
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in matches().count == 1 && matches().first?.isEnabled == true }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed, "Exact UTF-8 chip must occur once")
+        let found = matches()
+        XCTAssertEqual(found.count, 1)
+        return found.first ?? query.firstMatch
+    }
+
+    private func task196Pick(_ app: XCUIApplication, _ value: String) {
+        let chip = task196ExactChip(app, value), scroll = app.scrollViews["reference-bulk-remove-tag-scroll"]
+        // Imported full labels can be taller than the viewport. Tap only a
+        // measured visible intersection, preserving the full value and AX label.
+        var visible = CGRect.zero
+        for _ in 0..<24 {
+            var viewport = scroll.frame.intersection(app.frame)
+            let keyboard = app.keyboards.firstMatch
+            if keyboard.exists && keyboard.frame.intersects(viewport) { viewport.size.height = max(0, keyboard.frame.minY - viewport.minY) }
+            visible = chip.frame.intersection(viewport)
+            if !visible.isNull && visible.width >= 44 && visible.height >= 44 { break }
+            XCTAssertGreaterThan(viewport.height, 88)
+            let above = chip.frame.maxY <= viewport.minY
+            let y = viewport.minY + viewport.height * (above ? 0.25 : 0.75)
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            origin.withOffset(CGVector(dx: viewport.midX, dy: y)).press(forDuration: 0.05,
+                thenDragTo: origin.withOffset(CGVector(dx: viewport.midX, dy: y + (above ? 1 : -1) * viewport.height * 0.5)),
+                withVelocity: .slow, thenHoldForDuration: 0.15)
+        }
+        XCTAssertGreaterThanOrEqual(visible.width, 44); XCTAssertGreaterThanOrEqual(visible.height, 44)
+        XCTAssertTrue(chip.label.utf8.elementsEqual(value.utf8)); XCTAssertFalse(chip.isSelected)
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: visible.midX, dy: visible.midY)).tap()
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in chip.isSelected }, object: chip)
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed)
+        XCTAssertTrue(chip.label.utf8.elementsEqual(value.utf8))
+    }
+
+    private func task196ChooseTargets(_ app: XCUIApplication) {
+        task196Query(app, "Task196 caf")
+        task196Pick(app, task196Picks[0]); task196Pick(app, task196Picks[1])
+        task196Query(app, "   case   ")
+        task196Pick(app, task196Picks[2])
+        XCTAssertFalse(task196ExactChip(app, "#task196 case").isSelected)
+        task196Query(app, "Task196 imported")
+        task196Pick(app, task196Picks[3])
+        task196Query(app, "Task196 caf")
+        XCTAssertTrue(task196ExactChip(app, task196Picks[0]).isSelected)
+        XCTAssertTrue(task196ExactChip(app, task196Picks[1]).isSelected)
+        task196Query(app, "no Task196 token matches this query", noMatches: true)
+        boardEnabled(app.buttons["reference-bulk-remove-tag-save"], timeout: 20)
+    }
+
+    private func task196Clean(_ app: XCUIApplication) {
+        XCTAssertFalse(app.staticTexts["reference-bulk-remove-tag-error"].exists)
+        XCTAssertFalse(app.staticTexts["reference-bulk-remove-tag-read-error"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.buttons["task-referenceBulkRemoveTag-undo"].exists)
+        XCTAssertFalse(app.buttons["reference-bulk-organize"].exists)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+    }
+
+    private func task196Observe(_ app: XCUIApplication, library: String, operation: String) {
+        let record: [String: Any] = ["fixture": library, "operation": operation, "source": "reference", "tags": task196Picks,
+            "taskIds": task193IDs("inbox"), "params": ["groupBy": "none", "includeArchivedProjects": true,
+                "filters": ["searchQuery": task193Query("inbox")]], "beforeActionWallEpoch": Date().timeIntervalSince1970]
+        if let bytes = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]), let text = String(data: bytes, encoding: .utf8) {
+            print("Task196 action observation " + text)
+        } else { XCTFail("Cannot encode Task196 pre-action observation") }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task196 before " + operation; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func task196Flow(_ library: String, rtl: Bool = false, largest: Bool = false) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
+        app.launch(); task186Open(app); referenceGroup(app, "none"); task193Range(app, status: "inbox", rtl: rtl)
+        task196OpenRemove(app)
+        // Unfiltered union is210. Two actual More actions publish100/100/10;
+        // the real-host suite independently checks every value and revision.
+        XCTAssertTrue(app.buttons["reference-bulk-remove-tag-option-99"].exists)
+        XCTAssertFalse(app.buttons["reference-bulk-remove-tag-option-100"].exists)
+        for boundary in [199, 209] {
+            let more = task196Control(app, "reference-bulk-remove-tag-more"); more.tap()
+            boardEnabled(app.buttons["reference-bulk-remove-tag-option-\(boundary)"], timeout: 20)
+            XCTAssertFalse(app.buttons["reference-bulk-remove-tag-option-\(boundary + 1)"].exists)
+        }
+        XCTAssertFalse(app.buttons["reference-bulk-remove-tag-more"].exists)
+        task196Query(app, "Task196 caf"); task196Pick(app, task196Picks[0])
+        task196Query(app, "no Task196 token matches this query", noMatches: true)
+        task196Control(app, "reference-bulk-remove-tag-cancel").tap()
+        XCTAssertTrue(app.textFields["reference-bulk-remove-tag-input"].waitForNonExistence(timeout: 15))
+        task192Count(app, 4); task196Clean(app)
+        XCTAssertFalse(app.staticTexts["task-referenceBulkRemoveTag-notice"].exists)
+        task196OpenRemove(app)
+        let input = app.textFields["reference-bulk-remove-tag-input"], actual = input.value as? String ?? ""
+        XCTAssertTrue(actual.isEmpty || actual == input.placeholderValue)
+        task196Query(app, "Task196 caf")
+        XCTAssertFalse(task196ExactChip(app, task196Picks[0]).isSelected)
+        XCTAssertFalse(task196ExactChip(app, task196Picks[1]).isSelected)
+        task196ChooseTargets(app)
+        task196Observe(app, library: library, operation: "removeTag-changed")
+        task196Control(app, "reference-bulk-remove-tag-save").tap()
+        XCTAssertTrue(app.staticTexts["reference-bulk-count"].waitForNonExistence(timeout: 30))
+        XCTAssertTrue(app.textFields["reference-bulk-remove-tag-input"].waitForNonExistence(timeout: 20))
+        let notice = app.staticTexts["task-referenceBulkRemoveTag-notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15))
+        XCTAssertEqual(Int(notice.label.compactMap { $0.wholeNumberValue }.map(String.init).joined()), 3)
+        for id in task193IDs("inbox") { XCTAssertTrue(task192Reveal(app, "task-title-" + id).exists) }
+        XCTAssertTrue(task192Reveal(app, "task-title-task193-inbox-05").exists); task196Clean(app)
+        app.terminate(); app.launch(); task186Open(app); task193Filter(app, task193Query("inbox"), rtl: rtl)
+        XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists)
+        XCTAssertFalse(app.textFields["reference-bulk-remove-tag-input"].exists)
+        XCTAssertFalse(app.staticTexts["task-referenceBulkRemoveTag-notice"].exists)
+        task196Clean(app); app.terminate()
+    }
+
+    func testTask196ReferenceBulkRemoveTagCancelPagingSuccessAndCold() { task196Flow("dc3d1913-4036-412e-a837-1e60991b96af") }
+    func testTask196ReferenceBulkRemoveTagLargestDark() { task196Flow("53773fee-d31a-4cb8-8f25-d29c61976ac0", largest: true) }
+    func testTask196ReferenceBulkRemoveTagArabicRTL() { task196Flow("58d22302-bd82-4404-9139-255eb43156f4", rtl: true) }
+
+    private func task196ReadEvent(_ app: XCUIApplication, event: String, query: String, request: String? = nil) -> [String: Any] {
+        let state = app.staticTexts["reference-bulk-remove-tag-test-read-state"]
+        XCTAssertTrue(state.waitForExistence(timeout: 15))
+        let matches: () -> [[String: Any]] = {
+            (state.value as? String ?? "").split(separator: "\n").compactMap { line in
+                guard let record = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                      record["event"] as? String == event, record["query"] as? String == query,
+                      request == nil || record["request"] as? String == request else { return nil }
+                return record
+            }
+        }
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in matches().count == 1 }, object: state)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed, "Observe the exact real-host read event")
+        let found = matches(); XCTAssertEqual(found.count, 1)
+        let record = found.first ?? [:]
+        XCTAssertFalse((record["request"] as? String ?? "").isEmpty)
+        XCTAssertFalse((record["session"] as? String ?? "").isEmpty)
+        if let bytes = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]), let text = String(data: bytes, encoding: .utf8) {
+            print("Task196 picker read observation " + text)
+            let attachment = XCTAttachment(string: text); attachment.name = "Task196 picker " + event; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        return record
+    }
+
+    func testTask196ReferenceBulkRemoveTagReadRetryAndLateResponsesStayInSession() {
+        continueAfterFailure = false
+        let library = "dde9e7e6-e5e1-4aa3-8856-effa38b0e336"
+        let app = XCUIApplication()
+        app.launchArguments = task192Arguments(library) + ["--native-reference-remove-read-tests"]
+        app.launch(); task186Open(app); referenceGroup(app, "none"); task193Range(app, status: "inbox")
+        task196OpenRemove(app)
+        task196Query(app, "Task196 caf"); task196Pick(app, task196Picks[0])
+
+        task196Query(app, "Task196 pool", waitForResult: false)
+        let error = app.staticTexts["reference-bulk-remove-tag-read-error"]
+        XCTAssertTrue(error.waitForExistence(timeout: 20)); XCTAssertFalse(error.label.isEmpty)
+        _ = task196ReadEvent(app, event: "failed", query: "Task196 pool")
+        XCTAssertFalse(app.buttons["reference-bulk-remove-tag-save"].isEnabled)
+        let more = app.buttons["reference-bulk-remove-tag-more"]
+        XCTAssertTrue(!more.exists || !more.isEnabled)
+        let retry = task196Control(app, "reference-bulk-remove-tag-read-retry")
+        boardEnabled(retry, timeout: 15); retry.tap()
+        boardEnabled(app.buttons["reference-bulk-remove-tag-option-0"], timeout: 20)
+        _ = task196ReadEvent(app, event: "served", query: "Task196 pool")
+        XCTAssertTrue(error.waitForNonExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["reference-bulk-remove-tag-save"].isEnabled)
+        task196Query(app, "Task196 caf")
+        XCTAssertTrue(task196ExactChip(app, task196Picks[0]).isSelected)
+        XCTAssertFalse(task196ExactChip(app, task196Picks[1]).isSelected)
+
+        task196Query(app, "Task196 CASE", waitForResult: false)
+        let queryHold = task196ReadEvent(app, event: "held", query: "Task196 CASE")
+        task196Query(app, "Task196 pool")
+        let queryDelivery = task196ReadEvent(app, event: "delivered", query: "Task196 CASE", request: queryHold["request"] as? String)
+        XCTAssertEqual(queryDelivery["session"] as? String, queryHold["session"] as? String)
+        XCTAssertEqual(queryDelivery["generation"] as? Int, queryHold["generation"] as? Int)
+        XCTAssertEqual(queryDelivery["cancelled"] as? Bool, true)
+        XCTAssertTrue(app.buttons["reference-bulk-remove-tag-option-0"].label.utf8.elementsEqual("#Task196 pool 000".utf8))
+        XCTAssertTrue((app.textFields["reference-bulk-remove-tag-input"].value as? String ?? "").utf8.elementsEqual("Task196 pool".utf8))
+        task196Query(app, "Task196 caf")
+        XCTAssertTrue(task196ExactChip(app, task196Picks[0]).isSelected)
+
+        task196Query(app, "Task196 imported", waitForResult: false)
+        let sessionHold = task196ReadEvent(app, event: "held", query: "Task196 imported")
+        task196Control(app, "reference-bulk-remove-tag-cancel").tap()
+        XCTAssertTrue(app.textFields["reference-bulk-remove-tag-input"].waitForNonExistence(timeout: 15))
+        task196OpenRemove(app)
+        let sessionDelivery = task196ReadEvent(app, event: "delivered", query: "Task196 imported", request: sessionHold["request"] as? String)
+        XCTAssertEqual(sessionDelivery["session"] as? String, sessionHold["session"] as? String)
+        XCTAssertEqual(sessionDelivery["generation"] as? Int, sessionHold["generation"] as? Int)
+        XCTAssertEqual(sessionDelivery["cancelled"] as? Bool, true)
+        let input = app.textFields["reference-bulk-remove-tag-input"], value = input.value as? String ?? ""
+        XCTAssertTrue(value.isEmpty || value == input.placeholderValue)
+        XCTAssertFalse(app.buttons["reference-bulk-remove-tag-save"].isEnabled)
+        XCTAssertTrue(app.buttons["reference-bulk-remove-tag-option-99"].exists)
+        XCTAssertFalse(app.buttons["reference-bulk-remove-tag-option-100"].exists)
+        task196Query(app, "Task196 caf")
+        XCTAssertFalse(task196ExactChip(app, task196Picks[0]).isSelected)
+        XCTAssertFalse(task196ExactChip(app, task196Picks[1]).isSelected)
+        task196Control(app, "reference-bulk-remove-tag-cancel").tap()
+        XCTAssertTrue(app.textFields["reference-bulk-remove-tag-input"].waitForNonExistence(timeout: 15))
+        task192Count(app, 4); task196Clean(app)
+        XCTAssertFalse(app.staticTexts["task-referenceBulkRemoveTag-notice"].exists)
+        print("Task196 picker read-only observation fixture=" + library + " expectedWrites=0")
+        app.terminate()
+    }
+
+    private func task196SelectedRows(_ app: XCUIApplication, phase: String) {
+        for id in task193IDs("inbox") {
+            let selector = task192Reveal(app, "reference-select-none-" + id, buttons: true)
+            XCTAssertTrue(selector.isSelected, "Exact selected row must retain its trait: " + id)
+            print("Task196 selected row \(phase) id=\(selector.identifier) selected=\(selector.isSelected)")
+        }
+    }
+
+    private func task196FailedState(_ app: XCUIApplication, phase: String) {
+        let tree = XCTAttachment(string: app.debugDescription); tree.name = "Task196 failed state AX " + phase; tree.lifetime = .keepAlways; add(tree)
+        XCTAssertTrue(task192Reveal(app, "reference-bulk-remove-tag-error").label.contains("SAVE_FAILED"))
+        task196SelectedRows(app, phase: phase)
+    }
+
+    func testTask196ReferenceBulkRemoveTagTwoFailedSaveRetries() {
+        continueAfterFailure = false
+        let library = "5de03d54-c9e6-4916-a0ec-b42851df74a8", app = XCUIApplication()
+        app.launchArguments = task192Arguments(library)
+        app.launch(); task186Open(app); referenceGroup(app, "none"); task193Range(app, status: "inbox")
+        task196SelectedRows(app, phase: "before Save")
+        task196OpenRemove(app); task196ChooseTargets(app)
+        task196Observe(app, library: library, operation: "removeTag-failed-save")
+        task196Control(app, "reference-bulk-remove-tag-save").tap()
+        for id in ["reference-retry", "persistence-retry"] {
+            if id == "reference-retry" { task192Reveal(app, id, buttons: true) }
+            boardEnabled(app.buttons[id], timeout: 30)
+            task196FailedState(app, phase: "before " + id); task192Count(app, 4)
+            XCTAssertFalse(app.textFields["reference-bulk-remove-tag-input"].exists)
+            for blocked in ["reference-overflow-button", "reference-bulk-exit", "reference-bulk-add-tag", "reference-bulk-remove-tag", "reference-bulk-delete"] {
+                XCTAssertFalse(app.buttons[blocked].isEnabled)
+            }
+            XCTAssertFalse(app.staticTexts["task-referenceBulkRemoveTag-notice"].exists)
+            task193Options(app, enabled: false); task193NoCompletionExtras(app)
+            task196Observe(app, library: library, operation: "retry-" + id)
+            if id == "reference-retry" { task192Reveal(app, id, buttons: true) }
+            app.buttons[id].tap()
+        }
+        task192Reveal(app, "reference-retry", buttons: true); boardEnabled(app.buttons["reference-retry"], timeout: 30)
+        task196FailedState(app, phase: "after second retry"); task192Count(app, 4)
+        app.terminate()
+    }
+
+    func testTask196ReferenceBulkRemoveTagOriginalJournalColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task192Arguments("bcd47dde-a273-4e68-b705-c8b61933b7ae")
+        // Stage only the accepted failure DB plus its actual final pending bytes.
+        for launch in 0..<2 {
+            app.launch()
+            if launch == 0 { boardEnabled(app.buttons["reference-overflow-button"], timeout: 30) }
+            else { task186Open(app) }
+            task193Filter(app, task193Query("inbox"))
+            for id in task193IDs("inbox") { XCTAssertTrue(task192Reveal(app, "task-title-" + id).exists) }
+            XCTAssertTrue(task192Reveal(app, "task-title-task193-inbox-05").exists)
+            XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists)
+            XCTAssertFalse(app.textFields["reference-bulk-remove-tag-input"].exists)
+            XCTAssertFalse(app.staticTexts["task-referenceBulkRemoveTag-notice"].exists)
+            task196Clean(app); app.terminate()
+        }
+    }
+}

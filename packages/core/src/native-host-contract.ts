@@ -287,6 +287,7 @@ import { createProjectLifecycleMethods } from './native-host-contract-project-li
 import { createArchivedTaskRestoreMethods } from './native-host-contract-archive-task-restore';
 import { createReferenceTasksMoveMethods } from './native-host-contract-reference-bulk-status';
 import { createReferenceTasksAddTagMethods } from './native-host-contract-reference-bulk-tag';
+import { createReferenceTasksRemoveTagMethods } from './native-host-contract-reference-bulk-remove-tag';
 import { createArchivedTasksRestoreMethods } from './native-host-contract-archive-bulk-restore';
 import { createArchivedTasksDeleteMethods } from './native-host-contract-archive-bulk-delete';
 import { createProjectDateMethods } from './native-host-contract-project-date';
@@ -1668,6 +1669,7 @@ export function createNativeHostContract(options: {
             t: () => translate,
             formatDate: () => createDateFormatter(dateFormatting()),
             views: { ...menuViewMethods, ...inboxViewMethods },
+            pickerRevision: () => `${revision()}:${settingsRevision()}:${language}:${systemLocale ?? ''}`,
         }),
         // The Board: native-host-contract-board.ts.
         ...createBoardViewMethods({
@@ -1836,6 +1838,7 @@ export function createNativeHostContract(options: {
         ...createArchivedTasksRestoreMethods({ readiness, save }),
         ...createReferenceTasksMoveMethods({ readiness, save }),
         ...createReferenceTasksAddTagMethods({ readiness, save }),
+        ...createReferenceTasksRemoveTagMethods({ readiness, save }),
         ...createArchivedTasksDeleteMethods({ readiness, save, t: () => translate }),
         ...createProjectDateMethods({ readiness, save,
             revision: projectMutationRevision }),
