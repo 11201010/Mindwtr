@@ -12,15 +12,17 @@ final class NativeDiagnosticsLogFile {
     #endif
 
     init(libraryRoot: URL) {
-        // Only this verified OS alias is normalized. Resolving an arbitrary
-        // parent would hide a task-owned ancestor link from NOFOLLOW traversal.
-        if libraryRoot.pathComponents.dropFirst().first == "var",
+        root = Self.normalizingSystemVarAlias(libraryRoot)
+    }
+
+    private static func normalizingSystemVarAlias(_ url: URL) -> URL {
+        // Normalize only this verified OS alias, never a library-owned link.
+        if url.pathComponents.dropFirst().first == "var",
            let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: "/var"),
            ["private/var", "/private/var"].contains(destination) {
-            root = URL(fileURLWithPath: "/private" + libraryRoot.path, isDirectory: true)
-        } else {
-            root = libraryRoot
+            return URL(fileURLWithPath: "/private" + url.path, isDirectory: true)
         }
+        return url
     }
 
     func perform(_ operation: String, text: String) throws -> String {
@@ -131,9 +133,20 @@ final class NativeDiagnosticsLogFile {
     }
 
     private func logs(create: Bool) throws -> Int32 {
-        var current = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        // iOS permits opening its own container, but denies reading ancestors
+        // such as /private/var. Trust only the OS-provided home as the anchor;
+        // every library-owned component below it still uses O_NOFOLLOW.
+        let home = Self.normalizingSystemVarAlias(URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true))
+        let components = root.pathComponents
+        let homeComponents = home.pathComponents
+        guard !components.contains(".."), !components.contains(".") else { throw failure() }
+        let insideHome = components.count >= homeComponents.count
+            && zip(components, homeComponents).allSatisfy { Array($0.utf8) == Array($1.utf8) }
+        let anchor = insideHome ? home.path : "/"
+        let prefixCount = insideHome ? homeComponents.count : 1
+        var current = Darwin.open(anchor, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard current >= 0 else { throw failure() }
-        for component in root.pathComponents.dropFirst() {
+        for component in components.dropFirst(prefixCount) {
             let next = Darwin.openat(current, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
             let code = errno
             Darwin.close(current)

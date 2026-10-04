@@ -126,4 +126,32 @@ final class NativeDiagnosticsLogFileTests: XCTestCase {
         XCTAssertEqual(try alias.perform("isAbsent", text: ""), "1")
         // This control only probes an absent path; it creates nothing outside the test home.
     }
+    #if os(macOS)
+    func testDiagnostics197ContainerAccessWithoutAncestorReadPermission() throws {
+        // Reproduce the device sandbox boundary: the app can open its home,
+        // but cannot open the parent directory for reading. Do not broaden it.
+        let parent = FileManager.default.homeDirectoryForCurrentUser.deletingLastPathComponent().path
+        let encoded = try JSONSerialization.data(withJSONObject: [parent], options: .withoutEscapingSlashes)
+        let quoted = String(decoding: encoded, as: UTF8.self).dropFirst().dropLast()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        process.arguments = [
+            "-p", "(version 1)(allow default)(deny file-read-data (literal \(quoted)))",
+            "/usr/bin/xcrun", "xctest", "-XCTest",
+            "MindwtrNativeCoreTests.NativeDiagnosticsLogFileTests/testDiagnostics197FixedUnicodeBytesIsolationAndClosedHandles",
+            Bundle(for: Self.self).bundleURL.path,
+        ]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let transcript = String(decoding: data, as: UTF8.self)
+        XCTAssertEqual(process.terminationStatus, 0, transcript)
+        XCTAssertTrue(transcript.contains("Executed 1 test"), transcript)
+        XCTAssertTrue(transcript.contains("with 0 failures"), transcript)
+    }
+    #endif
+
 }

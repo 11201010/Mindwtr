@@ -22213,6 +22213,7 @@ extension FoundationUITests {
     private func task197Data(_ app: XCUIApplication) {
         boardEnabled(app.buttons["tab-menu"], timeout: 30)
         boardTap(app, "tab-menu"); boardTap(app, "menu-settings")
+        task192Reveal(app, "settings-data", buttons: true, scrollID: "settings-scroll")
         boardTap(app, "settings-data")
         boardEnabled(app.switches["diagnostics-debug-logging"], timeout: 30)
         XCTAssertTrue(app.staticTexts["diagnostics-title"].exists)
@@ -22228,7 +22229,8 @@ extension FoundationUITests {
         let close = app.buttons.matching(identifier: "header.closeButton").firstMatch
         boardEnabled(close, timeout: 30)
         task197Observe(app, "OS Share file sheet")
-        close.tap()
+        boardTap(app, "header.closeButton")
+        XCTAssertTrue(close.waitForNonExistence(timeout: 30))
         boardEnabled(app.buttons["diagnostics-clear"], timeout: 30)
     }
 
@@ -22239,18 +22241,30 @@ extension FoundationUITests {
         task197NormalFlow("b3a22a49-3ee4-449f-b8f8-7082190b8e52", largest: true)
     }
     func testTask197DiagnosticsArabicRTL() {
-        task197NormalFlow("8fe1a8b7-f084-4321-9268-0dd3fc71cf7b", rtl: true)
+        task197NormalFlow("b0e26680-759d-4edd-b263-81200c1f4c1d", rtl: true)
     }
     private func task197NormalFlow(_ library: String, rtl: Bool = false, largest: Bool = false) {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
-        app.launch(); task197Data(app)
+        app.launch()
+        if rtl {
+            // Arabic requires the shared explicit Language setting, not a system-locale hint.
+            task97Open(app); task97Picker(app, "language"); task97Choose(app, "ar")
+            task197Observe(app, "Arabic Language setup settled")
+            boardTap(app, "general-back"); boardTap(app, "settings-back")
+        }
+        task197Data(app)
+        if rtl { XCTAssertEqual(app.staticTexts["diagnostics-title"].label, "التشخيص") }
         let logging = app.switches["diagnostics-debug-logging"]
         XCTAssertEqual(logging.value as? String, "0")
         XCTAssertFalse(app.buttons["diagnostics-share"].exists); XCTAssertFalse(app.buttons["diagnostics-clear"].exists)
         logging.tap(); boardEnabled(app.buttons["diagnostics-share"], timeout: 30)
         XCTAssertEqual(logging.value as? String, "1")
+        if rtl {
+            XCTAssertTrue(app.buttons["diagnostics-share"].label.contains("سجل المشاركة"))
+            XCTAssertEqual(app.buttons["diagnostics-clear"].label, "مسح السجل")
+        }
         task197Observe(app, "Data enabled settled")
         task197ShareCancel(app)
         boardTap(app, "diagnostics-clear")
@@ -22314,7 +22328,7 @@ extension FoundationUITests {
     func testTask197DiagnosticsCloseRejectsLateShareReply() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = task192Arguments("1f564332-b272-41b8-bae2-5d0b91072dd4") + ["--native-diagnostics-share-hold-once"]
+        app.launchArguments = task192Arguments("6d7af833-ce13-4bc8-ac2f-2c580c6296ba") + ["--native-diagnostics-share-hold-once"]
         app.launch(); task197Data(app)
         app.switches["diagnostics-debug-logging"].tap()
         boardEnabled(app.buttons["diagnostics-share"], timeout: 30)
