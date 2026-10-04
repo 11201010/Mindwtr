@@ -21010,6 +21010,91 @@ extension FoundationUITests {
 
 }
 
+// Task194 requires saved preview contents, not merely a sheet with no Save button.
+extension FoundationUITests {
+    func testTask194ArchivedReferenceTaskSavedPreviewAndPaging() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        // Root stages an isolated rich archived-project Reference fixture here.
+        app.launchArguments = task192Arguments("3a67825a-e2b8-45c3-accf-02c3c6fecd70")
+        app.launch()
+        task186Open(app)
+        referenceGroup(app, "none")
+        task186Filter(app, "Task193 inbox batch 05")
+
+        for opening in 0..<2 {
+            let source = task192Reveal(app, "task-title-task193-inbox-05")
+            source.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            boardEnabled(app.buttons["task-view-close"], timeout: 30)
+            let scroll = app.scrollViews["task-editor-scroll"]
+            XCTAssertTrue(scroll.waitForExistence(timeout: 15))
+            XCTAssertFalse(app.staticTexts["task-view-error"].exists)
+            XCTAssertFalse(app.buttons["task-view-retry"].exists)
+            func previewText(_ text: String) -> XCUIElement {
+                scroll.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+            }
+            func requireText(_ text: String) {
+                let element = previewText(text)
+                revealPagedElement(app, element, in: scroll, ready: app.buttons["task-view-close"])
+                XCTAssertTrue(element.label.contains(text), text)
+            }
+            func requireReadOnly() {
+                XCTAssertFalse(app.staticTexts["task-view-error"].exists)
+                XCTAssertFalse(app.buttons["task-view-retry"].exists)
+                XCTAssertFalse(app.buttons["task-mode-edit"].exists)
+                XCTAssertFalse(app.buttons["task-editor-save"].exists)
+                XCTAssertFalse(app.textFields["task-editor-title"].exists)
+                XCTAssertFalse(app.textFields["task-view-checklist-append"].exists)
+                XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+                    "task-view-checklist-toggle-")).count, 0)
+            }
+
+            requireText("Task193 inbox batch 05")
+            let hint = app.staticTexts["task-view-readonly-hint"]
+            revealPagedElement(app, hint, in: scroll, ready: app.buttons["task-view-close"])
+            XCTAssertEqual(hint.label, "Archived project. Reactivate it to edit this task.")
+            let project = app.buttons["task-view-project-open"]
+            revealPagedElement(app, project, in: scroll, ready: app.buttons["task-view-close"])
+            XCTAssertTrue(project.label.contains("Task193 archived Project"))
+            requireText("Task193 archived Section")
+            requireText("Retain rich task notes café 🧭")
+            requireText("Two paragraphs.")
+            requireText("Second paragraph.")
+            requireText("Retain checked item")
+            requireText("Retain pending item")
+            requireReadOnly()
+
+            let tail = previewText("Task194 checklist tail105")
+            XCTAssertFalse(tail.exists, "The 105th item must require actual bounded paging")
+            let more = app.buttons["task-view-more"]
+            for _ in 0..<2 {
+                revealPagedElement(app, more, in: scroll, ready: app.buttons["task-view-close"])
+                boardEnabled(more)
+                more.tap()
+                boardEnabled(app.buttons["task-view-close"], timeout: 30)
+            }
+            requireText("Task194 checklist tail105")
+            XCTAssertFalse(more.exists)
+            let link = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+                "task-view-attachment-open-", "Retained fixture link")).firstMatch
+            revealPagedElement(app, link, in: scroll, ready: app.buttons["task-view-close"])
+            boardEnabled(link)
+            requireReadOnly()
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "Task194 saved read-only preview opening \(opening)"
+            shot.lifetime = .keepAlways
+            add(shot)
+            boardTap(app, "task-view-close")
+            XCTAssertFalse(app.buttons["task-editor-discard"].exists)
+            XCTAssertTrue(app.buttons["task-view-close"].waitForNonExistence(timeout: 15))
+            boardEnabled(app.buttons["reference-overflow-button"], timeout: 30)
+            XCTAssertFalse(app.staticTexts["reference-error"].exists)
+            XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        }
+        app.terminate()
+    }
+}
+
 // Task192 exercises the shared Reference selection scope through real controls.
 extension FoundationUITests {
     private var task192Batch: [String] { (1...4).map { String(format: "task192-batch-%02d", $0) } }

@@ -18659,16 +18659,29 @@ final class CoreModel: ObservableObject {
                     resetTaskEstimateInput()
                     resetTaskTimeSpentInput()
                 }
-                try await resolveTaskEditorInputs()
-                try await refreshTaskDestination()
-                if taskSchedulePending { try await resolveTaskEditorInputs() }
-                if taskChecklistLoaded { try await flushTaskChecklistInputs(id: id, session: session) }
+                let readOnly = taskEditor.flag("readOnly")
+                if !readOnly {
+                    try await resolveTaskEditorInputs()
+                    try await refreshTaskDestination()
+                    if taskSchedulePending { try await resolveTaskEditorInputs() }
+                    if taskChecklistLoaded { try await flushTaskChecklistInputs(id: id, session: session) }
+                }
                 var draft = taskDraft
-                var firstInput: CoreObject = ["id": id, "draft": draft, "offset": 0, "limit": pageSize]
-                if taskChecklistLoaded { firstInput["checklist"] = taskChecklist }
-                if taskChecklistLoaded { firstInput["attachments"] = taskAttachments }
+                // Archived-project previews use the saved core projection. Do
+                // not enter edit-only normalization or send an editor overlay.
+                var firstInput: CoreObject = ["id": id, "offset": 0, "limit": pageSize]
+                if !readOnly {
+                    firstInput["draft"] = draft
+                    if taskChecklistLoaded { firstInput["checklist"] = taskChecklist }
+                    if taskChecklistLoaded { firstInput["attachments"] = taskAttachments }
+                }
                 var next = try await query("taskView", [try json(firstInput)])
-                if !taskChecklistLoaded {
+                // Reactivation requires a fresh opening; this retained session
+                // must not acquire editable rows through its saved-view read.
+                guard !readOnly || (next.text("id") == id && next["readOnly"] as? Bool == true) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                if !taskChecklistLoaded || readOnly {
                     guard taskPresented, viewedTaskID == id, taskChecklistSession == session,
                           next["checklistBase"] is [CoreObject],
                           let openingAttachments = next["attachmentsBase"] as? [CoreObject] else {
@@ -18679,12 +18692,14 @@ final class CoreModel: ObservableObject {
                     taskOriginalAttachments = openingAttachments
                     taskAttachments = openingAttachments
                     try await refreshTaskAttachmentRows()
-                    _ = try await applyTaskChecklistEdit(nil, id: id, session: session)
+                    if !readOnly { _ = try await applyTaskChecklistEdit(nil, id: id, session: session) }
                     taskChecklistLoaded = true
-                    draft = taskDraft
-                    next = try await query("taskView", [try json([
-                        "id": id, "draft": draft, "checklist": taskChecklist,
-                        "attachments": taskAttachments, "offset": 0, "limit": pageSize])])
+                    if !readOnly {
+                        draft = taskDraft
+                        next = try await query("taskView", [try json([
+                            "id": id, "draft": draft, "checklist": taskChecklist,
+                            "attachments": taskAttachments, "offset": 0, "limit": pageSize])])
+                    }
                 }
                 let checklist = taskChecklist
                 let attachments = taskAttachments
@@ -18695,13 +18710,19 @@ final class CoreModel: ObservableObject {
                     let total = rows[index].number("total")
                     while entries.count < min(target, total) {
                         let limit = min(pageSize, min(target, total) - entries.count)
-                        let window = try await query("taskView", [try json([
-                            "id": id, "draft": draft, "checklist": checklist, "attachments": attachments,
-                            "offset": entries.count, "limit": limit, "revision": revision])])
+                        var input: CoreObject = ["id": id, "offset": entries.count,
+                                                 "limit": limit, "revision": revision]
+                        if !readOnly {
+                            input["draft"] = draft
+                            input["checklist"] = checklist
+                            input["attachments"] = attachments
+                        }
+                        let window = try await query("taskView", [try json(input)])
                         let checklist = window.objects("rows").first { $0.text("type") == "checklist" } ?? [:]
                         let page = checklist.objects("items")
                         guard window.text("revision") == revision, window.text("id") == id,
-                              checklist.number("total") == total, page.count == limit else {
+                              checklist.number("total") == total, page.count == limit,
+                              !readOnly || window["readOnly"] as? Bool == true else {
                             throw CocoaError(.coderReadCorrupt)
                         }
                         entries += page
@@ -18711,9 +18732,9 @@ final class CoreModel: ObservableObject {
                 }
                 guard taskPresented, viewedTaskID == id, taskChecklistSession == session else { return }
                 let draftChanged = (try json(draft)) != (try json(taskDraft))
-                if taskSchedulePending || draftChanged || !taskDraftValuesEqual(checklist, taskChecklist)
+                if !readOnly && (taskSchedulePending || draftChanged || !taskDraftValuesEqual(checklist, taskChecklist)
                     || !taskChecklistInputs.isEmpty || !taskChecklistAppendInput.isEmpty
-                    || !taskDraftValuesEqual(attachments, taskAttachments) {
+                    || !taskDraftValuesEqual(attachments, taskAttachments)) {
                     // A final native input callback may arrive during the view
                     // or checklist reads. Regenerate before publishing Preview.
                     try await resolveTaskEditorInputs()
@@ -18721,6 +18742,9 @@ final class CoreModel: ObservableObject {
                     continue
                 }
                 taskView = next
+                if readOnly {
+                    NSLog("Native iOS read-only task preview loaded releaseCheck=v1.3.4/ios-readonly-task-preview outcome=loaded checklistCount=\(taskChecklist.count) attachmentCount=\(taskAttachments.count)")
+                }
                 return
             } catch {
                 attempt += 1

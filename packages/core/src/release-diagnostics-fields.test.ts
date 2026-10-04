@@ -35,6 +35,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'retainedSectionCount',
     // archive-retention: counts from a durably saved expiration batch.
     'taskCount', 'projectCount', 'sectionCount',
+    // ios-readonly-task-preview: saved viewer cache counts, never task content.
+    'checklistCount', 'attachmentCount',
     // Apple development evaluations (#915, #1194, #1214, #1195).
     // apple-pcc-evaluation: fixed synthetic fixture identifier and elapsed request time.
     'fixtureId', 'durationMs',

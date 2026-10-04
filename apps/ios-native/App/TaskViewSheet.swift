@@ -194,6 +194,7 @@ struct TaskViewSheet: View {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         if !value.text("readOnlyHint").isEmpty {
                             Text(value.text("readOnlyHint")).rnFont(13).foregroundStyle(palette.secondary)
+                                .accessibilityIdentifier("task-view-readonly-hint")
                         }
                         if editing && !readOnly {
                             editorFields
