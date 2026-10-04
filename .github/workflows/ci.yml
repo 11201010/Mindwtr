@@ -144,6 +144,9 @@ jobs:
       - name: Apple output cleanup regression tests
         run: python3 -m unittest discover -s scripts/ci -p test_cleanup_apple_outputs.py
 
+      - name: Merged worktree cleanup regression tests
+        run: python3 -m unittest discover -s scripts/maintenance -p test_cleanup_merged_worktrees.py
+
       - name: Schema and release workflow governance checks
         run: bun run test:governance
 
